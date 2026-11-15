@@ -183,8 +183,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     edits a released migration, expands first only where old and new callers
     overlap, proves every row on a copy of real data, and keeps a recovery
     path. `research` cites a source for every fact and lists what it did not
-    check, and `spec-writing` asks one question at a time and names the test
-    of every criterion. Every review skill
+    check, and `spec-writing` asks one question at a time, names the test
+    of every criterion and ends on the orchestrator's agreement. Every review skill
     — `code-review`, `pr-reviewer` and `architecture-review` — writes its
     verdict first, with no preamble and no closing summary, and states the
     shared rules below in the same words. It marks a must-fix or blocking

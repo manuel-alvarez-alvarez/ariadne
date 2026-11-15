@@ -235,6 +235,7 @@ fn each_writing_skill_names_its_sibling_and_its_own_proof() {
         ("spec-writing", "Ask one question at a time."),
         ("spec-writing", "Name the test that proves it"),
         ("spec-writing", "every criterion names a test"),
+        ("spec-writing", "the orchestrator has agreed to the spec"),
     ] {
         let document = unwrapped(default_skill_document(name).unwrap());
         assert!(

@@ -37,7 +37,11 @@ Use `research` when the goal asks which option to pick.
    are none, agree a path and a format with the orchestrator first.
 
    Done when the format matches the repository.
-7. Call `complete_step` with the column report.
+7. Send the finished spec to the orchestrator with `send_message`. Ask
+   it to agree.
+
+   Done when the orchestrator has agreed to the spec.
+8. Call `complete_step` with the column report.
 
    Done when the report has been submitted.
 
