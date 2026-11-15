@@ -41,3 +41,17 @@ export const ARIADNE_BABYSITTING = {
   label: "Ariadne babysitting",
   tone: "bg-status-review-soft text-status-review-fg",
 }
+
+/**
+ * The pill Ariadne's own approval of the current head wears (029). It is
+ * not the forge's review decision, which has its own pill.
+ */
+export const ARIADNE_APPROVED = {
+  label: "Ariadne approved",
+  tone: "bg-status-done-soft text-status-done-fg",
+}
+
+/** What the approval pill says on hover: Ariadne's alone, on one head. */
+export function ariadneApprovedHint(headSha: string): string {
+  return `Ariadne's review approved ${headSha.slice(0, 7)}. This is not a forge approval.`
+}

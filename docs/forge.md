@@ -6,7 +6,7 @@ task's `pr` column opens is kept by that column's agent until a human
 merges it, a request asking for your review is yours to start Ariadne's
 review of, by hand, whenever you choose, and a request of your own that no
 task opened is yours to ask Ariadne to keep by hand too; no agent runs a
-forge command itself, and none approves or merges anything.
+forge command itself, and none approves on the forge or merges anything.
 
 ## Enabling it
 
@@ -189,6 +189,28 @@ agent keeps, the review's findings go to that agent like anyone else's
 comments, though they are posted under your login: it answers each one,
 and fixes what needs fixing.
 
+### Ariadne approved
+
+When a round leaves nothing to block the request, the reviewer can mark
+it **Ariadne approved**. This is Ariadne's own status. It posts no forge
+approval, and it is not the forge's review decision or a sign that the
+request is ready to merge. The reviewer approves only after a complete
+review, with the required checks green and no open P0 or P1 finding. An
+open P2 finding does not block it. A reviewer that finds a blocker later
+withdraws the approval.
+
+An approval names the exact head the reviewer read. The daemon refuses
+one for a head that is no longer the request's head. A push clears it,
+and the old head coming back does not restore it. The approval stays
+when you stop the review or restart the daemon, while the head is the
+same.
+
+The desktop app shows **Ariadne approved** on the row and in the panel,
+beside the forge's own review decision. `ariadne pr ls` shows it in its
+`ariadne approval` column, and `ariadne pr inspect` names the approved
+head. The API returns it as `ariadne_approval`, with `head_sha` and
+`approved_at`, on every pull request, and null where none stands.
+
 ## What a `pr-babysit` keeper session does
 
 An open request that no task opened can be kept by hand: call `PUT
@@ -236,7 +258,9 @@ or the close: the session, its worktree and its branch all go.
 
 No session can post an approval or merge a request — there is no tool for
 either. `pr-reviewer` posts `request_changes` or `comment`, never an
-approval; the approving call, and the merge, are always yours. The one
+approval; the approving call, and the merge, are always yours. Its
+[Ariadne approval](#ariadne-approved) stays inside Ariadne and reaches no
+forge. The one
 thread a session resolves is a review thread it opened itself: on a later
 round, once a push fixed that finding, it replies and resolves it. Every
 thread anyone else opened stays yours to resolve.
@@ -372,8 +396,9 @@ and **Review requests** narrow it; a repository picker and a text box —
 the number, title, description, author or branch — narrow it further, and
 every filter stays in the address. A row shows its checks and review
 decision as pills, "by you" on a request of yours, **Ariadne reviewing**
-while Ariadne reviews one of yours, and **Ariadne babysitting** while a
-keeper session babysits one of yours by hand. A row holds no button: a
+while Ariadne reviews one of yours, **Ariadne babysitting** while a
+keeper session babysits one of yours by hand, and **Ariadne approved**
+while Ariadne's review approves the current head. A row holds no button: a
 click on it opens the request's panel — its state and checks, its facts with
 links to the forge and to each failed check, its description rendered, and
 its sessions — where **Start review** and **Stop review** are, and, on a
@@ -409,7 +434,9 @@ asked it to review or babysit. The record is
 its own bookkeeping — which task keeps the request, what each agent was
 told, the head last reviewed and a mark per comment it told or its review posted. Once the request merges or closes
 and its work is taken down, the record goes, so an ended request takes no
-room. The sessions that ran on it stay, with their history and spend.
+room. An [Ariadne approval](#ariadne-approved) is kept apart from that
+record, by repository and number, with the head it names: it outlives the
+record until a push clears it or the reviewer withdraws it. The sessions that ran on it stay, with their history and spend.
 
 Nothing adds or removes a request by hand, in the desktop app or the CLI:
 it all happens on its own.

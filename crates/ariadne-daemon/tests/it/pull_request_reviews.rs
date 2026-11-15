@@ -2162,3 +2162,111 @@ async fn cancelling_a_replaced_review_goal_leaves_its_replacement_alone() {
         "the replacement's ask stands"
     );
 }
+
+/// The review session approves the exact head the forge holds (029): an
+/// earlier head is refused, a withdrawal takes the approval back, and the
+/// list and the request show it apart from the forge's own decision. It
+/// outlives a stop of the review. A push ends it, and the old head coming
+/// back does not restore it. No forge approval is posted.
+#[tokio::test]
+async fn an_approval_binds_to_its_head_outlives_a_stop_and_a_push_ends_it() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, first) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&first)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+    let report =
+        |body: Value| as_session(&format!("/v1/pull-requests/{id}/report"), &session.id, body);
+    let row = async || -> Value {
+        let page: Value = h
+            .json(
+                Request::builder()
+                    .uri("/v1/pull-requests")
+                    .body(Body::empty())
+                    .unwrap(),
+                StatusCode::OK,
+            )
+            .await;
+        page["pull_requests"][0].clone()
+    };
+    let listed = async || row().await["ariadne_approval"].clone();
+    // The list shows `head`, once a fetch has read it.
+    let shows = async |head: &str| {
+        eventually(TIMEOUT, "the list to show the head", async || {
+            row().await["head_sha"] == head
+        })
+        .await;
+    };
+
+    h.error(
+        report(json!({"approved": true, "head_sha": "0123456789abcdef"})),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    h.error(report(json!({"approved": true})), StatusCode::BAD_REQUEST)
+        .await;
+    h.error(
+        post_json(
+            &format!("/v1/pull-requests/{id}/report"),
+            json!({"approved": true, "head_sha": first}),
+        ),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    assert_eq!(listed().await, Value::Null, "a refusal approves nothing");
+
+    let approved: Value = h
+        .json(
+            report(json!({"approved": true, "head_sha": &first[..12]})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(approved["ariadne_approval"]["head_sha"], first);
+    assert_eq!(approved["review_decision"], "none", "the forge's own stays");
+    assert_eq!(listed().await["head_sha"], first);
+
+    let withdrawn: Value = h
+        .json(report(json!({"approved": false})), StatusCode::OK)
+        .await;
+    assert_eq!(withdrawn["ariadne_approval"], Value::Null);
+    let _: Value = h
+        .json(
+            report(json!({"approved": true, "head_sha": first})),
+            StatusCode::OK,
+        )
+        .await;
+
+    let _: Value = h
+        .json(put_review(&repo, json!({"asked": false})), StatusCode::OK)
+        .await;
+    eventually(TIMEOUT, "the stop to end the session", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+    assert_eq!(
+        listed().await["head_sha"],
+        first,
+        "stopping the review keeps the approval"
+    );
+
+    let second = push(&path);
+    stub.reprogram(script(&Shown::open(&second)));
+    fetch_again(&h, &stub, &repo).await;
+    shows(&second).await;
+    assert_eq!(listed().await, Value::Null, "a push ends the approval");
+    stub.reprogram(script(&Shown::open(&first)));
+    fetch_again(&h, &stub, &repo).await;
+    shows(&first).await;
+    assert_eq!(
+        listed().await,
+        Value::Null,
+        "the old head coming back restores nothing"
+    );
+    assert!(
+        review_posts(&stub).is_empty(),
+        "an approval posts no forge review"
+    );
+}

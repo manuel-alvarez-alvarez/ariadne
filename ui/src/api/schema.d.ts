@@ -848,7 +848,8 @@ export interface paths {
          *     believes every required approval and check reads green, on the head
          *     (`head_sha`, required with `ready: true`) it actually confirmed that
          *     against; and the head a review session posted its review on
-         *     (`reviewed_sha`). Neither raises `waiting_user` on the session by
+         *     (`reviewed_sha`), and the review session's own approval of the head
+         *     (`approved`, on `head_sha`). None raises `waiting_user` on the session by
          *     itself (029): the claim alone is not confirmed evidence, and a
          *     pr-reviewer session finishing its own review must notify nobody — the
          *     `pull_request` attention producer reads the forge's own evidence
@@ -1866,13 +1867,13 @@ export interface components {
         AgentQuestion: {
             /** @description The answers the user can pick. With none, the user types the answer. */
             options?: components["schemas"]["AgentQuestionOption"][];
-            /** @description The `id` of the option the agent recommends. */
-            recommended_option_id?: string | null;
             /**
              * @description Why the agent recommends that option. It needs
              *     `recommended_option_id`.
              */
             recommendation_reason?: string | null;
+            /** @description The `id` of the option the agent recommends. */
+            recommended_option_id?: string | null;
             /** @description The question, with the context the user needs to answer it. */
             text: string;
         };
@@ -2987,6 +2988,11 @@ export interface components {
          * @enum {string}
          */
         PrOperation: "review" | "babysit";
+        /** @description An Ariadne review session approved the request on this exact head (029). */
+        PullRequestApprovalDto: {
+            approved_at: string;
+            head_sha: string;
+        };
         /**
          * @description One comment on a request, as the forge holds it now, read live (026),
          *     with the marks Ariadne keeps of it.
@@ -3029,6 +3035,7 @@ export interface components {
          *     Ariadne to review.
          */
         PullRequestDto: {
+            ariadne_approval?: components["schemas"]["PullRequestApprovalDto"] | null;
             author_login: string;
             /**
              * @description Whether the user asked Ariadne to keep this request of their own by
@@ -3172,9 +3179,15 @@ export interface components {
          */
         ReportPullRequestRequest: {
             /**
+             * @description The review session approves the request on `head_sha` (`true`), or
+             *     withdraws its approval (`false`) (029). Ariadne's own status alone:
+             *     no forge approval is posted.
+             */
+            approved?: boolean | null;
+            /**
              * @description The head the session actually confirmed `ready` against — read off
              *     its own last `get_pull_request` call, never looked up again here.
-             *     Required wherever `ready` is `true`: a push landing between that
+             *     Required wherever `ready` or `approved` is `true`: a push landing between that
              *     read and this call must still be judged against the head the
              *     session confirmed, not whatever the daemon's own cache has moved
              *     on to since, or a push the session never actually saw could pass
@@ -5461,6 +5474,18 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

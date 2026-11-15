@@ -636,6 +636,18 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         requested.clone(),
         chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
     );
+    // A request on a head other than its approved one has moved since the
+    // approval: the approval goes for good, whether or not Ariadne still
+    // works on the request (029).
+    let heads: Vec<(i64, &str)> = listed
+        .iter()
+        .filter(|p| !p.head_sha.is_empty())
+        .map(|p| (p.number, p.head_sha.as_str()))
+        .collect();
+    store
+        .clear_moved_pull_request_approvals(id, &heads)
+        .await
+        .map_err(|e| e.to_string())?;
     // A request that asks for my review, out of draft, is one Ariadne keeps
     // a row of: nothing starts a session of its own (029), but the request
     // still needs its row, so the `pull_request` attention producer can

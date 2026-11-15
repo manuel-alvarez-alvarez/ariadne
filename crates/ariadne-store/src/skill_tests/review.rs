@@ -158,13 +158,16 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
             "the pr-reviewer skill names {gone}"
         );
     }
-    // Nothing in the skill names the agent's own approval.
-    assert_eq!(
-        words.iter().filter(|word| *word == "approve").count(),
-        0,
-        "the pr-reviewer skill approves on its own"
-    );
     let doc = unwrapped(doc);
+    // The skill approves in Ariadne alone, and only once nothing blocks.
+    for sentence in ste::sentences(&doc) {
+        if sentence.contains("Approve") {
+            assert!(
+                sentence.contains("in Ariadne") && sentence.contains("no open P0 or P1"),
+                "an approval outside Ariadne or with a blocker: {sentence}"
+            );
+        }
+    }
     for priority in ["P0: ", "P1: ", "P2: "] {
         assert!(
             doc.contains(priority),
@@ -203,7 +206,10 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "Call `resolve_thread` without a reply",
         "Resolve only a thread you opened",
         "one inline comment on the line of the defect",
-        "Never give approval. The user gives it.",
+        "Never give a forge approval. The user gives it.",
+        "Approve in Ariadne only after a complete review, with required checks green and no open P0 or P1.",
+        "A P2 can stay.",
+        "On a later blocker, pass `approved: false`.",
         "Never land the request.",
         "Never edit a file.",
         "## Done",

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
 import { DetailPanels } from "@/components/detail-panels"
@@ -94,6 +94,25 @@ it("shows the Ariadne babysitting pill on a row a keeper session babysits by han
   })
   renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
   expect(await screen.findByText("Ariadne babysitting")).toBeTruthy()
+})
+
+it("shows Ariadne approved beside the forge's own review decision, never in its place", async () => {
+  const approved = {
+    ...pull,
+    ariadne_approval: { head_sha: "abc123", approved_at: "2026-10-07T00:00:00Z" },
+  }
+  const other = { ...pull, number: 43, title: "Other" }
+  daemonFetch.mockImplementation(async (input) => {
+    const path = new URL((input as Request).url).pathname
+    if (path === "/v1/pull-requests") return page([approved, other])
+    return jsonResponse([])
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+  const row = await screen.findByRole("row", { name: "Open #42 Fix widgets" })
+  expect(within(row).getByText("Ariadne approved")).toBeTruthy()
+  expect(within(row).getByText("Review required")).toBeTruthy()
+  const unapproved = screen.getByRole("row", { name: "Open #43 Other" })
+  expect(within(unapproved).queryByText("Ariadne approved")).toBeNull()
 })
 
 it("lists every open request by default, narrows to mine or to review requests, and adds none by hand", async () => {

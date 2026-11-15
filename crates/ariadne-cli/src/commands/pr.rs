@@ -34,6 +34,7 @@ const COLUMNS: &[Column] = &[
     col("draft", 6),
     col("checks", 10),
     col("review decision", 20),
+    col("ariadne approval", 16),
     col("unanswered comments", 10),
     col("updated", 24),
     col("session", UNCAPPED).id(),
@@ -196,6 +197,15 @@ fn ariadne_label(r: &PullRequestDto) -> String {
     }
 }
 
+/// Whether Ariadne's review session approved the current head (029):
+/// `approved` or a dash. The forge's own decision has a column of its own.
+fn approval_label(r: &PullRequestDto) -> String {
+    match &r.ariadne_approval {
+        Some(_) => "approved".into(),
+        None => "-".into(),
+    }
+}
+
 /// What `pr inspect` prints: a hand-written block in a reading order, the
 /// body last after a `---` line, the way `goal inspect` prints a
 /// description.
@@ -214,6 +224,14 @@ fn inspect_rows(row: &PullRequestDto) -> Vec<(&'static str, Kv)> {
         ("head", row.head_sha.clone().into()),
         ("checks", row.checks.clone().into()),
         ("review decision", row.review_decision.clone().into()),
+        (
+            "ariadne approval",
+            match &row.ariadne_approval {
+                Some(a) => format!("approved {}", a.head_sha),
+                None => "-".into(),
+            }
+            .into(),
+        ),
         (
             "unanswered comments",
             row.unanswered_comments.to_string().into(),
@@ -300,6 +318,7 @@ fn ls_row(r: &PullRequestDto) -> Vec<String> {
         r.draft.to_string(),
         r.checks.clone(),
         r.review_decision.clone(),
+        approval_label(r),
         r.unanswered_comments.to_string(),
         r.updated_at.clone(),
         dash(r.session_id.as_deref()),
@@ -1206,6 +1225,7 @@ mod tests {
                 "head",
                 "checks",
                 "review decision",
+                "ariadne approval",
                 "unanswered comments",
                 "ariadne review",
                 "review goal",
@@ -1243,6 +1263,26 @@ mod tests {
         let at = |header: &str| COLUMNS.iter().position(|c| c.header == header).unwrap();
         assert_eq!(cells[at("branches")], "fix → main");
         assert_eq!(cells[at("session")], "01SESS");
+    }
+
+    /// Ariadne's approval shows in a column and a row of its own, beside
+    /// the forge's review decision and never in it (029).
+    #[test]
+    fn pr_ls_and_inspect_show_ariadne_approval_apart_from_the_forge_decision() {
+        let mut pull: PullRequestDto = serde_json::from_value(row()).unwrap();
+        let at = |header: &str| COLUMNS.iter().position(|c| c.header == header).unwrap();
+        assert_eq!(ls_row(&pull)[at("ariadne approval")], "-");
+
+        pull.ariadne_approval = Some(ariadne_api::pull_requests::PullRequestApprovalDto {
+            head_sha: "abc".into(),
+            approved_at: "2026-11-14T00:00:00Z".into(),
+        });
+        let cells = ls_row(&pull);
+        assert_eq!(cells[at("ariadne approval")], "approved");
+        assert_eq!(cells[at("review decision")], "none");
+        let rows = inspect_rows(&pull);
+        let block = crate::output::kv_block(&rows, &crate::output::View::plain());
+        assert!(block.contains("approved abc"), "{block}");
     }
 
     /// The `ariadne` column names every way Ariadne works a request: a

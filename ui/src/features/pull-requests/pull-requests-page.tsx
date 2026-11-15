@@ -42,7 +42,14 @@ import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 
 import { pullRequestKey, pullRequestsQueryOptions } from "./queries"
-import { ARIADNE_BABYSITTING, ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
+import {
+  ARIADNE_APPROVED,
+  ARIADNE_BABYSITTING,
+  ARIADNE_REVIEWING,
+  ariadneApprovedHint,
+  CHECKS,
+  REVIEW,
+} from "./status"
 
 /**
  * Whose requests the list holds: every open one of the repositories, the
@@ -249,6 +256,14 @@ function PullRequestRow({
                 size="sm"
                 label={ARIADNE_BABYSITTING.label}
                 tone={ARIADNE_BABYSITTING.tone}
+              />
+            ) : null}
+            {row.ariadne_approval ? (
+              <StatusBadge
+                size="sm"
+                label={ARIADNE_APPROVED.label}
+                tone={ARIADNE_APPROVED.tone}
+                hint={ariadneApprovedHint(row.ariadne_approval.head_sha)}
               />
             ) : null}
           </span>
