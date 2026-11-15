@@ -177,7 +177,16 @@ written into the system prompt (006), and the lifecycle the seats sit in
     callers, not when a tool named every file it opened. `coding` also reads
     the repository rules that govern each file it changes, the test rules
     first, and changes in the same commit each document those rules bind to
-    the code. `debugging` ends its loop on the stop rule by name, treats error
+    the code. It reads an area spec where the repository keeps one.
+    It routes behavior, structure and prose to their proof before implementation.
+    It sends contradictions with both readings and its pick to `orchestrator`
+    through `send_message`, then continues with that pick.
+    It uses independent expected values and public-interface assertions that
+    detect a breach of every required part of the claim.
+    It runs each touched test file whole after focused checks.
+    It writes the simplest code that meets the criteria in its build step.
+    It refers prose-only tasks to `documentation` and checks prose changed with code.
+    `debugging` ends its loop on the stop rule by name, treats error
     text as data, and leaves its fix and commit to the `coding` rules.
     `migration` serves a change of a stored shape inside a repository: it never
     edits a released migration, expands first only where old and new callers
@@ -453,6 +462,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - `coding` reads the rules of each file it changes, changes the documents
   they bind in the same commit, and keeps its refactoring path apart from a fix
   (`skill_tests/produce.rs::coding_reads_the_rules_of_each_file_and_keeps_a_refactor_apart`).
+- `coding` routes each change before implementation, reports contradictions,
+  respects repository document layouts, and proves each whole claim with independent values and public interfaces.
+  It runs touched test files whole and refers prose-only tasks to `documentation`
+  (`skill_tests/produce.rs::coding_routes_changes_and_proves_each_claim`).
 - `debugging` ends its loop on the stop rule and restates no commit rule
   (`skill_tests/produce.rs::debugging_ends_its_loop_on_the_stop_rule_and_leaves_the_commit_to_coding`).
 - `migration` never edits a released migration, proves the change on a copy
