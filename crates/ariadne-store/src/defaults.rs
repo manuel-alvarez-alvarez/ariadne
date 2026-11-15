@@ -499,7 +499,7 @@ const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
 - Your login: {login}
 - Last reviewed sha: {reviewed_sha}
 
-Review this request."#;
+Review this request. Then end your turn."#;
 
 /// What a session is woken with when a request has news: the news since it
 /// was last told, one line each.

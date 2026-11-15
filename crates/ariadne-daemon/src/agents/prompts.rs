@@ -761,6 +761,10 @@ mod tests {
         ] {
             assert!(review.contains(value), "{value}: {review}");
         }
+        assert!(
+            review.ends_with("Then end your turn."),
+            "the review briefing owns the end of the first turn: {review}"
+        );
         let news = pull_request_news(
             pull_request_news_prompt(),
             &pull,
