@@ -78,9 +78,9 @@ that fits.
 ## Never
 
 Never force-push any branch or remote, including with `--force-with-lease`.
-Never push the task branch by its name. Never change a file of the task.
-Never commit anything but the merge of step 2 and the squash. Never run a
-check that the push hook runs.
+Never push the task branch by its name. Never change a file of the task,
+except to resolve a conflict in step 2. Never commit anything but the merge
+of step 2 and the squash. Never run a check that the push hook runs.
 
 ## Do not tell yourself
 

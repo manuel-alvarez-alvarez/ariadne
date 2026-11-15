@@ -175,7 +175,8 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
         at += found + route.len();
     }
     for never in [
-        "Never change a file of the task. Never commit anything but the merge of step 2 and the squash.",
+        "Never change a file of the task, except to resolve a conflict in step 2.",
+        "Never commit anything but the merge of step 2 and the squash.",
         "Never run a check that the push hook runs.",
     ] {
         assert!(text.contains(never), "the merge skill does not say {never}");

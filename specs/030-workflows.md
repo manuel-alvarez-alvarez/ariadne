@@ -136,7 +136,7 @@ every other kebab-case word in it; the wire spells the same gate
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`). Its agent lands the
    reviewed task or returns it, and fixes no code: it never changes a file
-   of the task and commits nothing but the merge of its step 2 and the
+   of the task, except to resolve a conflict in its step 2, and commits nothing but the merge of its step 2 and the
    squash. The steps: fetch the
    base where a remote exists; read the repository's history rules and test
    whether the branch is published with `git ls-remote --heads`, then merge
