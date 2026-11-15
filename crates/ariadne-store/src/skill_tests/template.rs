@@ -34,7 +34,7 @@ fn every_shipped_skill_is_named_once_and_describes_itself() {
         let summary = skill_summary(skill.document)
             .unwrap_or_else(|| panic!("{} describes itself nowhere", skill.name));
         assert!(
-            !summary.is_empty() && summary.len() <= 160,
+            !summary.is_empty() && summary.len() < 160,
             "the {} summary is {} characters; the index carries one line",
             skill.name,
             summary.len()
