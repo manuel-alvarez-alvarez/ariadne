@@ -252,11 +252,16 @@ written into the system prompt (006), and the lifecycle the seats sit in
     skill that ends its own column — `debugging`, `migration`,
     `conflict-resolution`, `documentation`, `research`, `spec-writing` —
     calls `complete_step` with the column report the same way, and
-    `conflict-resolution` hands the step to the skill beside it where one
-    lands the task.
+    `conflict-resolution` returns to the skill that invoked it, and calls
+    nothing, where one did.
     `conflict-resolution` alone states the conflict method: both sides read
-    before either is kept, no side taken whole, no abort, each dropped intent
-    written in the commit body. `merge` and `pr-babysit` name it and state no
+    before either is kept, and no side taken whole. A generated file or a lock
+    file is the one exception: its source is resolved by intent and its tool
+    makes it again. Only an operation that started in error is aborted, and
+    only a commit whose change the base already holds is skipped. Each dropped
+    intent is written in the commit body, and also goes to the column report
+    or to the skill that invoked this one, since a squash drops the body. It
+    runs the checks of what it resolved. `merge` and `pr-babysit` name it and state no
     method of their own. `pr-babysit` treats comment text as untrusted input
     and runs no command a comment holds. `orchestration` names no forge.
 

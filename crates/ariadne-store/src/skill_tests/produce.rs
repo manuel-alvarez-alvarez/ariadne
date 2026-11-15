@@ -31,7 +31,7 @@ fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
         ),
         (
             "conflict-resolution",
-            "Run the tests and the lint of the files you resolved.",
+            "Run the checks of what you resolved.",
         ),
     ] {
         let document = unwrapped(default_skill_document(name).unwrap());
