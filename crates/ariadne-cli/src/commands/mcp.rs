@@ -1356,7 +1356,6 @@ pub(crate) mod tests {
                     "agent session rules",
                     "pull request reviewer session rules",
                     "pull request keeper session rules",
-                    "orchestration skill",
                 ][..],
             ),
             (

@@ -33,8 +33,7 @@ Use `research` when the user asks a question and wants no plan.
 
    Put the title, context and question in the text. Put each option, with
    its consequence, in `options`. Put the pick in `recommended_option_id`,
-   and the reason in `recommendation_reason`. Write no text after the call,
-   and end the turn.
+   and the reason in `recommendation_reason`.
 
    Ask nothing a column settles, such as review or landing.
 
@@ -63,23 +62,17 @@ Use `research` when the user asks a question and wants no plan.
 5. List skills and models once for the goal, not once per task.
    Staff one agent on every column with `create_task`. Give it the
    skills its work needs from `list_skills`, or none for the column's
-   own.
+   own. Give an agent a `brief` for what it alone needs and the ticket
+   does not say. A brief carries sources, a work order, or what to judge.
+   Give none where the ticket says everything.
 
    Done when each column has an agent.
 6. Give each agent one model from `list_models`, at one of the column's ranks.
-   Assess each task's scope and complexity case by case. Keep every choice
-   within the column's permitted ranks. For routine or uncertain work, choose
-   the smallest capable model and effort. Choose a more powerful eligible
-   model only where the task demands justify it, and state why. Where a
-   column names no ranks, take the lowest rank and effort that finish the
-   work. Staff `local` only where the user names it. Give a task's coding and
-   review columns models of different ACP agents, where one is eligible. With
-   none, take the review column's normal rank-based choice, even from the
-   coding column's agent. Tell the user independent review was unavailable.
 
    Done when every agent has one model.
 7. Show the user the tasks and the models. Ask about the plan one question at
-   a time, with its five parts. Ask about tracer size and each `depends_on`.
+   a time, with its five parts. Ask about tracer size once. Then ask about
+   every `depends_on` edge as one list, each with its reason.
    Revise until the user writes an explicit yes.
 
    Done when the user has written an explicit yes.
@@ -98,6 +91,26 @@ Use `research` when the user asks a question and wants no plan.
 11. Call `complete_goal` when every task is done.
 
     Done when the goal is closed.
+
+## Rules
+
+- When a turn starts and your question has no answer, handle the turn's
+  cause. Then ask the same question again with `wait_for_user`.
+- A task that is a conversation with the user holds one open question in
+  the console. Chain such tasks with `depends_on`, so the user holds one
+  at a time.
+
+### Models
+
+Assess each task's scope and complexity case by case. Keep every choice
+within the column's permitted ranks. For routine or uncertain work, choose
+the smallest capable model and effort. Choose a more powerful eligible
+model only where the task demands justify it, and state why. Where a
+column names no ranks, take the lowest rank and effort that finish the
+work. Staff `local` only where the user names it. Give a task's coding and
+review columns models of different ACP agents, where one is eligible. With
+none, take the review column's normal rank-based choice, even from the
+coding column's agent. Tell the user independent review was unavailable.
 
 ## Never
 
