@@ -411,7 +411,6 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         "Put the title, context and question in the text.",
         "Put each option, with its consequence, in `options`.",
         "Put the pick in `recommended_option_id`, and the reason in `recommendation_reason`.",
-        "Write no text after the call, and end the turn.",
         "\"Two short questions fit in one turn.\" -> Ask one; the user answers each one with its full context.",
     ] {
         assert!(
@@ -559,10 +558,13 @@ fn the_three_skills_name_the_ticket_format() {
 }
 
 /// Acceptance criteria state outcomes, not test cases: the coding agent
-/// picks its own tests. And plan review asks one question at a time,
-/// about tracer size and `depends_on`, the same as step 2's open points
-/// — without this, a planner could prescribe tests or collect every
-/// plan decision into one turn while this suite stays green.
+/// picks its own tests. And plan review asks one question at a time, the
+/// same as step 2's open points: tracer size once, then every
+/// `depends_on` edge as one list with its reason. A question per edge
+/// cost a turn per edge, and a 16-task plan skipped them all; one list
+/// shows every edge and lets the user reject one in one answer. Without
+/// this, a planner could prescribe tests or collect every plan decision
+/// into one turn while this suite stays green.
 #[test]
 fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_a_time() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
@@ -570,7 +572,8 @@ fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_
         "`## Criteria` is numbered. Each item is one outcome.",
         "Leave test cases and verification to the coding agent.",
         "Ask about the plan one question at a time, with its five parts.",
-        "Ask about tracer size and each `depends_on`.",
+        "Ask about tracer size once.",
+        "Then ask about every `depends_on` edge as one list, each with its reason.",
     ] {
         assert!(
             prompt.contains(phrase),
