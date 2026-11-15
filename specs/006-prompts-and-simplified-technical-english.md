@@ -144,11 +144,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    description defines (013), covering every criterion. `code-review` names
    the column report and the return report by name, and restates no field
    of either. It reads the column report as unverified claims before it
-   pins the scope to the diff, then reuses a result only when its revision
-   is the reviewed revision and its command covers a required check.
-   Missing, outdated or insufficient evidence runs the required check, once
-   for the verdict; the skill never reruns a check only to confirm the
-   report. Evidence never replaces code inspection, acceptance review or
+   pins the scope to the diff, then runs the tests, the lint and the
+   format check of the files the diff changes itself, once for the
+   verdict. It is an independent gate, not an audit of the report: a
+   reported result stands only for a check outside those files, and only
+   where the report names its command, the reviewed revision and the
+   result; the skill never reruns a check whose result it already holds.
+   Evidence never replaces code inspection, acceptance review or
    repository-rule enforcement. What a blocking or must-fix finding must
    name, and the cap on the rest, is 017 rule 11's to state, for all three
    review skills alike. Each other produce skill that ends its own column —
@@ -361,8 +363,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - `coding` calls `complete_step` with the column report that tool's
   description defines, covering every criterion, and names no field of it
   itself. `code-review` names the column report and the return report by
-  name, reads the former as unverified claims, then reuses only matching evidence and runs missing, outdated or
-  insufficient required checks.
+  name, reads the former as unverified claims, then runs the tests, the
+  lint and the format check of the changed files itself and reuses a
+  reported result only for a check outside them.
   Evidence does not replace its code inspection, acceptance review or
   repository-rule enforcement
   (`skill_tests/produce.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
