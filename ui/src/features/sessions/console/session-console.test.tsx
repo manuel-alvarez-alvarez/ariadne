@@ -1361,3 +1361,49 @@ it("copies a fenced block's trailing blank lines as written", () => {
   expect(written).toEqual(["last line\n\n"])
   vi.unstubAllGlobals()
 })
+
+function notes(count: number) {
+  return Array.from({ length: count }, (_, at) =>
+    event("agent_thought", { text: `idea ${at + 1}` }),
+  )
+}
+
+it("shows the last 3 rows of a run under a control that opens and closes it, and keeps the choice", () => {
+  const activity = notes(5)
+  const { source } = renderConsole(activity)
+  const log = within(transcript())
+  expect(log.queryByRole("button", { name: /thought · idea 2/ })).toBeNull()
+  const control = log.getByRole("button", { name: "Show 2 earlier" })
+  expect(control.getAttribute("aria-expanded")).toBe("false")
+  fireEvent.click(control)
+  expect(log.getByRole("button", { name: "Show fewer" }).getAttribute("aria-expanded")).toBe("true")
+  log.getByRole("button", { name: /thought · idea 1/ })
+  act(() => source.emit("event", event("agent_thought", { text: "idea 6" })))
+  log.getByRole("button", { name: /thought · idea 1/ })
+  cleanup()
+  stubEventSource()
+  renderConsole([...activity])
+  fireEvent.click(within(transcript()).getByRole("button", { name: "Show fewer" }))
+  expect(within(transcript()).queryByRole("button", { name: /thought · idea 1/ })).toBeNull()
+  within(transcript()).getByRole("button", { name: "Show 2 earlier" })
+})
+
+it("pushes the oldest shown row under the control as a turn adds rows", () => {
+  const { source } = renderConsole(notes(3))
+  const log = within(transcript())
+  expect(log.queryByRole("button", { name: /Show \d+ earlier/ })).toBeNull()
+  act(() => source.emit("event", event("agent_thought", { text: "idea 4" })))
+  log.getByRole("button", { name: "Show 1 earlier" })
+  expect(log.queryByRole("button", { name: /thought · idea 1/ })).toBeNull()
+})
+
+it("copies the hidden rows with the loaded transcript", async () => {
+  const written = vi.fn((_text: string) => Promise.resolve())
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: written } })
+  renderConsole(notes(5))
+  await userEvent.click(screen.getByRole("button", { name: "Commands and session actions" }))
+  await userEvent.click(screen.getByRole("button", { name: "Copy loaded transcript (main)" }))
+  await waitFor(() => expect(written).toHaveBeenCalled())
+  expect(written.mock.calls[0]?.[0]).toContain("idea 1")
+  vi.unstubAllGlobals()
+})

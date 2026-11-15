@@ -1232,3 +1232,55 @@ export function displayBlocks(blocks: Block[], cards: Block[]): Block[] {
     }
   })
 }
+
+/** How many rows of an activity run show before the rest fold under a control. */
+const SHOWN_ACTIVITY_ROWS = 3
+
+/** An activity row is an indented one; a prompt, a message and a question are conversation. */
+function isActivity(block: Block): boolean {
+  return block.type !== "prompt" && block.type !== "message" && block.type !== "question"
+}
+
+/** One thing to draw: a block, or the control that opens or closes a run. */
+type RunItem =
+  | { kind: "block"; block: Block }
+  | { kind: "control"; runId: string; hidden: number; expanded: boolean }
+
+/**
+ * Cut each run of consecutive activity rows to its last rows. A pending
+ * permission, an error and the selected row stay in place however old. A run's
+ * id is its first row's id; `expanded` holds the runs the reader opened.
+ */
+export function collapseRuns(
+  blocks: Block[],
+  expanded: Record<string, boolean>,
+  selectedId: string | undefined,
+): RunItem[] {
+  const items: RunItem[] = []
+  let at = 0
+  while (at < blocks.length) {
+    const first = blocks[at] as Block
+    if (!isActivity(first)) {
+      items.push({ kind: "block", block: first })
+      at += 1
+      continue
+    }
+    let end = at
+    while (end < blocks.length && isActivity(blocks[end] as Block)) end += 1
+    const run = blocks.slice(at, end)
+    at = end
+    const older = run.slice(0, Math.max(0, run.length - SHOWN_ACTIVITY_ROWS))
+    const hiding = older.filter(
+      (block) =>
+        block.id !== selectedId &&
+        block.type !== "error" &&
+        !(block.type === "permission" && block.answer === undefined),
+    )
+    const open = expanded[first.id] === true
+    if (hiding.length > 0)
+      items.push({ kind: "control", runId: first.id, hidden: hiding.length, expanded: open })
+    const hidden = open ? new Set<Block>() : new Set(hiding)
+    for (const block of run) if (!hidden.has(block)) items.push({ kind: "block", block })
+  }
+  return items
+}

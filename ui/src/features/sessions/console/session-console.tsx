@@ -56,7 +56,7 @@ import { useBaseUrl } from "@/stores/settings"
 
 import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
-import { BlockView, PermissionPicker, PermissionRow, PromptBox, ToolRow } from "./blocks"
+import { BlockView, PermissionPicker, PermissionRow, PromptBox, RunToggle, ToolRow } from "./blocks"
 import { Composer, suggest } from "./composer"
 import { ComposerMenu } from "./composer-menu"
 import { ConsoleStream, type ConsoleStreamStatus, consoleStreamUrl } from "./console-stream"
@@ -91,6 +91,7 @@ import {
   applyEvent,
   applySnapshot,
   blocksText,
+  collapseRuns,
   dequeuePrompt,
   displayBlocks,
   emptyTranscript,
@@ -229,6 +230,7 @@ function ConsolePane({
   const [requestReveal, setRequestReveal] = useState(0)
   const requestFocus = useRef<string | undefined>(undefined)
   const [blockFolds, setBlockFolds] = useState(() => readViewState(key).blockFolds)
+  const [runExpansions, setRunExpansions] = useState(() => readViewState(key).runExpansions)
   const [cursor, setCursor] = useState(0)
   const [suggested, setSuggested] = useState(0)
   const [dismissed, setDismissed] = useState(false)
@@ -282,6 +284,7 @@ function ConsolePane({
     const kept = readViewState(key)
     setDraft(kept.draft)
     setBlockFolds(kept.blockFolds)
+    setRunExpansions(kept.runExpansions)
     setShown(kept.shown)
     setFailed(kept.failed)
     setAnswered(new Set())
@@ -417,7 +420,7 @@ function ConsolePane({
   useLayoutEffect(() => {
     const el = log.current
     if (el && following.current && restore.current === null) pin(el, pinned)
-  }, [blockFolds])
+  }, [blockFolds, runExpansions])
 
   // Blocks above a reader who scrolled away change height when they fold,
   // unfold or take output; the block the reader was on stays where it was.
@@ -428,7 +431,7 @@ function ConsolePane({
     if (!el || !place || following.current || restore.current !== null) return
     const at = blockOffset(el, place.blockId)
     if (at !== undefined && at !== place.offset) el.scrollTop += at - place.offset
-  }, [transcript, blockFolds])
+  }, [transcript, blockFolds, runExpansions])
 
   // A panel that is resized, or a block that grows after it is drawn, keeps a
   // following reader at the newest output too.
@@ -820,6 +823,13 @@ function ConsolePane({
     updateViewState(keyRef.current, { blockFolds: next })
   }, [])
 
+  /** Show every row of one activity run, or its last 3 again, and keep the choice. */
+  const toggleRun = useCallback((runId: string, expanded: boolean) => {
+    const next = { ...readViewState(keyRef.current).runExpansions, [runId]: !expanded }
+    setRunExpansions(next)
+    updateViewState(keyRef.current, { runExpansions: next })
+  }, [])
+
   const resume = useResumeAction(onResumed)
   const viewName = child ? child.title : "main"
   const menu = (
@@ -988,8 +998,19 @@ function ConsolePane({
                 if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
               }}
             >
-              {inPlace.map((block) =>
-                block.type === "tool" ? (
+              {collapseRuns(inPlace, runExpansions, selectedTool).map((item) => {
+                if (item.kind === "control")
+                  return (
+                    <RunToggle
+                      key={`run:${item.runId}`}
+                      runId={item.runId}
+                      hidden={item.hidden}
+                      expanded={item.expanded}
+                      onToggle={toggleRun}
+                    />
+                  )
+                const block = item.block
+                return block.type === "tool" ? (
                   <ToolRow
                     key={block.id}
                     block={block}
@@ -1013,8 +1034,8 @@ function ConsolePane({
                     onToggle={toggleBlock}
                     picker={null}
                   />
-                ),
-              )}
+                )
+              })}
               {requestsError ? (
                 <div
                   role="alert"

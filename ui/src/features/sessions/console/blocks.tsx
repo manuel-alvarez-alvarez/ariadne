@@ -598,3 +598,27 @@ export function PermissionPicker({
     </div>
   )
 }
+
+/** The control over a run of activity rows: it shows the rows above the last 3, or hides them again. */
+export function RunToggle({
+  runId,
+  hidden,
+  expanded,
+  onToggle,
+}: {
+  runId: string
+  hidden: number
+  expanded: boolean
+  onToggle: (runId: string, expanded: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={expanded}
+      onClick={() => onToggle(runId, expanded)}
+      className="ml-4 flex w-[calc(100%-1rem)] min-w-0 cursor-pointer items-center rounded-md px-2 py-1 text-left font-mono text-xs text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      {expanded ? "Show fewer" : `Show ${hidden} earlier`}
+    </button>
+  )
+}
