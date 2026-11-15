@@ -16,6 +16,8 @@ Use `merge` when no conflict stops the landing. Use `debugging` when a check fai
 ## Steps
 
 1. Read the conflict state. Run `git status` and open every conflicting file.
+   Where the operation started in error, such as on the wrong base, abort it
+   and start the correct one.
 
    Done when you can name each file and the operation in progress.
 2. Read both sides before you keep either. Read both commit messages, both
@@ -24,29 +26,36 @@ Use `merge` when no conflict stops the landing. Use `debugging` when a check fai
    Done when you can state each intent in one sentence.
 3. Resolve each hunk to the intent of both sides. Where the intents fit
    together, keep both. Carry over only behavior one side already wrote.
+   Resolve the source of a generated file or a lock file by intent. Then
+   make that file again with its tool. Run `git rebase --skip` only for a
+   commit whose change the base already holds.
 
-   Done when no conflict marker is left.
+   Done when only hunks with clashing intents hold a conflict marker.
 4. Where two intents clash, keep the one the goal of the task wants. Write
    each dropped intent and the reason in the commit body.
 
-   Done when the commit body names each dropped intent.
-5. Run the tests and the lint of the files you resolved. Fix what the
-   resolution broke in the same commit.
+   Done when no conflict marker is left and the commit body names each
+   dropped intent.
+5. Run the checks of what you resolved. Fix what the resolution broke in the
+   same commit.
 
    Done when each check passes.
 6. Finish the operation. Stage the files, then continue the rebase or commit
    the merge.
 
    Done when git reports no operation in progress.
-7. Call `complete_step` with the column report, unless another skill invoked
-   this one. Then return to that skill's next step.
+7. Where another skill invoked this one, give it each dropped intent and
+   return to that skill's next step. Call nothing. Where no skill did, this
+   step ends the column. Call `complete_step` with the column report. Put
+   each dropped intent in it.
 
-   Done when the column is reported or the caller has its next step.
+   Done when the caller has its next step or the column is reported.
 
 ## Never
 
-Never take one side of a hunk whole. Never abort the operation. Never change
-work outside the task.
+Never take one side of a hunk whole. The one exception is a generated file
+or a lock file that you make again with its tool. Never abort an operation
+that started correctly. Never change work outside the task.
 
 ## Do not tell yourself
 

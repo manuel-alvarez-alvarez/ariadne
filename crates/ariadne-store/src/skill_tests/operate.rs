@@ -198,22 +198,29 @@ fn only_conflict_resolution_states_how_a_conflict_is_resolved() {
 }
 
 /// A conflict is resolved by intent: both sides are read before either is
-/// kept, no side is taken whole, the operation is never aborted, each
-/// dropped intent is written in the commit body, the checks of the
-/// resolved files run before the operation finishes, and it is finished.
+/// kept, no side is taken whole except a generated file made again with
+/// its tool, only an operation started in error is aborted, each dropped
+/// intent is written in the commit body and handed on, the checks of what
+/// was resolved run before the operation finishes, and it is finished.
 #[test]
 fn the_conflict_resolution_skill_resolves_by_intent_and_finishes_the_operation() {
     let text = unwrapped(default_skill_document("conflict-resolution").unwrap());
     let mut at = 0;
     for step in [
+        "Where the operation started in error, such as on the wrong base, abort it and start the correct one.",
         "Read both sides before you keep either.",
         "Read both commit messages, both diffs, the task each one names and the code around each hunk.",
         "Resolve each hunk to the intent of both sides.",
+        "Resolve the source of a generated file or a lock file by intent. Then make that file again with its tool.",
+        "Run `git rebase --skip` only for a commit whose change the base already holds.",
+        "Done when only hunks with clashing intents hold a conflict marker.",
         "Where two intents clash, keep the one the goal of the task wants.",
         "Write each dropped intent and the reason in the commit body.",
-        "Run the tests and the lint of the files you resolved.",
+        "Done when no conflict marker is left and the commit body names each dropped intent.",
+        "Run the checks of what you resolved.",
         "Finish the operation. Stage the files, then continue the rebase or commit the merge.",
-        "Call `complete_step` with the column report, unless another skill invoked this one.",
+        "Where another skill invoked this one, give it each dropped intent and return to that skill's next step. Call nothing.",
+        "Where no skill did, this step ends the column. Call `complete_step` with the column report. Put each dropped intent in it.",
     ] {
         let found = text[at..].find(step).unwrap_or_else(|| {
             panic!("the conflict-resolution skill has no {step} after its last step")
@@ -222,17 +229,14 @@ fn the_conflict_resolution_skill_resolves_by_intent_and_finishes_the_operation()
     }
     for never in [
         "Never take one side of a hunk whole.",
-        "Never abort the operation.",
+        "The one exception is a generated file or a lock file that you make again with its tool.",
+        "Never abort an operation that started correctly.",
     ] {
         assert!(
             text.contains(never),
             "the conflict-resolution skill has no {never}"
         );
     }
-    assert!(
-        text.contains("Then return to that skill's next step."),
-        "the conflict-resolution skill does not return to the skill that invoked it"
-    );
 }
 
 /// The `pr` column's agent is fed by the daemon (026, 030), so its skill
