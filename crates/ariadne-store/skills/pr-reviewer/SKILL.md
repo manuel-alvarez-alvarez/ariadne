@@ -31,8 +31,8 @@ Use `code-review` when the diff is a task branch and no forge request.
    read the last reply:
    - A claimed fix: verify it at the current head. Call `resolve_thread`
      without a reply after you verify the fix.
-   - A claimed fix that fails: reply once with `Still there: <why>.` Do
-     not reply again in that thread.
+   - A claimed fix that fails: reply once with `Still there: <why>.`
+     Never post `Still there:` twice in one thread.
    - A fix in a revision your worktree does not hold: post nothing. The
      push arrives as news.
    - A question: give one short answer with `reply_comment`, once per

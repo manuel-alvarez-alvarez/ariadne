@@ -260,7 +260,7 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         // An unanswered thread waits; a declined fix is marked so and
         // left open; a claimed fix that is not one is said once.
         "Still there: <why>",
-        "Do not reply again in that thread",
+        "Never post `Still there:` twice in one thread.",
         "```suggestion block",
         "Never post a second comment for a defect",
         "Call `resolve_thread` without a reply",
@@ -288,6 +288,11 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
     ] {
         assert!(doc.contains(step), "the pr-reviewer skill has no {step}");
     }
+    // A question after a `Still there:` still gets its one answer.
+    assert!(
+        !doc.contains("Do not reply again in that thread"),
+        "the pr-reviewer skill forbids the answer to a later question"
+    );
     // The checks come before the threads, and the threads before the hunt.
     let at = |needle: &str| doc.find(needle).unwrap();
     assert!(
