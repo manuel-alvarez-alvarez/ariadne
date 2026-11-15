@@ -4,7 +4,7 @@
 use super::{
     AppState,
     caller::call_ctx,
-    convert::{forge_pull_dto, pull_request_comment_dto, pull_request_dto_of},
+    convert::{approval_of, forge_pull_dto, pull_request_comment_dto, pull_request_dto_of},
     error::{ApiError, ApiResult, Json},
 };
 use crate::forge::live::{self, Details, Live};
@@ -165,6 +165,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         .get(&row.id)
         .map_or(row.role == "reviewer", |l| l.review_requested);
     let head_sha = details.pull.head_sha.clone();
+    clear_moved_approval(state, &row.repository_id, row.number, &head_sha).await?;
     let (before, after) = state.launcher.live.set_details_fingerprinted(
         &row.id,
         details.pull,
@@ -190,6 +191,39 @@ async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullReque
         Some(pull) => Ok(pull),
         None => read_now(state, row).await,
     }
+}
+
+/// A request nobody works on, as the forge's read alone, with Ariadne's
+/// approval of its head where one stands (029): the approval outlives the
+/// row that worked on the request.
+async fn unworked_dto(
+    state: &AppState,
+    repository_id: &str,
+    pull: pulls::ForgePullRequest,
+    role: &str,
+    review_requested: bool,
+) -> ApiResult<PullRequestDto> {
+    let mut dto = forge_pull_dto(repository_id, pull, role, review_requested);
+    dto.ariadne_approval =
+        approval_of(&state.store, repository_id, dto.number, &dto.head_sha).await?;
+    Ok(dto)
+}
+
+/// Clear Ariadne's approval of request `number` where a read just found it
+/// on another head (029). A push always ends an approval.
+async fn clear_moved_approval(
+    state: &AppState,
+    repository_id: &str,
+    number: i64,
+    head_sha: &str,
+) -> ApiResult<()> {
+    if !head_sha.is_empty() {
+        state
+            .store
+            .clear_moved_pull_request_approvals(repository_id, &[(number, head_sha)])
+            .await?;
+    }
+    Ok(())
 }
 
 /// The open requests of the enabled repositories, answered from the last
@@ -318,7 +352,7 @@ pub(super) async fn list(
                 let view = live::view(row, &read, &marks, &login);
                 pull_request_dto_of(&state.store, view).await?
             }
-            None => forge_pull_dto(&forge.repository_id, pull, role, asks),
+            None => unworked_dto(&state, &forge.repository_id, pull, role, asks).await?,
         });
     }
     Ok(Json(PullRequestPageDto {
@@ -442,7 +476,8 @@ pub(super) async fn get_by_number(
     let role = pulls::role(&details.pull.author_login, &forge);
     let comments = live::answered(live::comments("", &details.comments, &[]), role, &login);
     let unanswered = live::waiting_threads(&comments, role, &login).len() as i64;
-    let mut dto = forge_pull_dto(&id, details.pull, role, false);
+    clear_moved_approval(&state, &id, number, &details.pull.head_sha).await?;
+    let mut dto = unworked_dto(&state, &id, details.pull, role, false).await?;
     dto.unanswered_comments = unanswered;
     dto.behind_base = details.behind_base;
     dto.failed_checks = details
@@ -837,7 +872,8 @@ pub(super) async fn resolve(
 /// believes every required approval and check reads green, on the head
 /// (`head_sha`, required with `ready: true`) it actually confirmed that
 /// against; and the head a review session posted its review on
-/// (`reviewed_sha`). Neither raises `waiting_user` on the session by
+/// (`reviewed_sha`), and the review session's own approval of the head
+/// (`approved`, on `head_sha`). None raises `waiting_user` on the session by
 /// itself (029): the claim alone is not confirmed evidence, and a
 /// pr-reviewer session finishing its own review must notify nobody — the
 /// `pull_request` attention producer reads the forge's own evidence
@@ -846,7 +882,7 @@ pub(super) async fn resolve(
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/report", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = ReportPullRequestRequest,
-    responses((status = 200, body = PullRequestDto), (status = 400), (status = 403), (status = 404)))]
+    responses((status = 200, body = PullRequestDto), (status = 400), (status = 403), (status = 404), (status = 409), (status = 502)))]
 pub(super) async fn report(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -914,6 +950,48 @@ pub(super) async fn report(
         }
         let (next, _moved) = state.store.set_pull_request_reviewed(&row.id, sha).await?;
         row = next;
+    }
+    // Ariadne's own approval (029): the review session alone gives it, on
+    // the exact head the forge holds now, and no forge approval is posted.
+    if let Some(approved) = req.approved {
+        if session.seat() != Some(ariadne_core::Seat::Reviewer) {
+            return Err(ApiError::forbidden(
+                "only the request's review session approves it",
+            ));
+        }
+        match approved {
+            true => {
+                let sha = match req.head_sha.as_deref() {
+                    Some(sha) if is_sha(sha) => sha.to_ascii_lowercase(),
+                    Some(sha) => {
+                        return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
+                    }
+                    None => {
+                        return Err(ApiError::bad_request(
+                            "an approval names the head it was reviewed on",
+                        ));
+                    }
+                };
+                // Read now, never the cache: a push the session never saw
+                // must not pass as approved.
+                let head = read_now(&state, row.clone()).await?.head_sha;
+                if head.is_empty() || !head.to_ascii_lowercase().starts_with(&sha) {
+                    return Err(ApiError::conflict(format!(
+                        "{sha} is not the request's head {head}: review the new head first"
+                    )));
+                }
+                state
+                    .store
+                    .approve_pull_request(&row.repository_id, row.number, &head)
+                    .await?;
+            }
+            false => {
+                state
+                    .store
+                    .withdraw_pull_request_approval(&row.repository_id, row.number)
+                    .await?;
+            }
+        }
     }
     state.notify_scheduler_pull_request(&row.id);
     let pull = read_held(&state, row).await?;
@@ -1263,7 +1341,7 @@ pub(super) async fn ask_review(
         // a stop left open is ended all the same.
         (None, None) => {
             end_operation_goal(&state, &id, number, PrOperation::Review).await?;
-            return Ok(Json(forge_pull_dto(&id, pull, role, false)));
+            return Ok(Json(unworked_dto(&state, &id, pull, role, false).await?));
         }
     };
     // The review is a goal of its own with one staffed task (029). Starting
@@ -1479,7 +1557,7 @@ pub(super) async fn ask_babysit(
         // a stop left open is ended all the same.
         (None, None) => {
             end_operation_goal(&state, &id, number, PrOperation::Babysit).await?;
-            return Ok(Json(forge_pull_dto(&id, pull, role, false)));
+            return Ok(Json(unworked_dto(&state, &id, pull, role, false).await?));
         }
     };
     // The babysit is a goal of its own with one staffed task (032). Starting

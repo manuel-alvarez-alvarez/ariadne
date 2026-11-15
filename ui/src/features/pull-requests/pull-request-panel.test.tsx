@@ -209,6 +209,24 @@ it("offers a manual Start review on every request that asks for my review", asyn
   expect(screen.getByRole("button", { name: "Start review" })).toBeTruthy()
 })
 
+it("shows Ariadne approved apart from the forge's decision, naming the approved head", async () => {
+  daemon(() => ({
+    ...pull,
+    ariadne_approval: { head_sha: "abc1234def", approved_at: "2026-10-07T00:00:00Z" },
+  }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await userEvent.hover(await screen.findByText("Ariadne approved"))
+  expect(await screen.findByText(/approved abc1234\. This is not a forge approval/)).toBeTruthy()
+  expect(screen.getByText("Review required")).toBeTruthy()
+})
+
+it("shows no Ariadne approval where none names the head", async () => {
+  daemon(() => pull)
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await screen.findByText("#42 Fix widgets")
+  expect(screen.queryByText("Ariadne approved")).toBeNull()
+})
+
 it("links the goal of a review to the Goals board", async () => {
   daemon(() => ({
     ...pull,

@@ -90,6 +90,18 @@ pub struct PullRequestDto {
     /// operation (029): what Forge reads to link the goal and its task.
     #[serde(default)]
     pub operations: Vec<PullRequestOperationRefDto>,
+    /// Ariadne's own approval of the current head (029), null where its
+    /// review session approved no head or an earlier one. It is not the
+    /// forge's review decision, and it says nothing of merge readiness.
+    #[serde(default)]
+    pub ariadne_approval: Option<PullRequestApprovalDto>,
+}
+
+/// An Ariadne review session approved the request on this exact head (029).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestApprovalDto {
+    pub head_sha: String,
+    pub approved_at: String,
 }
 
 /// An open operation goal on a request, with its one task.
@@ -164,7 +176,7 @@ pub struct ReportPullRequestRequest {
     pub ready: Option<bool>,
     /// The head the session actually confirmed `ready` against — read off
     /// its own last `get_pull_request` call, never looked up again here.
-    /// Required wherever `ready` is `true`: a push landing between that
+    /// Required wherever `ready` or `approved` is `true`: a push landing between that
     /// read and this call must still be judged against the head the
     /// session confirmed, not whatever the daemon's own cache has moved
     /// on to since, or a push the session never actually saw could pass
@@ -174,6 +186,11 @@ pub struct ReportPullRequestRequest {
     /// The head a reviewer session posted its review on (029).
     #[serde(default)]
     pub reviewed_sha: Option<String>,
+    /// The review session approves the request on `head_sha` (`true`), or
+    /// withdraws its approval (`false`) (029). Ariadne's own status alone:
+    /// no forge approval is posted.
+    #[serde(default)]
+    pub approved: Option<bool>,
 }
 
 /// Query of `GET /v1/pull-requests/{id}/diff` (029).
