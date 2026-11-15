@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-11-15
+updated: 2026-11-16
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -154,11 +154,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    repository-rule enforcement. What a blocking or must-fix finding must
    name, and the cap on the rest, is 017 rule 11's to state, for all three
    review skills alike. Each other produce skill that ends its own column —
-   `debugging`, `migration`, `conflict-resolution`,
+   `migration`, `conflict-resolution`,
    `documentation`, `research`, `spec-writing` — calls `complete_step` with
    the column report the same way, naming it and restating none of its
-   fields. `debugging`'s own hypothesis loop ends on the stop rule by name,
-   not a count of its own.
+   fields.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. The refactoring path of `coding` commits

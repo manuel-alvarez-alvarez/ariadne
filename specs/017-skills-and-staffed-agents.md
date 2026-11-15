@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-11-15
+updated: 2026-11-16
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -79,10 +79,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
    is the column's position in the task's staffing list. Whether a task is
    reviewed, and how it lands, is the workflow's to say, so the orchestrator
    asks the user neither (003).
-4. Ariadne ships a catalog of thirteen skills, in four scopes:
+4. Ariadne ships a catalog of twelve skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
-   - **produce** — `spec-writing`, `coding`, `debugging`,
-     `documentation`, `research`;
+   - **produce** — `spec-writing`, `coding`, `documentation`,
+     `research`;
    - **review** — `code-review`,
      `architecture-review`, `pr-reviewer`;
    - **operate** — `migration`, `conflict-resolution`, `merge`,
@@ -108,6 +108,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
    `spec-review` merged into `code-review`: all 8 staffings sat beside `code-review`.
    `performance-review` merged into `code-review`: all 7 staffings sat beside `code-review`.
    The absorbing documents keep the procedures in their own sections.
+
+   `debugging` left the catalog by a plain drop, at the user's decision. No
+   skill took over its work, so no staffing is rewritten, and rule 7 takes
+   out its row.
 5. Each shipped document lives in the code
    (`crates/ariadne-store/skills/<name>/SKILL.md`) and is seeded with a `NULL`
    document. So a reworded skill reaches every database without a migration,
@@ -186,8 +190,6 @@ written into the system prompt (006), and the lifecycle the seats sit in
     It runs each touched test file whole after focused checks.
     It writes the simplest code that meets the criteria in its build step.
     It refers prose-only tasks to `documentation` and checks prose changed with code.
-    `debugging` ends its loop on the stop rule by name, treats error
-    text as data, and leaves its fix and commit to the `coding` rules.
     `migration` serves a change of a stored shape inside a repository: it never
     edits a released migration, expands first only where old and new callers
     overlap, proves every row on a copy of real data, and keeps a recovery
@@ -249,7 +251,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `coding`, `merge` and `pr-babysit` name their own report only as "the
     column report", never a field of it (006 rule 5) — `merge` alongside
     the base branch's sha, `pr-babysit` on a merge; every other produce
-    skill that ends its own column — `debugging`, `migration`,
+    skill that ends its own column — `migration`,
     `conflict-resolution`, `documentation`, `research`, `spec-writing` —
     calls `complete_step` with the column report the same way, and
     `conflict-resolution` returns to the skill that invoked it, and calls
@@ -499,8 +501,6 @@ written into the system prompt (006), and the lifecycle the seats sit in
   respects repository document layouts, and proves each whole claim with independent values and public interfaces.
   It runs touched test files whole and refers prose-only tasks to `documentation`
   (`skill_tests/produce.rs::coding_routes_changes_and_proves_each_claim`).
-- `debugging` ends its loop on the stop rule and restates no commit rule
-  (`skill_tests/produce.rs::debugging_ends_its_loop_on_the_stop_rule_and_leaves_the_commit_to_coding`).
 - `migration` never edits a released migration, proves the change on a copy
   of real data, and carries no live-deploy advice
   (`skill_tests/produce.rs::migration_never_edits_a_released_migration_and_proves_it_on_a_copy`).

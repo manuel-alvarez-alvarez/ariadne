@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn a_repeated_key_is_refused_naming_its_line() {
-        let text = "workflow x\n  a[A]\n    skills: coding\n    skills: debugging\n";
+        let text = "workflow x\n  a[A]\n    skills: coding\n    skills: research\n";
         let err = parse(text).unwrap_err();
         assert_eq!(err.line, 4);
         assert!(err.message.contains("repeats"), "{}", err.message);
