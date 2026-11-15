@@ -1,11 +1,11 @@
 ---
 name: spec-writing
-description: Use when a goal has no specification.
+description: Writes what the system does as claims a reader can test. Use when a goal has no specification.
 ---
 
 # Spec writing
 
-Write what the system does, so that a reader can test every claim. Done when `## Done` holds.
+Write what the system does, so that a reader can test every claim.
 
 ## When not to use
 
@@ -37,7 +37,11 @@ Use `research` when the goal asks which option to pick.
    are none, agree a path and a format with the orchestrator first.
 
    Done when the format matches the repository.
-7. Call `complete_step` with the column report.
+7. Send the finished spec to the orchestrator with `send_message`. Ask
+   it to agree.
+
+   Done when the orchestrator has agreed to the spec.
+8. Call `complete_step` with the column report.
 
    Done when the report has been submitted.
 
@@ -60,8 +64,3 @@ Never write the code or the test a criterion names.
   differently. Say it.
 - "I will pin the criteria later." -> A claim without its criterion is the
   one that ships untested.
-
-## Done
-
-The spec names its scope, its claims and its criteria. Every criterion
-names its test. The orchestrator agreed to it through `send_message`.

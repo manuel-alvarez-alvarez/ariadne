@@ -1,11 +1,11 @@
 ---
 name: merge
-description: Use when a reviewed task needs landing on its base branch.
+description: Lands a reviewed task on its base branch as one squashed commit. Use when a reviewed task needs landing on its base branch.
 ---
 
 # Merge
 
-Land the reviewed task on its base branch as one squashed commit. Done when the conditions in `## Done` hold.
+Land the reviewed task on its base branch as one squashed commit.
 
 ## When not to use
 
@@ -69,8 +69,3 @@ Never push the task branch by its name.
 
 - "The push is enough." -> The base must hold the result.
 - "The base name is a safe squash point." -> The name moves. Squash onto the merge base.
-
-## Done
-
-The push passed the repository hooks. `<base>` holds the squashed commit and
-nothing else of the task. `complete_step` carries its sha.

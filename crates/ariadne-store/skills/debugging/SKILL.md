@@ -1,11 +1,11 @@
 ---
 name: debugging
-description: Use when a test fails or a build breaks.
+description: Finds the cause of a failure with a loop that goes red before any fix. Use when a test fails or a build breaks.
 ---
 
 # Debugging
 
-Find the cause with a loop that goes red before any fix. Done when `## Done` holds.
+Find the cause with a loop that goes red before any fix.
 
 ## When not to use
 
@@ -74,9 +74,3 @@ Never weaken a correct assertion.
 - "The failing test is probably wrong." -> Verify that first.
 - "One more fix might work." -> A failed fix is evidence the cause is
   wrong. The stop rule applies.
-
-## Done
-
-The loop went red before the fix and green after it. The cause is a chain
-from trigger to symptom with a file and line at each link. The regression
-test fails without the fix. The debug prefix greps to nothing.

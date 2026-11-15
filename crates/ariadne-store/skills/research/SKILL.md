@@ -1,11 +1,11 @@
 ---
 name: research
-description: Use when a task asks a question or compares options.
+description: Answers a question from cited evidence, with a recommendation. Use when a task asks a question or compares options.
 ---
 
 # Research
 
-Answer the question from evidence, with a recommendation. Done when `## Done` holds.
+Answer the question from evidence, with a recommendation.
 
 ## When not to use
 
@@ -58,9 +58,3 @@ Never edit the repository. The report is the product.
   the source that disagrees.
 - "The report reads thin without more." -> Padding buries the finding. An
   unsettled question is a finding too.
-
-## Done
-
-The report answers the question and cites a source for every fact. It states
-a recommendation with its confidence, names what would change it, and lists
-what it did not check.

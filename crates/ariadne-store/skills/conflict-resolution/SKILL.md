@@ -1,11 +1,11 @@
 ---
 name: conflict-resolution
-description: Use when a rebase or merge stops on a conflict.
+description: Resolves each conflicting hunk to the intent of both sides. Use when a rebase or merge stops on a conflict.
 ---
 
 # Conflict resolution
 
-Resolve each conflict by intent, keeping both sides' meaning. Done when the conditions in `## Done` hold.
+Resolve each conflict by intent, keeping both sides' meaning.
 
 A conflict is two intents in one file.
 
@@ -55,9 +55,3 @@ work outside the task.
   dropped.
 - "I will put it back later." -> A dropped intent is invisible once the markers
   are gone.
-
-## Done
-
-No conflict marker is left. Both intents are in the result, or the dropped one
-is written in the commit body. The checks pass. Git reports no merge and no
-rebase in progress.

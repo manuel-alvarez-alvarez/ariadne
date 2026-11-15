@@ -1,11 +1,11 @@
 ---
 name: migration
-description: Use when a schema shape changes, data moves, or a caller retires.
+description: Moves a stored shape forward with no row lost and a recovery path. Use when a schema shape changes, data moves, or a caller retires.
 ---
 
 # Migration
 
-Move a stored shape forward and lose no row. Done when `## Done` holds.
+Move a stored shape forward and lose no row.
 
 ## When not to use
 
@@ -55,9 +55,3 @@ still reads. Never migrate the only copy of real data.
 - "One rename is safe." -> A caller you did not find still reads the old
   name. Search for callers first.
 - "Old callers are gone." -> Prove no caller remains with search and usage.
-
-## Done
-
-A new migration holds the change, and no released migration changed. Every
-row of the copy of real data survived with its values. A recovery path
-restored the copy. Where callers overlap, the contract is deferred and named.
