@@ -14,13 +14,16 @@ Use `code-review` when the question is correctness, tests or conventions.
 ## Steps
 
 1. Pin the scope to the diff. Take the reviewed revision from
-   `git rev-parse HEAD`. Map the system the diff touches: modules, owners
-   and dependency directions. Reuse the column report's evidence only
-   where it covers the reviewed revision.
+   `git rev-parse HEAD`. List each boundary the diff changes: a new
+   dependency, a moved responsibility or a new stored value. Where the
+   list is empty, go to step 5. Beside
+   `code-review`, the line is `Architecture: pass: no boundary changed`. Reuse the column report's
+   evidence only where it covers the reviewed revision.
 
-   Done when every changed component has a place on the map.
-2. Mark each boundary the change crosses on that map. Read code
-   outside the diff only to judge a risk you can name.
+   Done when each changed boundary is listed, or the list is empty.
+2. Map each listed boundary: its modules, owners and dependency
+   directions. Read code outside the diff only to judge a risk you can
+   name.
 
    Done when every new dependency has a source and a target.
 3. Trace ownership of behavior and state. Find each idea held in two
@@ -34,12 +37,16 @@ Use `code-review` when the question is correctness, tests or conventions.
    conviction in.
 
    Done when every must-fix finding names its trigger, rule and cost.
-5. Add the findings to the one verdict of the review skill loaded beside
-   this one. Where this is the only review skill loaded, write the
-   verdict. On a must-fix finding, call `fail_step` with it. Else call
-   `complete_step`.
+5. Add the findings to the verdict of the skill loaded beside this one.
+   - Beside `code-review`: add one line under the Repository conventions
+     heading of its one verdict:
+     `Architecture: <pass|fail>: <finding, or none>`. A must-fix finding
+     fails that verdict. That skill ends the column.
+   - Beside `pr-reviewer`: write each finding as an inline comment by the
+     rules of that skill. Add no line. Where there is no finding, say
+     nothing.
 
-   Done when the findings are in one verdict.
+   Done when the findings are in the verdict of the skill beside this one.
 
 ## Rules
 
@@ -54,9 +61,8 @@ Use `code-review` when the question is correctness, tests or conventions.
 - Direction: a dependency that points against the established flow.
 - Ownership: logic in a layer that does not own its decision.
 - State: one value stored in two places that can disagree.
-- Abstraction: one caller behind a general layer.
-- Coupling: unrelated callers forced through one abstraction.
-- Reversal: a decision that costs much to change later.
+- Abstraction: a general layer with one caller, or unrelated callers
+  forced through one.
 
 ## Never
 

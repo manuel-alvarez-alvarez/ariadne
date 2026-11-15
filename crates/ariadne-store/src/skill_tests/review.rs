@@ -136,32 +136,39 @@ fn the_review_skill_judges_a_spec_and_a_hot_path_by_their_lenses() {
 }
 
 /// One verdict per column: `code-review` ends the column, and
-/// `architecture-review` adds to the verdict of the agent that loaded it,
-/// naming a step call only for the case where it is the only review skill
-/// loaded.
+/// `architecture-review` adds one line to the verdict of the skill loaded
+/// beside it, and names no step call. Of 23 staffings over 158 goals, 22
+/// sat beside `code-review` and none stood alone, so the skill holds no
+/// branch for that case. Of 18 tasks, 17 ended on a pass line, each in a
+/// form of its own, so the line has one shape and a diff that changes no
+/// boundary gets it without a map.
 #[test]
 fn architecture_review_adds_to_the_one_verdict_of_its_column() {
     let text = unwrapped(default_skill_document("architecture-review").unwrap());
-    let beside = text
-        .find("Add the findings to the one verdict of the review skill loaded beside this one.")
-        .expect("the architecture-review skill does not add to the one verdict");
-    let alone = text
-        .find("Where this is the only review skill loaded, write the verdict.")
-        .expect("the architecture-review skill does not name the case where it is alone");
-    for call in ["`fail_step`", "`complete_step`"] {
-        let first = text.find(call).expect(call);
-        assert!(
-            alone < first && beside < first,
-            "the architecture-review skill names {call} outside the case where it is alone"
-        );
-    }
-    for gone in ["checkout", "--detach"] {
+    for gone in [
+        "`fail_step`",
+        "`complete_step`",
+        "only review skill",
+        "checkout",
+        "--detach",
+        "Reversal",
+        "Coupling",
+    ] {
         assert!(
             !text.contains(gone),
             "the architecture-review skill names {gone}"
         );
     }
     for rule in [
+        "Add the findings to the verdict of the skill loaded beside this one.",
+        "Beside `code-review`: add one line under the Repository conventions heading of its one verdict: `Architecture: <pass|fail>: <finding, or none>`.",
+        "A must-fix finding fails that verdict.",
+        "That skill ends the column.",
+        "Beside `pr-reviewer`: write each finding as an inline comment by the rules of that skill. Add no line. Where there is no finding, say nothing.",
+        "List each boundary the diff changes: a new dependency, a moved responsibility or a new stored value.",
+        "Where the list is empty, go to step 5. Beside `code-review`, the line is `Architecture: pass: no boundary changed`.",
+        "Map each listed boundary: its modules, owners and dependency directions.",
+        "- Abstraction: a general layer with one caller, or unrelated callers forced through one.",
         "Run no command that moves HEAD or a ref: no switch, reset, rebase or commit.",
         "A must-fix finding breaks a criterion, a written repository rule or a boundary the repository already holds.",
         "Reuse the column report's evidence only where it covers the reviewed revision.",
