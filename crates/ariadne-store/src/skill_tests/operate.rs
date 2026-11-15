@@ -156,17 +156,29 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
             "the merge skill does not define {name}"
         );
     }
-    // A failure has one owner: the base moved goes round again, a check
-    // that names a file of the task returns the task, and a check that
-    // names none is the orchestrator's. The merge agent fixes no code.
+    // A failure has one owner, and the rules are read in order: a hook
+    // that fails is a failed check, never a moved base, so a check that
+    // names a file of the task returns the task, a check that names none
+    // is the orchestrator's, and only then does the base-moved route go
+    // round again. The merge agent fixes no code, and commits only the
+    // merge of step 2 and the squash.
+    let mut at = 0;
     for route in [
-        "The base moved: a refused push, a file outside the task in `git diff --stat`, or a failed fast-forward. Start again from step 1.",
+        "A hook that fails is a failed check, not a moved base. Take the first rule that fits.",
         "A failed check that names a file of the task. Call `fail_step` with the check's output.",
         "A failed check that names no file of the task. Send it to the orchestrator with `send_message`. Land nothing.",
-        "Never change a file of the task. Never commit anything but the squash.",
+        "Else the base moved: a non-fast-forward rejection, an extra file in `git diff --stat`, or a failed fast-forward. Start again from step 1.",
+    ] {
+        let found = text[at..]
+            .find(route)
+            .unwrap_or_else(|| panic!("the merge skill has no {route} after its last rule"));
+        at += found + route.len();
+    }
+    for never in [
+        "Never change a file of the task. Never commit anything but the merge of step 2 and the squash.",
         "Never run a check that the push hook runs.",
     ] {
-        assert!(text.contains(route), "the merge skill does not say {route}");
+        assert!(text.contains(never), "the merge skill does not say {never}");
     }
     assert!(
         !text.contains("is a fix on the task branch"),

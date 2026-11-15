@@ -136,7 +136,8 @@ every other kebab-case word in it; the wire spells the same gate
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`). Its agent lands the
    reviewed task or returns it, and fixes no code: it never changes a file
-   of the task and commits nothing but the squash. The steps: fetch the
+   of the task and commits nothing but the merge of its step 2 and the
+   squash. The steps: fetch the
    base where a remote exists; read the repository's history rules and test
    whether the branch is published with `git ls-remote --heads`, then merge
    the upstream into a published branch and rebase an unpublished one onto
@@ -157,12 +158,15 @@ every other kebab-case word in it; the wire spells the same gate
    runs the checks the repository names for a landing. The squash goes
    onto the merge base rather than the base branch's or the upstream's
    name, since the base can move while the push runs. A failure has one
-   owner: a `git diff --stat` that lists a file the task did not touch, a
-   rejected push, or a fast-forward that fails, says the base moved, and
-   the agent starts again from the fetch; a failed check that names a file
-   of the task goes back to the previous column through `fail_step` with
-   the check's output; a failed check that names no file of the task goes
-   to the orchestrator through `send_message`, and nothing lands. It never
+   owner, and the skill's rules are read in order, the first that fits
+   applying: a failed check — a hook that fails is one, never a moved base
+   — that names a file of the task goes back to the previous column
+   through `fail_step` with the check's output; a failed check that names
+   no file of the task goes to the orchestrator through `send_message`,
+   and nothing lands; else the base moved — a push rejected as not a
+   fast-forward, a `git diff --stat` that lists a file the task did not
+   touch, or a fast-forward that fails — and the agent starts again from
+   the fetch. It never
    force-pushes any branch or remote, including with `--force-with-lease`.
    No skill merges a request: a human does. It obeys the STE rules and
    size caps of 006 and the shipped-skill tests of `skill_tests/`, the

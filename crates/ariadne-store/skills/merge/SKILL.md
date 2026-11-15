@@ -65,19 +65,22 @@ The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
 
 ### Where a failure goes
 
-- The base moved: a refused push, a file outside the task in
-  `git diff --stat`, or a failed fast-forward. Start again from step 1.
+A hook that fails is a failed check, not a moved base. Take the first rule
+that fits.
+
 - A failed check that names a file of the task. Call `fail_step` with the
   check's output.
 - A failed check that names no file of the task. Send it to the
   orchestrator with `send_message`. Land nothing.
+- Else the base moved: a non-fast-forward rejection, an extra file in
+  `git diff --stat`, or a failed fast-forward. Start again from step 1.
 
 ## Never
 
 Never force-push any branch or remote, including with `--force-with-lease`.
 Never push the task branch by its name. Never change a file of the task.
-Never commit anything but the squash. Never run a check that the push hook
-runs.
+Never commit anything but the merge of step 2 and the squash. Never run a
+check that the push hook runs.
 
 ## Do not tell yourself
 
