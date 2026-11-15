@@ -1310,9 +1310,9 @@ pub(crate) mod tests {
                     "wait_for_user description",
                 ][..],
             ),
-            // The description and the orchestration skill still carry the
-            // old words of these two rules, until their own tasks follow the
-            // session rules: both spellings are read as the one rule.
+            // The description still carries the old words of these two rules,
+            // until its own task follows the session rules: both spellings
+            // are read as the one rule.
             (
                 "ending a wait",
                 &[
@@ -1339,7 +1339,6 @@ pub(crate) mod tests {
                     "pull request reviewer session rules",
                     "pull request keeper session rules",
                     "wait_for_user description",
-                    "orchestration skill",
                 ][..],
             ),
             (
