@@ -1244,12 +1244,14 @@ function isActivity(block: Block): boolean {
 /** One thing to draw: a block, or the control that opens or closes a run. */
 type RunItem =
   | { kind: "block"; block: Block }
-  | { kind: "control"; runId: string; hidden: number; expanded: boolean }
+  | { kind: "control"; runId: string; rows: string[]; hidden: number; expanded: boolean }
 
 /**
  * Cut each run of consecutive activity rows to its last rows. A pending
  * permission, an error and the selected row stay in place however old. A run's
- * id is its first row's id; `expanded` holds the runs the reader opened.
+ * id is its first row's id. `expanded` is true under the id of a row of each
+ * run the reader opened, so a run keeps its choice when older or newer rows
+ * join it.
  */
 export function collapseRuns(
   blocks: Block[],
@@ -1276,9 +1278,10 @@ export function collapseRuns(
         block.type !== "error" &&
         !(block.type === "permission" && block.answer === undefined),
     )
-    const open = expanded[first.id] === true
-    if (hiding.length > 0)
-      items.push({ kind: "control", runId: first.id, hidden: hiding.length, expanded: open })
+    const rows = run.map((block) => block.id)
+    const open = rows.some((id) => expanded[id] === true)
+    if (run.length > SHOWN_ACTIVITY_ROWS)
+      items.push({ kind: "control", runId: first.id, rows, hidden: hiding.length, expanded: open })
     const hidden = open ? new Set<Block>() : new Set(hiding)
     for (const block of run) if (!hidden.has(block)) items.push({ kind: "block", block })
   }

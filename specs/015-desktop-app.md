@@ -581,16 +581,18 @@ Out: the daemon endpoints themselves (012).
     never hide; they, the start of the view and its end bound a run. A run of
     3 rows or fewer shows all of them and no control. A longer run has, above
     its last 3 rows, a button `Show N earlier`, where N is the number of rows
-    it hides, with `aria-expanded`. A pending permission, an error and the
+    it hides (0 where every older row shows in place), with `aria-expanded`. A pending permission, an error and the
     selected tool or permission row show in place however old; the other
     older rows stay hidden. A click, Enter or Space on the button shows every
     row of the run; it then reads `Show fewer` and returns the run to its
     last 3 rows. While a turn runs, each new row of the newest run pushes the
-    oldest shown row under the button. The choice is kept per run, by its
-    first row, in the console's view state like a fold (rule 24i), and a run
-    keeps it when rows join it. Hidden rows stay in the transcript, and
+    oldest shown row under the button. The choice is kept per run, under
+    the id of a row of the run, in the console's view state like a fold (rule
+    24i), and a run keeps it when rows join it at either end. Hidden rows stay in the transcript, and
     `Copy loaded transcript` copies them. Opening or closing a run keeps the
-    reader's place as a fold does (rule 23a3). The number 3 has no setting.
+    reader's place as a fold does (rule 23a3): a reader at the newest output
+    stays there, and a reader who scrolled away keeps the button where it
+    was, also when the run hides the block they were on. The number 3 has no setting.
 23b. The latest `available_commands_update` event replaces the command
     list, whole: a later list, an empty one included, replaces the earlier
     one. A list whose payload carries a `subagent`, of any value, is ignored, and the event
@@ -1562,9 +1564,14 @@ Out: the daemon endpoints themselves (012).
   `::shows the last 3 rows of a run under a control that opens and closes it, and keeps the choice`,
   `::pushes the oldest shown row under the control as a turn adds rows`,
   `::copies the hidden rows with the loaded transcript`,
+  `::folds the activity runs of a subagent's view as well as main's`,
+  `::keeps a reader who scrolled away in place when closing a run hides the block they were on`,
+  `::keeps a following reader at the newest output when a run opens`,
   `ui/src/features/sessions/console/transcript.test.ts::cuts a run of activity rows to its last 3 under a control, and leaves a short run whole`,
   `::bounds a run by a conversation block, and keeps the choice of a run as rows join it`,
   `::keeps an error, a pending permission and the selected row in place among hidden ones`,
+  `::shows the control over every run of more than 3 rows, also when no row hides`,
+  `::keeps the choice of a run when rows join it at either end`,
   `ui/src/lib/highlight.test.ts::names a language by its fence or its extension, and labels it`,
   `::leaves a name the data does not know, or plain text, unknown`,
   `::reads an extension that is not only letters and digits`,

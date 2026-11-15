@@ -824,8 +824,15 @@ function ConsolePane({
   }, [])
 
   /** Show every row of one activity run, or its last 3 again, and keep the choice. */
-  const toggleRun = useCallback((runId: string, expanded: boolean) => {
-    const next = { ...readViewState(keyRef.current).runExpansions, [runId]: !expanded }
+  const toggleRun = useCallback((runId: string, rows: string[], expanded: boolean) => {
+    // The rows a reader who scrolled away stands on may hide; the control stays.
+    const el = log.current
+    const at = el ? blockOffset(el, `run:${runId}`) : undefined
+    if (at !== undefined && !following.current)
+      placed.current = { blockId: `run:${runId}`, offset: at }
+    const next = { ...readViewState(keyRef.current).runExpansions }
+    if (expanded) for (const id of rows) next[id] = false
+    else next[runId] = true
     setRunExpansions(next)
     updateViewState(keyRef.current, { runExpansions: next })
   }, [])
@@ -1004,6 +1011,7 @@ function ConsolePane({
                     <RunToggle
                       key={`run:${item.runId}`}
                       runId={item.runId}
+                      rows={item.rows}
                       hidden={item.hidden}
                       expanded={item.expanded}
                       onToggle={toggleRun}

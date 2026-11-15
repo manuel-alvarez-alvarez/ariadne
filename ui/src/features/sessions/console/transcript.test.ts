@@ -975,3 +975,18 @@ it("keeps an error, a pending permission and the selected row in place among hid
     "e",
   ])
 })
+
+it("shows the control over every run of more than 3 rows, also when no row hides", () => {
+  const error = (id: string): Block => row(id, "error")
+  const blocks = [error("e1"), error("e2"), row("a", "note"), row("b", "note")]
+  expect(shown(collapseRuns(blocks, {}, undefined))).toEqual(["earlier:0", "e1", "e2", "a", "b"])
+})
+
+it("keeps the choice of a run when rows join it at either end", () => {
+  const notes = (ids: string) => ids.split("").map((id) => row(id, "note"))
+  const opened = { c: true }
+  const names = (blocks: Block[]) => shown(collapseRuns(blocks, opened, undefined))[0]
+  expect(names(notes("abcde"))).toBe("fewer:2")
+  expect(names(notes("zyabcde"))).toBe("fewer:4")
+  expect(names(notes("abcdefg"))).toBe("fewer:4")
+})

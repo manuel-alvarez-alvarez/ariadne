@@ -1407,3 +1407,85 @@ it("copies the hidden rows with the loaded transcript", async () => {
   expect(written.mock.calls[0]?.[0]).toContain("idea 1")
   vi.unstubAllGlobals()
 })
+
+it("folds the activity runs of a subagent's view as well as main's", async () => {
+  const user = userEvent.setup()
+  const child = Array.from({ length: 5 }, (_, at) =>
+    event("agent_thought", { text: `child idea ${at + 1}`, subagent: EXPLORER }),
+  )
+  renderConsole([update(EXPLORER, "running"), ...child])
+  await user.click(within(bar()).getByRole("tab", { name: /Explorer/ }))
+  const log = within(transcript())
+  expect(log.queryByRole("button", { name: /child idea 1/ })).toBeNull()
+  await user.click(log.getByRole("button", { name: "Show 2 earlier" }))
+  log.getByRole("button", { name: /child idea 1/ })
+})
+
+/** A scroll box of 1000px with the reader `top` down, and the blocks' tops from `tops`. */
+function scrollBox(tops: (block: HTMLElement) => number) {
+  const log = transcript()
+  const box = { top: 100 }
+  Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 1000 })
+  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 200 })
+  Object.defineProperty(log, "scrollTop", {
+    configurable: true,
+    get: () => box.top,
+    set: (value: number) => {
+      box.top = value
+    },
+  })
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const at = this.dataset.blockId ? tops(this) : 0
+    return {
+      top: at,
+      bottom: at + 20,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: 20,
+      x: 0,
+      y: at,
+      toJSON() {},
+    }
+  })
+  return box
+}
+
+it("keeps a reader who scrolled away in place when closing a run hides the block they were on", async () => {
+  const user = userEvent.setup()
+  renderConsole(notes(5))
+  const log = transcript()
+  await user.click(within(log).getByRole("button", { name: "Show 2 earlier" }))
+  // The control sits above the box; "idea 1" is the first block in view.
+  // Closing the run moves the control 60px down: the content above it grew.
+  const box = scrollBox((block) =>
+    block.dataset.blockId?.startsWith("run:")
+      ? block.textContent === "Show fewer"
+        ? -500
+        : -440
+      : block.textContent?.includes("idea 1")
+        ? 40
+        : -500,
+  )
+  fireEvent.scroll(log)
+
+  // Closing hides "idea 1", the block the reader was on.
+  await user.click(within(log).getByRole("button", { name: "Show fewer" }))
+
+  expect(box.top).toBe(160)
+  vi.restoreAllMocks()
+})
+
+it("keeps a following reader at the newest output when a run opens", async () => {
+  const user = userEvent.setup()
+  renderConsole(notes(5))
+  const log = transcript()
+  const box = scrollBox(() => 0)
+  box.top = 0
+  await user.click(within(log).getByRole("button", { name: "Show 2 earlier" }))
+
+  expect(box.top).toBe(1000)
+  vi.restoreAllMocks()
+})
