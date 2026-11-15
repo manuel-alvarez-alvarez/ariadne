@@ -112,7 +112,6 @@ fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
 fn a_produce_skill_names_the_column_report_where_it_ends_a_column() {
     for name in [
         "coding",
-        "migration",
         "conflict-resolution",
         "documentation",
         "research",
@@ -199,35 +198,6 @@ fn coding_routes_changes_and_proves_each_claim() {
         .next()
         .unwrap();
     assert!(!tests.contains("Write the simplest code"));
-}
-
-/// `migration` serves a change of a stored shape inside a repository. A
-/// released migration is never edited, the expand-contract sequence applies
-/// only where callers overlap, and the live-deploy advice is gone.
-#[test]
-fn migration_never_edits_a_released_migration_and_proves_it_on_a_copy() {
-    let migration = unwrapped(default_skill_document("migration").unwrap());
-    for phrase in [
-        "Never edit a released migration.",
-        "Where old and new callers overlap, expand first.",
-        "Where no caller overlaps, change the shape in one step.",
-        "Run the whole sequence on a copy of real data.",
-        "Write the recovery path: a reverse migration.",
-        "Where callers overlap, leave the contract to a later task.",
-        "With no overlap, name that in it.",
-        "Done when the report names the deferred work, or states no overlap.",
-    ] {
-        assert!(
-            migration.contains(phrase),
-            "the migration skill does not say \"{phrase}\""
-        );
-    }
-    for deploy in ["batches", "hot path", "Back up", "backup", "deploy"] {
-        assert!(
-            !migration.contains(deploy),
-            "the migration skill keeps live-deploy advice: {deploy}"
-        );
-    }
 }
 
 /// `documentation`, `research` and `spec-writing` each send neighboring

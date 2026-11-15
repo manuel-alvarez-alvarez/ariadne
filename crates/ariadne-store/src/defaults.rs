@@ -80,7 +80,7 @@ pub const PR_REVIEWER_SKILL: &str = "pr-reviewer";
 /// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
 /// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
 /// store refuses a task agent staffed on it.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 12] = [
+pub const BUILTIN_SKILLS: [BuiltinSkill; 11] = [
     // Orchestrating.
     builtin(
         ORCHESTRATION_SKILL,
@@ -111,7 +111,6 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 12] = [
         include_str!("../skills/pr-reviewer/SKILL.md"),
     ),
     // Operating.
-    builtin("migration", include_str!("../skills/migration/SKILL.md")),
     builtin(
         "conflict-resolution",
         include_str!("../skills/conflict-resolution/SKILL.md"),

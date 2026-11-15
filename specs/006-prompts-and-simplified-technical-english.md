@@ -154,8 +154,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    repository-rule enforcement. What a blocking or must-fix finding must
    name, and the cap on the rest, is 017 rule 11's to state, for all three
    review skills alike. Each other produce skill that ends its own column —
-   `migration`, `conflict-resolution`,
-   `documentation`, `research`, `spec-writing` — calls `complete_step` with
+   `conflict-resolution`, `documentation`, `research`, `spec-writing` —
+   calls `complete_step` with
    the column report the same way, naming it and restating none of its
    fields.
 7. A skill carries only the commit of the step it owns: `coding` commits the
