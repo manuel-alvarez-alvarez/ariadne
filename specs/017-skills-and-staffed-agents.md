@@ -190,8 +190,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
     It writes the simplest code that meets the criteria in its build step.
     It refers prose-only tasks to `documentation` and checks prose changed with code.
     `research` cites a source for every fact and lists what it did not
-    check, and `spec-writing` asks one question at a time, names the test
-    of every criterion and ends on the orchestrator's agreement. Every review skill
+    check. `spec-writing` writes the spec that later tasks build against,
+    before its code exists: it reads the repository's spec format first,
+    sends the orchestrator its open questions as one list with options and a
+    pick each, names the test of every criterion and marks each test that
+    does not exist yet in the repository's own form for an unbuilt part, and
+    commits the spec once after the orchestrator agrees to it. A task that
+    changes code and spec together is `coding`'s, and the exclusion of
+    `spec-writing` says so. Every review skill
     — `code-review`, `pr-reviewer` and `architecture-review` — writes its
     verdict first, with no preamble and no closing summary, and states the
     shared rules below in the same words. It marks a must-fix or blocking
@@ -498,7 +504,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   It runs touched test files whole and refers prose-only tasks to `documentation`
   (`skill_tests/produce.rs::coding_routes_changes_and_proves_each_claim`).
 - `documentation`, `research` and `spec-writing` each name a sibling, and
-  `research` and `spec-writing` keep their own proof
+  `research` and `spec-writing` keep their own proof: `spec-writing` names
+  `coding`, sends its questions as one list, marks each unbuilt test and
+  commits once after the agreement
   (`skill_tests/produce.rs::each_writing_skill_names_its_sibling_and_its_own_proof`).
 - The review skill reviews in place, moves no ref and ends on a step call,
   and the merge skill lands in order
