@@ -102,6 +102,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/attention/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["attention_dismiss"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/dashboards": {
         parameters: {
             query?: never;
@@ -1008,7 +1024,7 @@ export interface paths {
          *     on the `pr-babysit` workflow: the model must be ranked inside that
          *     workflow's band, else 400. Asking again keeps the open goal and moves its
          *     pin and skills. A request a task already keeps is refused to avoid
-         *     competing keepers. The goal completes when the request merges or closes.
+         *     competing keepers. The goal completes when the request merges; its task fails on close.
          *     Stopping cancels the goal and its task and ends only the keeper session,
          *     preserving an asked review. Pushes use the head repository and remain
          *     subject to its permissions.
@@ -1038,7 +1054,7 @@ export interface paths {
          *     the open goal and moves its pin and skills. The session waits while the
          *     request is a draft. A review of the user's own request posts as a
          *     comment; other reviews may request changes. The goal completes when the
-         *     request merges or closes. Stopping cancels the goal and its task and ends
+         *     request merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends
          *     only the reviewer session, keeping any task or keeper that also works on
          *     the request.
          */
@@ -2044,6 +2060,8 @@ export interface components {
              *     same blocker is the same row for as long as it stands.
              */
             id: string;
+            /** @description Opaque identity of the current occurrence, stable across clients and restarts. */
+            occurrence?: string;
             producer: components["schemas"]["AttentionProducer"];
             /**
              * @description The shared contract's `reason`: why this blocker exists, in the one
@@ -2113,6 +2131,10 @@ export interface components {
             /** @enum {string} */
             kind: "task";
             task_id: string;
+        } | {
+            goal_id: string;
+            /** @enum {string} */
+            kind: "goal";
         } | {
             /** @enum {string} */
             kind: "pull_request";
@@ -2358,6 +2380,10 @@ export interface components {
          *     the `data:` field.
          */
         DomainEvent: {
+            data: unknown;
+            /** @enum {string} */
+            event: "attention_changed";
+        } | {
             data: components["schemas"]["GoalDto"];
             /** @enum {string} */
             event: "goal_created";
@@ -3972,6 +3998,33 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AttentionListDto"];
                 };
+            };
+        };
+    };
+    attention_dismiss: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attention item id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Item no longer exists */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

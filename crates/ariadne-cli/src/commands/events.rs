@@ -462,6 +462,14 @@ fn first_argument_value(value: &serde_json::Value) -> Option<&str> {
 fn domain_line(event: &DomainEvent) -> Line {
     let kind = event.kind().to_string();
     match event {
+        DomainEvent::AttentionChanged(_) => Line {
+            at: String::new(),
+            kind,
+            subject: String::new(),
+            detail: "attention changed".into(),
+            session: None,
+            status: None,
+        },
         DomainEvent::PullRequestsChanged(p) => Line {
             at: String::new(),
             kind,

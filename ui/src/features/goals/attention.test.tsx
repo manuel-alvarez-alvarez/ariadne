@@ -17,7 +17,6 @@ import { waitFor } from "@testing-library/react"
 import { beforeEach, expect, it, vi } from "vitest"
 
 import type { AttentionItemDto, SessionDto } from "@/api"
-import { sessionTerminalFrom } from "@/routes/paths"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { type AttentionItem, attentionAffectedLinks } from "./attention"
@@ -92,6 +91,7 @@ it("raises a row for an exhausted session only once a quota item names it", asyn
   recoveryItems = [
     {
       id: "recovery:quota:claude-sonnet-5",
+      occurrence: "",
       producer: "recovery",
       reason: "quota",
       summary: "claude-sonnet-5 hit a usage limit.",
@@ -110,6 +110,7 @@ it("counts a resource or configuration item that names no goal or session", asyn
   recoveryItems = [
     {
       id: "recovery:resource:descriptor-limit",
+      occurrence: "",
       producer: "recovery",
       reason: "resource",
       summary: "The daemon ran out of file descriptors.",
@@ -129,6 +130,7 @@ it("does not also count a task's own row once a recovery item already names it",
   recoveryItems = [
     {
       id: "recovery:resource:descriptor-limit",
+      occurrence: "",
       producer: "recovery",
       reason: "resource",
       summary: "The daemon ran out of file descriptors.",
@@ -244,6 +246,7 @@ it("raises a row for a taskless orchestrator once recovery's own give-up item na
   recoveryItems = [
     {
       id: "recovery:unknown:orchestrator:01GOAL",
+      occurrence: "",
       producer: "recovery",
       reason: "unknown",
       summary: "The goal's orchestrator will not start.",
@@ -283,9 +286,10 @@ function aRecoveryRow(item: AttentionItemDto): AttentionItem {
   }
 }
 
-it("gives a grouped quota item's every session its own link to its own terminal", () => {
+it("does not offer dead session links for grouped recovery", () => {
   const row = aRecoveryRow({
     id: "recovery:quota:claude-sonnet-5:spent-its-automatic-switch-budget",
+    occurrence: "",
     producer: "recovery",
     reason: "quota",
     summary: "claude-sonnet-5 hit a usage limit.",
@@ -299,22 +303,13 @@ it("gives a grouped quota item's every session its own link to its own terminal"
   })
   const search = new URLSearchParams()
   const links = attentionAffectedLinks(row, search, "/goals")
-  expect(links?.map((link) => link.id)).toEqual(["01SA", "01SB"])
-  const [first, second] = links ?? []
-  expect(first).toBeDefined()
-  expect(second).toBeDefined()
-  // Each session's own link, not a copy of the item's own target (which
-  // would open only 01SA for both rows) — asserted against the exact
-  // destination `sessionTerminalFrom` itself builds, not only the id
-  // copied into the helper's result.
-  expect(first?.to).toEqual(sessionTerminalFrom("/goals", search, "01SA"))
-  expect(second?.to).toEqual(sessionTerminalFrom("/goals", search, "01SB"))
-  expect(first?.to).not.toEqual(second?.to)
+  expect(links).toBeNull()
 })
 
 it("gives a single-session quota item no extra links of its own", () => {
   const row = aRecoveryRow({
     id: "recovery:quota:claude-sonnet-5:spent-its-automatic-switch-budget",
+    occurrence: "",
     producer: "recovery",
     reason: "quota",
     summary: "claude-sonnet-5 hit a usage limit.",

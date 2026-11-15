@@ -481,12 +481,22 @@ more has arrived; click it to follow the live output again.
 
 ```sh
 ariadne attention                         # sessions and tasks needing you
+ariadne attention dismiss <item-id>       # dismiss one attention occurrence
 ariadne task ls --goal <goal-id>          # current tasks
 ariadne session ls --attention            # only sessions waiting for input
 ariadne task inspect <task-id>            # task, agents, diff, and history
 ariadne task messages <task-id> --full    # agent conversation about the task
 ariadne task diff <task-id>               # proposed change
 ```
+
+`ariadne attention` shows only the daemon's shared items, including during incomplete reads.
+An incomplete table read keeps its warning; JSON keeps `complete: false`; quiet output exits unsuccessfully.
+Dismissal hides one occurrence without answering a request or changing the underlying work.
+
+Use `ariadne attention --columns id` to print an ID table without summaries or actions.
+Select `id`, `title`, `reason`, `task`, and `age` in any order, separated by commas.
+`title` contains the summary; `task` contains affected task names, or `-` when there are none.
+Without `--columns`, the list includes the actions and affected subjects.
 
 Models and effort are always supplied by ACP discovery. `ariadne models ls`
 shows the available values, and its `rank` column shows the rank each has, or

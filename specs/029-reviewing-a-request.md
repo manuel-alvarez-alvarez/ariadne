@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-11-14
+updated: 2026-11-15
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -21,7 +21,7 @@ tests:
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/attention.rs
-  - crates/ariadne-cli/src/commands/attention/board.rs
+  - crates/ariadne-cli/tests/attention.rs
   - crates/ariadne-cli/src/commands/pr.rs
   - crates/ariadne-store/src/skill_tests/review.rs
   - ui/src/features/pull-requests/pull-requests-page.test.tsx
@@ -477,7 +477,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   badge of its own: a pull request session's own `waiting_user` carries no
   reason this board, the strip or the sessions screen's filter reads any
   more
-  (`attention/board.rs::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`).
+  (`crates/ariadne-cli/tests/attention.rs::incomplete_json_contains_only_daemon_items_and_their_count`).
 - `ariadne pr review` sends the pin it is given, is refused naming `--model`
   with no model and no `--stop`, and `--stop` sends `asked: false` alone and
   conflicts with every asking flag:

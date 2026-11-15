@@ -10,6 +10,7 @@ mod acp_registry;
 mod agent_requests;
 mod agents;
 mod ai_permissions;
+mod attention;
 mod change;
 mod dashboards;
 pub mod defaults;
@@ -185,6 +186,7 @@ pub struct Store {
     /// generator — the live events of the console — so they keep that order
     /// too.
     event_order: Arc<tokio::sync::Mutex<()>>,
+    attention_order: Arc<tokio::sync::Mutex<()>>,
     /// One lock per request (`repository#number`): what starts, stops and
     /// reconciles the operation goals of a request holds, so a pass never
     /// reads the half of a start the route has not finished (029). Shared by
@@ -263,6 +265,7 @@ impl Store {
             read,
             changes: Arc::default(),
             event_order: Arc::default(),
+            attention_order: Arc::default(),
             pr_locks: Arc::default(),
         };
         store.seed_builtin_skills().await?;
@@ -291,6 +294,7 @@ impl Store {
             read,
             changes: Arc::default(),
             event_order: Arc::default(),
+            attention_order: Arc::default(),
             pr_locks: Arc::default(),
         })
     }

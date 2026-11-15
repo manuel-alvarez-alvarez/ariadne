@@ -97,13 +97,18 @@ fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
 /// dedup is invalidated the same moment a transition fires, so the next
 /// poll-driven fetch is compared against nothing rather than a hash
 /// taken before it, and reads it as a change too.
-fn publish_evidence_transition(
+async fn publish_evidence_transition(
     state: &AppState,
     row: &PullRequestRow,
     before: Option<u64>,
     after: u64,
 ) {
     if before != Some(after) {
+        if let Err(error) =
+            crate::attention::pull_requests::items(&state.store, &state.launcher.live).await
+        {
+            tracing::warn!(%error, "cannot record pull request attention occurrences");
+        }
         state.forge_poll.invalidate_pulls_dedup(&row.repository_id);
         state.events.pull_requests_changed(&row.repository_id);
     }
@@ -139,7 +144,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
                 .live
                 .mark_evidence_failed_fingerprinted(&row.id)
             {
-                publish_evidence_transition(state, &row, Some(before), after);
+                publish_evidence_transition(state, &row, Some(before), after).await;
             }
             return Err(forge_error(error));
         }
@@ -150,7 +155,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             .live
             .mark_evidence_failed_fingerprinted(&row.id)
         {
-            publish_evidence_transition(state, &row, Some(before), after);
+            publish_evidence_transition(state, &row, Some(before), after).await;
         }
         return Err(forge_error(
             "the forge returned another request number".into(),
@@ -178,7 +183,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             head_sha,
         },
     );
-    publish_evidence_transition(state, &row, before, after);
+    publish_evidence_transition(state, &row, before, after).await;
     live::of_row(&state.store, &state.launcher.live, row)
         .await?
         .ok_or_else(|| ApiError::conflict("the request could not be read off the forge"))

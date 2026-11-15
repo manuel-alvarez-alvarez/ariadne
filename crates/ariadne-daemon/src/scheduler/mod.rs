@@ -497,6 +497,7 @@ impl Scheduler {
         self.reconcile_entities().await;
         self.reconcile_pull_requests_at(now).await;
         self.stale_attention_sweep().await;
+        let _ = crate::attention::collect(&self.store, &self.launcher).await;
     }
 
     /// Every goal, and every task of the active ones, reconciled in turn.

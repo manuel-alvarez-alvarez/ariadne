@@ -137,9 +137,14 @@ function useAttentionToasts(
   const announced = useRef<Set<string> | null>(null)
 
   useEffect(() => {
-    if (!ready) return
     const current = new Map(items.map((item) => [alertKey(item), item]))
     const seen = announced.current
+    // Even a partial response can remove an action. Keep notification history
+    // until a full read, but never retain a toast absent from the shared list.
+    for (const key of seen ?? []) {
+      if (!current.has(key)) toast.dismiss(`attention-${key}`)
+    }
+    if (!ready) return
     announced.current = new Set(current.keys())
     // The first answer is the state of the world, not news about it.
     if (!seen) return
@@ -166,7 +171,16 @@ function useAttentionToasts(
 
 /** What has changed about this row, as far as the list is concerned. */
 function alertKey(item: AttentionItem): string {
-  return `${item.id}:${item.taskReason ?? "-"}:${item.sessionReason ?? "-"}`
+  if (item.recovery) {
+    const occurrence =
+      item.recovery.occurrence ||
+      JSON.stringify([
+        item.recovery.since,
+        item.recovery.affected.map((subject) => `${subject.kind}:${subject.id}`).sort(),
+      ])
+    return `${item.id}:${occurrence}`
+  }
+  return `${item.id}:${item.at}:${item.taskReason ?? "-"}:${item.sessionReason ?? "-"}`
 }
 
 /** What the toast leads with: the reason, in the words the badges use. */

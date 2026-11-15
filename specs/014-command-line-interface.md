@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-11-13
+updated: 2026-11-15
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -24,6 +24,7 @@ tests:
   - crates/ariadne-cli/src/commands/console/tui.rs
   - crates/ariadne-cli/src/output/table.rs
   - crates/ariadne-cli/src/commands/attention.rs
+  - crates/ariadne-cli/tests/attention.rs
   - crates/ariadne-cli/src/commands/agent.rs
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
@@ -163,11 +164,13 @@ same binary also serves (013).
     redraw escapes only reach a real terminal, and `--watch` is advertised
     only on these four commands. `goal ls` redraws after task creation and
     task updates, because its task progress column changes with them.
-22. A screen of several tables is fitted once, across every group of rows:
-    `ariadne attention` prints a section per goal, and a column is the same
-    width under every heading — on a `--watch` redraw too. A `--columns`
-    naming a column the table does not have is refused once, before any of
-    the screen is printed.
+22. A screen of several tables is fitted once, across every group of rows.
+    A `--columns` naming an unknown column fails before the screen prints.
+    `ariadne attention --columns` displays the daemon's shared items in the
+    selected column order. Its columns are `id` (item ID), `title` (summary),
+    `reason` (cause), `task` (affected task labels, or `-`), and `age` (time
+    since the occurrence). The default output retains its detailed section.
+    Item membership follows 031, without local goal, task or session fallback rows.
 23. A heading is one style everywhere: a section heading and the column header
     of a table are both bold and uppercase. `-q` prints the first cell of
     every row of every group, and nothing else — and, like every other `-q`
@@ -583,25 +586,27 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `commands/goal.rs::goal_watch_responds_when_a_task_changes`).
 - Several row groups are fitted together, and drop and cut the same columns
   (`table.rs::columns_are_fitted_once_across_every_group`,
-  `::every_group_drops_and_cuts_the_same_columns`), which is what aligns the
-  attention board across its goals
-  (`attention.rs::the_columns_align_across_every_goal_of_the_board`).
-- A `--columns` naming no column is refused before anything is printed
+  `::every_group_drops_and_cuts_the_same_columns`).
+- A `--columns` naming no column fails before anything prints
   (`table.rs::a_bad_column_is_refused_before_a_group_is_rendered`,
   `attention.rs::a_bad_columns_flag_is_refused_before_any_table`).
-- A section heading and a column header are one style
-  (`table.rs::a_header_is_printed_in_the_one_heading_style`,
-  `attention.rs::the_goal_heading_is_printed_in_the_one_heading_style`).
-- The board's `-q` is the ids of every group, from the same `quiet_lines`
-  every listing pipes through
-  (`attention.rs::quiet_output_is_the_ids_of_every_group`), and only a run
-  that prints a table refuses a `--columns`
-  (`::a_columns_flag_is_refused_only_where_a_table_is_printed`).
-- `ariadne attention` reads `GET /v1/sessions` as a page object, asking for
-  the Ariadne kind alone and following every `next_cursor` until the last
-  page, so a session the first page left off still reaches the board
-  (`attention.rs::the_board_renders_against_a_paged_sessions_response`,
-  `::every_page_of_ariadne_sessions_is_fetched`).
+- A section heading and a column header share one style
+  (`table.rs::a_header_is_printed_in_the_one_heading_style`).
+- `ariadne attention` keeps its JSON envelope and counts only daemon items.
+  Table output keeps incomplete-read warnings; quiet output prints only daemon
+  IDs and still fails on incomplete reads
+  (`crates/ariadne-cli/tests/attention.rs::incomplete_json_contains_only_daemon_items_and_their_count`,
+  `::incomplete_table_omits_dismissed_and_dead_rows_but_keeps_the_warning`,
+  `::incomplete_quiet_output_names_only_daemon_items_and_still_fails`).
+  Only table output validates `--columns`
+  (`commands/attention.rs::a_columns_flag_is_refused_only_where_a_table_is_printed`).
+- Selected attention columns contain only the requested fields, in the requested
+  order. Partial reads keep their warning. Quiet and JSON output ignore column
+  selection, and an unknown table column fails without output
+  (`crates/ariadne-cli/tests/attention.rs::selecting_only_ids_omits_attention_details_and_keeps_partial_warnings`,
+  `::selected_attention_columns_follow_the_requested_order`,
+  `::quiet_and_json_output_still_ignore_column_selection`,
+  `::an_unknown_table_column_still_fails_without_output`).
 - Mutation lines and empty listings share their output forms
   (`output.rs::quiet_mutations_print_only_the_id`,
   `::an_empty_state_puts_the_next_command_on_its_own_line`).

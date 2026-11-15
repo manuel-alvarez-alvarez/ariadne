@@ -393,6 +393,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::DashboardDeleted(dashboard) => {
             unscoped(DomainEvent::DashboardDeleted(dashboard_dto(dashboard)))
         }
+        Change::AttentionChanged => unscoped(DomainEvent::AttentionChanged(serde_json::json!({}))),
         Change::PullRequestsChanged(repository_id) => unscoped(DomainEvent::PullRequestsChanged(
             ariadne_api::stream::PullRequestsChangedDto { repository_id },
         )),

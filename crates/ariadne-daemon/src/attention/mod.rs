@@ -27,7 +27,7 @@ use crate::launcher::Launcher;
 /// (009, 026). A producer whose read fails costs the list its `complete`
 /// flag rather than its other producers' items, so a partial read never
 /// answers as if nothing were wrong.
-pub async fn collect(store: &Store, launcher: &Launcher) -> AttentionListDto {
+pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> AttentionListDto {
     let mut items = Vec::new();
     let mut complete = true;
     match recovery::items(store, launcher).await {
@@ -44,10 +44,51 @@ pub async fn collect(store: &Store, launcher: &Launcher) -> AttentionListDto {
             complete = false;
         }
     }
-    match pull_requests::items(store, launcher).await {
+    match pull_requests::items(store, &launcher.live).await {
         Ok(found) => items.extend(found),
         Err(error) => {
             tracing::warn!(%error, "the pull-request attention producer could not read its evidence");
+            complete = false;
+        }
+    }
+    match store.attention_source_versions().await {
+        Ok(versions) => {
+            for item in &mut items {
+                let mut members: Vec<_> = item
+                    .affected
+                    .iter()
+                    .map(|subject| {
+                        let kind =
+                            serde_json::to_value(subject.kind).expect("subject kind serializes");
+                        let kind = kind.as_str().expect("subject kind is a string");
+                        let version = if item.id == format!("agent_request:{}", item.occurrence) {
+                            // A question has its own immutable request id. Other session
+                            // flags cannot turn it into a new question.
+                            0
+                        } else {
+                            let source = match &item.target {
+                                ariadne_api::attention::AttentionTarget::PullRequest { .. } => {
+                                    // Each cause has its own revision. A keeper failure
+                                    // cannot revive a dismissed reviewer or readiness item.
+                                    ("pull_request_cause".to_string(), item.id.clone())
+                                }
+                                _ => (kind.to_string(), subject.id.clone()),
+                            };
+                            versions.get(&source).copied().unwrap_or(0)
+                        };
+                        (kind.to_string(), subject.id.clone(), version)
+                    })
+                    .collect();
+                members.sort();
+                item.occurrence = serde_json::to_string(&(item.occurrence.clone(), members))
+                    .expect("occurrence serializes");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not read attention source versions");
+            for item in &mut items {
+                item.occurrence.clear();
+            }
             complete = false;
         }
     }
@@ -146,4 +187,37 @@ pub(crate) async fn work_is_active_checked(store: &Store, session: &AgentSession
             None => false,
         },
     })
+}
+
+pub async fn collect(store: &Store, launcher: &Launcher) -> AttentionListDto {
+    let _guard = store.lock_attention().await;
+    let mut list = collect_raw(store, launcher).await;
+    match store.attention_dismissals().await {
+        Ok(dismissed) => {
+            list.items.retain(|item| {
+                !dismissed
+                    .get(&item.id)
+                    .is_some_and(|held| dismissal_covers(held, &item.occurrence))
+            });
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not read attention dismissals");
+            list.complete = false;
+        }
+    }
+    list
+}
+
+/// A dismissal covers the members the user saw, at those source revisions.
+/// Removing members leaves that coverage intact. A new member, or a recovered
+/// member returning with a new revision, makes the cause visible again.
+fn dismissal_covers(dismissed: &str, current: &str) -> bool {
+    type Occurrence = (String, Vec<(String, String, i64)>);
+    let Ok((held_cause, held_members)) = serde_json::from_str::<Occurrence>(dismissed) else {
+        return false;
+    };
+    let Ok((cause, members)) = serde_json::from_str::<Occurrence>(current) else {
+        return false;
+    };
+    held_cause == cause && members.iter().all(|member| held_members.contains(member))
 }

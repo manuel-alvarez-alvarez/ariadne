@@ -140,16 +140,17 @@ async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
             .iter()
             .find(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
             .or_else(|| orchestrators.last());
-        let Some(alarm) = alarm else {
-            continue;
+        let error = match alarm {
+            Some(alarm) => last_session_error(store, &alarm.id).await?,
+            None => None,
         };
-        let error = last_session_error(store, &alarm.id).await?;
         let summary = give_up_summary(
             "The goal's orchestrator",
             goal.orchestrator_given_up_wedged,
             error.as_deref(),
         );
         items.push(AttentionItemDto {
+            occurrence: String::new(),
             id: format!("recovery:unknown:orchestrator:{}", goal.id),
             producer: AttentionProducer::Recovery,
             reason: AttentionCause::Unknown,
@@ -161,8 +162,8 @@ async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
                 id: goal.id.clone(),
                 label: goal.title.clone(),
             }],
-            target: AttentionTarget::Console {
-                session_id: alarm.id.clone(),
+            target: AttentionTarget::Goal {
+                goal_id: goal.id.clone(),
             },
         });
     }
@@ -215,6 +216,7 @@ async fn pull_request_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
                 _ => unreachable!("only reviewer and keeper marks reach recovery"),
             };
             items.push(AttentionItemDto {
+                occurrence: String::new(),
                 id,
                 producer: AttentionProducer::Recovery,
                 reason: AttentionCause::Unknown,
@@ -292,22 +294,18 @@ async fn quota_items(store: &Store, launcher: &Launcher) -> Result<Vec<Attention
     }
     Ok(groups
         .into_iter()
-        .map(|((model, reason), group)| {
-            let session_id = group
-                .affected
-                .first()
-                .map(|s| s.id.clone())
-                .unwrap_or_default();
-            AttentionItemDto {
-                id: format!("recovery:quota:{model}:{}", reason.replace(' ', "-")),
-                producer: AttentionProducer::Recovery,
-                reason: AttentionCause::Quota,
-                summary: format!("{model} hit a usage limit; automatic switching {reason}."),
-                required_action: required_action_for(reason),
-                since: group.since,
-                affected: group.affected,
-                target: AttentionTarget::Console { session_id },
-            }
+        .map(|((model, reason), group)| AttentionItemDto {
+            occurrence: String::new(),
+            id: format!("recovery:quota:{model}:{}", reason.replace(' ', "-")),
+            producer: AttentionProducer::Recovery,
+            reason: AttentionCause::Quota,
+            summary: format!("{model} hit a usage limit; automatic switching {reason}."),
+            required_action: required_action_for(reason),
+            since: group.since,
+            affected: group.affected,
+            target: AttentionTarget::Settings {
+                section: "agents".into(),
+            },
         })
         .collect())
 }
@@ -393,6 +391,7 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
             descriptor_affected.push(affected);
         } else {
             unknown.push(AttentionItemDto {
+                occurrence: String::new(),
                 id: format!("recovery:unknown:task:{}", task.id),
                 producer: AttentionProducer::Recovery,
                 reason: AttentionCause::Unknown,
@@ -412,6 +411,7 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
             .map(|s| s.id.clone())
             .unwrap_or_default();
         items.push(AttentionItemDto {
+            occurrence: String::new(),
             id: "recovery:resource:descriptor-limit".into(),
             producer: AttentionProducer::Recovery,
             reason: AttentionCause::Resource,
@@ -533,6 +533,7 @@ async fn configuration_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
         .into_iter()
         .map(
             |(program, (since, affected, error, section))| AttentionItemDto {
+                occurrence: String::new(),
                 id: format!("recovery:configuration:{program}"),
                 producer: AttentionProducer::Recovery,
                 reason: AttentionCause::Configuration,
@@ -591,6 +592,7 @@ async fn access_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     Ok(groups
         .into_iter()
         .map(|(host, (since, affected, section))| AttentionItemDto {
+            occurrence: String::new(),
             id: format!("recovery:access:{host}"),
             producer: AttentionProducer::Recovery,
             reason: AttentionCause::Access,
