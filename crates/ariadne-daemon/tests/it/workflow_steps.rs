@@ -303,7 +303,7 @@ async fn a_task_walks_develop_review_merge_with_one_agent_per_column() {
     .await;
     assert!(
         h.prompted(&review)
-            .contains("The column before this one finished again.")
+            .contains("The column before this one sent the task forward again.")
     );
     call(&h, &task, &review, "complete", "The change passes review.").await;
     let merge = session_at(&h, &task, "merge").await;

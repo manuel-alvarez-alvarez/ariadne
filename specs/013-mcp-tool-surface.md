@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-11-14
+updated: 2026-11-15
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -63,10 +63,17 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    each of them once. Its
    `hint` is one line for the Needs attention list, and the daemon refuses
    one that is longer than a line or than 100 characters (031 rule 11), so
-   the question cannot move into the hint. A turn that ends without
-   `wait_for_user` ends the wait;
-    repeating its hint keeps the same request, while console input answers
-    the newest pending request of that session (031 rule 12).
+   the question cannot move into the hint. The rules say what keeps a
+   question open and what closes it, in those words: one call in a turn
+   keeps it open, and a later turn that ends without the call closes it.
+   They no longer ban text after the call: an orchestrator read that ban
+   beside "a turn that ends without the call ends the wait" as "text ends
+   the wait", called `wait_for_user` three times for one question, and
+   wrote the question out again as text; Claude Code ends every turn with
+   text, and the console pins an open question above the input (031 rule
+   12), so text after the call hides nothing. Repeating the hint keeps the
+   same request, while console input answers the newest pending request of
+   that session (031 rule 12).
     `withdraw_wait_for_user` takes the flag down again. The daemon answers a
     withdrawal `204`, with no body, and the tool reads that as success
     rather than a decoding failure (014).

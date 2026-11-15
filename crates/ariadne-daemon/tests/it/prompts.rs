@@ -563,7 +563,7 @@ async fn a_fresh_session_back_in_a_later_column_has_the_previous_report() {
     assert_eq!(prompt.matches("Second report.").count(), 1, "{prompt}");
     assert!(
         prompt.contains(
-            "Resume \"task\" at Review. The column before this one finished again.\nReason:"
+            "Resume \"task\" at Review. The column before this one sent the task forward again.\nReason:"
         ),
         "{prompt}"
     );

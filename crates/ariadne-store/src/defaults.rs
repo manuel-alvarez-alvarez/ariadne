@@ -473,15 +473,20 @@ const STEP_RETURN: &str = "Resume \"{task_title}\" at {step_title}. {direction}\
 /// What the agent of the current column is nudged with when it has gone
 /// quiet with the task still in front of it.
 ///
-/// Four things, and no more: this is not a new request, so there is nothing
+/// Five things, and no more: this is not a new request, so there is nothing
 /// to plan or narrate; check whether the work the column owes is already
-/// done; make the call that ends the column, or go on with the work; and
-/// write no reply about the nudge itself, since a reply over the nudge is a
-/// turn spent on nothing the task needed.
-const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
+/// done; make the call that ends the column, or go on with the work; ask an
+/// open question again, since the nudge starts a turn and a turn that ends
+/// without `wait_for_user` closes every question an earlier turn raised
+/// (031); and write no reply about the nudge itself, since a reply over the
+/// nudge is a turn spent on nothing the task needed.
+const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Ask an open question again. Write no reply about this nudge.";
 
-/// Seat text of a reviewer pull request session (029).
-const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. Review it as your skill says. Then end your turn."#;
+/// Seat text of a reviewer pull request session (029): what the seat owes,
+/// and nothing a layer it already reads says. How to review is the skill's,
+/// and the skills header tells every seat to read it; when the turn ends is
+/// the briefing's and the news prompt's, which each end on it.
+const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing."#;
 
 /// Initial briefing of a reviewer pull request session (029).
 const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
@@ -494,7 +499,7 @@ const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
 - Your login: {login}
 - Last reviewed sha: {reviewed_sha}
 
-Review this request."#;
+Review this request. Then end your turn."#;
 
 /// What a session is woken with when a request has news: the news since it
 /// was last told, one line each.
@@ -554,7 +559,11 @@ Workflow: {workflow}
 /// Once the goal is active the orchestrator is the one agent that outlives
 /// its own hand-off, and what it is woken for is on the tasks: one that
 /// failed, one that has gone quiet, or a goal with nothing left to do.
-const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}" where it stands. When the goal is under way, read `list_tasks`. Before the user writes an explicit yes, continue the plan conversation. After the yes, call `finalize_plan`."#;
+///
+/// In either situation a question can be open, and the nudge starts a turn:
+/// a turn that ends without `wait_for_user` closes every question an
+/// earlier turn raised (031), so the nudge says to ask it again.
+const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}". Ask an open question again. Before an explicit yes, continue the plan conversation. After the yes, call `finalize_plan`. When the goal is under way, read `list_tasks`."#;
 
 /// What the orchestrator of a goal under way is woken with.
 ///
@@ -971,7 +980,7 @@ pub(crate) mod tests {
                 "Reach Ariadne",
                 "backticked",
                 "Work alone",
-                "narrate progress",
+                "for a result, a question or a blocker",
                 "as few turns as you can",
                 "ASD-STE100",
                 "before you repeat a discovery",
@@ -1075,16 +1084,17 @@ pub(crate) mod tests {
         );
     }
 
-    /// The quiet nudge says four things, and the agent seat text is the one
+    /// The quiet nudge says five things, and the agent seat text is the one
     /// place a column's agent is told to stop after three failed attempts
     /// at one fix.
     #[test]
-    fn the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner() {
+    fn the_quiet_nudge_says_five_things_and_the_stop_rule_has_one_owner() {
         let nudge = default_prompt_text(PromptKind::AgentResume);
         for rule in [
             "Not a new request",
             "Check if the work is done.",
             "Make the call that ends the column, or go on.",
+            "Ask an open question again.",
             "Write no reply about this nudge.",
         ] {
             assert!(nudge.contains(rule), "the quiet nudge and \"{rule}\"");
@@ -1170,13 +1180,15 @@ pub(crate) mod tests {
     /// there are two: a plan being agreed, and a goal under way. A resume
     /// that asked for `finalize_plan` alone would push an orchestrator past a
     /// plan the user never saw; one that named the conversation alone would
-    /// leave a running goal unattended.
+    /// leave a running goal unattended. In both, a question can be open, and
+    /// the nudge's own turn would close it unless it is asked again.
     #[test]
     fn the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way() {
         let resume = default_prompt_text(PromptKind::OrchestratorResume);
         for phase in [
+            "Ask an open question again.",
             "When the goal is under way, read `list_tasks`",
-            "Before the user writes an explicit yes, continue the plan conversation",
+            "Before an explicit yes, continue the plan conversation",
             "After the yes, call `finalize_plan`",
         ] {
             assert!(
