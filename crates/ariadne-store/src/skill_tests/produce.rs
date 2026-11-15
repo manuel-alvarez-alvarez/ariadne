@@ -190,7 +190,7 @@ fn migration_never_edits_a_released_migration_and_proves_it_on_a_copy() {
         "Write the recovery path: a reverse migration.",
         "Where callers overlap, leave the contract to a later task.",
         "With no overlap, name that in it.",
-        "Where callers overlap, the contract is deferred and named.",
+        "Done when the report names the deferred work, or states no overlap.",
     ] {
         assert!(
             migration.contains(phrase),
@@ -231,10 +231,11 @@ fn each_writing_skill_names_its_sibling_and_its_own_proof() {
     }
     for (name, phrase) in [
         ("research", "Cite the source of every fact"),
-        ("research", "and lists what it did not check"),
+        ("research", "what you did not check"),
         ("spec-writing", "Ask one question at a time."),
         ("spec-writing", "Name the test that proves it"),
-        ("spec-writing", "Every criterion names its test."),
+        ("spec-writing", "every criterion names a test"),
+        ("spec-writing", "the orchestrator has agreed to the spec"),
     ] {
         let document = unwrapped(default_skill_document(name).unwrap());
         assert!(

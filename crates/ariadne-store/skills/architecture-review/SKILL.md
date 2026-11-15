@@ -1,11 +1,11 @@
 ---
 name: architecture-review
-description: Use when a design, component or integration needs review.
+description: Judges a change against the boundaries and ownership of the system that exists. Use when a design, component or integration needs review.
 ---
 
 # Architecture review
 
-Judge the change against the system that exists. Done when the conditions in `## Done` hold.
+Judge the change against the system that exists.
 
 ## When not to use
 
@@ -72,8 +72,3 @@ Use `code-review` when the question is correctness, tests or conventions.
   boundary.
 - "The review asked for findings, so I name one." -> A sound boundary
   gets no invented finding.
-
-## Done
-
-The verdict maps every changed component and dependency. Optional
-findings stay at five or fewer.

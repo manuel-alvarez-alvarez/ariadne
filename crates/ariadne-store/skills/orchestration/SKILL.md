@@ -1,11 +1,11 @@
 ---
 name: orchestration
-description: Use when goals open, plans change, or tasks report.
+description: Turns a goal into a plan the user accepted and runs it to its end. Use when goals open, plans change, or tasks report.
 ---
 
 # Orchestration
 
-Turn a goal into a plan the user accepted, and run it to its end. Done when the conditions in `## Done` hold.
+Turn a goal into a plan the user accepted, and run it to its end.
 
 The workflow columns in your briefing are settled: do not ask for them.
 
@@ -114,8 +114,3 @@ Never run checks yourself: the last column proved the work.
 - "This task needs no review." -> The workflow decides; staff its column.
 - "A plan this long is thorough." -> A plan longer than the code it
   describes has written the code.
-
-## Done
-
-Every task is a tracer with outcome criteria. The user wrote an explicit yes.
-Every task ran to its end. `complete_goal` closed the goal.

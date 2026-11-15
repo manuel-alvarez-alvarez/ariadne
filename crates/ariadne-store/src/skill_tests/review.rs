@@ -53,7 +53,7 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         "Never fail the step on an optional finding.",
         "On a must-fix finding, call `fail_step` with the return report.",
         "Else call `complete_step` with the verdict and the optional findings.",
-        "HEAD stays on the task branch at the reviewed revision.",
+        "Done when `git rev-parse HEAD` prints the reviewed revision and the column has ended.",
     ] {
         assert!(text.contains(rule), "the code-review skill and {rule}");
     }
@@ -212,7 +212,6 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "On a later blocker, pass `approved: false`.",
         "Never land the request.",
         "Never edit a file.",
-        "## Done",
     ] {
         assert!(doc.contains(step), "the pr-reviewer skill has no {step}");
     }

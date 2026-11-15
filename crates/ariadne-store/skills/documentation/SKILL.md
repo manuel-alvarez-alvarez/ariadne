@@ -1,11 +1,11 @@
 ---
 name: documentation
-description: Use when a feature lands or a page drifts.
+description: Writes the manual page for the reader who has the problem. Use when a feature lands or a page drifts.
 ---
 
 # Documentation
 
-Write for the reader who has the problem, not the author who has the code. Done when `## Done` holds.
+Write for the reader who has the problem, not the author who has the code.
 
 ## When not to use
 
@@ -58,8 +58,3 @@ Never change code. Never write a spec in a manual.
   poisons the whole page. Run it.
 - "I will update the old section later." -> A stale page misleads every
   reader until then. Fix it now.
-
-## Done
-
-A reader can do the task from the page alone, and reaches it from the
-index. Every example runs. Nothing on the page is out of date.
