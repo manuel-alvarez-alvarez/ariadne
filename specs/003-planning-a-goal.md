@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-11-13
+updated: 2026-11-15
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -53,7 +53,11 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    options and what each one causes; gives a recommendation with one reason;
    and ends with one direct question, worded so a "yes" accepts the
    recommendation. How to ask is the session rules' (013); asking one
-   question at a time, with these parts, is the playbook's.
+   question at a time, with these parts, is the playbook's. So is what
+   to do when a turn starts while the question has no answer — an agent's
+   message or a late answer to an earlier question each start one: the
+   orchestrator handles the turn's cause, then asks the same question
+   again, since a turn that ends without the call ends the wait.
    The user answers in the session's terminal (`ariadne goal attach`). An
    orchestrator waiting on an answer is not nudged.
 4. It writes one task per unit of work: one cohesive outcome, one repository,
@@ -77,12 +81,19 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    Tasks that run together stay off the same code.
    Where one task hands another a route, a response shape, a function or a
    file, it names that interface in both tickets instead of a `depends_on`
-   edge.
+   edge. One more edge is for the user rather than the code: a task that is
+   a conversation with the user holds one open question in the console, so
+   such tasks are chained with `depends_on` and the user holds one at a
+   time.
 6. It reads the skill and model catalogs once for the whole plan, not once
    per task. It staffs one agent on every column of each task (030), and
    gives every agent one model from the catalog (011) — a model is
    required, so no agent is staffed without one. A column's agent runs on
-   the column's skills unless the task names others. For each column it
+   the column's skills unless the task names others. An agent gets a brief
+   (017 rule 12) for what it alone needs and the ticket does not say —
+   sources, a work order, or what to judge — and none where the ticket
+   says everything: the ticket is read by every column, so a hint for one
+   agent has nowhere else to go. For each column it
    takes a model at one of
    the ranks in the column's capability band (030) — a band naming more than
    one rank lets it pick any rank in it. It assesses each task's scope and
@@ -104,7 +115,11 @@ Out: the columns and their gates (030), the model catalog the sizing reads
      the catalog (011) and shows the user the tasks and the models. It asks
      about the plan the same way it asks about the goal (3): one question at
      a time, with its five parts, and it revises the plan until the user
-     writes an explicit yes.
+     writes an explicit yes. It asks about tracer size once, then about
+     every `depends_on` edge as one list with each edge's reason — a
+     question per edge cost a turn per edge, and a plan of sixteen tasks
+     skipped them all, where one list shows every edge and lets the user
+     reject one in one answer.
    Nothing a column settles is asked about: whether a task is reviewed, and
    how it lands, follow from the goal's workflow, settled when the goal was
    created (030).
@@ -159,6 +174,10 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   `depends_on` names only a real prerequisite
   (`skill_tests/operate.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
   `::the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule`).
+- The criteria state outcomes and leave the tests to the coding agent, and
+  the plan review asks about tracer size once and about the `depends_on`
+  edges as one list
+  (`skill_tests/operate.rs::the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_a_time`).
 - Each ticket is the four sections, in order, with the criteria numbered,
   and carries no pasted history
   (`skill_tests/operate.rs::the_orchestration_skill_names_what_a_ticket_carries`). The
