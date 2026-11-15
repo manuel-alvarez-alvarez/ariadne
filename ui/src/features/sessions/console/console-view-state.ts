@@ -1,7 +1,7 @@
 /**
  * What a session's console keeps while it is off screen: the draft, the
  * transcript's scroll position, whether it follows the newest block, the view
- * shown, and the fold preferences.
+ * shown, the fold preferences and the opened activity runs.
  *
  * Expanding the console into the modal, collapsing it back and switching the
  * panel's tab each unmount one pane and mount another, so the state cannot
@@ -36,6 +36,8 @@ export type ConsoleViewState = {
   following: boolean
   /** A fold preference per block id; a foldable block with none starts folded. */
   blockFolds: Record<string, boolean>
+  /** Whether each activity run, by its first row's id, shows every row; none shows its last 3. */
+  runExpansions: Record<string, boolean>
   /** The child whose view is shown; none for `main`. */
   shown: string | undefined
   /** The sends the daemon refused, each with its Retry and Edit. */
@@ -49,6 +51,7 @@ const initial: ConsoleViewState = {
   oldest: undefined,
   following: true,
   blockFolds: {},
+  runExpansions: {},
   shown: undefined,
   failed: [],
 }
