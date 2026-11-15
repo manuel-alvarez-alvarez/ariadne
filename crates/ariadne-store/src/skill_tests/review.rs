@@ -282,7 +282,7 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "A draft gets the same round.",
         "News of a head equal to the reviewed revision needs no tool call.",
         "Where the head moves during a round, report the revision you reviewed.",
-        "`Reviewed <sha>: nothing new.`",
+        "A round with no new finding has `Reviewed <sha>: nothing new.` as its first line.",
         "Never land the request.",
         "Never edit a file.",
     ] {

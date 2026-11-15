@@ -87,8 +87,9 @@ Use `code-review` when the diff is a task branch and no forge request.
    Done when the review is submitted, if needed.
 8. Call `report_pull_request` with `reviewed_sha` set to the revision you
    reviewed. Then write the result of the round, in this shape and no
-   other text. A round with nothing new has the first line only:
-   `Reviewed <sha>: nothing new.`
+   other text. A round with no new finding has `Reviewed <sha>: nothing
+   new.` as its first line. Keep each applicable line below it. Omit a line
+   that has nothing to say.
 
    ```
    Reviewed <sha>: <request changes|comment> with <n> findings.
