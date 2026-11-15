@@ -196,6 +196,17 @@ fn architecture_review_adds_to_the_one_verdict_of_its_column() {
 /// once a push fixed it, settles a declined or a still-open one without
 /// a second warning, and suggests a fix where the edit is small and
 /// local.
+///
+/// The user agreed the rest in November 2026, from 37 review goals. Four
+/// `submit_review` calls were refused for a line the diff does not show,
+/// so a finding goes on the shown line that causes it. Sessions ran
+/// suites of 2,000 tests, so the checks are those of the changed files.
+/// A P0 or P1 needs a proof: a run for code, two quoted lines for text.
+/// The body has four labelled paragraphs. A question in an owned thread
+/// gets one answer, and a finding proven wrong is withdrawn and resolved.
+/// The round ends on one literal result shape, since a round with no
+/// finding posts nothing and the turn text is all the user reads of it.
+/// The skill names no Ariadne approval: the user took that step out.
 #[test]
 fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
     let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");
@@ -210,14 +221,9 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         );
     }
     let doc = unwrapped(doc);
-    // The skill approves in Ariadne alone, and only once nothing blocks.
-    for sentence in ste::sentences(&doc) {
-        if sentence.contains("Approve") {
-            assert!(
-                sentence.contains("in Ariadne") && sentence.contains("no open P0 or P1"),
-                "an approval outside Ariadne or with a blocker: {sentence}"
-            );
-        }
+    // The skill gives no approval, on the forge or in Ariadne.
+    for gone in ["Approve", "`approved", "in Ariadne"] {
+        assert!(!doc.contains(gone), "the pr-reviewer skill names {gone}");
     }
     for priority in ["P0: ", "P1: ", "P2: "] {
         assert!(
@@ -240,8 +246,11 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "P0 or P1",
         "`report_pull_request` with `reviewed_sha`",
         "without a reply",
-        "Reuse evidence only when it covers the reviewed revision and a required check.",
-        "On a later round, call `list_comments` first.",
+        "Run the tests, the lint and the format check of the files the diff changes.",
+        "Reuse your evidence of an earlier round only where it covers the reviewed revision.",
+        "The `checks` field of `get_pull_request` stands for every other check.",
+        "Reproduce each failed check that the diff can cause.",
+        "On a later round, call `list_comments`.",
         "For each thread you opened",
         "after you verify the fix",
         "Read code outside the diff only to judge a risk you can name.",
@@ -258,14 +267,41 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "Resolve only a thread you opened",
         "one inline comment on the line of the defect",
         "Never give a forge approval. The user gives it.",
-        "Approve in Ariadne only after a complete review, with required checks green and no open P0 or P1.",
-        "A P2 can stay.",
-        "On a later blocker, pass `approved: false`.",
+        "P0 and P1 are must-fix. P2 is optional.",
+        "A finding with no proof is P2.",
+        "A code defect: run a command that triggers it at the reviewed revision.",
+        "A text defect: quote the two lines that disagree.",
+        "Put code that a proof needs in a scratch file under `/tmp`.",
+        "use the shown line that causes it. Name the real file and line in the body.",
+        "A defect that the diff does not cause is no finding.",
+        "a body of four paragraphs: `Trigger:`, `Failure:`, `Proof:` and `Fix:`",
+        "A question: give one short answer with `reply_comment`, once per question.",
+        "A reply that argues with no new question gets no answer.",
+        "Reply once with `Withdrawn: <why>.` Then call `resolve_thread`.",
+        "A fix in a revision your worktree does not hold: post nothing.",
+        "A draft gets the same round.",
+        "News of a head equal to the reviewed revision needs no tool call.",
+        "Where the head moves during a round, report the revision you reviewed.",
+        "`Reviewed <sha>: nothing new.`",
         "Never land the request.",
         "Never edit a file.",
     ] {
         assert!(doc.contains(step), "the pr-reviewer skill has no {step}");
     }
+    // The checks come before the threads, and the threads before the hunt.
+    let at = |needle: &str| doc.find(needle).unwrap();
+    assert!(
+        at("Run the tests, the lint") < at("On a later round, call `list_comments`.")
+            && at("On a later round, call `list_comments`.") < at("Hunt a defect"),
+        "the pr-reviewer skill reads its steps out of order"
+    );
+    // The result shape is a literal template, read off the raw document.
+    assert!(
+        default_skill_document(PR_REVIEWER_SKILL).unwrap().contains(
+            "   ```\n   Reviewed <sha>: <request changes|comment> with <n> findings.\n   <P0|P1|P2> <path>:<line>: <title>\n   Thread <path>:<line>: <resolved|still there|answered|withdrawn>\n   Check <command>: <result>\n   Failed <tool>: <reason>\n   Outside the diff: <defect>\n   ```"
+        ),
+        "the pr-reviewer skill does not give the result as a literal template"
+    );
     assert!(
         !doc.contains("git log"),
         "the pr-reviewer skill still reads a commit list"

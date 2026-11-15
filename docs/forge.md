@@ -164,7 +164,11 @@ It posts its findings at one of three priorities:
 Each round posts its new findings as one review — `request_changes` while
 a P0 or P1 finding is open, `comment` otherwise — never an approval. Each finding
 is an inline comment of its own on the line of the defect, opening on
-**[P0] Title**, then what goes wrong and how to fix it. Where the fix
+**[P0] Title**, then four paragraphs: `Trigger:`, `Failure:`, `Proof:` and
+`Fix:`. A P0 or P1 carries a proof: a run that triggers a code defect, or
+the two quoted lines of a text defect. A finding with no proof is P2. A
+defect the change causes on a line the diff does not show sits on the
+changed line that causes it. Where the fix
 replaces the commented line alone, the comment carries a `suggestion`
 block, holding the new text of that one line, the author can apply
 directly; a fix across lines, across files, or one that needs a test,
@@ -172,7 +176,14 @@ stays prose. A change request whose P0 or P1 findings are not on their lines is
 refused. This is one API call carrying every inline comment.
 
 The review posts no generated summary, status table, summary comment, or
-summary draft. A round with no new finding publishes nothing.
+summary draft. A round with no new finding publishes nothing. Each round
+ends on one result in the session's console: `Reviewed <sha>:` with the
+verdict and the count, or `nothing new`, then one line per finding,
+settled thread, check and failed tool call.
+
+Before it hunts, the reviewer runs the tests, the lint and the format
+check of the files the diff changes. The forge's own checks stand for the
+rest.
 
 On a later round the reviewer settles each thread it opened before it
 hunts for more. The author answers in one of three ways: `Fixed in <sha>:
@@ -182,7 +193,9 @@ a reply.
 Where the
 last reply claims a fix (`Fixed in <sha>: ...`) but the defect is still
 there, the reviewer replies once, `Still there: <why>.`, and never says it
-again in that thread. Any other answered reply that leaves the defect in
+again in that thread. A question gets one short answer. A reply that
+proves the finding wrong gets one `Withdrawn: <why>.` reply, and the
+reviewer resolves the thread. Any other answered reply that leaves the defect in
 place — a `Not changed:` reply, or any other — gets no reply back and the thread stays open for the user to settle. A
 thread nobody has answered gets nothing: it waits. On a request a task's
 agent keeps, the review's findings go to that agent like anyone else's
@@ -191,13 +204,11 @@ and fixes what needs fixing.
 
 ### Ariadne approved
 
-When a round leaves nothing to block the request, the reviewer can mark
-it **Ariadne approved**. This is Ariadne's own status. It posts no forge
+A review session can mark a request **Ariadne approved** through
+`report_pull_request`. This is Ariadne's own status. It posts no forge
 approval, and it is not the forge's review decision or a sign that the
-request is ready to merge. The reviewer approves only after a complete
-review, with the required checks green and no open P0 or P1 finding. An
-open P2 finding does not block it. A reviewer that finds a blocker later
-withdraws the approval.
+request is ready to merge. The shipped `pr-reviewer` skill does not ask
+for it: a skill of your own beside it can.
 
 An approval names the exact head the reviewer read. The daemon refuses
 one for a head that is no longer the request's head. A push clears it,
