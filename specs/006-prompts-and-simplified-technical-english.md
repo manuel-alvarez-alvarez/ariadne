@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-17
+updated: 2026-11-15
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -200,7 +200,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     come down to what a rewrite fits in. Moving a cap is a decision argued in
     the test's own documentation, never a way round a failing assertion. The
     shipped skill documents are capped on their own scale, since a skill is
-    read once and on purpose rather than carried by every turn.
+    read once and on purpose rather than carried by every turn: one cap of
+    8,000 characters holds every skill alike, 70,000 holds the catalog, and a
+    body stays under 500 lines (017 rule 16). One number for every skill,
+    rather than a budget per skill, lets a skill grow for a reason of its own
+    without a change of the test first; the total still keeps one skill from
+    taking the whole room.
 14. The handoff is a text built from a session's stored events for a
     session switched to another coding agent (021): no ACP agent can resume
     another's conversation, so the new agent gets this instead, as its
@@ -394,7 +399,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
 - The index adds one line per skill, and the path it names holds the document
   (`prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`).
-- Every shipped skill document is within its cap (`skill_tests/template.rs::skill_size_caps_hold`).
+- Every shipped skill document is within the one skill cap, and the catalog
+  within its total (`skill_tests/template.rs::skill_size_caps_hold`).
 - Every session is told to load a deferred tool before it calls it
   (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
 - A console-sourced prompt renders whole and a daemon-sourced one folds to

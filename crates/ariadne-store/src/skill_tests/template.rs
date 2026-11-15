@@ -34,7 +34,7 @@ fn every_shipped_skill_is_named_once_and_describes_itself() {
         let summary = skill_summary(skill.document)
             .unwrap_or_else(|| panic!("{} describes itself nowhere", skill.name));
         assert!(
-            !summary.is_empty() && summary.len() <= 140,
+            !summary.is_empty() && summary.len() <= 160,
             "the {} summary is {} characters; the index carries one line",
             skill.name,
             summary.len()
@@ -87,54 +87,21 @@ fn no_skill_names_a_timer_or_a_poll() {
     }
 }
 
-/// Each of the thirteen skills has a cap for its procedure and template sections.
-/// A separate total cap prevents growth from consuming another skill's unused budget.
-/// The description cap belongs to the catalog test above.
+/// One cap holds every skill, and one total holds the catalog (006 rule 13).
 ///
-/// Four merges preserve their procedures in the absorbing documents.
-/// Testing previously merged into coding, whose later pruning left a 3300 budget.
-/// `refactoring` now merges into `coding`, adding its 2000 budget and rounding to 5400.
-/// `spec-review` and `performance-review` now merge into `code-review`.
-/// Their 2320 and 2380 budgets join code review's 3100, rounded to 7900.
-/// The three remaining review skills are code-review, architecture-review, and pr-reviewer.
-///
-/// The template adds sibling routing, completion boundaries, and explicit mutation limits.
-/// Orchestration moves from 4650 to 5200 for eleven completion boundaries and routing.
-/// It moves to 5250 to name the `wait_for_user` field of each part of a question.
-/// It moves to 5300 to write no text after the call, so the open question stays last.
-/// Debugging moves from 2700 to 2900 for routing and limits.
-/// Architecture review moves from 2380 to 2800 for routing, limits, and completion boundaries.
-/// Migration moves from 2000 to 2200 for routing and two completion boundaries.
-/// Conflict resolution, documentation, and research each move from 2000 to 2300.
-/// Their routing, limits, and missing completion boundaries use the extra space.
-/// Specification writing moves from 2000 to 2400 for routing and four missing completion boundaries.
-/// Merge moves from 2300 to 2900 for six completion boundaries and the missing counterexample section.
-/// PR babysit moves from 4300 to 4900; PR reviewer moves from 3750 to 4400.
-/// Each gains eight completion boundaries plus routing and explicit limits.
-///
-/// The total moves from 41200 to 45500 for thirteen documents with the common template.
-/// The three merges remove catalog entries but preserve the procedures and their costs.
-/// Routing and completion boundaries consume the additional 4300 characters across the catalog.
-/// The total leaves a small margin beyond the current documents, below the combined individual caps.
+/// A skill is read whole, once per launch and again after a compaction,
+/// so its cost is its own and not every turn's. 8,000 characters is about
+/// 2,000 tokens: the largest skill today, `code-review`, is under it with
+/// room for a rewrite, and it is well under the 500 lines and 5,000 tokens
+/// the outside guidance holds a skill to. One number per skill, rather than
+/// a budget per skill, lets a skill grow for a reason of its own without a
+/// change here first. The total still bounds the catalog: 70,000 is
+/// thirteen skills at about 5,400 each, so no one skill can take the
+/// whole room. The description cap belongs to the catalog test above.
 #[test]
 fn skill_size_caps_hold() {
-    const TOTAL: usize = 45_500;
-    let cap = |name: &str| match name {
-        "orchestration" => 5300,
-        "debugging" => 2900,
-        "code-review" => 7900,
-        "coding" => 5400,
-        "architecture-review" => 2800,
-        "migration" => 2200,
-        "conflict-resolution" => 2300,
-        "documentation" => 2300,
-        "research" => 2300,
-        "spec-writing" => 2400,
-        "merge" => 2900,
-        "pr-babysit" => 4900,
-        "pr-reviewer" => 4400,
-        _ => unreachable!(),
-    };
+    const CAP: usize = 8_000;
+    const TOTAL: usize = 70_000;
 
     let read = |skill: &BuiltinSkill| skill_text(skill.document).len();
     for skill in &BUILTIN_SKILLS {
@@ -142,11 +109,10 @@ fn skill_size_caps_hold() {
     }
     for skill in &BUILTIN_SKILLS {
         assert!(
-            read(skill) <= cap(skill.name),
-            "the {} skill is {} characters, over its {}",
+            read(skill) <= CAP,
+            "the {} skill is {} characters, over {CAP}",
             skill.name,
             read(skill),
-            cap(skill.name)
         );
     }
     let total: usize = BUILTIN_SKILLS.iter().map(read).sum();
@@ -215,20 +181,31 @@ fn every_skill_obeys_the_template() {
             .unwrap()
             .split_once("\n---\n")
             .unwrap();
+        // The description is two sentences: what the skill does, then
+        // "Use when" and its triggers. The orchestrator staffs from this
+        // line and a native tool triggers on it, so both readers get both.
         let description = skill_summary(document).unwrap();
+        let (does, triggers) = description
+            .split_once(". ")
+            .unwrap_or_else(|| panic!("{}: description is one sentence", skill.name));
         assert!(
-            description.starts_with("Use when "),
-            "{}: description trigger",
+            !does.is_empty() && !does.starts_with("Use when"),
+            "{}: description opens with what the skill does",
+            skill.name
+        );
+        assert!(
+            triggers.starts_with("Use when ") && triggers.ends_with('.'),
+            "{}: description ends with its triggers",
             skill.name
         );
         assert_eq!(
             description.matches('.').count(),
-            1,
-            "{}: triggers alone",
+            2,
+            "{}: two sentences",
             skill.name
         );
         assert!(
-            !description.contains(" you "),
+            !description.contains(" you ") && !description.starts_with("You "),
             "{}: third person",
             skill.name
         );
@@ -236,12 +213,13 @@ fn every_skill_obeys_the_template() {
             .lines()
             .filter(|line| line.starts_with("## "))
             .collect();
+        // No `## Done`: each step carries its own `Done when`, and a closing
+        // section that restated them drifted from them.
         let required = [
             "## When not to use",
             "## Steps",
             "## Never",
             "## Do not tell yourself",
-            "## Done",
         ];
         let actual: Vec<_> = headings
             .iter()
@@ -279,11 +257,16 @@ fn every_skill_obeys_the_template() {
             "{}: sibling",
             skill.name
         );
+        // The outcome line is one sentence of purpose, with no end
+        // condition of its own: the last step's `Done when` ends the skill.
         let mut lines = body.lines().filter(|line| !line.is_empty());
         assert!(lines.next().unwrap().starts_with("# "));
+        let outcome = lines.next().unwrap();
         assert!(
-            lines.next().unwrap().contains("Done when"),
-            "{}: outcome",
+            !outcome.starts_with('#')
+                && ste::sentences(outcome).len() == 1
+                && !outcome.contains("Done when"),
+            "{}: outcome is one sentence of purpose: {outcome}",
             skill.name
         );
         assert!(body.lines().count() < 500, "{}: body line cap", skill.name);

@@ -1,11 +1,11 @@
 ---
 name: coding
-description: Use when implementation, fixes, or behavior-preserving code changes are needed.
+description: Builds the task and proves each behavior change at its public seam. Use when implementation, fixes, or behavior-preserving code changes are needed.
 ---
 
 # Coding
 
-Build the task and nothing else, with proof at the public seam. Done when `## Done` holds.
+Build the task and nothing else, with proof at the public seam.
 
 ## When not to use
 
@@ -112,11 +112,3 @@ does not ask for.
   written rule returns the task. Read the rule first.
 - "This code is clearly useless." -> The fence stands for a reason you have
   not found. Find it first.
-
-## Done
-
-Every behavior change has a seam test that failed before implementation. A
-refactor leaves its tests green and its diff structure only. The documents
-the repository rules bind to the code changed with it. Required checks are
-green at the committed revision. The task is committed under a conventional
-subject.

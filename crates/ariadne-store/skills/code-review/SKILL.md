@@ -1,11 +1,11 @@
 ---
 name: code-review
-description: Use when a diff, specification, hot path, regression or scaling risk needs review.
+description: Judges a branch revision and ends the column with one verdict. Use when a diff, specification, hot path, regression or scaling risk needs review.
 ---
 
 # Code review
 
-Judge the branch revision and end the column with one verdict. Done when the conditions in `## Done` hold.
+Judge the branch revision and end the column with one verdict.
 
 ## When not to use
 
@@ -132,9 +132,3 @@ optional.
 - "This loop looks slow." -> Appearance is not a measurement.
 - "The benchmark improved." -> Different workloads do not support one
   comparison.
-
-## Done
-
-Every Criteria number has a pass or fail line. Every finding names its
-trigger, failure and weight. HEAD stays on the task branch at the
-reviewed revision. The column ended on one step call.

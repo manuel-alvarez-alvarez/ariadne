@@ -299,7 +299,6 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         "Call `complete_step` with the column report.",
         "Else end your turn: Ariadne ends your session.",
         "On a close, where you sit on a task, call `fail_task` with the reason.",
-        "## Done",
     ] {
         assert!(doc.contains(step), "the pr-babysit skill has no {step}");
     }

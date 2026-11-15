@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-11-14
+updated: 2026-11-15
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -321,18 +321,29 @@ written into the system prompt (006), and the lifecycle the seats sit in
     writing the account's real one.
 
 16. Every shipped skill follows this template, in order:
-    frontmatter with `name` and `description`; a title; one outcome line ending with a `Done when` condition;
+    frontmatter with `name` and `description`; a title; one outcome line;
     `## When not to use`; `## Steps`; optional `## Rules`; `## Never`;
-    `## Do not tell yourself`; `## Done`.
+    `## Do not tell yourself`.
     The name matches the directory.
-    The description uses the third person, opens with "Use when", and names triggers alone.
+    The description is two sentences in the third person, under 160
+    characters: what the skill does, then "Use when" and its triggers. The
+    orchestrator staffs from that line through `list_skills`, and a native
+    tool triggers on the same line (rule 15), so both readers get both.
+    The outcome line is one sentence of purpose, with no end condition of
+    its own.
     The exclusion section names a sibling skill where one exists.
-    Steps are numbered and bounded. Each step ends with a `Done when` condition.
+    Steps are numbered and bounded. Each step ends with a `Done when`
+    condition, and the last step's condition ends the skill: no closing
+    section restates them, since a restated condition drifts from its step.
     The optional Rules section has content when present.
     The Never section states what the skill never mutates or calls.
-    Lens and procedure subsections retain their original words.
-    The body stays under 500 lines.
-    `skill_tests/template.rs::every_skill_obeys_the_template` proves the structure.
+    A skill is one file with no reference file beside it, read whole (rule
+    11). A rule that several skills share is stated in each in the same
+    words, and no skill moves a rule between the layers of 006 rule 5.
+    The body stays under 500 lines and within the caps of 006 rule 13.
+    The template is proven by structure and words
+    (`skill_tests/template.rs::every_skill_obeys_the_template`), not by an
+    evaluation with real agents.
 
 ## Acceptance criteria
 
@@ -427,7 +438,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`skill_tests/operate.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - Every shipped skill is named once and describes itself
   (`skill_tests/template.rs::every_shipped_skill_is_named_once_and_describes_itself`),
-  every document is within its cap (`skill_tests/template.rs::skill_size_caps_hold`),
+  every document is within the one skill cap (`skill_tests/template.rs::skill_size_caps_hold`),
   and every shipped workflow stages shipped skills
   (`::every_shipped_workflow_parses_and_stages_shipped_skills`).
 - No skill repeats how a check runs: that is the session rules'
