@@ -32,7 +32,8 @@ pub(super) struct Quiet {
     /// Relaunches spent on this session, which no change of situation gives
     /// back. Bounded by [`SPAWN_RETRY_BUDGET`] like a task's spawn attempts
     /// are: an agent that goes quiet again after every relaunch is not one
-    /// more relaunch away from working.
+    /// more relaunch away from working. The task failed for it gives them
+    /// back, so a retry starts with the whole budget.
     pub(super) relaunches: u32,
 }
 
@@ -92,6 +93,20 @@ impl super::Scheduler {
         if quiet_secs < QUIET_NUDGE_SECS {
             return Ok(());
         }
+        // An agent that asked the user a question and ended its turn is
+        // waiting on the answer, as a planning orchestrator is: the question
+        // is a pending request row, not an attention reason, so the row is
+        // what is read. A turn that never ends is still watched, question or
+        // not.
+        if self.between_turns(session).await
+            && !self
+                .store
+                .pending_session_agent_requests(&session.id)
+                .await?
+                .is_empty()
+        {
+            return Ok(());
+        }
         let done = self.quiet.entry(session.id.clone()).or_default();
         if done.situation != situation {
             done.situation = situation;
@@ -125,13 +140,8 @@ impl super::Scheduler {
             return Ok(());
         }
         // A running agent is inside a turn and is left alone — the relaunch
-        // threshold answers for a turn that never ends. The row says running
-        // from the agent's `session_start` on, so the runtime driving it is
-        // asked too: an agent that came up and was never prompted is between
-        // turns, and left alone it would sit there until the relaunch.
-        if session.status() == SessionStatus::Running
-            && self.launcher.acp.in_turn(&session.id).await != Some(false)
-        {
+        // threshold answers for a turn that never ends.
+        if !self.between_turns(session).await {
             return Ok(());
         }
         info!(session = %session.id, seat = ?session.seat, quiet_secs, "nudging idle agent");
@@ -144,6 +154,14 @@ impl super::Scheduler {
             None => self.hand_prompt(session, resume.to_string()),
         };
         Ok(())
+    }
+
+    /// Whether the agent is between turns. The row says running from the
+    /// agent's `session_start` on, so the runtime driving it is asked too:
+    /// an agent that came up and was never prompted is between turns.
+    async fn between_turns(&self, session: &AgentSession) -> bool {
+        session.status() != SessionStatus::Running
+            || self.launcher.acp.in_turn(&session.id).await == Some(false)
     }
 
     /// The one clock: when this session was last heard from at all.
@@ -229,6 +247,9 @@ impl super::Scheduler {
                 record_taskless_relaunch_give_up(&self.store, session).await;
                 return Ok(());
             };
+            // A retry of the task is a fresh start, so the relaunches go
+            // back with it, as a spawn budget does.
+            self.quiet.remove(&session.id);
             if let Err(e) = self.launcher.kill_session(&session.id).await {
                 warn!(session = %session.id, error = %e, "killing the wedged session failed");
             }
@@ -240,7 +261,7 @@ impl super::Scheduler {
                     &task_id,
                     TaskStatus::Failed,
                     Actor::Daemon,
-                    Some("its agent stopped mid-turn after every relaunch"),
+                    Some("its agent reported nothing after every relaunch"),
                     None,
                 )
                 .await;
