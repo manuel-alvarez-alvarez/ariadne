@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-17
+updated: 2026-11-15
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -55,10 +55,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      its first prompt, whatever its seat (013). They hold the session rules
      first: that Ariadne is reached only through its tools, that a client
      which defers tools loads the ones it needs in one tool search first,
-     when a seat asks the user and how, how few turns to take, how every
-     check runs, the English to write in, and that no text carries a
-     trailer. After the rules come the seat text, picked by the seat, and
-     the index of the skills the session loads (rule 4);
+     when a seat asks the user and how, what turn text is for — a result,
+     a question or a blocker — how few turns to take, how every check runs,
+     the English to write in, and that no text carries a trailer. After the
+     rules come the seat text, picked by the seat, and the index of the
+     skills the session loads (rule 4);
    - the **system prompt**, which is that seat text and that skill index
      again: what a seat owes from its first read to the call that ends its
      work, then the skills this agent was staffed with (017) — for the
@@ -94,9 +95,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
    with the ban on `--no-verify` and `-n`. What a column does — build,
    review, merge, keep a request — is its skill's to say. The `reviewer` seat
-   text is the pull request review session's (029), and the `keeper` seat
-   text is the session's that keeps a request of the user's own asked for
-   by hand (032).
+   text is the pull request review session's (029): the request it reviews,
+   its detached worktree, and that it commits and pushes nothing. It names
+   neither its skill, which the skill index does for every seat, nor the end
+   of its turn, which its briefing and the news prompt each end on. The
+   `keeper` seat text is the session's that keeps a request of the user's
+   own asked for by hand (032).
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. That
@@ -173,9 +177,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    defaults rather than at a save. The kinds are the orchestrator's briefing,
    resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
    `AgentResume` (`ariadne_core::PromptKind`). `AgentResume`, the quiet nudge
-   of a column's agent (009), says four things only: this is not a new
+   of a column's agent (009), says five things only: this is not a new
    request, to check whether the work is done, to make the call that ends
-   the column or go on, and to write no reply about the nudge itself.
+   the column or go on, to ask an open question again, and to write no
+   reply about the nudge itself. `OrchestratorResume` says to ask an open
+   question again too: either nudge starts a turn, and a turn that ends
+   without `wait_for_user` closes every question an earlier turn raised
+   (031 rule 12).
 11. Default texts, shipped skills, workflow documents, session rules and tool
     descriptions use ASD-STE100 Simplified Technical English: one instruction
     to a sentence, the imperative for an instruction, the active voice, at
@@ -192,10 +200,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     refusal or the result string it writes in place of the daemon's own
     JSON. Each is proven with the `ste` module beside the code that builds
     it, rendered with sample values where the line takes any.
-12. STE binds what the agents write too — turn text and visible reasoning,
-    task titles and descriptions, step and task reasons, commits, and pull
-    request text — and that rule lives in the session rules, where no edit
-    of a skill can remove it.
+12. STE binds what the agents write too — turn text, task titles and
+    descriptions, step and task reasons, commits, and pull request text —
+    and that rule lives in the session rules, where no edit of a skill can
+    remove it. An agent's visible reasoning is not bound: nobody reads it as
+    a product, and a constraint on how a model reasons costs it reasoning
+    tokens on every turn for no reader's gain.
 13. Every default text is capped in size, per text and in total, and the caps
     come down to what a rewrite fits in. Moving a cap is a decision argued in
     the test's own documentation, never a way round a failing assertion. The
@@ -367,10 +377,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   No skill repeats any of it
   (`skill_tests/template.rs::each_rule_is_stated_in_exactly_one_briefing`).
 - The quiet nudge says this is not a new request, to check whether the work
-  is done, to make the call that ends the column or go on, and to write no
-  reply about the nudge; the stop rule has the agent seat text as its one
-  owner
-  (`defaults.rs::the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner`).
+  is done, to make the call that ends the column or go on, to ask an open
+  question again, and to write no reply about the nudge; the stop rule has
+  the agent seat text as its one owner
+  (`defaults.rs::the_quiet_nudge_says_five_things_and_the_stop_rule_has_one_owner`).
+  The orchestrator nudge says to ask an open question again too, beside
+  the conversation and the goal under way
+  (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`).
 - `coding` adds a new commit on a return and amends nothing, and no skill
   divides a task
   (`skill_tests/produce.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
