@@ -895,12 +895,12 @@ async fn a_second_ask_that_moves_only_the_skills_restarts_the_live_keeper() {
             babysit(
                 &repo,
                 1,
-                json!({"asked": true, "model": PIN, "skills": ["migration"]}),
+                json!({"asked": true, "model": PIN, "skills": ["research"]}),
             ),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(moved["babysit_skills"], json!(["migration"]));
+    assert_eq!(moved["babysit_skills"], json!(["research"]));
 
     eventually(
         TIMEOUT,
@@ -918,7 +918,7 @@ async fn a_second_ask_that_moves_only_the_skills_restarts_the_live_keeper() {
     .await;
     let launch = h.launch_file(&session.id).expect("a launch file");
     assert!(
-        launch.system_prompt.contains("- migration: "),
+        launch.system_prompt.contains("- research: "),
         "{}",
         launch.system_prompt
     );

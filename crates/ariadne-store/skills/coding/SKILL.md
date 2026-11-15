@@ -9,8 +9,7 @@ Build the task, prove each change by its type, and commit once under the reposit
 
 ## When not to use
 
-Use `migration` when a stored shape changes. Use `documentation` for a
-prose-only task.
+Use `documentation` for a prose-only task.
 
 ## Steps
 

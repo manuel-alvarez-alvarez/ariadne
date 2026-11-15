@@ -79,14 +79,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
    is the column's position in the task's staffing list. Whether a task is
    reviewed, and how it lands, is the workflow's to say, so the orchestrator
    asks the user neither (003).
-4. Ariadne ships a catalog of twelve skills, in four scopes:
+4. Ariadne ships a catalog of eleven skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
    - **produce** — `spec-writing`, `coding`, `documentation`,
      `research`;
    - **review** — `code-review`,
      `architecture-review`, `pr-reviewer`;
-   - **operate** — `migration`, `conflict-resolution`, `merge`,
-     `pr-babysit`.
+   - **operate** — `conflict-resolution`, `merge`, `pr-babysit`.
 
    `pull-request` left the catalog once opening a request became the
    daemon's own tool (`open_pull_request`) rather than an agent's to read a
@@ -109,9 +108,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
    `performance-review` merged into `code-review`: all 7 staffings sat beside `code-review`.
    The absorbing documents keep the procedures in their own sections.
 
-   `debugging` left the catalog by a plain drop, at the user's decision. No
-   skill took over its work, so no staffing is rewritten, and rule 7 takes
-   out its row.
+   `debugging` and `migration` each left the catalog by a plain drop, at the
+   user's decision. No skill took over their work, so no staffing is
+   rewritten, and rule 7 takes out each row.
 5. Each shipped document lives in the code
    (`crates/ariadne-store/skills/<name>/SKILL.md`) and is seeded with a `NULL`
    document. So a reworded skill reaches every database without a migration,
@@ -190,10 +189,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     It runs each touched test file whole after focused checks.
     It writes the simplest code that meets the criteria in its build step.
     It refers prose-only tasks to `documentation` and checks prose changed with code.
-    `migration` serves a change of a stored shape inside a repository: it never
-    edits a released migration, expands first only where old and new callers
-    overlap, proves every row on a copy of real data, and keeps a recovery
-    path. `research` cites a source for every fact and lists what it did not
+    `research` cites a source for every fact and lists what it did not
     check, and `spec-writing` asks one question at a time, names the test
     of every criterion and ends on the orchestrator's agreement. Every review skill
     — `code-review`, `pr-reviewer` and `architecture-review` — writes its
@@ -251,8 +247,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `coding`, `merge` and `pr-babysit` name their own report only as "the
     column report", never a field of it (006 rule 5) — `merge` alongside
     the base branch's sha, `pr-babysit` on a merge; every other produce
-    skill that ends its own column — `migration`,
-    `conflict-resolution`, `documentation`, `research`, `spec-writing` —
+    skill that ends its own column — `conflict-resolution`,
+    `documentation`, `research`, `spec-writing` —
     calls `complete_step` with the column report the same way, and
     `conflict-resolution` returns to the skill that invoked it, and calls
     nothing, where one did.
@@ -501,9 +497,6 @@ written into the system prompt (006), and the lifecycle the seats sit in
   respects repository document layouts, and proves each whole claim with independent values and public interfaces.
   It runs touched test files whole and refers prose-only tasks to `documentation`
   (`skill_tests/produce.rs::coding_routes_changes_and_proves_each_claim`).
-- `migration` never edits a released migration, proves the change on a copy
-  of real data, and carries no live-deploy advice
-  (`skill_tests/produce.rs::migration_never_edits_a_released_migration_and_proves_it_on_a_copy`).
 - `documentation`, `research` and `spec-writing` each name a sibling, and
   `research` and `spec-writing` keep their own proof
   (`skill_tests/produce.rs::each_writing_skill_names_its_sibling_and_its_own_proof`).
