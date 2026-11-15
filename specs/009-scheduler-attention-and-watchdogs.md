@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-10-17
+updated: 2026-11-15
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -101,14 +101,17 @@ the ACP runtime that takes a prompt (021).
     nothing (008, 012).
 14. Relaunches of one session are bounded by the spawn-retry budget of 3
     (`SPAWN_RETRY_BUDGET`). A task whose agent wedges again after every
-    relaunch fails.
+    relaunch fails, with the reason "its agent reported nothing after every
+    relaunch". That failure gives the relaunches back, so a retry of the
+    task starts with the whole budget.
 15. Attention on a session means a human must act. It is raised only while
     the work that session was started for is still its own to do.
 16. The agent of a column that is not current, and an orchestrator of a
     finished goal, are agents nobody is waiting on, and neither raises
     attention.
 17. A session waiting on a person is never nudged and never relaunched: the
-    quiet is the point.
+    quiet is the point. An agent between turns with a pending question is
+    one (rule 43).
 18. A flag raised for the user (`waiting_user`) is not an agent waiting on
     one. A wedged agent carrying it keeps the flag and is still relaunched.
 19. An agent that reported an error is left alone rather than nudged over
@@ -238,6 +241,14 @@ the ACP runtime that takes a prompt (021).
     window (rule 32), so its session is retired and the seat is filled, or the
     death counted, without a tick or a window end. An agent that a kill or a
     relaunch took down sends no such wake: the daemon did that itself.
+43. An agent between turns with a pending `wait_for_user` request (031 rule
+    11) is waiting on the user's answer, as an idle planning orchestrator is
+    (rule 31). It is never nudged, never flagged stalled and never
+    relaunched. The watchdog reads the request row, since the question sets
+    no attention reason. Between turns is the test of rule 11: the row reads
+    idle, or the runtime says no turn is in flight. A turn that never ends
+    with a question pending is still flagged and relaunched. Once the
+    request is answered, withdrawn or expired, the quiet clock applies again.
 
 ## Acceptance criteria
 
@@ -286,7 +297,16 @@ the ACP runtime that takes a prompt (021).
   that keeps reporting is left alone
   (`::a_running_agent_that_keeps_reporting_is_left_alone`), and one that
   wedges after every relaunch fails its task
-  (`::an_agent_that_wedges_after_every_relaunch_fails_its_task`).
+  (`::an_agent_that_wedges_after_every_relaunch_fails_its_task`). A retry
+  of that task resumes the same session with its relaunches back, so its
+  next silence is relaunched, not failed
+  (`::a_retried_task_gets_its_relaunches_back`).
+- An idle agent with a pending question is not nudged, flagged or
+  relaunched past the relaunch threshold, and once the question is
+  withdrawn the same silence is relaunched
+  (`::an_idle_agent_with_a_pending_question_is_left_alone_until_it_closes`).
+  An agent stuck inside a turn with a pending question is still relaunched
+  (`::an_agent_stuck_in_a_turn_with_a_pending_question_is_still_relaunched`).
 - An orchestrator of a finished goal raises no attention
   (`events.rs::an_orchestrator_of_a_finished_goal_raises_no_attention`).
 - A session waiting on a person is never nudged or relaunched

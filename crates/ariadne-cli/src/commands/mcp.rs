@@ -1029,19 +1029,38 @@ pub(crate) mod tests {
             "The whole message. Write it so that the recipient needs no follow-up question."
         ));
         assert!(description("wait_for_user").contains(
-            "Put the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text or your reply."
+            "Ask in `question`, with the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text."
         ));
+        for sentence in [
+            "A later turn that ends without the call closes it.",
+            "Withdraw a pending question before you change it.",
+            "Returns its `id`.",
+        ] {
+            assert!(
+                description("wait_for_user").contains(sentence),
+                "wait_for_user and \"{sentence}\""
+            );
+        }
         assert!(
-            description("wait_for_user")
-                .contains("Write no text after the call, and end the turn.")
+            !description("wait_for_user").contains("Write no text after the call"),
+            "the session rules own the end of the turn"
         );
         assert!(schema("wait_for_user").contains(
             "\"recommendation_reason\":{\"description\":\"Why you recommend that option. Give it only with `recommended_option_id`.\""
         ));
         assert!(schema("submit_review").contains("\"description\":\"Leave it empty.\""));
-        assert!(schema("submit_review").contains(
-            "The severity: P0 is a critical risk, P1 is a proven defect, P2 is optional."
-        ));
+        // A doc comment keeps its line breaks in the schema, so the three
+        // ranks are read one sentence at a time.
+        for rank in [
+            "The rank: P0 is a critical risk to behavior, data or security.",
+            "P1 is a proven defect, an unmet requirement or a rule violation.",
+            "P2 is an optional improvement.",
+        ] {
+            assert!(
+                schema("submit_review").contains(rank),
+                "the Priority doc and \"{rank}\""
+            );
+        }
     }
 
     /// The orchestrator is told the user answers in the console and to ask;
@@ -1310,15 +1329,9 @@ pub(crate) mod tests {
                     "wait_for_user description",
                 ][..],
             ),
-            // The description still carries the old words of these two rules,
-            // until its own task follows the session rules: both spellings
-            // are read as the one rule.
             (
                 "ending a wait",
-                &[
-                    "A later turn that ends without the call closes it.",
-                    "A turn that ends without the call ends the wait.",
-                ][..],
+                &["A later turn that ends without the call closes it."][..],
                 &[
                     "orchestrator session rules",
                     "agent session rules",
@@ -1327,6 +1340,11 @@ pub(crate) mod tests {
                     "wait_for_user description",
                 ][..],
             ),
+            // The orchestration skill still carries the old words of this
+            // rule, until its own task follows the session rules: both
+            // spellings are read as the one rule. The `wait_for_user`
+            // description carries neither: the session rules say when the
+            // turn ends, and the description keeps to what closes a question.
             (
                 "ending the turn after a question",
                 &[
@@ -1338,7 +1356,6 @@ pub(crate) mod tests {
                     "agent session rules",
                     "pull request reviewer session rules",
                     "pull request keeper session rules",
-                    "wait_for_user description",
                 ][..],
             ),
             (

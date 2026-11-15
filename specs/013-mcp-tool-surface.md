@@ -54,26 +54,31 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    `wait_for_user` with a one-line hint and the question in its `question`
    field, with options where the user picks one and a recommended option:
    the console draws that question whole (031 rule 11), so the agent does
-   not write it again in its reply, and the tool description says so. The
+   not write it again in its reply. The
    session rules of every seat and the tool description also keep the
    options, the recommendation and its reason out of the question text: they
    go in `options`, `recommended_option_id` and the optional
    `recommendation_reason`, whose schema doc is "Why you recommend that
    option. Give it only with `recommended_option_id`." The console shows
-   each of them once. Its
+   each of them once. The `wait_for_user` description is the short form of
+   this rule (006 rule 5): ask in `question`, keep the three out of its text,
+   a later turn without the call closes the question, withdraw a pending
+   question before changing it, and the call returns the request's `id`,
+   which `withdraw_wait_for_user` takes as `request_id`. It says nothing of
+   the end of the turn: the session rules own that. Its
    `hint` is one line for the Needs attention list, and the daemon refuses
    one that is longer than a line or than 100 characters (031 rule 11), so
    the question cannot move into the hint. The rules say what keeps a
    question open and what closes it, in those words: one call in a turn
    keeps it open, and a later turn that ends without the call closes it.
-   They no longer ban text after the call: an orchestrator read that ban
-   beside "a turn that ends without the call ends the wait" as "text ends
-   the wait", called `wait_for_user` three times for one question, and
-   wrote the question out again as text; Claude Code ends every turn with
-   text, and the console pins an open question above the input (031 rule
-   12), so text after the call hides nothing. Repeating the hint keeps the
-   same request, while console input answers the newest pending request of
-   that session (031 rule 12).
+   Neither the rules nor the description bans text after the call any
+   more: an orchestrator read that ban beside "a turn that ends without
+   the call ends the wait" as "text ends the wait", called `wait_for_user`
+   three times for one question, and wrote the question out again as text;
+   Claude Code ends every turn with text, and the console pins an open
+   question above the input (031 rule 12), so text after the call hides
+   nothing. Repeating the hint keeps the same request, while console input
+   answers the newest pending request of that session (031 rule 12).
     `withdraw_wait_for_user` takes the flag down again. The daemon answers a
     withdrawal `204`, with no body, and the tool reads that as success
     rather than a decoding failure (014).
@@ -217,6 +222,26 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
     A tool description that names an empty field says it is left out: a model
     with no rank has no `rank` field.
+15. Every tool description says, in this order and only where the tool
+    needs it: what the tool does, when to call it and when not, the field
+    the agent fills by name, and what the result holds. It stays under 300
+    characters, since four seats read their listing on every session and
+    small local models read it too. A parameter text says what the value
+    is and where it comes from. So `complete_step` and `fail_step` say "in
+    `reason`", `get_comment`, `reply_comment` and `resolve_thread` say "by
+    its `comment_id`", `get_pull_request` says to call it on a task only
+    after `open_pull_request`, `mark_ready_for_review` says it is accepted
+    only where `role` is `author` (032 rule 17), `submit_review` says one
+    round, once, and never with no new finding, every write of rule 14
+    names what it returns, and `get_task`, `list_tasks`, `get_pull_request`
+    and `list_comments` name the fields of their result. The ticket format
+    stays the `orchestration` skill's: `create_task` points to "the ticket
+    your skill lays out" and restates no section. The `Priority` doc
+    carries the three ranks of the `pr-reviewer` skill in its words. These
+    came from the refusals real sessions got: `complete_step` with no
+    `reason`, `get_comment` with no `comment_id`, `get_pull_request` on a
+    task with no request, and a `wait_for_user` repeat under one hint with
+    another question.
 
 ## Acceptance criteria
 
@@ -248,7 +273,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - `complete_step`'s description names the column report's five fields in
   order and its line cap; `fail_step`'s description names the return
   report's finding fields
-  (`tools.rs::complete_step_and_fail_step_define_their_reports`).
+  (`tools.rs::complete_step_and_fail_step_define_their_reports`). No
+  description runs past 300 characters
+  (`tools.rs::no_tool_is_described_at_length`).
 - `switch_session` is offered to the orchestrator alone
   (`tools.rs::switch_session_is_offered_to_the_orchestrator_alone`), posts
   the pin to the session's switch endpoint
@@ -284,13 +311,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   - `open_pull_request` says it "returns" the URL, not "answers" it.
   - The `send_message` `body` doc is "The whole message. Write it so that the
     recipient needs no follow-up question."
-  - `wait_for_user` says "Put the options, your pick and its reason in
-    `options`, `recommended_option_id` and `recommendation_reason`, not in
-    its text or your reply." and "Write no text after the call, and end the
-    turn." (031), and its schema lists `recommendation_reason` with its doc.
+  - `wait_for_user` says "Ask in `question`, with the options, your pick
+    and its reason in `options`, `recommended_option_id` and
+    `recommendation_reason`, not in its text.", "A later turn that ends
+    without the call closes it.", "Withdraw a pending question before you
+    change it." and "Returns its `id`." (031), never "Write no text after
+    the call", and its schema lists `recommendation_reason` with its doc.
   - The `submit_review` `body` doc is "Leave it empty."
-  - The `Priority` doc is "The severity: P0 is a critical risk, P1 is a
-    proven defect, P2 is optional."
+  - The `Priority` doc is "The rank: P0 is a critical risk to behavior,
+    data or security. P1 is a proven defect, an unmet requirement or a rule
+    violation. P2 is an optional improvement."
 - `report_pull_request` with `ready: true` and no `head_sha` is refused with
   "Pass `head_sha` with `ready: true`: the head you checked.", and with
   `approved: true` and no `head_sha` with "Pass `head_sha` with
