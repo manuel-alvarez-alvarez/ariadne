@@ -107,6 +107,7 @@ workflow pr-review
     Review the request and each later push until it merges or closes.
     skills: pr-reviewer
     ranks: balanced, frontier
+    gate: request-merged
 ```
 
 The workflow shows in the catalog and is edited like any other: you can
@@ -115,7 +116,7 @@ and its ranks. Its shape stays fixed, and a save that breaks it is refused
 with a 400 that names the rule:
 
 - exactly one column, `review`;
-- no gate;
+- `gate: request-merged`;
 - `pr-reviewer` among the column's skills;
 - `ranks` of `balanced`, `frontier` or both.
 
@@ -127,8 +128,9 @@ already open keeps the band it started with.
 No goal you create, and no repository default, can use `pr-review`: the
 goal and repository pickers leave it out, and the daemon refuses it. Asking
 for a review again on a request that has one open keeps the same goal and
-moves the model and skills onto its agent. A merge or a close completes the
-goal; **Stop review** cancels it, and the next ask makes a new goal.
+moves the model and skills onto its agent. A merge completes the goal. A close
+without merging fails the task and leaves the goal active. **Stop review**
+cancels it, and the next ask makes a new goal.
 
 ## The `pr-babysit` workflow
 
@@ -146,6 +148,7 @@ workflow pr-babysit
     Keep the request until it merges or closes.
     skills: pr-babysit
     ranks: balanced, frontier
+    gate: request-merged
 ```
 
 It shows in the catalog and is edited like `pr-review`: you can change the
@@ -154,9 +157,9 @@ ranks. A save that breaks its shape is refused with a 400 that names the
 rule:
 
 - exactly one column, `babysit`;
-- no gate;
+- `gate: request-merged`;
 - `pr-babysit` among the column's skills;
-- `ranks` of `fast`, `balanced` or both.
+- `ranks` of `balanced`, `frontier` or both.
 
 The ranks decide which models a babysit accepts. A model you ranked outside
 the band, or never ranked, is refused with a 400 that names the band. A goal
@@ -164,7 +167,8 @@ already open keeps the band it started with.
 
 No goal you create, and no repository default, can use `pr-babysit`. Asking
 again on a request that is already babysat keeps the same goal and moves
-the model and skills onto its agent. A merge or a close completes the goal;
+the model and skills onto its agent. A merge completes the goal. A close
+without merging fails the task and leaves the goal active.
 **Stop babysit** cancels it, and the next ask makes a new goal. A request a
 task already keeps is refused with a 409, so one request never has two
 keepers; a review of the same request is independent and has a goal of its

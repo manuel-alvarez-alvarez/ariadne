@@ -211,7 +211,7 @@ pub fn pr_operation_workflow(operation: ariadne_core::workflow::PrOperation) -> 
 }
 
 /// Why `workflow` cannot serve `operation`, where it cannot: it keeps
-/// exactly one column with no gate, that column loads the operation's own
+/// exactly one column with the request-merged gate, that column loads the operation's own
 /// skill, and its band names only the ranks the operation allows —
 /// `balanced` and `frontier` for a review, `fast` and `balanced` for a
 /// babysit. The column's title, description, extra skills and band stay
@@ -245,9 +245,6 @@ pub fn pr_operation_shape_error(
     if step.id != column {
         return Some(format!("the one column of {name} is {column}"));
     }
-    if step.gate.is_some() {
-        return Some(format!("the {column} column has no gate"));
-    }
     if !step.skills.iter().any(|s| s == skill) {
         return Some(format!("the {column} column must load {skill}"));
     }
@@ -255,6 +252,9 @@ pub fn pr_operation_shape_error(
         return Some(format!(
             "the {column} column allows the {allowed_text} ranks only"
         ));
+    }
+    if step.gate != Some(ariadne_core::workflow::StepGate::RequestMerged) {
+        return Some(format!("the {column} column requires gate: request-merged"));
     }
     None
 }
@@ -1356,6 +1356,20 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn pr_operations_require_a_merged_request_gate() {
+        use ariadne_core::workflow::PrOperation;
+        for (operation, name, column, skill) in [
+            (PrOperation::Review, "pr-review", "review", "pr-reviewer"),
+            (PrOperation::Babysit, "pr-babysit", "babysit", "pr-babysit"),
+        ] {
+            let document =
+                format!("workflow {name}\n {column}[Column]\n skills: {skill}\n ranks: balanced\n");
+            let workflow = ariadne_core::workflow::parse(&document).unwrap();
+            assert!(pr_operation_shape_error(operation, &workflow).is_some());
+        }
+    }
+
     /// The shipped review workflow is the shape its operation requires, and
     /// a document that breaks the shape is named.
     #[test]
@@ -1383,7 +1397,7 @@ pub(crate) mod tests {
             ),
             (
                 "workflow pr-review\n review[Review]\n skills: pr-reviewer\n ranks: balanced\n gate: committed\n",
-                "no gate",
+                "request-merged",
             ),
             (
                 "workflow pr-review\n review[Review]\n skills: coding\n ranks: balanced\n",
@@ -1403,7 +1417,7 @@ pub(crate) mod tests {
             assert!(error.contains(reason), "{document}: {error}");
         }
         let edited = parse(
-            "workflow pr-review\n review[Look hard]\n Read it twice.\n skills: pr-reviewer, research\n ranks: frontier\n",
+            "workflow pr-review\n review[Look hard]\n Read it twice.\n skills: pr-reviewer, research\n ranks: frontier\n gate: request-merged\n",
         );
         assert_eq!(pr_operation_shape_error(PrOperation::Review, &edited), None);
     }
@@ -1433,8 +1447,8 @@ pub(crate) mod tests {
                 "is babysit",
             ),
             (
-                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n ranks: fast\n gate: request-merged\n",
-                "no gate",
+                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n ranks: balanced\n gate: committed\n",
+                "request-merged",
             ),
             (
                 "workflow pr-babysit\n babysit[B]\n skills: coding\n ranks: fast\n",
@@ -1454,7 +1468,7 @@ pub(crate) mod tests {
             assert!(error.contains(reason), "{document}: {error}");
         }
         let edited = parse(
-            "workflow pr-babysit\n babysit[Keep it]\n Watch it.\n skills: pr-babysit, research\n ranks: balanced\n",
+            "workflow pr-babysit\n babysit[Keep it]\n Watch it.\n skills: pr-babysit, research\n ranks: balanced\n gate: request-merged\n",
         );
         assert_eq!(
             pr_operation_shape_error(PrOperation::Babysit, &edited),

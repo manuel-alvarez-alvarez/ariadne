@@ -360,7 +360,7 @@ every other kebab-case word in it; the wire spells the same gate
     operation (`defaults::pr_operation_of`); `pr-review` serves `review`
     and `pr-babysit` serves `babysit`. Its definition shows in the catalog
     and is edited like any other, and its shape is checked at every save
-    (`defaults::pr_operation_shape_error`): exactly one column with no gate,
+    (`defaults::pr_operation_shape_error`): exactly one column with the `request-merged` gate,
     that loads the operation's own skill, and whose `ranks` name only what
     the operation allows. For `review` the column is `review`, the skill is
     `pr-reviewer` and the ranks are `balanced`, `frontier` or both. For
@@ -371,7 +371,9 @@ every other kebab-case word in it; the wire spells the same gate
     repository default can name an operation workflow: a goal create or a
     repository write that does answers 400. A goal of the operation, and
     its one task, are 029's to start and to end, for a babysit as for a
-    review (032 rule 7b).
+    review (032 rule 7b). An upgrade adds the gate to custom operation
+    workflows and active goal snapshots, preserving completed snapshots
+    (`store.rs::operation_gate_upgrade_preserves_custom_settings_and_history`).
 
 ## Acceptance criteria
 
