@@ -10,7 +10,7 @@ fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
         ),
         (
             "code-review",
-            "Run each required check with no reusable result, once for this verdict.",
+            "Run the tests, the lint and the format check of the files the diff changes, once for this verdict.",
         ),
         (
             "pr-babysit",

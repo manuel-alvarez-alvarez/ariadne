@@ -24,14 +24,18 @@ Use `pr-reviewer` when the diff is an open forge request.
    Done when you can name what each claim covers.
 3. Pin the scope to the diff. With a prior SHA from the conversation, run
    `git merge-base --is-ancestor <sha> HEAD`. Where HEAD is after it, run
-   `git diff <sha>..HEAD`. Otherwise, use `get_diff`.
+   `git diff <sha>..HEAD`. Otherwise, use `get_diff`. On a later round,
+   read the diff since your reviewed revision for new findings. Judge
+   every criterion on the whole change, from `get_diff`.
 
    Done when the diff is not empty.
-4. List the checks the diff requires. Reuse evidence only when it covers
-   the reviewed revision and a required check. Run each required check
-   with no reusable result, once for this verdict.
+4. Run the tests, the lint and the format check of the files the diff
+   changes, once for this verdict. Reuse a reported result only for a
+   check outside those files. Reuse it only where the report names its
+   command, the reviewed revision and the result. A reported result
+   stands for no check you ran.
 
-   Done when every required check has a reused or fresh result.
+   Done when every check the verdict needs has a result you hold.
 5. Map every hunk of the diff to its purpose. Read code outside the diff
    only to judge a risk you can name.
 
@@ -50,11 +54,23 @@ Use `pr-reviewer` when the diff is an open forge request.
    Done when every finding has a weight.
 8. Write the verdict under each axis's own heading, with one pass or fail
    line per Criteria number. Open it with pass or fail and the reviewed
-   revision. End it with each behavior you did not judge.
+   revision. End it with each behavior you did not judge. A criterion you
+   did not judge fails. A category that does not apply never counts as
+   passed. Write it in this shape:
+
+   ```
+   <pass|fail> at <sha>
+   ## Repository conventions
+   <pass|fail>: <finding, or none>
+   ## Acceptance criteria
+   <n>. <pass|fail>: <proof, or finding>
+   Not judged: <behavior, or none>
+   ```
 
    Done when every Criteria number has one line.
-9. On a must-fix finding, call `fail_step` with the return report. Else call
-   `complete_step` with the verdict and the optional findings.
+9. Open each must-fix finding with `Trigger:`. On a must-fix finding, call
+   `fail_step` with the return report. Else call `complete_step` with the
+   verdict and the optional findings.
 
    Done when `git rev-parse HEAD` prints the reviewed revision and the
    column has ended.
@@ -63,8 +79,10 @@ Use `pr-reviewer` when the diff is an open forge request.
 
 - Write the verdict first. Add no preamble and no closing summary.
 - A must-fix finding breaks a criterion or a written repository rule.
-- A criterion you did not judge fails. A category that does not apply
-  never counts as passed.
+- Judge the ticket as it reads now. A criterion about an event outside
+  the repository passes on the column report's record of it.
+- A request that no criterion holds is no finding. Send it to the
+  orchestrator.
 - Judge the task, not your preferred design.
 - Evidence proves a check ran. Inspect code and enforce both axes
   yourself.
@@ -114,7 +132,7 @@ optional.
 - Run no command that moves HEAD or a ref: no switch, reset, rebase
   or commit.
 - Never change code to see whether a test fails.
-- Never rerun a check only to confirm the column report.
+- Never rerun a check whose result you already hold for this verdict.
 - Never fail the step on an optional finding.
 
 ## Do not tell yourself
@@ -124,6 +142,8 @@ optional.
 - "The task passes, so conventions do not matter." -> A correct feature
   can still damage the repository.
 - "The report says it is fixed." -> The report is a claim. Read the code.
+- "The user asked for this, so I fail the step." -> A request reaches you
+  as a criterion. Judge the ticket.
 - "The diff is small, so it is safe." -> Classify by risk, not by size.
 - "The task asked for a review, so I name a gap." -> A sound change gets
   no invented gap.

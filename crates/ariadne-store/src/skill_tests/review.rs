@@ -5,9 +5,21 @@ use super::*;
 /// left the develop agent's fix commit off the branch, found only in the
 /// reflog. It pins the revision HEAD already holds, reads the column
 /// report as unverified claims before it pins the scope, and pins the
-/// scope before it decides which checks to run. It reuses only evidence
-/// for the reviewed revision and a required check. A must-fix finding ends
-/// the step on `fail_step`; an optional one never does.
+/// scope before it decides which checks to run. It is an independent
+/// gate: it runs the tests, the lint and the format check of the changed
+/// files itself, and a reported result stands only for a check outside
+/// them, named with its command, revision and result. In November 2026,
+/// 114 of 213 verdicts reused the author's check lines and 37 ran a
+/// check; the one reviewer that ran the changed test file found two red
+/// tests the author never ran. The ticket is the contract: the reviewer
+/// cannot read the channel, so a criterion about an event outside the
+/// repository passes on the column report's record, and a request no
+/// criterion holds is no finding — three verdicts flipped on one sha
+/// over approval it could not see. A later round judges every criterion
+/// on the whole change, and the verdict takes one literal shape, since
+/// a prose shape was compressed to "Criteria 3–10 not fully judged". A
+/// must-fix finding opens with `Trigger:` and ends the step on
+/// `fail_step`; an optional one never does.
 #[test]
 fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
     let text = unwrapped(default_skill_document("code-review").unwrap());
@@ -24,7 +36,9 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
     let pinned = at("Run `git rev-parse HEAD` and `git branch --show-current`.");
     let claims = at("Read the column report as unverified claims, not proof.");
     let scope = at("Pin the scope to the diff.");
-    let checks = at("Run each required check with no reusable result, once for this verdict.");
+    let checks = at(
+        "Run the tests, the lint and the format check of the files the diff changes, once for this verdict.",
+    );
     let ends = at("`git rev-parse HEAD` prints the reviewed revision");
     assert!(
         pinned < claims && claims < scope && scope < checks && checks < ends,
@@ -40,17 +54,26 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         "Name the sha as the reviewed revision.",
         "the work is off the branch. That is a must-fix finding.",
         "`git merge-base --is-ancestor <sha> HEAD`",
-        "Reuse evidence only when it covers the reviewed revision and a required check.",
+        "On a later round, read the diff since your reviewed revision for new findings.",
+        "Judge every criterion on the whole change, from `get_diff`.",
+        "Reuse a reported result only for a check outside those files.",
+        "Reuse it only where the report names its command, the reviewed revision and the result.",
+        "A reported result stands for no check you ran.",
         "Judge the diff against the Out of scope section.",
         "with one pass or fail line per Criteria number",
         "A criterion you did not judge fails.",
         "End it with each behavior you did not judge.",
+        "Write it in this shape:",
         "A must-fix finding breaks a criterion or a written repository rule.",
+        "Judge the ticket as it reads now.",
+        "A criterion about an event outside the repository passes on the column report's record of it.",
+        "A request that no criterion holds is no finding. Send it to the orchestrator.",
         "Judge each test by reading its setup, action and assertions.",
         "Run no command that moves HEAD or a ref: no switch, reset, rebase or commit.",
         "Never change code to see whether a test fails.",
-        "Never rerun a check only to confirm the column report.",
+        "Never rerun a check whose result you already hold for this verdict.",
         "Never fail the step on an optional finding.",
+        "Open each must-fix finding with `Trigger:`.",
         "On a must-fix finding, call `fail_step` with the return report.",
         "Else call `complete_step` with the verdict and the optional findings.",
         "Done when `git rev-parse HEAD` prints the reviewed revision and the column has ended.",
@@ -61,6 +84,27 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         text.matches("`fail_step`").count() + text.matches("`complete_step`").count(),
         2,
         "the code-review skill names its step calls in one place"
+    );
+    // The verdict shape is a literal template in step 8, and the weights
+    // sit with it. The fence is read off the raw document: `unwrapped`
+    // drops fenced lines.
+    let document = default_skill_document("code-review").unwrap();
+    assert!(
+        document.contains(
+            "   ```\n   <pass|fail> at <sha>\n   ## Repository conventions\n   <pass|fail>: <finding, or none>\n   ## Acceptance criteria\n   <n>. <pass|fail>: <proof, or finding>\n   Not judged: <behavior, or none>\n   ```"
+        ),
+        "the code-review skill does not give the verdict as a literal template"
+    );
+    let shape = at("Write it in this shape:");
+    let weights = at("A category that does not apply never counts as passed.");
+    let rules = at("## Rules");
+    assert!(
+        weights < shape && shape < rules,
+        "the code-review skill states the verdict shape or its weights outside step 8"
+    );
+    assert!(
+        text.contains("\"The user asked for this, so I fail the step.\""),
+        "the code-review skill does not tell the reviewer a request is no finding"
     );
 }
 

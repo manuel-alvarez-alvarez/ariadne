@@ -192,11 +192,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
     it causes, and the criterion, behavior or written rule it breaks. A
     finding with no nameable trigger is downgraded to its optional weight
     and marked unverified, and every optional finding of one review is
-    capped at five. Each pins its scope to the diff, reuses evidence that
-    already covers the reviewed revision — the column report's, for the two
-    task-column skills, and its own prior round's, for `pr-reviewer` —
-    rather than re-deriving it, reads outside the diff only to judge a risk
-    it can name, and edits no file.
+    capped at five. Each pins its scope to the diff, reuses evidence only
+    where it covers the reviewed revision — `architecture-review` the
+    column report's, `pr-reviewer` its own prior round's, and `code-review`
+    a reported result for a check outside the files the diff changes
+    alone, since it runs those files' tests, lint and format check itself
+    (006 rule 6) — reads outside the diff only to judge a risk it can
+    name, and edits no file.
 
     One column has one verdict. `code-review` ends the column: it fails the
     step on a must-fix finding, completes it otherwise, and never fails it
@@ -209,9 +211,18 @@ written into the system prompt (006), and the lifecycle the seats sit in
     in place, pins the sha that `git rev-parse HEAD` prints as the reviewed
     revision, treats a missing branch as a must-fix finding, and ends with
     HEAD on the task branch at that sha. It reads the column report as
-    unverified claims, reruns no check only to confirm it, gives one pass
-    or fail line per `## Criteria` number, and judges the diff against
-    `## Out of scope`. It carries two lenses. A spec change is judged for
+    unverified claims, reruns no check whose result it already holds,
+    gives one pass or fail line per `## Criteria` number in one literal
+    verdict shape, and judges the diff against `## Out of scope`. On a
+    later round it reads the diff since its reviewed revision for new
+    findings and judges every criterion on the whole change. The ticket
+    is its contract: it judges the ticket as it reads now, passes a
+    criterion about an event outside the repository on the column
+    report's record of it, and treats a request no criterion holds as no
+    finding, sent to the orchestrator — the reviewer cannot read the
+    channel, so what the user told the author reaches it only through
+    the ticket and that report. Each must-fix finding of its return
+    report opens with `Trigger:`. It carries two lenses. A spec change is judged for
     ambiguity, testability, duplication and scope. A hot-path change is
     judged by a measurement with its workload, never by appearance, and a
     cost with no measurement is optional. `pr-reviewer` never approves and
