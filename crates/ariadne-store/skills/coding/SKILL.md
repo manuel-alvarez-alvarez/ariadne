@@ -9,8 +9,8 @@ Build the task, prove each change by its type, and commit once under the reposit
 
 ## When not to use
 
-Use `debugging` when the cause of a failure is unknown. Use `migration` when
-a stored shape changes. Use `documentation` for a prose-only task.
+Use `migration` when a stored shape changes. Use `documentation` for a
+prose-only task.
 
 ## Steps
 

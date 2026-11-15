@@ -4705,7 +4705,7 @@ async fn an_edit_replaces_the_whole_column_staffing() {
         vec![
             NewTaskAgent::new(
                 "develop",
-                ["coding", "debugging"],
+                ["coding", "research"],
                 pin("codex-acp:gpt-5.6-terra"),
             ),
             NewTaskAgent::new("review", Vec::<String>::new(), default_pin()),
@@ -4765,7 +4765,7 @@ async fn an_edit_replaces_the_whole_column_staffing() {
             (
                 "develop".to_string(),
                 "codex-acp:gpt-5.6-terra".to_string(),
-                vec!["coding".to_string(), "debugging".to_string()]
+                vec!["coding".to_string(), "research".to_string()]
             ),
             (
                 "review".to_string(),
@@ -6290,7 +6290,7 @@ async fn a_staffing_names_the_goals_columns_once_each_and_may_leave_some_for_lat
 
     // Empty skills inherit the column's; named skills are the agent's own.
     let mut named = step_agents();
-    named[0].skills = vec!["coding".into(), "debugging".into()];
+    named[0].skills = vec!["coding".into(), "research".into()];
     let task = store.create_task(new(named)).await.unwrap();
     let skills_of = async |step: &str| -> Vec<String> {
         let agent = agent_of(&store, &task, step).await;
@@ -6302,7 +6302,7 @@ async fn a_staffing_names_the_goals_columns_once_each_and_may_leave_some_for_lat
             .map(|s| s.name)
             .collect()
     };
-    assert_eq!(skills_of("develop").await, ["coding", "debugging"]);
+    assert_eq!(skills_of("develop").await, ["coding", "research"]);
     assert_eq!(skills_of("review").await, ["code-review"]);
     assert_eq!(skills_of("merge").await, ["merge"]);
     assert!(store.unstaffed_columns(&task).await.unwrap().is_empty());

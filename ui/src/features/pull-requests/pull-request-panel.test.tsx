@@ -17,7 +17,7 @@ import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { pull } from "@/test/pull-request"
 import { PullRequestPanel } from "./pull-request-panel"
 
-const SKILLS = ["code-review", "debugging", "pr-reviewer", "pr-babysit", "orchestration"].map(
+const SKILLS = ["code-review", "research", "pr-reviewer", "pr-babysit", "orchestration"].map(
   (name) => ({
     name,
     seat:
@@ -167,14 +167,14 @@ it("starts and stops a review of a Dependabot request without a review assignmen
   ).toBe("false")
   expect(within(skills).queryByRole("button", { name: "orchestration" })).toBeNull()
   await user.click(within(skills).getByRole("button", { name: "code-review" }))
-  await user.click(within(skills).getByRole("button", { name: "debugging" }))
+  await user.click(within(skills).getByRole("button", { name: "research" }))
   await user.click(within(dialog).getByRole("button", { name: "Start review" }))
 
   await waitFor(() => expect(writes).toHaveLength(1))
   expect(await writes[0]?.json()).toEqual({
     asked: true,
     model: "stub:review-model",
-    skills: ["code-review", "debugging"],
+    skills: ["code-review", "research"],
   })
   // The dialog closes, and the panel opens the review's session once it is up.
   await waitFor(() =>

@@ -96,7 +96,7 @@ fn no_skill_names_a_timer_or_a_poll() {
 /// the outside guidance holds a skill to. One number per skill, rather than
 /// a budget per skill, lets a skill grow for a reason of its own without a
 /// change here first. The total still bounds the catalog: 70,000 is
-/// thirteen skills at about 5,400 each, so no one skill can take the
+/// twelve skills at about 5,800 each, so no one skill can take the
 /// whole room. The description cap belongs to the catalog test above.
 #[test]
 fn skill_size_caps_hold() {
@@ -164,7 +164,7 @@ fn no_skill_repeats_what_every_session_is_told_by_the_mcp_server() {
 
 #[test]
 fn every_skill_obeys_the_template() {
-    assert_eq!(BUILTIN_SKILLS.len(), 13);
+    assert_eq!(BUILTIN_SKILLS.len(), 12);
     assert_eq!(
         MERGED_SKILLS,
         [

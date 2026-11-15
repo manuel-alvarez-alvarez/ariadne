@@ -11,7 +11,7 @@ A conflict is two intents in one file.
 
 ## When not to use
 
-Use `merge` when no conflict stops the landing. Use `debugging` when a check fails and no conflict is open.
+Use `merge` when no conflict stops the landing.
 
 ## Steps
 
