@@ -202,14 +202,18 @@ fn coding_routes_changes_and_proves_each_claim() {
 
 /// `documentation`, `research` and `spec-writing` each send neighboring
 /// work to a sibling by name. `research` cites a source for every fact and
-/// names what it did not check, and `spec-writing` asks one question at a
-/// time and names the test of every criterion.
+/// names what it did not check. `spec-writing` sends the orchestrator its
+/// open questions as one list, names the test of every criterion and marks
+/// each test that does not exist yet, and commits the spec once after the
+/// orchestrator agrees to it: its code does not exist yet, so a task that
+/// changes code and spec together is `coding`'s, and the exclusion names it.
 #[test]
 fn each_writing_skill_names_its_sibling_and_its_own_proof() {
     for (name, sibling) in [
         ("documentation", "`spec-writing`"),
         ("research", "`spec-writing`"),
         ("spec-writing", "`documentation`"),
+        ("spec-writing", "`coding`"),
     ] {
         let document = unwrapped(default_skill_document(name).unwrap());
         let exclusions = document
@@ -227,10 +231,23 @@ fn each_writing_skill_names_its_sibling_and_its_own_proof() {
     for (name, phrase) in [
         ("research", "Cite the source of every fact"),
         ("research", "what you did not check"),
-        ("spec-writing", "Ask one question at a time."),
+        (
+            "spec-writing",
+            "Send every open question to the orchestrator in one `send_message`.",
+        ),
         ("spec-writing", "Name the test that proves it"),
+        ("spec-writing", "The coding task writes that test."),
+        ("spec-writing", "Mark each test that does not exist yet"),
         ("spec-writing", "every criterion names a test"),
         ("spec-writing", "the orchestrator has agreed to the spec"),
+        (
+            "spec-writing",
+            "Commit the spec once, under the repository's commit rules.",
+        ),
+        (
+            "spec-writing",
+            "Use when a goal needs a spec before its code exists.",
+        ),
     ] {
         let document = unwrapped(default_skill_document(name).unwrap());
         assert!(

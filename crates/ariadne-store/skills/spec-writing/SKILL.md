@@ -1,47 +1,53 @@
 ---
 name: spec-writing
-description: Writes what the system does as claims a reader can test. Use when a goal has no specification.
+description: Writes the spec that later tasks build against, as claims with a test each. Use when a goal needs a spec before its code exists.
 ---
 
 # Spec writing
 
-Write what the system does, so that a reader can test every claim.
+Write what the system will do, so that a reader can test every claim.
 
 ## When not to use
 
-Use `documentation` when the page teaches a reader software that exists.
-Use `research` when the goal asks which option to pick.
+Use `coding` when the code exists or lands in the same task: it changes the
+spec in its commit. Use `documentation` when the page teaches a reader
+software that exists. Use `research` when the goal asks which option to pick.
 
 ## Steps
 
 1. Read the goal and the code it touches. List what you do not know.
 
    Done when each unknown is written as a question.
-2. Ask the orchestrator about the unknowns with `send_message`. Ask one
-   question at a time. Give the options and your pick. Read the answer
-   before the next question.
+2. Read the repository's spec rules and the specs already there. Where
+   there are none, add the path and the format to your questions.
 
-   Done when no question is open.
-3. Write the scope. Name what is in it. Name what is out of it, and say
-   where that belongs instead.
+   Done when you can name the format, or the question that settles it.
+3. Send every open question to the orchestrator in one `send_message`.
+   Give each question its options and your pick. The orchestrator asks the
+   user.
+
+   Done when every question has an answer.
+4. Write the scope in that format. Name what is in it. Name what is out of
+   it, and say where that belongs instead.
 
    Done when the scope names its boundaries.
-4. Write the behavior as numbered claims. State one claim per sentence.
+5. Write the behavior as numbered claims. State one claim per sentence.
 
    Done when the behavior is numbered.
-5. Write one acceptance criterion per claim. Name the test that proves it:
-   its file and its name.
+6. Write one acceptance criterion per claim. Name the test that proves it:
+   its file and its name. The coding task writes that test. Mark each test
+   that does not exist yet, in the form the repository uses for an unbuilt
+   part.
 
-   Done when every claim has a criterion and every criterion names a test.
-6. Follow the format of the specs already in the repository. Where there
-   are none, agree a path and a format with the orchestrator first.
-
-   Done when the format matches the repository.
+   Done when every criterion names a test and every unbuilt test is marked.
 7. Send the finished spec to the orchestrator with `send_message`. Ask
    it to agree.
 
    Done when the orchestrator has agreed to the spec.
-8. Call `complete_step` with the column report.
+8. Commit the spec once, under the repository's commit rules.
+
+   Done when the branch holds the spec in one commit.
+9. Call `complete_step` with the column report.
 
    Done when the report has been submitted.
 
