@@ -2029,58 +2029,254 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
     w.make_resumable(&w.task, &session).await;
 
     let sched = w.scheduler();
-    // Two relaunches out of the budget of three, each one wedging again.
-    // Each is waited out to the agent actually reporting, not merely to the
-    // stamp changing: a next pass's own `launched_ago` would otherwise land
-    // while the previous relaunch's report is still draining, and that
-    // report's own later writes would clobber it back to silence nobody
-    // measures.
-    for relaunch in 1..=2 {
-        w.launched_ago(&session, RELAUNCH_SECS + 60).await;
-        let launched = w.launched_at(&session).await;
-        sched.task(&w.task);
-        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
-            w.relaunched(&session, &launched).await
-        })
-        .await;
-    }
-    assert_eq!(
-        w.store.get_task(&w.task.id).await.unwrap().status(),
-        TaskStatus::InProgress,
-        "a task whose agent is being put back on its feet is still going"
-    );
+    w.wedge_until_failed(&sched, &session).await;
+}
 
-    // And it wedges once more.
-    w.launched_ago(&session, RELAUNCH_SECS + 60).await;
-    let launched = w.launched_at(&session).await;
+/// A retry is a fresh start for the agent as well as the task. The watchdog
+/// that failed it gives its relaunches back, as a spawn budget is given back,
+/// so the retried task's agent is put back on its feet at its next silence
+/// rather than failed again at the first one.
+#[tokio::test]
+async fn a_retried_task_gets_its_relaunches_back() {
+    let w = World::active().await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.make_resumable(&w.task, &session).await;
+    let sched = w.scheduler();
+    w.wedge_until_failed(&sched, &session).await;
+    // The agent had spoken after its last launch, as a live one answers its
+    // nudges, so the retry resumes this row rather than spawning afresh
+    // (009 rule 23): the row whose relaunches were spent.
+    w.backdate(&["last_activity_at"], &session, RELAUNCH_SECS)
+        .await;
+
+    let before = w.launched_at(&session).await;
+    let _: serde_json::Value = w
+        .json(
+            common::post_json(
+                &format!("/v1/tasks/{}/retry", w.task.id),
+                serde_json::json!({}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
     sched.task(&w.task);
-    eventually(TIMEOUT, "the task to be failed", async || {
-        w.store.get_task(&w.task.id).await.unwrap().status() == TaskStatus::Failed
+    eventually(TIMEOUT, "the retried task's agent to be back", async || {
+        w.relaunched(&session, &before).await
     })
     .await;
     assert_eq!(
-        w.launched_at(&session).await,
-        launched,
-        "the agent is not started a fourth time"
+        w.sessions_of(&w.task.id).await.len(),
+        1,
+        "the retry resumes the session the watchdog gave up on"
     );
+
+    // Silent once more, past the relaunch threshold.
+    w.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    let launched = w.launched_at(&session).await;
+    sched.task(&w.task);
+    eventually(TIMEOUT, "the retried agent to be relaunched", async || {
+        w.relaunched(&session, &launched).await
+    })
+    .await;
     assert_eq!(
-        w.session_status(&session).await,
-        SessionStatus::Exited,
-        "and it is not left running under a failed task"
+        w.store.get_task(&w.task.id).await.unwrap().status(),
+        TaskStatus::InProgress,
+        "the retried task is not failed at its first silence"
     );
-    // A task nobody is coming back to carries why, whichever watchdog gave up
-    // on it.
-    let ended = w.store.list_task_transitions(&w.task.id).await.unwrap();
-    let reason = ended
-        .iter()
-        .rev()
-        .find(|t| t.to_status == TaskStatus::Failed.as_str())
-        .and_then(|t| t.reason.clone())
-        .expect("the task says why it failed");
-    assert!(
-        reason.contains("stopped mid-turn after every relaunch"),
-        "{reason}"
+}
+
+/// An agent that asked the user a question and ended its turn is waiting on
+/// the answer, not wedged. The question is a pending request row and no
+/// attention reason, so the watchdog reads the row: the agent is not nudged,
+/// not flagged and not relaunched, however long the user takes. Once the
+/// question closes, the same silence is watched again.
+#[tokio::test]
+async fn an_idle_agent_with_a_pending_question_is_left_alone_until_it_closes() {
+    let w = World::active().await;
+    let asked = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.make_resumable(&w.task, &asked).await;
+    let opened: serde_json::Value = w
+        .json(
+            common::as_session(
+                &format!("/v1/sessions/{}/agent-requests", asked.id),
+                &asked.id,
+                serde_json::json!({"summary": "Agree the purpose first."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let request_id = opened["id"].as_str().expect("a request id").to_string();
+    w.idle_for(&asked, RELAUNCH_SECS + 60).await;
+    // A second task's agent, idle as long and asking nothing: its relaunch
+    // says the pass over the asking one is over.
+    let control_task = w.extra_task("control").await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
+    w.make_resumable(&control_task, &control).await;
+    w.idle_for(&control, RELAUNCH_SECS + 60).await;
+    let launched = [w.launched_at(&asked).await, w.launched_at(&control).await];
+
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    sched.task(&control_task);
+    eventually(
+        TIMEOUT,
+        "the agent asking nothing to be relaunched",
+        async || w.relaunched(&control, &launched[1]).await,
+    )
+    .await;
+    assert_eq!(
+        w.prompts_to(&asked).len(),
+        0,
+        "an agent waiting on the user's answer is not nudged"
     );
+    assert_eq!(w.attention(&asked).await, None, "nor flagged stalled");
+    assert_eq!(
+        w.launched_at(&asked).await,
+        launched[0],
+        "nor killed out from under its question"
+    );
+
+    // The agent withdraws the question, and the silence is its own again.
+    let (status, body) = w
+        .send(common::as_session(
+            &format!("/v1/sessions/{}/agent-requests/{request_id}", asked.id),
+            &asked.id,
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::NO_CONTENT,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    w.idle_for(&asked, RELAUNCH_SECS + 60).await;
+    sched.task(&w.task);
+    eventually(
+        TIMEOUT,
+        "the agent with no question left to be relaunched",
+        async || w.relaunched(&asked, &launched[0]).await,
+    )
+    .await;
+}
+
+/// A question does not shelter a turn that never ends. An agent that asked
+/// the user something and then sat inside its turn, silent, is wedged, and
+/// the relaunch threshold still answers for it.
+#[tokio::test]
+async fn an_agent_stuck_in_a_turn_with_a_pending_question_is_still_relaunched() {
+    let w = World::active().await;
+    // The agent holds the turn it is handed open until the test ends. Both
+    // scripts keep the conversation the relaunch resumes.
+    let resumable = || {
+        let mut script = common::acp::script();
+        script["stored_sessions"] = serde_json::json!(["uuid-1234", "stub-session"]);
+        script
+    };
+    let hold = w.dir.path().join("held-turn");
+    let mut script = resumable();
+    script["prompts"] =
+        serde_json::json!([{"wait_for": hold.display().to_string(), "updates": []}]);
+    w.agent.reprogram(script);
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.make_resumable(&w.task, &session).await;
+    w.launcher
+        .acp
+        .send_prompt(&session.id, "Work on it.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the agent inside its turn", async || {
+        hold.with_extension("reached").exists()
+    })
+    .await;
+    // The question is raised inside the turn that then never ends.
+    let _: serde_json::Value = w
+        .json(
+            common::as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                serde_json::json!({"summary": "Agree the purpose first."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    // The agent put back on its feet ends its turns, so its report is what
+    // says the relaunch is done.
+    w.agent.reprogram(resumable());
+    w.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    let launched = w.launched_at(&session).await;
+
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    eventually(TIMEOUT, "the wedged agent to be relaunched", async || {
+        w.relaunched(&session, &launched).await
+    })
+    .await;
+    assert_eq!(
+        w.store.get_task(&w.task.id).await.unwrap().status(),
+        TaskStatus::InProgress,
+        "a first relaunch is a remedy, not the end of the task"
+    );
+}
+
+impl World {
+    /// Wedge the task's agent until the watchdog fails the task: two
+    /// relaunches out of the budget of three, each wedging again, and then
+    /// the silence that spends the last of it.
+    async fn wedge_until_failed(&self, sched: &Sched, session: &AgentSession) {
+        let w = self;
+        // Two relaunches out of the budget of three, each one wedging again.
+        // Each is waited out to the agent actually reporting, not merely to the
+        // stamp changing: a next pass's own `launched_ago` would otherwise land
+        // while the previous relaunch's report is still draining, and that
+        // report's own later writes would clobber it back to silence nobody
+        // measures.
+        for relaunch in 1..=2 {
+            w.launched_ago(session, RELAUNCH_SECS + 60).await;
+            let launched = w.launched_at(session).await;
+            sched.task(&w.task);
+            eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
+                w.relaunched(session, &launched).await
+            })
+            .await;
+        }
+        assert_eq!(
+            w.store.get_task(&w.task.id).await.unwrap().status(),
+            TaskStatus::InProgress,
+            "a task whose agent is being put back on its feet is still going"
+        );
+
+        // And it wedges once more.
+        w.launched_ago(session, RELAUNCH_SECS + 60).await;
+        let launched = w.launched_at(session).await;
+        sched.task(&w.task);
+        eventually(TIMEOUT, "the task to be failed", async || {
+            w.store.get_task(&w.task.id).await.unwrap().status() == TaskStatus::Failed
+        })
+        .await;
+        assert_eq!(
+            w.launched_at(session).await,
+            launched,
+            "the agent is not started a fourth time"
+        );
+        assert_eq!(
+            w.session_status(session).await,
+            SessionStatus::Exited,
+            "and it is not left running under a failed task"
+        );
+        // A task nobody is coming back to carries why, whichever watchdog gave up
+        // on it.
+        let ended = w.store.list_task_transitions(&w.task.id).await.unwrap();
+        let reason = ended
+            .iter()
+            .rev()
+            .find(|t| t.to_status == TaskStatus::Failed.as_str())
+            .and_then(|t| t.reason.clone())
+            .expect("the task says why it failed");
+        assert!(
+            reason.contains("reported nothing after every relaunch"),
+            "{reason}"
+        );
+    }
 }
 
 /// The orchestrator outlives the plan. Once the goal it planned is being
