@@ -319,25 +319,51 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     violation. P2 is optional. What a finding must name to stand at P0 or
     P1, the downgrade to P2 and its cap, the diff as scope, and the verdict
     written first are 017 rule 11's to state, for `pr-reviewer` as for the
-    other four review skills. It posts only new inline findings. It creates
+    other review skills. It posts only new inline findings. It creates
     no summary, status table, summary comment, or summary draft. It records
     the reviewed revision and evidence that covers its current head. It
-    approves in Ariadne (rule 15a) only after a complete review, with
-    required checks green and no open P0 or P1; an open P2 does not block
-    it. It withdraws the approval when it finds a blocker later. It never
-    gives a forge approval.
+    never gives a forge approval, and it names no Ariadne approval: the
+    tool of rule 15a stays, and the shipped skill does not call it.
 
-    Each new finding has a title, its trigger, a failure and a fix. Where the fix replaces the commented line alone, a ```suggestion
+    A round runs in this order: the diff, the checks, the threads it
+    opened, the hunt. The checks are the tests, the lint and the format
+    check of the files the diff changes; the `checks` field of
+    `get_pull_request` stands for every other check. It reproduces each
+    failed forge check the diff can cause, and one the diff causes is a P1.
+
+    A P0 or P1 needs a proof. A code defect is proven by a run that
+    triggers it at the reviewed revision, with any code the proof needs in
+    a scratch file under `/tmp`. A text defect is proven by the two quoted
+    lines that disagree. A finding with no proof is P2.
+
+    Each new finding has a title and a body of four paragraphs: `Trigger:`,
+    `Failure:`, `Proof:` and `Fix:`. Where the diff causes a defect on a
+    line it does not show, the comment sits on the shown line that causes
+    it, and the body names the real file and line. A defect the diff does
+    not cause is no finding; the result text names it. Where the fix replaces the commented line alone, a ```suggestion
     block under the fix holds the new text of that one line, and a fix
     across lines, across files, or one a test must prove stays prose. On a
     later round it settles each thread it opened before it hunts, reading
-    the author's reply: where the defect is actually gone at the head it
+    the last reply: where the defect is actually gone at the head it
     resolves silently; where the last reply claims a fix (`Fixed in <sha>: ...`) and the defect survives, it
     gets one reply, `Still there: <why>.`, never posted twice in the same
-    thread; any other answered reply that leaves the defect in place —
+    thread; a fix claimed in a revision the worktree does not hold gets
+    nothing, since the push arrives as news; a question gets one short
+    answer, once per question, and a reply that argues with no new
+    question gets none; a reply that proves the finding wrong gets one
+    `Withdrawn: <why>.` reply and the thread is resolved; any other
+    answered reply that leaves the defect in place —
     `Not changed: ...` or any other — gets nothing back and stays open for
     the user; a thread nobody has
     answered gets nothing; it waits.
+
+    A draft gets the same round. News of a head equal to the reviewed
+    revision needs no tool call. Where the head moves during a round, the
+    session reports the revision it reviewed. The round ends on one result
+    in the turn text, in a literal shape: `Reviewed <sha>:` with the verdict
+    and the count, or `nothing new`, then one line per finding, settled
+    thread, check, failed tool call and defect outside the diff. That text
+    is all the user reads of a round that posts nothing.
 
 18. A review posted, or a request reported ready, notifies nobody by
     itself: the approval and the merge stay the user's to give in their own
@@ -423,13 +449,17 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
 
 - The skill is within its caps, names the three priorities, permits
-  `request_changes` for P0 and P1, approves in Ariadne alone and only with
-  no open P0 or P1, lets a P2 stay, withdraws on a later blocker, never
+  `request_changes` for P0 and P1, names no approval, never
   gives a forge approval or lands a request, and
-  reuses verification evidence only for the reviewed head. A `Not changed:`
+  reuses its evidence only for the reviewed revision. It runs the checks
+  of the changed files before it settles its threads, and settles them
+  before it hunts. A P0 or P1 has a proof, a finding with none is P2, and
+  the body has four labelled paragraphs. A finding the diff causes on a
+  line it does not show sits on the shown line that causes it. A `Not changed:`
   reply gets no reply back, while a claimed fix that fails verification gets
-  one `Still there: <why>.` reply; a small local fix carries a `suggestion`
-  block:
+  one `Still there: <why>.` reply, a question gets one answer and a finding
+  proven wrong is withdrawn; a small local fix carries a `suggestion`
+  block. The round ends on the literal result shape:
   `skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `skill_tests/template.rs::skill_size_caps_hold`.
 - A request of mine is no work and gets no review until the user asks; the
