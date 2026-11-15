@@ -16,8 +16,8 @@ Use `code-review` when the question is correctness, tests or conventions.
 1. Pin the scope to the diff. Take the reviewed revision from
    `git rev-parse HEAD`. List each boundary the diff changes: a new
    dependency, a moved responsibility or a new stored value. Where the
-   list is empty, go to step 5 with
-   `Architecture: pass: no boundary changed`. Reuse the column report's
+   list is empty, go to step 5. Beside
+   `code-review`, the line is `Architecture: pass: no boundary changed`. Reuse the column report's
    evidence only where it covers the reviewed revision.
 
    Done when each changed boundary is listed, or the list is empty.
@@ -37,12 +37,16 @@ Use `code-review` when the question is correctness, tests or conventions.
    conviction in.
 
    Done when every must-fix finding names its trigger, rule and cost.
-5. Add the findings to the one verdict of the skill loaded beside this
-   one. Add one line under the Repository conventions heading of that
-   verdict: `Architecture: <pass|fail>: <finding, or none>`. A must-fix
-   finding fails that verdict. That skill ends the column.
+5. Add the findings to the verdict of the skill loaded beside this one.
+   - Beside `code-review`: add one line under the Repository conventions
+     heading of its one verdict:
+     `Architecture: <pass|fail>: <finding, or none>`. A must-fix finding
+     fails that verdict. That skill ends the column.
+   - Beside `pr-reviewer`: write each finding as an inline comment by the
+     rules of that skill. Add no line. Where there is no finding, say
+     nothing.
 
-   Done when the findings are in one verdict.
+   Done when the findings are in the verdict of the skill beside this one.
 
 ## Rules
 

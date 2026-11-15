@@ -213,7 +213,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
     step on a must-fix finding, completes it otherwise, and never fails it
     on an optional one. `architecture-review` adds its findings to the one
     verdict of the skill loaded beside it, as one `Architecture` line
-    under the repository conventions heading, and names no step call: of
+    under the repository conventions heading beside `code-review`, and as
+    inline comments with no line and no clean-review text beside
+    `pr-reviewer`. It names no step call: of
     its 23 staffings over 158 goals, none stood alone. It lists the
     boundaries the diff changes before it maps any, and a diff that
     changes none gets the pass line with no map. `code-review` moves no ref and

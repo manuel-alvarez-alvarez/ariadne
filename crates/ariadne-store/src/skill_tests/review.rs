@@ -160,12 +160,13 @@ fn architecture_review_adds_to_the_one_verdict_of_its_column() {
         );
     }
     for rule in [
-        "Add the findings to the one verdict of the skill loaded beside this one.",
-        "Add one line under the Repository conventions heading of that verdict: `Architecture: <pass|fail>: <finding, or none>`.",
+        "Add the findings to the verdict of the skill loaded beside this one.",
+        "Beside `code-review`: add one line under the Repository conventions heading of its one verdict: `Architecture: <pass|fail>: <finding, or none>`.",
         "A must-fix finding fails that verdict.",
         "That skill ends the column.",
+        "Beside `pr-reviewer`: write each finding as an inline comment by the rules of that skill. Add no line. Where there is no finding, say nothing.",
         "List each boundary the diff changes: a new dependency, a moved responsibility or a new stored value.",
-        "Where the list is empty, go to step 5 with `Architecture: pass: no boundary changed`.",
+        "Where the list is empty, go to step 5. Beside `code-review`, the line is `Architecture: pass: no boundary changed`.",
         "Map each listed boundary: its modules, owners and dependency directions.",
         "- Abstraction: a general layer with one caller, or unrelated callers forced through one.",
         "Run no command that moves HEAD or a ref: no switch, reset, rebase or commit.",
