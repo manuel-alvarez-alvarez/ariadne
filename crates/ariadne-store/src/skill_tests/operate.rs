@@ -335,8 +335,7 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         "Keep every commit others added.",
         "Follow `conflict-resolution` where either stops on a conflict.",
         "Its document is `../conflict-resolution/SKILL.md`, relative to the directory of this one.",
-        "After a merge, push only a fast-forward.",
-        "The task seat runs `git push <remote> HEAD:<head>`. The keeper runs the push command of its briefing.",
+        "After a merge, push only a fast-forward: `git push <remote> HEAD:<head>`.",
         "After a rebase, run `git push --force-with-lease=<head>:<sha> <remote> HEAD:<head>`, with `<sha>` the fetched tip of `<head>`.",
         "Report a refused push; do not push again.",
         "Never push to another branch.",
@@ -348,12 +347,12 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         "Call `get_pull_request` again. Where `head_sha` differs from the head you read or pushed, start again at step 2.",
         "Settled is not merged.",
         "Use `merge` when the workflow lands the task with no request.",
-        "On a merge, the task seat updates `<base>` in the primary checkout:",
+        "On a merge, update `<base>` in the primary checkout:",
         "The primary checkout is the `Repo:` path of your briefing.",
         "Call `complete_step` with the column report.",
         "A call refused because the task already ended needs nothing more: end your turn.",
-        "On a close, the task seat calls `fail_task` with the reason.",
-        "The keeper ends its turn on either: Ariadne ends its session.",
+        "On a close, call `fail_task` with the reason.",
+        "On a merge or a close it skips step 12 and ends its turn: Ariadne ends its session.",
         "`<head>` is the request's head branch: on the task seat, the task branch.",
     ] {
         assert!(doc.contains(step), "the pr-babysit skill has no {step}");
@@ -430,8 +429,8 @@ fn the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks() {
     for rule in [
         "Take the route of the `A failed check` rule for each failed check the news or `failed_checks` names.",
         "Reproduce the check at the head.",
-        "Where the request's own change causes the failure, fix it in a batch. Where it does not, fix nothing.",
-        "The task seat sends the check and its output to the orchestrator with `send_message`.",
+        "Where the request's own change causes the failure, fix it in a batch. Where it does not, fix nothing: report it as the two-seats rule says.",
+        "A failure the request did not cause: the task seat sends it to the orchestrator with `send_message`.",
         "The keeper asks the user once with `wait_for_user`.",
         "Never push to another branch.",
         "\"The check is red, so I fix the suite.\" -> Fix only what the request's change breaks.",
@@ -443,24 +442,44 @@ fn the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks() {
 
 /// One document serves two seats, so it names them once: the agent of
 /// a task's `pr` column and the keeper asked for by hand run the same
-/// steps, and the three differences — step 1, the push target and the
-/// ending — are a rule, not a branch inside a step.
+/// steps, and what differs — step 1, the push command, the ending and
+/// who hears a failure the request did not cause — is one rule, never a
+/// branch inside a step. The steps section is read whole for a seat
+/// word, so a step that grows a branch again fails here whatever its
+/// wording.
 #[test]
 fn the_pr_babysit_skill_names_its_two_seats_once() {
-    let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+    let document = default_skill_document(PR_BABYSIT_SKILL).unwrap();
+    let doc = unwrapped(document);
     for rule in [
         "### The two seats",
         "The task seat is the agent of a task's `pr` column.",
         "The keeper is the session the user asked to keep a request by hand. Both run the same steps.",
         "Step 1 is the task seat's alone: a keeper's request is already open.",
-        "The push target: the task seat pushes `HEAD:<head>`; the keeper runs the push command of its briefing.",
-        "The ending: the task seat calls `complete_step` or `fail_task`. The keeper has no task tool and no `Repo:` line, so it ends its turn.",
+        "The push: both push `HEAD:<head>`. The keeper's briefing spells that command with its remote; run it as given.",
+        "The ending: the keeper has no task tool and no `Repo:` line.",
+        "A failure the request did not cause: the task seat sends it to the orchestrator with `send_message`. The keeper asks the user once with `wait_for_user`.",
     ] {
         assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
     }
-    assert!(
-        !doc.contains("where you sit on a task"),
-        "the pr-babysit skill still branches on the seat inside a step"
+    let steps = document
+        .split_once("## Steps\n")
+        .unwrap()
+        .1
+        .split("\n## ")
+        .next()
+        .unwrap()
+        .to_lowercase();
+    for seat in ["seat", "keeper", "where you sit"] {
+        assert!(
+            !steps.contains(seat),
+            "the pr-babysit skill branches on a seat inside a step: {seat}"
+        );
+    }
+    assert_eq!(
+        doc.matches("### The two seats").count(),
+        1,
+        "the pr-babysit skill names its seats more than once"
     );
 }
 

@@ -367,9 +367,9 @@ every other kebab-case word in it; the wire spells the same gate
     format check of the files it changed; a base update with no fix runs
     no check, since the hook runs at the push and the forge's checks run
     on the head. After a
-    merge, it pushes only when the update fast-forwards: the task's agent
-    pushes `HEAD:<head>`, the request's head branch, and a keeper runs
-    the push command of its briefing (032 rule 4). A rebase replaces
+    merge, it pushes only when the update fast-forwards, `HEAD:<head>`,
+    the request's head branch, on either seat; a keeper's briefing spells
+    that command with its remote (032 rule 4). A rebase replaces
     the head branch's pushed commits, so after one it pushes that
     branch alone with `--force-with-lease` pinned to the tip of it that
     it fetched, the lease and the target both naming the head branch, since

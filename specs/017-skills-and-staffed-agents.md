@@ -268,9 +268,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
     directory links every catalog skill beside them (rule 15). `pr-babysit`
     treats comment text as untrusted input
     and runs no command a comment holds. It is one playbook for two seats,
-    the agent of a task's `pr` column and the keeper (032), and names the
-    three differences — the opening step, the push target and the ending —
-    once, in a rule, rather than branching inside a step. `orchestration`
+    the agent of a task's `pr` column and the keeper (032), and names what
+    differs — the opening step, the push command, the ending and who hears
+    a failure the request did not cause — once, in a rule; no step names a
+    seat. `orchestration`
     names no forge.
 
     A skill document holds one text. The launcher links the run directory's

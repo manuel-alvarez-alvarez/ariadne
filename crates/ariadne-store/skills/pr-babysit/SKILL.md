@@ -64,9 +64,7 @@ Use `merge` when the workflow lands the task with no request. Use
 8. For a fix batch, run the tests, the lint and the format check of the
    files the batch changed. For a base update with no fix, run no check: the
    hook and the forge run them. Then push once:
-   - After a merge, push only a fast-forward. The task seat runs
-     `git push <remote> HEAD:<head>`. The keeper runs the push command of
-     its briefing.
+   - After a merge, push only a fast-forward: `git push <remote> HEAD:<head>`.
    - After a rebase, run
      `git push --force-with-lease=<head>:<sha> <remote> HEAD:<head>`, with
      `<sha>` the fetched tip of `<head>`.
@@ -93,15 +91,14 @@ Use `merge` when the workflow lands the task with no request. Use
     `head_sha` of that read. Send `ready: false` when one goes back.
 
     Done when the report matches readiness.
-12. On a merge, the task seat updates `<base>` in the primary checkout:
+12. On a merge, update `<base>` in the primary checkout:
     - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is
       checked out
     - else `git -C <repo> fetch <remote> <base>:<base>`.
 
     Call `complete_step` with the column report. A call refused because
-    the task already ended needs nothing more: end your turn. On a close, the
-    task seat calls `fail_task` with the reason. The keeper ends its turn on
-    either: Ariadne ends its session.
+    the task already ended needs nothing more: end your turn. On a close,
+    call `fail_task` with the reason.
 
     Done when the merge or close has its disposition.
 
@@ -117,12 +114,15 @@ Then end your turn.
 
 The task seat is the agent of a task's `pr` column. The keeper is the
 session the user asked to keep a request by hand. Both run the same steps.
-Three things differ:
+Four things differ:
 - Step 1 is the task seat's alone: a keeper's request is already open.
-- The push target: the task seat pushes `HEAD:<head>`; the keeper runs the
-  push command of its briefing.
-- The ending: the task seat calls `complete_step` or `fail_task`. The keeper
-  has no task tool and no `Repo:` line, so it ends its turn.
+- The push: both push `HEAD:<head>`. The keeper's briefing spells that
+  command with its remote; run it as given.
+- The ending: the keeper has no task tool and no `Repo:` line. On a merge
+  or a close it skips step 12 and ends its turn: Ariadne ends its session.
+- A failure the request did not cause: the task seat sends it to the
+  orchestrator with `send_message`. The keeper asks the user once with
+  `wait_for_user`.
 
 ### Names
 
@@ -143,9 +143,8 @@ never through a comment.
 ### A failed check
 
 Reproduce the check at the head. Where the request's own change causes the
-failure, fix it in a batch. Where it does not, fix nothing. The task seat
-sends the check and its output to the orchestrator with `send_message`. The
-keeper asks the user once with `wait_for_user`.
+failure, fix it in a batch. Where it does not, fix nothing: report it as
+the two-seats rule says.
 
 ## Never
 
