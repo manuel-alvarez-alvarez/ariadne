@@ -14,7 +14,11 @@ fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
         ),
         (
             "pr-babysit",
-            "Run the checks the batch affects, then push once.",
+            "For a fix batch, run the tests, the lint and the format check of the files the batch changed.",
+        ),
+        (
+            "pr-babysit",
+            "For a base update with no fix, run no check: the hook and the forge run them.",
         ),
         (
             "coding",
@@ -89,7 +93,7 @@ fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
         ),
         (
             "pr-babysit",
-            "Never amend a pushed commit outside this rebase.",
+            "Never amend a pushed commit outside the rebase of step 7.",
         ),
     ] {
         let document = unwrapped(default_skill_document(name).unwrap());

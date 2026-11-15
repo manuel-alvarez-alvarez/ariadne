@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-11-08
+updated: 2026-11-15
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -213,8 +213,16 @@ reads behind them ([026](026-pull-requests.md)).
     It also accepts the request's keeper when the integration login opened the request.
     It refuses another author's request with 403, including requests opened by bots.
     Every other seat and a call without a session receive 403.
-    The `pr-babysit` skill calls the tool on the head it read when every check is green.
-    A draft needs this call before the keeper checks approvals.
+    The `pr-babysit` skill calls the tool on the head it read when every check is green,
+    then reads the request again, since the forge restarts the checks on the mark.
+    A draft needs this call before readiness can hold: the ready report
+    requires `draft: false` beside `checks: success`, `mergeable: clean` and
+    no unanswered comment (030 rule 10). A keeper's other differences from
+    the task's agent — no opening step, the briefing's push command, and a
+    turn that ends on the merge or the close with no task call — are the
+    skill's own two-seats rule, stated once (017 rule 11). A failed check
+    that the request's own change does not cause is fixed by no keeper: it
+    asks the user once with `wait_for_user` (030 rule 10).
 
 ## Acceptance criteria
 
@@ -327,8 +335,14 @@ reads behind them ([026](026-pull-requests.md)).
 - Keepers receive 403 for other authors:
   `pull_request_babysit.rs::asking_keeps_another_authors_request_until_the_merge`,
   `::asking_keeps_a_dependabot_request_until_the_merge`.
-- The skill marks checked drafts ready, only where its role is `author`:
+- The skill marks checked drafts ready, only where its role is `author`,
+  reads the request again after the mark, and reports ready on the forge's
+  own fields rather than an approvals list:
   `skill_tests/operate.rs::the_keeper_marks_a_draft_ready_on_the_checked_head`.
+- The skill names its two seats once, and a keeper fixes only what the
+  request's own change breaks:
+  `skill_tests/operate.rs::the_pr_babysit_skill_names_its_two_seats_once`,
+  `::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`.
 
 ## Sources
 

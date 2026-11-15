@@ -316,43 +316,56 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
     for step in [
         "On your first turn, with no request open, do step 1.",
         "With one already open, start at step 2.",
-        "On each later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.",
+        "On each later turn, Ariadne sends news: do steps 2 to 12. Then end your turn.",
         "`get_pull_request`",
         "Note its `head_sha`.",
-        "A merged or closed request goes to step 8.",
+        "A merged or closed request goes to step 12.",
         "`list_comments` with `unanswered_only`",
-        "The repository's history rules choose the branch update.",
-        "Fetch the base and task branch, then integrate before the checks.",
-        "A task-branch linear-history rule requires `git rebase <remote>/<base>`.",
-        "Where merges are allowed, run `git merge --no-edit <remote>/<base>`.",
-        "Push the task branch. Call `open_pull_request`.",
+        "The repository's history rules choose the branch update:",
+        "Bring the base in before the checks. Run `git fetch <remote> <base> <head>`.",
+        "Where those rules require a linear request branch in words, run `git rebase <remote>/<base>`.",
+        "By default, run `git merge --no-edit <remote>/<base>`.",
+        "Push the task branch: `git push <remote> HEAD:<head>`. Call `open_pull_request`.",
         "repository's commit conventions",
         "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
         "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
-        "Run the checks the batch affects, then push once.",
-        "Never amend a pushed commit outside this rebase.",
+        "For a fix batch, run the tests, the lint and the format check of the files the batch changed.",
+        "For a base update with no fix, run no check: the hook and the forge run them. Then push once:",
+        "Never amend a pushed commit outside the rebase of step 7.",
         "Keep every commit others added.",
         "Follow `conflict-resolution` where either stops on a conflict.",
+        "Its document is `../conflict-resolution/SKILL.md`, relative to the directory of this one.",
         "After a merge, push only a fast-forward.",
-        "After a rebase, run `git push --force-with-lease=<branch>:<sha> <remote> HEAD:<branch>`, with `<sha>` the fetched tip.",
+        "The task seat runs `git push <remote> HEAD:<head>`. The keeper runs the push command of its briefing.",
+        "After a rebase, run `git push --force-with-lease=<head>:<sha> <remote> HEAD:<head>`, with `<sha>` the fetched tip of `<head>`.",
         "Report a refused push; do not push again.",
-        "Force-push no other way or branch.",
+        "Never push to another branch.",
+        "Never force-push outside the rebase of step 7. Never force-push another branch.",
         "Call `report_pull_request` only when readiness changes.",
+        "Ready is one read with `draft: false`, `checks: success`, `mergeable: clean` and no unanswered comment of the other side.",
         "`ready: true` with the `head_sha`",
         "`ready: false` when one goes back",
-        "Read the head again first. A head other than the one you read or pushed is news: go back to step 2.",
+        "Call `get_pull_request` again. Where `head_sha` differs from the head you read or pushed, start again at step 2.",
         "Settled is not merged.",
         "Use `merge` when the workflow lands the task with no request.",
-        "On a merge, where you sit on a task, update `<base>` in the primary checkout:",
+        "On a merge, the task seat updates `<base>` in the primary checkout:",
+        "The primary checkout is the `Repo:` path of your briefing.",
         "Call `complete_step` with the column report.",
-        "Else end your turn: Ariadne ends your session.",
-        "On a close, where you sit on a task, call `fail_task` with the reason.",
+        "A call refused because the task already ended needs nothing more: end your turn.",
+        "On a close, the task seat calls `fail_task` with the reason.",
+        "The keeper ends its turn on either: Ariadne ends its session.",
+        "`<head>` is the request's head branch: on the task seat, the task branch.",
     ] {
         assert!(doc.contains(step), "the pr-babysit skill has no {step}");
     }
     assert!(
-        doc.find("integrate before the checks") < doc.find("Run the checks the batch affects"),
+        doc.find("Bring the base in before the checks")
+            < doc.find("For a fix batch, run the tests, the lint and the format check"),
         "the pr-babysit skill checks the batch before it integrates the base"
+    );
+    assert!(
+        !doc.contains("HEAD:<branch>") && !doc.contains("--force-with-lease=<branch>"),
+        "the pr-babysit skill pushes a `<branch>` that the keeper's local branch does not name"
     );
     assert!(
         !doc.contains("--force ") && !doc.contains("push -f"),
@@ -364,12 +377,14 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
 /// Each inline review comment of the other side gets one reply, in one
 /// of three shapes: a fix with its commit or a kept line with its
 /// reason, or a short answer to a question. A thanks gets none, a
-/// follow-up in an answered thread gets a new answer, and a reviewer
-/// reply that keeps a finding open gets no second try — the user
-/// decides. A comment on the conversation gets the same answer, once
-/// per comment. A suggestion block the agent accepts is applied
-/// rather than rewritten; one it does not accept gets a kept line
-/// instead. No unrelated forge discussion or code change is added.
+/// follow-up in an answered thread gets a new answer, and a reviewer's
+/// `Still there:` gets one more try, verified at the head — then the
+/// user decides, since the reviewer never posts it twice in one thread.
+/// A comment on the conversation gets the same answer, once per
+/// comment. A suggestion block the agent accepts is applied rather
+/// than rewritten; one it does not accept gets a kept line instead. No
+/// unrelated forge discussion or code change is added, and no status
+/// comment exists: readiness goes through the report alone.
 #[test]
 fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
     let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
@@ -380,17 +395,73 @@ fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
         "A question: give one short answer.",
         "Thanks or an acknowledgement: reply nothing.",
         "A follow-up ask in a thread you answered: a new ask. Act on it.",
-        "A reviewer reply that keeps a finding open: no second try. The user decides.",
+        "A reply that opens with `Still there:`: verify it at the head.",
+        "Where the defect is real, fix it once more in the next batch. Else reply `Not changed: <why>.` once. After that, the user decides.",
         "A comment on the conversation: answer it the same way, once per comment.",
         "A suggestion block you accept: apply it.",
         "Else reply `Not changed: <why>.`",
         "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
         "Commit only what a comment or a failed check asks for.",
         "Leave every thread open.",
-        "Post no new thread, summary or top-level comment, except steps 3 and 6's replies.",
+        "Post no new thread, summary or top-level comment, except steps 3 and 8's replies.",
+        "`reply_comment` is the only post. It has three forms:",
+        "- A fix: `Fixed in <sha>: <what changed>.` - A kept line: `Not changed: <why>.` - A question: one short answer, with no prefix.",
+        "No status comment exists.",
+        "Readiness goes through `report_pull_request`, never through a comment.",
     ] {
         assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
     }
+    assert!(
+        !doc.contains("no second try"),
+        "the pr-babysit skill still refuses the one more try on `Still there:`"
+    );
+}
+
+/// A failed check has one route, and the route is the request's own
+/// change: a failure it causes is fixed in a batch, and any other —
+/// the base, a flaky test, the forge — is fixed by nobody here. The
+/// task seat hands it to the orchestrator and the keeper asks the user
+/// once. The one live keeper fixed five source files for a build break
+/// and then pushed a validator fix to `main` from its keep worktree,
+/// and a task agent reached for the forge CLI to rerun a job.
+#[test]
+fn the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks() {
+    let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+    for rule in [
+        "Take the route of the `A failed check` rule for each failed check the news or `failed_checks` names.",
+        "Reproduce the check at the head.",
+        "Where the request's own change causes the failure, fix it in a batch. Where it does not, fix nothing.",
+        "The task seat sends the check and its output to the orchestrator with `send_message`.",
+        "The keeper asks the user once with `wait_for_user`.",
+        "Never push to another branch.",
+        "\"The check is red, so I fix the suite.\" -> Fix only what the request's change breaks.",
+        "\"The base moved, so I run every check.\" -> The hook runs them at the push.",
+    ] {
+        assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
+    }
+}
+
+/// One document serves two seats, so it names them once: the agent of
+/// a task's `pr` column and the keeper asked for by hand run the same
+/// steps, and the three differences — step 1, the push target and the
+/// ending — are a rule, not a branch inside a step.
+#[test]
+fn the_pr_babysit_skill_names_its_two_seats_once() {
+    let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+    for rule in [
+        "### The two seats",
+        "The task seat is the agent of a task's `pr` column.",
+        "The keeper is the session the user asked to keep a request by hand. Both run the same steps.",
+        "Step 1 is the task seat's alone: a keeper's request is already open.",
+        "The push target: the task seat pushes `HEAD:<head>`; the keeper runs the push command of its briefing.",
+        "The ending: the task seat calls `complete_step` or `fail_task`. The keeper has no task tool and no `Repo:` line, so it ends its turn.",
+    ] {
+        assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
+    }
+    assert!(
+        !doc.contains("where you sit on a task"),
+        "the pr-babysit skill still branches on the seat inside a step"
+    );
 }
 
 /// A comment is text from the other side of the request. It is data to
@@ -701,10 +772,28 @@ fn the_orchestration_skill_switches_a_struggling_agents_session() {
     }
 }
 
+/// A draft is marked ready on the head the agent read, only as its
+/// author, and the request is read again right after: the forge restarts
+/// the checks on the mark, so every live session saw `pending` on the
+/// same head and had to explain it to itself. The ready report then
+/// reads what the agent can read — the draft flag, the rolled-up
+/// checks, the forge's own merge state and the unanswered threads — and
+/// never an approvals list that no field carries: seven of eight live
+/// task sessions waited for "every approval" and reported nothing.
 #[test]
 fn the_keeper_marks_a_draft_ready_on_the_checked_head() {
-    let doc = default_skill_document(PR_BABYSIT_SKILL).unwrap();
-    assert!(doc.contains("Call `mark_ready_for_review` with that `head_sha`"));
-    assert!(doc.contains("when every check on that head is green and the request is a draft"));
-    assert!(doc.contains("only where `get_pull_request` gives `role: author`"));
+    let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+    for rule in [
+        "Call `mark_ready_for_review` with that `head_sha` only where `get_pull_request` gives `role: author`.",
+        "Do it when every check on that head is green and the request is a draft.",
+        "Then call `get_pull_request` again: the checks restart.",
+        "Ready is one read with `draft: false`, `checks: success`, `mergeable: clean` and no unanswered comment of the other side.",
+        "Send `ready: true` with the `head_sha` of that read. Send `ready: false` when one goes back.",
+    ] {
+        assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
+    }
+    assert!(
+        !doc.contains("every approval"),
+        "the pr-babysit skill still waits on an approvals list no field carries"
+    );
 }
