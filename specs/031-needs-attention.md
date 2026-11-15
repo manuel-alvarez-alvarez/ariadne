@@ -609,11 +609,11 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     its resolution replaces that line with how it closed. Ariadne Desktop
     draws it as a card (015 rule 22a). Both consoles keep an open question
     after every later block, directly above the input, and draw a closed
-    one by event order (008 rule 37, 015 rule 22a). The `wait_for_user`
-    description and the session rules of every seat tell the agent to
-    write no text after the call, and to end the turn, so the question is
-    the last thing the agent says. Every shipped skill that asks the user
-    through the call says the same. A permission the
+    one by event order (008 rule 37, 015 rule 22a). The session rules of
+    every seat tell the agent to end the turn after the call, that one call
+    in a turn keeps the question open, and that a later turn that ends
+    without the call closes it (013 rule 3); the console pins the open
+    question, so text after the call hides nothing. A permission the
     daemon raised on one of Ariadne's own MCP tools and *allowed* by itself —
     by its mode, the AI permission model or a learned rule, never at the
     console — leaves no permission block in the console: the call's own
@@ -825,9 +825,10 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   one on any other tool, keeps its
   (`::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
 - The tool is `wait_for_user` with a `hint`, listed to every seat, and every
-  seat's session rules and its description say that a turn that ends without
-  the call ends the wait, after telling it to put the question in the call's
-  `question` field, and the tool posts the hint and the question
+  seat's session rules and its description say what closes the wait — a
+  later turn that ends without the call — after telling it to put the
+  question in the call's `question` field, and the tool posts the hint and
+  the question
   (`tools.rs::wait_for_user_posts_the_hint_and_the_question`)
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`,
   `mcp.rs::only_the_orchestrator_is_told_to_ask`).

@@ -149,7 +149,7 @@ fn no_skill_repeats_what_every_session_is_told_by_the_mcp_server() {
             "Reach Ariadne",
             "backticked",
             "Work alone",
-            "narrate progress",
+            "for a result, a question or a blocker",
             "as few turns as you can",
             "ASD-STE100",
             "before you repeat a discovery",

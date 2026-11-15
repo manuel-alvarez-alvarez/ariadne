@@ -424,10 +424,13 @@ pub(crate) fn step_return(
     )
 }
 
+/// Each sentence names the direction and who sent the task: the agent reads
+/// it with no history of the task, so "finished again" would leave it to
+/// guess what finished and why again.
 fn direction_sentence(direction: &str) -> &'static str {
     match direction {
         "back" => "A later column sent the task back.",
-        "forward" => "The column before this one finished again.",
+        "forward" => "The column before this one sent the task forward again.",
         _ => "The orchestrator retried the task.",
     }
 }
@@ -758,6 +761,10 @@ mod tests {
         ] {
             assert!(review.contains(value), "{value}: {review}");
         }
+        assert!(
+            review.ends_with("Then end your turn."),
+            "the review briefing owns the end of the first turn: {review}"
+        );
         let news = pull_request_news(
             pull_request_news_prompt(),
             &pull,
@@ -1247,7 +1254,10 @@ mod tests {
         let (task, steps) = (task(), steps());
         for (direction, sentence) in [
             ("back", "A later column sent the task back."),
-            ("forward", "The column before this one finished again."),
+            (
+                "forward",
+                "The column before this one sent the task forward again.",
+            ),
             ("retry", "The orchestrator retried the task."),
         ] {
             let text = step_return(
