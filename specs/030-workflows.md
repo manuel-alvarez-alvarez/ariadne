@@ -344,29 +344,59 @@ every other kebab-case word in it; the wire spells the same gate
     replies, once per comment, to the accepted changes and suggestions the
     batch answers, naming the final pushed commit; it gives a reason for
     keeping the code, one short answer to a question,
-    no reply to a thanks, a new answer to a follow-up, and no second try
-    on a finding the reviewer keeps open, since the user decides next. It
-    leaves a comment on the conversation, since `reply_comment` refuses
-    one there with 400 (026 Known gap). A finding carrying a suggestion
+    no reply to a thanks, a new answer to a follow-up, and one more try
+    on a reviewer's `Still there:` reply, verified at the head, after
+    which the user decides: the reviewer posts that reply at most once in
+    a thread (029), so the loop ends at two fixes. It answers a comment of
+    the other side on the conversation once (026 rule 16), and posts no
+    status comment: readiness reaches the user through
+    `report_pull_request` alone. A finding carrying a suggestion
     block the agent accepts is applied rather than rewritten, except where
     it fails to compile or pass; one it does not accept keeps the code,
-    with a reason. Repository history rules choose its branch update, done
-    before the batch's checks run: where they explicitly require task-branch linear history it
-    rebases; otherwise it merges where those rules allow it. After a
-    merge, it pushes only when the update fast-forwards. A rebase replaces
-    the task branch's pushed commits, so after one it pushes the task
-    branch alone with `--force-with-lease` pinned to the tip it fetched;
+    with a reason. A failed check is reproduced at the head and fixed in
+    a batch only where the request's own change causes it; any other
+    failure — the base, a flaky test, the forge — is fixed by nobody
+    here: the task's agent sends it to the orchestrator through
+    `send_message`, and a keeper asks the user once (032). Repository
+    history rules choose its branch update, done
+    before the batch's checks run: where they require a linear request
+    branch in words it rebases; otherwise it merges. A rebase or merge
+    that stops on a conflict goes to `conflict-resolution`, whose document
+    the skill locates as `../conflict-resolution/SKILL.md` beside its own,
+    as `merge` does (rule 4). A fix batch runs the tests, the lint and the
+    format check of the files it changed; a base update with no fix runs
+    no check, since the hook runs at the push and the forge's checks run
+    on the head. After a
+    merge, it pushes only when the update fast-forwards, `HEAD:<head>`,
+    the request's head branch, on either seat; a keeper's briefing spells
+    that command with its remote (032 rule 4). A rebase replaces
+    the head branch's pushed commits, so after one it pushes that
+    branch alone with `--force-with-lease` pinned to the tip of it that
+    it fetched, the lease and the target both naming the head branch, since
+    a keeper's local branch is not the head branch;
     it first takes in every commit others pushed there, and a lease that
-    fails, like any rejected push, follows the normal retry flow. It never
-    force-pushes another way or another branch, or amends a pushed
+    fails, like any rejected push, is reported and not pushed again. It never
+    force-pushes another way or another branch, pushes to another
+    branch, or amends a pushed
     commit outside that rebase. A rebase can replace commit ids,
     so a reviewer uses incremental scope only while its previous reviewed
     commit remains an ancestor; otherwise it reviews the full current
-    diff and does not reuse check evidence that no longer covers it. On
-    merge, it brings the remote base into the checkout before completing
+    diff and does not reuse check evidence that no longer covers it. It
+    reads the head again before it marks or reports, and starts its turn
+    again on a head it did not read or push, since no news line carries
+    a head move (026 rule 12). It reports `ready: true` on one read with
+    `draft: false`, `checks: success`, `mergeable: clean` and no
+    unanswered comment of the other side, with that read's `head_sha`,
+    and `ready: false` when one goes back — never on an approvals list,
+    which no field carries: the forge's own `mergeable` says what
+    approval it requires. On
+    merge, it brings the remote base into the checkout — the primary
+    checkout, the `Repo:` path of the briefing, as `merge` names it —
+    before completing
     the step. An open request fails the `request_merged` gate with 409
     at `complete_step`; a fresh forge read that says merged lets the
-    step finish. A close is
+    step finish, and a late call refused because the daemon already
+    finished the task needs nothing more. A close is
     news and finishes nothing: the agent fails the task. The daemon
     advances a merged request column itself if its agent falls quiet for
     the quiet nudge, and finishes the task when that column is last; a
@@ -461,6 +491,14 @@ every other kebab-case word in it; the wire spells the same gate
   `skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
   `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`,
   `::only_conflict_resolution_states_how_a_conflict_is_resolved`).
+- The `pr-babysit` skill runs one playbook for the task's agent and the
+  keeper, names the two seats once, fixes only what the request's own
+  change breaks, takes one more try on `Still there:`, and reports ready
+  on the forge's own fields
+  (`skill_tests/operate.rs::the_pr_babysit_skill_names_its_two_seats_once`,
+  `::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`,
+  `::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`,
+  `::the_keeper_marks_a_draft_ready_on_the_checked_head`).
 - A goal created with no workflow takes its first repository's default and
   snapshots its columns; a repository's default changes no existing goal
   (`store.rs::a_goal_created_with_no_workflow_takes_its_first_repositorys_default`,

@@ -262,8 +262,17 @@ written into the system prompt (006), and the lifecycle the seats sit in
     intent is written in the commit body, and also goes to the column report
     or to the skill that invoked this one, since a squash drops the body. It
     runs the checks of what it resolved. `merge` and `pr-babysit` name it and state no
-    method of their own. `pr-babysit` treats comment text as untrusted input
-    and runs no command a comment holds. `orchestration` names no forge.
+    method of their own, and each locates its document as
+    `../conflict-resolution/SKILL.md` beside its own, in the same words,
+    since the index names a path only for a staffed skill and the run
+    directory links every catalog skill beside them (rule 15). `pr-babysit`
+    treats comment text as untrusted input
+    and runs no command a comment holds. It is one playbook for two seats,
+    the agent of a task's `pr` column and the keeper (032), and names what
+    differs — the opening step, the push command, the ending and who hears
+    a failure the request did not cause — once, in a rule; no step names a
+    seat. `orchestration`
+    names no forge.
 
     A skill document holds one text. The launcher links the run directory's
     `skills` folder onto the shared home copy that holds it (15), for the
@@ -512,8 +521,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - The orchestration skill selects within each column's permitted ranks after a
   case-by-case scope and complexity assessment, the shipped merge skill never
   force-pushes, including with `--force-with-lease`, and the PR skill
-  force-pushes only its own task branch, with a lease pinned to the tip it
-  fetched, after a rebase explicitly required and permitted by task-branch policy
+  force-pushes only the request's head branch, with a lease pinned to the
+  tip of it that it fetched, after a rebase a written linear-branch rule
+  requires
   (`skill_tests/operate.rs::the_orchestrator_staffs_each_column_on_its_rank`,
   `skill_tests/operate.rs::the_merge_skill_forbids_every_force_push`,
   `skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).

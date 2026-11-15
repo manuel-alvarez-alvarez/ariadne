@@ -84,21 +84,32 @@ calls for**: a requested change goes onto the branch as a new commit, with
 the changed tests and lint run again before it is pushed, and the reply
 names the commit or says why the code stays; a question gets one short
 answer; a thanks gets no reply; a follow-up in a thread it already
-answered gets a new answer; and a reviewer reply that keeps a finding
-open gets no second try — you decide what happens next. It also answers,
+answered gets a new answer; and a reviewer's `Still there:` reply gets one
+more try, verified at the head — a second fix or a reason the code stays
+— and then you decide what happens next. It also answers,
 once, a comment of yours on the conversation: it cannot reply twice to
-the same one, and it cannot reply to its own earlier words there. A
+the same one, and it cannot reply to its own earlier words there. It
+posts no status comment: the readiness report below is how it reaches
+you. A
 finding that carries a suggestion block the agent accepts is applied as
 given, and rewritten only where it fails to compile or pass; one it does
 not accept keeps the code, with a reply that says why. It **resolves no
 thread**: resolving a thread, once its reply satisfies you, is yours to
-do. Before it runs the affected checks, it integrates a moved base branch
-as the repository's history rules require. Where those rules explicitly require a
-linear task-branch history, it rebases; otherwise it merges where those rules allow it.
-After a merge, it pushes normally. A repository that explicitly requires task-branch rebases can permit a pinned lease push.
+do. A failed check it fixes only where the request's own change causes
+it; a failure from the base branch, a flaky test or the forge goes to
+the orchestrator — or, for a keeper, to you — and it changes nothing for
+it. It never pushes to another branch. Before it runs the checks of the
+files a fix changed, it integrates a moved base branch
+as the repository's history rules require. Where those rules require a
+linear request branch in words, it rebases; otherwise it merges.
+After a merge, it pushes normally; a base update with no fix runs no
+check of its own, since the push hook and the forge's checks run anyway.
+After a rebase it pushes the request's head branch with a lease pinned
+to the tip it fetched.
 It keeps every commit others added. It never force-pushes main.
-It reports the request ready once every required approval and
-check reads green, and takes the readiness back down the moment a later
+It reports the request ready once the forge reads it as a non-draft with
+every check green and a clean merge state, and every comment answered,
+and takes the readiness back down the moment a later
 change turns one back. Once you merge the request, the agent brings the base
 branch up to date and completes the column, which finishes the task when
 nothing follows it, or hands on to the next column; a request closed unmerged
