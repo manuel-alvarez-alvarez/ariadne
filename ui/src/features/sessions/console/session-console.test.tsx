@@ -1489,3 +1489,44 @@ it("keeps a following reader at the newest output when a run opens", async () =>
   expect(box.top).toBe(1000)
   vi.restoreAllMocks()
 })
+
+it("keeps the block a reader is on in place when a run above it opens", async () => {
+  const user = userEvent.setup()
+  renderConsole([...notes(5), event("agent_message", { text: "reading here" })])
+  const log = transcript()
+  // The message sits 40px down; opening the run pushes it 120px lower.
+  const box = scrollBox((block) =>
+    block.dataset.block === "message"
+      ? within(log).queryByRole("button", { name: "Show fewer" })
+        ? 160
+        : 40
+      : -500,
+  )
+  fireEvent.scroll(log)
+
+  await user.click(within(log).getByRole("button", { name: "Show 2 earlier" }))
+
+  expect(box.top).toBe(220)
+  vi.restoreAllMocks()
+})
+
+it("keeps the block a reader is on in place when a run above it closes", async () => {
+  const user = userEvent.setup()
+  renderConsole([...notes(5), event("agent_message", { text: "reading here" })])
+  const log = transcript()
+  await user.click(within(log).getByRole("button", { name: "Show 2 earlier" }))
+  const box = scrollBox((block) =>
+    block.dataset.block === "message"
+      ? within(log).queryByRole("button", { name: "Show fewer" })
+        ? 160
+        : 40
+      : -500,
+  )
+  box.top = 300
+  fireEvent.scroll(log)
+
+  await user.click(within(log).getByRole("button", { name: "Show fewer" }))
+
+  expect(box.top).toBe(180)
+  vi.restoreAllMocks()
+})

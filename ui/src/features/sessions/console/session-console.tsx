@@ -264,6 +264,8 @@ function ConsolePane({
   const seen = useRef(transcript)
   /** The block the reader was last on, and where its top sat, for layout changes above it. */
   const placed = useRef<ConsoleViewState["anchor"]>(undefined)
+  /** Where a toggled run's control sat: the place to keep where the toggle hides the anchor. */
+  const runAnchor = useRef<ConsoleViewState["anchor"]>(undefined)
   const [history, setHistory] = useState<History>({ state: "idle" })
   // Bumped when a snapshot or a new session replaces the transcript, so a page
   // still loading for the old one is dropped.
@@ -427,9 +429,16 @@ function ConsolePane({
   // biome-ignore lint/correctness/useExhaustiveDependencies: the changes are the trigger, the effect reads none of them
   useLayoutEffect(() => {
     const el = log.current
-    const place = placed.current
+    let place = placed.current
+    const fallback = runAnchor.current
+    runAnchor.current = undefined
     if (!el || !place || following.current || restore.current !== null) return
-    const at = blockOffset(el, place.blockId)
+    let at = blockOffset(el, place.blockId)
+    if (at === undefined && fallback) {
+      place = fallback
+      at = blockOffset(el, place.blockId)
+      placed.current = fallback
+    }
     if (at !== undefined && at !== place.offset) el.scrollTop += at - place.offset
   }, [transcript, blockFolds, runExpansions])
 
@@ -825,11 +834,11 @@ function ConsolePane({
 
   /** Show every row of one activity run, or its last 3 again, and keep the choice. */
   const toggleRun = useCallback((runId: string, rows: string[], expanded: boolean) => {
-    // The rows a reader who scrolled away stands on may hide; the control stays.
+    // The block a reader who scrolled away stands on may hide; the control stays.
     const el = log.current
     const at = el ? blockOffset(el, `run:${runId}`) : undefined
-    if (at !== undefined && !following.current)
-      placed.current = { blockId: `run:${runId}`, offset: at }
+    runAnchor.current =
+      at !== undefined && !following.current ? { blockId: `run:${runId}`, offset: at } : undefined
     const next = { ...readViewState(keyRef.current).runExpansions }
     if (expanded) for (const id of rows) next[id] = false
     else next[runId] = true

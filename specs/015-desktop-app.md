@@ -591,8 +591,9 @@ Out: the daemon endpoints themselves (012).
     24i), and a run keeps it when rows join it at either end. Hidden rows stay in the transcript, and
     `Copy loaded transcript` copies them. Opening or closing a run keeps the
     reader's place as a fold does (rule 23a3): a reader at the newest output
-    stays there, and a reader who scrolled away keeps the button where it
-    was, also when the run hides the block they were on. The number 3 has no setting.
+    stays there, and a reader who scrolled away keeps the block they were on
+    where it was; where the toggle hides that block, the reader keeps the
+    button where it was. The number 3 has no setting.
 23b. The latest `available_commands_update` event replaces the command
     list, whole: a later list, an empty one included, replaces the earlier
     one. A list whose payload carries a `subagent`, of any value, is ignored, and the event
@@ -1567,6 +1568,8 @@ Out: the daemon endpoints themselves (012).
   `::folds the activity runs of a subagent's view as well as main's`,
   `::keeps a reader who scrolled away in place when closing a run hides the block they were on`,
   `::keeps a following reader at the newest output when a run opens`,
+  `::keeps the block a reader is on in place when a run above it opens`,
+  `::keeps the block a reader is on in place when a run above it closes`,
   `ui/src/features/sessions/console/transcript.test.ts::cuts a run of activity rows to its last 3 under a control, and leaves a short run whole`,
   `::bounds a run by a conversation block, and keeps the choice of a run as rows join it`,
   `::keeps an error, a pending permission and the selected row in place among hidden ones`,
