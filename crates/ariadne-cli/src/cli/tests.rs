@@ -169,6 +169,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("agent update", true),
     ("attach", false),
     ("attention", true),
+    ("attention dismiss", false),
     ("completions", false),
     ("completions install", false),
     ("daemon logs", false),
@@ -2109,7 +2110,7 @@ fn leaf_paths() -> Vec<String> {
         // A command with subcommands is a grouping and not run on its own —
         // unless it takes an argument of its own too, as `completions
         // <SHELL>` does next to `completions install`.
-        let runs_itself = leaf || cmd.get_positionals().next().is_some();
+        let runs_itself = leaf || cmd.get_positionals().next().is_some() || prefix == "attention";
         if runs_itself && !prefix.is_empty() {
             out.push(prefix.to_string());
         }
@@ -2205,4 +2206,26 @@ fn removed_session_commands_and_options_are_refused() {
     ] {
         assert!(try_parse(&args).is_err(), "{args:?}");
     }
+}
+
+#[test]
+fn attention_supports_listing_watch_and_individual_dismissal() {
+    assert!(matches!(
+        parse(&["ariadne", "attention"]).command,
+        Command::Attention {
+            command: None,
+            watch: false
+        }
+    ));
+    assert!(matches!(
+        parse(&["ariadne", "attention", "--watch"]).command,
+        Command::Attention {
+            command: None,
+            watch: true
+        }
+    ));
+    assert!(
+        matches!(parse(&["ariadne", "attention", "dismiss", "agent_request:one"]).command,
+        Command::Attention { command: Some(AttentionCommand::Dismiss { item_id }), .. } if item_id == "agent_request:one")
+    );
 }

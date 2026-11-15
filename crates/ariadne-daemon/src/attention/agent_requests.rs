@@ -11,13 +11,15 @@ use ariadne_store::SessionFilter;
 use ariadne_store::{Result, Store};
 
 pub(crate) async fn items(store: &Store) -> Result<Vec<AttentionItemDto>> {
+    store.expire_dead_agent_requests().await?;
     let mut items = Vec::new();
     for request in store.pending_agent_requests().await? {
         let session = store.get_session(&request.session_id).await?;
-        if !super::work_is_active_checked(store, &session).await? {
+        if !session.status().is_live() || !super::work_is_active_checked(store, &session).await? {
             continue;
         }
         items.push(AttentionItemDto {
+            occurrence: request.id.clone(),
             id: format!("agent_request:{}", request.id),
             producer: AttentionProducer::AgentRequest,
             reason: AttentionCause::Unknown,
@@ -41,21 +43,35 @@ pub(crate) async fn items(store: &Store) -> Result<Vec<AttentionItemDto>> {
         })
         .await?
     {
-        if session.attention_reason() != Some(AttentionReason::WaitingPermission)
-            || !super::work_is_active_checked(store, &session).await?
-        {
+        let Some(reason) = session.attention_reason() else {
+            continue;
+        };
+        if !session.status().is_live() || !super::work_is_active_checked(store, &session).await? {
             continue;
         }
+        let summary = match reason {
+            AttentionReason::WaitingPermission => "The agent needs permission to continue.",
+            AttentionReason::WaitingInput => "The agent needs input to continue.",
+            AttentionReason::WaitingUser if session.pull_request_id.is_none() => {
+                "The agent is waiting for you."
+            }
+            AttentionReason::AgentError => "The agent reported an error.",
+            _ => continue,
+        };
+        if reason == AttentionReason::WaitingUser && items.iter().any(|item| {
+            matches!(&item.target, AttentionTarget::Console { session_id } if session_id == &session.id)
+        }) { continue; }
         let since = session
             .attention_since
             .clone()
             .unwrap_or_else(|| session.created_at.clone());
         items.push(AttentionItemDto {
-            id: format!("agent_request:permission:{}", session.id),
+            occurrence: String::new(),
+            id: format!("agent_request:{}:{}", reason.as_str(), session.id),
             producer: AttentionProducer::AgentRequest,
             reason: AttentionCause::Unknown,
-            summary: "The agent needs permission to continue.".into(),
-            required_action: "Answer the permission request in the agent console.".into(),
+            summary: summary.into(),
+            required_action: "Open the agent console to respond.".into(),
             since,
             affected: vec![AttentionSubjectDto {
                 kind: AttentionSubjectKind::Session,

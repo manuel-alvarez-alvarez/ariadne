@@ -27,6 +27,7 @@ import { parsePayload, ReconnectingEventStream } from "./reconnecting-stream"
  */
 const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   pull_requests_changed: true,
+  attention_changed: true,
   goal_created: true,
   goal_updated: true,
   goal_deleted: true,

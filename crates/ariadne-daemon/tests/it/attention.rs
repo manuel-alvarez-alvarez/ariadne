@@ -15,6 +15,45 @@ use crate::common::{
     Harness, RUNS_OUT, TIMEOUT, as_session, eventually, harness, next_event, with_forge,
 };
 
+/// Dismissal hides the reminder while the agent's request remains pending.
+#[tokio::test]
+async fn dismissing_a_question_keeps_the_request_pending() {
+    let h = harness().await;
+    let session = h.lone_session("dismiss-question").await;
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                serde_json::json!({"summary": "Which base branch should I use?"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let before: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(before.items.len(), 1);
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", before.items[0].id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let after: AttentionListDto = h.get("/v1/attention").await;
+    assert!(after.complete);
+    assert!(after.items.is_empty());
+    let pending: Vec<ariadne_api::attention::AgentRequestDto> = h
+        .get(&format!("/v1/sessions/{}/agent-requests", session.id))
+        .await;
+    assert_eq!(pending.len(), 1);
+    let reopened = ariadne_store::Store::open(h.dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let restarted = ariadne_daemon::attention::collect(&reopened, &h.launcher).await;
+    assert!(restarted.complete);
+    assert!(restarted.items.is_empty());
+}
+
 /// An agent question is explicit evidence, so punctuation and an idle turn
 /// cannot create this row. The item keeps the session console as its target.
 #[tokio::test]
@@ -947,8 +986,8 @@ async fn an_exhausted_session_on_an_unranked_model_is_a_quota_item() {
     assert_eq!(item.affected[0].label, "orchestrator (0 switch(es))");
     assert_eq!(
         item.target,
-        ariadne_api::attention::AttentionTarget::Console {
-            session_id: session.id.clone()
+        ariadne_api::attention::AttentionTarget::Settings {
+            section: "agents".into()
         }
     );
 }
@@ -3753,4 +3792,560 @@ async fn the_pending_list_racing_a_failed_answer_keeps_the_question() {
         assert_eq!(listed.len(), 1, "round {round}: {listed:?}");
         assert_eq!(listed[0].id, request_id, "round {round}");
     }
+}
+
+#[tokio::test]
+async fn dead_session_questions_expire_without_hiding_recovery() {
+    let h = harness().await;
+    let session = h.lone_session("dead-question").await;
+    h.store
+        .create_agent_request(&session.id, "Choose a branch", None, None)
+        .await
+        .unwrap();
+    h.store
+        .set_session_status_if_live(&session.id, SessionStatus::Exited, None)
+        .await
+        .unwrap();
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.complete);
+    assert!(
+        list.items
+            .iter()
+            .all(|item| item.producer != AttentionProducer::AgentRequest)
+    );
+    assert!(
+        h.store
+            .pending_session_agent_requests(&session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn dismissing_permission_does_not_answer_it_and_a_new_prompt_returns() {
+    let h = harness().await;
+    let session = h.lone_session("permission-dismiss").await;
+    h.store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", list.items[0].id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let hidden: AttentionListDto = h.get("/v1/attention").await;
+    assert!(hidden.items.is_empty());
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingPermission)
+    );
+    h.store.clear_session_attention(&session.id).await.unwrap();
+    h.store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    let returned: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(returned.items.len(), 1);
+}
+
+#[tokio::test]
+async fn a_dismissed_group_returns_when_another_task_joins() {
+    let h = harness().await;
+    let first = h.cast().await;
+    let second = h
+        .task_on(&first.goal, &first.repo, "second", test_pin())
+        .await;
+    let mut failed_tasks = Vec::new();
+    for task_id in [&first.task.id, &second.id] {
+        let failed = h
+            .store
+            .transition_task(
+                task_id,
+                TaskStatus::Failed,
+                Actor::Daemon,
+                Some(ariadne_daemon::scheduler::DESCRIPTOR_LIMIT_REASON),
+                None,
+            )
+            .await
+            .unwrap();
+        let transition_id = h
+            .store
+            .latest_transition_to(&failed.id, TaskStatus::Failed)
+            .await
+            .unwrap()
+            .expect("a task reported failed has a transition to failed on record");
+        failed_tasks.push((failed.id, transition_id));
+        h.store
+            .confirm_goal_orchestrator_answered(&first.goal.id, &failed_tasks)
+            .await
+            .unwrap();
+        if failed_tasks.len() == 1 {
+            let first_list: AttentionListDto = h.get("/v1/attention").await;
+            assert_eq!(first_list.items.len(), 1);
+            let (status, _) = h
+                .send(crate::common::post_json(
+                    &format!("/v1/attention/{}/dismiss", first_list.items[0].id),
+                    serde_json::json!({}),
+                ))
+                .await;
+            assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+            let hidden: AttentionListDto = h.get("/v1/attention").await;
+            assert!(hidden.items.is_empty());
+        }
+    }
+    h.store
+        .confirm_goal_orchestrator_answered(&first.goal.id, &failed_tasks)
+        .await
+        .unwrap();
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    let affected: Vec<&str> = list.items[0]
+        .affected
+        .iter()
+        .map(|subject| subject.id.as_str())
+        .collect();
+    assert_eq!(affected.len(), 2);
+    assert!(affected.contains(&first.task.id.as_str()));
+    assert!(affected.contains(&second.id.as_str()));
+}
+
+#[tokio::test]
+async fn dismissed_review_requests_return_without_an_intervening_read() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1);
+    let item = &list.items[0];
+    assert_eq!(item.producer, AttentionProducer::PullRequest);
+    assert_eq!(item.reason, AttentionCause::Configuration);
+    assert_eq!(
+        item.target,
+        AttentionTarget::PullRequest {
+            pull_request_id: pull.id.clone()
+        }
+    );
+    assert_eq!(item.affected[0].kind, AttentionSubjectKind::PullRequest);
+    assert_eq!(item.affected[0].id, pull.id);
+
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", item.id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let hidden: AttentionListDto = h.get("/v1/attention").await;
+    assert!(hidden.items.is_empty());
+    h.store
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_review_asked(&pull.id, None)
+        .await
+        .unwrap();
+    let stopped = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(
+        stopped.items.len(),
+        1,
+        "stopping with the forge still asking brings the item back: {:?}",
+        stopped.items
+    );
+    assert_eq!(stopped.items[0].target, item.target);
+}
+
+#[tokio::test]
+async fn a_cold_forge_cache_does_not_forget_dismissals() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1);
+    let item = &list.items[0];
+    assert_eq!(item.producer, AttentionProducer::PullRequest);
+    assert_eq!(item.reason, AttentionCause::Configuration);
+    assert_eq!(
+        item.target,
+        AttentionTarget::PullRequest {
+            pull_request_id: pull.id.clone()
+        }
+    );
+    assert_eq!(item.affected[0].kind, AttentionSubjectKind::PullRequest);
+    assert_eq!(item.affected[0].id, pull.id);
+
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", item.id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let hidden: AttentionListDto = h.get("/v1/attention").await;
+    assert!(hidden.items.is_empty());
+    h.launcher.live.remove(&pull.id);
+    let cold: AttentionListDto = h.get("/v1/attention").await;
+    assert!(cold.items.is_empty());
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+    let warm: AttentionListDto = h.get("/v1/attention").await;
+    assert!(
+        warm.items.is_empty(),
+        "a cache refill is the same occurrence"
+    );
+}
+
+#[tokio::test]
+async fn recovery_targets_the_goal_even_without_an_alarm_session() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    h.store
+        .set_goal_orchestrator_given_up(&cast.goal.id, false)
+        .await
+        .unwrap();
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let item = list
+        .items
+        .iter()
+        .find(|item| item.id == format!("recovery:unknown:orchestrator:{}", cast.goal.id))
+        .expect("the goal's recovery blocker remains visible");
+    assert_eq!(
+        item.target,
+        AttentionTarget::Goal {
+            goal_id: cast.goal.id
+        }
+    );
+}
+
+async fn dismissed_descriptor_group() -> (Harness, String, String, String) {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let second = h
+        .task_on(&cast.goal, &cast.repo, "second", test_pin())
+        .await;
+    let mut failed_tasks = Vec::new();
+    for task_id in [&cast.task.id, &second.id] {
+        let task = h
+            .store
+            .transition_task(
+                task_id,
+                TaskStatus::Failed,
+                Actor::Daemon,
+                Some(ariadne_daemon::scheduler::DESCRIPTOR_LIMIT_REASON),
+                None,
+            )
+            .await
+            .unwrap();
+        let transition = h
+            .store
+            .latest_transition_to(&task.id, TaskStatus::Failed)
+            .await
+            .unwrap()
+            .unwrap();
+        failed_tasks.push((task.id, transition));
+    }
+    h.store
+        .confirm_goal_orchestrator_answered(&cast.goal.id, &failed_tasks)
+        .await
+        .unwrap();
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].affected.len(), 2);
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", list.items[0].id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    (h, cast.goal.id, cast.task.id, second.id)
+}
+
+#[tokio::test]
+async fn a_shrinking_dismissed_group_stays_hidden_across_restart() {
+    let (h, _, first, _) = dismissed_descriptor_group().await;
+    h.store
+        .transition_task(&first, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+    let shrunk: AttentionListDto = h.get("/v1/attention").await;
+    assert!(shrunk.complete);
+    assert!(
+        shrunk.items.is_empty(),
+        "remaining affected work stays dismissed"
+    );
+    let reopened = ariadne_store::Store::open(h.dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let restarted = ariadne_daemon::attention::collect(&reopened, &h.launcher).await;
+    assert!(restarted.complete);
+    assert!(restarted.items.is_empty());
+}
+
+#[tokio::test]
+async fn recovered_group_members_return_without_an_intervening_attention_read() {
+    let (h, goal, first, second) = dismissed_descriptor_group().await;
+    h.store
+        .transition_task(&first, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+    let failed = h
+        .store
+        .transition_task(
+            &first,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some(ariadne_daemon::scheduler::DESCRIPTOR_LIMIT_REASON),
+            None,
+        )
+        .await
+        .unwrap();
+    let mut failed_tasks = Vec::new();
+    for id in [&failed.id, &second] {
+        let transition = h
+            .store
+            .latest_transition_to(id, TaskStatus::Failed)
+            .await
+            .unwrap()
+            .unwrap();
+        failed_tasks.push((id.clone(), transition));
+    }
+    h.store
+        .confirm_goal_orchestrator_answered(&goal, &failed_tasks)
+        .await
+        .unwrap();
+    let returned: AttentionListDto = h.get("/v1/attention").await;
+    assert!(returned.complete);
+    assert_eq!(returned.items.len(), 1);
+    let affected: Vec<_> = returned.items[0]
+        .affected
+        .iter()
+        .map(|subject| subject.id.as_str())
+        .collect();
+    assert_eq!(affected.len(), 2);
+    assert!(affected.contains(&first.as_str()));
+    assert!(affected.contains(&second.as_str()));
+}
+
+async fn independent_pull_request_recovery_dismissals(reviewer_first: bool) {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    if reviewer_first {
+        h.store
+            .set_pull_request_reviewer_given_up(&pull.id, false)
+            .await
+            .unwrap();
+    } else {
+        h.store
+            .set_pull_request_keeper_given_up(&pull.id, false)
+            .await
+            .unwrap();
+    }
+    let first: AttentionListDto = h.get("/v1/attention").await;
+    assert!(first.complete);
+    assert_eq!(first.items.len(), 1);
+    let dismissed = &first.items[0];
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", dismissed.id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+    if reviewer_first {
+        h.store
+            .set_pull_request_keeper_given_up(&pull.id, false)
+            .await
+            .unwrap();
+    } else {
+        h.store
+            .set_pull_request_reviewer_given_up(&pull.id, false)
+            .await
+            .unwrap();
+    }
+    let second: AttentionListDto = h.get("/v1/attention").await;
+    assert!(second.complete);
+    assert!(
+        !second.items.iter().any(|item| item.id == dismissed.id),
+        "an independent recovery blocker must not restore the dismissed cause: {:?}",
+        second.items
+    );
+    assert_eq!(second.items.len(), 1);
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", second.items[0].id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+    // Clear and return the first cause without an attention read between them.
+    if reviewer_first {
+        h.store
+            .clear_pull_request_reviewer_given_up(&pull.id)
+            .await
+            .unwrap();
+        h.store
+            .set_pull_request_reviewer_given_up(&pull.id, false)
+            .await
+            .unwrap();
+    } else {
+        h.store
+            .clear_pull_request_keeper_given_up(&pull.id)
+            .await
+            .unwrap();
+        h.store
+            .set_pull_request_keeper_given_up(&pull.id, false)
+            .await
+            .unwrap();
+    }
+    let reopened = ariadne_store::Store::open(h.dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let returned = ariadne_daemon::attention::collect(&reopened, &h.launcher).await;
+    assert!(returned.complete);
+    assert_eq!(
+        returned.items.len(),
+        1,
+        "the other cause stays dismissed across restart"
+    );
+    assert_eq!(returned.items[0].id, dismissed.id);
+    assert_ne!(returned.items[0].occurrence, dismissed.occurrence);
+}
+
+#[tokio::test]
+async fn keeper_failure_does_not_restore_a_dismissed_reviewer_blocker() {
+    independent_pull_request_recovery_dismissals(true).await;
+}
+
+#[tokio::test]
+async fn reviewer_failure_does_not_restore_a_dismissed_keeper_blocker() {
+    independent_pull_request_recovery_dismissals(false).await;
+}
+
+async fn recovery_does_not_restore_a_dismissed_pull_request_action(ready: bool) {
+    let h = harness().await;
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: if ready { "author" } else { "reviewer" }.into(),
+            origin_task_id: ready.then(|| cast.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    if ready {
+        crate::common::forge::seed_review_evidence(
+            &h,
+            &pull,
+            crate::common::forge::ReviewEvidence {
+                checks: "success",
+                review_decision: "approved",
+                mergeable: "clean",
+                head_sha: "abc",
+                details_head_sha: None,
+                evidence_ok: true,
+                comments: Vec::new(),
+            },
+        );
+        h.store
+            .set_pull_request_ready(&pull.id, true, Some("abc"))
+            .await
+            .unwrap();
+    } else {
+        crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
+    }
+    let before: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(before.items.len(), 1);
+    let item = &before.items[0];
+    assert_eq!(item.producer, AttentionProducer::PullRequest);
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", item.id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    // A keeper failure does not clear either pull-request action.
+    h.store
+        .set_pull_request_keeper_given_up(&pull.id, false)
+        .await
+        .unwrap();
+    let after: AttentionListDto = h.get("/v1/attention").await;
+    assert!(after.complete);
+    assert!(
+        !after.items.iter().any(|found| found.id == item.id),
+        "{:?}",
+        after.items
+    );
+    assert_eq!(after.items.len(), 1);
+    assert_eq!(after.items[0].producer, AttentionProducer::Recovery);
+}
+
+#[tokio::test]
+async fn keeper_failure_does_not_restore_a_dismissed_review_request() {
+    recovery_does_not_restore_a_dismissed_pull_request_action(false).await;
+}
+
+#[tokio::test]
+async fn keeper_failure_does_not_restore_a_dismissed_ready_request() {
+    recovery_does_not_restore_a_dismissed_pull_request_action(true).await;
 }

@@ -20,7 +20,7 @@ import type { QueryClient } from "@tanstack/react-query"
 import { fireEvent, screen, waitFor } from "@testing-library/react"
 import { toast } from "sonner"
 import { beforeEach, expect, it, vi } from "vitest"
-import type { AttentionItemDto, SessionDto } from "@/api"
+import type { AttentionItemDto, AttentionListDto, SessionDto } from "@/api"
 
 import { Toaster } from "@/components/ui/sonner"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
@@ -47,11 +47,13 @@ const BLOCKED: SessionDto = aSession({
 let sessions: SessionDto[]
 /** The `pull_request` (or any other) producer's own items right now. */
 let recoveryItems: AttentionItemDto[]
+let attentionOverride: AttentionListDto | null
 
 /** A `pull_request` producer item, as `GET /v1/attention` answers one. */
 function aPullRequestItem(overrides: Partial<AttentionItemDto> = {}): AttentionItemDto {
   return {
     id: "pull_request:review_start:pull-1",
+    occurrence: "",
     producer: "pull_request",
     reason: "configuration",
     summary: "acme/widgets#1 Fix widgets asks for your review, and no agent is assigned to it.",
@@ -74,19 +76,45 @@ function stubDaemon() {
         : url.pathname === "/v1/tasks"
           ? [TASK]
           : url.pathname === "/v1/attention"
-            ? { items: recoveryItems, complete: true }
+            ? (attentionOverride ?? {
+                items: [
+                  ...recoveryItems,
+                  ...sessions
+                    .filter((s) => s.attention_reason)
+                    .map((s) => ({
+                      id: `agent_request:waiting_permission:${s.id}`,
+                      occurrence: "",
+                      producer: "agent_request",
+                      reason: "unknown",
+                      summary: "Waiting for permission",
+                      required_action: "Answer in the console.",
+                      since: s.attention_since,
+                      affected: [
+                        {
+                          kind: "session",
+                          id: s.id,
+                          label: s.task_id ? TASK.title : "Orchestrator",
+                        },
+                      ],
+                      target: { kind: "console", session_id: s.id },
+                    })),
+                ],
+                complete: true,
+              })
             : aSessionPage(sessions)
     return Promise.resolve(jsonResponse(body))
   })
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks()
   // Sonner's store outlives a render, and a toast raised by the test before
   // this one is still in it — it would render into the next test's toaster and
   // read as news that never happened.
   toast.dismiss()
   sessions = []
   recoveryItems = []
+  attentionOverride = null
   document.title = "Ariadne Desktop"
   // The toaster asks the browser whether motion is welcome; jsdom has no
   // opinion and no `matchMedia` to hold one.
@@ -162,6 +190,25 @@ it("raises no toast for what was already stuck when it opened", async () => {
   expect(screen.queryByText("Waiting for permission")).toBeNull()
 })
 
+it("removes a toast omitted by an incomplete attention read", async () => {
+  const { queryClient } = renderAlerts("/profiles")
+  await settled(queryClient)
+  await arrives(queryClient, [BLOCKED])
+  expect(await screen.findByText("Waiting for permission")).not.toBeNull()
+
+  attentionOverride = { items: [], complete: false }
+  await queryClient.invalidateQueries()
+
+  await waitFor(() => expect(screen.queryByText("Waiting for permission")).toBeNull())
+  expect(document.title).toBe("(!) Ariadne")
+
+  attentionOverride = null
+  await queryClient.invalidateQueries()
+  await settled(queryClient)
+  expect(document.title).toBe("(1) Ariadne")
+  expect(screen.queryByText("Waiting for permission")).toBeNull()
+})
+
 it("raises one toast for an agent that gets stuck on another screen", async () => {
   const { queryClient, location } = renderAlerts("/profiles")
   await settled(queryClient)
@@ -171,7 +218,7 @@ it("raises one toast for an agent that gets stuck on another screen", async () =
   expect(await screen.findByText("Waiting for permission")).not.toBeNull()
   expect(screen.getAllByText("Waiting for permission")).toHaveLength(1)
   // What it is about, so the toast is worth reading before it is clicked.
-  expect(screen.getByText(TASK.title)).not.toBeNull()
+  expect(screen.getByText("Waiting for permission")).not.toBeNull()
 
   // The same place the strip's row would have gone: the console the prompt is
   // waiting in, with the keyboard already in it.
@@ -308,4 +355,42 @@ it("raises one toast per readiness transition, none for a repeat, and none for a
     }),
   ])
   expect(await screen.findByText("Ready to merge")).not.toBeNull()
+})
+
+it("announces a new occurrence without requiring an intervening empty read", async () => {
+  const warning = vi.spyOn(toast, "warning")
+  const { queryClient } = renderAlerts("/profiles")
+  await settled(queryClient)
+  const item = aPullRequestItem()
+  await attentionArrives(queryClient, [item])
+  await waitFor(() => expect(warning).toHaveBeenCalledTimes(1))
+  await attentionArrives(queryClient, [{ ...item, since: "2026-01-02T03:00:00Z" }])
+  await waitFor(() => expect(warning).toHaveBeenCalledTimes(2))
+  warning.mockRestore()
+})
+
+it("announces additional affected work on an existing grouped cause", async () => {
+  const warning = vi.spyOn(toast, "warning")
+  const { queryClient } = renderAlerts("/profiles")
+  await settled(queryClient)
+  const item = aPullRequestItem()
+  await attentionArrives(queryClient, [item])
+  await waitFor(() => expect(warning).toHaveBeenCalledTimes(1))
+  await attentionArrives(queryClient, [
+    { ...item, affected: [...item.affected, { kind: "task", id: "new", label: "New work" }] },
+  ])
+  await waitFor(() => expect(warning).toHaveBeenCalledTimes(2))
+  warning.mockRestore()
+})
+
+it("uses the daemon occurrence even when the displayed timestamp is unchanged", async () => {
+  const warning = vi.spyOn(toast, "warning")
+  const { queryClient } = renderAlerts("/profiles")
+  await settled(queryClient)
+  const item = aPullRequestItem({ occurrence: "first" })
+  await attentionArrives(queryClient, [item])
+  await waitFor(() => expect(warning).toHaveBeenCalledTimes(1))
+  await attentionArrives(queryClient, [{ ...item, occurrence: "second" }])
+  await waitFor(() => expect(warning).toHaveBeenCalledTimes(2))
+  warning.mockRestore()
 })

@@ -84,6 +84,7 @@ pub struct ResyncDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub enum DomainEvent {
+    AttentionChanged(serde_json::Value),
     GoalCreated(GoalDto),
     /// Covers status changes: finalize, cancel, completion.
     GoalUpdated(GoalDto),
@@ -175,6 +176,7 @@ impl DomainEvent {
             Self::ForgeSettingsUpdated(_) => "forge_settings_updated",
             Self::IssuesChanged(_) => "issues_changed",
             Self::PullRequestsChanged(_) => "pull_requests_changed",
+            Self::AttentionChanged(_) => "attention_changed",
         }
     }
 
@@ -186,6 +188,7 @@ impl DomainEvent {
         }
         match self {
             Self::PullRequestsChanged(p) => json(p),
+            Self::AttentionChanged(p) => p.clone(),
             Self::GoalCreated(g) | Self::GoalUpdated(g) => json(g),
             Self::GoalDeleted(d) => json(d),
             Self::TaskCreated(t) => json(t),

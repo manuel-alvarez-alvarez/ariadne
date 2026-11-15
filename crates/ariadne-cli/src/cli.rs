@@ -478,12 +478,14 @@ pub(crate) enum Command {
         #[arg(long = "kind", value_name = "KIND")]
         kinds: Vec<String>,
     },
-    /// Show everything that needs a human, grouped by goal
+    /// Show the shared list of what needs a human
     ///
-    /// The UI's Attention page from the terminal: tasks that failed or
-    /// stalled, plus agent sessions waiting on a permission prompt or an
-    /// answer, in error, disconnected or stalled.
+    /// The same shared list as Desktop: pending questions, permissions and
+    /// recovery blockers. Partial reads show only the items the daemon supplied
+    /// and keep their incomplete-read warning.
     Attention {
+        #[command(subcommand)]
+        command: Option<AttentionCommand>,
         /// Redraw the list whenever something on it changes, until Ctrl-C
         #[arg(long)]
         watch: bool,
@@ -509,6 +511,12 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: McpCommand,
     },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum AttentionCommand {
+    /// Dismiss one occurrence without resolving its underlying request
+    Dismiss { item_id: String },
 }
 
 #[derive(Subcommand)]
@@ -566,6 +574,7 @@ pub(crate) const STOP_TIMEOUT: u64 = 10;
 ///
 /// Hiding it on a command hides it on everything under that command.
 const NO_FORMAT: &[&[&str]] = &[
+    &["attention", "dismiss"],
     &["completions"],
     &["attach"],
     &["mcp"],
@@ -702,7 +711,9 @@ fn hide_unless(cmd: clap::Command, path: &str, shown: &[&str], arg: clap::Arg) -
     // unless it takes an argument of its own too, as `completions <SHELL>`
     // does next to `completions install`. That one is run as itself, so the
     // flags it does not honour have to be hidden on it as well as below it.
-    let runs_itself = subcommands.is_empty() || cmd.get_positionals().next().is_some();
+    // `attention` also runs without its optional `dismiss` subcommand.
+    let runs_itself =
+        subcommands.is_empty() || cmd.get_positionals().next().is_some() || path == "attention";
     let cmd = match runs_itself && !shown.contains(&path) {
         true => cmd.arg(arg.clone()),
         false => cmd,

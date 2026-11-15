@@ -1,18 +1,9 @@
 /**
- * What is stuck, in one query, for the strip above the board — and, from the
- * same query, for the badges on the board itself ({@link useBoardAttention})
- * and for the count the shell carries onto every other screen (see
- * `attention-alerts.tsx`).
- *
- * The orchestrator's first question — "which tasks are stalled or failed, which
- * agents died or are waiting on me?" — used to need every goal opened one by
- * one. It is three list queries, all of them shared keys the SSE dispatcher
- * already invalidates, so the answer stays live without anything here
- * subscribing to events.
- *
- * All three are read unfiltered on purpose: the board's status filter narrows
- * the lanes, never this — a stuck task the filter hides is exactly the one the
- * strip exists to keep in sight.
+ * The shared daemon list supplies the attention rows, counts and board badges.
+ * Goal, task and session queries keep their loading and retry state, but raw
+ * statuses cannot restore an item that the daemon omitted. The SSE dispatcher
+ * keeps these shared queries current. The board's filters narrow its lanes,
+ * never this list.
  */
 
 import { queryOptions, useQuery } from "@tanstack/react-query"
@@ -55,9 +46,8 @@ function attentionListQueryOptions() {
 export type AttentionReason = "failed" | "stalled"
 
 /**
- * Whether this task wants the user on the strength of its bare status
- * alone — `failed` only, kept as the fallback a recovery read that could
- * not be read in full leaves standing. `stalled` is never reported here:
+ * The lane ordering's fallback for a task's bare status: `failed` only.
+ * This does not create an attention row. `stalled` is never reported here:
  * it is a flag raised while automatic recovery (a nudge, then a relaunch)
  * is still working the agent, and reporting it immediately would be
  * exactly the "automatic recovery still trying" row 009's attention
@@ -148,23 +138,12 @@ const INCOMPLETE_RECOVERY_READ = new Error(
 export function useAttention(): Attention {
   const goals = useQuery(goalsQueryOptions())
   const tasks = useQuery(taskListQueryOptions())
-  // Unfiltered, and narrowed by `sessionAttention` below rather than by the
-  // daemon: the key is the one the sessions screen already holds, so the extra
-  // rows usually cost no extra request, where `GET /v1/sessions?attention=true`
-  // would be a second list of its own. Filtering here is also what keeps the
-  // rule — "the daemon raised a reason for it" — in one place for both this
-  // strip and `ariadne attention`.
+  // Keep the shared queries' loading and retry state. Their raw statuses
+  // cannot restore rows that the attention endpoint omitted.
   const sessions = useQuery(sessionsQueryOptions())
-  // The daemon's own recovery producer: gates `exhausted` (see
-  // `recoveryExhaustedSessions`) and supplies the rows — a machine resource
-  // or a daemon configuration blocker — that name no goal or session of
-  // their own.
   const recovery = useQuery(attentionListQueryOptions())
 
-  const items = useMemo(
-    () => collectAttention(goals.data, tasks.data, sessions.data, recovery.data),
-    [goals.data, tasks.data, sessions.data, recovery.data],
-  )
+  const items = useMemo(() => collectAttention(recovery.data), [recovery.data])
 
   const error =
     goals.error ??
@@ -188,113 +167,13 @@ export function useAttention(): Attention {
 }
 
 /**
- * The tasks and the sessions folded into one list of rows, newest first.
- *
- * Which sessions belong is {@link sessionAttention}'s call, not this list's,
- * so the strip and `ariadne attention` include and label the same ones.
- *
- * A flagged session lands on its task's row rather than on one of its own —
- * the pair is one thing gone wrong (see {@link AttentionItem}) — and a task
- * with several of them keeps the most recently raised, which is the one the
- * user has not seen yet and the one the board's card shows. The row is dated
- * by whichever of its two reasons moved last, since that is what the list is
- * ordered by and what "last moved" claims on the row itself.
- *
- * A goal the goals list did not carry does not drop its rows: a task or a
- * session can outlive its goal falling out of a filtered list, and hiding it
- * would hide exactly the row the strip exists for — the row names the goal by
- * its short id instead.
+ * Only the shared list supplies rows, including during incomplete reads.
+ * Raw task statuses and session flags cannot say whether an occurrence was
+ * dismissed or whether its action still targets live work.
  */
-function collectAttention(
-  goals: GoalDto[] | undefined,
-  tasks: TaskDto[] | undefined,
-  sessions: SessionDto[] | undefined,
-  recovery: AttentionListDto | undefined,
-): AttentionItem[] {
-  const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
-  const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
-  // Once the recovery read is complete, it is authoritative for every
-  // failed task — including by staying silent while its orchestrator is
-  // still the one answering it (the daemon's recovery producer raises an
-  // item for a failed task only once it has given up on it). Falling back
-  // to the bare status whenever a task merely goes unnamed by a recovery
-  // item would undo that silence the moment `collectAttention` ran, so the
-  // fallback is reserved for a read that could not be trusted at all —
-  // absent, or itself marked `complete: false`.
-  const recoveryTrustworthy = recovery?.complete ?? false
-  /** Keyed by what identifies a row, which is what folds the two kinds. */
-  const rows = new Map<string, AttentionItem>()
-  /**
-   * When each row's folded session raised its reason, while the newest of them
-   * is still being picked — the row's own stamp is the later of that and the
-   * task's, so it cannot be compared against.
-   */
-  const flaggedAt = new Map<string, string>()
-
-  for (const task of tasks ?? []) {
-    if (recoveryTrustworthy) continue
-    const reason = taskAttentionReason(task)
-    if (!reason) continue
-    rows.set(task.id, {
-      id: task.id,
-      goalId: task.goal_id,
-      goal: goalsById.get(task.goal_id),
-      at: task.updated_at,
-      taskId: task.id,
-      task,
-      taskReason: reason,
-      session: undefined,
-      sessionReason: null,
-    })
-  }
-
-  for (const session of sessions ?? []) {
-    const reason = sessionAttention(session)
-    if (!reason) continue
-    // `exhausted` is never a row of its own here: automatic switching may
-    // still clear the bare flag on the very next tick, and whether it is
-    // still worth a person's time is the recovery producer's own `quota`
-    // item to say, read below with every other cause.
-    if (reason === "exhausted") continue
-    // A session's stall or disconnection is never this list's own business,
-    // task-tied or not: while the agent is still being nudged or
-    // relaunched, automatic recovery is still trying it, and whichever
-    // recovery item eventually covers it — the task's own, once it
-    // actually fails, or the taskless orchestrator's or reviewer's own
-    // give-up item — says the same thing with the cause and the action a
-    // bare flag cannot.
-    if (reason === "stalled" || reason === "disconnected") continue
-    const at = sessionAttentionAt(session)
-    const taskId = session.task_id ?? null
-    const key = taskId ?? session.id
-    const row = rows.get(key)
-    // Not the newest of this task's flagged sessions: the row already carries
-    // one raised more recently, which is the one the user has not seen yet.
-    const held = flaggedAt.get(key)
-    if (held && held.localeCompare(at) >= 0) continue
-    flaggedAt.set(key, at)
-    rows.set(key, {
-      id: key,
-      // A pull request's session has no goal; the fallback keeps this row's
-      // id total.
-      goalId: session.goal_id ?? "",
-      goal: goalsById.get(session.goal_id ?? ""),
-      // The row is as recent as its most recent reason, whichever raised it.
-      at: row && row.at.localeCompare(at) > 0 ? row.at : at,
-      taskId,
-      task: row?.task ?? (taskId ? tasksById.get(taskId) : undefined),
-      taskReason: row?.taskReason ?? null,
-      session,
-      sessionReason: reason,
-    })
-  }
-
-  // Every recovery item is its own row, whatever its cause: none of them
-  // belongs to one goal the way a task's row does, and
-  // a `quota` item's own summary, action and target say more than this
-  // board could derive from the bare `exhausted` flag alone.
-  for (const item of recovery?.items ?? []) {
-    rows.set(item.id, {
+function collectAttention(attention: AttentionListDto | undefined): AttentionItem[] {
+  return (attention?.items ?? [])
+    .map((item) => ({
       id: item.id,
       goalId: "",
       goal: undefined,
@@ -305,10 +184,8 @@ function collectAttention(
       session: undefined,
       sessionReason: null,
       recovery: item,
-    })
-  }
-
-  return [...rows.values()].sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id))
+    }))
+    .sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id))
 }
 
 /**
@@ -351,7 +228,11 @@ export interface BoardAttention {
 
 export function useBoardAttention(): BoardAttention {
   const sessions = useQuery(sessionsQueryOptions())
-  return useMemo(() => collectBoardAttention(sessions.data), [sessions.data])
+  const attention = useQuery(attentionListQueryOptions())
+  return useMemo(
+    () => collectBoardAttention(sessions.data, attention.data),
+    [sessions.data, attention.data],
+  )
 }
 
 /**
@@ -362,7 +243,10 @@ export function useBoardAttention(): BoardAttention {
  * card has room for one badge, so the most recently raised reason wins: it is
  * the one the strip lists first, and the one the user has not seen yet.
  */
-function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttention {
+function collectBoardAttention(
+  sessions: SessionDto[] | undefined,
+  attention?: AttentionListDto,
+): BoardAttention {
   const byTask = new Map<string, Flagged>()
   const byGoal = new Map<string, Flagged>()
   const lastActivity = new Map<string, string>()
@@ -373,6 +257,12 @@ function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttenti
       const seen = lastActivity.get(session.task_id)
       if (!seen || latest(seen, active) === active) lastActivity.set(session.task_id, active)
     }
+    if (
+      !attention?.items.some((item) =>
+        item.affected.some((subject) => subject.kind === "session" && subject.id === session.id),
+      )
+    )
+      continue
     const reason = sessionAttention(session)
     if (!reason) continue
     const at = sessionAttentionAt(session)
@@ -459,6 +349,10 @@ function recoveryTarget(
   switch (item.target.kind) {
     case "console":
       return sessionTerminalFrom(pathname, current, item.target.session_id)
+    case "goal": {
+      const [path, search] = paths.goal(item.target.goal_id).split("?")
+      return { pathname: path, search: search ? `?${search}` : "" }
+    }
     case "task":
       return taskPanelFrom(pathname, current, item.target.task_id)
     case "pull_request": {
@@ -466,7 +360,10 @@ function recoveryTarget(
       return { pathname: path, search: `?${search}` }
     }
     case "settings":
-      return { pathname: paths.repositories(), search: "" }
+      return {
+        pathname: item.target.section === "agents" ? "/agents" : paths.repositories(),
+        search: "",
+      }
   }
 }
 
@@ -574,6 +471,7 @@ export function attentionAffectedLinks(
   current: URLSearchParams,
   pathname: string,
 ): AttentionAffectedLink[] | null {
+  if (item.recovery?.producer === "recovery") return null
   const sessions = item.recovery?.affected.filter((subject) => subject.kind === "session") ?? []
   if (sessions.length < 2) return null
   return sessions.map((subject) => ({

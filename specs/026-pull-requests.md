@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-11-09
+updated: 2026-11-15
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -34,7 +34,7 @@ tests:
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/session.rs
   - crates/ariadne-cli/src/commands/attention.rs
-  - crates/ariadne-cli/src/commands/attention/board.rs
+  - crates/ariadne-cli/tests/attention.rs
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-store/src/skill_tests/operate.rs
   - crates/ariadne-store/src/skill_tests/template.rs
@@ -525,7 +525,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A ready report raises no row of its own on `ariadne attention`: that is
   the `pull_request` attention producer's own item, confirmed against the
   forge's evidence, not a bare flag on the session (031):
-  `board.rs::tests::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`.
+  `crates/ariadne-cli/tests/attention.rs::incomplete_json_contains_only_daemon_items_and_their_count`.
 - The Pull requests screen row opens its session and shows the unanswered count:
   `pull-requests-page.test.tsx::opens a request's session panel from its row and shows its unanswered comments`.
 - A session event of a request refetches that request:

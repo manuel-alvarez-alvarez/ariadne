@@ -1099,6 +1099,12 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
     .await;
     assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
     h.state.forge_poll.set_mode(&repo_id, Mode::WakeOnly);
+    // The cache is populated before the poll publishes its initial event.
+    // Subscribe after that fetch ends, so only direct-read events reach us.
+    eventually(TIMEOUT, "the initial fetch to finish", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     let mut events = h.bus.subscribe();
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo_id);
 

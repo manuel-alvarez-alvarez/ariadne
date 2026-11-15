@@ -1,8 +1,8 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-11-14
-areas: [api, daemon, cli, ui]
+updated: 2026-11-15
+areas: [api, daemon, cli, store, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/attention.rs
@@ -23,7 +23,8 @@ tests:
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/attention.rs
-  - crates/ariadne-cli/src/commands/attention/board.rs
+  - crates/ariadne-cli/tests/attention.rs
+  - crates/ariadne-cli/src/main.rs
   - crates/ariadne-daemon/src/scheduler/auto_switch.rs
   - crates/ariadne-daemon/src/scheduler/goals.rs
   - crates/ariadne-daemon/src/scheduler/pull_requests.rs
@@ -34,6 +35,7 @@ tests:
   - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/forge/github/details.rs
   - ui/src/features/goals/attention.test.tsx
+  - ui/src/features/goals/attention-incomplete.test.tsx
   - ui/src/features/goals/attention-alerts.test.tsx
   - ui/src/features/goals/attention-header.test.tsx
   - ui/src/events/dispatch.test.ts
@@ -103,7 +105,7 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
    clears it, `since` (RFC 3339, first observed), every `affected`
    subject (`goal`, `task`, `session` or `repository`, with an id and a
    label identifying it on its own), and a typed `target` (`console`,
-   `task`, `pull_request` or `settings`) a client opens the item onto.
+   `goal`, `task`, `pull_request` or `settings`) a client opens the item onto.
    Opening a target does not resolve the item — only the action it names
    does. `producer` and `reason` answer different questions: a later
    producer may share none of recovery's reasons, or raise `unknown` for
@@ -326,9 +328,7 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
      task's own item carries no "resume it" action for this one to be
      dropped in favour of — so both are raised, each naming its own
      subject (the task, the goal) and its own action. The item names the
-     goal and targets the alarm session the give-up itself is raised on
-     (or the goal's last orchestrator session where none still carries
-     it), and its summary carries the spawn-retry budget spent
+     goal and targets that goal's active panel. Its summary carries the spawn-retry budget spent
      (`SPAWN_RETRY_BUDGET`) and the alarm session's own last
      `session.error`, where it reported one (`last_session_error`).
    - every pull request whose reviewer session has been given up on
@@ -416,59 +416,17 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
    returning, so a client that reacted to the status change the mark
    rode in on and still saw nothing yet gets a second event, right
    behind it, once the mark itself has actually committed.
-7. The CLI (`ariadne attention`) and Ariadne Desktop (the attention strip,
-   its badge and its toasts) each still compose their own list from goals,
-   tasks and sessions (009's existing contract) for every reason this
-   route does not cover (`waiting_permission`, `waiting_input`,
-   `waiting_user`, `agent_error`), with the following suppressed so the
-   two lists never say the same thing twice, or raise a row while
-   automatic recovery is still trying:
-   - a session's bare `exhausted` flag never raises a row of its own on
-     either client; only a `quota` item does, read with every other
-     reason in the same pass rather than used to gate a locally-derived
-     row — a session automatic switching is still working on is not on
-     the list at all, under any reason;
-   - a task's own bare `failed` status never raises a row either, once
-     the recovery read is `complete`: whatever this producer has to say
-     about a failed task — its own named, actionable item, or silence
-     while its orchestrator is still the one answering it — is
-     authoritative, and the local `failed` reason defers to it entirely
-     (`group`'s `recovery_trustworthy` in the CLI,
-     `recoveryTrustworthy` in Desktop). A membership check on which
-     tasks a recovery item happens to name would not do: an empty,
-     `complete` recovery read is what suppression while the orchestrator
-     still owns the failure looks like, and reads identically to "this
-     task was never considered" unless `complete` itself is read instead.
-     The local `failed` reason survives only as the fallback a recovery
-     read that could not be read in full (`complete: false`) leaves
-     standing, so a task's failure is never silently dropped just because
-     the producer that would otherwise explain it had a hiccup;
-   - a task's `stalled` flag never raises a row, on the task or on its
-     session: it is raised while automatic recovery (a nudge, then a
-     relaunch) is still working the agent, and reporting it immediately
-     would be exactly the "automatic recovery still trying" row this
-     contract asks never to raise. If the relaunch also fails, the task
-     fails, and the point above covers it;
-   - a session's `disconnected` flag never raises a row of its own
-     either, task-tied or not: the scheduler resumes a disconnected agent
-     automatically, whatever it runs, and the flag by itself is exactly
-     the same one a mere crash raises well before any retry budget is
-     spent (`retire_disconnected`) — raising it locally would be the
-     false positive recovery's own `given_up_at` marks exist to avoid.
-     A task-tied session's eventual failure is the point above's
-     business; a taskless orchestrator's or reviewer's eventual give-up
-     is the recovery producer's own `unknown` item
-     (`orchestrator_given_up_items`, `reviewer_given_up_items`), read with
-     every other recovery item below — never derived from the bare flag
-     here, on either client, for either seat.
+7. The CLI (`ariadne attention`) and Desktop show only items supplied by
+   `GET /v1/attention`, including during incomplete reads. Raw task statuses
+   and session flags never reconstruct dismissed items or dead-session actions.
+   Board badges require an affected session in the shared list.
 
-   Every recovery item is its own row, with no goal of its own the way a
-   composed task or session row has one: the CLI's `RECOVERY` section
-   below the per-goal board, and a Desktop strip row synthesized straight
-   from the item (`AttentionItem.recovery`), rendering the item's own
-   summary, action, since, reason and `affected` list (each entry shown,
-   not only the single `target`) rather than a label derived from a bare
-   flag.
+   Every item retains its summary, action, age, reason and affected subjects.
+   Default CLI output prints these in its `NEEDS ATTENTION` section. An explicit
+   `--columns` selects shared-item fields as specified in 014. Desktop renders
+   the item's own target. CLI JSON retains `goals` as an empty array, `count` as
+   the number of daemon items, `recovery` as those items, and `complete` as
+   the daemon's completeness value. Quiet output contains only daemon item IDs.
 8. A client never reads a partial or failed read as "nothing needs
    attention": a query failure, or `complete: false` with no items, holds
    the list open rather than letting it read as all-clear. The CLI prints
@@ -740,6 +698,8 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     `::a_route_level_read_failure_withdraws_the_readiness_item_and_its_recovery_restores_it`,
     `pull_requests.rs::an_outer_list_failure_publishes_pull_requests_changed`,
     `::a_route_level_read_failure_withdraws_the_rows_evidence`).
+    The route test waits for the initial fetch before subscribing, so startup
+    events cannot count as duplicate route events.
 16. `mergeable` is read off the forge's own mergeability for the head,
     never derived from `checks` or `review_decision`, and read by each
     state's own documented meaning rather than guessed from its name:
@@ -757,6 +717,66 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     unevaluated one
     (`forge/github/pulls.rs::tests::mergeable_reads_every_merge_state_status_by_its_documented_meaning`,
     `::a_read_naming_no_merge_state_status_is_unknown`).
+
+### Individual dismissal
+
+`POST /v1/attention/{id}/dismiss` hides the current occurrence and returns 204.
+An absent item returns 404. `ariadne attention dismiss <item-id>` and each
+popover or drawer row use this operation. Clients encode the item ID as one
+path segment, including any slash in a quota item's model name.
+Dismissal never answers a pending question, approves permission, or changes work.
+SQLite stores the occurrence's
+source revisions and sorted affected identities. Dismissals survive daemon restarts.
+A shrinking group stays hidden while its remaining members retain their dismissed
+source revisions. Returning recovered work has a new revision and resurfaces the
+group, as does newly affected work. The dismissal covers only the members and
+revisions the user dismissed. Missing items never erase dismissals:
+a cold forge cache or an incomplete read cannot prove that a cause cleared.
+The scheduler also collects attention during reconciliation. Source revisions change
+transactionally with relevant source mutations. Forge reads record changes of
+attention eligibility. Thus clearing and returning requires no intervening
+client read. `occurrence` carries that identity to notification consumers.
+Pull-request reviewer recovery, keeper recovery, review requests and merge readiness
+have separate source revisions. A change to one cause cannot restore another
+cause's dismissed reminder. Migration `0008_attention_pull_request_causes.sql`
+starts each revision at the previous shared value, preserving existing occurrences
+and dismissals. It retains the legacy revisions and trigger for compatibility.
+The store migration test reverses the addition on a populated database copy:
+it removes the four new triggers and the `pull_request_cause` revision rows.
+
+Daemon lists govern client lists and counts, including during incomplete reads. `attention_changed`
+invalidates attention queries and CLI watch output. Desktop also uses only shared
+items during incomplete reads, with the existing warning and Retry action.
+Missing or failed reads supply no additional rows or board badges.
+Removed items lose their toasts even during an incomplete read. Notification
+history waits for a complete read, so a temporary omission cannot announce an
+old occurrence again. The CLI retains its incomplete-read warning and quiet-mode failure, with no fallback rows.
+Dead sessions supply no questions or permission reminders. Collection expires
+old pending questions from dead sessions. Recovery remains visible with goal,
+task, pull request or settings targets. Recovery rows offer no dead console links.
+
+Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
+`crates/ariadne-cli/src/main.rs::tests::dismisses_a_quota_item_whose_model_name_contains_a_slash`,
+`attention.rs::dismissing_permission_does_not_answer_it_and_a_new_prompt_returns`,
+`attention.rs::a_dismissed_group_returns_when_another_task_joins`,
+`attention.rs::a_shrinking_dismissed_group_stays_hidden_across_restart`,
+`attention.rs::recovered_group_members_return_without_an_intervening_attention_read`,
+`attention.rs::dead_session_questions_expire_without_hiding_recovery`,
+`store.rs::attention_dismissals_survive_reopening_the_database`,
+`store.rs::attention_migration_preserves_existing_work_in_both_directions`,
+`store.rs::splitting_pull_request_causes_preserves_existing_occurrences_and_work`,
+`attention.rs::keeper_failure_does_not_restore_a_dismissed_reviewer_blocker`,
+`attention.rs::reviewer_failure_does_not_restore_a_dismissed_keeper_blocker`,
+`attention.rs::keeper_failure_does_not_restore_a_dismissed_review_request`,
+`attention.rs::keeper_failure_does_not_restore_a_dismissed_ready_request`,
+`attention.rs::dismissed_review_requests_return_without_an_intervening_read`,
+`attention.rs::a_cold_forge_cache_does_not_forget_dismissals`,
+`attention.rs::recovery_targets_the_goal_even_without_an_alarm_session`,
+`attention-header.test.tsx` (popover and drawer dismissal, valid recovery targets),
+`attention-incomplete.test.tsx` (dismissal, dead sessions, partial lists and board badges),
+`attention-alerts.test.tsx` (occurrence identity and removed toasts during partial reads), and `dispatch.test.ts`
+(cross-client attention invalidation).
+
 
 ## Acceptance criteria
 
@@ -897,7 +917,7 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   (`attention.rs::two_tasks_failed_for_different_reasons_stay_separate_unknown_items`).
 - An exhausted session on a model the catalog does not rank — so automatic
   switching has nothing to try — is a `quota` item naming that session,
-  targeting its console, naming the producer as `recovery`, and naming the
+  targeting agent settings, naming the producer as `recovery`, and naming the
   session's affected entry by its seat rather than the model
   (`attention.rs::an_exhausted_session_on_an_unranked_model_is_a_quota_item`);
   a task-tied session's affected entry instead names its task
@@ -1064,25 +1084,20 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   file — the closest this suite comes to a daemon restart, since nothing
   else in it spawns a second daemon process either
   (`attention.rs::a_recovery_items_id_is_stable_across_a_fresh_store_connection`).
-- The CLI board raises no `exhausted` row of its own, and no `disconnected`
-  or `stalled` row either, task-tied or not
-  (`board.rs::an_exhausted_session_raises_no_row_of_its_own_on_this_board`,
-  `::a_taskless_disconnected_or_stalled_session_raises_no_row_of_its_own_on_this_board`,
-  `::a_flagged_session_row_spells_the_reason_the_ui_spells`,
-  `::a_row_names_what_it_is_about`); every recovery item, `quota` included,
-  prints in its own section with its reason, its waiting time, its action
-  and what it affects
-  (`attention.rs::every_recovery_item_prints_in_its_own_section`); a
-  failed task a complete recovery read has nothing to say about stays off
-  the board entirely, rather than falling back to its bare `failed` row,
-  and only an incomplete read brings that fallback back
-  (`board.rs::a_failed_task_recovery_has_not_named_stays_off_the_board_once_recovery_is_trustworthy`);
-  every affected entry's own id leads its line, so each stays reachable even
-  inside a grouped item; `-q` names every recovery item's own id alongside
-  the board's
-  (`attention.rs::quiet_rows_also_names_every_recovery_item`); and `-q`
-  fails the command on an incomplete read rather than succeeding silently
-  (`attention.rs::quiet_mode_fails_on_an_incomplete_recovery_read`).
+- The CLI shows only daemon items during incomplete reads. JSON counts only
+  those items, table output retains its warning, and quiet output lists only
+  their IDs and fails. Dismissed task and permission rows, and a dead session's
+  permission flag, cannot reappear through local fallback
+  (`crates/ariadne-cli/tests/attention.rs::incomplete_json_contains_only_daemon_items_and_their_count`,
+  `::incomplete_table_omits_dismissed_and_dead_rows_but_keeps_the_warning`,
+  `::incomplete_quiet_output_names_only_daemon_items_and_still_fails`,
+  `::an_empty_incomplete_read_warns_without_restoring_raw_rows`,
+  `::empty_incomplete_quiet_output_fails_without_printing_raw_ids`).
+  Complete quiet output still succeeds, and a complete empty read still reports
+  the empty state (`::complete_quiet_output_still_succeeds_with_daemon_item_ids`,
+  `::an_empty_complete_read_still_reports_nothing_needs_attention`).
+  Each shared item retains its cause, age, action and affected IDs
+  (`commands/attention.rs::every_recovery_item_prints_in_its_own_section`).
 - Ariadne Desktop's attention list raises no row for an exhausted session
   recovery has not given up on, raises one once a `quota` item names it,
   counts a resource or configuration item that names no goal or session,
@@ -1098,21 +1113,20 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   failed task once a complete recovery read has nothing to say about
   it", "raises no row of its own for a taskless orchestrator's
   disconnected flag", "raises a row for a taskless orchestrator once
-  recovery's own give-up item names its goal"). A grouped quota item with
-  two or more affected sessions gives each its own link to its own
-  session's terminal — asserted against the
-  exact destination `sessionTerminalFrom` itself builds, not only the id
-  copied into the helper's result — and one with a single session adds no
-  second line saying the same thing the row's own link already does
-  (`attention.test.tsx::gives_a_grouped_quota_items_every_session_its_own_link_to_its_own_terminal`,
-  `::gives_a_single-session_quota_item_no_extra_links_of_its_own`).
+  recovery's own give-up item names its goal"). A grouped quota item opens agent settings and provides no links to dead
+  sessions (`attention.test.tsx`, "does not offer dead session links for grouped recovery").
+
 - Neither client reads an incomplete or failed read as all-clear: the CLI
   notes it instead of printing the empty state and fails under `-q`, and
   Desktop's title and badge read unavailable rather than quiet while zero
   items sit under an unfinished read
   (`ui/src/features/goals/attention.test.tsx`, "never reads an incomplete
   recovery read as nothing needing attention";
-  `attention.rs::quiet_mode_fails_on_an_incomplete_recovery_read`).
+  `crates/ariadne-cli/tests/attention.rs::incomplete_quiet_output_names_only_daemon_items_and_still_fails`).
+- Desktop keeps dismissed items and dead-session prompts absent during incomplete
+  reads, including task and goal badges. It retains returned items and the warning
+  (`attention-incomplete.test.tsx`). A removed toast loses its action during a
+  partial read (`attention-alerts.test.tsx`, "removes a toast omitted by an incomplete attention read").
 - Desktop refetches the attention list on a goal's own confirmed-turn or
   give-up evidence (`goal_updated`) and on a reviewer session's own
   give-up evidence (`pull_requests_changed`)
@@ -1182,7 +1196,7 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   (`pull_request_reviews.rs::a_reviewed_sha_is_stored_and_raises_no_waiting_user`,
   `kept_requests.rs::the_pr_agent_replies_and_reports_and_no_other_session_may`,
   `workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`,
-  `attention/board.rs::a_pull_request_sessions_own_waiting_user_raises_no_row_of_its_own_on_this_board`,
+  `crates/ariadne-cli/tests/attention.rs::incomplete_json_contains_only_daemon_items_and_their_count`,
   `scheduler_attention.rs::a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart`).
 - A mergeability-only transition still publishes `pull_requests_changed`,
   both directions, and an unchanged fetch after it still raises nothing:
@@ -1230,7 +1244,7 @@ give-up branch), `crates/ariadne-store/src/goals.rs`
 `crates/ariadne-daemon/src/forge/github/pulls.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs` (`ask_review`, `report`),
 `crates/ariadne-cli/src/commands/attention.rs` (including `relevant`),
-`crates/ariadne-cli/src/commands/attention/board.rs`,
+`crates/ariadne-cli/tests/attention.rs`,
 `ui/src/features/goals/attention.ts`, `ui/src/features/goals/attention-alerts.tsx`,
 `ui/src/features/goals/attention-strip.tsx`, `ui/src/events/dispatch.ts`,
 `ui/src/features/sessions/session-display.tsx`,

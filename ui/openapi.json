@@ -144,6 +144,31 @@
         }
       }
     },
+    "/v1/attention/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "attention"
+        ],
+        "operationId": "dismiss",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attention item id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "description": "Item no longer exists"
+          }
+        }
+      }
+    },
     "/v1/dashboards": {
       "get": {
         "tags": [
@@ -2330,7 +2355,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nactive goal for the babysit, with one staffed task and no orchestrator,\non the `pr-babysit` workflow: the model must be ranked inside that\nworkflow's band, else 400. Asking again keeps the open goal and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The goal completes when the request merges or closes.\nStopping cancels the goal and its task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
+        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nactive goal for the babysit, with one staffed task and no orchestrator,\non the `pr-babysit` workflow: the model must be ranked inside that\nworkflow's band, else 400. Asking again keeps the open goal and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The goal completes when the request merges; its task fails on close.\nStopping cancels the goal and its task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
         "operationId": "ask_babysit",
         "parameters": [
           {
@@ -2383,7 +2408,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one active goal for the review, with one\nstaffed task and no orchestrator, on the `pr-review` workflow: the model\nmust be ranked inside that workflow's band, else 400. Asking again keeps\nthe open goal and moves its pin and skills. The session waits while the\nrequest is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The goal completes when the\nrequest merges or closes. Stopping cancels the goal and its task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
+        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one active goal for the review, with one\nstaffed task and no orchestrator, on the `pr-review` workflow: the model\nmust be ranked inside that workflow's band, else 400. Asking again keeps\nthe open goal and moves its pin and skills. The session waits while the\nrequest is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The goal completes when the\nrequest merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
         "operationId": "ask_review",
         "parameters": [
           {
@@ -4700,6 +4725,10 @@
             "type": "string",
             "description": "Stable across a restart and across the same cause recurring: derived\nfrom the cause and what it shares rather than issued fresh, so the\nsame blocker is the same row for as long as it stands."
           },
+          "occurrence": {
+            "type": "string",
+            "description": "Opaque identity of the current occurrence, stable across clients and restarts."
+          },
           "producer": {
             "$ref": "#/components/schemas/AttentionProducer"
           },
@@ -4835,6 +4864,25 @@
               },
               "task_id": {
                 "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The active goal responsible for recovery.",
+            "required": [
+              "goal_id",
+              "kind"
+            ],
+            "properties": {
+              "goal_id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "goal"
+                ]
               }
             }
           },
@@ -5337,6 +5385,22 @@
       },
       "DomainEvent": {
         "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {},
+              "event": {
+                "type": "string",
+                "enum": [
+                  "attention_changed"
+                ]
+              }
+            }
+          },
           {
             "type": "object",
             "required": [

@@ -1,9 +1,10 @@
 /** The shell's persistent entry point to the shared live attention list. */
 
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useRef, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
-import type { GoalDto } from "@/api"
+import { api, type GoalDto, qk, unwrap } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
@@ -145,12 +146,14 @@ function actionLabel(item: AttentionItem): string {
     switch (item.recovery.target.kind) {
       case "console":
         return "Open console"
+      case "goal":
+        return "Open goal"
       case "task":
         return "Open task"
       case "pull_request":
         return "Open pull request"
       case "settings":
-        return "Open repositories"
+        return item.recovery.target.section === "agents" ? "Open agents" : "Open repositories"
     }
   }
   if (
@@ -292,6 +295,12 @@ function Row({
   /** The drawer's row: the whole text, and the action named. */
   expanded?: boolean
 }) {
+  const queryClient = useQueryClient()
+  const dismiss = useMutation({
+    mutationFn: () =>
+      unwrap(api().POST("/v1/attention/{id}/dismiss", { params: { path: { id: item.id } } })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.attention.lists() }),
+  })
   const [search] = useSearchParams()
   // Where a row lands depends on the screen as well as its params: the strip is
   // the board's, but the same targets are used from the alerts, which are
@@ -353,6 +362,17 @@ function Row({
 
   return (
     <li>
+      {item.recovery ? (
+        <button
+          type="button"
+          disabled={dismiss.isPending}
+          onClick={() => dismiss.mutate()}
+          className="float-right px-3 py-2 text-xs underline"
+        >
+          Dismiss
+        </button>
+      ) : null}
+      {dismiss.error ? <p role="alert">{describeError(dismiss.error)}</p> : null}
       <Link
         to={target}
         // Set exactly when the target is a task panel replacing an open

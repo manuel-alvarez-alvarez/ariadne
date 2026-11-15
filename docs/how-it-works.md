@@ -109,3 +109,24 @@ On the desktop Goals board, each goal has one task area. The Active filter
 hides finished and cancelled tasks. All, Finished, and custom filters show
 all tasks in matching goals. The heading counts visible tasks; goal progress
 counts include hidden tasks. See [the desktop specification](../specs/015-desktop-app.md).
+
+## Dismiss an attention reminder
+
+Run `ariadne attention` to list reminders and their dismissal commands.
+Use `ariadne attention dismiss <item-id>` to dismiss one occurrence.
+Keep the item ID unchanged, including any `/` in its model name.
+In Desktop, select **Dismiss** in the header popover or expanded attention drawer.
+The change applies to all clients and survives daemon restarts.
+
+If a read is incomplete, both clients show only the available daemon items and keep the warning visible.
+Dismissed reminders stay hidden. Desktop offers Retry; CLI quiet output still fails to signal the incomplete list.
+
+Dismissal leaves questions, permissions and underlying work unchanged.
+A cause appears again after it clears and returns, or when additional work joins
+its group. If some affected work recovers, the remaining group stays dismissed.
+The group appears again if recovered work returns or new affected work joins.
+Separate causes keep separate dismissals, even when they concern the same pull request.
+For example, a keeper failure does not restore a dismissed reviewer recovery reminder.
+Dead sessions lose their questions and permission reminders.
+Recovery blockers link to the active work or settings that can address them.
+See [Needs attention](../specs/031-needs-attention.md) for the shared contract.

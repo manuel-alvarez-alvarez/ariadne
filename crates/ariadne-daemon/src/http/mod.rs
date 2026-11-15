@@ -176,6 +176,7 @@ impl AppState {
         models::set_rank,
         logs::snapshot, logs::stream,
         attention::list,
+        attention::dismiss,
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
@@ -406,6 +407,7 @@ pub fn router(state: AppState) -> Router {
         .merge(query::routes())
         // attention
         .route("/v1/attention", get(attention::list))
+        .route("/v1/attention/{id}/dismiss", post(attention::dismiss))
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))

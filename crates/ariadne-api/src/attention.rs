@@ -58,7 +58,7 @@ pub enum AttentionProducer {
     /// `crate::attention::recovery` (`ariadne-daemon`): a blocker automatic
     /// recovery has given up on, or that no retry loop covers at all.
     Recovery,
-    /// Not produced yet: a session's own question to the user.
+    /// A live session's own question, permission, input or error reminder.
     AgentRequest,
     /// `crate::attention::pull_requests` (`ariadne-daemon`): a review
     /// request nobody is assigned to, or a request a babysitting task has
@@ -85,6 +85,8 @@ pub enum AttentionTarget {
     Console { session_id: String },
     /// The named task.
     Task { task_id: String },
+    /// The active goal responsible for recovery.
+    Goal { goal_id: String },
     /// The named pull request.
     PullRequest { pull_request_id: String },
     /// A settings section, named for the client's own routing.
@@ -98,6 +100,9 @@ pub struct AttentionItemDto {
     /// from the cause and what it shares rather than issued fresh, so the
     /// same blocker is the same row for as long as it stands.
     pub id: String,
+    /// Opaque identity of the current occurrence, stable across clients and restarts.
+    #[serde(default)]
+    pub occurrence: String,
     pub producer: AttentionProducer,
     /// The shared contract's `reason`: why this blocker exists, in the one
     /// vocabulary every producer draws from (`AttentionCause`).

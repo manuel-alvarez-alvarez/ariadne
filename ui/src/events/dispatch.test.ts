@@ -458,3 +458,10 @@ describe("dashboard events", () => {
     expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toBeUndefined()
   })
 })
+
+it("invalidates shared attention when another client dismisses an item", () => {
+  const queryClient = new QueryClient()
+  queryClient.setQueryData(qk.attention.list(), { items: [], complete: true })
+  dispatch(queryClient, { event: "attention_changed", data: {} })
+  expect(stale(queryClient, qk.attention.list())).toBe(true)
+})

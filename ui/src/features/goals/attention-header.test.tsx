@@ -21,6 +21,13 @@ beforeEach(() => {
     )
     if (url.pathname === "/v1/goals") return Promise.resolve(jsonResponse([goal]))
     if (url.pathname === "/v1/tasks") return Promise.resolve(jsonResponse([task]))
+    if (url.pathname.endsWith("/dismiss")) {
+      recovery = recovery.filter(
+        (item) =>
+          !url.pathname.includes(encodeURIComponent(item.id)) && !url.pathname.includes(item.id),
+      )
+      return Promise.resolve(new Response(null, { status: 204 }))
+    }
     if (url.pathname === "/v1/attention")
       return Promise.resolve(jsonResponse({ items: recovery, complete }))
     if (failSessions) return Promise.resolve(jsonResponse({ message: "offline" }, 503))
@@ -32,6 +39,7 @@ function item(
 ): AttentionItemDto {
   return {
     id: "recovery:resource:test",
+    occurrence: "",
     producer: "recovery",
     reason: "resource",
     summary: "Resource limit reached",
@@ -163,4 +171,39 @@ it("drops a filter whose last item resolved instead of hiding every row", async 
   await queryClient.invalidateQueries()
   expect(await screen.findByText("Showing 1 of 1")).not.toBeNull()
   expect((screen.getByLabelText("Reason") as HTMLSelectElement).value).toBe("")
+})
+
+it("dismisses one item immediately and updates the shared count", async () => {
+  recovery = [item()]
+  renderScreen(<AttentionPopover />, { route: "/profiles" })
+  fireEvent.click(await screen.findByRole("button", { name: /Needs attention/ }))
+  fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }))
+  await waitFor(() => expect(screen.queryByRole("button", { name: /Needs attention/ })).toBeNull())
+  expect(recovery).toEqual([])
+})
+
+it("dismisses directly from the expanded drawer", async () => {
+  recovery = [item()]
+  renderScreen(<AttentionPopover />, { route: "/profiles" })
+  fireEvent.click(await screen.findByRole("button", { name: /Needs attention/ }))
+  fireEvent.click(await screen.findByRole("button", { name: "View all" }))
+  fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }))
+  await waitFor(() => expect(recovery).toEqual([]))
+  await waitFor(() => expect(screen.queryByText("Resource limit reached")).toBeNull())
+})
+
+it("opens agent settings for quota recovery", async () => {
+  recovery = [item({ kind: "settings", section: "agents" })]
+  const { location } = renderScreen(<AttentionPopover />, { route: "/sessions" })
+  await openDrawer()
+  fireEvent.click(await screen.findByText("Open agents"))
+  expect(location.url).toBe("/agents")
+})
+
+it("opens the active goal for orchestrator recovery from the sessions screen", async () => {
+  recovery = [item({ kind: "goal", goal_id: goal.id })]
+  const { location } = renderScreen(<AttentionPopover />, { route: "/sessions" })
+  await openDrawer()
+  fireEvent.click(await screen.findByText("Open goal"))
+  expect(location.url).toBe(`/goals?goal=${goal.id}`)
 })

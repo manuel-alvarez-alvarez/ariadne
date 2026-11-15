@@ -694,6 +694,9 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         }
         wake_scheduler(&handoff.scheduler, &row.id);
     }
+    if let Err(error) = crate::attention::pull_requests::items(store, &handoff.live).await {
+        warn!(%error, "cannot record pull request attention occurrences");
+    }
     pulls_moved(handoff, &integration, &listed, &requested, &held);
     issues_moved(handoff, &integration, &client).await;
     Ok(())

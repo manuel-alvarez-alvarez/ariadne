@@ -16,37 +16,54 @@ use ariadne_api::attention::{
 use ariadne_store::{PullRequest, PullRequestFilter, Result, Store};
 
 use crate::forge::live;
-use crate::launcher::Launcher;
+use crate::forge::live::LivePulls;
 
 /// Every item this producer currently finds, each read off the last fetch
 /// of a request Ariadne already keeps a row for: `live::of_row` answers
 /// `None` where no fetch has read the row yet, which is missing evidence
 /// rather than a blocker either item raises on.
-pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<AttentionItemDto>> {
+pub(crate) async fn items(store: &Store, cache: &LivePulls) -> Result<Vec<AttentionItemDto>> {
     let mut items = Vec::new();
     for row in store
         .list_pull_requests(PullRequestFilter::default())
         .await?
     {
-        let Some(pull) = live::of_row(store, &launcher.live, row).await? else {
+        let Some(pull) = live::of_row(store, cache, row).await? else {
             continue;
         };
-        if pull.state != "open" || pull.draft {
-            continue;
-        }
         let integration = store.forge_integration(&pull.repository_id).await?;
         let repo = integration
             .as_ref()
             .map(|i| format!("{}/{}", i.owner, i.name))
             .unwrap_or_else(|| pull.repository_id.clone());
-        if pull.role == "reviewer"
-            && let Some(item) = review_start_item(&pull, &repo)
-        {
-            items.push(item);
-        }
-        if pull.origin_task_id.is_some() || pull.babysit_asked {
+        let active = pull.state == "open" && !pull.draft;
+        let review = if active && pull.role == "reviewer" {
+            review_start_item(&pull, &repo)
+        } else {
+            None
+        };
+        let ready = if active && (pull.origin_task_id.is_some() || pull.babysit_asked) {
             let enabled = integration.is_some_and(|i| i.enabled);
-            items.extend(readiness_item(store, launcher, &pull, enabled, &repo).await?);
+            readiness_item(store, cache, &pull, enabled, &repo).await?
+        } else {
+            None
+        };
+        for (kind, item) in [("review_start", review), ("ready", ready)] {
+            let id = format!("pull_request:{kind}:{}", pull.id);
+            let state = if item.is_some() {
+                if kind == "ready" {
+                    pull.head_sha.as_str()
+                } else {
+                    "active"
+                }
+            } else {
+                ""
+            };
+            let version = store.observe_attention(&id, state).await?;
+            if let Some(mut item) = item {
+                item.occurrence = version.to_string();
+                items.push(item);
+            }
         }
     }
     Ok(items)
@@ -78,6 +95,7 @@ fn review_start_item(pull: &PullRequest, repo: &str) -> Option<AttentionItemDto>
         return None;
     }
     Some(AttentionItemDto {
+        occurrence: String::new(),
         id: format!("pull_request:review_start:{}", pull.id),
         producer: AttentionProducer::PullRequest,
         reason: AttentionCause::Configuration,
@@ -146,7 +164,7 @@ fn review_start_item(pull: &PullRequest, repo: &str) -> Option<AttentionItemDto>
 /// to.
 async fn readiness_item(
     store: &Store,
-    launcher: &Launcher,
+    cache: &LivePulls,
     pull: &PullRequest,
     integration_enabled: bool,
     repo: &str,
@@ -159,7 +177,7 @@ async fn readiness_item(
     {
         return Ok(None);
     }
-    let cached = launcher.live.get(&pull.id);
+    let cached = cache.get(&pull.id);
     if !cached.as_ref().is_some_and(|cached| cached.evidence_ok) {
         return Ok(None);
     }
@@ -177,7 +195,7 @@ async fn readiness_item(
     // a review's own summary — posted as a plain `issue_comment`, never a
     // resolvable thread at all — must never be read as one that blocks
     // forever.
-    let comments = live::comments_of(store, &launcher.live, pull).await?;
+    let comments = live::comments_of(store, cache, pull).await?;
     if comments
         .iter()
         .any(|c| c.kind == "review_comment" && !c.resolved)
@@ -212,6 +230,7 @@ async fn readiness_item(
         .clone()
         .unwrap_or_else(|| pull.updated_at.clone());
     Ok(Some(AttentionItemDto {
+        occurrence: String::new(),
         id: format!("pull_request:ready:{}", pull.id),
         producer: AttentionProducer::PullRequest,
         reason: AttentionCause::Unknown,

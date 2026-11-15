@@ -169,7 +169,19 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             since,
             step,
         } => commands::query::run(&client, expr, at, since, step, format).await,
-        Command::Attention { watch } => commands::attention::run(&client, watch, format).await,
+        Command::Attention { watch, command } => match command {
+            Some(cli::AttentionCommand::Dismiss { item_id }) => {
+                client
+                    .post_bytes(
+                        &format!("/v1/attention/{}/dismiss", commands::path_segment(&item_id)),
+                        "application/json",
+                        b"{}".to_vec(),
+                    )
+                    .await?;
+                Ok(())
+            }
+            None => commands::attention::run(&client, watch, format).await,
+        },
         Command::Events {
             follow,
             goal,
@@ -202,4 +214,46 @@ fn command_path(matches: &ArgMatches) -> String {
         current = nested;
     }
     path.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use axum::Router;
+    use axum::extract::Path;
+    use axum::http::StatusCode;
+    use axum::routing::post;
+
+    /// Quota item IDs contain the model name, including provider/model slashes.
+    #[tokio::test]
+    async fn dismisses_a_quota_item_whose_model_name_contains_a_slash() {
+        const ITEM_ID: &str =
+            "recovery:quota:opencode-acp:ollama/llama3:8b:no-other-model-is-available";
+        let matches = command()
+            .try_get_matches_from(["ariadne", "attention", "dismiss", ITEM_ID])
+            .unwrap();
+        let cli = Cli::from_arg_matches(&matches).unwrap();
+        let app = Router::new().route(
+            "/v1/attention/{id}/dismiss",
+            post(|Path(id): Path<String>| async move {
+                if id == ITEM_ID {
+                    StatusCode::NO_CONTENT
+                } else {
+                    StatusCode::NOT_FOUND
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let result = run(cli, Arc::new(Client::tcp(format!("http://{address}")))).await;
+        server.abort();
+
+        assert_eq!(
+            result.expect("the quota item ID reaches the dismissal route unchanged"),
+            ExitCode::SUCCESS
+        );
+    }
 }

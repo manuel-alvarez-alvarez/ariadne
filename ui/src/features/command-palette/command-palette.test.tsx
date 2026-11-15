@@ -16,7 +16,7 @@ import userEvent from "@testing-library/user-event"
 import { useState } from "react"
 import { beforeEach, expect, it, vi } from "vitest"
 
-import type { GoalDto, RepositoryDto, SessionDto, TaskDto } from "@/api"
+import type { AttentionListDto, GoalDto, RepositoryDto, SessionDto, TaskDto } from "@/api"
 import { DetailPanels } from "@/components/detail-panels"
 import { useStreamStore } from "@/stores/stream"
 import { aGoal, aRepository, aSession, aSessionPage, aSkill, aTask } from "@/test/fixtures"
@@ -42,6 +42,27 @@ function stubDaemon(tasks: TaskDto[] = [TASK, STUCK]) {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const { pathname } = new URL(typeof input === "string" ? input : (input as Request).url)
     const task = tasks.find((candidate) => pathname === `/v1/tasks/${candidate.id}`)
+    if (pathname === "/v1/attention") {
+      const attention: AttentionListDto = {
+        complete: true,
+        items: tasks.includes(STUCK)
+          ? [
+              {
+                id: `recovery:unknown:task:${STUCK.id}`,
+                occurrence: "failed-task-1",
+                producer: "recovery",
+                reason: "unknown",
+                summary: "Land the migration failed.",
+                required_action: "Read the failure and retry the task.",
+                since: STUCK.updated_at,
+                affected: [{ kind: "task", id: STUCK.id, label: STUCK.title }],
+                target: { kind: "task", task_id: STUCK.id },
+              },
+            ]
+          : [],
+      }
+      return Promise.resolve(jsonResponse(attention))
+    }
     const body =
       pathname === "/v1/goals"
         ? [GOAL]

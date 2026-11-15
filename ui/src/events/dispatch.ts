@@ -29,6 +29,10 @@ import { type DomainEvent, qk } from "@/api"
 /** Apply one domain event to the query cache. */
 export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent): void {
   switch (event.event) {
+    case "attention_changed": {
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
+      break
+    }
     case "pull_requests_changed": {
       // The event carries no request, so every list and detail reads the
       // daemon's newest held fetch or row read again.

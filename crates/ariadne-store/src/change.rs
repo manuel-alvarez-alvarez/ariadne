@@ -13,6 +13,7 @@ use crate::{
 /// A committed write, carrying the row as it now stands.
 #[derive(Debug, Clone)]
 pub enum Change {
+    AttentionChanged,
     /// What Ariadne keeps of a repository's requests moved: a request it
     /// started or stopped working on, or a flag of one it works on. Carries
     /// the repository id; the requests themselves are the forge's.

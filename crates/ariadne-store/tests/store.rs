@@ -7231,3 +7231,167 @@ async fn an_approval_outlives_its_row_and_a_reopen_and_a_moved_head_ends_it_for_
         "a second withdrawal finds nothing"
     );
 }
+
+#[tokio::test]
+async fn attention_dismissals_survive_reopening_the_database() {
+    let (store, dir) = test_store().await;
+    store.dismiss_attention("one", "occurrence").await.unwrap();
+    drop(store);
+    let reopened = Store::open(dir.path().join("test.db")).await.unwrap();
+    assert_eq!(
+        reopened
+            .attention_dismissals()
+            .await
+            .unwrap()
+            .get("one")
+            .map(String::as_str),
+        Some("occurrence")
+    );
+}
+
+/// The additive migration preserves existing work and can be removed from a copy.
+#[tokio::test]
+async fn attention_migration_preserves_existing_work_in_both_directions() {
+    let (store, dir) = test_store().await;
+    let (goal, repo) = seed_goal(&store).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let before_goal = format!("{:?}", store.get_goal(&goal.id).await.unwrap());
+    let before_task = format!("{:?}", store.get_task(&task.id).await.unwrap());
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("test.db")),
+    )
+    .await
+    .unwrap();
+    let reverse = "DROP TRIGGER attention_session_changed;
+        DROP TRIGGER attention_task_changed;
+        DROP TRIGGER attention_goal_changed;
+        DROP TRIGGER attention_repository_changed;
+        DROP TRIGGER attention_pull_request_changed;
+        DROP TABLE attention_dismissals;
+        DROP TABLE attention_source_versions;
+        DROP TABLE attention_observations;";
+    sqlx::raw_sql(reverse).execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0007_attention_dismissals.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        format!("{:?}", store.get_goal(&goal.id).await.unwrap()),
+        before_goal
+    );
+    assert_eq!(
+        format!("{:?}", store.get_task(&task.id).await.unwrap()),
+        before_task
+    );
+    store.dismiss_attention("test", "occurrence").await.unwrap();
+    sqlx::raw_sql(reverse).execute(&pool).await.unwrap();
+    assert_eq!(
+        format!("{:?}", store.get_goal(&goal.id).await.unwrap()),
+        before_goal
+    );
+    assert_eq!(
+        format!("{:?}", store.get_task(&task.id).await.unwrap()),
+        before_task
+    );
+    pool.close().await;
+}
+
+// Migration 0008 is additive. Older callers still use the shared revisions.
+const REVERSE_PULL_REQUEST_ATTENTION_CAUSES: &str = "
+    DROP TRIGGER attention_reviewer_recovery_changed;
+    DROP TRIGGER attention_keeper_recovery_changed;
+    DROP TRIGGER attention_review_start_changed;
+    DROP TRIGGER attention_readiness_changed;
+    DELETE FROM attention_source_versions WHERE kind = 'pull_request_cause';";
+
+#[tokio::test]
+async fn splitting_pull_request_causes_preserves_existing_occurrences_and_work() {
+    let (store, dir, pull) = store_with_my_pull_request().await;
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("test.db")),
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql(REVERSE_PULL_REQUEST_ATTENTION_CAUSES)
+        .execute(&pool)
+        .await
+        .unwrap();
+    store
+        .set_pull_request_reviewer_given_up(&pull.id, false)
+        .await
+        .unwrap();
+    store
+        .set_pull_request_keeper_given_up(&pull.id, false)
+        .await
+        .unwrap();
+    store
+        .set_pull_request_ready(&pull.id, true, Some("abc"))
+        .await
+        .unwrap();
+    let prefixes = [
+        "recovery:unknown:pull_request:",
+        "recovery:unknown:pull_request:keeper:",
+        "pull_request:review_start:",
+        "pull_request:ready:",
+    ];
+    let versions = store.attention_source_versions().await.unwrap();
+    let revision = versions[&("pull_request".into(), pull.id.clone())];
+    for prefix in prefixes {
+        let id = format!("{prefix}{}", pull.id);
+        let occurrence =
+            serde_json::json!(["", [["repository", pull.repository_id, revision]]]).to_string();
+        store.dismiss_attention(&id, &occurrence).await.unwrap();
+    }
+    let dismissed = store.attention_dismissals().await.unwrap();
+    let before = format!("{:?}", store.get_pull_request(&pull.id).await.unwrap());
+    // Apply and reverse the migration on a copy of the populated database.
+    let copy = dir.path().join("migration-copy.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(copy.to_str().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let copied_pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&copy))
+            .await
+            .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../migrations/0008_attention_pull_request_causes.sql"
+    ))
+    .execute(&copied_pool)
+    .await
+    .unwrap();
+    let migrated = Store::open(&copy).await.unwrap();
+    assert_eq!(
+        format!("{:?}", migrated.get_pull_request(&pull.id).await.unwrap()),
+        before
+    );
+    assert_eq!(migrated.attention_dismissals().await.unwrap(), dismissed);
+    let mut expected = versions.clone();
+    for prefix in prefixes {
+        expected.insert(
+            ("pull_request_cause".into(), format!("{prefix}{}", pull.id)),
+            revision,
+        );
+    }
+    assert_eq!(
+        migrated.attention_source_versions().await.unwrap(),
+        expected
+    );
+    sqlx::raw_sql(REVERSE_PULL_REQUEST_ATTENTION_CAUSES)
+        .execute(&copied_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        format!("{:?}", migrated.get_pull_request(&pull.id).await.unwrap()),
+        before
+    );
+    assert_eq!(migrated.attention_dismissals().await.unwrap(), dismissed);
+    assert_eq!(
+        migrated.attention_source_versions().await.unwrap(),
+        versions
+    );
+    assert_eq!(store.attention_source_versions().await.unwrap(), versions);
+    copied_pool.close().await;
+    pool.close().await;
+}
