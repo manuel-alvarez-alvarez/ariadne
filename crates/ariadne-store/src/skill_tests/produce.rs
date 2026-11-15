@@ -151,6 +151,53 @@ fn coding_reads_the_rules_of_each_file_and_keeps_a_refactor_apart() {
     }
 }
 
+/// The coding paths select proof before implementation and cover the whole claim.
+#[test]
+fn coding_routes_changes_and_proves_each_claim() {
+    let coding = unwrapped(default_skill_document("coding").unwrap());
+    for phrase in [
+        "Build the task, prove each change by its type, and commit once under the repository rules.",
+        "Use `documentation` for a prose-only task.",
+        "Classify each change as behavior, structure or prose.",
+        "For structure, follow the refactoring path in place of steps 5 and 6.",
+        "For prose, inspect the diff and run the relevant existing checks.",
+        "Skip steps 5 and 6 for prose.",
+        "with `send_message` to `orchestrator`.",
+        "Send both readings and your pick. Continue with your pick.",
+        "the area spec where the repository keeps one.",
+        "Examples include a spec, manual or index where the repository keeps them.",
+        "Run each test file you touched whole.",
+        "Take expected values from an independent source. Never recompute the answer in the assertion.",
+        "Assert through public interfaces. Avoid assertions on internals that can change while behavior holds.",
+        "Make assertions fail when any required part of the named claim breaks.",
+    ] {
+        assert!(
+            coding.contains(phrase),
+            "the coding skill does not say \"{phrase}\""
+        );
+    }
+    let steps = coding
+        .split_once("## Steps")
+        .unwrap()
+        .1
+        .split("### Refactoring path")
+        .next()
+        .unwrap();
+    assert!(
+        steps.find("Classify each change").unwrap()
+            < steps.find("write a failing test first").unwrap()
+    );
+    assert!(steps.contains("Write the simplest code that meets the criteria."));
+    let tests = coding
+        .split_once("### Tests")
+        .unwrap()
+        .1
+        .split("## Never")
+        .next()
+        .unwrap();
+    assert!(!tests.contains("Write the simplest code"));
+}
+
 /// `debugging` keeps its loop and ends it on the stop rule by name. Its fix
 /// follows the `coding` commit rules and restates none of them.
 #[test]
