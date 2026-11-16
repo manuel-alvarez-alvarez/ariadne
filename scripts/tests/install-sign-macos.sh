@@ -47,6 +47,15 @@ for tool in ariadne ariadned; do
     cp "$REPO_DIR/scripts/tests/install-command.sh" "$TEST_ROOT/payload/$tool"
     chmod 755 "$TEST_ROOT/payload/$tool"
 done
+# Model the graphical login: the console belongs to the current user, and no
+# SSH indicator leaks in from the session that runs the test.
+REAL_STAT="$(command -v stat)"
+cat > "$TEST_ROOT/bin/stat" <<STUB
+#!/bin/sh
+if [ "\$*" = "-f %u /dev/console" ]; then id -u; else exec "$REAL_STAT" "\$@"; fi
+STUB
+chmod 755 "$TEST_ROOT/bin/stat"
+unset SSH_CONNECTION SSH_CLIENT SSH_TTY
 export CARGO_TARGET_DIR="$TEST_ROOT/build"
 export PATH="$TEST_ROOT/bin:$PATH"
 
