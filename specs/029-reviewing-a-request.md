@@ -358,10 +358,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     proof is a dispute, a `Not changed:` reply or a plain disagreement. The
     reviewer posts nothing in that thread and calls `escalate_comment` once,
     with the id of the thread's first comment and a one-sentence reason.
-    `list_comments` shows no escalation, so it takes one from its own
-    earlier round results. It escalates a thread again only after a new
-    disputing reply follows its earlier escalation, and the `Thread` line of
-    the result says `escalated`.
+    It escalates a thread again only after a new dispute, and the `Thread`
+    line of the result says `escalated`.
 
     Before it posts a finding, the reviewer tries to reproduce it at the
     reviewed revision. A code defect is reproduced by a run that triggers

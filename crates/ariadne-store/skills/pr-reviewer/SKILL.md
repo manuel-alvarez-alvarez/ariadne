@@ -42,10 +42,8 @@ Use `code-review` when the diff is a task branch and no forge request.
    - A last reply that keeps the defect and gives no proof is a dispute.
      This covers a `Not changed:` reply and a plain disagreement. Post
      nothing. Call `escalate_comment` once, with the id of the first
-     comment of the thread and a one-sentence reason. `list_comments`
-     shows no escalation: take it from your own earlier round results.
-     Escalate a thread again only after a new disputing reply follows
-     your earlier escalation.
+     comment of the thread and a one-sentence reason. Escalate
+     again only after a new dispute.
    - No answer: post nothing.
 
    Leave every other thread open for its author.
