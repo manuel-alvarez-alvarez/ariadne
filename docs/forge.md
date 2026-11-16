@@ -306,9 +306,8 @@ panel:
   agent or the reviewer escalated with `escalate_comment`, because the two
   disagree. The item names the thread by its path and its first line, and
   gives the agent's reason. Ariadne posts nothing on the forge for it.
-  Answer or resolve the thread on the forge: a resolve, or any comment
-  in the thread after the escalation, clears the item. A reply from before
-  the escalation does not.
+  Answer or resolve the thread on the forge: a resolve, or any later
+  comment in the thread, clears the item.
 
 ## Webhooks: a delivery wakes the daemon, the daemon wakes the agent
 

@@ -4504,7 +4504,7 @@ async fn each_escalated_thread_raises_its_own_item_until_the_forge_settles_it() 
     reply.forge_id = "rc-2".into();
     reply.author_login = "alice".into();
     reply.in_reply_to = Some("rc-1".into());
-    reply.created_at = "2999-01-01T00:00:00Z".into();
+    reply.created_at = "2026-10-02T00:00:00Z".into();
     answered.push(reply);
     seed_threads(&h, &pull, answered.clone());
     let list: AttentionListDto = h.get("/v1/attention").await;
@@ -4519,45 +4519,6 @@ async fn each_escalated_thread_raises_its_own_item_until_the_forge_settles_it() 
         }
     }
     seed_threads(&h, &pull, answered);
-    let list: AttentionListDto = h.get("/v1/attention").await;
-    assert!(escalations(&list).is_empty(), "{:?}", list.items);
-}
-
-/// A reply that came before the escalation does not settle it (031): the
-/// review opens a finding, the author answers, and the review session then
-/// escalates its own finding. The thread's item stands until a comment
-/// later than the escalation, or a resolve, clears it.
-#[tokio::test]
-async fn a_reply_before_the_escalation_does_not_settle_the_thread() {
-    let h = harness().await;
-    let mut threads = disputed_threads();
-    threads.truncate(1);
-    threads[0].author_login = "ariadne-bot".into();
-    threads[0].from_review = true;
-    let mut reply = crate::common::forge::open_review_comment();
-    reply.forge_id = "rc-2".into();
-    reply.author_login = "alice".into();
-    reply.in_reply_to = Some("rc-1".into());
-    reply.created_at = "2026-10-02T00:00:00Z".into();
-    threads.push(reply);
-    let (pull, keeper) = kept_by_hand(&h, threads.clone()).await;
-    h.store
-        .mark_review_comments(&pull.id, &["rc-1".to_string()])
-        .await
-        .unwrap();
-    escalate(&h, &keeper, &pull.id, "rc-1").await;
-
-    let list: AttentionListDto = h.get("/v1/attention").await;
-    let found = escalations(&list);
-    assert_eq!(found.len(), 1, "{found:?}");
-
-    let mut later = crate::common::forge::open_review_comment();
-    later.forge_id = "rc-3".into();
-    later.author_login = "alice".into();
-    later.in_reply_to = Some("rc-1".into());
-    later.created_at = "2999-01-01T00:00:00Z".into();
-    threads.push(later);
-    seed_threads(&h, &pull, threads);
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert!(escalations(&list).is_empty(), "{:?}", list.items);
 }
@@ -4704,4 +4665,84 @@ async fn a_closed_request_raises_no_escalation_item() {
         let list: AttentionListDto = h.get("/v1/attention").await;
         assert!(escalations(&list).is_empty(), "{state}: {:?}", list.items);
     }
+}
+
+/// A reply made before the escalation does not settle it (031): the keeper
+/// answers a finding, still disagrees, and escalates the finding itself. The
+/// item stands until a comment after the escalation, or a resolve, clears it.
+#[tokio::test]
+async fn a_reply_before_the_escalation_does_not_clear_its_item() {
+    let h = harness().await;
+    let opening = crate::common::forge::open_review_comment();
+    let mut reply = crate::common::forge::open_review_comment();
+    reply.forge_id = "rc-2".into();
+    reply.in_reply_to = Some("rc-1".into());
+    reply.author_login = "keeper".into();
+    reply.created_at = "2026-10-02T00:00:00Z".into();
+    let thread = vec![opening, reply];
+    let (pull, keeper) = kept_by_hand(&h, thread.clone()).await;
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+
+    let mut answered = thread;
+    let mut later = crate::common::forge::open_review_comment();
+    later.forge_id = "rc-3".into();
+    later.in_reply_to = Some("rc-1".into());
+    later.author_login = "alice".into();
+    later.created_at = "2026-10-03T00:00:00Z".into();
+    answered.push(later);
+    seed_threads(&h, &pull, answered);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(escalations(&list).is_empty(), "{:?}", list.items);
+}
+
+/// Two escalated comments of one thread, written at the same second, are
+/// one item (031): the thread's latest escalation names it. A dismissal
+/// hides the thread whole, and a new escalation of either comment brings
+/// it back as one item again.
+#[tokio::test]
+async fn two_escalated_comments_of_one_thread_at_one_time_raise_one_item() {
+    let h = harness().await;
+    let mut tied = crate::common::forge::open_review_comment();
+    tied.forge_id = "rc-3".into();
+    tied.in_reply_to = Some("rc-1".into());
+    tied.author_login = "alice".into();
+    tied.body = "Still the same ask.".into();
+    let opening = crate::common::forge::open_review_comment();
+    assert_eq!(opening.created_at, tied.created_at, "one time for both");
+    let (pull, keeper) = kept_by_hand(&h, vec![opening, tied]).await;
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    escalate(&h, &keeper, &pull.id, "rc-3").await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].id,
+        format!("pull_request:escalated:{}:rc-3", pull.id)
+    );
+    assert!(
+        found[0].summary.contains("What about this case?"),
+        "{}",
+        found[0].summary
+    );
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", found[0].id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(escalations(&list).is_empty(), "{:?}", list.items);
+
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].id,
+        format!("pull_request:escalated:{}:rc-1", pull.id)
+    );
 }

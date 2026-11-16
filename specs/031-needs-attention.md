@@ -721,17 +721,20 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
 17. An escalation item (`AttentionCause::Unknown`) is raised for each
     thread the request's keeping agent or its review session escalated
     with `escalate_comment` (026 rule 15, 029 rule 11). The item is the
-    same whichever seat escalated. Its id is
-    `pull_request:escalated:<request id>:<comment id>`. Its summary names
+    same whichever seat escalated. Two escalated comments of one thread are one item. The
+    thread's latest escalation names it: the store stamps each escalation
+    of a request later than every earlier one, by a millisecond where the
+    clock has not moved. Its id is
+    `pull_request:escalated:<request id>:<comment id>` of that escalation. Its summary names
     the request, then the thread by its path (or "the conversation" for an
     `ic-` comment) and the first line of the thread's first comment, then
     the agent's reason. Its `required_action` is "Answer or resolve the
     thread on the forge." Its `target` is the request, and its `since` is
     the mark's `escalated_at`.
     The item clears when the forge reports the thread resolved, or when
-    the last read holds a comment in that thread later than the
-    escalation itself (`escalated_at`), not later than the escalated
-    comment. A reply that came before the escalation settles nothing. A dismissal also hides it. A merged or closed request raises
+    the last read holds a comment in that thread later than the newest one
+    the thread held at its latest escalation (the mark's `escalated_after`). A reply made before
+    the escalation does not clear it. A comment at the same time is not later. A dismissal also hides it. A merged or closed request raises
     none, and nor does a comment the last read no longer holds.
 
 ### Individual dismissal
@@ -1223,19 +1226,23 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   `scheduler_attention.rs::a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart`).
 - Each escalated thread raises its own item, named by its path and first
   line, asking to answer or resolve it on the forge, targeting the
-  request, dated from the escalation; a comment in the thread later than
-  the escalation, or a resolve on the forge, clears it
+  request, dated from the escalation; a later comment in the thread or a
+  resolve on the forge clears it
   (`attention.rs::each_escalated_thread_raises_its_own_item_until_the_forge_settles_it`).
+  A reply made before the escalation does not clear it
+  (`attention.rs::a_reply_before_the_escalation_does_not_clear_its_item`).
   A merged or closed request raises none
   (`attention.rs::a_closed_request_raises_no_escalation_item`). A dismissal
   of one thread hides no other, and a new escalation brings it back
   (`attention.rs::dismissing_one_escalated_thread_hides_no_other_and_a_new_escalation_returns_it`).
+  Two escalated comments of one thread at the same time raise one item, a
+  dismissal hides the thread whole, and a new escalation in it brings one
+  item back
+  (`attention.rs::two_escalated_comments_of_one_thread_at_one_time_raise_one_item`).
 - A review session's escalation of a thread its review opened raises the
   same item, with the same summary, action, target and dating, and clears
   the same way
   (`attention.rs::a_review_sessions_escalation_raises_the_same_item_as_a_keepers`).
-  A reply that came before the escalation does not settle it
-  (`attention.rs::a_reply_before_the_escalation_does_not_settle_the_thread`).
 - A mergeability-only transition still publishes `pull_requests_changed`,
   both directions, and an unchanged fetch after it still raises nothing:
   (`pull_requests.rs::a_mergeability_only_transition_publishes_pull_requests_changed`).

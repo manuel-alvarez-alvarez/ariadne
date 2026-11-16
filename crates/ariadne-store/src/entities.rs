@@ -997,6 +997,9 @@ pub struct CommentMark {
     pub escalated_at: Option<String>,
     /// Why it escalated the thread, in the agent's own words.
     pub escalation_reason: Option<String>,
+    /// The forge time of the newest comment its thread held when it was
+    /// escalated: only a later comment settles the escalation.
+    pub escalated_after: Option<String>,
 }
 
 /// One comment on a pull request, as the forge holds it and the daemon's

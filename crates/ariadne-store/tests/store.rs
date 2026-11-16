@@ -5949,7 +5949,12 @@ async fn an_escalation_stamps_its_mark_moves_its_own_revision_and_goes_with_the_
         .await
         .unwrap();
     let first = store
-        .escalate_comment(&row.id, "rc-1", "The reviewer wants a rename I refused.")
+        .escalate_comment(
+            &row.id,
+            "rc-1",
+            "The reviewer wants a rename I refused.",
+            "2026-10-03T00:00:00Z",
+        )
         .await
         .unwrap();
     assert!(first.from_review, "the review's mark stays");
@@ -5959,7 +5964,12 @@ async fn an_escalation_stamps_its_mark_moves_its_own_revision_and_goes_with_the_
         Some("The reviewer wants a rename I refused.")
     );
     store
-        .escalate_comment(&row.id, "ic-2", "The user must pick the base.")
+        .escalate_comment(
+            &row.id,
+            "ic-2",
+            "The user must pick the base.",
+            "2026-10-03T00:00:00Z",
+        )
         .await
         .unwrap();
     let revision = |id: &str| {
@@ -5980,10 +5990,14 @@ async fn an_escalation_stamps_its_mark_moves_its_own_revision_and_goes_with_the_
     assert_eq!(revision("rc-1").await, Some(1));
     assert_eq!(revision("ic-2").await, Some(1));
     let again = store
-        .escalate_comment(&row.id, "rc-1", "Still disputed.")
+        .escalate_comment(&row.id, "rc-1", "Still disputed.", "2026-10-03T00:00:00Z")
         .await
         .unwrap();
     assert_eq!(again.escalation_reason.as_deref(), Some("Still disputed."));
+    assert!(
+        again.escalated_at > first.escalated_at,
+        "a later escalation is stamped later, even in the same millisecond"
+    );
     assert_eq!(revision("rc-1").await, Some(2), "a new escalation moves it");
     assert_eq!(revision("ic-2").await, Some(1), "another thread's stays");
     store.delete_pull_request(&row.id).await.unwrap();

@@ -3,6 +3,9 @@
 -- marks still go with their row (`ON DELETE CASCADE` of 0001).
 ALTER TABLE pull_request_comment_marks ADD COLUMN escalated_at TEXT;
 ALTER TABLE pull_request_comment_marks ADD COLUMN escalation_reason TEXT;
+-- The forge time of the newest comment the thread held when it was escalated:
+-- a comment after it settles the escalation, one before it does not.
+ALTER TABLE pull_request_comment_marks ADD COLUMN escalated_after TEXT;
 
 -- Each escalated thread is its own attention cause (031): a write of
 -- `escalated_at` moves only that thread's revision, so a dismissal of one

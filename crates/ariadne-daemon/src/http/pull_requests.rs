@@ -888,10 +888,11 @@ pub(super) async fn escalate(
             entity: "pull_request_comment",
             id: comment_id.clone(),
         })?;
-    let mut comment = live::comments_of(&state.store, &state.launcher.live, &pull)
-        .await?
-        .into_iter()
+    let thread = live::comments_of(&state.store, &state.launcher.live, &pull).await?;
+    let mut comment = thread
+        .iter()
         .find(|c| c.id == comment_id)
+        .cloned()
         .ok_or_else(|| ariadne_store::StoreError::NotFound {
             entity: "pull_request_comment",
             id: comment_id.clone(),
@@ -906,9 +907,17 @@ pub(super) async fn escalate(
             )));
         }
     }
+    // The thread's newest comment now: a reply made before this call does not
+    // settle the escalation, only a comment after it does.
+    let after = thread
+        .iter()
+        .filter(|c| c.thread_id == comment.thread_id)
+        .map(|c| c.created_at.as_str())
+        .max()
+        .unwrap_or_default();
     let mark = state
         .store
-        .escalate_comment(&pull.id, &comment.forge_id, reason)
+        .escalate_comment(&pull.id, &comment.forge_id, reason, after)
         .await?;
     comment.told_at = mark.told_at;
     Ok(Json(pull_request_comment_dto(comment)))

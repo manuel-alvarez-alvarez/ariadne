@@ -878,6 +878,7 @@ mod tests {
             from_review,
             escalated_at: None,
             escalation_reason: None,
+            escalated_after: None,
         }
     }
 
