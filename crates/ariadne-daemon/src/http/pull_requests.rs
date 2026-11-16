@@ -11,10 +11,10 @@ use crate::forge::live::{self, Details, Live};
 use crate::forge::pulls::{DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AskBabysitRequest, AskReviewRequest, PULL_REQUEST_PAGE_SIZE, PullRequestCommentDto,
-    PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto, PullRequestListQuery,
-    PullRequestMatchDto, PullRequestPageDto, ReplyCommentRequest, ReportPullRequestRequest,
-    SubmitReviewRequest,
+    AskBabysitRequest, AskReviewRequest, EscalateCommentRequest, PULL_REQUEST_PAGE_SIZE,
+    PullRequestCommentDto, PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto,
+    PullRequestListQuery, PullRequestMatchDto, PullRequestPageDto, ReplyCommentRequest,
+    ReportPullRequestRequest, SubmitReviewRequest,
 };
 use ariadne_core::models::ModelRank;
 use ariadne_core::workflow::{PrOperation, StepGate};
@@ -836,6 +836,77 @@ pub(super) async fn resolve(
                 .expect("PullRequestCommentDto serializes"),
         ),
     ))
+}
+
+/// Escalate the thread of one comment to a human (026): the keeping agent
+/// and the reviewer disagree, and a person settles it on the forge. Only
+/// the request's keeping agent escalates: the current column agent of the
+/// task that opened it (`Seat::Agent`), or the keeper of a request kept by
+/// hand (`Seat::Keeper`, 032). The daemon marks the comment and raises a
+/// `pull_request` attention item for its thread (031). It calls no forge
+/// and posts nothing: the comment is looked up in the last read alone.
+#[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/escalate", tag = "pull-requests",
+    params(("id" = String, Path), ("comment_id" = String, Path)),
+    request_body = EscalateCommentRequest,
+    responses((status = 200, body = PullRequestCommentDto), (status = 400), (status = 403), (status = 404)))]
+pub(super) async fn escalate(
+    State(state): State<AppState>,
+    Path((id, comment_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(req): Json<EscalateCommentRequest>,
+) -> ApiResult<Json<PullRequestCommentDto>> {
+    let row = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &row).await?;
+    // `own_session` lets an `Agent` seat through only as the current column
+    // agent of the task that opened the row, and a `Keeper` only as the
+    // keeper of this row. A reviewer of the same row passes it too, and is
+    // refused here.
+    let keeping_agent = match session.seat() {
+        Some(ariadne_core::Seat::Agent) => {
+            row.origin_task_id.is_some() && session.task_id == row.origin_task_id
+        }
+        Some(ariadne_core::Seat::Keeper) => session.pull_request_id.as_deref() == Some(&row.id),
+        _ => false,
+    };
+    if !keeping_agent {
+        return Err(ApiError::forbidden(format!(
+            "only the keeping agent of pull request {} escalates a thread",
+            row.id
+        )));
+    }
+    let reason = req.reason.trim();
+    if reason.is_empty() {
+        return Err(ApiError::bad_request("an escalation needs a reason"));
+    }
+    let pull = live::of_row(&state.store, &state.launcher.live, row)
+        .await?
+        .ok_or_else(|| ariadne_store::StoreError::NotFound {
+            entity: "pull_request_comment",
+            id: comment_id.clone(),
+        })?;
+    let thread = live::comments_of(&state.store, &state.launcher.live, &pull).await?;
+    let mut comment = thread
+        .iter()
+        .find(|c| c.id == comment_id)
+        .cloned()
+        .ok_or_else(|| ariadne_store::StoreError::NotFound {
+            entity: "pull_request_comment",
+            id: comment_id.clone(),
+        })?;
+    // The thread's newest comment now: a reply made before this call does not
+    // settle the escalation, only a comment after it does.
+    let after = thread
+        .iter()
+        .filter(|c| c.thread_id == comment.thread_id)
+        .map(|c| c.created_at.as_str())
+        .max()
+        .unwrap_or_default();
+    let mark = state
+        .store
+        .escalate_comment(&pull.id, &comment.forge_id, reason, after)
+        .await?;
+    comment.told_at = mark.told_at;
+    Ok(Json(pull_request_comment_dto(comment)))
 }
 
 /// What the request's session says of it: `ready` once the babysitting task

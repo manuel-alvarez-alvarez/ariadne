@@ -64,6 +64,62 @@ impl Store {
         Ok(())
     }
 
+    /// Escalate the thread of one comment to a human (026): the comment's
+    /// mark records when and why. A later escalation of the same comment
+    /// stamps it again, which moves its attention revision (031). Publishes
+    /// `attention_changed`, since the thread's item appears.
+    ///
+    /// `after` is the forge time of the newest comment of the thread now.
+    ///
+    /// Each escalation of a request is stamped later than every one before
+    /// it, by a millisecond where the clock has not moved: the latest
+    /// escalation of a thread names its one item (031), so two calls in the
+    /// same millisecond must still have an order.
+    pub async fn escalate_comment(
+        &self,
+        pull_request_id: &str,
+        forge_id: &str,
+        reason: &str,
+        after: &str,
+    ) -> Result<CommentMark> {
+        let mut tx = self.w().begin().await?;
+        let latest: Option<String> = sqlx::query_scalar(
+            "SELECT MAX(escalated_at) FROM pull_request_comment_marks WHERE pull_request_id = ?",
+        )
+        .bind(pull_request_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut at = chrono::Utc::now();
+        if let Some(latest) = latest
+            .as_deref()
+            .and_then(|l| chrono::DateTime::parse_from_rfc3339(l).ok())
+        {
+            let after = latest.to_utc() + chrono::Duration::milliseconds(1);
+            at = at.max(after);
+        }
+        let at = at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let mark = sqlx::query_as(
+            "INSERT INTO pull_request_comment_marks
+                    (pull_request_id, forge_id, escalated_at, escalation_reason, escalated_after)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT (pull_request_id, forge_id) DO UPDATE
+                SET escalated_at = excluded.escalated_at,
+                    escalation_reason = excluded.escalation_reason,
+                    escalated_after = excluded.escalated_after
+             RETURNING *",
+        )
+        .bind(pull_request_id)
+        .bind(forge_id)
+        .bind(at)
+        .bind(reason)
+        .bind(after)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        self.publish(crate::Change::AttentionChanged);
+        Ok(mark)
+    }
+
     /// Claim a pull request's news, right before the prompt that tells it
     /// goes out (026): its comments are marked told, and the row takes the
     /// told mark the news leaves and the time it was told.

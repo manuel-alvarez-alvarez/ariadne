@@ -16,7 +16,8 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::pull_requests::{
-    ReplyCommentRequest, ReportPullRequestRequest, ReviewCommentRequest, SubmitReviewRequest,
+    EscalateCommentRequest, ReplyCommentRequest, ReportPullRequestRequest, ReviewCommentRequest,
+    SubmitReviewRequest,
 };
 use ariadne_api::sessions::SwitchSessionRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
@@ -235,6 +236,16 @@ pub(super) struct ReplyCommentReq {
     pub comment_id: String,
     /// What you changed, or why the code stays.
     pub body: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct EscalateCommentReq {
+    /// The `id` of the comment, as the news or `list_comments` gives it:
+    /// `rc-<n>` or `ic-<n>`.
+    pub comment_id: String,
+    /// Why a human must settle the thread, in one short sentence.
+    pub reason: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -882,6 +893,34 @@ impl AriadneMcp {
     }
 
     #[tool(
+        description = "Escalate a disputed thread of your pull request to the user, by the `comment_id` of a comment in it. Give a short `reason`. Ariadne posts nothing on the forge. The user sees the thread in Needs attention until a human answers or resolves it."
+    )]
+    async fn escalate_comment(
+        &self,
+        Parameters(req): Parameters<EscalateCommentReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let reason = req.reason.trim();
+        if reason.is_empty() {
+            return Err(McpError::invalid_params(
+                "an escalation needs a reason",
+                None,
+            ));
+        }
+        let path = self
+            .pull_request_path(&format!("/comments/{}/escalate", req.comment_id))
+            .await?;
+        let answer = self
+            .post(
+                &path,
+                &EscalateCommentRequest {
+                    reason: reason.to_string(),
+                },
+            )
+            .await?;
+        json_result(answer)
+    }
+
+    #[tool(
         description = "Resolve one thread you opened, by the `comment_id` of a comment in it. Do it after you verify the fix at the current head. Ariadne resolves it on the forge."
     )]
     async fn resolve_thread(
@@ -1132,6 +1171,42 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&seen[0].body).unwrap()["head_sha"],
             "abcd1234"
+        );
+    }
+
+    /// `escalate_comment` posts its reason to the escalate route of the
+    /// comment, on the request the keeper keeps (026).
+    #[tokio::test]
+    async fn escalating_a_comment_posts_its_reason_to_the_escalate_route() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::PullRequestKeeper,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.escalate_comment(Parameters(EscalateCommentReq {
+            comment_id: "rc-7".into(),
+            reason: " The reviewer wants a rename I refused. ".into(),
+        }))
+        .await
+        .unwrap();
+        let err = mcp
+            .escalate_comment(Parameters(EscalateCommentReq {
+                comment_id: "rc-7".into(),
+                reason: "  ".into(),
+            }))
+            .await
+            .expect_err("an empty reason");
+        assert!(err.message.contains("reason"), "{}", err.message);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "the empty reason reaches no route");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(
+            seen[0].path,
+            "/v1/pull-requests/01PR/comments/rc-7/escalate"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&seen[0].body).unwrap(),
+            serde_json::json!({"reason": "The reviewer wants a rename I refused."})
         );
     }
 

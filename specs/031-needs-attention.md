@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-11-15
+updated: 2026-11-16
 areas: [api, daemon, cli, store, ui]
 commits: []
 tests:
@@ -585,11 +585,12 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
 
 ## The pull-request producer
 
-13. `crate::attention::pull_requests` raises two items, both read off a
-    request's last fetch (`crate::forge::live::of_row`) rather than from a
-    guess: a review request nobody is assigned to, and a request a
+13. `crate::attention::pull_requests` raises three kinds of item, each read
+    off a request's last fetch (`crate::forge::live::of_row`) rather than
+    from a guess: a review request nobody is assigned to, a request a
     babysitting task has claimed is ready to merge, confirmed against the
-    forge's own evidence for the current head. Neither applies to a
+    forge's own evidence for the current head, and a thread its keeping
+    agent escalated (rule 17). The first two do not apply to a
     request that is closed, merged, back in draft, or that the last fetch
     has not read yet (`of_row` answers `None`): missing evidence withholds
     both items the same way it withholds a recovery one.
@@ -717,6 +718,23 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     unevaluated one
     (`forge/github/pulls.rs::tests::mergeable_reads_every_merge_state_status_by_its_documented_meaning`,
     `::a_read_naming_no_merge_state_status_is_unknown`).
+17. An escalation item (`AttentionCause::Unknown`) is raised for each
+    thread the request's keeping agent escalated with `escalate_comment`
+    (026 rule 15). Two escalated comments of one thread are one item. The
+    thread's latest escalation names it: the store stamps each escalation
+    of a request later than every earlier one, by a millisecond where the
+    clock has not moved. Its id is
+    `pull_request:escalated:<request id>:<comment id>` of that escalation. Its summary names
+    the request, then the thread by its path (or "the conversation" for an
+    `ic-` comment) and the first line of the thread's first comment, then
+    the agent's reason. Its `required_action` is "Answer or resolve the
+    thread on the forge." Its `target` is the request, and its `since` is
+    the mark's `escalated_at`.
+    The item clears when the forge reports the thread resolved, or when
+    the last read holds a comment in that thread later than the newest one
+    the thread held at its latest escalation (the mark's `escalated_after`). A reply made before
+    the escalation does not clear it. A comment at the same time is not later. A dismissal also hides it. A merged or closed request raises
+    none, and nor does a comment the last read no longer holds.
 
 ### Individual dismissal
 
@@ -736,11 +754,16 @@ The scheduler also collects attention during reconciliation. Source revisions ch
 transactionally with relevant source mutations. Forge reads record changes of
 attention eligibility. Thus clearing and returning requires no intervening
 client read. `occurrence` carries that identity to notification consumers.
-Pull-request reviewer recovery, keeper recovery, review requests and merge readiness
-have separate source revisions. A change to one cause cannot restore another
+Pull-request reviewer recovery, keeper recovery, review requests, merge readiness
+and each escalated thread have separate source revisions. A change to one cause cannot restore another
 cause's dismissed reminder. Migration `0008_attention_pull_request_causes.sql`
 starts each revision at the previous shared value, preserving existing occurrences
 and dismissals. It retains the legacy revisions and trigger for compatibility.
+Migration `0010_escalated_comments.sql` keeps the revision
+`pull_request:escalated:<request id>:<comment id>` for each escalated comment.
+A write of the mark's `escalated_at` moves it. So a dismissal of one thread does
+not hide another, no other cause's dismissal hides it, and a new escalation of a
+dismissed thread shows it again.
 The store migration test reverses the addition on a populated database copy:
 it removes the four new triggers and the `pull_request_cause` revision rows.
 
@@ -769,6 +792,8 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
 `attention.rs::reviewer_failure_does_not_restore_a_dismissed_keeper_blocker`,
 `attention.rs::keeper_failure_does_not_restore_a_dismissed_review_request`,
 `attention.rs::keeper_failure_does_not_restore_a_dismissed_ready_request`,
+`attention.rs::dismissing_one_escalated_thread_hides_no_other_and_a_new_escalation_returns_it`,
+`store.rs::an_escalation_stamps_its_mark_moves_its_own_revision_and_goes_with_the_row`,
 `attention.rs::dismissed_review_requests_return_without_an_intervening_read`,
 `attention.rs::a_cold_forge_cache_does_not_forget_dismissals`,
 `attention.rs::recovery_targets_the_goal_even_without_an_alarm_session`,
@@ -1198,6 +1223,21 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   `workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`,
   `crates/ariadne-cli/tests/attention.rs::incomplete_json_contains_only_daemon_items_and_their_count`,
   `scheduler_attention.rs::a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart`).
+- Each escalated thread raises its own item, named by its path and first
+  line, asking to answer or resolve it on the forge, targeting the
+  request, dated from the escalation; a later comment in the thread or a
+  resolve on the forge clears it
+  (`attention.rs::each_escalated_thread_raises_its_own_item_until_the_forge_settles_it`).
+  A reply made before the escalation does not clear it
+  (`attention.rs::a_reply_before_the_escalation_does_not_clear_its_item`).
+  A merged or closed request raises none
+  (`attention.rs::a_closed_request_raises_no_escalation_item`). A dismissal
+  of one thread hides no other, and a new escalation brings it back
+  (`attention.rs::dismissing_one_escalated_thread_hides_no_other_and_a_new_escalation_returns_it`).
+  Two escalated comments of one thread at the same time raise one item, a
+  dismissal hides the thread whole, and a new escalation in it brings one
+  item back
+  (`attention.rs::two_escalated_comments_of_one_thread_at_one_time_raise_one_item`).
 - A mergeability-only transition still publishes `pull_requests_changed`,
   both directions, and an unchanged fetch after it still raises nothing:
   (`pull_requests.rs::a_mergeability_only_transition_publishes_pull_requests_changed`).

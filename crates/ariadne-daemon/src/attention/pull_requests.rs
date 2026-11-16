@@ -1,10 +1,11 @@
 //! The pull-request producer: a request's next step.
 //!
-//! Two items, both raised from the forge's own evidence of the last fetch
-//! (026) rather than a guess: a review request nobody is assigned to, and
-//! a request a babysitting task has claimed is ready to merge, confirmed
+//! Three items, each raised from the forge's own evidence of the last fetch
+//! (026) rather than a guess: a review request nobody is assigned to, a
+//! request a babysitting task has claimed is ready to merge, confirmed
 //! against the forge's own approval, comment, check and mergeability
-//! evidence for the current head. A request automatic recovery has given
+//! evidence for the current head, and a review thread its keeping agent
+//! escalated that no human has settled yet. A request automatic recovery has given
 //! up starting a reviewer for (`PullRequestRow::reviewer_given_up_at`) is
 //! `recovery`'s own item (009, 031); this producer never raises a second
 //! one for it, since both would carry the same underlying request.
@@ -65,6 +66,91 @@ pub(crate) async fn items(store: &Store, cache: &LivePulls) -> Result<Vec<Attent
                 items.push(item);
             }
         }
+        if pull.state == "open" {
+            items.extend(escalated_items(store, cache, &pull, &repo).await?);
+        }
+    }
+    Ok(items)
+}
+
+/// One item per thread the request's keeping agent escalated (026), while
+/// no human has settled it on the forge: the thread is still unresolved,
+/// and no comment is later than the newest the thread held at its latest escalation (`escalated_after`). Two
+/// escalated comments of one thread are still one item: the thread's
+/// latest escalation (`escalated_at`, which the store keeps strictly
+/// increasing within a request) names it. The item's id is
+/// `pull_request:escalated:<request>:<comment>` of that escalation, and its
+/// attention source revision is that id's, which a write of the mark's
+/// `escalated_at` moves (migration 0010): a dismissal of one thread hides
+/// no other, and a later escalation in a dismissed thread brings it back.
+/// A comment the last read no longer holds raises nothing, as missing
+/// evidence.
+async fn escalated_items(
+    store: &Store,
+    cache: &LivePulls,
+    pull: &PullRequest,
+    repo: &str,
+) -> Result<Vec<AttentionItemDto>> {
+    let marks = store.pull_request_comment_marks(&pull.id).await?;
+    if marks.iter().all(|m| m.escalated_at.is_none()) {
+        return Ok(Vec::new());
+    }
+    // In the forge's order (`live::comments`, by time and then id), so a
+    // thread's first comment comes first and the item order is stable.
+    let comments = live::comments_of(store, cache, pull).await?;
+    let mut threads: Vec<&str> = Vec::new();
+    for comment in &comments {
+        if !threads.contains(&comment.thread_id.as_str()) {
+            threads.push(&comment.thread_id);
+        }
+    }
+    let mut items = Vec::new();
+    for thread_id in threads {
+        let thread: Vec<_> = comments
+            .iter()
+            .filter(|c| c.thread_id == thread_id)
+            .collect();
+        let escalated: Vec<_> = thread
+            .iter()
+            .filter_map(|c| {
+                let mark = marks.iter().find(|m| m.forge_id == c.forge_id)?;
+                Some((*c, mark, mark.escalated_at.as_deref()?))
+            })
+            .collect();
+        let Some(&(_, mark, escalated_at)) = escalated.iter().max_by_key(|(_, _, at)| *at) else {
+            continue;
+        };
+        let newest = mark.escalated_after.as_deref().unwrap_or_default();
+        let settled = thread.iter().any(|c| c.resolved)
+            || thread.iter().any(|c| c.created_at.as_str() > newest);
+        if settled {
+            continue;
+        }
+        let opening = thread[0];
+        let place = match opening.path.as_deref() {
+            Some(path) => format!("on {path}"),
+            None => "in the conversation".into(),
+        };
+        let first_line = opening.body.lines().next().unwrap_or_default().trim();
+        let reason = mark.escalation_reason.as_deref().unwrap_or_default();
+        items.push(AttentionItemDto {
+            occurrence: escalated_at.to_string(),
+            id: format!("pull_request:escalated:{}:{}", pull.id, mark.forge_id),
+            producer: AttentionProducer::PullRequest,
+            reason: AttentionCause::Unknown,
+            summary: format!(
+                "{}: the agent escalated the thread {place} that starts \"{first_line}\". {reason}",
+                label(pull, repo)
+            )
+            .trim_end()
+            .to_string(),
+            required_action: "Answer or resolve the thread on the forge.".into(),
+            since: escalated_at.to_string(),
+            affected: vec![subject(pull, repo)],
+            target: AttentionTarget::PullRequest {
+                pull_request_id: pull.id.clone(),
+            },
+        });
     }
     Ok(items)
 }

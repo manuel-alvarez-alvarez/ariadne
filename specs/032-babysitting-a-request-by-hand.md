@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-11-15
+updated: 2026-11-16
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -18,6 +18,7 @@ tests:
   - crates/ariadne-core/src/lib.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/pr.rs
+  - crates/ariadne-daemon/tests/it/attention.rs
   - ui/src/features/pull-requests/pull-request-panel.test.tsx
   - ui/src/features/pull-requests/pull-requests-page.test.tsx
 ---
@@ -171,12 +172,17 @@ reads behind them ([026](026-pull-requests.md)).
 ## Tools and reports
 
 12. The keeper seat lists `get_pull_request`, `get_diff`, `list_comments`,
-    `get_comment`, `reply_comment` and `report_pull_request`, beside
-    `wait_for_user` and `withdraw_wait_for_user` — the same six request
+    `get_comment`, `reply_comment`, `escalate_comment`,
+    `mark_ready_for_review` and `report_pull_request`, beside
+    `wait_for_user` and `withdraw_wait_for_user` — the same eight request
     tools the agent of a task's `pr` column has, and no task tool and no
     message tool: the user reaches the session through its console, as a
     reviewer's. No tool resolves a thread and none submits a review: those
-    stay the reviewer seat's alone (029).
+    stay the reviewer seat's alone (029). `escalate_comment` hands a
+    disputed thread to the user (026 rule 15): the escalate route accepts
+    the keeper of this row (`Seat::Keeper`), posts nothing on the forge,
+    and the `pull_request` producer raises one item for the thread until a
+    human settles it (031 rule 17).
 13. `reply_comment` from the keeper follows the keeping agent's own rule
     (026 rule 16): it answers an inline review comment, the thread of the
     defect, and a comment of the other side in the conversation, once. It
@@ -289,8 +295,12 @@ reads behind them ([026](026-pull-requests.md)).
   `pr.rs::tests::pr_ls_names_babysitting_beside_a_review_in_the_ariadne_column`.
   `pr inspect` prints the ask:
   `pr.rs::tests::pr_inspect_prints_readable_keys_in_order_with_the_body_last`.
-- The keeper seat lists its six tools and no task or message tool:
+- The keeper seat lists its eight request tools, `escalate_comment`
+  among them, and no task or message tool:
   `mcp.rs::tests::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`.
+- The keeper escalates a thread of the row it keeps, and the thread's
+  item appears (rule 12):
+  `attention.rs::each_escalated_thread_raises_its_own_item_until_the_forge_settles_it`.
 - The keeper briefing fills every placeholder it names, its title, URL
   and base branch name fenced the same as a reviewer's own, since a
   keeper session carries no task or goal for 006 rule 19's plain-text

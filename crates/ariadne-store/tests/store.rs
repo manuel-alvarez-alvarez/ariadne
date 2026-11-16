@@ -5937,6 +5937,80 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
     );
 }
 
+/// An escalation stamps the comment's mark with its time and reason, and
+/// keeps what the mark already held (026). Each escalation of a thread
+/// moves that thread's attention revision alone (031). The marks still go
+/// with the row.
+#[tokio::test]
+async fn an_escalation_stamps_its_mark_moves_its_own_revision_and_goes_with_the_row() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    store
+        .mark_review_comments(&row.id, &["rc-1".into()])
+        .await
+        .unwrap();
+    let first = store
+        .escalate_comment(
+            &row.id,
+            "rc-1",
+            "The reviewer wants a rename I refused.",
+            "2026-10-03T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    assert!(first.from_review, "the review's mark stays");
+    assert!(first.escalated_at.is_some());
+    assert_eq!(
+        first.escalation_reason.as_deref(),
+        Some("The reviewer wants a rename I refused.")
+    );
+    store
+        .escalate_comment(
+            &row.id,
+            "ic-2",
+            "The user must pick the base.",
+            "2026-10-03T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let revision = |id: &str| {
+        let key = (
+            "pull_request_cause".to_string(),
+            format!("pull_request:escalated:{}:{id}", row.id),
+        );
+        let store = store.clone();
+        async move {
+            store
+                .attention_source_versions()
+                .await
+                .unwrap()
+                .get(&key)
+                .copied()
+        }
+    };
+    assert_eq!(revision("rc-1").await, Some(1));
+    assert_eq!(revision("ic-2").await, Some(1));
+    let again = store
+        .escalate_comment(&row.id, "rc-1", "Still disputed.", "2026-10-03T00:00:00Z")
+        .await
+        .unwrap();
+    assert_eq!(again.escalation_reason.as_deref(), Some("Still disputed."));
+    assert!(
+        again.escalated_at > first.escalated_at,
+        "a later escalation is stamped later, even in the same millisecond"
+    );
+    assert_eq!(revision("rc-1").await, Some(2), "a new escalation moves it");
+    assert_eq!(revision("ic-2").await, Some(1), "another thread's stays");
+    store.delete_pull_request(&row.id).await.unwrap();
+    assert!(
+        store
+            .pull_request_comment_marks(&row.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the marks go with the row"
+    );
+}
+
 /// The ready flag a session reports moves the row, and a repeated ready
 /// report on the same head says nothing moved. A later report of `true` on
 /// a different head moves the row again, even though `ready` itself was

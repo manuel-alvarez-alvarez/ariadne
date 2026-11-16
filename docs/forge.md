@@ -277,11 +277,11 @@ thread a session resolves is a review thread it opened itself: on a later
 round, once a push fixed that finding, it replies and resolves it. Every
 thread anyone else opened stays yours to resolve.
 
-## Needs attention: an unassigned review and a confirmed-ready request
+## Needs attention: an unassigned review, a ready request, an escalated thread
 
 Neither a posted review nor a `pr` agent's own ready report notifies you by
 itself: a `pr-reviewer` session finishing its review raises nothing, and a
-`ready` report is a claim, not confirmed evidence. Two things reach Needs
+`ready` report is a claim, not confirmed evidence. Three things reach Needs
 attention instead, in `ariadne attention` and the desktop app's attention
 strip, each naming the request's title, its repository, the one action that
 clears it and how long it has waited, and each linking to the request's own
@@ -298,6 +298,12 @@ panel:
   the forge no longer counts drops the item until the keeping agent
   reports ready again, on the new head. The merge itself is still always
   yours: Ariadne gives no approval.
+- **An escalated thread** — one item for each review thread the keeping
+  agent escalated with `escalate_comment`, because it and the reviewer
+  disagree. The item names the thread by its path and its first line, and
+  gives the agent's reason. Ariadne posts nothing on the forge for it.
+  Answer or resolve the thread on the forge: a resolve, or any later
+  comment in the thread, clears the item.
 
 ## Webhooks: a delivery wakes the daemon, the daemon wakes the agent
 
