@@ -4578,6 +4578,37 @@ async fn a_closed_request_raises_no_escalation_item() {
     }
 }
 
+/// A reply made before the escalation does not settle it (031): the keeper
+/// answers a finding, still disagrees, and escalates the finding itself. The
+/// item stands until a comment after the escalation, or a resolve, clears it.
+#[tokio::test]
+async fn a_reply_before_the_escalation_does_not_clear_its_item() {
+    let h = harness().await;
+    let opening = crate::common::forge::open_review_comment();
+    let mut reply = crate::common::forge::open_review_comment();
+    reply.forge_id = "rc-2".into();
+    reply.in_reply_to = Some("rc-1".into());
+    reply.author_login = "keeper".into();
+    reply.created_at = "2026-10-02T00:00:00Z".into();
+    let thread = vec![opening, reply];
+    let (pull, keeper) = kept_by_hand(&h, thread.clone()).await;
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+
+    let mut answered = thread;
+    let mut later = crate::common::forge::open_review_comment();
+    later.forge_id = "rc-3".into();
+    later.in_reply_to = Some("rc-1".into());
+    later.author_login = "alice".into();
+    later.created_at = "2026-10-03T00:00:00Z".into();
+    answered.push(later);
+    seed_threads(&h, &pull, answered);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(escalations(&list).is_empty(), "{:?}", list.items);
+}
+
 /// Two escalated comments of one thread, written at the same second, are
 /// one item (031): the thread's latest escalation names it. A dismissal
 /// hides the thread whole, and a new escalation of either comment brings

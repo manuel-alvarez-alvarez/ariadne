@@ -69,6 +69,8 @@ impl Store {
     /// stamps it again, which moves its attention revision (031). Publishes
     /// `attention_changed`, since the thread's item appears.
     ///
+    /// `after` is the forge time of the newest comment of the thread now.
+    ///
     /// Each escalation of a request is stamped later than every one before
     /// it, by a millisecond where the clock has not moved: the latest
     /// escalation of a thread names its one item (031), so two calls in the
@@ -78,6 +80,7 @@ impl Store {
         pull_request_id: &str,
         forge_id: &str,
         reason: &str,
+        after: &str,
     ) -> Result<CommentMark> {
         let mut tx = self.w().begin().await?;
         let latest: Option<String> = sqlx::query_scalar(
@@ -97,17 +100,19 @@ impl Store {
         let at = at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let mark = sqlx::query_as(
             "INSERT INTO pull_request_comment_marks
-                    (pull_request_id, forge_id, escalated_at, escalation_reason)
-             VALUES (?, ?, ?, ?)
+                    (pull_request_id, forge_id, escalated_at, escalation_reason, escalated_after)
+             VALUES (?, ?, ?, ?, ?)
              ON CONFLICT (pull_request_id, forge_id) DO UPDATE
                 SET escalated_at = excluded.escalated_at,
-                    escalation_reason = excluded.escalation_reason
+                    escalation_reason = excluded.escalation_reason,
+                    escalated_after = excluded.escalated_after
              RETURNING *",
         )
         .bind(pull_request_id)
         .bind(forge_id)
         .bind(at)
         .bind(reason)
+        .bind(after)
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;

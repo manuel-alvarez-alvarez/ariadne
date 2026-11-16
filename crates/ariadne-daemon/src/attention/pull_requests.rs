@@ -75,7 +75,7 @@ pub(crate) async fn items(store: &Store, cache: &LivePulls) -> Result<Vec<Attent
 
 /// One item per thread the request's keeping agent escalated (026), while
 /// no human has settled it on the forge: the thread is still unresolved,
-/// and no comment is later than the latest escalated comment in it. Two
+/// and no comment is later than the newest the thread held at its latest escalation (`escalated_after`). Two
 /// escalated comments of one thread are still one item: the thread's
 /// latest escalation (`escalated_at`, which the store keeps strictly
 /// increasing within a request) names it. The item's id is
@@ -120,11 +120,7 @@ async fn escalated_items(
         let Some(&(_, mark, escalated_at)) = escalated.iter().max_by_key(|(_, _, at)| *at) else {
             continue;
         };
-        let newest = escalated
-            .iter()
-            .map(|(c, _, _)| c.created_at.as_str())
-            .max()
-            .unwrap_or_default();
+        let newest = mark.escalated_after.as_deref().unwrap_or_default();
         let settled = thread.iter().any(|c| c.resolved)
             || thread.iter().any(|c| c.created_at.as_str() > newest);
         if settled {

@@ -154,7 +154,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
     `answered` holds where a later comment in the thread is the integration login's own side's.
-    What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, `from_review`, once an Ariadne review posted it (029), and `escalated_at` with `escalation_reason`, once the keeping agent escalated its thread (rule 15, migration `0010_escalated_comments.sql`). The marks go with their row.
+    What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, `from_review`, once an Ariadne review posted it (029), and `escalated_at`, `escalation_reason` and `escalated_after`, once the keeping agent escalated its thread (rule 15, migration `0010_escalated_comments.sql`). The marks go with their row.
     What Ariadne posts itself is held beside the last read until the next fetch reads it back.
 11. The DTO joins the forge's read and the row.
     It includes the request's fields, `failed_checks`, `behind_base`, `id`, `origin_task_id`, `ready`, review ask, and `session_id`.
@@ -188,7 +188,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     The route accepts the current column agent of the task that opened the request (`Seat::Agent`) and the keeper of a request kept by hand (`Seat::Keeper`, 032 rule 12).
     It refuses a review session of the same request, any other session, and a call with no session, with 403. It refuses an empty reason with 400.
     It finds the comment in the request's last read. A comment the request does not hold gets 404.
-    It stamps the comment's mark with `escalated_at` and `escalation_reason`, `escalated_at` strictly later than every earlier escalation of the request. It publishes `attention_changed`, and answers the comment with 200.
+    It stamps the comment's mark with `escalated_at`, `escalation_reason` and `escalated_after`, the forge time of the newest comment its thread holds then. `escalated_at` strictly later than every earlier escalation of the request. It publishes `attention_changed`, and answers the comment with 200.
     It makes no forge call and posts nothing. The `pull_request` attention producer raises one item for the thread (031 rule 17).
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.

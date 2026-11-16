@@ -731,8 +731,9 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     thread on the forge." Its `target` is the request, and its `since` is
     the mark's `escalated_at`.
     The item clears when the forge reports the thread resolved, or when
-    the last read holds a comment in that thread later than its latest
-    escalated comment. A comment at the same time is not later. A dismissal also hides it. A merged or closed request raises
+    the last read holds a comment in that thread later than the newest one
+    the thread held at its latest escalation (the mark's `escalated_after`). A reply made before
+    the escalation does not clear it. A comment at the same time is not later. A dismissal also hides it. A merged or closed request raises
     none, and nor does a comment the last read no longer holds.
 
 ### Individual dismissal
@@ -1227,6 +1228,8 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   request, dated from the escalation; a later comment in the thread or a
   resolve on the forge clears it
   (`attention.rs::each_escalated_thread_raises_its_own_item_until_the_forge_settles_it`).
+  A reply made before the escalation does not clear it
+  (`attention.rs::a_reply_before_the_escalation_does_not_clear_its_item`).
   A merged or closed request raises none
   (`attention.rs::a_closed_request_raises_no_escalation_item`). A dismissal
   of one thread hides no other, and a new escalation brings it back
