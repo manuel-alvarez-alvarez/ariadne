@@ -460,6 +460,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/logs": {
         parameters: {
             query?: never;
@@ -2537,6 +2553,11 @@ export interface components {
             data: components["schemas"]["PullRequestsChangedDto"];
             /** @enum {string} */
             event: "pull_requests_changed";
+        } | {
+            /** @description A host's status, endpoint or error changed (037). */
+            data: components["schemas"]["HostDto"];
+            /** @enum {string} */
+            event: "host_updated";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -2777,6 +2798,31 @@ export interface components {
             /** @description The daemon's version, as `GET /v1/version` reports it. */
             version: string;
         };
+        /** @description One host a client can address: this daemon, or one `config.toml` lists. */
+        HostDto: {
+            /**
+             * @description The address a client on this machine uses. For an `ssh` host it is
+             *     null until a forward is up.
+             */
+            endpoint?: string | null;
+            /** @description Why the host is down, when it is. */
+            error?: string | null;
+            kind: components["schemas"]["HostKind"];
+            name: string;
+            /** @description The far daemon's address, for an `ssh` host with one configured. */
+            remote?: string | null;
+            status: components["schemas"]["HostStatus"];
+        };
+        /**
+         * @description How a host is reached.
+         * @enum {string}
+         */
+        HostKind: "local" | "direct" | "ssh";
+        /**
+         * @description Whether a client can use a host's endpoint now.
+         * @enum {string}
+         */
+        HostStatus: "ready" | "connecting" | "down";
         IssueDto: {
             assignees: string[];
             body: string;
@@ -4698,6 +4744,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    hosts_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostDto"][];
                 };
             };
         };

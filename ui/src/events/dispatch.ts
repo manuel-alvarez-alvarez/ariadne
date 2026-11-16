@@ -215,6 +215,10 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.dashboards.lists() })
       break
     }
+    case "host_updated": {
+      // Nothing in the app reads hosts yet.
+      break
+    }
     default: {
       // A kind the generated types do not know about: the daemon is newer than
       // these types. Regenerate with `npm run gen:api`.

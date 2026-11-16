@@ -16,6 +16,7 @@ mod error;
 pub(crate) mod events;
 mod forge;
 mod goals;
+mod hosts;
 mod issues;
 mod logs;
 mod permissions;
@@ -144,6 +145,7 @@ impl AppState {
         skills::reset_document,
         workflows::create, workflows::list, workflows::get, workflows::update,
         workflows::delete, workflows::reset, workflows::parse,
+        hosts::list,
         dashboards::create, dashboards::list, dashboards::get, dashboards::update, dashboards::delete, dashboards::reset,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
@@ -182,6 +184,7 @@ impl AppState {
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
+        ariadne_api::hosts::HostDto, ariadne_api::hosts::HostKind, ariadne_api::hosts::HostStatus,
         ariadne_api::events::AgentEventDto, ariadne_api::events::AgentEventSummaryDto,
         ariadne_api::events::EventOrder, ariadne_api::events::PermissionReplyDto,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
@@ -199,6 +202,7 @@ impl AppState {
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "workflows", description = "The kanban of columns a task is staged through"),
+        (name = "hosts", description = "The daemons a client can address: this one and the configured others"),
         (name = "dashboards", description = "Editable Perses dashboards"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "permissions", description = "The AI permission model: the local model the `ai` permission mode answers with"),
@@ -305,6 +309,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/workflows/{name}/reset", post(workflows::reset))
         .route("/v1/workflows/parse", post(workflows::parse))
+        .route("/v1/hosts", get(hosts::list))
         .route(
             "/v1/dashboards",
             post(dashboards::create).get(dashboards::list),

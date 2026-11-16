@@ -571,6 +571,19 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
+        DomainEvent::HostUpdated(h) => Line {
+            at: String::new(),
+            kind,
+            subject: h.name.clone(),
+            detail: format!(
+                "host {}",
+                serde_json::to_string(&h.status)
+                    .unwrap_or_default()
+                    .trim_matches('"')
+            ),
+            session: None,
+            status: None,
+        },
         DomainEvent::IssuesChanged(i) => Line {
             at: String::new(),
             kind,

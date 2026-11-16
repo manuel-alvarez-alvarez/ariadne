@@ -1027,6 +1027,28 @@
         }
       }
     },
+    "/v1/hosts": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HostDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/logs": {
       "get": {
         "tags": [
@@ -5970,6 +5992,26 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A host's status, endpoint or error changed (037).",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/HostDto",
+                "description": "A host's status, endpoint or error changed (037)."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "host_updated"
+                ]
+              }
+            }
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
@@ -6450,6 +6492,65 @@
             "description": "The daemon's version, as `GET /v1/version` reports it."
           }
         }
+      },
+      "HostDto": {
+        "type": "object",
+        "description": "One host a client can address: this daemon, or one `config.toml` lists.",
+        "required": [
+          "name",
+          "kind",
+          "status"
+        ],
+        "properties": {
+          "endpoint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address a client on this machine uses. For an `ssh` host it is\nnull until a forward is up."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the host is down, when it is."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HostKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "remote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The far daemon's address, for an `ssh` host with one configured."
+          },
+          "status": {
+            "$ref": "#/components/schemas/HostStatus"
+          }
+        }
+      },
+      "HostKind": {
+        "type": "string",
+        "description": "How a host is reached.",
+        "enum": [
+          "local",
+          "direct",
+          "ssh"
+        ]
+      },
+      "HostStatus": {
+        "type": "string",
+        "description": "Whether a client can use a host's endpoint now.",
+        "enum": [
+          "ready",
+          "connecting",
+          "down"
+        ]
       },
       "IssueDto": {
         "type": "object",
@@ -8963,6 +9064,10 @@
     {
       "name": "workflows",
       "description": "The kanban of columns a task is staged through"
+    },
+    {
+      "name": "hosts",
+      "description": "The daemons a client can address: this one and the configured others"
     },
     {
       "name": "dashboards",

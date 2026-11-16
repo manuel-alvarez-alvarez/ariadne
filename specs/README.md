@@ -46,3 +46,4 @@ test that proves it. Conventions for writing and changing one are in
 | 034 | [Telemetry query APIs](034-telemetry-query.md) | the Prometheus and Loki routes over the telemetry store, the name translation, the supported PromQL and LogQL, and `ariadne query` |
 | 035 | [Metrics](035-metrics.md) | the metric catalog the daemon records: every instrument, its unit, attributes and where it is recorded |
 | 036 | [Dashboards](036-dashboards.md) | editable Perses dashboard documents, their catalog routes, events and CLI |
+| 037 | [Hosts](037-hosts.md) | the `[hosts.<name>]` config tables, their validation, `GET /v1/hosts`, `HostDto` and the `host_updated` event |

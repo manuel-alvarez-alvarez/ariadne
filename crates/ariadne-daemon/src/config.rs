@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use axum::http::HeaderValue;
 use url::Url;
 
-use ariadne_client::endpoint::{self, AcpAgentConfig};
+use ariadne_client::endpoint::{self, AcpAgentConfig, HostConfig};
 
 use crate::ai_permissions::hardware::HardwareOverride;
 
@@ -58,6 +58,8 @@ pub struct Config {
     pub ai_failure_diagnosis: bool,
     /// User-defined ACP agent commands appended to the built-in registry.
     pub acp_agents: Vec<AcpAgentConfig>,
+    /// Other machines' daemons, in the order the file lists them (037).
+    pub hosts: Vec<(String, HostConfig)>,
     /// ACP registry index URL, fetched only on an explicit refresh.
     pub acp_registry_url: String,
     /// The Python interpreter the model's install runs on (022). `None` finds
@@ -121,6 +123,7 @@ impl Config {
         // exactly what would stop this daemon from starting.
         let file = endpoint::parse_config(&root)?.unwrap_or_default();
         validate_telemetry_retention_days(&file)?;
+        validate_hosts(&file)?;
 
         let config = Config {
             socket_path: file
@@ -157,6 +160,7 @@ impl Config {
                 .unwrap_or_else(default_exhausted_patterns),
             ai_failure_diagnosis: file.ai_failure_diagnosis.unwrap_or(false),
             acp_agents: file.acp_agents,
+            hosts: file.hosts.0,
             acp_registry_url: file.acp_registry_url.unwrap_or_else(|| {
                 "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into()
             }),
@@ -202,6 +206,7 @@ impl Config {
         let file = file.unwrap_or_default();
         validate_tcp_file_config(&file)?;
         validate_telemetry_retention_days(&file)?;
+        validate_hosts(&file)?;
         let skills_dir = file
             .skills_dir
             .as_ref()
@@ -259,6 +264,75 @@ fn validate_telemetry_retention_days(config: &endpoint::FileConfig) -> Result<()
         if days.is_some_and(|days| days <= 0) {
             anyhow::bail!("{key} must be a positive number of days");
         }
+    }
+    Ok(())
+}
+
+/// The rules of `[hosts.<name>]` (037): a refusal names the host and the key.
+fn validate_hosts(config: &endpoint::FileConfig) -> Result<()> {
+    for (name, host) in &config.hosts.0 {
+        if name == "local" {
+            anyhow::bail!(
+                "hosts.local: the name local is the daemon itself and cannot be configured"
+            );
+        }
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            anyhow::bail!("hosts.{name}: a host name has only letters, digits, - and _");
+        }
+        validate_host_endpoint(name, &host.endpoint)?;
+        match (&host.remote, host.endpoint.starts_with("ssh://")) {
+            (Some(_), false) => {
+                anyhow::bail!("hosts.{name}.remote is accepted only with an ssh:// endpoint")
+            }
+            (Some(remote), true) => validate_host_remote(name, remote)?,
+            (None, _) => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_host_endpoint(name: &str, endpoint: &str) -> Result<()> {
+    let bad = || {
+        anyhow::anyhow!(
+            "hosts.{name}.endpoint must be ssh://[user@]host[:port], http://host:port or an absolute socket path: {endpoint}"
+        )
+    };
+    if endpoint.starts_with('/') {
+        return Ok(());
+    }
+    let url = Url::parse(endpoint).map_err(|_| bad())?;
+    let bare_path = matches!(url.path(), "" | "/");
+    let plain = url.query().is_none() && url.fragment().is_none() && bare_path;
+    match url.scheme() {
+        "ssh" if plain && url.host_str().is_some() && url.password().is_none() => Ok(()),
+        "http"
+            if plain
+                && url.host_str().is_some()
+                && url.port().is_some()
+                && url.username().is_empty()
+                && url.password().is_none() =>
+        {
+            Ok(())
+        }
+        _ => Err(bad()),
+    }
+}
+
+fn validate_host_remote(name: &str, remote: &str) -> Result<()> {
+    let loopback = remote
+        .parse::<SocketAddr>()
+        .is_ok_and(|address| address.ip().is_loopback())
+        || remote
+            .strip_prefix("localhost:")
+            .is_some_and(|port| port.parse::<u16>().is_ok());
+    if !remote.starts_with('/') && !loopback {
+        anyhow::bail!(
+            "hosts.{name}.remote must be an absolute socket path or a loopback host:port: {remote}"
+        );
     }
     Ok(())
 }
