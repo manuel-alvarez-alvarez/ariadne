@@ -141,6 +141,7 @@ impl super::Scheduler {
             return Ok(());
         };
         if pull.state == "open"
+            && pull.role == "author"
             && pull.draft
             && (pull.origin_task_id.is_some() || pull.babysit_asked)
         {
@@ -157,14 +158,13 @@ impl super::Scheduler {
                     integration.enabled,
                 )
                 .await?
-                && self
-                    .store
-                    .claim_draft_mark(&pull.id, &pull.head_sha)
-                    .await?
+                && !self
+                    .draft_marks
+                    .contains(&(pull.id.clone(), pull.head_sha.clone()))
             {
                 let client =
                     crate::forge::ForgeClient::for_repository(&self.launcher.cfg, &integration);
-                client
+                match client
                     .mark_ready_for_review(
                         &format!(
                             "{}/{}/{}",
@@ -173,20 +173,26 @@ impl super::Scheduler {
                         pull.number,
                     )
                     .await
-                    .map_err(anyhow::Error::msg)?;
-                if let Some(cached) = self.launcher.live.get(&pull.id) {
-                    self.launcher.live.set_pull_evidence_failed(
-                        &pull.id,
-                        cached.pull,
-                        cached.review_requested,
-                    );
+                {
+                    Ok(()) => {
+                        self.draft_marks
+                            .insert((pull.id.clone(), pull.head_sha.clone()));
+                        if let Some(cached) = self.launcher.live.get(&pull.id) {
+                            self.launcher.live.set_pull_evidence_failed(
+                                &pull.id,
+                                cached.pull,
+                                cached.review_requested,
+                            );
+                        }
+                        if let Some(poll) = self.launcher.forge_poll.get() {
+                            poll.wake(&pull.repository_id);
+                        }
+                    }
+                    Err(error) => warn!(pull_request = %pull.id, %error, "draft promotion failed"),
                 }
-                if let Some(poll) = self.launcher.forge_poll.get() {
-                    poll.wake(&pull.repository_id);
-                }
-                return Ok(());
             }
         }
+
         // The operation goals follow the request: each ends with it, or with
         // its ask. What stays open is the owner of the operation's session.
         let owner = match self.settle_pr_operation(&pull, PrOperation::Review).await? {

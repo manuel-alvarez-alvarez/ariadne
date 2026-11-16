@@ -321,6 +321,9 @@ A session with a `pull_request_id` shows the request's title and a link to its U
     `CONFLICTING` blocks promotion. Unknown or missing conflict evidence withholds it.
     Readiness attention still requires a non-draft with a clean merge state (031 rule 15).
     Only the integration login's own request is marked, at most once per head.
+    The scheduler remembers successful marks in memory, once per head in its lifetime.
+    A refused mark is logged and retried on a later pass without stopping other work.
+    After a restart the forge accepts a repeat without changing a non-draft request.
     The forge restarts checks on the mark. The readiness item waits for fresh evidence.
     No seat has a draft-mark tool or route.
 ## Acceptance criteria
@@ -329,8 +332,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `news.rs::tests::green_checks_reviews_and_behind_base_are_not_keeper_news`.
 - Comments settle after the newest one; failures and state changes arrive immediately:
   `news.rs::tests::comments_wait_for_the_newest_comment_but_failures_and_state_do_not`.
-- The store claims each draft head once:
-  `store.rs::a_draft_mark_is_claimed_once_for_each_head`.
+- A non-draft makes no mutation:
+  `forge_integration.rs::marking_an_already_ready_request_sends_no_mutation`.
+- A refused draft mark is retried on the same head:
+  `kept_requests.rs::a_refused_draft_mark_is_retried_on_the_same_head`.
+- An unanswered comment blocks promotion:
+  `kept_requests.rs::an_unanswered_comment_blocks_draft_promotion`.
 - A draft uses GitHub's conflict evidence; a blocked non-draft stays blocked:
   `github/pulls.rs::tests::a_drafts_mergeability_uses_githubs_conflict_evidence`.
 - The daemon promotes only its own checked draft once per head:
@@ -602,9 +609,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 GitHub's `reviewRequests` names a team by a slug or a name, never a login.
 A review asked of a team the user belongs to is read as asking nobody, so it
 raises no row and starts no session (029).
-
-- A non-draft makes no mutation:
-  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
 
 ## Sources
 

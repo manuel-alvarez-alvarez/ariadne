@@ -215,6 +215,8 @@ A separate critic session is a later idea. It is not a current feature.
 
 ## What a `pr-babysit` keeper session does
 
+The daemon marks your checked draft ready for review when you keep it by hand.
+
 An open request that no task opened can be kept by hand: call `PUT
 /v1/repositories/<repo-id>/pull-requests/<number>/ariadne-babysit` with
 `{"asked": true, "model": "<agent:model>", "effort": "<effort>", "skills":

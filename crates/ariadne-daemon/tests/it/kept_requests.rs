@@ -2461,3 +2461,74 @@ async fn the_daemon_promotes_only_its_own_checked_draft_once_per_head() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_refused_draft_mark_is_retried_on_the_same_head() {
+    let head = "a".repeat(40);
+    let mut read = ready_pull(&head);
+    read["isDraft"] = json!(true);
+    read["mergeStateStatus"] = json!("DRAFT");
+    read["mergeable"] = json!("MERGEABLE");
+    let mut script = script_with_read(&head, &read);
+    let entries = script.as_array_mut().unwrap();
+    entries.insert(
+        0,
+        answer(
+            &["api", "repos/acme/widgets/pulls/1"],
+            0,
+            r#"{"node_id":"PR_one"}"#,
+        ),
+    );
+    let mutation = [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        "query=mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }",
+    ];
+    entries.insert(0, answer(&mutation, 1, ""));
+    let Kept { h, stub, repo, .. } = kept_request_running(script.clone()).await;
+    let marks = || {
+        stub.invocations()
+            .iter()
+            .filter(|c| {
+                c.args
+                    .iter()
+                    .any(|a| a.contains("markPullRequestReadyForReview"))
+            })
+            .count()
+    };
+    eventually(TIMEOUT, "the refused mark", async || marks() >= 1).await;
+    h.flush_scheduler().await;
+    script.as_array_mut().unwrap()[0] = answer(
+        &mutation,
+        0,
+        r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}"#,
+    );
+    stub.reprogram(script);
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the retried mark", async || marks() >= 2).await;
+}
+
+#[tokio::test]
+async fn an_unanswered_comment_blocks_draft_promotion() {
+    let head = "a".repeat(40);
+    let mut read = ready_pull(&head);
+    read["isDraft"] = json!(true);
+    read["mergeStateStatus"] = json!("DRAFT");
+    read["mergeable"] = json!("MERGEABLE");
+    let mut script = script_with_read(&head, &read);
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/issues/1/comments"]) {
+            entry["stdout"] = json!(json!([{"id": 101, "user": {"login": "alice", "type": "User"}, "body": "Please fix this", "created_at": "2026-10-01T00:00:00Z"}]).to_string());
+        }
+    }
+    let Kept { h, stub, repo, .. } = kept_request_running(script).await;
+    fetch_again(&h, &stub, &repo).await;
+    assert!(!stub.invocations().iter().any(|c| {
+        c.args
+            .iter()
+            .any(|a| a.contains("markPullRequestReadyForReview"))
+    }));
+}
