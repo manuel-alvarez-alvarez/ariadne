@@ -114,12 +114,21 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    its author's ever names one, and nothing here starts a review pass over
    content nobody has published yet
    (`pull_request_reviews.rs::a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_news`).
-8. A review's news is told at once: the next reconcile after a push or a
-   reply hands it over, with no wait for activity to settle. A push also
-   waits for the session to be idle: once it is, the daemon moves the
-   worktree to the new head (`checkout_detached`) and hands the news in one
-   prompt. A fetch with the same head hands nothing. A reply alone needs no
-   idle session, since it moves no worktree:
+8. A review's news is told at once, except a push: the first round of an
+   ask and a reply in a thread the review opened are handed over on the next
+   reconcile. A push is handed over only once the request's head stood
+   unchanged for `Timeouts::review_push_settle` (60 seconds in production),
+   so a run of commits is one round on the last head. A further push inside
+   the interval restarts it, and the session is never told the head in
+   between. A push told after the interval also waits for the session to be
+   idle: once it is, the daemon moves the worktree to the new head
+   (`checkout_detached`) and hands the news in one prompt. A fetch with the
+   same head hands nothing. A reply alone needs no idle session, since it
+   moves no worktree:
+   `head_settle.rs::a_head_settles_exactly_when_the_whole_interval_has_passed`
+   (the boundary), `head_settle.rs::a_new_head_restarts_the_interval` (the
+   restart),
+   `pull_request_reviews.rs::a_run_of_pushes_is_told_once_when_the_head_stands_still`,
    `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
 9. A request that turns merged or closed, or whose manual ask is stopped,
    has its reviewer session killed and its detached worktree removed. A
