@@ -80,8 +80,12 @@ Use `code-review` when the diff is a task branch and no forge request.
    block.
 
    Done when each new finding has one inline comment.
-7. Write the body for this round. Start with this verdict line:
-   `Reviewed <sha>: <request changes|comment> with <n> findings.`
+7. Write the body for this round. Start with this verdict line.
+
+   ```
+   Reviewed <sha>: <request changes|comment> with <n> findings.
+   ```
+
    Add one or two sentences on the change and its risk.
    Add one line per new finding: `<P0|P1|P2> <path>:<line>: <title>`.
    Add one line per check: `Check <command>: <result>`.
