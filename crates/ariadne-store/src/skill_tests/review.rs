@@ -204,22 +204,24 @@ fn architecture_review_adds_to_the_one_verdict_of_its_column() {
 /// gives every approval and lands every request: the skill never
 /// approves on its own, and names no merge, sleep, poll or forge CLI.
 /// It names the three priorities, each with the trigger a finding must
-/// name or be downgraded to P2, caps new P2 findings at five, asks for
-/// changes only where a P0 or P1 stands, resolves a thread of its own
-/// once a push fixed it, settles a declined or a still-open one without
-/// a second warning, and suggests a fix where the edit is small and
-/// local.
+/// name or be made optional, caps new P2 findings at five, resolves a
+/// thread of its own once a push fixed it, settles a declined or a
+/// still-open one without a second warning, and suggests a fix where the
+/// edit is small and local.
 ///
 /// The user agreed the rest in November 2026, from 37 review goals. Four
 /// `submit_review` calls were refused for a line the diff does not show,
 /// so a finding goes on the shown line that causes it. Sessions ran
 /// suites of 2,000 tests, so the checks are those of the changed files.
-/// A P0 or P1 needs a proof: a run for code, two quoted lines for text.
-/// The body has four labelled paragraphs. A question in an owned thread
-/// gets one answer, and a finding proven wrong is withdrawn and resolved.
-/// The round ends on one literal result shape, since a round with no
-/// finding posts nothing and the turn text is all the user reads of it.
-/// The skill names no Ariadne approval: the user took that step out.
+/// Every round is a `comment`, and its body is prose: the reviewed sha,
+/// one paragraph on the defects, and one sentence on whether the code
+/// must change. A finding keeps the priority of its severity. The
+/// reviewer tries to reproduce it first, and a failed reproduction opens
+/// `Proof:` with `Unverified:` in place of a downgrade to P2. A question
+/// in an owned thread gets one answer, and a finding proven wrong is
+/// withdrawn and resolved. The round ends on one literal result shape,
+/// since the turn text is all the user reads of it. The skill names no
+/// Ariadne approval: the user took that step out.
 #[test]
 fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
     let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");
@@ -244,25 +246,43 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
             "the pr-reviewer skill has no {priority}"
         );
     }
-    for sentence in ste::sentences(&doc) {
-        if sentence.contains("`request_changes`") {
-            assert!(
-                sentence.contains("P0") && sentence.contains("P1"),
-                "`request_changes` without P0 and P1: {sentence}"
-            );
-        }
+    // Every round is a comment: the closing sentence of the body, not the
+    // event, says whether the code must change.
+    assert!(
+        !doc.contains("request_changes") && !doc.contains("request changes"),
+        "the pr-reviewer skill names a change request"
+    );
+    for gone in [
+        "A finding with no proof is P2.",
+        "Without one it is P2.",
+        "one line per new finding",
+        "one line per check",
+    ] {
+        assert!(!doc.contains(gone), "the pr-reviewer skill keeps {gone}");
     }
     for step in [
-        "Write the body for this round.",
-        "Add one or two sentences on the change and its risk.",
-        "Add one line per new finding:",
-        "Add one line per check:",
-        "Never write a status table.",
+        "Write the body for this round in three parts, in this order:",
+        "First line: `Reviewed <sha>.`",
+        "One short prose paragraph that describes the defects concisely.",
+        "Write no bullet, no table, no line per finding and no line per check.",
+        "One closing sentence that states whether the author must change the code.",
+        "`Changes required: fix the P1 before this lands.`",
+        "`No change required.`",
+        "Write the body even with no new finding.",
+        "Use the event `comment` for every round.",
         "Call it even with no new findings.",
+        "Keep the priority of the severity, with or without a reproduction.",
+        "Try to reproduce each finding at the reviewed revision before you post it:",
+        "Where the reproduction fails, keep the finding. Record why it failed.",
+        "In `Failure:`, state the expected and the observed behavior.",
+        "In `Proof:`, give the command and its result.",
+        "Add the steps to reproduce where they help.",
+        "Where the reproduction failed, open `Proof:` with `Unverified:` and say why.",
+        "In `Fix:`, name the file, the line and the change.",
+        "Write them so the author can fix the defect without a question.",
         "Pin the scope to the diff. Call `get_pull_request` and `get_diff`.",
         "`since`",
         "`submit_review` once with only new findings",
-        "P0 or P1",
         "`report_pull_request` with `reviewed_sha`",
         "without a reply",
         "Run the tests, the lint and the format check of the files the diff changes.",
@@ -287,7 +307,6 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "one inline comment on the line of the defect",
         "Never give a forge approval. The user gives it.",
         "P0 and P1 are must-fix. P2 is optional.",
-        "A finding with no proof is P2.",
         "A code defect: run a command that triggers it at the reviewed revision.",
         "A text defect: quote the two lines that disagree.",
         "Put code that a proof needs in a scratch file under `/tmp`.",
@@ -323,9 +342,15 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
     // The result shape is a literal template, read off the raw document.
     assert!(
         default_skill_document(PR_REVIEWER_SKILL).unwrap().contains(
-            "   ```\n   Reviewed <sha>: <request changes|comment> with <n> findings.\n   <P0|P1|P2> <path>:<line>: <title>\n   Thread <path>:<line>: <resolved|still there|answered|withdrawn>\n   Check <command>: <result>\n   Failed <tool>: <reason>\n   Outside the diff: <defect>\n   ```"
+            "   ```\n   Reviewed <sha>: comment with <n> findings.\n   <P0|P1|P2> <path>:<line>: <title>[ unverified]\n   Thread <path>:<line>: <resolved|still there|answered|withdrawn>\n   Check <command>: <result>\n   Failed <tool>: <reason>\n   Outside the diff: <defect>\n   ```"
         ),
         "the pr-reviewer skill does not give the result as a literal template"
+    );
+    assert!(
+        default_skill_document(PR_REVIEWER_SKILL).unwrap().contains(
+            "   ```\n   Reviewed <sha>.\n   <one short paragraph on the defects>\n   <Changes required: <what must change>.|No change required.>\n   ```"
+        ),
+        "the pr-reviewer skill does not give the body as a literal template"
     );
     assert!(
         !doc.contains("git log"),

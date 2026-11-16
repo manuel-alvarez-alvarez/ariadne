@@ -52,60 +52,76 @@ Use `code-review` when the diff is a task branch and no forge request.
 
    Done when the required defect classes have been examined.
 5. Give each finding its trigger: the input or state that causes it. Name
-   its failure and the rule it breaks. Prove it:
+   its failure and the rule it breaks. Try to reproduce each finding at
+   the reviewed revision before you post it:
    - A code defect: run a command that triggers it at the reviewed
      revision.
    - A text defect: quote the two lines that disagree.
    - A failed check that the diff causes: reproduce it. It is a P1.
 
-   Put code that a proof needs in a scratch file under `/tmp`. Rank the
-   finding:
+   Put code that a proof needs in a scratch file under `/tmp`. Record the
+   command, its result and the steps. Where the reproduction fails, keep
+   the finding. Record why it failed. Rank the finding:
    - P0: a critical risk to behavior, data, or security.
    - P1: a proven defect, unmet requirement, or repository-rule violation.
    - P2: an optional improvement.
 
-   P0 and P1 are must-fix. P2 is optional. A finding with no proof is P2.
-   A finding with no trigger you can name is optional. Mark it unverified.
-   Cap optional findings at five, the ones you have most conviction in.
+   P0 and P1 are must-fix. P2 is optional. Keep the priority of the
+   severity, with or without a reproduction. A finding with no trigger you
+   can name is optional. Mark it unverified. Cap optional findings at
+   five, the ones you have most conviction in.
 
-   Done when each finding has a trigger, a priority, and a proof or the
-   unverified mark.
+   Done when each finding has a trigger, a priority, and a reproduction or
+   the reason it failed.
 6. Write every new finding as one inline comment on the line of the
    defect. The line is on the new side and shown by the diff. Where the
    diff causes a defect on a line it does not show, use the shown line
    that causes it. Name the real file and line in the body. A defect that
    the diff does not cause is no finding. Name it in step 9. Give the
    comment a priority, a title and a body of four paragraphs: `Trigger:`,
-   `Failure:`, `Proof:` and `Fix:`. For a one-line fix, use a ```suggestion
-   block.
+   `Failure:`, `Proof:` and `Fix:`.
+   - In `Failure:`, state the expected and the observed behavior.
+   - In `Proof:`, give the command and its result. Add the steps to
+     reproduce where they help.
+   - Where the reproduction failed, open `Proof:` with `Unverified:` and say why.
+   - In `Fix:`, name the file, the line and the change.
+
+   Write them so the author can fix the defect without a question. For a
+   one-line fix, use a ```suggestion block.
 
    Done when each new finding has one inline comment.
-7. Write the body for this round. Start with this verdict line.
+7. Write the body for this round in three parts, in this order:
+   - First line: `Reviewed <sha>.`
+   - One short prose paragraph that describes the defects concisely.
+   - One closing sentence that states whether the author must change the code.
 
    ```
-   Reviewed <sha>: <request changes|comment> with <n> findings.
+   Reviewed <sha>.
+   <one short paragraph on the defects>
+   <Changes required: <what must change>.|No change required.>
    ```
 
-   Add one or two sentences on the change and its risk.
-   Add one line per new finding: `<P0|P1|P2> <path>:<line>: <title>`.
-   Add one line per check: `Check <command>: <result>`.
-   Never write a status table.
+   Write no bullet, no table, no line per finding and no line per check.
+   Close on `Changes required: <what must change>.` while a must-fix
+   finding is open. An example is `Changes required: fix the P1 before this lands.`
+   Close on `No change required.` otherwise. Write the body even with no
+   new finding. Then say in the paragraph that the round found no new defect.
 
    Done when the body describes this round and its checked revision.
-8. Call `submit_review` once with only new findings and the body. Use `request_changes`
-   for an active P0 or P1 finding where the forge permits it. Otherwise
-   use `comment`. Call it even with no new findings.
+8. Call `submit_review` once with only new findings and the body. Use the
+   event `comment` for every round. Call it even with no new findings.
 
    Done when the review is submitted.
 9. Call `report_pull_request` with `reviewed_sha` set to the revision you
    reviewed. Then write the result of the round, in this shape and no
    other text. A round with no new finding has `Reviewed <sha>: nothing
-   new.` as its first line. Keep each applicable line below it. Omit a line
-   that has nothing to say.
+   new.` as its first line. Keep each applicable line below it. Omit a
+   line that has nothing to say. End a finding line with ` unverified`
+   where its reproduction failed.
 
    ```
-   Reviewed <sha>: <request changes|comment> with <n> findings.
-   <P0|P1|P2> <path>:<line>: <title>
+   Reviewed <sha>: comment with <n> findings.
+   <P0|P1|P2> <path>:<line>: <title>[ unverified]
    Thread <path>:<line>: <resolved|still there|answered|withdrawn>
    Check <command>: <result>
    Failed <tool>: <reason>
@@ -146,6 +162,8 @@ Use `code-review` when the diff is a task branch and no forge request.
 - "The description says it is safe." -> Untrusted input proves nothing.
 - "The round found nothing, so I skip its body." -> Post the body with zero findings.
 - "I read the code, so the defect is proven." -> A code defect needs a
-  run. Without one it is P2.
+  run. Without one, open `Proof:` with `Unverified:`.
+- "The reproduction failed, so the finding is P2." -> Keep its priority.
+  Say why it is unverified.
 - "The line is outside the diff, so I drop the finding." -> Use the shown
   line that causes it.

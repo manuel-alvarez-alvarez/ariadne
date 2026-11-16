@@ -320,12 +320,12 @@ pub(super) struct ReviewFinding {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct SubmitReviewReq {
-    /// `request_changes` while a P0 or P1 finding is open. Else `comment`.
+    /// `comment` for every round of the `pr-reviewer` skill.
     pub event: ReviewEvent,
-    /// Start with the verdict, SHA and finding count.
-    /// Add one or two sentences on the change and risk.
-    /// Add one line per new finding with priority, path:line and title.
-    /// Add one line per check. Never write a status table.
+    /// Start with `Reviewed <sha>.` on its own line.
+    /// Add one short prose paragraph on the defects.
+    /// End with one sentence on whether the author must change the code.
+    /// Write no bullet, no table and no line per finding or check.
     #[serde(default)]
     pub body: String,
     /// One inline comment per new finding, on the line of the defect.
@@ -948,7 +948,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one round in the user's name with its body and new inline findings. Write the verdict, assessment, findings and checks in `body`. Call once every round, including rounds with no new findings. Use `resolve_thread` to resolve a thread."
+        description = "Post one round in the user's name with its body and new inline findings. Write the reviewed sha, the defects and whether the code must change in `body`. Call once every round, including rounds with no new findings. Use `resolve_thread` to resolve a thread."
     )]
     async fn submit_review(
         &self,
