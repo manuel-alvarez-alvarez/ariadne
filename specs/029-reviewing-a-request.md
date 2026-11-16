@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-11-15
+updated: 2026-11-16
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -90,8 +90,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    its name with a branch of the checkout. No local branch is written.
 5. The briefing names the repository, the worktree and its head, the
    branches, the login, and the last `reviewed_sha`, or `none`. The seat text
-   says to work only in the detached worktree, and to commit and push
-   nothing.
+   states: "You review one open pull or merge request that the user explicitly asks Ariadne to review.
+   The author can be the user, another person or a bot. The user needs no GitHub review assignment.
+   The request can be a draft. Work only in your worktree, detached at the head of the request.
+   Commit nothing and push nothing."
 5a. A review session that went away is resumed on its own row and
    conversation, unless the pin moved since it started: a conversation keeps
    the model it started on, so a new model or effort is a fresh session on

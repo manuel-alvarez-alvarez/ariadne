@@ -357,9 +357,8 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
 
 /// The system prompt of a session that reviews a request (029): what the
 /// seat owes, as [`default_system_prompt`] says it for the task seats. The
-/// work itself is the [`PR_REVIEWER_SKILL`] document. A request of the
-/// user's own has no session of its own: the `pr` column of its task keeps
-/// it (030).
+/// work itself is the [`PR_REVIEWER_SKILL`] document. The user can ask for
+/// a review regardless of authorship or GitHub review assignment (029).
 pub fn pull_request_system_prompt() -> &'static str {
     PULL_REQUEST_REVIEW_SYSTEM_PROMPT
 }
@@ -484,7 +483,7 @@ const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {ste
 /// and nothing a layer it already reads says. How to review is the skill's,
 /// and the skills header tells every seat to read it; when the turn ends is
 /// the briefing's and the news prompt's, which each end on it.
-const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing."#;
+const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request that the user explicitly asks Ariadne to review. The author can be the user, another person or a bot. The user needs no GitHub review assignment. The request can be a draft. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing."#;
 
 /// Initial briefing of a reviewer pull request session (029).
 const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
@@ -1064,6 +1063,10 @@ pub(crate) mod tests {
              - Call `fail_task` when nobody can do the task as written.\n\
              - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.\n\
              - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."
+        );
+        assert_eq!(
+            default_system_prompt(Seat::Reviewer),
+            "You review one open pull or merge request that the user explicitly asks Ariadne to review. The author can be the user, another person or a bot. The user needs no GitHub review assignment. The request can be a draft. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing."
         );
         assert!(
             default_prompt_text(PromptKind::StepBriefing)

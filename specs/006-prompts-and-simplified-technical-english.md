@@ -95,8 +95,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
    with the ban on `--no-verify` and `-n`. What a column does — build,
    review, merge, keep a request — is its skill's to say. The `reviewer` seat
-   text is the pull request review session's (029): the request it reviews,
-   its detached worktree, and that it commits and pushes nothing. It names
+   text is the pull request review session's (029 rule 5).
+   It states the explicit ask, all authors, no required GitHub assignment, and drafts (029 rule 1).
+   It also states its detached worktree and that it commits and pushes nothing. It names
    neither its skill, which the skill index does for every seat, nor the end
    of its turn, which its briefing and the news prompt each end on. The
    `keeper` seat text is the session's that keeps a request of the user's
