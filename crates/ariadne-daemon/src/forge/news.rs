@@ -221,7 +221,7 @@ pub async fn untold(
     }
     let comments = super::live::comments_of(store, live, pull).await?;
     let role = super::live::comment_role(&pull.role, pull.babysit_asked);
-    let untold = super::live::untold(&comments, role, login, false);
+    let untold = super::live::untold(&comments, role, login);
     Ok(of(pull, &untold, login))
 }
 
