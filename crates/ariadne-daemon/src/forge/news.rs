@@ -59,10 +59,13 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
     let failed: Vec<FailedCheck> = serde_json::from_str(&pull.failed_checks).unwrap_or_default();
     // The failed checks of a head are told as one list, once the rolled-up
     // state is final: while it reads `pending`, more checks may still fail.
+    // A turn to `failure` lists every failed check, a check told before it
+    // included; a failure that holds lists only the checks not told yet.
     let settled = pull.checks != "pending";
+    let turned = pull.checks == "failure" && before.check_state != "failure";
     let to_tell = failed
         .iter()
-        .filter(|c| settled && !told_checks.contains(&c.name));
+        .filter(|c| settled && (turned || !told_checks.contains(&c.name)));
     for check in to_tell {
         let at = match check.url.is_empty() {
             true => String::new(),
@@ -411,6 +414,44 @@ mod tests {
         let done = PullRequest {
             checks: "failure".into(),
             ..pending
+        };
+        let news = of(&done, &[], "me");
+        assert_eq!(
+            news.lines,
+            [
+                "- Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
+                 <<<untrusted>>>failure<<<end untrusted>>>",
+                "- Check <<<untrusted>>>fmt<<<end untrusted>>> turned to \
+                 <<<untrusted>>>failure<<<end untrusted>>>",
+                "- The checks now read <<<untrusted>>>failure<<<end untrusted>>>.",
+            ]
+        );
+        assert_eq!(news.told.checks, ["lint", "fmt"]);
+    }
+
+    /// A check told before the checks went back to pending is in the list
+    /// again when they turn `failure`: the prompt names every failed check
+    /// of the head (026 rule 12).
+    #[test]
+    fn a_turn_to_failure_lists_a_check_told_before_it() {
+        let rerun = PullRequest {
+            checks: "pending".into(),
+            failed_checks: r#"[{"name":"lint","url":"","conclusion":"failure"}]"#.into(),
+            told_checks: r#"["lint"]"#.into(),
+            told_check_state: Some("failure".into()),
+            ..pull()
+        };
+        let news = of(&rerun, &[], "me");
+        assert_eq!(
+            news.lines,
+            ["- The checks now read <<<untrusted>>>pending<<<end untrusted>>>."]
+        );
+        let done = PullRequest {
+            checks: "failure".into(),
+            failed_checks: r#"[{"name":"lint","url":"","conclusion":"failure"},
+                {"name":"fmt","url":"","conclusion":"failure"}]"#
+                .into(),
+            ..told(&rerun, &news)
         };
         let news = of(&done, &[], "me");
         assert_eq!(
