@@ -53,6 +53,7 @@ import { paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths
 
 import {
   pullRequestByKeyQueryOptions,
+  pullRequestQueryOptions,
   useAskBabysit,
   useAskReview,
   useKeeperTurn,
@@ -67,7 +68,9 @@ type Tab = (typeof TABS)[number]
 
 export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
-  const query = useQuery(pullRequestByKeyQueryOptions(id))
+  const query = useQuery(
+    id.includes(":") ? pullRequestByKeyQueryOptions(id) : pullRequestQueryOptions(id),
+  )
   // Ariadne's id of the request, while it works on it: what its sessions
   // name.
   const workedId = query.data?.id ?? null

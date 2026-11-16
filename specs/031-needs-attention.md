@@ -1150,6 +1150,7 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
 - A mergeability-only transition still publishes `pull_requests_changed`,
   both directions, and an unchanged fetch after it still raises nothing:
   (`pull_requests.rs::a_mergeability_only_transition_publishes_pull_requests_changed`).
+- A pull request target opens its panel by Ariadne PR id (`ui/src/features/pull-requests/pull-request-panel.test.tsx::opens the request named by an attention link`).
 - A `pull_request` producer item renders through the shared recovery
   rendering extension point, not the task or session fallback: a toast
   titles an unassigned review request "Review needed" and a readiness

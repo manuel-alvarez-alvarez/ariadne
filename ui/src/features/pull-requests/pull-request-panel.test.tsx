@@ -11,7 +11,8 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
-import type { PullRequestDto, RepositoryDto } from "@/api"
+import type { AttentionItemDto, PullRequestDto, RepositoryDto } from "@/api"
+import { type AttentionItem, attentionTarget } from "@/features/goals/attention"
 import { aModel, aSession, aSessionPage } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { pull } from "@/test/pull-request"
@@ -54,6 +55,45 @@ function daemon(
     return jsonResponse(row())
   })
 }
+
+it("opens the request named by an attention link", async () => {
+  const asked: string[] = []
+  daemon(() => pull)
+  const answer = daemonFetch.getMockImplementation()
+  daemonFetch.mockImplementation(async (input) => {
+    asked.push(new URL((input as Request).url).pathname)
+    return answer?.(input)
+  })
+  const recovery: AttentionItemDto = {
+    id: "ready",
+    occurrence: "",
+    producer: "pull_request",
+    reason: "unknown",
+    summary: "Ready to merge",
+    required_action: "Merge",
+    since: "2026-01-01T00:00:00Z",
+    affected: [],
+    target: { kind: "pull_request", pull_request_id: "pull-42" },
+  }
+  const item: AttentionItem = {
+    id: "ready",
+    goalId: "",
+    goal: undefined,
+    at: "2026-01-01T00:00:00Z",
+    taskId: null,
+    task: undefined,
+    taskReason: null,
+    session: undefined,
+    sessionReason: null,
+    recovery,
+  }
+  const target = attentionTarget(item, new URLSearchParams(), "/goals")
+  const id = new URLSearchParams(target.search).get("pr") ?? ""
+  renderScreen(<PullRequestPanel id={id} onClose={() => {}} />)
+  expect(await screen.findByText("#42 Fix widgets")).toBeTruthy()
+  expect(asked).toContain("/v1/pull-requests/pull-42")
+  expect(asked.some((path) => path.includes("NaN"))).toBe(false)
+})
 
 it("reads its facts by name, renders its description, links the forge, and removes nothing", async () => {
   const asked: string[] = []
