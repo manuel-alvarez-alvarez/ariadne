@@ -176,3 +176,11 @@ service installed before this setting existed keeps the throttle until you
 re-run the installer.
 
 [ACP]: https://agentclientprotocol.com
+
+The installer skips the desktop app when the session has no graphical access.
+This applies to release installs and source builds. On Linux, a nonempty
+`DISPLAY` or `WAYLAND_DISPLAY` permits installation, including forwarded displays.
+On macOS, the current user must own the graphical console login, and the
+session must have no SSH indicators. The installer does not connect to a display.
+It reports the skip reason and preserves an existing app and its uninstall records.
+CLI, daemon, service, and completion installation still follow their existing flags.

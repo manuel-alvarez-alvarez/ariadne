@@ -41,12 +41,6 @@ pub struct PullRequestFilter {
 }
 
 impl Store {
-    /// Claim one draft promotion attempt for a head, across restarts.
-    pub async fn claim_draft_mark(&self, id: &str, head: &str) -> Result<bool> {
-        Ok(sqlx::query("INSERT OR IGNORE INTO pull_request_draft_marks (pull_request_id, head_sha) VALUES (?, ?)")
-            .bind(id).bind(head).execute(self.w()).await?.rows_affected() == 1)
-    }
-
     /// Start to work on a request, or answer the row that already works on
     /// it: a task that opens a request its row already holds becomes its
     /// origin, and the first origin stays. The boolean is true only for an
