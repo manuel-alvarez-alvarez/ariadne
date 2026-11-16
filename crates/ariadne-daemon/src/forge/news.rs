@@ -57,7 +57,13 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
     let before = told_before(pull);
     let told_checks = before.checks.clone();
     let failed: Vec<FailedCheck> = serde_json::from_str(&pull.failed_checks).unwrap_or_default();
-    for check in failed.iter().filter(|c| !told_checks.contains(&c.name)) {
+    // The failed checks of a head are told as one list, once the rolled-up
+    // state is final: while it reads `pending`, more checks may still fail.
+    let settled = pull.checks != "pending";
+    let to_tell = failed
+        .iter()
+        .filter(|c| settled && !told_checks.contains(&c.name));
+    for check in to_tell {
         let at = match check.url.is_empty() {
             true => String::new(),
             false => format!(": {}", crate::agents::prompts::fence(&check.url)),
@@ -101,7 +107,12 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
         told: PullRequestTold {
             // A check that is green again is dropped, so a later failure of
             // it is news again; so is a head that caught up with its base.
-            checks: failed.into_iter().map(|c| c.name).collect(),
+            // While the state is pending, a check not told yet stays untold.
+            checks: failed
+                .into_iter()
+                .filter(|c| settled || told_checks.contains(&c.name))
+                .map(|c| c.name)
+                .collect(),
             behind_base: pull.behind_base,
             review_decision: pull.review_decision.clone(),
             state: pull.state.clone(),
@@ -376,6 +387,43 @@ mod tests {
             ],
             "a check that fails again and a head behind again are news again"
         );
+    }
+
+    /// While the rolled-up checks read `pending`, no failed check is told
+    /// and none is marked. When they turn `failure`, every failed check is
+    /// told in one prompt and marked (026 rules 12, 14).
+    #[test]
+    fn failed_checks_are_told_as_one_list_when_the_rollup_is_final() {
+        let failed = r#"[{"name":"lint","url":"","conclusion":"failure"},
+            {"name":"fmt","url":"","conclusion":"failure"}]"#;
+        let pending = PullRequest {
+            checks: "pending".into(),
+            failed_checks: failed.into(),
+            ..pull()
+        };
+        let news = of(&pending, &[], "me");
+        assert_eq!(
+            news.lines,
+            ["- The checks now read <<<untrusted>>>pending<<<end untrusted>>>."]
+        );
+        assert!(news.told.checks.is_empty(), "no failed check is marked yet");
+        let pending = told(&pending, &news);
+        let done = PullRequest {
+            checks: "failure".into(),
+            ..pending
+        };
+        let news = of(&done, &[], "me");
+        assert_eq!(
+            news.lines,
+            [
+                "- Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
+                 <<<untrusted>>>failure<<<end untrusted>>>",
+                "- Check <<<untrusted>>>fmt<<<end untrusted>>> turned to \
+                 <<<untrusted>>>failure<<<end untrusted>>>",
+                "- The checks now read <<<untrusted>>>failure<<<end untrusted>>>.",
+            ]
+        );
+        assert_eq!(news.told.checks, ["lint", "fmt"]);
     }
 
     /// A request I review is told a push once, by the sha it last
