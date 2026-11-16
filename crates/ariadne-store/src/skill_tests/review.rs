@@ -318,6 +318,10 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "A reply that argues with no new question gets no answer.",
         "Reply once with `Withdrawn: <why>.` Then call `resolve_thread`.",
         "A fix in a revision your worktree does not hold: post nothing.",
+        "A last reply that keeps the defect and gives no proof is a dispute.",
+        "This covers a `Not changed:` reply and a plain disagreement.",
+        "Call `escalate_comment` once, with the id of the first comment of the thread and a one-sentence reason.",
+        "Escalate again only after a new dispute.",
         "A draft gets the same round.",
         "News of a head equal to the reviewed revision needs no tool call.",
         "Where the head moves during a round, report the revision you reviewed.",
@@ -343,7 +347,7 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
     // The result shape is a literal template, read off the raw document.
     assert!(
         default_skill_document(PR_REVIEWER_SKILL).unwrap().contains(
-            "   ```\n   Reviewed <sha>: comment with <n> findings.\n   <P0|P1|P2> <path>:<line>: <title>[ unverified]\n   Thread <path>:<line>: <resolved|still there|answered|withdrawn>\n   Check <command>: <result>\n   Failed <tool>: <reason>\n   Outside the diff: <defect>\n   ```"
+            "   ```\n   Reviewed <sha>: comment with <n> findings.\n   <P0|P1|P2> <path>:<line>: <title>[ unverified]\n   Thread <path>:<line>: <resolved|still there|answered|withdrawn|escalated>\n   Check <command>: <result>\n   Failed <tool>: <reason>\n   Outside the diff: <defect>\n   ```"
         ),
         "the pr-reviewer skill does not give the result as a literal template"
     );

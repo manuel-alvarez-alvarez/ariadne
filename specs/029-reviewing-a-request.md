@@ -354,6 +354,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     check of the files the diff changes; the `checks` field of
     `get_pull_request` stands for every other check. It reproduces each
     failed forge check the diff can cause, and one the diff causes is a P1.
+    In the thread step, a last reply that keeps the defect and gives no
+    proof is a dispute, a `Not changed:` reply or a plain disagreement. The
+    reviewer posts nothing in that thread and calls `escalate_comment` once,
+    with the id of the thread's first comment and a one-sentence reason.
+    It escalates a thread again only after a new dispute, and the `Thread`
+    line of the result says `escalated`.
 
     Before it posts a finding, the reviewer tries to reproduce it at the
     reviewed revision. A code defect is reproduced by a run that triggers
@@ -417,6 +423,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   the forge and marks the comment. Any other comment gets 403 and no mark
   (rule 11):
   `kept_requests.rs::the_review_session_escalates_only_a_comment_the_review_posted`.
+- The `pr-reviewer` skill escalates a disputed thread once and posts nothing
+  in it, and its `Thread` line accepts `escalated` (rule 17):
+  `skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`.
 - The reviewer seat lists `escalate_comment` beside its request tools, and
   no other seat gains it (rule 11):
   `mcp.rs::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
