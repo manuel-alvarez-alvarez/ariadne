@@ -24,7 +24,6 @@ export const pull: PullRequestDto = {
   babysit_asked: false,
   body: "Fixes the widgets that break on an empty list.",
   session_id: null,
-  ready: false,
   origin_task_id: null,
   opened_at: "2026-10-01T00:00:00Z",
   updated_at: "2026-10-07T01:00:00Z",

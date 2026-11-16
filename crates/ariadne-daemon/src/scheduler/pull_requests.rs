@@ -140,6 +140,53 @@ impl super::Scheduler {
         else {
             return Ok(());
         };
+        if pull.state == "open"
+            && pull.draft
+            && (pull.origin_task_id.is_some() || pull.babysit_asked)
+        {
+            let integration = self.store.forge_integration(&pull.repository_id).await?;
+            if let Some(integration) = integration
+                && integration
+                    .login
+                    .as_deref()
+                    .is_some_and(|login| login.eq_ignore_ascii_case(&pull.author_login))
+                && crate::attention::pull_requests::ready_evidence(
+                    &self.store,
+                    &self.launcher.live,
+                    &pull,
+                    integration.enabled,
+                )
+                .await?
+                && self
+                    .store
+                    .claim_draft_mark(&pull.id, &pull.head_sha)
+                    .await?
+            {
+                let client =
+                    crate::forge::ForgeClient::for_repository(&self.launcher.cfg, &integration);
+                client
+                    .mark_ready_for_review(
+                        &format!(
+                            "{}/{}/{}",
+                            integration.host, integration.owner, integration.name
+                        ),
+                        pull.number,
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                if let Some(cached) = self.launcher.live.get(&pull.id) {
+                    self.launcher.live.set_pull_evidence_failed(
+                        &pull.id,
+                        cached.pull,
+                        cached.review_requested,
+                    );
+                }
+                if let Some(poll) = self.launcher.forge_poll.get() {
+                    poll.wake(&pull.repository_id);
+                }
+                return Ok(());
+            }
+        }
         // The operation goals follow the request: each ends with it, or with
         // its ask. What stays open is the owner of the operation's session.
         let owner = match self.settle_pr_operation(&pull, PrOperation::Review).await? {
@@ -619,12 +666,18 @@ impl super::Scheduler {
         ) {
             return Ok(false);
         }
-        let news = news::untold(
+        let forced = self.launcher.live.take_keeper_turn(&pull.id);
+        let mut news = news::untold(
             &self.store,
             &self.launcher.live,
             pull,
             login,
             session.seat(),
+            if forced {
+                Duration::ZERO
+            } else {
+                self.timeouts.keeper_comment_settle
+            },
         )
         .await?;
         if let Some(recovered) = news.recovered() {
@@ -633,7 +686,11 @@ impl super::Scheduler {
                 .await?;
         }
         if news.is_empty() {
-            return Ok(false);
+            if !forced {
+                return Ok(false);
+            }
+            news.lines
+                .push("- Read the request again with get_pull_request and list_comments.".into());
         }
         self.tell_request_news(session, pull, news)
     }

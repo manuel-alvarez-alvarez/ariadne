@@ -3430,8 +3430,6 @@ async fn the_forge_integrations_kind_check_accepts_github_and_rejects_other_kind
 #[tokio::test]
 async fn a_fresh_database_already_has_every_column_the_old_chain_added() {
     let (store, _dir, pr) = store_with_my_pull_request().await;
-    assert_eq!(pr.ready_confirmed_at, None);
-    assert_eq!(pr.ready_head_sha, None);
     assert!(!pr.babysit_asked);
     assert_eq!(pr.asks_revision, 0);
 
@@ -6011,46 +6009,6 @@ async fn an_escalation_stamps_its_mark_moves_its_own_revision_and_goes_with_the_
     );
 }
 
-/// The ready flag a session reports moves the row, and a repeated ready
-/// report on the same head says nothing moved. A later report of `true` on
-/// a different head moves the row again, even though `ready` itself was
-/// never reported `false` in between (031): the babysitting task may
-/// re-confirm readiness on a new head without an intervening `false`, and
-/// the stored head must move with it.
-#[tokio::test]
-async fn a_pull_request_reports_ready_once_per_head() {
-    let (store, _dir, row) = store_with_my_pull_request().await;
-    let (ready, moved) = store
-        .set_pull_request_ready(&row.id, true, Some("abc"))
-        .await
-        .unwrap();
-    assert!(ready.ready && moved);
-    assert_eq!(ready.ready_head_sha.as_deref(), Some("abc"));
-    let confirmed_at = ready.ready_confirmed_at.clone();
-    let (_, moved) = store
-        .set_pull_request_ready(&row.id, true, Some("abc"))
-        .await
-        .unwrap();
-    assert!(!moved, "a repeat on the same head moves nothing");
-    let (ready, moved) = store
-        .set_pull_request_ready(&row.id, true, Some("def"))
-        .await
-        .unwrap();
-    assert!(moved, "a later head moves it again");
-    assert_eq!(ready.ready_head_sha.as_deref(), Some("def"));
-    assert_eq!(
-        ready.ready_confirmed_at, confirmed_at,
-        "ready never moved from false, so its own since stays the first one's"
-    );
-    let (ready, moved) = store
-        .set_pull_request_ready(&row.id, false, None)
-        .await
-        .unwrap();
-    assert!(!ready.ready && moved);
-    assert_eq!(ready.ready_head_sha, None);
-    assert_eq!(ready.ready_confirmed_at, None);
-}
-
 /// A reviewer row keeps the head its session last reviewed, and says once
 /// whether that moved (029).
 #[tokio::test]
@@ -7335,10 +7293,6 @@ async fn splitting_pull_request_causes_preserves_existing_occurrences_and_work()
         .set_pull_request_keeper_given_up(&pull.id, false)
         .await
         .unwrap();
-    store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
     let prefixes = [
         "recovery:unknown:pull_request:",
         "recovery:unknown:pull_request:keeper:",
@@ -7405,4 +7359,13 @@ async fn splitting_pull_request_causes_preserves_existing_occurrences_and_work()
     assert_eq!(store.attention_source_versions().await.unwrap(), versions);
     copied_pool.close().await;
     pool.close().await;
+}
+
+#[tokio::test]
+async fn a_draft_mark_is_claimed_once_for_each_head() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    assert!(store.claim_draft_mark(&row.id, "abc").await.unwrap());
+    assert!(!store.claim_draft_mark(&row.id, "abc").await.unwrap());
+    assert!(store.claim_draft_mark(&row.id, "def").await.unwrap());
+    assert!(!store.claim_draft_mark(&row.id, "abc").await.unwrap());
 }

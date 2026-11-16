@@ -616,7 +616,7 @@ pub(crate) fn pull_request_dto(
         opened_at: pull.opened_at,
         updated_at: pull.forge_updated_at,
         role: pull.role,
-        ready: pull.ready,
+
         operations: Vec::new(),
     }
 }
@@ -653,7 +653,7 @@ pub(crate) fn forge_pull_dto(
         failed_checks: Vec::new(),
         behind_base: false,
         origin_task_id: None,
-        ready: false,
+
         review_asked: false,
         review_model: None,
         review_effort: None,

@@ -385,8 +385,7 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
             h.prompts_to(agent).iter().skip(before).any(|p| {
                 p.contains("rc-101")
                     && p.contains(
-                        "Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-                             <<<untrusted>>>failure<<<end untrusted>>>",
+                        "Failed checks: <<<untrusted>>>lint<<<end untrusted>>> (<<<untrusted>>>failure<<<end untrusted>>>)",
                     )
             })
         },
@@ -436,17 +435,6 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
         forge.fetches() > before_reply
     })
     .await;
-    let report = |ready| {
-        as_session(
-            &format!("/v1/pull-requests/{id}/report"),
-            &agent.id,
-            json!({"ready": ready, "head_sha": "a".repeat(40)}),
-        )
-    };
-    let _: Value = h.json(report(true), StatusCode::OK).await;
-    assert_eq!(h.attention(agent).await, None);
-    let _: Value = h.json(report(false), StatusCode::OK).await;
-    assert_eq!(h.attention(agent).await, None);
     let complete = || {
         as_session(
             &format!("/v1/tasks/{}/step/complete", task.id),
@@ -725,99 +713,4 @@ async fn completing_the_request_column_by_hand_carries_its_merge_commit_onward()
         .await;
     assert_eq!(finished["status"], "finished");
     assert_eq!(finished["merge_commit"], merge);
-}
-
-#[tokio::test]
-async fn only_the_pr_agent_can_mark_its_current_draft_ready() {
-    let request = request_column_without_periodic_reconcile(false, false).await;
-    let h = &request.h;
-    let path = format!("/v1/pull-requests/{}/ready-for-review", request.id);
-    let head = "a".repeat(40);
-    let mut shown = script("OPEN", &request.task.branch, &[], &[]);
-    for entry in shown.as_array_mut().unwrap() {
-        if entry["args"] == json!(["pr", "view"]) {
-            let mut pull = opened_pull(URL, &request.task.branch);
-            pull["headRefOid"] = json!(head);
-            pull["isDraft"] = json!(true);
-            entry["stdout"] = json!(pull.to_string());
-        }
-    }
-    shown.as_array_mut().unwrap().insert(
-        0,
-        answer(
-            &["api", "repos/acme/widgets/pulls/1"],
-            0,
-            r#"{"node_id":"PR_task"}"#,
-        ),
-    );
-    shown.as_array_mut().unwrap().insert(0, answer(&["api", "graphql", "--hostname", "github.com", "-f", "query=mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"], 0, r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}"#));
-    shown.as_array_mut().unwrap().insert(
-        0,
-        answer(
-            &[
-                "api",
-                &format!("repos/acme/widgets/commits/{head}/check-runs"),
-            ],
-            0,
-            r#"{"check_runs":[]}"#,
-        ),
-    );
-    shown.as_array_mut().unwrap().insert(
-        0,
-        answer(
-            &["api", &format!("repos/acme/widgets/compare/main...{head}")],
-            0,
-            r#"{"behind_by":0}"#,
-        ),
-    );
-    request.forge.reprogram(shown);
-    for seat in [
-        ariadne_core::Seat::Reviewer,
-        ariadne_core::Seat::Orchestrator,
-        ariadne_core::Seat::Agent,
-    ] {
-        let session = h
-            .store
-            .create_session(ariadne_store::NewSession {
-                goal_id: None,
-                task_id: None,
-                task_agent_id: None,
-                seat: Some(seat),
-                model: "stub:test".into(),
-                effort: None,
-                worktree_path: None,
-                pull_request_id: Some(request.id.clone()),
-            })
-            .await
-            .unwrap();
-        h.json::<Value>(
-            as_session(&path, &session.id, json!({"head_sha": head})),
-            StatusCode::FORBIDDEN,
-        )
-        .await;
-    }
-    h.json::<Value>(
-        as_session(&path, &request.agent.id, json!({"head_sha": "bbbb"})),
-        StatusCode::CONFLICT,
-    )
-    .await;
-    assert!(!request.forge.invocations().iter().any(|c| {
-        c.args
-            .iter()
-            .any(|a| a.contains("markPullRequestReadyForReview"))
-    }));
-    let ready: Value = h
-        .json(
-            as_session(&path, &request.agent.id, json!({"head_sha": head})),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(ready["draft"], false);
-    assert!(
-        request
-            .forge
-            .invocations()
-            .iter()
-            .any(|c| c.args.iter().any(|a| a == "id=PR_task"))
-    );
 }

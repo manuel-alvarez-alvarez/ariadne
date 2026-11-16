@@ -28,6 +28,7 @@ use crate::gitwt::GitManager;
 
 pub struct Launcher {
     pub cfg: Arc<Config>,
+    pub forge_poll: std::sync::OnceLock<crate::forge::poll::ForgePoll>,
     pub store: Store,
     pub git: GitManager,
     /// The daemon-owned ACP agents: every session runs as a child process

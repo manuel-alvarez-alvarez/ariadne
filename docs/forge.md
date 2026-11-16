@@ -89,7 +89,7 @@ more try, verified at the head — a second fix or a reason the code stays
 — and then you decide what happens next. It also answers,
 once, a comment of yours on the conversation: it cannot reply twice to
 the same one, and it cannot reply to its own earlier words there. It
-posts no status comment: the readiness report below is how it reaches
+posts no status comment: the daemon readiness item below is how it reaches
 you. A
 finding that carries a suggestion block the agent accepts is applied as
 given, and rewritten only where it fails to compile or pass; one it does
@@ -107,10 +107,12 @@ check of its own, since the push hook and the forge's checks run anyway.
 After a rebase it pushes the request's head branch with a lease pinned
 to the tip it fetched.
 It keeps every commit others added. It never force-pushes main.
-It reports the request ready once the forge reads it as a non-draft with
-every check green and a clean merge state, and every comment answered,
-and takes the readiness back down the moment a later
-change turns one back. Once you merge the request, the agent brings the base
+The daemon marks your checked draft ready for review automatically.
+It raises readiness attention from current forge evidence: successful checks, clean mergeability and no unanswered comments.
+A newer comment delays keeper news for five minutes. Failures and final states arrive immediately.
+Use `ariadne pr babysit <repo> <number> --again` or **Keeper turn** to wake a keeper now.
+This also works on a request a task keeps.
+Once you merge the request, the agent brings the base
 branch up to date and completes the column, which finishes the task when
 nothing follows it, or hands on to the next column; a request closed unmerged
 fails the task. Should the agent fall quiet once it has read the merge, the
@@ -268,7 +270,7 @@ own item and does not clear a reviewer's item on the same request. It hears
 the same news a task's keeping agent
 does — a new comment, a check that turned to failure or back to green, a
 changed review decision, a merge or a close — replies and fixes the same
-way, and reports the request ready the same way. Unlike a self-review,
+way, and receives daemon readiness attention the same way. Unlike a self-review,
 which only ends when you stop asking, babysitting also ends on the merge
 or the close: the session, its worktree and its branch all go.
 `ariadne pr babysit <repo-id> <number> --stop` takes it down early.
@@ -285,9 +287,7 @@ thread anyone else opened stays yours to resolve.
 
 ## Needs attention: an unassigned review, a ready request, an escalated thread
 
-Neither a posted review nor a `pr` agent's own ready report notifies you by
-itself: a `pr-reviewer` session finishing its review raises nothing, and a
-`ready` report is a claim, not confirmed evidence. Three things reach Needs
+The daemon decides readiness from the forge. Three things reach Needs
 attention instead, in `ariadne attention` and the desktop app's attention
 strip, each naming the request's title, its repository, the one action that
 clears it and how long it has waited, and each linking to the request's own
@@ -295,15 +295,9 @@ panel:
 
 - **Review needed** — a request that asks for your review and has no
   review asked yet: see the previous section for starting one by hand.
-- **Ready to merge** — a request a `pr` agent keeps, or one a keeper
-  session babysits by hand, once its own `ready` report is actually
-  backed up by the forge's own evidence for the request's current head: a
-  current approval, every review thread actually resolved — a reply alone
-  is not enough — every check green, and the forge's own confirmation the
-  head can be merged now. A later push, a reopened comment or an approval
-  the forge no longer counts drops the item until the keeping agent
-  reports ready again, on the new head. The merge itself is still always
-  yours: Ariadne gives no approval.
+- **Ready to merge** — a kept request out of draft, with successful checks, clean mergeability and no unanswered comments.
+  The evidence must be current for its head. The daemon waits for fresh checks after draft promotion.
+  You merge the request yourself.
 - **An escalated thread** — one item for each review thread the keeping
   agent or the reviewer escalated with `escalate_comment`, because the two
   disagree. The item names the thread by its path and its first line, and

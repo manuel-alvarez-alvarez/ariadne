@@ -202,6 +202,7 @@ pub(crate) struct Scheduler {
     sleep: SleepInhibitor,
     /// Whether taking that inhibition is wanted at all (`prevent_sleep`).
     prevent_sleep: bool,
+    timeouts: Timeouts,
 }
 
 /// Start the scheduler; returns the event sender for the HTTP layer.
@@ -231,6 +232,7 @@ pub fn start(
         keeper_skills_applied: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
+        timeouts,
     };
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(timeouts.full_reconcile);

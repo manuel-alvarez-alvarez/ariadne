@@ -14,10 +14,10 @@ use ariadne_api::pull_requests::{
     AskBabysitRequest, AskReviewRequest, EscalateCommentRequest, PULL_REQUEST_PAGE_SIZE,
     PullRequestCommentDto, PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto,
     PullRequestListQuery, PullRequestMatchDto, PullRequestPageDto, ReplyCommentRequest,
-    ReportPullRequestRequest, SubmitReviewRequest,
+    SubmitReviewRequest,
 };
 use ariadne_core::models::ModelRank;
-use ariadne_core::workflow::{PrOperation, StepGate};
+use ariadne_core::workflow::PrOperation;
 use ariadne_store::{
     AgentSession, ForgeIntegration, PrOperationEnd, PullRequest, PullRequestComment,
     PullRequestFilter, PullRequestRow, StartPrOperation,
@@ -923,93 +923,6 @@ pub(super) async fn escalate(
     Ok(Json(pull_request_comment_dto(comment)))
 }
 
-/// What the request's session says of it: `ready` once the babysitting task
-/// believes every required approval and check reads green, on the head
-/// (`head_sha`, required with `ready: true`) it actually confirmed that
-/// against; and the head a review session posted its review on
-/// (`reviewed_sha`). Neither raises `waiting_user` on the session by
-/// itself (029): the claim alone is not confirmed evidence, and a
-/// pr-reviewer session finishing its own review must notify nobody — the
-/// `pull_request` attention producer reads the forge's own evidence
-/// against this claim, for the head it names, and raises its own item
-/// once it actually backs the claim up.
-#[utoipa::path(post, path = "/v1/pull-requests/{id}/report", tag = "pull-requests",
-    params(("id" = String, Path)),
-    request_body = ReportPullRequestRequest,
-    responses((status = 200, body = PullRequestDto), (status = 400), (status = 403), (status = 404), (status = 409), (status = 502)))]
-pub(super) async fn report(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<ReportPullRequestRequest>,
-) -> ApiResult<Json<PullRequestDto>> {
-    let mut row = state.store.get_pull_request(&id).await?;
-    let session = own_session(&state, &headers, &row).await?;
-    if let Some(ready) = req.ready {
-        // `ready` is the keeping agent's own claim (031): a row a task
-        // keeps answers through its own column agent alone
-        // (`Seat::Agent`), and one kept by hand through its keeper alone
-        // (`Seat::Keeper`, 032) — never through a reviewer session that
-        // also happens to answer for the same row, since a request of
-        // mine can also carry an Ariadne self-review asked on it, and
-        // that reviewer seat's own claim must never pass as the
-        // keeper's.
-        let keeper_seat = match row.origin_task_id {
-            Some(_) => ariadne_core::Seat::Agent,
-            None => ariadne_core::Seat::Keeper,
-        };
-        if (row.origin_task_id.is_some() || row.babysit_asked)
-            && session.seat() != Some(keeper_seat)
-        {
-            return Err(ApiError::forbidden(
-                "only the request's keeper may report it ready",
-            ));
-        }
-        // The head this report answers for is the one the session itself
-        // confirmed, never looked up again here: a push landing between
-        // the session's own read and this call must still be judged
-        // against what the session actually saw, not whatever the
-        // daemon's cache has moved on to since (031) — reading the cache
-        // instead would let a push the session never saw pass as though
-        // it had.
-        let head_sha: Option<&str> = match (ready, req.head_sha.as_deref()) {
-            (true, Some(sha)) if is_sha(sha) => Some(sha),
-            (true, Some(sha)) => {
-                return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
-            }
-            (true, None) => {
-                return Err(ApiError::bad_request(
-                    "a ready report names the head it was confirmed on",
-                ));
-            }
-            (false, _) => None,
-        };
-        let (next, _moved) = state
-            .store
-            .set_pull_request_ready(&row.id, ready, head_sha)
-            .await?;
-        row = next;
-    }
-    // A review posted on a new head is kept for the record (029); the
-    // user's approval is theirs to give in their own time, and this alone
-    // asks nothing of them.
-    if let Some(sha) = req.reviewed_sha.as_deref() {
-        if row.role != "reviewer" && !row.review_asked {
-            return Err(ApiError::bad_request(
-                "only a request Ariadne reviews takes a reviewed_sha",
-            ));
-        }
-        if !is_sha(sha) {
-            return Err(ApiError::bad_request(format!("{sha} is no commit sha")));
-        }
-        let (next, _moved) = state.store.set_pull_request_reviewed(&row.id, sha).await?;
-        row = next;
-    }
-    state.notify_scheduler_pull_request(&row.id);
-    let pull = read_held(&state, row).await?;
-    Ok(Json(pull_request_dto_of(&state.store, pull).await?))
-}
-
 /// Whether `text` reads as a commit sha, whole or abbreviated: what a
 /// reviewer session names a head by, and nothing git would read as an
 /// option.
@@ -1221,6 +1134,10 @@ pub(super) async fn submit_review(
         )
         .await
         .map_err(forge_error)?;
+    state
+        .store
+        .set_pull_request_reviewed(&pull.id, &pull.head_sha)
+        .await?;
     // The findings are the review's the moment the forge holds them.
     hold_review_comments(&state, &pull.id, &mut posted).await?;
     let ids: Vec<String> = posted.iter().map(|c| c.forge_id.clone()).collect();
@@ -1616,112 +1533,6 @@ pub(super) async fn ask_babysit(
     Ok(Json(pull_request_dto_of(&state.store, view).await?))
 }
 
-/// Whether `step` names a column of `columns` that waits on the request merge.
-fn is_request_column(columns: &[ariadne_store::GoalStep], step: Option<&str>) -> bool {
-    columns.iter().any(|column| {
-        Some(column.id.as_str()) == step
-            && column.gate.as_deref() == Some(StepGate::RequestMerged.as_str())
-    })
-}
-
-#[derive(Deserialize, utoipa::ToSchema)]
-pub(super) struct MarkReadyRequest {
-    head_sha: String,
-}
-
-/// Mark the current draft ready through its keeping session.
-#[utoipa::path(post, path = "/v1/pull-requests/{id}/ready-for-review", tag = "pull-requests",
-    params(("id" = String, Path)), request_body = MarkReadyRequest,
-    responses((status = 200, body = PullRequestDto), (status = 400), (status = 403), (status = 409)))]
-pub(super) async fn mark_ready_for_review(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<MarkReadyRequest>,
-) -> ApiResult<Json<PullRequestDto>> {
-    let row = state.store.get_pull_request(&id).await?;
-    let session = own_session(&state, &headers, &row).await?;
-    let allowed = match session.seat() {
-        Some(ariadne_core::Seat::Keeper) => session.pull_request_id.as_deref() == Some(&id),
-        Some(ariadne_core::Seat::Agent) => match row.origin_task_id.as_deref() {
-            Some(task) => {
-                let task = state.store.get_task(task).await?;
-                let ctx = call_ctx(&state.store, &headers).await?;
-                super::steps::current_agent(&state, &ctx, &task).await?;
-                let columns = state.store.goal_steps(&task.goal_id).await?;
-                is_request_column(&columns, task.step.as_deref())
-            }
-            None => false,
-        },
-        _ => false,
-    };
-    if !allowed {
-        return Err(ApiError::forbidden(
-            "only the request's keeping session can mark it ready",
-        ));
-    }
-    if !is_sha(&req.head_sha) {
-        return Err(ApiError::bad_request("head_sha must be a hex sha"));
-    }
-    let pull = read_now(&state, row).await?;
-    let forge = integration(&state, &pull.repository_id).await?;
-    if !forge
-        .login
-        .as_deref()
-        .is_some_and(|login| login.eq_ignore_ascii_case(&pull.author_login))
-    {
-        return Err(ApiError::forbidden(
-            "only the integration login's request can be marked ready",
-        ));
-    }
-    if pull.head_sha != req.head_sha {
-        return Err(ApiError::conflict("the request head has changed"));
-    }
-    if !pull.draft {
-        return Ok(Json(pull_request_dto_of(&state.store, pull).await?));
-    }
-    client(&state, &forge)
-        .mark_ready_for_review(&slug(&forge), pull.number)
-        .await
-        .map_err(forge_error)?;
-    let mut pull = pull;
-    pull.draft = false;
-    state.forge_poll.wake(&pull.repository_id);
-    Ok(Json(pull_request_dto_of(&state.store, pull).await?))
-}
-
-#[cfg(test)]
-mod ready_tests {
-    use super::*;
-
-    fn column(id: &str, gate: Option<&str>) -> ariadne_store::GoalStep {
-        ariadne_store::GoalStep {
-            goal_id: "goal".into(),
-            ordinal: 0,
-            id: id.into(),
-            title: id.into(),
-            description: String::new(),
-            skills: "[]".into(),
-            ranks: "[]".into(),
-            gate: gate.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn a_request_column_is_found_by_its_gate_not_its_id() {
-        let columns = [
-            column("develop", Some("committed")),
-            column("land", Some(StepGate::RequestMerged.as_str())),
-            column("pr", None),
-        ];
-        assert!(is_request_column(&columns, Some("land")));
-        assert!(!is_request_column(&columns, Some("pr")));
-        assert!(!is_request_column(&columns, Some("develop")));
-        assert!(!is_request_column(&columns, None));
-    }
-}
-
-/// Request a reviewer round on the next idle pass.
 #[utoipa::path(post, path = "/v1/repositories/{id}/pull-requests/{number}/review-round", tag = "pull-requests",
     params(("id" = String, Path), ("number" = i64, Path)),
     responses((status = 202), (status = 409)))]
@@ -1735,6 +1546,31 @@ pub(super) async fn review_round(
         .filter(|row| row.review_asked)
         .ok_or_else(|| ApiError::conflict("no review is asked on this request"))?;
     state.launcher.live.ask_review_round(&row.id);
+    state.notify_scheduler_pull_request(&row.id);
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Ask the current keeper to read the request again now.
+#[utoipa::path(post, path = "/v1/repositories/{id}/pull-requests/{number}/keeper-turn", tag = "pull-requests",
+    params(("id" = String, Path), ("number" = i64, Path)),
+    responses((status = 202), (status = 409)))]
+pub(super) async fn keeper_turn(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, i64)>,
+) -> ApiResult<StatusCode> {
+    let row = state
+        .store
+        .pull_request_by_number(&id, number)
+        .await?
+        .filter(|row| row.babysit_asked || row.origin_task_id.is_some())
+        .ok_or_else(|| ApiError::conflict("nobody keeps this request"))?;
+    if let Some(task) = &row.origin_task_id {
+        let task = state.store.get_task(task).await?;
+        if task.status().is_terminal() || task.status() == ariadne_core::TaskStatus::Failed {
+            return Err(ApiError::conflict("nobody keeps this request"));
+        }
+    }
+    state.launcher.live.ask_keeper_turn(&row.id);
     state.notify_scheduler_pull_request(&row.id);
     Ok(StatusCode::ACCEPTED)
 }

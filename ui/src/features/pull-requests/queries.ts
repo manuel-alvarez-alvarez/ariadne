@@ -154,3 +154,15 @@ export function useReviewRound() {
       ),
   })
 }
+
+/** Ask for a keeper turn on the current head. */
+export function useKeeperTurn() {
+  return useMutation({
+    mutationFn: ({ repository_id, number }: { repository_id: string; number: number }) =>
+      unwrap(
+        api().POST("/v1/repositories/{id}/pull-requests/{number}/keeper-turn", {
+          params: { path: { id: repository_id, number } },
+        }),
+      ),
+  })
+}

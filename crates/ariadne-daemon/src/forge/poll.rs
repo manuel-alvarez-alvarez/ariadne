@@ -964,7 +964,6 @@ mod tests {
             origin_task_id: None,
             opened_at: String::new(),
             role: "reviewer".into(),
-            ready: false,
             forge_updated_at: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
@@ -990,8 +989,7 @@ mod tests {
             reviewer_given_up_wedged: false,
             keeper_given_up_at: None,
             keeper_given_up_wedged: false,
-            ready_confirmed_at: None,
-            ready_head_sha: None,
+
             babysit_asked: false,
             babysit_model: None,
             babysit_effort: None,

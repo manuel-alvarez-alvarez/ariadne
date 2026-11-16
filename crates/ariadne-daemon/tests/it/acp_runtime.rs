@@ -807,6 +807,7 @@ async fn a_stub_session_resumes_through_session_load_after_a_daemon_restart() {
     // The restarted daemon: the same store, config and registry, and a fresh
     // runtime that owns no child of the daemon that died.
     let restarted = ariadne_daemon::launcher::Launcher {
+        forge_poll: Default::default(),
         cfg: h.launcher.cfg.clone(),
         store: h.store.clone(),
         git: ariadne_daemon::gitwt::GitManager,

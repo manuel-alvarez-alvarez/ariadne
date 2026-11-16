@@ -2473,11 +2473,7 @@ async fn on_the_pr_column_with_a_kept_request(w: &World) -> (AgentSession, Strin
 #[tokio::test]
 async fn a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart() {
     let w = World::on_pull_requests().await;
-    let (session, pull) = on_the_pr_column_with_a_kept_request(&w).await;
-    w.store
-        .set_pull_request_ready(&pull, true, Some("abc"))
-        .await
-        .unwrap();
+    let (session, _pull) = on_the_pr_column_with_a_kept_request(&w).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);

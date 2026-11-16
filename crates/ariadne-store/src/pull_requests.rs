@@ -41,6 +41,12 @@ pub struct PullRequestFilter {
 }
 
 impl Store {
+    /// Claim one draft promotion attempt for a head, across restarts.
+    pub async fn claim_draft_mark(&self, id: &str, head: &str) -> Result<bool> {
+        Ok(sqlx::query("INSERT OR IGNORE INTO pull_request_draft_marks (pull_request_id, head_sha) VALUES (?, ?)")
+            .bind(id).bind(head).execute(self.w()).await?.rows_affected() == 1)
+    }
+
     /// Start to work on a request, or answer the row that already works on
     /// it: a task that opens a request its row already holds becomes its
     /// origin, and the first origin stays. The boolean is true only for an
@@ -56,8 +62,8 @@ impl Store {
         let ts = now();
         let row: PullRequestRow = sqlx::query_as(
             "INSERT INTO pull_requests (id, repository_id, number, url, role, origin_task_id,
-                                        ready, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+                                        created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (repository_id, number) DO UPDATE SET
                  url = excluded.url,
                  role = excluded.role,
@@ -384,55 +390,5 @@ impl Store {
             Some(row) => Ok((row, true)),
             None => Ok((self.get_pull_request(id).await?, false)),
         }
-    }
-
-    /// Set whether the request's session reports it ready to merge, on
-    /// `head_sha` — the live head that session read at the moment of its
-    /// report, `None` where nothing has fetched the request yet. Answers
-    /// the row, and whether the flag moved to `true` for the first time on
-    /// this head (used only to decide whether `ready_confirmed_at` needed a
-    /// fresh stamp).
-    ///
-    /// A report of `true` always writes `ready_head_sha` fresh, whether or
-    /// not `ready` itself was already `true`: a babysitting task may report
-    /// readiness again on a later head without ever reporting `false` in
-    /// between, and the `pull_request` attention producer's readiness item
-    /// must read *that* head, not the first one this row was ever reported
-    /// ready on. `ready_confirmed_at` moves only the first time `ready`
-    /// itself flips to `true` after being `false`, so repeated reports on
-    /// the same still-ready request keep the `since` of when it first
-    /// became ready rather than resetting it on every poll. A report of
-    /// `false` clears both, so a later claim gets its own, fresh `since`
-    /// and head rather than the first one's.
-    pub async fn set_pull_request_ready(
-        &self,
-        id: &str,
-        ready: bool,
-        head_sha: Option<&str>,
-    ) -> Result<(PullRequestRow, bool)> {
-        let before = self.get_pull_request(id).await?;
-        let head_sha = ready.then(|| head_sha.map(str::to_string)).flatten();
-        let moved = ready != before.ready || (ready && head_sha != before.ready_head_sha);
-        if !moved {
-            return Ok((before, false));
-        }
-        let confirmed_at = match (ready, before.ready) {
-            (true, true) => before.ready_confirmed_at.clone(),
-            (true, false) => Some(now()),
-            (false, _) => None,
-        };
-        let row: PullRequestRow = sqlx::query_as(
-            "UPDATE pull_requests SET ready = ?, ready_confirmed_at = ?, ready_head_sha = ?,
-              updated_at = ? WHERE id = ? RETURNING *",
-        )
-        .bind(ready)
-        .bind(confirmed_at)
-        .bind(head_sha)
-        .bind(now())
-        .bind(id)
-        .fetch_one(self.w())
-        .await?;
-        self.publish(Change::PullRequestsChanged(row.repository_id.clone()));
-        Ok((row, true))
     }
 }

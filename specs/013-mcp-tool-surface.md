@@ -48,9 +48,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    skill and no tool description repeats any of them.
 3. Whether anyone answers a question is the one rule picked by seat: the
    orchestrator's user answers in the console; a column's agent works alone, and asks only where
-   the task cannot go on without the answer, and a pull request reviewer or
-   keeper where the request cannot. The rule names no channel — the seat's own
-   playbook already says how to ask. Every seat is told to call
+   the task cannot go on without the answer, and a keeper where the request cannot. The rule names no channel — the seat's own
+   playbook already says how to ask. Every seat that lists the tool is told to call
    `wait_for_user` with a one-line hint and the question in its `question`
    field, with options where the user picks one and a recommended option:
    the console draws that question whole (031 rule 11), so the agent does
@@ -115,8 +114,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `get_comment` (one `comment_id`, read off the forge at the call),
      `reply_comment` (one `comment_id` and a `body`; the daemon posts it),
      `escalate_comment` (one `comment_id` and a `reason`; rule 16),
-     `mark_ready_for_review` (`head_sha`) and `report_pull_request` (`ready`) — `send_message` and
-     `read_messages`. Seventeen tools. It works one workflow column on its
+     `send_message` and
+     `read_messages`. Fifteen tools. It works one workflow column on its
      task, and its instructions name the task and the column.
      `complete_step` moves to the next column, or ends the task from the
      last; `fail_step` moves to the previous column, or fails the task
@@ -148,8 +147,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `event` of `request_changes` or `comment`, and the round's new inline
      `comments` of `path`, `line`, `body` and a `priority` of
      `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
-     opened, once a push fixed it) and `report_pull_request` (which takes
-     `reviewed_sha` beside `ready` and `state`). Eleven tools, and no
+     opened, once a push fixed it). Eight tools, and no
      task tool and no message tool: the task a review operation's goal
      gives the session is the daemon's (029 rule 10b), so the session has
      no step or task to write to, and the user reaches it through its
@@ -162,9 +160,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      set and seat `keeper` (032), on a request of the user's own asked for
      by hand: `get_pull_request`, `get_diff`, `list_comments`,
      `get_comment`, `reply_comment`, `escalate_comment`,
-     `mark_ready_for_review` and `report_pull_request` — the same eight
-     request tools the agent seat has — beside `wait_for_user` and
-     `withdraw_wait_for_user`. Ten tools, and no task tool and no message tool, the same as the
+     beside `wait_for_user` and
+     `withdraw_wait_for_user`. Eight tools, and no task tool and no message tool, the same as the
      reviewer's: it has no goal, task or staffed agent to write to, and
      the user reaches it through its console. It resolves no thread and
      submits no review: those stay the reviewer seat's alone.
@@ -207,9 +204,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     reads is derived from the parameter types, and the value it sends back is
     deserialized from them, so a spelling set on one of the two alone offers
     a word and then refuses it.
-13. `mark_ready_for_review` takes a hex `head_sha` and posts it to the route in 026 rule 27.
-    The agent and keeper seats list this tool. The daemon applies the seat rules in 032 rule 17.
-    Reviewer and orchestrator seats do not list or call this tool.
+13. Readiness and draft promotion have no seat tools. The daemon owns both (026 rule 27, 031 rule 15).
 14. Every tool result is compact JSON on one line. It leaves out each
     object field whose value is `null`, an empty array or an empty object, at
     every depth; `false`, `0` and a string stay. A write answers a short
@@ -232,8 +227,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     is and where it comes from. So `complete_step` and `fail_step` say "in
     `reason`", `get_comment`, `reply_comment` and `resolve_thread` say "by
     its `comment_id`", `get_pull_request` says to call it on a task only
-    after `open_pull_request`, `mark_ready_for_review` says it is accepted
-    only where `role` is `author` (032 rule 17), `submit_review` says one
+    after `open_pull_request`, `submit_review` says one
     round, once, and never with no new finding, every write of rule 14
     names what it returns, and `get_task`, `list_tasks`, `get_pull_request`
     and `list_comments` name the fields of their result. The ticket format
@@ -320,10 +314,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::the_header_names_no_id_and_only_checking_seats_get_the_check_block`).
 - The tool texts read exactly so
   (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`):
-  - `report_pull_request` is "Tell Ariadne the state of your request. Set
-    `ready` when readiness changes. Set `reviewed_sha` after a review round."
-    It takes no `approved`: Ariadne holds no approval of its own (029 rule
-    15a).
   - `list_tasks` says "as a summary".
   - `list_models` says "an agent", not "a slot".
   - `open_pull_request` says it "returns" the URL, not "answers" it.
@@ -339,10 +329,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   - The `Priority` doc is "The rank: P0 is a critical risk to behavior,
     data or security. P1 is a proven defect, an unmet requirement or a rule
     violation. P2 is an optional improvement."
-- `report_pull_request` with `ready: true` and no `head_sha` is refused with
-  "Pass `head_sha` with `ready: true`: the head you checked.", before any
-  daemon call
-  (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`).
 - Asking the user, the end of a turn, the check block and the trailer rule
   are each written in their owner alone
   (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
@@ -376,7 +362,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - A review session's MCP server is told the request, and the seat decides
   its tools: a goal and task in its environment give it no task tool
   (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
-- The pull request keeper seat lists its eight request tools beside
+- The pull request keeper seat lists its six request tools beside
   `wait_for_user` and no task or message tool (032)
   (`mcp.rs::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`).
 - A refused call reaches the agent in the daemon's words
@@ -418,8 +404,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   with no rank has no `rank` field
   (`::the_rank_of_each_model_reaches_the_orchestrator`).
 
-- The readiness tool posts the supplied head:
-  `tools.rs::marking_ready_posts_the_confirmed_head`.
 - `list_tasks` asks `GET /v1/tasks?goal=<goal id>` and returns `goal_steps`,
   the goal columns once, and `tasks`. Each task holds `id`, `title`,
   `status`, `step`, `depends_on`, `branch`, `pr_url`, `reason`, `stalled`

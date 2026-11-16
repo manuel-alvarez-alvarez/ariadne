@@ -190,6 +190,7 @@ impl From<&ForgeIntegration> for RepositoryListIdentity {
 #[derive(Debug, Clone, Default)]
 pub struct LivePulls {
     /// Pending round requests belong to the live session and survive busy turns.
+    keeper_turns: Arc<RwLock<HashSet<String>>>,
     review_rounds: Arc<RwLock<HashMap<String, ReviewRounds>>>,
     rows: Arc<RwLock<HashMap<String, Live>>>,
     lists: Arc<RwLock<HashMap<String, RepositoryList>>>,
@@ -231,6 +232,19 @@ impl LivePulls {
             }
             round.listed = listed;
         }
+    }
+
+    pub fn ask_keeper_turn(&self, id: &str) {
+        self.keeper_turns
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id.into());
+    }
+    pub fn take_keeper_turn(&self, id: &str) -> bool {
+        self.keeper_turns
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(id)
     }
 
     pub fn ask_review_round(&self, id: &str) {

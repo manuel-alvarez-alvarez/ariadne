@@ -523,11 +523,11 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     let _: Value = h
         .json(
             as_session(
-                &format!("/v1/pull-requests/{id}/report"),
+                &format!("/v1/pull-requests/{id}/reviews"),
                 &session.id,
-                json!({"reviewed_sha": first}),
+                json!({"event":"comment", "body":"Reviewed the head.", "comments":[]}),
             ),
-            StatusCode::OK,
+            StatusCode::CREATED,
         )
         .await;
     let briefed = h.prompts_to(&session).len();
@@ -1163,7 +1163,7 @@ async fn a_review_resolves_its_own_fixed_finding() {
 /// `waiting_user` flag to decide anything. The same sha again, and a later
 /// one, both leave the session's attention alone.
 #[tokio::test]
-async fn a_reviewed_sha_is_stored_and_raises_no_waiting_user() {
+async fn a_submitted_review_stores_its_head_and_raises_no_waiting_user() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
@@ -1172,72 +1172,17 @@ async fn a_reviewed_sha_is_stored_and_raises_no_waiting_user() {
     let id = the_request(&h).await;
     ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
-    let report = |sha: &str| {
+    let review = || {
         as_session(
-            &format!("/v1/pull-requests/{id}/report"),
+            &format!("/v1/pull-requests/{id}/reviews"),
             &session.id,
-            json!({"reviewed_sha": sha}),
+            json!({"event":"comment", "body":"Reviewed the head.", "comments":[]}),
         )
     };
-
-    let _: Value = h.json(report(&first), StatusCode::OK).await;
+    let _: Value = h.json(review(), StatusCode::CREATED).await;
     let row = h.store.get_pull_request(&id).await.unwrap();
     assert_eq!(row.reviewed_sha.as_deref(), Some(first.as_str()));
     assert_eq!(h.attention(&session).await, None);
-
-    // The same sha again raises nothing either.
-    let _: Value = h.json(report(&first), StatusCode::OK).await;
-    assert_eq!(
-        h.attention(&session).await,
-        None,
-        "the same sha raises nothing"
-    );
-
-    let second = push(&path);
-    let _: Value = h.json(report(&second), StatusCode::OK).await;
-    assert_eq!(
-        h.attention(&session).await,
-        None,
-        "a later sha raises nothing either"
-    );
-    h.error(report("not a sha"), StatusCode::BAD_REQUEST).await;
-}
-
-/// Ariadne holds no approval of a request of its own (029 rule 15a): a
-/// report that sets `approved` is refused before anything is read, even
-/// from the review session on the forge's current head, and the request
-/// answers with no `ariadne_approval` field at all.
-#[tokio::test]
-async fn a_report_with_approved_is_refused_and_a_request_carries_no_ariadne_approval() {
-    let stub = stub_forge_cli(json!([]));
-    let h = harness().scheduler().forge_cli(&stub).await;
-    let (path, first) = checkout(&h);
-    stub.reprogram(script(&Shown::open(&first)));
-    let repo = repository(&h, &path).await;
-    let id = the_request(&h).await;
-    ask_review(&h, &id, &repo, 1, PIN).await;
-    let session = idle_session(&h, &id).await;
-    let report =
-        |body: Value| as_session(&format!("/v1/pull-requests/{id}/report"), &session.id, body);
-
-    h.error(
-        report(json!({"approved": true, "head_sha": first})),
-        StatusCode::UNPROCESSABLE_ENTITY,
-    )
-    .await;
-    h.error(
-        report(json!({"approved": false})),
-        StatusCode::UNPROCESSABLE_ENTITY,
-    )
-    .await;
-    let pull: Value = h
-        .json(report(json!({"reviewed_sha": first})), StatusCode::OK)
-        .await;
-    assert!(
-        pull.get("ariadne_approval").is_none(),
-        "no Ariadne approval field: {pull}"
-    );
-    assert_eq!(pull["review_decision"], "none", "the forge's own stays");
 }
 
 /// The review session of a request that ends, or that no longer asks for

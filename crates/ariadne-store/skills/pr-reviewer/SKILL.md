@@ -116,9 +116,7 @@ Use `code-review` when the diff is a task branch and no forge request.
    event `comment` for every round. Call it even with no new findings.
 
    Done when the review is submitted.
-9. Call `report_pull_request` with `reviewed_sha` set to the revision you
-   reviewed. Then write the result of the round, in this shape and no
-   other text. A round with no new finding has `Reviewed <sha>: comment
+9. Write the result of the round, in this shape and no other text. A round with no new finding has `Reviewed <sha>: comment
    with 0 findings.` as its first line. Keep each applicable line below it. Omit a
    line that has nothing to say. End a finding line with ` unverified`
    where its reproduction failed.

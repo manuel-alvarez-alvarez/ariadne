@@ -340,10 +340,6 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         "Report a refused push; do not push again.",
         "Never push to another branch.",
         "Never force-push outside the rebase of step 7. Never force-push another branch.",
-        "Call `report_pull_request` only when readiness changes.",
-        "Ready is one read with `draft: false`, `checks: success`, `mergeable: clean` and no unanswered comment of the other side.",
-        "`ready: true` with the `head_sha`",
-        "`ready: false` when one goes back",
         "Call `get_pull_request` again. Where `head_sha` differs from the head you read or pushed, start again at step 2.",
         "Settled is not merged.",
         "Use `merge` when the workflow lands the task with no request.",
@@ -414,7 +410,6 @@ fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
         "`reply_comment` is the only post. It has three forms:",
         "- A question: one short answer, with no prefix.",
         "No status comment exists.",
-        "Readiness goes through `report_pull_request`, never through a comment.",
     ] {
         assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
     }
@@ -814,20 +809,13 @@ fn the_orchestration_skill_switches_a_struggling_agents_session() {
 /// checks, the forge's own merge state and the unanswered threads — and
 /// never an approvals list that no field carries: seven of eight live
 /// task sessions waited for "every approval" and reported nothing.
+
 #[test]
-fn the_keeper_marks_a_draft_ready_on_the_checked_head() {
+fn the_daemon_decides_keeper_readiness() {
     let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
-    for rule in [
-        "Call `mark_ready_for_review` with that `head_sha` only where `get_pull_request` gives `role: author`.",
-        "Do it when every check on that head is green and the request is a draft.",
-        "Then call `get_pull_request` again: the checks restart.",
-        "Ready is one read with `draft: false`, `checks: success`, `mergeable: clean` and no unanswered comment of the other side.",
-        "Send `ready: true` with the `head_sha` of that read. Send `ready: false` when one goes back.",
-    ] {
-        assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
-    }
     assert!(
-        !doc.contains("every approval"),
-        "the pr-babysit skill still waits on an approvals list no field carries"
+        doc.contains("Ariadne marks a checked draft ready and decides readiness from the forge.")
     );
+    assert!(!doc.contains("report_pull_request"));
+    assert!(!doc.contains("mark_ready_for_review"));
 }
