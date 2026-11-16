@@ -22,7 +22,7 @@ mod quiet;
 mod sweeps;
 mod tasks;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -192,6 +192,8 @@ pub(crate) struct Scheduler {
     head_settle: head_settle::HeadSettle,
     /// Next permitted periodic forge read of an open kept request.
     pull_request_read_retry: HashMap<String, Instant>,
+    /// Successfully marked request heads in this scheduler lifetime.
+    draft_marks: HashSet<(String, String)>,
     /// The skills a request's live keeper session last ran with, by pull
     /// request id: in memory, since nothing but a later ask ever moves
     /// them, and a session already running them needs no backfill but the
@@ -229,6 +231,7 @@ pub fn start(
         pull_request_cleanup_retry: HashMap::new(),
         head_settle: head_settle::HeadSettle::new(timeouts.review_push_settle),
         pull_request_read_retry: HashMap::new(),
+        draft_marks: HashSet::new(),
         keeper_skills_applied: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,

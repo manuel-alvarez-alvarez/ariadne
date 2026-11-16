@@ -203,7 +203,7 @@ reads behind them ([026](026-pull-requests.md)).
     **Babysit goal**. The panel's Sessions tab lists the
     keeper session beside a review's, since both carry the request's id.
 
-17. The daemon promotes drafts under 026 rule 27. No seat has a draft-mark tool.
+17. The daemon promotes drafts kept by hand under 026 rule 27. No seat has a draft-mark tool.
     `POST /v1/repositories/{id}/pull-requests/{number}/keeper-turn` accepts an empty body and returns 202.
     It wakes a task's keeper or a keeper by hand with untold news immediately, bypassing comment settling.
     With no news, it asks the keeper to read the request again. No keeper returns 409.
@@ -316,6 +316,8 @@ reads behind them ([026](026-pull-requests.md)).
   it by hand:
   `pull-requests-page.test.tsx::shows the Ariadne babysitting pill on a row a keeper session babysits by hand`.
 
+- A draft kept by hand is marked ready:
+  `pull_request_babysit.rs::a_draft_kept_by_hand_is_marked_ready`.
 - The daemon promotes only its own checked draft, once per head:
   `kept_requests.rs::the_daemon_promotes_only_its_own_checked_draft_once_per_head`.
 - Keeper turn wakes a task keeper and refuses an unkept request:

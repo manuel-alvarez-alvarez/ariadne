@@ -1827,3 +1827,59 @@ async fn a_babysit_and_a_review_of_one_request_are_two_goals() {
         ariadne_core::GoalStatus::Active
     );
 }
+
+#[tokio::test]
+async fn a_draft_kept_by_hand_is_marked_ready() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    let mut shown = Shown::open(&head);
+    shown.checks = "SUCCESS";
+    shown.mergeable = "DRAFT";
+    let mut answers = script(&shown);
+    for entry in answers.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "list"]) || entry["args"] == json!(["pr", "view"]) {
+            let mut value: Value = serde_json::from_str(entry["stdout"].as_str().unwrap()).unwrap();
+            let read = if value.is_array() {
+                &mut value[0]
+            } else {
+                &mut value
+            };
+            read["isDraft"] = json!(true);
+            read["mergeable"] = json!("MERGEABLE");
+            entry["stdout"] = json!(value.to_string());
+        }
+    }
+    let entries = answers.as_array_mut().unwrap();
+    entries.insert(
+        0,
+        answer(
+            &["api", "repos/acme/widgets/pulls/1"],
+            0,
+            r#"{"node_id":"PR_one"}"#,
+        ),
+    );
+    entries.insert(0, answer(&["api", "graphql", "--hostname", "github.com", "-f", "query=mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"], 0, r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}"#));
+    stub.reprogram(answers);
+    let repo = repository(&h, &path).await;
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let _: Value = h
+        .json(
+            babysit(
+                &repo,
+                1,
+                json!({"asked": true, "model": PIN, "skills": ["coding"]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the draft mark", async || {
+        stub.invocations().iter().any(|c| {
+            c.args
+                .iter()
+                .any(|a| a.contains("markPullRequestReadyForReview"))
+        })
+    })
+    .await;
+}

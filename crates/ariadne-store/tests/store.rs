@@ -7360,12 +7360,3 @@ async fn splitting_pull_request_causes_preserves_existing_occurrences_and_work()
     copied_pool.close().await;
     pool.close().await;
 }
-
-#[tokio::test]
-async fn a_draft_mark_is_claimed_once_for_each_head() {
-    let (store, _dir, row) = store_with_my_pull_request().await;
-    assert!(store.claim_draft_mark(&row.id, "abc").await.unwrap());
-    assert!(!store.claim_draft_mark(&row.id, "abc").await.unwrap());
-    assert!(store.claim_draft_mark(&row.id, "def").await.unwrap());
-    assert!(!store.claim_draft_mark(&row.id, "abc").await.unwrap());
-}
