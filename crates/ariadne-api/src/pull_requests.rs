@@ -55,9 +55,7 @@ pub struct PullRequestDto {
     /// The task that opened the request: its author keeps it (005).
     #[serde(default)]
     pub origin_task_id: Option<String>,
-    /// Whether the request's session reported it ready to merge.
-    #[serde(default)]
-    pub ready: bool,
+
     /// Whether the user asked Ariadne to review this request of their own
     /// (029).
     #[serde(default)]
@@ -161,27 +159,6 @@ pub struct ReplyCommentRequest {
 #[serde(deny_unknown_fields)]
 pub struct EscalateCommentRequest {
     pub reason: String,
-}
-
-/// Body of `POST /v1/pull-requests/{id}/report`: what the request's session
-/// says of it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReportPullRequestRequest {
-    /// Every required approval and check reads green.
-    pub ready: Option<bool>,
-    /// The head the session actually confirmed `ready` against — read off
-    /// its own last `get_pull_request` call, never looked up again here.
-    /// Required wherever `ready` is `true`: a push landing between that
-    /// read and this call must still be judged against the head the
-    /// session confirmed, not whatever the daemon's own cache has moved
-    /// on to since, or a push the session never actually saw could pass
-    /// as though it had (031).
-    #[serde(default)]
-    pub head_sha: Option<String>,
-    /// The head a reviewer session posted its review on (029).
-    #[serde(default)]
-    pub reviewed_sha: Option<String>,
 }
 
 /// Query of `GET /v1/pull-requests/{id}/diff` (029).

@@ -852,3 +852,8 @@ the built-in help screen.
 | `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop\|--again]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
 | `permissions` | `ai show`, `enable [--wait]`, `disable`, `refresh [--wait]`, `set` with `--allow-threshold`, `--deny-threshold`, `--default-thresholds`, `--flavour`, or `--device`, and `test --tool TEXT --input JSON [--kind] [--option]... [--location]... [--workspace]`; `learned list [--repo]`, `show ID`, `rm ID`, and `scope ID all\|repository`. |
 | `completions`, `mcp` | `completions SHELL [--static]` for bash, elvish, fish, PowerShell, or zsh; `completions install [--shell bash\|zsh\|fish]`; `mcp serve`. |
+
+To wake an existing keeper immediately, run `ariadne pr babysit <repo> <number> --again`.
+This works on requests a task keeps. It sends untold news or asks the keeper to read the request again.
+Do not combine `--again` with `--model`, `--effort`, `--skill`, `--attach` or `--stop`.
+The daemon decides readiness and promotes checked drafts. Sessions make no readiness report.

@@ -55,6 +55,7 @@ import {
   pullRequestByKeyQueryOptions,
   useAskBabysit,
   useAskReview,
+  useKeeperTurn,
   useReviewRound,
 } from "./queries"
 import { StartBabysitDialog } from "./start-babysit-dialog"
@@ -230,6 +231,7 @@ function PullRequestHeader({
 }) {
   const ask = useAskReview()
   const round = useReviewRound()
+  const keeperTurn = useKeeperTurn()
   const babysit = useAskBabysit()
   const [starting, setStarting] = useState(false)
   const [babysitting, setBabysitting] = useState(false)
@@ -281,6 +283,18 @@ function PullRequestHeader({
                   Start review
                 </Button>
               )
+            ) : null}
+            {(pull.babysit_asked || pull.origin_task_id) && pull.state === "open" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                pending={keeperTurn.isPending}
+                onClick={() =>
+                  keeperTurn.mutate({ repository_id: pull.repository_id, number: pull.number })
+                }
+              >
+                Keeper turn
+              </Button>
             ) : null}
             {babysittable && pull.state === "open" ? (
               pull.babysit_asked ? (
@@ -361,6 +375,9 @@ function PullRequestHeader({
         onOpenChange={setBabysitting}
         onStarted={() => onSessionStarted("keeper")}
       />
+      {keeperTurn.error ? (
+        <ErrorState title="Could not start a keeper turn" error={keeperTurn.error} />
+      ) : null}
       {round.error ? (
         <div className="px-4">
           <ErrorState title="Could not start another review" error={round.error} />

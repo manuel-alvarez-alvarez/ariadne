@@ -102,7 +102,7 @@ pub(crate) enum PrCommand {
         #[arg(long, conflicts_with_all = ["model", "effort", "skills", "attach", "stop"])]
         again: bool,
     },
-    /// Ask Ariadne to keep a request of your own by hand, or stop (032)
+    /// Ask Ariadne to keep an open request by hand, or stop (032)
     Babysit {
         /// The repository, by id or path
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
@@ -110,7 +110,7 @@ pub(crate) enum PrCommand {
         /// The request's number
         number: i64,
         /// What the keeper session runs on: AGENT:MODEL — required with no
-        /// `--stop`, since every keeper session starts manually
+        /// `--stop` or `--again`, since every keeper session starts manually
         #[arg(long, value_name = "MODEL", value_parser = parse_review_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// The reasoning effort that model is run at
@@ -125,6 +125,9 @@ pub(crate) enum PrCommand {
         /// Stop Ariadne's keeper session on the request
         #[arg(long, conflicts_with_all = ["model", "effort", "skills", "attach"])]
         stop: bool,
+        /// Wake the current keeper now
+        #[arg(long, conflicts_with_all = ["model", "effort", "skills", "attach", "stop"])]
+        again: bool,
     },
 }
 
@@ -442,8 +445,21 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
             skills,
             attach,
             stop,
+            again,
         } => {
             let repo_id = resolve::id(client, Kind::Repo, &repo).await?;
+            if again {
+                client
+                    .send_no_content::<()>(
+                        http::Method::POST,
+                        &format!("/v1/repositories/{repo_id}/pull-requests/{number}/keeper-turn"),
+                        None,
+                    )
+                    .await?;
+                return print(format, &json!({"requested": true}), || {
+                    println!("Keeper turn asked on {repo_id} #{number}.")
+                });
+            }
             let request = babysit_request(stop, model, effort, skills)?;
             let pull: PullRequestDto = client
                 .put_json(&babysit_path(&repo_id, number), &request)
@@ -811,6 +827,47 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn pr_babysit_again_posts_an_empty_keeper_turn() {
+        let calls: Calls = Arc::default();
+        let app = Router::new()
+            .route("/v1/repositories", get(answer))
+            .route(
+                "/v1/repositories/repo-1/pull-requests/42/keeper-turn",
+                post(answer),
+            )
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::tcp(format!("http://{}", listener.local_addr().unwrap()));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        run(
+            &client,
+            PrCommand::Babysit {
+                repo: "repo-1".into(),
+                number: 42,
+                model: None,
+                effort: None,
+                skills: Vec::new(),
+                attach: false,
+                stop: false,
+                again: true,
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+        assert!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(method, path, body)| method == "POST"
+                    && path.ends_with("/keeper-turn")
+                    && body.is_null())
+        );
+    }
+
     #[test]
     fn pr_review_again_conflicts_with_every_asking_flag() {
         use clap::Parser;
@@ -863,6 +920,30 @@ mod tests {
         assert!(
             parse(&["pr", "review", "repo-1", "42", "--model", "default"]).is_err(),
             "a review pins a model of its own, never \"whatever the agent runs\""
+        );
+    }
+
+    #[test]
+    fn pr_babysit_again_conflicts_with_every_start_or_stop_flag() {
+        #[derive(clap::Parser)]
+        struct Pr {
+            #[command(subcommand)]
+            command: PrCommand,
+        }
+        for extra in [
+            vec!["--model", "stub:m"],
+            vec!["--effort", "high"],
+            vec!["--skill", "coding"],
+            vec!["--attach"],
+            vec!["--stop"],
+        ] {
+            let mut args = vec!["pr", "babysit", "repo-1", "42", "--again"];
+            args.extend(extra);
+            assert!(<Pr as clap::Parser>::try_parse_from(args).is_err());
+        }
+        assert!(
+            <Pr as clap::Parser>::try_parse_from(["pr", "babysit", "repo-1", "42", "--again"])
+                .is_ok()
         );
     }
 
@@ -1015,6 +1096,7 @@ mod tests {
         run(
             &client,
             PrCommand::Babysit {
+                again: false,
                 repo: "repo-1".into(),
                 number: 42,
                 model: Some("stub:test-model".into()),
@@ -1030,6 +1112,7 @@ mod tests {
         run(
             &client,
             PrCommand::Babysit {
+                again: false,
                 repo: "repo-1".into(),
                 number: 42,
                 model: None,
@@ -1076,6 +1159,7 @@ mod tests {
         let err = run(
             &client,
             PrCommand::Babysit {
+                again: false,
                 repo: "repo-1".into(),
                 number: 42,
                 model: None,

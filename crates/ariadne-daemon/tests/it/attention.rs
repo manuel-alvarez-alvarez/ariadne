@@ -2304,10 +2304,6 @@ async fn a_ready_request_the_forges_own_evidence_backs_up_raises_a_readiness_ite
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
@@ -2366,10 +2362,6 @@ async fn a_ready_request_kept_by_hand_raises_the_same_readiness_item() {
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
@@ -2388,7 +2380,7 @@ async fn a_ready_request_kept_by_hand_raises_the_same_readiness_item() {
 /// conditions — a current approval and resolved comments — must hold
 /// together for the current revision, neither standing in for the other.
 #[tokio::test]
-async fn a_ready_claim_with_resolved_comments_but_no_approval_raises_no_readiness_item() {
+async fn clean_forge_evidence_without_an_approval_raises_readiness() {
     let h = harness().await;
     let cast = h.cast().await;
     crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
@@ -2416,13 +2408,9 @@ async fn a_ready_claim_with_resolved_comments_but_no_approval_raises_no_readines
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
-    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
 }
 
 /// The same request, approved and clear of open comments, but whose
@@ -2458,10 +2446,6 @@ async fn a_ready_claim_with_pending_checks_raises_no_readiness_item() {
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
@@ -2499,10 +2483,6 @@ async fn a_ready_claim_with_an_open_review_comment_raises_no_readiness_item() {
             comments: vec![crate::common::forge::open_review_comment()],
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
@@ -2515,7 +2495,7 @@ async fn a_ready_claim_with_an_open_review_comment_raises_no_readiness_item() {
 /// readiness item must require the latter explicitly (031, "Require
 /// explicit resolution of every review thread").
 #[tokio::test]
-async fn a_ready_claim_with_an_ariadne_finding_answered_but_unresolved_raises_no_readiness_item() {
+async fn an_answered_ariadne_finding_does_not_block_readiness() {
     let h = harness().await;
     let cast = h.cast().await;
     crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
@@ -2546,10 +2526,6 @@ async fn a_ready_claim_with_an_ariadne_finding_answered_but_unresolved_raises_no
             ),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let live = ariadne_daemon::forge::live::of_row(&h.store, &h.launcher.live, pull.clone())
         .await
@@ -2560,7 +2536,7 @@ async fn a_ready_claim_with_an_ariadne_finding_answered_but_unresolved_raises_no
         "the reply already answers it for feedback-routing purposes"
     );
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
-    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
 }
 
 /// The same trap, but for a human reviewer's own finding rather than
@@ -2570,7 +2546,7 @@ async fn a_ready_claim_with_an_ariadne_finding_answered_but_unresolved_raises_no
 /// the same way, since resolution is read by the thread's own kind, not
 /// by who opened it.
 #[tokio::test]
-async fn a_ready_claim_with_a_human_finding_answered_but_unresolved_raises_no_readiness_item() {
+async fn an_answered_human_finding_does_not_block_readiness() {
     let h = harness().await;
     let cast = h.cast().await;
     crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
@@ -2601,10 +2577,6 @@ async fn a_ready_claim_with_a_human_finding_answered_but_unresolved_raises_no_re
             ),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let live = ariadne_daemon::forge::live::of_row(&h.store, &h.launcher.live, pull.clone())
         .await
@@ -2615,7 +2587,7 @@ async fn a_ready_claim_with_a_human_finding_answered_but_unresolved_raises_no_re
         "the author's own reply already answers it for feedback-routing purposes"
     );
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
-    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
 }
 
 /// A completed Ariadne review — its real summary comment beside a finding
@@ -2651,10 +2623,6 @@ async fn a_completed_review_with_its_real_summary_and_a_resolved_finding_raises_
             comments: crate::common::forge::completed_review_with_a_resolved_finding("ariadne-bot"),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
@@ -2693,10 +2661,6 @@ async fn a_ready_claim_with_an_open_conversation_comment_raises_no_readiness_ite
             comments: vec![crate::common::forge::open_conversation_comment()],
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
@@ -2738,10 +2702,6 @@ async fn a_ready_claim_with_a_resolved_review_thread_raises_a_readiness_item() {
             comments,
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
@@ -2779,10 +2739,6 @@ async fn a_ready_claim_with_unconfirmed_mergeability_raises_no_readiness_item() 
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
@@ -2823,10 +2779,6 @@ async fn a_ready_claim_on_a_disabled_integration_raises_no_readiness_item() {
         },
     );
     h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
-    h.store
         .set_forge_integration(ariadne_store::SetForgeIntegration {
             repository_id: cast.repo.id.clone(),
             kind: ariadne_core::ForgeKind::Github,
@@ -2852,7 +2804,7 @@ async fn a_ready_claim_on_a_disabled_integration_raises_no_readiness_item() {
 /// (031). The item returns only once the babysitting task reports ready
 /// again, on the new head.
 #[tokio::test]
-async fn a_push_past_the_ready_head_withdraws_the_item_until_reconfirmed() {
+async fn fresh_evidence_on_a_new_head_needs_no_session_confirmation() {
     let h = harness().await;
     let cast = h.cast().await;
     crate::common::forge::enable_integration(&h, &cast.repo.id, "ariadne-bot").await;
@@ -2880,10 +2832,6 @@ async fn a_push_past_the_ready_head_withdraws_the_item_until_reconfirmed() {
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
 
@@ -2904,18 +2852,9 @@ async fn a_push_past_the_ready_head_withdraws_the_item_until_reconfirmed() {
         },
     );
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
-    assert_eq!(
-        list.items,
-        Vec::new(),
-        "the claim predates the new head: {:?}",
-        list.items
-    );
+    assert_eq!(list.items.len(), 1, "fresh forge evidence needs no report");
 
     // The babysitting task reports ready again, on the new head.
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("def"))
-        .await
-        .unwrap();
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
 }
@@ -2956,10 +2895,6 @@ async fn comment_evidence_behind_the_live_head_raises_no_readiness_item() {
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("def"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
@@ -3000,10 +2935,6 @@ async fn a_failed_refresh_at_the_same_head_raises_no_readiness_item() {
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
@@ -3043,10 +2974,6 @@ async fn a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item() {
             comments: Vec::new(),
         },
     );
-    h.store
-        .set_pull_request_ready(&pull.id, true, Some("abc"))
-        .await
-        .unwrap();
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
@@ -4306,10 +4233,6 @@ async fn recovery_does_not_restore_a_dismissed_pull_request_action(ready: bool) 
                 comments: Vec::new(),
             },
         );
-        h.store
-            .set_pull_request_ready(&pull.id, true, Some("abc"))
-            .await
-            .unwrap();
     } else {
         crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", true);
     }

@@ -167,6 +167,7 @@ pub(crate) fn harness() -> HarnessBuilder {
             forge_wake_debounce: Duration::from_millis(1),
             // A push reaches a review session at once unless a test sets
             // the interval it is proving.
+            keeper_comment_settle: Duration::ZERO,
             review_push_settle: Duration::ZERO,
             ..Timeouts::default()
         },
@@ -435,6 +436,7 @@ impl HarnessBuilder {
             self.timeouts.failure_diagnosis_decision,
         );
         let launcher = Arc::new(Launcher {
+            forge_poll: Default::default(),
             cfg: Arc::new(config),
             store: store.clone(),
             git: GitManager,
@@ -480,6 +482,7 @@ impl HarnessBuilder {
         if let Some(sched) = &sched {
             forge_poll.connect_scheduler(sched.clone());
         }
+        let _ = launcher.forge_poll.set(forge_poll.clone());
         let state = AppState {
             tunnel,
             forge_poll,

@@ -335,9 +335,7 @@ every other kebab-case word in it; the wire spells the same gate
     DTO's `session_id`, its tools accept that session, and an idle agent
     waits on the forge without a quiet nudge (009 rule 41) — the session
     rules of its seat say never to check the request on its own instead
-    (006 rule 5). A ready report is stored but raises nothing of its own
-    on that session: the `pull_request` attention producer reads the
-    forge's own evidence against the claim instead (031). The agent
+    (006 rule 5). The daemon decides readiness from forge evidence alone (031). The agent
     answers each inline review comment of the other side once: it groups
     related accepted changes in one coherent commit and verification run,
     keeps unrelated fixes separate, pushes each completed batch once, and
@@ -353,8 +351,7 @@ every other kebab-case word in it; the wire spells the same gate
     calls `escalate_comment` with the comment id and a one-line reason,
     posts nothing in that thread and makes no further fix for it. It answers a comment of
     the other side on the conversation once (026 rule 16), and posts no
-    status comment: readiness reaches the user through
-    `report_pull_request` alone. A finding carrying a suggestion
+    status comment: the daemon raises readiness attention from forge evidence. A finding carrying a suggestion
     block the agent accepts is applied rather than rewritten, except where
     it fails to compile or pass; one it does not accept keeps the code,
     with a reason. It works from the one list of failed checks the news
@@ -388,14 +385,8 @@ every other kebab-case word in it; the wire spells the same gate
     so a reviewer uses incremental scope only while its previous reviewed
     commit remains an ancestor; otherwise it reviews the full current
     diff and does not reuse check evidence that no longer covers it. It
-    reads the head again before it marks or reports, and starts its turn
-    again on a head it did not read or push, since no news line carries
-    a head move (026 rule 12). It reports `ready: true` on one read with
-    `draft: false`, `checks: success`, `mergeable: clean` and no
-    unanswered comment of the other side, with that read's `head_sha`,
-    and `ready: false` when one goes back — never on an approvals list,
-    which no field carries: the forge's own `mergeable` says what
-    approval it requires. On
+    reads the head again after its fixes. The daemon marks a checked draft ready for review
+    and raises readiness attention from current forge evidence (026 rule 27, 031 rule 15). On
     merge, it brings the remote base into the checkout — the primary
     checkout, the `Repo:` path of the briefing, as `merge` names it —
     before completing
@@ -497,16 +488,6 @@ every other kebab-case word in it; the wire spells the same gate
   `skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
   `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`,
   `::only_conflict_resolution_states_how_a_conflict_is_resolved`).
-- The `pr-babysit` skill runs one playbook for the task's agent and the
-  keeper, names the two seats once, fixes only what the request's own
-  change breaks in one batch from the final list, explains each fix or
-  kept line in at most three sentences, escalates a disagreement with
-  no comment, and reports ready
-  on the forge's own fields
-  (`skill_tests/operate.rs::the_pr_babysit_skill_names_its_two_seats_once`,
-  `::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`,
-  `::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`,
-  `::the_keeper_marks_a_draft_ready_on_the_checked_head`).
 - A goal created with no workflow takes its first repository's default and
   snapshots its columns; a repository's default changes no existing goal
   (`store.rs::a_goal_created_with_no_workflow_takes_its_first_repositorys_default`,
@@ -588,7 +569,7 @@ every other kebab-case word in it; the wire spells the same gate
   (`workflow_steps.rs::a_merge_gate_requires_the_commit_on_the_fetched_remote_base`,
   `::a_merge_gate_uses_the_current_remote_base_when_fetch_fails`).
 - The `pr` column opens and keeps one request. Its agent gets comments and
-  failed checks once, reports ready, enforces the merge gate, and cleans up
+  failed checks once, uses daemon readiness, enforces the merge gate, and cleans up
   after a merge. A close ends nothing. The daemon finishes the task when its
   agent falls quiet after merge news
   (`workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`,

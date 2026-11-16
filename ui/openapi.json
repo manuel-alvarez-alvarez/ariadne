@@ -1942,94 +1942,6 @@
         }
       }
     },
-    "/v1/pull-requests/{id}/ready-for-review": {
-      "post": {
-        "tags": [
-          "pull-requests"
-        ],
-        "summary": "Mark the current draft ready through its keeping session.",
-        "operationId": "mark_ready_for_review",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MarkReadyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PullRequestDto"
-                }
-              }
-            }
-          },
-          "400": {},
-          "403": {},
-          "409": {}
-        }
-      }
-    },
-    "/v1/pull-requests/{id}/report": {
-      "post": {
-        "tags": [
-          "pull-requests"
-        ],
-        "summary": "What the request's session says of it: `ready` once the babysitting task\nbelieves every required approval and check reads green, on the head\n(`head_sha`, required with `ready: true`) it actually confirmed that\nagainst; and the head a review session posted its review on\n(`reviewed_sha`). Neither raises `waiting_user` on the session by\nitself (029): the claim alone is not confirmed evidence, and a\npr-reviewer session finishing its own review must notify nobody — the\n`pull_request` attention producer reads the forge's own evidence\nagainst this claim, for the head it names, and raises its own item\nonce it actually backs the claim up.",
-        "operationId": "report",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportPullRequestRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PullRequestDto"
-                }
-              }
-            }
-          },
-          "400": {},
-          "403": {},
-          "404": {},
-          "409": {},
-          "502": {}
-        }
-      }
-    },
     "/v1/pull-requests/{id}/reviews": {
       "post": {
         "tags": [
@@ -2507,12 +2419,43 @@
         }
       }
     },
+    "/v1/repositories/{id}/pull-requests/{number}/keeper-turn": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Ask the current keeper to read the request again now.",
+        "operationId": "keeper_turn",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "202": {},
+          "409": {}
+        }
+      }
+    },
     "/v1/repositories/{id}/pull-requests/{number}/review-round": {
       "post": {
         "tags": [
           "pull-requests"
         ],
-        "summary": "Request a reviewer round on the next idle pass.",
         "operationId": "review_round",
         "parameters": [
           {
@@ -6735,17 +6678,6 @@
           }
         }
       },
-      "MarkReadyRequest": {
-        "type": "object",
-        "required": [
-          "head_sha"
-        ],
-        "properties": {
-          "head_sha": {
-            "type": "string"
-          }
-        }
-      },
       "MessageDto": {
         "type": "object",
         "required": [
@@ -7275,10 +7207,6 @@
             ],
             "description": "The task that opened the request: its author keeps it (005)."
           },
-          "ready": {
-            "type": "boolean",
-            "description": "Whether the request's session reported it ready to merge."
-          },
           "repository_id": {
             "type": "string"
           },
@@ -7494,34 +7422,6 @@
         "properties": {
           "body": {
             "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "ReportPullRequestRequest": {
-        "type": "object",
-        "description": "Body of `POST /v1/pull-requests/{id}/report`: what the request's session\nsays of it.",
-        "properties": {
-          "head_sha": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The head the session actually confirmed `ready` against — read off\nits own last `get_pull_request` call, never looked up again here.\nRequired wherever `ready` is `true`: a push landing between that\nread and this call must still be judged against the head the\nsession confirmed, not whatever the daemon's own cache has moved\non to since, or a push the session never actually saw could pass\nas though it had (031)."
-          },
-          "ready": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Every required approval and check reads green."
-          },
-          "reviewed_sha": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The head a reviewer session posted its review on (029)."
           }
         },
         "additionalProperties": false

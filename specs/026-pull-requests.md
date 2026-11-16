@@ -76,7 +76,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    GitHub uses `/pull/<number>`.
    A different repository or host does not match.
 2. Nothing the forge holds is stored: a stored title, check or comment goes stale the moment somebody pushes.
-   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, `ready`, `ready_head_sha` (the head the `ready` claim was confirmed on, 031 rule 13), the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, `babysit_asked` and its pin and skills (032), and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
+   A `pull_requests` row (`PullRequestRow`) is Ariadne's bookkeeping of a request it works on: `id`, `repository_id`, `number`, `url`, `role`, `origin_task_id`, the told marks (rule 18), `reviewed_sha`, `review_asked` and its pin and skills, `babysit_asked` and its pin and skills (032), and `summary_comment_id` (029). The row holds no other column, and there is no comments table.
    `role` is `author` when the request's author is the integration login, ignoring case, else `reviewer`.
    An upsert keeps the existing id and creation time, and the first origin task.
 3. A row exists while Ariadne works on the request, or while a human still
@@ -126,7 +126,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    A thread answered last by the integration login's own side counts zero. A resolved thread counts zero.
    It is worked out from the comments as the forge holds them and the marks (`forge::live`), never stored.
 8. A fetch publishes `pull_requests_changed` with the repository id where its requests moved since that worker's last read: the open list, the review requests, and what the requests Ariadne works on read now.
-   A row Ariadne starts or stops working on, or one whose ready flag or review ask moves, publishes it too.
+   A row Ariadne starts or stops working on, or one whose review ask moves, publishes it too.
    The event carries no request: the desktop reads its lists and panels again (012).
 
 ## The agent who keeps a request
@@ -157,18 +157,22 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, `from_review`, once an Ariadne review posted it (029), and `escalated_at`, `escalation_reason` and `escalated_after`, once the keeping agent escalated its thread (rule 15, migration `0010_escalated_comments.sql`). The marks go with their row.
     What Ariadne posts itself is held beside the last read until the next fetch reads it back.
 11. The DTO joins the forge's read and the row.
-    It includes the request's fields, `failed_checks`, `behind_base`, `id`, `origin_task_id`, `ready`, review ask, and `session_id`.
+    It includes the request's fields, `failed_checks`, `behind_base`, `id`, `origin_task_id`, review ask, and `session_id`.
     For an origin task, `session_id` names the current column agent's newest session.
     Otherwise it names the newest review session on the request.
     A request nobody works on has a null `id`.
 
 ## The news
 
-12. For a keeper or task agent, `forge/news.rs` computes what the session has not been told: comments of the other side with no `told_at` mark in a thread nobody answered or resolved, checks that turned to failure, a rolled-up check state that changed, `behind_base` that turned true, a review decision that changed, and a state that turned `merged` or `closed`.
-    Reviewers receive only round prompts, as 029 rules 7 and 8 specify.
-    The check state is what a ready report turns on: checks that end green after an approval, or go back to pending after a report, are news.
-    The prompt lists each item on one line, and names each comment by its id.
-    While `checks` reads `pending`, the news carries no failed-check line, whatever `failed_checks` names. When `checks` turns `failure`, one prompt lists every failed check of the head, one line each, a check told before the turn included. While `checks` stays `failure`, a check that fails and was not told yet is told.
+12. For a keeper or task agent, news has only four kinds of line:
+    a comment of the other side; failed checks at the final failure rollup as one list;
+    `mergeable: behind` asking to merge the base in; and a state that became merged or closed.
+    GitHub's `mergeStateStatus: BEHIND` reads `mergeable: behind`.
+    Checks turning green, the review decision and `behind_base` are not news.
+    Comments wait until the newest untold comment is `Timeouts::keeper_comment_settle` old.
+    The default is 300 seconds. A newer comment restarts the interval.
+    The test harness uses zero. Failed checks and final state changes are told at once.
+    Reviewers receive only round prompts (029).
 13. The scheduler hands the news as a `session/prompt`, queued behind a running turn (009 rule 6).
     A session still `starting` gets the news once it has its briefing.
     A fetch that finds nothing new hands nothing.
@@ -181,7 +185,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## Tools and replies
 
-15. The agent seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment`, `escalate_comment` and `report_pull_request` beside its task tools (013).
+15. The agent seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment`, `escalate_comment` beside its task tools (013).
     `get_pull_request`, `list_comments` and `get_comment` read the forge at the call: what a session works from is never an earlier read.
     Each finds the request its task opened through `GET /v1/pull-requests?task=<id>&role=author`; with none, it says to call `open_pull_request` first.
     The task agent has no thread-resolution tool. A review session resolves a thread it opened once a push fixed it (029).
@@ -196,10 +200,8 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
     The current column agent's `reply_comment` answers an inline review comment, the thread of the defect. In the conversation, it answers a comment of the other side once. It may not answer a comment of its own side. A `from_review` comment, a review's own summary, is one of those. It may not answer a comment that its own side already answered in the conversation. The daemon reads the seat (`Seat::Agent`), as for rule 17. A review session is never this seat. The daemon refuses any other conversation reply of the agent with 400, and makes no forge call. A review session keeps its wider reach, into the conversation and a defect's thread alike (029).
     No body the daemon posts on a request's behalf — this reply, `open_pull_request`'s own body, and a review's summary and findings (029) — carries a trailer an agent's skill appends: a `Generated with` footer, a `Co-Authored-By`, or a tool's `Signed-off-by`, and the blank line before it, are stripped before the post.
-17. A report with `ready: true` or `ready: false` is stored and raises nothing of its own on any session (031): the `pull_request` attention producer reads the forge's own evidence against the claim instead of trusting it. A `ready: true` report also names `head_sha`, the head it was confirmed on (029 rule 15); it is stored as `ready_head_sha` and is rejected before storage when it is missing or fails the same hex-sha check `reviewed_sha` does. A request a task keeps accepts a `ready` report from the current column agent alone, never from a review session that also answers for the same row (a request of mine a task keeps can also carry an Ariadne self-review asked on it, 029) — read by seat (`Seat::Agent`), not merely by which session answers for the row.
-    The state is the forge's to say: no session reports it.
-    Accept comments, replies, and reports only from the current column agent or the review session (029), subject to the `ready`-specific restriction above.
-    Another session gets 403. A report or reply with no session gets 403. The user reads comments freely.
+17. No session reports readiness. The daemon decides from forge evidence (031 rule 15).
+    Comments and replies accept only the request's own sessions. Other sessions receive 403.
 18. `complete_step` on the `pr` column is accepted once the forge, read at the call, says its request merged (030 rule 5). A close is told to the agent, which fails the task.
 
 ## Cleanup
@@ -277,7 +279,6 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI. Return 201. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate` | Take `{reason}` from the request's keeping agent, or its review session on its own comment, mark the comment escalated, and make no forge call (rule 15). Return 200. |
-| `POST /v1/pull-requests/{id}/report` | Take `ready`, `head_sha` (required with `ready: true`), and `reviewed_sha` (029), from the request's own session. |
 | `GET /v1/sessions?pull_request=` | List the sessions of one request (012). |
 
 There is no route that adds or removes a request.
@@ -313,13 +314,30 @@ A row and the panel link to the request's session. The panel shows the failed ch
 A session with a `pull_request_id` shows the request's title and a link to its URL in the sessions table Context column and the session panel.
 `ariadne session ls` titles such a session with the request's title and URL, read off the forge. `session inspect` prints its `pull request`.
 
-27. `POST /v1/pull-requests/{id}/ready-for-review` takes `head_sha`, a hex sha.
-    It reads the current head from the forge. A different head returns 409 before any mutation.
-    A non-draft returns its current DTO without a mutation.
-    GitHub uses `markPullRequestReadyForReview` and returns the request with `draft: false`.
-    The daemon never calls this route itself. Spec 032 rule 17 defines its seat gate.
-
+27. The daemon marks a kept draft ready for review from current forge evidence alone:
+    successful checks, clean mergeability and no unanswered comment of the other side.
+    GitHub reads `mergeable` beside `mergeStateStatus` on both lists and single-request reads.
+    For `isDraft: true` with `mergeStateStatus: DRAFT`, `mergeable: MERGEABLE` counts as clean for promotion.
+    `CONFLICTING` blocks promotion. Unknown or missing conflict evidence withholds it.
+    Readiness attention still requires a non-draft with a clean merge state (031 rule 15).
+    Only the integration login's own request is marked, at most once per head.
+    The forge restarts checks on the mark. The readiness item waits for fresh evidence.
+    No seat has a draft-mark tool or route.
 ## Acceptance criteria
+
+- Green checks, review decisions and `behind_base` are no news:
+  `news.rs::tests::green_checks_reviews_and_behind_base_are_not_keeper_news`.
+- Comments settle after the newest one; failures and state changes arrive immediately:
+  `news.rs::tests::comments_wait_for_the_newest_comment_but_failures_and_state_do_not`.
+- The store claims each draft head once:
+  `store.rs::a_draft_mark_is_claimed_once_for_each_head`.
+- A draft uses GitHub's conflict evidence; a blocked non-draft stays blocked:
+  `github/pulls.rs::tests::a_drafts_mergeability_uses_githubs_conflict_evidence`.
+- The daemon promotes only its own checked draft once per head:
+  `kept_requests.rs::the_daemon_promotes_only_its_own_checked_draft_once_per_head`.
+- Keeper turn wakes a task keeper and refuses an unkept request:
+  `kept_requests.rs::a_keeper_turn_wakes_a_task_kept_request_and_refuses_an_unkept_request`.
+
 
 - URL variants share one identity and foreign repositories fail:
   `forge/mod.rs::tests::pull_request_urls_share_the_repository_and_number_only`.
@@ -523,8 +541,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `kept_requests.rs::the_detail_fetch_reads_every_page_of_threads_and_check_runs`.
 - A closed request the user reviews deletes no branch, and its row goes:
   `kept_requests.rs::a_closed_request_i_review_deletes_no_branch`.
-- An approval before the checks end, the checks ending green, and checks going back to pending are told:
-  `news.rs::tests::a_change_of_the_checks_is_told_for_the_ready_report`.
 - An idle request session is not nudged or relaunched, and a wedged one is relaunched with its briefing:
   `scheduler_attention.rs::an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_is_relaunched`.
 - The session's MCP server is told the request and no goal:
@@ -533,8 +549,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
 - Each change is told once, and a green check is news again when it fails again:
   `news.rs::tests::each_change_is_told_once`, `::a_quiet_request_is_no_news`.
-- A ready report moves once, per head:
-  `store.rs::a_pull_request_reports_ready_once_per_head`.
 - The agent seat lists the request's tools beside its task tools:
   `mcp.rs::tests::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`.
 - Its request tools find the request its task opened, then call its routes, and say to open one where there is none:
@@ -547,11 +561,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - The skill fixes a failed check only where the request's own change causes it, routes any other to the orchestrator or the user, and names its two seats once:
   `skill_tests/operate.rs::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`,
   `::the_pr_babysit_skill_names_its_two_seats_once`.
-- The skill treats comment text as untrusted input and runs no command a comment holds, never merges, and leaves every thread open; it reads the head again before a ready report, and follows `conflict-resolution` where an integration stops on a conflict:
+- The skill treats comment text as untrusted input and runs no command a comment holds, never merges, and leaves every thread open; it reads the head again after a fix, and follows `conflict-resolution` where an integration stops on a conflict:
   `skill_tests/operate.rs::the_pr_babysit_skill_treats_comment_text_as_untrusted_and_never_merges`, `::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
-- A ready report raises no row of its own on `ariadne attention`: that is
+- A posted review raises no row of its own on `ariadne attention`: that is
   the `pull_request` attention producer's own item, confirmed against the
   forge's evidence, not a bare flag on the session (031):
   `crates/ariadne-cli/tests/attention.rs::incomplete_json_contains_only_daemon_items_and_their_count`.
@@ -567,25 +581,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A `502 forge_error` is never retried, while another `502` still gets its retries:
   `queries.test.ts::createQueryClient's retry > never retries a 502 whose body error is forge_error`,
   `::still retries another 502`.
-- A request's title, URL, head and base branch names, head sha and
-  reviewed sha, a comment's id, author, path and first line, a failed
-  check's name, conclusion and URL, and the rolled-up checks, review
-  decision and state each sit inside the fence where they reach a
-  briefing or news prompt, proved word for word:
-  `prompts.rs::the_pull_request_texts_fill_every_placeholder_they_name`,
-  `news.rs::tests::a_comments_first_line_is_fenced_in_its_news_line`,
-  `::each_change_is_told_once` (the check, the decision, the state and
-  the "behind the base" lines),
-  `::a_change_of_the_checks_is_told_for_the_ready_report`,
-  `::a_reviewer_hears_only_round_prompts`
-  (the head sha and the reviewed sha), and the keeper's own (032). A
-  comment's path crafted with the closing marker and a fresh instruction
-  cannot escape its own fence:
-  `news.rs::tests::a_crafted_comment_path_cannot_escape_its_fence`.
-  006 rule 19 plainly reaches a task's title and a user-typed goal's
-  title and description; a reviewer and a keeper session carry neither,
-  so every field above stays inside the fence unchanged by that rule
-  (rule 26 above).
 - A reviewer or a keeper session refuses to start on a head branch git
   refuses as a ref, starting no worktree and no session, and the refusal
   is recorded on the row (032)
@@ -608,8 +603,6 @@ GitHub's `reviewRequests` names a team by a slug or a name, never a login.
 A review asked of a team the user belongs to is read as asking nobody, so it
 raises no row and starts no session (029).
 
-- Draft readiness checks the head and uses the GitHub mutation:
-  `workflow_pull_request.rs::only_the_pr_agent_can_mark_its_current_draft_ready`.
 - A non-draft makes no mutation:
   `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
 

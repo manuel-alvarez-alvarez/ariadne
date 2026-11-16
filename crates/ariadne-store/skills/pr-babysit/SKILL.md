@@ -83,18 +83,12 @@ Use `merge` when the workflow lands the task with no request. Use
    read or pushed, start again at step 2.
 
    Done when the head you hold is the current head.
-10. Call `mark_ready_for_review` with that `head_sha` only where
-    `get_pull_request` gives `role: author`. Do it when every check on that
-    head is green and the request is a draft. Then call `get_pull_request`
-    again: the checks restart.
+10. Finish the fixes and replies. Ariadne marks a checked draft ready and decides readiness from the forge.
 
-    Done when a draft with green checks is marked ready and read again.
-11. Call `report_pull_request` only when readiness changes. Ready is one read
-    with `draft: false`, `checks: success`, `mergeable: clean` and no
-    unanswered comment of the other side. Send `ready: true` with the
-    `head_sha` of that read. Send `ready: false` when one goes back.
+    Done when the fixes and replies are complete.
+11. Read the request again when Ariadne asks for another turn.
 
-    Done when the report matches readiness.
+    Done when the request is read.
 12. On a merge, update `<base>` in the primary checkout:
     - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is
       checked out
@@ -146,8 +140,7 @@ task branch. The primary checkout is the `Repo:` path of your briefing.
 Verify the defect at the head before a fix or a kept line. A disagreement
 gets no reply: `escalate_comment` is its only call.
 
-No status comment exists. Readiness goes through `report_pull_request`,
-never through a comment.
+No status comment exists. Ariadne decides readiness from the forge.
 
 ### A failed check
 

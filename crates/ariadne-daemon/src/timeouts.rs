@@ -39,6 +39,8 @@ pub struct Timeouts {
     /// on the last head. A push inside the interval restarts it. The first
     /// round and explicit round requests do not wait on it.
     pub review_push_settle: Duration,
+    /// How long the newest comment must stand before the keeper hears it.
+    pub keeper_comment_settle: Duration,
     /// How long a killed agent's running turn has to end once it is
     /// cancelled.
     ///
@@ -153,6 +155,7 @@ impl Default for Timeouts {
             forge_poll_backoff_cap: Duration::from_secs(3600),
             forge_wake_debounce: Duration::from_secs(5),
             review_push_settle: Duration::from_secs(300),
+            keeper_comment_settle: Duration::from_secs(300),
             checkpoint: Duration::from_secs(30),
             telemetry_retention: Duration::from_secs(3600),
             dead_launch_patience: Duration::from_secs(30),

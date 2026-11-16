@@ -156,10 +156,7 @@ reads behind them ([026](026-pull-requests.md)).
    own row, in the worktree above. A session that went away on its own is
    resumed on its own row and conversation, unless the pin moved since it
    started, the same as a reviewer session is (029 rule 5a).
-10. The author's news (026) reaches the keeper session exactly as it
-    reaches the agent of a task's `pr` column: comments by another login,
-    checks that turn to failure, the rolled-up check state, the review
-    decision and the state, each told once.
+10. The keeper receives the same actionable news and comment cool-down as a task agent (026 rule 12).
 11. Babysitting ends on an explicit stop, merge or close: the babysit goal
     and its task end (rule 7b), the keeper session is killed, its worktree and its local branch are removed, and Ariadne
     stops working on the request, unless a review is still asked of it.
@@ -173,8 +170,8 @@ reads behind them ([026](026-pull-requests.md)).
 
 12. The keeper seat lists `get_pull_request`, `get_diff`, `list_comments`,
     `get_comment`, `reply_comment`, `escalate_comment`,
-    `mark_ready_for_review` and `report_pull_request`, beside
-    `wait_for_user` and `withdraw_wait_for_user` — the same eight request
+    beside
+    `wait_for_user` and `withdraw_wait_for_user` — the same six request
     tools the agent of a task's `pr` column has, and no task tool and no
     message tool: the user reaches the session through its console, as a
     reviewer's. No tool resolves a thread and none submits a review: those
@@ -191,17 +188,8 @@ reads behind them ([026](026-pull-requests.md)).
     way it accepts a task's column agent: a request a task keeps is
     refused the ask (rule 1), so no row ever carries both, and the seat
     alone tells the two apart.
-14. `report_pull_request` takes `ready` with `head_sha`, on a row this
-    keeper answers for, by the same rule a task's column agent reports
-    under (029 rule 15): a `ready: true` report with no `head_sha`, or one
-    that fails the hex-sha check, is refused with 400. On a row
-    `babysit_asked` keeps, only the keeper session reports it ready — never
-    a reviewer session the same row also carries, where a self-review was
-    asked of it too.
-15. The `pull_request` attention producer's readiness item (031) covers a
-    row kept by hand the same way it covers a task-kept one: the same forge
-    evidence, confirmed against the head the keeper's report named.
-
+14. No keeper reports readiness. The daemon decides from forge evidence (031 rule 15).
+15. The readiness item covers a hand-kept request with the same evidence as a task-kept request (031 rule 15).
 ## Desktop
 
 16. The Pull requests panel offers Start babysit and Stop babysit beside
@@ -215,25 +203,13 @@ reads behind them ([026](026-pull-requests.md)).
     **Babysit goal**. The panel's Sessions tab lists the
     keeper session beside a review's, since both carry the request's id.
 
-17. The draft readiness route (026 rule 27) accepts the current agent of the task's request column on its own request. The daemon finds that column by its `request-merged` gate, not by its id.
-    It also accepts the request's keeper when the integration login opened the request.
-    It refuses another author's request with 403, including requests opened by bots.
-    Every other seat and a call without a session receive 403.
-    The `pr-babysit` skill calls the tool on the head it read when every check is green,
-    then reads the request again, since the forge restarts the checks on the mark.
-    A draft needs this call before readiness can hold: the ready report
-    requires `draft: false` beside `checks: success`, `mergeable: clean` and
-    no unanswered comment (030 rule 10). A keeper's other differences from
-    the task's agent — no opening step, the briefing's push command, and a
-    turn that ends on the merge or the close with no task call — are the
-    skill's own two-seats rule, stated once (017 rule 11). The keeper fixes
-    in one batch every failure of the final list that the request's own
-    change causes, replies `Fixed in <sha>:` or `Not changed:` with at most
-    three sentences, and calls `escalate_comment` with no comment where the
-    comment's author rejects that outcome, a `Still there:` reply included
-    (030 rule 10). A failed check that the request's own change does not
-    cause is fixed by no keeper: it asks the user once with `wait_for_user`.
-
+17. The daemon promotes drafts under 026 rule 27. No seat has a draft-mark tool.
+    `POST /v1/repositories/{id}/pull-requests/{number}/keeper-turn` accepts an empty body and returns 202.
+    It wakes a task's keeper or a keeper by hand with untold news immediately, bypassing comment settling.
+    With no news, it asks the keeper to read the request again. No keeper returns 409.
+    `pr babysit <repo> <number> --again` calls it, including on task-kept requests.
+    `--again` conflicts with `--model`, `--effort`, `--skill`, `--attach` and `--stop`.
+    The panel offers Keeper turn on kept open requests.
 ## Acceptance criteria
 
 - A request of Ariadne's maps to the author role; Dependabot's and another
@@ -251,7 +227,7 @@ reads behind them ([026](026-pull-requests.md)).
 
 - Asking on a request starts one keeper session, seat `keeper`,
   with `pr-babysit` indexed, its worktree on `ariadne/keep-<id>`; a comment
-  by another login reaches it once; its `ready` report is accepted; and the
+  by another login reaches it once; daemon readiness uses forge evidence; and the
   merge ends it, with its worktree and its branch gone and the row gone:
   `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`.
 - A babysit ask makes one active goal with no orchestrator, on a snapshot of
@@ -299,7 +275,7 @@ reads behind them ([026](026-pull-requests.md)).
   `pr.rs::tests::pr_ls_names_babysitting_beside_a_review_in_the_ariadne_column`.
   `pr inspect` prints the ask:
   `pr.rs::tests::pr_inspect_prints_readable_keys_in_order_with_the_body_last`.
-- The keeper seat lists its eight request tools, `escalate_comment`
+- The keeper seat lists its six request tools, `escalate_comment`
   among them, and no task or message tool:
   `mcp.rs::tests::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`.
 - The keeper escalates a thread of the row it keeps, and the thread's
@@ -340,19 +316,16 @@ reads behind them ([026](026-pull-requests.md)).
   it by hand:
   `pull-requests-page.test.tsx::shows the Ariadne babysitting pill on a row a keeper session babysits by hand`.
 
-- The PR agent can mark its current draft ready; reviewer and orchestrator seats receive 403:
-  `workflow_pull_request.rs::only_the_pr_agent_can_mark_its_current_draft_ready`.
-- A request column is found by its gate, not its id:
-  `http/pull_requests.rs::ready_tests::a_request_column_is_found_by_its_gate_not_its_id`.
-- Keepers can mark the integration login's draft ready; sessionless calls receive 403:
-  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
-- Keepers receive 403 for other authors:
-  `pull_request_babysit.rs::asking_keeps_another_authors_request_until_the_merge`,
-  `::asking_keeps_a_dependabot_request_until_the_merge`.
-- The skill marks checked drafts ready, only where its role is `author`,
-  reads the request again after the mark, and reports ready on the forge's
-  own fields rather than an approvals list:
-  `skill_tests/operate.rs::the_keeper_marks_a_draft_ready_on_the_checked_head`.
+- The daemon promotes only its own checked draft, once per head:
+  `kept_requests.rs::the_daemon_promotes_only_its_own_checked_draft_once_per_head`.
+- Keeper turn wakes a task keeper and refuses an unkept request:
+  `kept_requests.rs::a_keeper_turn_wakes_a_task_kept_request_and_refuses_an_unkept_request`.
+- The CLI sends an empty keeper-turn request:
+  `pr.rs::tests::pr_babysit_again_posts_an_empty_keeper_turn`.
+- The CLI refuses incompatible keeper-turn flags:
+  `pr.rs::tests::pr_babysit_again_conflicts_with_every_start_or_stop_flag`.
+- The panel sends Keeper turn on a task-kept request and shows a refusal:
+  `pull-request-panel.test.tsx::asks for a keeper turn on a task kept request and shows the daemon refusal`.
 - The skill names its two seats once, and a keeper fixes only what the
   request's own change breaks:
   `skill_tests/operate.rs::the_pr_babysit_skill_names_its_two_seats_once`,

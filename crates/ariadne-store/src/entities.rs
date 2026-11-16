@@ -693,8 +693,7 @@ pub struct PullRequestRow {
     /// The task that opened the request: the agent of its `pr` column keeps
     /// it (030).
     pub origin_task_id: Option<String>,
-    /// Whether the request's session reported it ready to merge.
-    pub ready: bool,
+
     /// The names of the failed checks the request's session was told of.
     pub told_checks: String,
     /// Whether the session was told the head is behind its base.
@@ -743,17 +742,6 @@ pub struct PullRequestRow {
     /// Whether the keeper give-up came from an exhausted relaunch.
     /// Meaningless while `keeper_given_up_at` is `None`.
     pub keeper_given_up_wedged: bool,
-    /// When `ready` last moved from false to true: the babysitting task's
-    /// own claim that the request is ready to merge, read as the
-    /// `pull_request` attention producer's `since` for the readiness item
-    /// it raises once the forge's own evidence backs that claim up.
-    /// Cleared the moment `ready` moves back to false, so a later claim
-    /// gets its own, fresh `since` rather than the first one's.
-    pub ready_confirmed_at: Option<String>,
-    /// The head the babysitting task reported `ready` on. A later commit
-    /// moves the live head past it, which the `pull_request` attention
-    /// producer reads as the claim's own revision gone stale.
-    pub ready_head_sha: Option<String>,
     /// Whether the user asked Ariadne to keep a request of their own by
     /// hand (032): a keeper session runs on it while it is open, beside the
     /// task that would otherwise keep it — but a task-opened request never
@@ -878,7 +866,7 @@ pub struct PullRequest {
     pub opened_at: String,
     pub forge_updated_at: String,
     pub role: String,
-    pub ready: bool,
+
     pub created_at: String,
     pub updated_at: String,
     pub failed_checks: String,
@@ -902,8 +890,7 @@ pub struct PullRequest {
     pub reviewer_given_up_wedged: bool,
     pub keeper_given_up_at: Option<String>,
     pub keeper_given_up_wedged: bool,
-    pub ready_confirmed_at: Option<String>,
-    pub ready_head_sha: Option<String>,
+
     pub babysit_asked: bool,
     pub babysit_model: Option<String>,
     pub babysit_effort: Option<String>,
@@ -936,7 +923,7 @@ impl PullRequest {
             opened_at: live.opened_at,
             forge_updated_at: live.forge_updated_at,
             role: row.role,
-            ready: row.ready,
+
             created_at: row.created_at,
             updated_at: row.updated_at,
             failed_checks: live.failed_checks,
@@ -960,8 +947,7 @@ impl PullRequest {
             reviewer_given_up_wedged: row.reviewer_given_up_wedged,
             keeper_given_up_at: row.keeper_given_up_at,
             keeper_given_up_wedged: row.keeper_given_up_wedged,
-            ready_confirmed_at: row.ready_confirmed_at,
-            ready_head_sha: row.ready_head_sha,
+
             babysit_asked: row.babysit_asked,
             babysit_model: row.babysit_model,
             babysit_effort: row.babysit_effort,

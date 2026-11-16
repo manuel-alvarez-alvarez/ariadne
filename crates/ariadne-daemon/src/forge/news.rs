@@ -1,13 +1,9 @@
 //! What a pull request's session has not been told yet (026).
 //!
 //! After a detail fetch reads what the forge holds, the news is the
-//! difference between that and what the session was last told: comments by
-//! another login nobody told it of, checks that turned to failure, checks
-//! whose rolled-up state moved, a head that fell behind its base, a review
-//! decision that changed, and a state that turned `merged` or `closed`. Each
-//! change is told once (009 rule 4): a comment's mark carries `told_at`, and the row
-//! carries a told mark for the rest. The ACP driver writes both right before
-//! the prompt goes out, and gives them back where it never did (018).
+//! difference between the current forge read and the told marks: comments,
+//! final failed checks, mergeability behind the base, and a merged or closed state.
+//! The ACP driver claims the marks before delivery and releases failed deliveries.
 //!
 //! A reviewer receives only round prompts (029).
 //!
@@ -60,44 +56,35 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
     // state is final: while it reads `pending`, more checks may still fail.
     // A turn to `failure` lists every failed check, a check told before it
     // included; a failure that holds lists only the checks not told yet.
-    let settled = pull.checks != "pending";
+    let settled = pull.checks == "failure";
     let turned = pull.checks == "failure" && before.check_state != "failure";
-    let to_tell = failed
+    let to_tell: Vec<_> = failed
         .iter()
-        .filter(|c| settled && (turned || !told_checks.contains(&c.name)));
-    for check in to_tell {
-        let at = match check.url.is_empty() {
-            true => String::new(),
-            false => format!(": {}", crate::agents::prompts::fence(&check.url)),
-        };
+        .filter(|c| settled && (turned || !told_checks.contains(&c.name)))
+        .collect();
+    if !to_tell.is_empty() {
+        use crate::agents::prompts::fence;
         lines.push(format!(
-            "- Check {} turned to {}{at}",
-            crate::agents::prompts::fence(&check.name),
-            crate::agents::prompts::fence(&check.conclusion)
+            "- Failed checks: {}.",
+            to_tell
+                .iter()
+                .map(|c| format!(
+                    "{} ({}) {}",
+                    fence(&c.name),
+                    fence(&c.conclusion),
+                    fence(&c.url)
+                ))
+                .collect::<Vec<_>>()
+                .join("; ")
         ));
     }
-    if pull.behind_base && !pull.told_behind_base {
+    if pull.mergeable == "behind" && !pull.told_behind_base {
         lines.push(format!(
-            "- The head is behind {}.",
+            "- Merge {} into the head branch: the request is behind its base.",
             crate::agents::prompts::fence(&pull.base_branch)
         ));
     }
-    // What a ready report is decided on: approvals and the rolled-up checks.
-    // Checks that finished green after an approval, or went back to pending
-    // after a ready report, are news, since the session cannot look itself.
-    if pull.checks != before.check_state {
-        lines.push(format!(
-            "- The checks now read {}.",
-            crate::agents::prompts::fence(&pull.checks)
-        ));
-    }
-    if pull.review_decision != before.review_decision {
-        lines.push(format!(
-            "- The review decision is now {}.",
-            crate::agents::prompts::fence(&pull.review_decision)
-        ));
-    }
-    if pull.state != before.state {
+    if matches!(pull.state.as_str(), "merged" | "closed") && pull.state != before.state {
         lines.push(format!(
             "- The request is now {}.",
             crate::agents::prompts::fence(&pull.state)
@@ -115,7 +102,7 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
                 .filter(|c| settled || told_checks.contains(&c.name))
                 .map(|c| c.name)
                 .collect(),
-            behind_base: pull.behind_base,
+            behind_base: pull.mergeable == "behind",
             review_decision: pull.review_decision.clone(),
             state: pull.state.clone(),
             check_state: pull.checks.clone(),
@@ -215,6 +202,7 @@ pub async fn untold(
     pull: &PullRequest,
     login: &str,
     seat: Option<ariadne_core::Seat>,
+    settle: std::time::Duration,
 ) -> ariadne_store::Result<News> {
     if seat == Some(ariadne_core::Seat::Reviewer) {
         return Ok(of_review(pull, &[]));
@@ -222,7 +210,29 @@ pub async fn untold(
     let comments = super::live::comments_of(store, live, pull).await?;
     let role = super::live::comment_role(&pull.role, pull.babysit_asked);
     let untold = super::live::untold(&comments, role, login);
-    Ok(of(pull, &untold, login))
+    Ok(settled(pull, &untold, login, settle, chrono::Utc::now()))
+}
+
+/// Apply comment settling without delaying other actionable news.
+fn settled(
+    pull: &PullRequest,
+    untold: &[PullRequestComment],
+    login: &str,
+    interval: std::time::Duration,
+    now: chrono::DateTime<chrono::Utc>,
+) -> News {
+    let newest = untold
+        .iter()
+        .filter(|c| !is_review_summary(c, login))
+        .filter_map(|c| chrono::DateTime::parse_from_rfc3339(&c.created_at).ok())
+        .max();
+    let ready = interval.is_zero()
+        || newest.is_some_and(|at| {
+            now.signed_duration_since(at)
+                .to_std()
+                .is_ok_and(|age| age >= interval)
+        });
+    of(pull, if ready { untold } else { &[] }, login)
 }
 
 /// The first line of a comment, cut short: the session reads the whole of
@@ -266,7 +276,6 @@ mod tests {
             origin_task_id: None,
             opened_at: String::new(),
             role: "author".into(),
-            ready: false,
             forge_updated_at: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
@@ -292,8 +301,7 @@ mod tests {
             reviewer_given_up_wedged: false,
             keeper_given_up_at: None,
             keeper_given_up_wedged: false,
-            ready_confirmed_at: None,
-            ready_head_sha: None,
+
             babysit_asked: false,
             babysit_model: None,
             babysit_effort: None,
@@ -323,102 +331,59 @@ mod tests {
         assert!(of(&pull(), &[], "me").is_empty());
     }
 
-    /// Each kind of change is told once: what the news marks told is
-    /// what the next news leaves out, and a check that recovers is news
-    /// again when it fails again.
+    #[test]
+    fn green_checks_reviews_and_behind_base_are_not_keeper_news() {
+        let changed = PullRequest {
+            checks: "success".into(),
+            review_decision: "approved".into(),
+            behind_base: true,
+            ..pull()
+        };
+        assert!(of(&changed, &[], "me").is_empty());
+    }
+
     #[test]
     fn each_change_is_told_once() {
         let changed = PullRequest {
+            checks: "failure".into(),
             failed_checks: r#"[{"name":"lint","url":"https://ci/1","conclusion":"failure"}]"#
                 .into(),
-            behind_base: true,
-            review_decision: "changes_requested".into(),
+            mergeable: "behind".into(),
             state: "merged".into(),
             ..pull()
         };
         let news = of(&changed, &[], "me");
-        assert_eq!(
-            news.lines,
-            [
-                "- Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-                 <<<untrusted>>>failure<<<end untrusted>>>: \
-                 <<<untrusted>>>https://ci/1<<<end untrusted>>>",
-                "- The head is behind <<<untrusted>>>main<<<end untrusted>>>.",
-                "- The review decision is now \
-                 <<<untrusted>>>changes_requested<<<end untrusted>>>.",
-                "- The request is now <<<untrusted>>>merged<<<end untrusted>>>.",
-            ]
-        );
-        let mut changed = told(&changed, &news);
-        assert!(of(&changed, &[], "me").is_empty(), "nothing is told twice");
-
-        // A check that turns green and a head that catches up are no news,
-        // but they leave the mark, so their next turn is news again.
-        changed.failed_checks = "[]".into();
-        changed.behind_base = false;
-        let green = of(&changed, &[], "me");
-        assert!(green.is_empty());
-        let recovered = green.recovered().expect("a mark to persist");
-        assert!(recovered.checks.is_empty());
-        assert!(!recovered.behind_base);
-        let changed = PullRequest {
-            told_checks: "[]".into(),
-            told_behind_base: false,
-            failed_checks: r#"[{"name":"lint","url":"","conclusion":"failure"}]"#.into(),
-            behind_base: true,
-            ..changed
-        };
-        assert_eq!(
-            of(&changed, &[], "me").lines,
-            [
-                "- Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-                 <<<untrusted>>>failure<<<end untrusted>>>",
-                "- The head is behind <<<untrusted>>>main<<<end untrusted>>>."
-            ],
-            "a check that fails again and a head behind again are news again"
-        );
+        assert_eq!(news.lines.len(), 3);
+        assert!(news.lines[0].starts_with("- Failed checks:"));
+        assert!(news.lines[1].starts_with("- Merge "));
+        assert!(news.lines[2].contains("merged"));
+        assert!(of(&told(&changed, &news), &[], "me").is_empty());
     }
 
-    /// While the rolled-up checks read `pending`, no failed check is told
-    /// and none is marked. When they turn `failure`, every failed check is
-    /// told in one prompt and marked (026 rules 12, 14).
     #[test]
     fn failed_checks_are_told_as_one_list_when_the_rollup_is_final() {
-        let failed = r#"[{"name":"lint","url":"","conclusion":"failure"},
-            {"name":"fmt","url":"","conclusion":"failure"}]"#;
         let pending = PullRequest {
             checks: "pending".into(),
-            failed_checks: failed.into(),
+            failed_checks: r#"[{"name":"lint","url":"","conclusion":"failure"},{"name":"fmt","url":"","conclusion":"failure"}]"#.into(),
             ..pull()
         };
         let news = of(&pending, &[], "me");
-        assert_eq!(
-            news.lines,
-            ["- The checks now read <<<untrusted>>>pending<<<end untrusted>>>."]
-        );
-        assert!(news.told.checks.is_empty(), "no failed check is marked yet");
-        let pending = told(&pending, &news);
+        assert!(news.is_empty());
+        assert!(news.told.checks.is_empty());
         let done = PullRequest {
             checks: "failure".into(),
-            ..pending
+            ..told(&pending, &news)
         };
         let news = of(&done, &[], "me");
         assert_eq!(
             news.lines,
             [
-                "- Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-                 <<<untrusted>>>failure<<<end untrusted>>>",
-                "- Check <<<untrusted>>>fmt<<<end untrusted>>> turned to \
-                 <<<untrusted>>>failure<<<end untrusted>>>",
-                "- The checks now read <<<untrusted>>>failure<<<end untrusted>>>.",
+                "- Failed checks: <<<untrusted>>>lint<<<end untrusted>>> (<<<untrusted>>>failure<<<end untrusted>>>) ; <<<untrusted>>>fmt<<<end untrusted>>> (<<<untrusted>>>failure<<<end untrusted>>>) ."
             ]
         );
         assert_eq!(news.told.checks, ["lint", "fmt"]);
     }
 
-    /// A check told before the checks went back to pending is in the list
-    /// again when they turn `failure`: the prompt names every failed check
-    /// of the head (026 rule 12).
     #[test]
     fn a_turn_to_failure_lists_a_check_told_before_it() {
         let rerun = PullRequest {
@@ -429,29 +394,12 @@ mod tests {
             ..pull()
         };
         let news = of(&rerun, &[], "me");
-        assert_eq!(
-            news.lines,
-            ["- The checks now read <<<untrusted>>>pending<<<end untrusted>>>."]
-        );
+        assert!(news.is_empty());
         let done = PullRequest {
             checks: "failure".into(),
-            failed_checks: r#"[{"name":"lint","url":"","conclusion":"failure"},
-                {"name":"fmt","url":"","conclusion":"failure"}]"#
-                .into(),
             ..told(&rerun, &news)
         };
-        let news = of(&done, &[], "me");
-        assert_eq!(
-            news.lines,
-            [
-                "- Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-                 <<<untrusted>>>failure<<<end untrusted>>>",
-                "- Check <<<untrusted>>>fmt<<<end untrusted>>> turned to \
-                 <<<untrusted>>>failure<<<end untrusted>>>",
-                "- The checks now read <<<untrusted>>>failure<<<end untrusted>>>.",
-            ]
-        );
-        assert_eq!(news.told.checks, ["lint", "fmt"]);
+        assert_eq!(of(&done, &[], "me").lines.len(), 1);
     }
 
     #[test]
@@ -473,41 +421,66 @@ mod tests {
         assert!(news.comment_ids.is_empty());
     }
 
-    /// An approval that lands while checks still run is told, and so is the
-    /// checks finishing green after it: that is when the session reports the
-    /// request ready. Checks that go back to pending after it are told too,
-    /// so a ready report is taken back.
     #[test]
-    fn a_change_of_the_checks_is_told_for_the_ready_report() {
-        let approved = PullRequest {
-            review_decision: "approved".into(),
-            checks: "pending".into(),
+    fn comments_wait_for_the_newest_comment_but_failures_and_state_do_not() {
+        let interval = crate::timeouts::Timeouts::default().keeper_comment_settle;
+        assert_eq!(interval.as_secs(), 300);
+        let start = chrono::DateTime::parse_from_rfc3339("2026-10-02T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let first = comment("ic-1", CONVERSATION, "them", false);
+        let second = PullRequestComment {
+            id: "ic-2".into(),
+            created_at: "2026-10-02T00:04:00Z".into(),
+            ..first.clone()
+        };
+        assert!(
+            settled(
+                &pull(),
+                std::slice::from_ref(&first),
+                "me",
+                interval,
+                start + chrono::Duration::seconds(299)
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            settled(
+                &pull(),
+                std::slice::from_ref(&first),
+                "me",
+                interval,
+                start + chrono::Duration::seconds(300)
+            )
+            .lines
+            .len(),
+            1
+        );
+        let changed = PullRequest {
+            state: "closed".into(),
+            checks: "failure".into(),
+            failed_checks: r#"[{"name":"lint","url":"ci","conclusion":"failure"}]"#.into(),
             ..pull()
         };
-        let news = of(&approved, &[], "me");
-        assert_eq!(
-            news.lines,
-            [
-                "- The checks now read <<<untrusted>>>pending<<<end untrusted>>>.",
-                "- The review decision is now <<<untrusted>>>approved<<<end untrusted>>>.",
-            ]
+        let news = settled(
+            &changed,
+            &[first.clone(), second.clone()],
+            "me",
+            interval,
+            start + chrono::Duration::seconds(300),
         );
-        let green = PullRequest {
-            checks: "success".into(),
-            ..told(&approved, &news)
-        };
-        let news = of(&green, &[], "me");
+        assert_eq!(news.lines.len(), 2);
+        assert!(news.comment_ids.is_empty());
         assert_eq!(
-            news.lines,
-            ["- The checks now read <<<untrusted>>>success<<<end untrusted>>>."]
-        );
-        let pending = PullRequest {
-            checks: "pending".into(),
-            ..told(&green, &news)
-        };
-        assert_eq!(
-            of(&pending, &[], "me").lines,
-            ["- The checks now read <<<untrusted>>>pending<<<end untrusted>>>."]
+            settled(
+                &pull(),
+                &[first, second],
+                "me",
+                interval,
+                start + chrono::Duration::seconds(540)
+            )
+            .comment_ids,
+            ["ic-1", "ic-2"]
         );
     }
 

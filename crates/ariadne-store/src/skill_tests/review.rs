@@ -284,7 +284,6 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "Pin the scope to the diff. Call `get_pull_request` and `get_diff`.",
         "`since`",
         "`submit_review` once with only new findings",
-        "`report_pull_request` with `reviewed_sha`",
         "without a reply",
         "Run the tests, the lint and the format check of the files the diff changes.",
         "Reuse your evidence of an earlier round only where it covers the reviewed revision.",

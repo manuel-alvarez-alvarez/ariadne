@@ -861,51 +861,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/pull-requests/{id}/ready-for-review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Mark the current draft ready through its keeping session. */
-        post: operations["pull-requests_mark_ready_for_review"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/pull-requests/{id}/report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * What the request's session says of it: `ready` once the babysitting task
-         *     believes every required approval and check reads green, on the head
-         *     (`head_sha`, required with `ready: true`) it actually confirmed that
-         *     against; and the head a review session posted its review on
-         *     (`reviewed_sha`). Neither raises `waiting_user` on the session by
-         *     itself (029): the claim alone is not confirmed evidence, and a
-         *     pr-reviewer session finishing its own review must notify nobody — the
-         *     `pull_request` attention producer reads the forge's own evidence
-         *     against this claim, for the head it names, and raises its own item
-         *     once it actually backs the claim up.
-         */
-        post: operations["pull-requests_report"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/pull-requests/{id}/reviews": {
         parameters: {
             query?: never;
@@ -1093,6 +1048,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/repositories/{id}/pull-requests/{number}/keeper-turn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the current keeper to read the request again now. */
+        post: operations["pull-requests_keeper_turn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories/{id}/pull-requests/{number}/review-round": {
         parameters: {
             query?: never;
@@ -1102,7 +1074,6 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request a reviewer round on the next idle pass. */
         post: operations["pull-requests_review_round"];
         delete?: never;
         options?: never;
@@ -2912,9 +2883,6 @@ export interface components {
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
         };
-        MarkReadyRequest: {
-            head_sha: string;
-        };
         MessageDto: {
             body: string;
             created_at: string;
@@ -3151,8 +3119,6 @@ export interface components {
             operations?: components["schemas"]["PullRequestOperationRefDto"][];
             /** @description The task that opened the request: its author keeps it (005). */
             origin_task_id?: string | null;
-            /** @description Whether the request's session reported it ready to merge. */
-            ready?: boolean;
             repository_id: string;
             /**
              * @description Whether the user asked Ariadne to review this request of their own
@@ -3243,26 +3209,6 @@ export interface components {
         /** @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`. */
         ReplyCommentRequest: {
             body: string;
-        };
-        /**
-         * @description Body of `POST /v1/pull-requests/{id}/report`: what the request's session
-         *     says of it.
-         */
-        ReportPullRequestRequest: {
-            /**
-             * @description The head the session actually confirmed `ready` against — read off
-             *     its own last `get_pull_request` call, never looked up again here.
-             *     Required wherever `ready` is `true`: a push landing between that
-             *     read and this call must still be judged against the head the
-             *     session confirmed, not whatever the daemon's own cache has moved
-             *     on to since, or a push the session never actually saw could pass
-             *     as though it had (031).
-             */
-            head_sha?: string | null;
-            /** @description Every required approval and check reads green. */
-            ready?: boolean | null;
-            /** @description The head a reviewer session posted its review on (029). */
-            reviewed_sha?: string | null;
         };
         RepositoryDto: {
             base_branch: string;
@@ -5531,104 +5477,6 @@ export interface operations {
             };
         };
     };
-    "pull-requests_mark_ready_for_review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MarkReadyRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PullRequestDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    "pull-requests_report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReportPullRequestRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PullRequestDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     "pull-requests_submit_review": {
         parameters: {
             query?: never;
@@ -6054,6 +5902,32 @@ export interface operations {
                 content?: never;
             };
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_keeper_turn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

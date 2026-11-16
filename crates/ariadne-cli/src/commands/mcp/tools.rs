@@ -16,8 +16,7 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::pull_requests::{
-    EscalateCommentRequest, ReplyCommentRequest, ReportPullRequestRequest, ReviewCommentRequest,
-    SubmitReviewRequest,
+    EscalateCommentRequest, ReplyCommentRequest, ReviewCommentRequest, SubmitReviewRequest,
 };
 use ariadne_api::sessions::SwitchSessionRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
@@ -260,26 +259,6 @@ pub(super) struct GetCommentReq {
 pub(super) struct ResolveThreadReq {
     /// The `id` of a comment of the thread, as `list_comments` gives it.
     pub comment_id: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct MarkReadyReq {
-    /// The hex head sha you read every check against.
-    pub head_sha: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct ReportPullRequestReq {
-    /// True once every required approval and check reads green. False when
-    /// a later change turns one back.
-    pub ready: Option<bool>,
-    /// The head sha you read every approval and check against, from your
-    /// own last `get_pull_request` call. Required with `ready: true`.
-    pub head_sha: Option<String>,
-    /// The head sha your posted review is on.
-    pub reviewed_sha: Option<String>,
 }
 
 /// The two events a review takes. The user gives every approval.
@@ -933,57 +912,6 @@ impl AriadneMcp {
         json_result(self.post(&path, &serde_json::json!({})).await?)
     }
 
-    #[tool(
-        description = "Mark your draft request ready for review, by its `head_sha`, after every check on that head is green. Ariadne accepts it only where `get_pull_request` gives `role: author`."
-    )]
-    async fn mark_ready_for_review(
-        &self,
-        Parameters(req): Parameters<MarkReadyReq>,
-    ) -> Result<CallToolResult, McpError> {
-        if !(4..=64).contains(&req.head_sha.len())
-            || !req.head_sha.bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return Err(McpError::invalid_params("head_sha must be a hex sha", None));
-        }
-        let path = self.pull_request_path("/ready-for-review").await?;
-        json_result(
-            self.post(&path, &serde_json::json!({"head_sha": req.head_sha}))
-                .await?,
-        )
-    }
-
-    #[tool(
-        description = "Tell Ariadne the state of your request. Set `ready` when readiness changes. Set `reviewed_sha` after a review round."
-    )]
-    async fn report_pull_request(
-        &self,
-        Parameters(req): Parameters<ReportPullRequestReq>,
-    ) -> Result<CallToolResult, McpError> {
-        if req.ready.is_none() && req.reviewed_sha.is_none() {
-            return Err(McpError::invalid_params(
-                "report `ready` or `reviewed_sha`",
-                None,
-            ));
-        }
-        if req.ready == Some(true) && req.head_sha.is_none() {
-            return Err(McpError::invalid_params(
-                "Pass `head_sha` with `ready: true`: the head you checked.",
-                None,
-            ));
-        }
-        json_result(
-            self.post(
-                &self.pull_request_path("/report").await?,
-                &ReportPullRequestRequest {
-                    ready: req.ready,
-                    head_sha: req.head_sha,
-                    reviewed_sha: req.reviewed_sha,
-                },
-            )
-            .await?,
-        )
-    }
-
     // ---- pull request reviewer ----
 
     #[tool(
@@ -1153,27 +1081,6 @@ mod tests {
         recording_no_content_daemon, server_at,
     };
 
-    #[tokio::test]
-    async fn marking_ready_posts_the_confirmed_head() {
-        let (endpoint, seen) = recording_daemon().await;
-        let mcp = server_at(
-            McpSeat::PullRequestKeeper,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        mcp.mark_ready_for_review(Parameters(MarkReadyReq {
-            head_sha: "abcd1234".into(),
-        }))
-        .await
-        .unwrap();
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen[0].path, "/v1/pull-requests/01PR/ready-for-review");
-        assert_eq!(seen[0].method, "POST");
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&seen[0].body).unwrap()["head_sha"],
-            "abcd1234"
-        );
-    }
-
     /// `escalate_comment` posts its reason to the escalate route of the
     /// comment, on the request the keeper keeps (026).
     #[tokio::test]
@@ -1254,13 +1161,6 @@ mod tests {
         }))
         .await
         .expect("reply");
-        mcp.report_pull_request(Parameters(ReportPullRequestReq {
-            ready: Some(true),
-            head_sha: Some("abc".into()),
-            reviewed_sha: None,
-        }))
-        .await
-        .expect("report");
 
         let seen = seen.lock().expect("lock").clone();
         let mut calls: Vec<(String, String)> = seen
@@ -1289,16 +1189,10 @@ mod tests {
                     "POST".into(),
                     "/v1/pull-requests/01PR/comments/01C/reply".into()
                 ),
-                ("POST".into(), "/v1/pull-requests/01PR/report".into()),
             ]
         );
         let reply: serde_json::Value = serde_json::from_str(&seen[5].body).expect("json");
         assert_eq!(reply, serde_json::json!({"body": "Renamed it."}));
-        let report: serde_json::Value = serde_json::from_str(&seen[6].body).expect("json");
-        assert_eq!(
-            report,
-            serde_json::json!({"ready": true, "head_sha": "abc", "reviewed_sha": null})
-        );
     }
 
     /// The first lookup that finds the request keeps its id, so a later
@@ -1539,13 +1433,6 @@ mod tests {
         }))
         .await
         .expect("post the review");
-        mcp.report_pull_request(Parameters(ReportPullRequestReq {
-            ready: None,
-            head_sha: Some("abc".into()),
-            reviewed_sha: Some("abc".into()),
-        }))
-        .await
-        .expect("report");
         mcp.resolve_thread(Parameters(ResolveThreadReq {
             comment_id: "01C".into(),
         }))
@@ -1568,7 +1455,6 @@ mod tests {
             [
                 ("GET".into(), "/v1/pull-requests/01PR/diff?since=abc".into()),
                 ("POST".into(), "/v1/pull-requests/01PR/reviews".into()),
-                ("POST".into(), "/v1/pull-requests/01PR/report".into()),
                 (
                     "POST".into(),
                     "/v1/pull-requests/01PR/comments/01C/resolve".into()
@@ -1580,7 +1466,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&seen[4].body).expect("json"),
+            serde_json::from_str::<serde_json::Value>(&seen[3].body).expect("json"),
             serde_json::json!({"reason": "The author refused the finding twice."})
         );
         let review: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
@@ -1590,11 +1476,6 @@ mod tests {
                 {"path": "src/lib.rs", "line": 3, "title": "An empty list panics",
                  "body": "An empty list panics.", "priority": "P0"}
             ]})
-        );
-        let report: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
-        assert_eq!(
-            report,
-            serde_json::json!({"ready": null, "head_sha": "abc", "reviewed_sha": "abc"})
         );
     }
 
@@ -1644,38 +1525,6 @@ mod tests {
             .await
             .expect_err("an empty reply");
         texts.push(("reply_comment's refusal", err.message.to_string()));
-
-        let (endpoint, _seen) = recording_daemon().await;
-        let err = agent_at(&endpoint)
-            .report_pull_request(Parameters(ReportPullRequestReq {
-                ready: None,
-                head_sha: None,
-                reviewed_sha: None,
-            }))
-            .await
-            .expect_err("neither ready nor reviewed_sha");
-        texts.push((
-            "report_pull_request's empty refusal",
-            err.message.to_string(),
-        ));
-
-        let (endpoint, _seen) = recording_daemon().await;
-        let err = agent_at(&endpoint)
-            .report_pull_request(Parameters(ReportPullRequestReq {
-                ready: Some(true),
-                head_sha: None,
-                reviewed_sha: None,
-            }))
-            .await
-            .expect_err("ready with no head_sha");
-        assert_eq!(
-            err.message,
-            "Pass `head_sha` with `ready: true`: the head you checked."
-        );
-        texts.push((
-            "report_pull_request's head_sha refusal",
-            err.message.to_string(),
-        ));
 
         let (endpoint, _seen) = recording_daemon_answering(r#"{"pending": true}"#).await;
         let answer = server_at(

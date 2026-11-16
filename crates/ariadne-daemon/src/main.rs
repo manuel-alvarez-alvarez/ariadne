@@ -169,6 +169,7 @@ async fn main() -> Result<()> {
         ariadne_daemon::timeouts::Timeouts::default().failure_diagnosis_decision,
     );
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
+        forge_poll: Default::default(),
         cfg: config.clone(),
         store: store.clone(),
         git: ariadne_daemon::gitwt::GitManager,
@@ -211,6 +212,7 @@ async fn main() -> Result<()> {
         launcher.live.clone(),
         ariadne_daemon::timeouts::Timeouts::default(),
     );
+    let _ = launcher.forge_poll.set(forge_poll.clone());
     let webhook_listen =
         ariadne_daemon::webhooks::WebhookListen::bind(&config, store.clone(), forge_poll.clone())
             .await

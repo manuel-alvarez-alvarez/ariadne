@@ -83,8 +83,6 @@ impl McpSeat {
                 "get_comment",
                 "reply_comment",
                 "escalate_comment",
-                "mark_ready_for_review",
-                "report_pull_request",
                 "send_message",
                 "read_messages",
             ],
@@ -94,8 +92,6 @@ impl McpSeat {
             // opened, when the keeping agent disputes it. No tool approves:
             // the user gives every approval (029).
             McpSeat::PullRequestReviewer => &[
-                "wait_for_user",
-                "withdraw_wait_for_user",
                 "get_pull_request",
                 "get_diff",
                 "list_comments",
@@ -104,7 +100,6 @@ impl McpSeat {
                 "escalate_comment",
                 "resolve_thread",
                 "submit_review",
-                "report_pull_request",
             ],
             // No task tool and no message tool: the user reaches the
             // session through its console. It resolves no thread and
@@ -118,8 +113,6 @@ impl McpSeat {
                 "get_comment",
                 "reply_comment",
                 "escalate_comment",
-                "mark_ready_for_review",
-                "report_pull_request",
             ],
         }
     }
@@ -653,8 +646,6 @@ pub(crate) mod tests {
                     "get_comment",
                     "reply_comment",
                     "escalate_comment",
-                    "mark_ready_for_review",
-                    "report_pull_request",
                     "send_message",
                     "read_messages",
                 ][..],
@@ -662,8 +653,6 @@ pub(crate) mod tests {
             (
                 McpSeat::PullRequestReviewer,
                 &[
-                    "wait_for_user",
-                    "withdraw_wait_for_user",
                     "get_pull_request",
                     "get_diff",
                     "list_comments",
@@ -672,7 +661,6 @@ pub(crate) mod tests {
                     "escalate_comment",
                     "resolve_thread",
                     "submit_review",
-                    "report_pull_request",
                 ][..],
             ),
             (
@@ -686,8 +674,6 @@ pub(crate) mod tests {
                     "get_comment",
                     "reply_comment",
                     "escalate_comment",
-                    "mark_ready_for_review",
-                    "report_pull_request",
                 ][..],
             ),
         ] {
@@ -713,11 +699,9 @@ pub(crate) mod tests {
             "list_models",
             "list_skills",
             "list_tasks",
-            "mark_ready_for_review",
             "open_pull_request",
             "read_messages",
             "reply_comment",
-            "report_pull_request",
             "resolve_thread",
             "retry_task",
             "send_message",
@@ -760,14 +744,12 @@ pub(crate) mod tests {
             McpSeat::Agent,
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
-        assert_eq!(mcp.seat.tools().len(), 17);
+        assert_eq!(mcp.seat.tools().len(), 15);
         for tool in [
             "get_pull_request",
             "list_comments",
             "reply_comment",
             "escalate_comment",
-            "mark_ready_for_review",
-            "report_pull_request",
             "open_pull_request",
             "complete_step",
             "fail_step",
@@ -824,13 +806,10 @@ pub(crate) mod tests {
                 "get_pull_request",
                 "list_comments",
                 "reply_comment",
-                "report_pull_request",
                 "resolve_thread",
                 "submit_review",
-                "wait_for_user",
-                "withdraw_wait_for_user",
             ],
-            "the pull request reviewer is listed eleven tools"
+            "the pull request reviewer is listed eight tools"
         );
         for tool in [
             "get_task",
@@ -886,9 +865,7 @@ pub(crate) mod tests {
                 "get_diff",
                 "get_pull_request",
                 "list_comments",
-                "mark_ready_for_review",
                 "reply_comment",
-                "report_pull_request",
                 "wait_for_user",
                 "withdraw_wait_for_user",
             ],
@@ -1029,10 +1006,6 @@ pub(crate) mod tests {
         };
         let description = |name: &str| tool(name).description.as_deref().unwrap().to_string();
         let schema = |name: &str| serde_json::to_string(&tool(name).input_schema).unwrap();
-        assert_eq!(
-            description("report_pull_request"),
-            "Tell Ariadne the state of your request. Set `ready` when readiness changes. Set `reviewed_sha` after a review round."
-        );
         assert!(description("list_tasks").contains("as a summary"));
         assert!(description("list_models").contains("models an agent can run on"));
         assert!(description("open_pull_request").contains("returns the URL"));

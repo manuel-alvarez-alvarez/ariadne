@@ -402,3 +402,27 @@ it("asks for another review round and shows the daemon refusal", async () => {
   )
   expect(await screen.findByText(/No review is asked/)).toBeTruthy()
 })
+
+it("asks for a keeper turn on a task kept request and shows the daemon refusal", async () => {
+  const writes: Request[] = []
+  daemon(() => ({ ...pull, origin_task_id: "task-1" }), writes)
+  const answer = daemonFetch.getMockImplementation()
+  daemonFetch.mockImplementation(async (input) => {
+    const request = input as Request
+    if (new URL(request.url).pathname.endsWith("/keeper-turn")) {
+      writes.push(request.clone())
+      return jsonResponse(
+        { error: { code: "conflict", message: "Nobody keeps this request" } },
+        409,
+      )
+    }
+    return answer?.(input) ?? jsonResponse(pull)
+  })
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await userEvent.click(await screen.findByRole("button", { name: "Keeper turn" }))
+  expect(writes.at(0)?.method).toBe("POST")
+  expect(new URL(writes.at(0)?.url ?? "").pathname).toBe(
+    `/v1/repositories/${pull.repository_id}/pull-requests/${pull.number}/keeper-turn`,
+  )
+  expect(await screen.findByText(/Nobody keeps this request/)).toBeTruthy()
+})

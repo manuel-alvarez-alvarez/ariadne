@@ -21,6 +21,7 @@ use ariadne_daemon::forge::poll::Mode;
 use ariadne_daemon::scheduler::SchedEvent;
 use ariadne_store::defaults::PULL_REQUEST_WORKFLOW;
 use ariadne_store::{AgentSession, NewPullRequest, SessionFilter, Task};
+use tower::ServiceExt;
 
 /// Where `pr create` says the task's request is.
 const URL: &str = "https://github.com/acme/widgets/pull/1";
@@ -509,8 +510,7 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     let news = h.prompts_to(&agent).pop().unwrap();
     assert!(
         news.contains(
-            "Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-             <<<untrusted>>>failure<<<end untrusted>>>"
+            "Failed checks: <<<untrusted>>>lint<<<end untrusted>>> (<<<untrusted>>>failure<<<end untrusted>>>)"
         ),
         "{news}"
     );
@@ -691,100 +691,22 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         );
     }
 
-    let report = |ready: bool| {
-        as_session(
-            &format!("/v1/pull-requests/{id}/report"),
-            &agent.id,
-            json!({"ready": ready, "head_sha": "a".repeat(40)}),
-        )
-    };
-    let dto: Value = h.json(report(true), StatusCode::OK).await;
-    assert_eq!(dto["ready"], true);
-    assert_eq!(h.attention(&agent).await, None);
-    let _: Value = h.json(report(false), StatusCode::OK).await;
-    assert_eq!(h.attention(&agent).await, None);
-
     let stranger = h.lone_session("stranger").await;
-    h.error(
-        as_session(
-            &format!("/v1/pull-requests/{id}/report"),
-            &stranger.id,
-            json!({"ready": true}),
-        ),
-        StatusCode::FORBIDDEN,
-    )
-    .await;
     h.error(
         get_as(&format!("/v1/pull-requests/{id}/comments"), &stranger.id),
         StatusCode::FORBIDDEN,
     )
     .await;
-    h.error(
-        post_json(
+    let response = h
+        .router
+        .clone()
+        .oneshot(post_json(
             &format!("/v1/pull-requests/{id}/report"),
             json!({"ready": true}),
-        ),
-        StatusCode::FORBIDDEN,
-    )
-    .await;
-
-    // An Ariadne self-review of the same request (029) also answers for
-    // it — `own_session` lets it call `/report` at all — but its own
-    // `ready` claim must never pass as the babysitting `pr` agent's
-    // (031): only the task's own column agent reports this row ready.
-    h.store
-        .set_pull_request_review_asked(
-            &id,
-            Some((
-                &ariadne_store::AgentPin {
-                    model: "stub:model".into(),
-                    effort: None,
-                },
-                &[],
-            )),
-        )
+        ))
         .await
         .unwrap();
-    let reviewer = h
-        .store
-        .create_session(ariadne_store::NewSession {
-            goal_id: None,
-            task_id: None,
-            seat: Some(ariadne_core::Seat::Reviewer),
-            task_agent_id: None,
-            model: "stub:model".into(),
-            effort: None,
-            worktree_path: None,
-            pull_request_id: Some(id.clone()),
-        })
-        .await
-        .unwrap();
-    h.error(
-        as_session(
-            &format!("/v1/pull-requests/{id}/report"),
-            &reviewer.id,
-            json!({"ready": true}),
-        ),
-        StatusCode::FORBIDDEN,
-    )
-    .await;
-    assert!(
-        !h.store.get_pull_request(&id).await.unwrap().ready,
-        "the reviewer's claim never lands"
-    );
-    // Its own `reviewed_sha` still goes through: that is legitimately
-    // its own report to make.
-    let dto: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/report"),
-                &reviewer.id,
-                json!({"reviewed_sha": "0".repeat(40)}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(dto["id"], id);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 /// The task's `pr` agent escalates a disputed thread with one call (026):
@@ -1674,7 +1596,7 @@ async fn a_route_level_read_failure_withdraws_the_readiness_item_and_its_recover
     let Kept {
         h,
         stub,
-        agent,
+        agent: _,
         id,
         repo,
         ..
@@ -1682,16 +1604,6 @@ async fn a_route_level_read_failure_withdraws_the_readiness_item_and_its_recover
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     fetch_again(&h, &stub, &repo).await;
 
-    let _: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/report"),
-                &agent.id,
-                json!({"ready": true, "head_sha": head}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
     let items = || async {
         ariadne_daemon::attention::collect(&h.store, &h.launcher)
             .await
@@ -1733,13 +1645,13 @@ async fn a_route_level_read_failure_withdraws_the_readiness_item_and_its_recover
 /// item, and publishes `pull_requests_changed` — held in `WakeOnly`
 /// throughout, so nothing but this direct read could have told anyone.
 #[tokio::test]
-async fn a_successful_route_level_read_withdraws_the_readiness_item_when_approval_is_dismissed() {
+async fn a_successful_route_level_read_withdraws_readiness_when_mergeability_is_blocked() {
     use ariadne_api::stream::DomainEvent;
     let head = "a".repeat(40);
     let Kept {
         h,
         stub,
-        agent,
+        agent: _,
         id,
         repo,
         ..
@@ -1747,16 +1659,6 @@ async fn a_successful_route_level_read_withdraws_the_readiness_item_when_approva
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     fetch_again(&h, &stub, &repo).await;
 
-    let _: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/report"),
-                &agent.id,
-                json!({"ready": true, "head_sha": head}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
     let items = || async {
         ariadne_daemon::attention::collect(&h.store, &h.launcher)
             .await
@@ -1771,7 +1673,7 @@ async fn a_successful_route_level_read_withdraws_the_readiness_item_when_approva
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
 
     let mut dismissed = ready_pull(&head);
-    dismissed["reviewDecision"] = json!("");
+    dismissed["mergeStateStatus"] = json!("BLOCKED");
     stub.reprogram(script_with_read(&head, &dismissed));
     let _: Value = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     assert!(
@@ -1802,7 +1704,7 @@ async fn a_first_successful_route_level_read_creates_the_readiness_item_and_publ
     let Kept {
         h,
         stub,
-        agent,
+        agent: _,
         id,
         repo,
         ..
@@ -1810,16 +1712,6 @@ async fn a_first_successful_route_level_read_creates_the_readiness_item_and_publ
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     fetch_again(&h, &stub, &repo).await;
 
-    let _: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/report"),
-                &agent.id,
-                json!({"ready": true, "head_sha": head}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
     let items = || async {
         ariadne_daemon::attention::collect(&h.store, &h.launcher)
             .await
@@ -1862,60 +1754,6 @@ async fn a_first_successful_route_level_read_creates_the_readiness_item_and_publ
             .await
             .is_err(),
         "a repeated, unchanged read publishes nothing more"
-    );
-}
-
-/// A push lands, through the real forge fetch path, between the agent's
-/// own read of the request and its `ready` report: the report must still
-/// bind to the head the agent actually read, not to whatever the daemon's
-/// own cache has moved on to by the time the call lands (031). Confirming
-/// readiness for a revision the agent never actually inspected would let
-/// a stale confirmation pass for a push it never saw.
-#[tokio::test]
-async fn a_ready_report_binds_the_head_the_agent_actually_read_not_a_later_push() {
-    let old_head = "a".repeat(40);
-    let new_head = "b".repeat(40);
-    let Kept {
-        h,
-        stub,
-        agent,
-        id,
-        repo,
-        ..
-    } = kept_request(script_for_head(&old_head)).await;
-    // The agent's own read: the request is on the old head.
-    assert_eq!(
-        h.launcher.live.get(&id).map(|l| l.pull.head_sha),
-        Some(old_head.clone())
-    );
-
-    // A push lands before the agent gets to report: the next fetch reads
-    // the request whole, on its new head.
-    stub.reprogram(script_for_head(&new_head));
-    fetch_again(&h, &stub, &repo).await;
-    eventually(TIMEOUT, "the cache to read the pushed head", async || {
-        h.launcher.live.get(&id).map(|l| l.pull.head_sha) == Some(new_head.clone())
-    })
-    .await;
-
-    // The agent reports ready on the head it actually read — the old
-    // one, never the pushed one it never saw.
-    let dto: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/report"),
-                &agent.id,
-                json!({"ready": true, "head_sha": old_head}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(dto["ready"], true);
-    let row = h.store.get_pull_request(&id).await.unwrap();
-    assert_eq!(
-        row.ready_head_sha.as_deref(),
-        Some(old_head.as_str()),
-        "the report binds to the head the agent read, not the cache's current one"
     );
 }
 
@@ -2291,8 +2129,7 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
             .iter()
             .filter(|p| {
                 p.contains(
-                    "Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-                     <<<untrusted>>>failure<<<end untrusted>>>",
+                    "Failed checks: <<<untrusted>>>lint<<<end untrusted>>> (<<<untrusted>>>failure<<<end untrusted>>>)",
                 )
             })
             .count()
@@ -2532,6 +2369,95 @@ async fn the_posting_api_has_no_supervision_controls() {
             schema["paths"]
                 .get(format!("/v1/pull-requests/{{id}}/{route}"))
                 .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_keeper_turn_wakes_a_task_kept_request_and_refuses_an_unkept_request() {
+    let Kept {
+        h,
+        stub,
+        agent,
+        repo,
+        ..
+    } = kept_request_running(script("OPEN", &[], json!([]))).await;
+    fetch_again(&h, &stub, &repo).await;
+    let path = format!("/v1/repositories/{repo}/pull-requests/1/keeper-turn");
+    let response = h
+        .router
+        .clone()
+        .oneshot(Request::post(&path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    eventually(TIMEOUT, "the keeper turn", async || {
+        h.prompts_to(&agent)
+            .iter()
+            .any(|p| p.contains("Read the request again"))
+    })
+    .await;
+    let response = h
+        .router
+        .clone()
+        .oneshot(post_json(
+            &format!("/v1/repositories/{repo}/pull-requests/999/keeper-turn"),
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn the_daemon_promotes_only_its_own_checked_draft_once_per_head() {
+    for author in ["me", "another-author"] {
+        let head = "a".repeat(40);
+        let mut read = ready_pull(&head);
+        read["author"]["login"] = json!(author);
+        read["isDraft"] = json!(true);
+        read["mergeStateStatus"] = json!("DRAFT");
+        read["mergeable"] = json!("MERGEABLE");
+        let mut script = script_with_read(&head, &read);
+        let entries = script.as_array_mut().unwrap();
+        entries.insert(
+            0,
+            answer(
+                &["api", "repos/acme/widgets/pulls/1"],
+                0,
+                r#"{"node_id":"PR_one"}"#,
+            ),
+        );
+        entries.insert(0, answer(&["api", "graphql", "--hostname", "github.com", "-f", "query=mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"], 0, r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}"#));
+        let Kept { h, stub, repo, .. } = kept_request_running(script).await;
+        assert!(
+            stub.invocations().iter().any(|call| call
+                .args
+                .windows(2)
+                .any(|args| args[0] == "--json"
+                    && args[1].split(',').any(|field| field == "mergeable"))),
+            "the forge read must request conflict evidence"
+        );
+        let marks = || {
+            stub.invocations()
+                .iter()
+                .filter(|c| {
+                    c.args
+                        .iter()
+                        .any(|arg| arg.contains("markPullRequestReadyForReview"))
+                })
+                .count()
+        };
+        if author == "me" {
+            eventually(TIMEOUT, "the draft promotion", async || marks() == 1).await;
+        }
+        fetch_again(&h, &stub, &repo).await;
+        assert_eq!(marks(), usize::from(author == "me"));
+        assert!(
+            ariadne_daemon::attention::collect(&h.store, &h.launcher)
+                .await
+                .items
+                .is_empty()
         );
     }
 }

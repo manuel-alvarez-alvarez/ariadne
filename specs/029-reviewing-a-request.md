@@ -215,7 +215,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 11. The reviewer PR seat lists `get_pull_request`, `get_diff`,
     `list_comments`, `get_comment`, `reply_comment`, `escalate_comment`,
-    `resolve_thread`, `submit_review` and `report_pull_request`, and no task
+    `resolve_thread` and `submit_review`, and no task
     tool and no message tool (013). The user reaches the session through its
     console (008). `escalate_comment` takes a `comment_id` of a comment the
     review posted alone: a `from_review` comment of the integration login.
@@ -285,37 +285,13 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 14. Every `event` but `request_changes` and `comment` answers 400 before the
     forge sees a call. A forge approval is refused above all: the user gives
     it. No route approves on the forge or merges.
-15. `report_pull_request` takes `reviewed_sha`, a hex sha, on a reviewer row,
-    or on a row of the user's own with `review_asked`, alone, and `ready`,
-    whether the keeping agent believes every required approval and
-    check reads green — a task's column agent, or a keeper session on a
-    request asked for by hand (032) — together with `head_sha`, the hex sha
-    of the head it actually read before confirming readiness. A `ready: true`
-    report with no `head_sha`, or one that fails the same hex-sha check as
-    `reviewed_sha`, is refused with 400: a readiness claim binds to a
-    revision, never floats free of one. `pull_requests.reviewed_sha`,
-    `pull_requests.ready` and `pull_requests.ready_head_sha` are written,
-    and none raises anything of its own on the session: a pr-reviewer
-    session finishing its review must notify nobody, and a `ready` claim
-    alone is not confirmed evidence. The `pull_request` attention producer
-    (031 rule 13) reads the forge's own evidence against the request's
-    current state instead of trusting either call, and withholds the
-    readiness item once a later push leaves `ready_head_sha` behind the
-    request's current head.
-15a. Ariadne holds no approval of its own for a request. The Ariadne
-    approval this rule once gave — `approved` on `report_pull_request`, the
-    `pull_request_approvals` table, `PullRequestDto.ariadne_approval`, the
-    **Ariadne approved** pill and the `ariadne approval` column — is
-    retired: rule 7 makes checks no news to a reviewer, so a reviewer
-    session never learns when to approve, and the shipped `pr-reviewer`
-    names no Ariadne approval (rule 17). `report_pull_request` takes no
-    `approved`, and `POST /v1/pull-requests/{id}/report` refuses a body that
-    carries one with 422 `invalid_request`, from every session. `head_sha` stays for `ready:
-    true` (rule 15). Migration 0009 drops `pull_request_approvals`, and no
-    store code reads or writes it. The forge approval is the user's alone
-    (rule 14), and the only approval any answer names is the forge's own
-    `review_decision`.
-16. Diffs, reviews and reports are accepted from the request's own session
+15. `submit_review` writes `pull_requests.reviewed_sha` from the head of the checkout the round reviewed,
+    and posts the review on that head, not on a live forge head fetched since
+    (`pull_request_reviews.rs::a_submitted_review_stores_the_checkout_head_when_the_forge_head_moved`).
+    No session reports readiness. The daemon decides from forge evidence (031 rule 15).
+15a. Ariadne holds no approval of its own for a request. The user gives approval.
+    No tool approves or merges.
+16. Diffs and reviews are accepted from the request's own session
     alone. Another session, or a call with no session, gets 403.
 16a. `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` resolves
     the thread of that comment on the forge, and fetches the repository
@@ -394,18 +370,18 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
     A draft gets the same round. News of a head equal to the reviewed
     revision needs no tool call. Where the head moves during a round, the
-    session reports the revision it reviewed. The round ends on one result
+    daemon records the revision the round reviewed. The round ends on one result
     in the turn text, in a literal shape: `Reviewed <sha>: comment with <n>
     findings.`, with `0` for a round with no new finding, then one line per
     finding, ending `unverified` where its reproduction failed, settled
     thread, check, failed tool call and defect outside the diff. That text
     is all the user reads of a round that posts nothing. The round ends on
-    `submit_review` and `report_pull_request` alone: the skill states that
+    `submit_review` alone: the skill states that
     a step call another skill names — `complete_step` or `fail_step` in a
     picked `code-review` or `documentation` — is the task seat's, and that
     this seat has none, since the seat lists neither tool (rule 11).
 
-18. A review posted, or a request reported ready, notifies nobody by
+18. A review posted notifies nobody by
     itself: the approval and the merge stay the user's to give in their own
     time, and only the `pull_request` attention producer's own readiness
     item (031), confirmed against the forge's own evidence, tells the user
@@ -536,14 +512,6 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
 - A round body does not answer an earlier conversation comment:
   `forge::live::tests::a_round_body_does_not_answer_a_conversation_comment`.
-- Ariadne holds no approval of its own (rule 15a): a report that sets
-  `approved` answers 422 even from the review session on the current head,
-  and the request carries no `ariadne_approval` field:
-  `pull_request_reviews.rs::a_report_with_approved_is_refused_and_a_request_carries_no_ariadne_approval`.
-  A migrated database has no `pull_request_approvals` table:
-  `store.rs::a_migrated_database_has_no_pull_request_approvals_table`.
-  The reviewer tool sends `reviewed_sha` with `head_sha` and no `approved`:
-  `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
 - The desktop's request panel starts an Ariadne review of any open request
   on the model and skills picked in its dialog — `pr-reviewer` always on and
   nothing else picked to start with — closes the dialog and opens the new
@@ -555,7 +523,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   that asks for the user's review offers the same manual start as a
   request of the user's own, on every repository:
   `::offers a manual Start review on every request that asks for my review`.
-- Neither a posted review nor a `ready` report raises a row, a toast or a
+- No posted review raises a row, a toast or a
   badge of its own: a pull request session's own `waiting_user` carries no
   reason this board, the strip or the sessions screen's filter reads any
   more
