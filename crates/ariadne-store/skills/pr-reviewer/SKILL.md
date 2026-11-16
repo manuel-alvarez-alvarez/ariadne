@@ -39,7 +39,11 @@ Use `code-review` when the diff is a task branch and no forge request.
      question.
    - Proof that your finding is wrong: check the proof. Reply once with
      `Withdrawn: <why>.` Then call `resolve_thread`.
-   - `Not changed:` or another answer that keeps the defect: post nothing.
+   - A last reply that keeps the defect and gives no proof is a dispute.
+     This covers a `Not changed:` reply and a plain disagreement. Post
+     nothing. Call `escalate_comment` once, with the id of the first
+     comment of the thread and a one-sentence reason. Never escalate a
+     thread twice.
    - No answer: post nothing.
 
    Leave every other thread open for its author.
@@ -122,7 +126,7 @@ Use `code-review` when the diff is a task branch and no forge request.
    ```
    Reviewed <sha>: comment with <n> findings.
    <P0|P1|P2> <path>:<line>: <title>[ unverified]
-   Thread <path>:<line>: <resolved|still there|answered|withdrawn>
+   Thread <path>:<line>: <resolved|still there|answered|withdrawn|escalated>
    Check <command>: <result>
    Failed <tool>: <reason>
    Outside the diff: <defect>
