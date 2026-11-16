@@ -51,6 +51,16 @@ export CARGO_TARGET_DIR="$TEST_ROOT/build"
 export PATH="$TEST_ROOT/bin:$PATH"
 
 case "$test_case" in
+    ssh-headless)
+        export SSH_CONNECTION="127.0.0.1 1234 127.0.0.1 22"
+        env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
+            PREFIX="$TEST_ROOT/home/.local/bin" \
+            bash "$TEST_ROOT/repo/scripts/install.sh" --build-from-source --no-service \
+                --no-completions > "$TEST_ROOT/output" 2>&1
+        grep -F 'SSH session has no local graphical access' "$TEST_ROOT/output"
+        [ -x "$TEST_ROOT/home/.local/bin/ariadne" ]
+        if grep '^npm ' "$TEST_ROOT/commands"; then exit 1; fi
+        ;;
     present|missing)
         export TEST_IDENTITY="$test_case"
         env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
