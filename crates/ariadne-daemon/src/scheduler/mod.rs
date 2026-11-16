@@ -15,6 +15,7 @@
 pub(crate) mod auto_switch;
 mod coalesce;
 mod goals;
+mod head_settle;
 mod messages;
 mod pull_requests;
 mod quiet;
@@ -186,14 +187,9 @@ pub(crate) struct Scheduler {
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
     pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
-    /// The head a request showed on the last review pass, and since when it
-    /// has shown it, by pull request id: a push is told to the review
-    /// session only once its head stood still for `review_push_settle`. In
-    /// memory, so a restart starts the interval again.
-    review_head_seen: HashMap<String, (String, Instant)>,
-    /// How long a head must stand still before a review session is told of
-    /// a push (`Timeouts::review_push_settle`).
-    review_push_settle: Duration,
+    /// How long each request's head has stood still, for the push a review
+    /// session is told of. In memory, so a restart starts the interval again.
+    head_settle: head_settle::HeadSettle,
     /// Next permitted periodic forge read of an open kept request.
     pull_request_read_retry: HashMap<String, Instant>,
     /// The skills a request's live keeper session last ran with, by pull
@@ -230,8 +226,7 @@ pub fn start(
         goal_told: HashMap::new(),
         exhausted_notices: HashMap::new(),
         pull_request_cleanup_retry: HashMap::new(),
-        review_head_seen: HashMap::new(),
-        review_push_settle: timeouts.review_push_settle,
+        head_settle: head_settle::HeadSettle::new(timeouts.review_push_settle),
         pull_request_read_retry: HashMap::new(),
         keeper_skills_applied: HashMap::new(),
         sleep: SleepInhibitor::new(),

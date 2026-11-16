@@ -305,7 +305,7 @@ impl super::Scheduler {
         }
         self.launcher.live.remove(id);
         self.pull_request_cleanup_retry.remove(id);
-        self.review_head_seen.remove(id);
+        self.head_settle.forget(id);
         self.pull_request_read_retry.remove(id);
         self.keeper_skills_applied.remove(id);
         Ok(())
@@ -740,20 +740,13 @@ impl super::Scheduler {
         };
         // A push is news only once the head stood still for the settle
         // interval, so a run of commits is one round on the last head.
-        let now = Instant::now();
-        let since = match self.review_head_seen.get(&pull.id) {
-            Some((head, since)) if *head == pull.head_sha => *since,
-            _ => {
-                self.review_head_seen
-                    .insert(pull.id.clone(), (pull.head_sha.clone(), now));
-                now
-            }
-        };
+        let settled = self
+            .head_settle
+            .settled(&pull.id, &pull.head_sha, Instant::now());
         let pushed = pull
             .told_head_sha
             .as_deref()
             .is_some_and(|told| told != pull.head_sha);
-        let settled = now.duration_since(since) >= self.review_push_settle;
         if pushed && !settled {
             // The push is held back, and the rest of the news goes on: the
             // session is shown the head it was told, so no line names the

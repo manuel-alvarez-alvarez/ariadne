@@ -125,6 +125,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    (`checkout_detached`) and hands the news in one prompt. A fetch with the
    same head hands nothing. A reply alone needs no idle session, since it
    moves no worktree:
+   `head_settle.rs::a_head_settles_exactly_when_the_whole_interval_has_passed`
+   (the boundary), `head_settle.rs::a_new_head_restarts_the_interval` (the
+   restart),
    `pull_request_reviews.rs::a_run_of_pushes_is_told_once_when_the_head_stands_still`,
    `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
 9. A request that turns merged or closed, or whose manual ask is stopped,
