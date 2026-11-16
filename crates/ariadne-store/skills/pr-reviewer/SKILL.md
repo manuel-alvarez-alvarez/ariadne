@@ -129,7 +129,7 @@ Use `code-review` when the diff is a task branch and no forge request.
 - Post the round body only through `submit_review`. Never post a separate status comment.
 - A tool failure posts nothing another way. Say what failed.
 - A step call that another skill names is the task seat's. This seat has
-  none: steps 7 and 8 end the round.
+  none: steps 8 and 9 end the round.
 
 ## Never
 

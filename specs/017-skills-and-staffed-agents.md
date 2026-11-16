@@ -227,7 +227,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     and that skill ends the round: a review session (029) loads it beside
     `pr-reviewer` — 18 of 48 review goals did — and has neither tool.
     `pr-reviewer` states once that a step call another skill names is the
-    task seat's, and that its own steps 7 and 8 end the round, so a picked
+    task seat's, and that its own steps 8 and 9 end the round, so a picked
     skill such as `documentation` cannot send the seat to a tool it lacks.
     `architecture-review` adds its findings to the one
     verdict of the skill loaded beside it, as one `Architecture` line

@@ -194,7 +194,7 @@ fn architecture_review_adds_to_the_one_verdict_of_its_column() {
     // A picked skill may still name one: the seat says whose it is.
     assert!(
         pr.contains(
-            "A step call that another skill names is the task seat's. This seat has none: steps 7 and 8 end the round."
+            "A step call that another skill names is the task seat's. This seat has none: steps 8 and 9 end the round."
         ),
         "the pr-reviewer skill does not disown a step call another skill names"
     );
@@ -302,7 +302,7 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "News of a head equal to the reviewed revision needs no tool call.",
         "Where the head moves during a round, report the revision you reviewed.",
         "A round with no new finding has `Reviewed <sha>: nothing new.` as its first line.",
-        "This seat has none: steps 7 and 8 end the round.",
+        "This seat has none: steps 8 and 9 end the round.",
         "Never land the request.",
         "Never edit a file.",
     ] {
