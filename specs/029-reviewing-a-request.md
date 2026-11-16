@@ -372,7 +372,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     revision needs no tool call. Where the head moves during a round, the
     session reports the revision it reviewed. The round ends on one result
     in the turn text, in a literal shape: `Reviewed <sha>: comment with <n>
-    findings.`, or `Reviewed <sha>: nothing new.`, then one line per
+    findings.`, with `0` for a round with no new finding, then one line per
     finding, ending `unverified` where its reproduction failed, settled
     thread, check, failed tool call and defect outside the diff. That text
     is all the user reads of a round that posts nothing. The round ends on

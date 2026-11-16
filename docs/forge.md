@@ -198,7 +198,7 @@ says whether the author must change the code: for example `Changes
 required: fix the P1 before this lands.` or `No change required.` The
 review posts no status table, separate summary comment, or summary draft.
 Each round ends on one result in the session's console: `Reviewed <sha>:
-comment with <n> findings.`, or `Reviewed <sha>: nothing new.`, then one
+comment with <n> findings.`, with `0` where the round found nothing new, then one
 line per finding, ending `unverified` where the reviewer could not
 reproduce it, and one per settled thread, check and failed tool call.
 

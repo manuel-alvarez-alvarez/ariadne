@@ -257,6 +257,7 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "Without one it is P2.",
         "one line per new finding",
         "one line per check",
+        "nothing new",
     ] {
         assert!(!doc.contains(gone), "the pr-reviewer skill keeps {gone}");
     }
@@ -320,7 +321,7 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "A draft gets the same round.",
         "News of a head equal to the reviewed revision needs no tool call.",
         "Where the head moves during a round, report the revision you reviewed.",
-        "A round with no new finding has `Reviewed <sha>: nothing new.` as its first line.",
+        "A round with no new finding has `Reviewed <sha>: comment with 0 findings.` as its first line.",
         "This seat has none: steps 8 and 9 end the round.",
         "Never land the request.",
         "Never edit a file.",
