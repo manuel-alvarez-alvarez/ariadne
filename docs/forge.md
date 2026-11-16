@@ -219,7 +219,11 @@ again in that thread. A question gets one short answer. A reply that
 proves the finding wrong gets one `Withdrawn: <why>.` reply, and the
 reviewer resolves the thread. Any other answered reply that leaves the defect in
 place — a `Not changed:` reply, or any other — gets no reply back and the thread stays open for the user to settle. A
-thread nobody has answered gets nothing: it waits. On a request a task's
+thread nobody has answered gets nothing: it waits. Where the keeping
+agent and the reviewer still dispute a thread the review opened, the
+reviewer escalates it with `escalate_comment` and posts no comment for it.
+The thread reaches you in [Needs attention](#needs-attention-an-unassigned-review-a-ready-request-an-escalated-thread)
+as an escalated thread. On a request a task's
 agent keeps, the review's findings go to that agent like anyone else's
 comments, though they are posted under your login: it answers each one,
 and fixes what needs fixing.
@@ -299,7 +303,7 @@ panel:
   reports ready again, on the new head. The merge itself is still always
   yours: Ariadne gives no approval.
 - **An escalated thread** — one item for each review thread the keeping
-  agent escalated with `escalate_comment`, because it and the reviewer
+  agent or the reviewer escalated with `escalate_comment`, because the two
   disagree. The item names the thread by its path and its first line, and
   gives the agent's reason. Ariadne posts nothing on the forge for it.
   Answer or resolve the thread on the forge: a resolve, or any later

@@ -719,8 +719,9 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     (`forge/github/pulls.rs::tests::mergeable_reads_every_merge_state_status_by_its_documented_meaning`,
     `::a_read_naming_no_merge_state_status_is_unknown`).
 17. An escalation item (`AttentionCause::Unknown`) is raised for each
-    thread the request's keeping agent escalated with `escalate_comment`
-    (026 rule 15). Two escalated comments of one thread are one item. The
+    thread the request's keeping agent or its review session escalated
+    with `escalate_comment` (026 rule 15, 029 rule 11). The item is the
+    same whichever seat escalated. Two escalated comments of one thread are one item. The
     thread's latest escalation names it: the store stamps each escalation
     of a request later than every earlier one, by a millisecond where the
     clock has not moved. Its id is
@@ -1238,6 +1239,10 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   dismissal hides the thread whole, and a new escalation in it brings one
   item back
   (`attention.rs::two_escalated_comments_of_one_thread_at_one_time_raise_one_item`).
+- A review session's escalation of a thread its review opened raises the
+  same item, with the same summary, action, target and dating, and clears
+  the same way
+  (`attention.rs::a_review_sessions_escalation_raises_the_same_item_as_a_keepers`).
 - A mergeability-only transition still publishes `pull_requests_changed`,
   both directions, and an unchanged fetch after it still raises nothing:
   (`pull_requests.rs::a_mergeability_only_transition_publishes_pull_requests_changed`).

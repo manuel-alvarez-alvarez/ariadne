@@ -217,9 +217,17 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 ## Tools and routes
 
 11. The reviewer PR seat lists `get_pull_request`, `get_diff`,
-    `list_comments`, `reply_comment`, `resolve_thread`, `submit_review` and
-    `report_pull_request`, and no task tool and no message tool (013). The
-    user reaches the session through its console (008).
+    `list_comments`, `get_comment`, `reply_comment`, `escalate_comment`,
+    `resolve_thread`, `submit_review` and `report_pull_request`, and no task
+    tool and no message tool (013). The user reaches the session through its
+    console (008). `escalate_comment` takes a `comment_id` of a comment the
+    review posted alone: a `from_review` comment of the integration login.
+    The route refuses any other comment with 403 (026 rule 15). The thread
+    reaches Needs attention as the keeping agent's escalation does (031
+    rule 17):
+    `kept_requests.rs::the_review_session_escalates_only_a_comment_the_review_posted`,
+    `attention.rs::a_review_sessions_escalation_raises_the_same_item_as_a_keepers`,
+    `mcp.rs::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`.
 12. `GET /v1/pull-requests/{id}/diff?since=` answers `git diff <base>...HEAD`
     in the session's worktree, or `git diff <since>..HEAD` only where `since`
     is an ancestor of the current head. The base is `<remote>/<base_branch>`
@@ -375,7 +383,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     answered reply that leaves the defect in place —
     `Not changed: ...` or any other — gets nothing back and stays open for
     the user; a thread nobody has
-    answered gets nothing; it waits.
+    answered gets nothing; it waits. Where the keeping agent and the
+    reviewer still dispute a thread the review opened, the session escalates
+    it with `escalate_comment` (rule 11) and posts no comment for it. The user
+    sees it in Needs attention, as one item for the thread, the same item the
+    keeping agent's escalation raises (031 rule 17).
 
     A draft gets the same round. News of a head equal to the reviewed
     revision needs no tool call. Where the head moves during a round, the
@@ -400,6 +412,20 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 ## Acceptance criteria
 
+- The review session escalates a thread its own review opened: a
+  `from_review` comment of the integration login gets 200, posts nothing on
+  the forge and marks the comment. Any other comment gets 403 and no mark
+  (rule 11):
+  `kept_requests.rs::the_review_session_escalates_only_a_comment_the_review_posted`.
+- The reviewer seat lists `escalate_comment` beside its request tools, and
+  no other seat gains it (rule 11):
+  `mcp.rs::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
+  `::every_seat_has_the_tools_its_playbook_names_and_no_others`.
+- The tool calls the escalate route of the session's request (rule 11):
+  `tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
+- A review session's escalation raises the same item as a keeper's
+  (rule 17, 031 rule 17):
+  `attention.rs::a_review_sessions_escalation_raises_the_same_item_as_a_keepers`.
 - A Dependabot request without a review assignment starts a reviewer, keeps
   it after the forge confirms no assignment, loads the picked skills, and
   stops it on explicit stop:
@@ -469,7 +495,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::the_diff_reads_the_worktree_against_its_base_and_since_narrows_it`.
 - The reviewer briefing fills every placeholder it names:
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
-- The reviewer PR seat lists its ten tools and no task or message tool,
+- The reviewer PR seat lists its eleven tools and no task or message tool,
   and its tools call the routes of its request:
   `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.

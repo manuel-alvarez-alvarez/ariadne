@@ -893,7 +893,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Escalate a disputed thread of your pull request to the user, by the `comment_id` of a comment in it. Give a short `reason`. Ariadne posts nothing on the forge. The user sees the thread in Needs attention until a human answers or resolves it."
+        description = "Escalate a disputed thread of the pull request to the user, by the `comment_id` of a comment in it. Give a short `reason`. Ariadne posts nothing on the forge. The user sees the thread in Needs attention until a human answers or resolves it."
     )]
     async fn escalate_comment(
         &self,
@@ -1512,7 +1512,8 @@ mod tests {
 
     /// The tools of a reviewer pull request session reach the routes of its
     /// own request (029): the diff from a sha, one review with its findings
-    /// and their priorities, and the report of the reviewed sha.
+    /// and their priorities, the report of the reviewed sha, the resolve of a
+    /// thread it opened and the escalation of one.
     #[tokio::test]
     async fn the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request() {
         let (endpoint, seen) = recording_daemon().await;
@@ -1550,6 +1551,12 @@ mod tests {
         }))
         .await
         .expect("resolve");
+        mcp.escalate_comment(Parameters(EscalateCommentReq {
+            comment_id: "rc-9".into(),
+            reason: "The author refused the finding twice.".into(),
+        }))
+        .await
+        .expect("escalate");
 
         let seen = seen.lock().expect("lock").clone();
         let calls: Vec<(String, String)> = seen
@@ -1566,7 +1573,15 @@ mod tests {
                     "POST".into(),
                     "/v1/pull-requests/01PR/comments/01C/resolve".into()
                 ),
+                (
+                    "POST".into(),
+                    "/v1/pull-requests/01PR/comments/rc-9/escalate".into()
+                ),
             ]
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&seen[4].body).expect("json"),
+            serde_json::json!({"reason": "The author refused the finding twice."})
         );
         let review: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
         assert_eq!(

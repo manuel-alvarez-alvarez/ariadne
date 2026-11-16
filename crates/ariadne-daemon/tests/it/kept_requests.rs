@@ -790,8 +790,10 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
 /// The task's `pr` agent escalates a disputed thread with one call (026):
 /// the comment's mark takes the time and the reason, and the forge sees no
 /// call at all. A comment the request does not hold is 404. A reviewer
-/// session of the same request, any other session and a call from no
-/// session are refused.
+/// session of the same request may escalate only its own comment (see
+/// `the_review_session_escalates_only_a_comment_the_review_posted`); here
+/// it escalates another side's and is refused, as are any other session and
+/// a call from no session.
 #[tokio::test]
 async fn the_pr_agent_escalates_a_thread_without_a_forge_call_and_no_other_session_may() {
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
@@ -868,6 +870,82 @@ async fn the_pr_agent_escalates_a_thread_without_a_forge_call_and_no_other_sessi
     )
     .await;
     assert_eq!(stub.invocations().len(), before, "a refusal calls no forge");
+}
+
+/// The request's review session escalates a thread it opened (029): a
+/// `from_review` comment of the integration login. Any other comment is
+/// 403 for it: another side's comment, a comment of the login the review
+/// did not post, and a review's comment under another login. The call posts
+/// nothing on the forge.
+#[tokio::test]
+async fn the_review_session_escalates_only_a_comment_the_review_posted() {
+    let comments = [
+        review_comment(101, "alice", None, "2026-10-02T00:00:00Z"),
+        review_comment(102, "me", None, "2026-10-02T00:01:00Z"),
+        review_comment(103, "me", None, "2026-10-02T00:02:00Z"),
+        review_comment(104, "alice", None, "2026-10-02T00:03:00Z"),
+    ];
+    let Kept { h, stub, id, .. } = kept_request(script("OPEN", &comments, json!([]))).await;
+    // The review posted 102 and 104; 103 is the login's own, not the review's.
+    h.store
+        .mark_review_comments(&id, &["rc-102".to_string(), "rc-104".to_string()])
+        .await
+        .unwrap();
+    let escalate = |comment: &str| format!("/v1/pull-requests/{id}/comments/{comment}/escalate");
+    let reason = json!({"reason": "The author refused my finding twice."});
+    let reviewer = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(id.clone()),
+        })
+        .await
+        .unwrap();
+    let before = stub.invocations().len();
+    for refused in ["rc-101", "rc-103", "rc-104"] {
+        h.error(
+            as_session(&escalate(refused), &reviewer.id, reason.clone()),
+            StatusCode::FORBIDDEN,
+        )
+        .await;
+    }
+    let marks = h.store.pull_request_comment_marks(&id).await.unwrap();
+    assert!(
+        marks.iter().all(|m| m.escalated_at.is_none()),
+        "a refusal marks nothing"
+    );
+    let escalated: Value = h
+        .json(
+            as_session(&escalate("rc-102"), &reviewer.id, reason),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(escalated["id"], "rc-102");
+    let mark = h
+        .store
+        .pull_request_comment_marks(&id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.forge_id == "rc-102")
+        .expect("the escalated comment's mark");
+    assert!(mark.escalated_at.is_some());
+    assert!(mark.from_review, "the review's own mark stays");
+    assert_eq!(
+        mark.escalation_reason.as_deref(),
+        Some("The author refused my finding twice.")
+    );
+    assert_eq!(
+        stub.invocations().len(),
+        before,
+        "no call reaches the forge"
+    );
 }
 
 /// `open_pull_request`'s body reaches the forge without a trailer an
