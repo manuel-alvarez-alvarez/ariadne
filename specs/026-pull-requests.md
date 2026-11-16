@@ -167,11 +167,12 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 12. `forge/news.rs` computes what the session has not been told: comments of the other side with no `told_at` mark in a thread nobody answered or resolved, checks that turned to failure, a rolled-up check state that changed, `behind_base` that turned true, a review decision that changed, and a state that turned `merged` or `closed`.
     The check state is what a ready report turns on: checks that end green after an approval, or go back to pending after a report, are news.
     The prompt lists each item on one line, and names each comment by its id.
+    While `checks` reads `pending`, the news carries no failed-check line, whatever `failed_checks` names. When `checks` turns `failure`, one prompt lists every failed check of the head, one line each, a check told before the turn included. While `checks` stays `failure`, a check that fails and was not told yet is told.
 13. The scheduler hands the news as a `session/prompt`, queued behind a running turn (009 rule 6).
     A session still `starting` gets the news once it has its briefing.
     A fetch that finds nothing new hands nothing.
 14. Each change is told once (009 rule 4).
-    A told comment's mark carries `told_at`. The row keeps a told mark for the rest: the failed checks by name, `behind_base`, the check state, the review decision and the state.
+    A told comment's mark carries `told_at`. The row keeps a told mark for the rest: the failed checks by name (a failed check is marked only when its line is told, so never while `checks` reads `pending`), `behind_base`, the check state, the review decision and the state.
     The ACP driver writes both right before the prompt goes out, as it claims an agent message (018). A prompt that never went out, a kill before it included, gives them back.
     The claim is a compare and set: it holds only while the row still carries the mark the news was computed from, and every comment it names is untold. A stale news is refused, its prompt is skipped, and the next pass computes the news again.
     News of a request still queued is not queued again.
@@ -507,6 +508,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `workflow_pull_request.rs::a_close_is_told_to_the_pr_agent_and_finishes_nothing`.
 - A check that recovers and fails again is told again:
   `kept_requests.rs::a_check_that_recovers_and_fails_again_is_told_again`.
+- While the checks read `pending` no failed check is told or marked, and when they turn `failure` every failed check is told in one prompt:
+  `forge/news.rs::tests::failed_checks_are_told_as_one_list_when_the_rollup_is_final`.
+- A turn to `failure` lists a check that was told before the checks went back to pending:
+  `forge/news.rs::tests::a_turn_to_failure_lists_a_check_told_before_it`.
 - The detail read reads every page of threads and check runs:
   `kept_requests.rs::the_detail_fetch_reads_every_page_of_threads_and_check_runs`.
 - A closed request the user reviews deletes no branch, and its row goes:
