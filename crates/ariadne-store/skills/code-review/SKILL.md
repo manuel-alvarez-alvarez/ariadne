@@ -68,9 +68,11 @@ Use `pr-reviewer` when the diff is an open forge request.
    ```
 
    Done when every Criteria number has one line.
-9. Open each must-fix finding with `Trigger:`. On a must-fix finding, call
-   `fail_step` with the return report. Else call `complete_step` with the
-   verdict and the optional findings.
+9. Open each must-fix finding with `Trigger:`. The two step calls are the
+   task seat's. On a must-fix finding, call `fail_step` with the return
+   report. Else call `complete_step` with the verdict and the optional
+   findings. Beside `pr-reviewer`, post each finding as that skill says.
+   That skill ends the round.
 
    Done when `git rev-parse HEAD` prints the reviewed revision and the
    column has ended.
