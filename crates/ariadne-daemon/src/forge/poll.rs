@@ -729,7 +729,9 @@ async fn read_row(
     }
     let requested = review_requested(handoff, client, slug, login, row, &read, asks).await;
     if row.role == "reviewer" {
-        handoff.live.observe_review_request(&row.id, requested);
+        handoff
+            .live
+            .observe_review_request(&row.id, asks && read.state == "open");
     }
     if read.state != "open" {
         handoff.live.set_pull(&row.id, read, requested);

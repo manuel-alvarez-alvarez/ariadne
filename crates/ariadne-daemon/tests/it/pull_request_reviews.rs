@@ -2456,6 +2456,28 @@ async fn a_review_round_needs_an_ask_and_runs_on_the_current_head() {
     fetch_again(&h, &stub, &repo).await;
     tokio::time::sleep(QUIET).await;
     assert_eq!(h.prompts_to(&session).len(), count + 2);
+    idle_session(&h, &id).await;
+    stub.reprogram(script(&Shown {
+        listed: false,
+        timeline: &["review_requested", "reviewed"],
+        ..Shown::open(&third)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    assert!(
+        h.state.launcher.live.get(&id).unwrap().review_requested,
+        "the completed review keeps its ask"
+    );
+    stub.reprogram(script(&Shown {
+        timeline: &["review_requested", "reviewed", "review_requested"],
+        ..Shown::open(&third)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(
+        TIMEOUT,
+        "the re-request after a completed review",
+        async || h.prompts_to(&session).len() == count + 3,
+    )
+    .await;
     let doc: Value = h.get("/api-docs/openapi.json").await;
     assert!(doc["paths"]["/v1/repositories/{id}/pull-requests/{number}/review-round"]["post"]["responses"]["202"].is_object());
 }

@@ -109,7 +109,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    `Timeouts::review_push_settle`, 300 seconds by default.
    Each further push restarts that interval. The harness uses zero.
    On a `reviewer` request, a push alone starts no round.
-   A false-to-true transition of `review_requested` after session start queues a forge re-request round.
+   A reviewer-role request that the forge's open list names again after session start, and did not name on the last read, queues a forge re-request round. It does so even where `review_requested` stayed true after a completed review.
    An assignment already present at session start queues nothing more.
    A user ask through `POST /v1/repositories/{id}/pull-requests/{number}/review-round`
    queues a round immediately. The route takes an empty body and answers 202.

@@ -197,36 +197,39 @@ pub struct LivePulls {
 
 #[derive(Debug, Clone, Default)]
 struct ReviewRounds {
-    requested: bool,
+    /// Whether the forge's list of review requests held the request on the
+    /// last read. The list drops it once I reviewed, so a later listing is
+    /// a re-request even where the retained `review_requested` stayed true.
+    listed: bool,
     generation: u64,
     pending: Option<&'static str>,
 }
 
 impl LivePulls {
-    pub fn start_review_rounds(&self, id: &str, requested: bool) {
+    pub fn start_review_rounds(&self, id: &str, listed: bool) {
         self.review_rounds
             .write()
             .unwrap_or_else(|p| p.into_inner())
             .insert(
                 id.into(),
                 ReviewRounds {
-                    requested,
+                    listed,
                     ..Default::default()
                 },
             );
     }
 
-    pub fn observe_review_request(&self, id: &str, requested: bool) {
+    pub fn observe_review_request(&self, id: &str, listed: bool) {
         let mut rounds = self
             .review_rounds
             .write()
             .unwrap_or_else(|p| p.into_inner());
         if let Some(round) = rounds.get_mut(id) {
-            if !round.requested && requested {
+            if !round.listed && listed {
                 round.generation += 1;
                 round.pending = Some("forge re-request");
             }
-            round.requested = requested;
+            round.listed = listed;
         }
     }
 
