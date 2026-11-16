@@ -75,12 +75,16 @@ pub(crate) async fn items(store: &Store, cache: &LivePulls) -> Result<Vec<Attent
 
 /// One item per thread the request's keeping agent escalated (026), while
 /// no human has settled it on the forge: the thread is still unresolved,
-/// and no comment later than the escalated one is in it. Each carries its
-/// own id, `pull_request:escalated:<request>:<comment>`, and the attention
-/// source revision of that id, which a write of the mark's `escalated_at`
-/// moves (migration 0010): a dismissal of one thread hides no other, and a
-/// later escalation of a dismissed thread brings it back. A comment the
-/// last read no longer holds raises nothing, as missing evidence.
+/// and no comment is later than the latest escalated comment in it. Two
+/// escalated comments of one thread are still one item: the thread's
+/// latest escalation (`escalated_at`, which the store keeps strictly
+/// increasing within a request) names it. The item's id is
+/// `pull_request:escalated:<request>:<comment>` of that escalation, and its
+/// attention source revision is that id's, which a write of the mark's
+/// `escalated_at` moves (migration 0010): a dismissal of one thread hides
+/// no other, and a later escalation in a dismissed thread brings it back.
+/// A comment the last read no longer holds raises nothing, as missing
+/// evidence.
 async fn escalated_items(
     store: &Store,
     cache: &LivePulls,
@@ -91,36 +95,51 @@ async fn escalated_items(
     if marks.iter().all(|m| m.escalated_at.is_none()) {
         return Ok(Vec::new());
     }
+    // In the forge's order (`live::comments`, by time and then id), so a
+    // thread's first comment comes first and the item order is stable.
     let comments = live::comments_of(store, cache, pull).await?;
+    let mut threads: Vec<&str> = Vec::new();
+    for comment in &comments {
+        if !threads.contains(&comment.thread_id.as_str()) {
+            threads.push(&comment.thread_id);
+        }
+    }
     let mut items = Vec::new();
-    for mark in marks {
-        let Some(escalated_at) = mark.escalated_at else {
-            continue;
-        };
-        let Some(escalated) = comments.iter().find(|c| c.forge_id == mark.forge_id) else {
-            continue;
-        };
-        let mut thread = comments
+    for thread_id in threads {
+        let thread: Vec<_> = comments
             .iter()
-            .filter(|c| c.thread_id == escalated.thread_id);
-        let settled = escalated.resolved
-            || thread
-                .clone()
-                .any(|c| c.created_at.as_str() > escalated.created_at.as_str());
+            .filter(|c| c.thread_id == thread_id)
+            .collect();
+        let escalated: Vec<_> = thread
+            .iter()
+            .filter_map(|c| {
+                let mark = marks.iter().find(|m| m.forge_id == c.forge_id)?;
+                Some((*c, mark, mark.escalated_at.as_deref()?))
+            })
+            .collect();
+        let Some(&(_, mark, escalated_at)) = escalated.iter().max_by_key(|(_, _, at)| *at) else {
+            continue;
+        };
+        let newest = escalated
+            .iter()
+            .map(|(c, _, _)| c.created_at.as_str())
+            .max()
+            .unwrap_or_default();
+        let settled = thread.iter().any(|c| c.resolved)
+            || thread.iter().any(|c| c.created_at.as_str() > newest);
         if settled {
             continue;
         }
-        let opening = thread.next().unwrap_or(escalated);
-        let place = match escalated.path.as_deref() {
+        let opening = thread[0];
+        let place = match opening.path.as_deref() {
             Some(path) => format!("on {path}"),
             None => "in the conversation".into(),
         };
         let first_line = opening.body.lines().next().unwrap_or_default().trim();
-        let reason = mark.escalation_reason.unwrap_or_default();
-        let id = format!("pull_request:escalated:{}:{}", pull.id, mark.forge_id);
+        let reason = mark.escalation_reason.as_deref().unwrap_or_default();
         items.push(AttentionItemDto {
-            occurrence: escalated_at.clone(),
-            id,
+            occurrence: escalated_at.to_string(),
+            id: format!("pull_request:escalated:{}:{}", pull.id, mark.forge_id),
             producer: AttentionProducer::PullRequest,
             reason: AttentionCause::Unknown,
             summary: format!(
@@ -130,7 +149,7 @@ async fn escalated_items(
             .trim_end()
             .to_string(),
             required_action: "Answer or resolve the thread on the forge.".into(),
-            since: escalated_at,
+            since: escalated_at.to_string(),
             affected: vec![subject(pull, repo)],
             target: AttentionTarget::PullRequest {
                 pull_request_id: pull.id.clone(),

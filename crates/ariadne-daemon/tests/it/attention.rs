@@ -4577,3 +4577,52 @@ async fn a_closed_request_raises_no_escalation_item() {
         assert!(escalations(&list).is_empty(), "{state}: {:?}", list.items);
     }
 }
+
+/// Two escalated comments of one thread, written at the same second, are
+/// one item (031): the thread's latest escalation names it. A dismissal
+/// hides the thread whole, and a new escalation of either comment brings
+/// it back as one item again.
+#[tokio::test]
+async fn two_escalated_comments_of_one_thread_at_one_time_raise_one_item() {
+    let h = harness().await;
+    let mut tied = crate::common::forge::open_review_comment();
+    tied.forge_id = "rc-3".into();
+    tied.in_reply_to = Some("rc-1".into());
+    tied.author_login = "alice".into();
+    tied.body = "Still the same ask.".into();
+    let opening = crate::common::forge::open_review_comment();
+    assert_eq!(opening.created_at, tied.created_at, "one time for both");
+    let (pull, keeper) = kept_by_hand(&h, vec![opening, tied]).await;
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    escalate(&h, &keeper, &pull.id, "rc-3").await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].id,
+        format!("pull_request:escalated:{}:rc-3", pull.id)
+    );
+    assert!(
+        found[0].summary.contains("What about this case?"),
+        "{}",
+        found[0].summary
+    );
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", found[0].id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(escalations(&list).is_empty(), "{:?}", list.items);
+
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].id,
+        format!("pull_request:escalated:{}:rc-1", pull.id)
+    );
+}

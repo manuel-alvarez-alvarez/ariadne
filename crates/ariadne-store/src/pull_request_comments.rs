@@ -68,12 +68,33 @@ impl Store {
     /// mark records when and why. A later escalation of the same comment
     /// stamps it again, which moves its attention revision (031). Publishes
     /// `attention_changed`, since the thread's item appears.
+    ///
+    /// Each escalation of a request is stamped later than every one before
+    /// it, by a millisecond where the clock has not moved: the latest
+    /// escalation of a thread names its one item (031), so two calls in the
+    /// same millisecond must still have an order.
     pub async fn escalate_comment(
         &self,
         pull_request_id: &str,
         forge_id: &str,
         reason: &str,
     ) -> Result<CommentMark> {
+        let mut tx = self.w().begin().await?;
+        let latest: Option<String> = sqlx::query_scalar(
+            "SELECT MAX(escalated_at) FROM pull_request_comment_marks WHERE pull_request_id = ?",
+        )
+        .bind(pull_request_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut at = chrono::Utc::now();
+        if let Some(latest) = latest
+            .as_deref()
+            .and_then(|l| chrono::DateTime::parse_from_rfc3339(l).ok())
+        {
+            let after = latest.to_utc() + chrono::Duration::milliseconds(1);
+            at = at.max(after);
+        }
+        let at = at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let mark = sqlx::query_as(
             "INSERT INTO pull_request_comment_marks
                     (pull_request_id, forge_id, escalated_at, escalation_reason)
@@ -85,10 +106,11 @@ impl Store {
         )
         .bind(pull_request_id)
         .bind(forge_id)
-        .bind(now())
+        .bind(at)
         .bind(reason)
-        .fetch_one(self.w())
+        .fetch_one(&mut *tx)
         .await?;
+        tx.commit().await?;
         self.publish(crate::Change::AttentionChanged);
         Ok(mark)
     }

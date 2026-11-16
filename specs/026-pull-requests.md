@@ -187,7 +187,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     The route accepts the current column agent of the task that opened the request (`Seat::Agent`) and the keeper of a request kept by hand (`Seat::Keeper`, 032 rule 12).
     It refuses a review session of the same request, any other session, and a call with no session, with 403. It refuses an empty reason with 400.
     It finds the comment in the request's last read. A comment the request does not hold gets 404.
-    It stamps the comment's mark with `escalated_at` and `escalation_reason`, publishes `attention_changed`, and answers the comment with 200.
+    It stamps the comment's mark with `escalated_at` and `escalation_reason`, `escalated_at` strictly later than every earlier escalation of the request. It publishes `attention_changed`, and answers the comment with 200.
     It makes no forge call and posts nothing. The `pull_request` attention producer raises one item for the thread (031 rule 17).
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
@@ -323,7 +323,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it`.
 - Comment marks are claimed once, released whole, keep the review's mark, and go with their row:
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
-- An escalation stamps its mark with its time and reason, keeps the rest of the mark, moves its own thread's attention revision alone, and goes with the row:
+- An escalation stamps its mark with its time and reason, later than every earlier escalation of the request, keeps the rest of the mark, moves its own comment's attention revision alone, and goes with the row:
   `store.rs::an_escalation_stamps_its_mark_moves_its_own_revision_and_goes_with_the_row`.
 - The task's `pr` agent escalates a thread with no forge call. A comment the request does not hold is 404, and an empty reason is 400. A review session of the same request, another session and a call with no session get 403 (rule 15):
   `kept_requests.rs::the_pr_agent_escalates_a_thread_without_a_forge_call_and_no_other_session_may`.

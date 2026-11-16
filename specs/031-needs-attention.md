@@ -720,16 +720,19 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     `::a_read_naming_no_merge_state_status_is_unknown`).
 17. An escalation item (`AttentionCause::Unknown`) is raised for each
     thread the request's keeping agent escalated with `escalate_comment`
-    (026 rule 15). Its id is
-    `pull_request:escalated:<request id>:<comment id>`. Its summary names
+    (026 rule 15). Two escalated comments of one thread are one item. The
+    thread's latest escalation names it: the store stamps each escalation
+    of a request later than every earlier one, by a millisecond where the
+    clock has not moved. Its id is
+    `pull_request:escalated:<request id>:<comment id>` of that escalation. Its summary names
     the request, then the thread by its path (or "the conversation" for an
     `ic-` comment) and the first line of the thread's first comment, then
     the agent's reason. Its `required_action` is "Answer or resolve the
     thread on the forge." Its `target` is the request, and its `since` is
     the mark's `escalated_at`.
     The item clears when the forge reports the thread resolved, or when
-    the last read holds a comment in that thread later than the escalated
-    one. A dismissal also hides it. A merged or closed request raises
+    the last read holds a comment in that thread later than its latest
+    escalated comment. A comment at the same time is not later. A dismissal also hides it. A merged or closed request raises
     none, and nor does a comment the last read no longer holds.
 
 ### Individual dismissal
@@ -1228,6 +1231,10 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   (`attention.rs::a_closed_request_raises_no_escalation_item`). A dismissal
   of one thread hides no other, and a new escalation brings it back
   (`attention.rs::dismissing_one_escalated_thread_hides_no_other_and_a_new_escalation_returns_it`).
+  Two escalated comments of one thread at the same time raise one item, a
+  dismissal hides the thread whole, and a new escalation in it brings one
+  item back
+  (`attention.rs::two_escalated_comments_of_one_thread_at_one_time_raise_one_item`).
 - A mergeability-only transition still publishes `pull_requests_changed`,
   both directions, and an unchanged fetch after it still raises nothing:
   (`pull_requests.rs::a_mergeability_only_transition_publishes_pull_requests_changed`).
