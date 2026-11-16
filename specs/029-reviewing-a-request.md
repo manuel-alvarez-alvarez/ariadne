@@ -323,8 +323,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     other review skills. It posts only new inline findings. It creates
     no summary, status table, summary comment, or summary draft. It records
     the reviewed revision and evidence that covers its current head. It
-    never gives a forge approval, and it names no Ariadne approval: the
-    tool of rule 15a stays, and the shipped skill does not call it.
+    never gives a forge approval, and Ariadne holds no approval of its own
+    (rule 15a).
 
     A round runs in this order: the diff, the checks, the threads it
     opened, the hunt. The checks are the tests, the lint and the format

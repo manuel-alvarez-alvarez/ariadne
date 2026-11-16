@@ -197,16 +197,6 @@ async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullReque
     }
 }
 
-/// A request nobody works on, as the forge's read alone.
-fn unworked_dto(
-    repository_id: &str,
-    pull: pulls::ForgePullRequest,
-    role: &str,
-    review_requested: bool,
-) -> PullRequestDto {
-    forge_pull_dto(repository_id, pull, role, review_requested)
-}
-
 /// The open requests of the enabled repositories, answered from the last
 /// fetch of each (026): every one, or with `role` and `requested` the
 /// user's own or the ones that ask for their review, each with what Ariadne
@@ -333,7 +323,7 @@ pub(super) async fn list(
                 let view = live::view(row, &read, &marks, &login);
                 pull_request_dto_of(&state.store, view).await?
             }
-            None => unworked_dto(&forge.repository_id, pull, role, asks),
+            None => forge_pull_dto(&forge.repository_id, pull, role, asks),
         });
     }
     Ok(Json(PullRequestPageDto {
@@ -457,7 +447,7 @@ pub(super) async fn get_by_number(
     let role = pulls::role(&details.pull.author_login, &forge);
     let comments = live::answered(live::comments("", &details.comments, &[]), role, &login);
     let unanswered = live::waiting_threads(&comments, role, &login).len() as i64;
-    let mut dto = unworked_dto(&id, details.pull, role, false);
+    let mut dto = forge_pull_dto(&id, details.pull, role, false);
     dto.unanswered_comments = unanswered;
     dto.behind_base = details.behind_base;
     dto.failed_checks = details
@@ -1274,7 +1264,7 @@ pub(super) async fn ask_review(
         // a stop left open is ended all the same.
         (None, None) => {
             end_operation_goal(&state, &id, number, PrOperation::Review).await?;
-            return Ok(Json(unworked_dto(&id, pull, role, false)));
+            return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };
     // The review is a goal of its own with one staffed task (029). Starting
@@ -1490,7 +1480,7 @@ pub(super) async fn ask_babysit(
         // a stop left open is ended all the same.
         (None, None) => {
             end_operation_goal(&state, &id, number, PrOperation::Babysit).await?;
-            return Ok(Json(unworked_dto(&id, pull, role, false)));
+            return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };
     // The babysit is a goal of its own with one staffed task (032). Starting
