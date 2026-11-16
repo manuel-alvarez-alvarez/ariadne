@@ -45,25 +45,31 @@ impl HeadSettle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeouts::Timeouts;
 
-    const INTERVAL: Duration = Duration::from_secs(60);
+    /// The interval is the daemon's own `Timeouts` field, never a constant
+    /// of the test.
+    fn interval() -> Duration {
+        Timeouts::default().review_push_settle
+    }
 
     /// 029 rule 8: the head is told only once it stood still for the whole
     /// interval, and not a moment before.
     #[test]
     fn a_head_settles_exactly_when_the_whole_interval_has_passed() {
         let start = Instant::now();
-        let mut settle = HeadSettle::new(INTERVAL);
+        let interval = interval();
+        let mut settle = HeadSettle::new(interval);
         assert!(
             !settle.settled("pr", "a", start),
             "the first sight starts it"
         );
         assert!(
-            !settle.settled("pr", "a", start + INTERVAL - Duration::from_nanos(1)),
+            !settle.settled("pr", "a", start + interval - Duration::from_nanos(1)),
             "one instant short of the interval is held"
         );
         assert!(
-            settle.settled("pr", "a", start + INTERVAL),
+            settle.settled("pr", "a", start + interval),
             "the whole interval has passed"
         );
     }
@@ -73,28 +79,30 @@ mod tests {
     #[test]
     fn a_new_head_restarts_the_interval() {
         let start = Instant::now();
-        let mut settle = HeadSettle::new(INTERVAL);
+        let interval = interval();
+        let mut settle = HeadSettle::new(interval);
         settle.settled("pr", "a", start);
-        let push = start + INTERVAL - Duration::from_secs(1);
+        let push = start + interval - Duration::from_secs(1);
         assert!(!settle.settled("pr", "b", push));
         assert!(
-            !settle.settled("pr", "b", start + INTERVAL),
+            !settle.settled("pr", "b", start + interval),
             "the first head's interval is over, the second head's is not"
         );
         assert!(
-            !settle.settled("pr", "b", push + INTERVAL - Duration::from_nanos(1)),
+            !settle.settled("pr", "b", push + interval - Duration::from_nanos(1)),
             "the second head's interval runs from its own push"
         );
-        assert!(settle.settled("pr", "b", push + INTERVAL));
+        assert!(settle.settled("pr", "b", push + interval));
     }
 
     #[test]
     fn requests_settle_on_their_own() {
         let start = Instant::now();
-        let mut settle = HeadSettle::new(INTERVAL);
+        let interval = interval();
+        let mut settle = HeadSettle::new(interval);
         settle.settled("one", "a", start);
-        assert!(!settle.settled("two", "a", start + INTERVAL));
+        assert!(!settle.settled("two", "a", start + interval));
         settle.forget("one");
-        assert!(!settle.settled("one", "a", start + INTERVAL * 2));
+        assert!(!settle.settled("one", "a", start + interval * 2));
     }
 }
