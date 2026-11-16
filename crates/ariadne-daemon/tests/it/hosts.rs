@@ -126,6 +126,16 @@ fn good_hosts_pass_check_config() {
     assert!(Config::check(Some(home)).unwrap().contains(": ok"));
 }
 
+/// `http://host:80` names its port even though 80 is the scheme's default.
+#[tokio::test]
+async fn an_http_host_on_the_default_port_is_accepted_and_listed() {
+    let (_dir, home) = home_with("[hosts.web]\nendpoint = \"http://example.com:80\"\n");
+    assert!(Config::check(Some(home.clone())).unwrap().contains(": ok"));
+    let h = harness().home(home).await;
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert_eq!(hosts[1].endpoint.as_deref(), Some("http://example.com:80"));
+}
+
 #[tokio::test]
 async fn openapi_carries_the_route_the_dto_and_the_event() {
     let h = harness().await;

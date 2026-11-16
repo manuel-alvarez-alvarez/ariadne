@@ -312,7 +312,7 @@ fn validate_host_endpoint(name: &str, endpoint: &str) -> Result<()> {
         "http"
             if plain
                 && url.host_str().is_some()
-                && url.port().is_some()
+                && has_explicit_port(endpoint)
                 && url.username().is_empty()
                 && url.password().is_none() =>
         {
@@ -320,6 +320,18 @@ fn validate_host_endpoint(name: &str, endpoint: &str) -> Result<()> {
         }
         _ => Err(bad()),
     }
+}
+
+/// `Url::port` hides a port that is the scheme's default, so `http://box:80`
+/// would read as having none: look at the text instead.
+fn has_explicit_port(endpoint: &str) -> bool {
+    let authority = endpoint
+        .split_once("://")
+        .map_or("", |(_, rest)| rest)
+        .trim_end_matches('/');
+    authority
+        .rsplit_once(':')
+        .is_some_and(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn validate_host_remote(name: &str, remote: &str) -> Result<()> {
