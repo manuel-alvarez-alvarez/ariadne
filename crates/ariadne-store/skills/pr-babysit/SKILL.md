@@ -48,8 +48,9 @@ Use `merge` when the workflow lands the task with no request. Use
    carries. Take the route of the `A failed check` rule for each check in it.
 
    Done when each failed check has its route.
-6. Group related accepted changes and failed-check fixes in one
-   coherent commit per batch; keep unrelated changes separate.
+6. Put all failed-check fixes in one batch, related or not. Group
+   related accepted changes in one commit per batch; keep unrelated ones
+   separate.
 
    Done when each batch has one commit.
 7. Bring the base in before the checks. Run `git fetch <remote> <base> <head>`.
