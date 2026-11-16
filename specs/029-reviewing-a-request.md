@@ -285,7 +285,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 14. Every `event` but `request_changes` and `comment` answers 400 before the
     forge sees a call. A forge approval is refused above all: the user gives
     it. No route approves on the forge or merges.
-15. `submit_review` writes `pull_requests.reviewed_sha` from the head it posted the round on.
+15. `submit_review` writes `pull_requests.reviewed_sha` from the head of the checkout the round reviewed,
+    and posts the review on that head, not on a live forge head fetched since
+    (`pull_request_reviews.rs::a_submitted_review_stores_the_checkout_head_when_the_forge_head_moved`).
     No session reports readiness. The daemon decides from forge evidence (031 rule 15).
 15a. Ariadne holds no approval of its own for a request. The user gives approval.
     No tool approves or merges.

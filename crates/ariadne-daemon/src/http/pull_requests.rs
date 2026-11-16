@@ -1098,6 +1098,18 @@ pub(super) async fn submit_review(
             )));
         }
     }
+    // The round reviewed the checkout, not the live forge head: a push
+    // fetched since starts no round, so the two can differ (029). A
+    // session with no worktree left falls back to the head it read.
+    let reviewed_sha = match session_worktree(&session) {
+        Some(worktree) => state
+            .launcher
+            .git
+            .checkout_head(&worktree)
+            .await
+            .map_err(|e| ApiError::conflict(format!("{e:#}")))?,
+        None => pull.head_sha.clone(),
+    };
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
     // A change request has a P0 or P1 finding on a changed line, either
@@ -1122,7 +1134,7 @@ pub(super) async fn submit_review(
             pull.number,
             &ReviewDraft {
                 request_changes,
-                head_sha: pull.head_sha.clone(),
+                head_sha: reviewed_sha.clone(),
                 body: if req.body.is_empty() {
                     req.body
                 } else {
@@ -1136,7 +1148,7 @@ pub(super) async fn submit_review(
         .map_err(forge_error)?;
     state
         .store
-        .set_pull_request_reviewed(&pull.id, &pull.head_sha)
+        .set_pull_request_reviewed(&pull.id, &reviewed_sha)
         .await?;
     // The findings are the review's the moment the forge holds them.
     hold_review_comments(&state, &pull.id, &mut posted).await?;

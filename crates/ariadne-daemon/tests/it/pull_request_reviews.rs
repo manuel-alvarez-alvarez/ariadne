@@ -1185,6 +1185,40 @@ async fn a_submitted_review_stores_its_head_and_raises_no_waiting_user() {
     assert_eq!(h.attention(&session).await, None);
 }
 
+/// A push fetched while a round runs leaves the checkout on the head the
+/// reviewer inspected: the stored `reviewed_sha` and the posted review name
+/// that head, not the live forge head (029).
+#[tokio::test]
+async fn a_submitted_review_stores_the_checkout_head_when_the_forge_head_moved() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, first) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&first)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+
+    let second = push(&path);
+    stub.reprogram(script(&Shown::open(&second)));
+    fetch_again(&h, &stub, &repo).await;
+    assert_eq!(sh(&worktree, "git rev-parse HEAD"), first);
+
+    let _: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/reviews"),
+                &session.id,
+                json!({"event":"comment", "body":"Reviewed the head.", "comments":[]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let row = h.store.get_pull_request(&id).await.unwrap();
+    assert_eq!(row.reviewed_sha.as_deref(), Some(first.as_str()));
+}
+
 /// The review session of a request that ends, or that no longer asks for
 /// my review, is killed and its worktree removed.
 async fn the_review_ends_when_the_request_shows(shown: impl Fn(&str) -> Shown<'_>) {

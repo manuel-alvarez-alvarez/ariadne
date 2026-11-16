@@ -235,6 +235,13 @@ impl GitManager {
         .await
     }
 
+    /// The commit a checkout holds, as a full sha: what a review round
+    /// inspected (029).
+    pub(crate) async fn checkout_head(&self, repo: &Path) -> Result<String> {
+        self.git(repo, &["rev-parse", "--verify", "HEAD^{commit}"])
+            .await
+    }
+
     /// Where the repository keeps the refs every one of its worktrees shares.
     ///
     /// `<repo>/.git` for an ordinary checkout, but a repository registered at
