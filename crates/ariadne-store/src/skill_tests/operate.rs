@@ -375,10 +375,13 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
 
 /// Each inline review comment of the other side gets one reply, in one
 /// of three shapes: a fix with its commit or a kept line with its
-/// reason, or a short answer to a question. A thanks gets none, a
-/// follow-up in an answered thread gets a new answer, and a reviewer's
-/// `Still there:` gets one more try, verified at the head — then the
-/// user decides, since the reviewer never posts it twice in one thread.
+/// reason, or a short answer to a question. Each of the first two is its
+/// prefix and at most three sentences, after the agent verifies the
+/// defect at the head. A thanks gets none, and a reply that asks a new
+/// change is a new ask. A reply of the comment's author that rejects a
+/// `Fixed in` or `Not changed` outcome, a `Still there:` included, is a
+/// disagreement: the agent calls `escalate_comment` with the comment id
+/// and a reason, posts nothing in that thread and fixes no more for it.
 /// A comment on the conversation gets the same answer, once per
 /// comment. A suggestion block the agent accepts is applied rather
 /// than rewritten; one it does not accept gets a kept line instead. No
@@ -389,31 +392,43 @@ fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
     let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
     for rule in [
         "Answer each inline review comment of the other side, once per comment:",
-        "whose accepted change or suggestion the batch includes: `Fixed in <sha>: <what changed>.`",
+        "whose accepted change or suggestion the batch includes. Use the fix form of the `Posts` rule.",
+        "- A fix: `Fixed in <sha>:` then at most three sentences. Say what was wrong, what changed, and where.",
+        "- A kept line: `Not changed:` then at most three sentences. Say what the head shows, and why the code stays.",
+        "Verify the defect at the head before a fix or a kept line.",
         "A rejected request or a question keeps its step 3 reply.",
         "A question: give one short answer.",
         "Thanks or an acknowledgement: reply nothing.",
-        "A follow-up ask in a thread you answered: a new ask. Act on it.",
-        "A reply that opens with `Still there:`: verify it at the head.",
-        "Where the defect is real, fix it once more in the next batch. Else reply `Not changed: <why>.` once. After that, the user decides.",
+        "A reply that asks a new change: a new ask. Act on it.",
+        "A reply by the comment's author, after your `Fixed in` or `Not changed` reply, that rejects it: a disagreement.",
+        "Call `escalate_comment` with the comment id and a one-line reason. Post nothing in that thread. Make no further fix for it.",
+        "A `Still there:` reply is one such disagreement.",
+        "A disagreement gets no reply: `escalate_comment` is its only call.",
         "A comment on the conversation: answer it the same way, once per comment.",
         "A suggestion block you accept: apply it.",
-        "Else reply `Not changed: <why>.`",
+        "Else reply with a kept line.",
         "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
         "Commit only what a comment or a failed check asks for.",
         "Leave every thread open.",
         "Post no new thread, summary or top-level comment, except steps 3 and 8's replies.",
         "`reply_comment` is the only post. It has three forms:",
-        "- A fix: `Fixed in <sha>: <what changed>.` - A kept line: `Not changed: <why>.` - A question: one short answer, with no prefix.",
+        "- A question: one short answer, with no prefix.",
         "No status comment exists.",
         "Readiness goes through `report_pull_request`, never through a comment.",
     ] {
         assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
     }
-    assert!(
-        !doc.contains("no second try"),
-        "the pr-babysit skill still refuses the one more try on `Still there:`"
-    );
+    for gone in [
+        "no second try",
+        "fix it once more",
+        "one more try",
+        "the user decides",
+    ] {
+        assert!(
+            !doc.contains(gone),
+            "the pr-babysit skill keeps the `Still there:` retry: {gone}"
+        );
+    }
 }
 
 /// A failed check has one route, and the route is the request's own
@@ -427,9 +442,9 @@ fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
 fn the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks() {
     let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
     for rule in [
-        "Take the route of the `A failed check` rule for each failed check the news or `failed_checks` names.",
-        "Reproduce the check at the head.",
-        "Where the request's own change causes the failure, fix it in a batch. Where it does not, fix nothing: report it as the two-seats rule says.",
+        "Wait for the final rollup. Take the one list of failed checks the news carries. Take the route of the `A failed check` rule for each check in it.",
+        "Reproduce each failed check of the list at the head.",
+        "Fix every failure the request's own change causes in one batch. Fix no other failure: report it as the two-seats rule says.",
         "A failure the request did not cause: the task seat sends it to the orchestrator with `send_message`.",
         "The keeper asks the user once with `wait_for_user`.",
         "Never push to another branch.",

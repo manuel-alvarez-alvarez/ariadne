@@ -27,22 +27,25 @@ Use `merge` when the workflow lands the task with no request. Use
 
    Done when the request and comments are read.
 3. Answer each inline review comment of the other side, once per comment:
-   - An ask for a change: accept it, or reply `Not changed: <why>.`
+   - An ask for a change: verify the defect at the head. Accept it, or
+     reply with a kept line.
    - A question: give one short answer.
    - Thanks or an acknowledgement: reply nothing.
-   - A follow-up ask in a thread you answered: a new ask. Act on it.
-   - A reply that opens with `Still there:`: verify it at the head. Where
-     the defect is real, fix it once more in the next batch. Else reply
-     `Not changed: <why>.` once. After that, the user decides.
+   - A reply by the comment's author, after your `Fixed in` or `Not changed`
+     reply, that rejects it: a disagreement. Call `escalate_comment`
+     with the comment id and a one-line reason. Post nothing in that thread.
+     Make no further fix for it. A `Still there:` reply is one such
+     disagreement.
+   - A reply that asks a new change: a new ask. Act on it.
    - A comment on the conversation: answer it the same way, once per comment.
 
    Done when each comment has its reply or disposition.
 4. A suggestion block you accept: apply it. Write your own code only where it
-   does not compile or pass. Else reply `Not changed: <why>.`
+   does not compile or pass. Else reply with a kept line.
 
    Done when each accepted suggestion has a disposition.
-5. Take the route of the `A failed check` rule for each failed check the
-   news or `failed_checks` names.
+5. Wait for the final rollup. Take the one list of failed checks the news
+   carries. Take the route of the `A failed check` rule for each check in it.
 
    Done when each failed check has its route.
 6. Group related accepted changes and failed-check fixes in one
@@ -71,8 +74,8 @@ Use `merge` when the workflow lands the task with no request. Use
 
    Report a refused push; do not push again. A rejected request or a
    question keeps its step 3 reply. Reply once to each comment whose
-   accepted change or suggestion the batch includes:
-   `Fixed in <sha>: <what changed>.`
+   accepted change or suggestion the batch includes. Use the fix form of
+   the `Posts` rule.
 
    Done when the batch is pushed and its comments have their reply.
 9. Call `get_pull_request` again. Where `head_sha` differs from the head you
@@ -133,17 +136,22 @@ task branch. The primary checkout is the `Repo:` path of your briefing.
 ### Posts
 
 `reply_comment` is the only post. It has three forms:
-- A fix: `Fixed in <sha>: <what changed>.`
-- A kept line: `Not changed: <why>.`
+- A fix: `Fixed in <sha>:` then at most three sentences. Say what was wrong,
+  what changed, and where.
+- A kept line: `Not changed:` then at most three sentences. Say what the
+  head shows, and why the code stays.
 - A question: one short answer, with no prefix.
+
+Verify the defect at the head before a fix or a kept line. A disagreement
+gets no reply: `escalate_comment` is its only call.
 
 No status comment exists. Readiness goes through `report_pull_request`,
 never through a comment.
 
 ### A failed check
 
-Reproduce the check at the head. Where the request's own change causes the
-failure, fix it in a batch. Where it does not, fix nothing: report it as
+Reproduce each failed check of the list at the head. Fix every failure the
+request's own change causes in one batch. Fix no other failure: report it as
 the two-seats rule says.
 
 ## Never
@@ -157,7 +165,7 @@ the two-seats rule says.
 - Never amend a pushed commit outside the rebase of step 7.
 - Commit only what a comment or a failed check asks for.
 - Post no new thread, summary or top-level comment, except steps 3 and 8's
-  replies.
+  replies. Post nothing for a disagreement.
 - Use only your session's request tools. Report a failed tool; post nothing
   another way.
 
@@ -170,7 +178,7 @@ the two-seats rule says.
 - "The check is red, so I fix the suite." -> Fix only what the request's
   change breaks.
 - "The base moved, so I run every check." -> The hook runs them at the push.
-- "The reviewer says Still there, so I argue." -> Verify at the head. One
-  more fix, or one `Not changed:`.
+- "The reviewer disagrees, so I argue." -> Call `escalate_comment`. Post
+  nothing and fix nothing more.
 - "Every field reads green, so it is settled." -> Settled is not merged. A
   human merges.
