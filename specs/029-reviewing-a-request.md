@@ -322,51 +322,44 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     never gives a forge approval, and Ariadne holds no approval of its own
     (rule 15a).
 
-    A round runs in this order: the diff, the checks, the threads it
-    opened, the hunt. The checks are the tests, the lint and the format
-    check of the files the diff changes; the `checks` field of
-    `get_pull_request` stands for every other check. It reproduces each
-    failed forge check the diff can cause, and one the diff causes is a P1.
-    In the thread step, a last reply that keeps the defect and gives no
-    proof is a dispute, a `Not changed:` reply or a plain disagreement. The
-    reviewer posts nothing in that thread and calls `escalate_comment` once,
-    with the id of the thread's first comment and a one-sentence reason.
-    It escalates a thread again only after a new dispute, and the `Thread`
-    line of the result says `escalated`.
+    A round reads the ask, diff, checks, owned threads, hunt, self-disproof pass, then posts.
+    The ask is the request body's purpose and linked issue or ticket, read before the diff.
+    Claims in descriptions, commits and replies prove nothing.
+    A check passes only in this round at the reviewed sha.
+    Run changed files' tests, lint and format checks; forge checks stand for the rest.
+    A failed forge check is a P1 only after the diff is shown to cause it.
+    Hunt behavior, errors, races, boundaries, security, data loss, tests and required behavior.
+    Check deleted, skipped or weakened tests, removed negative cases, weak assertions and tests that mock the defective seam.
+    A regression test must fail when the defect returns.
+    An unrequested change needs a concrete consequence to become a finding.
+    Try reproduction at the reviewed sha, with scratch code under `/tmp`.
+    Quote conflicting lines for text defects.
+    Refute each candidate with a code citation before posting; drop refuted candidates.
+    Failed reproduction keeps severity and states `Unverified:` with its cause.
 
-    Before it posts a finding, the reviewer tries to reproduce it at the
-    reviewed revision. A code defect is reproduced by a run that triggers
-    it, with any code the run needs in a scratch file under `/tmp`. A text
-    defect is reproduced by the two quoted lines that disagree.
+    Each finding is one inline comment on a shown new-side line, opening `**[Pn] Title**`.
+    Follow with a concise description and `To reproduce:` steps where needed.
+    Include the trigger, rule, expected behavior, observed failure, evidence and needed change.
+    Use the shown causal line for defects elsewhere, naming the real file and line.
+    Report unrelated defects only in the turn result.
+    Use a suggestion block for a one-line fix.
+    The body opens `Reviewed <short sha>.`.
+    Add at most two sentences on the change and main risk, then one sentence per new finding.
+    Close with `Changes required: <what>.` while a must-fix finding remains open, else `No change required.`
+    Write no check line or finding list; post the body even with no new findings.
 
-    Each new finding has a title and a body of four paragraphs: `Trigger:`,
-    `Failure:`, `Proof:` and `Fix:`. `Failure:` states the expected and the
-    observed behavior. `Proof:` gives the command and its result, and can
-    give the steps to reproduce; where the reproduction failed, it opens
-    with `Unverified:` and says why. `Fix:` names the file, the line and
-    the change, so the author can fix the defect without a question. Where the diff causes a defect on a
-    line it does not show, the comment sits on the shown line that causes
-    it, and the body names the real file and line. A defect the diff does
-    not cause is no finding; the result text names it. Where the fix replaces the commented line alone, a ```suggestion
-    block under the fix holds the new text of that one line, and a fix
-    across lines, across files, or one a test must prove stays prose. On a
-    later round it settles each thread it opened before it hunts, reading
-    the last reply: where the defect is actually gone at the head it
-    resolves silently; where the last reply claims a fix (`Fixed in <sha>: ...`) and the defect survives, it
-    gets one reply, `Still there: <why>.`, never posted twice in the same
-    thread; a fix claimed in a revision the worktree does not hold gets
-    nothing until a later round; a question gets one short
-    answer, once per question, and a reply that argues with no new
-    question gets none; a reply that proves the finding wrong gets one
-    `Withdrawn: <why>.` reply and the thread is resolved; any other
-    answered reply that leaves the defect in place —
-    `Not changed: ...` or any other — gets nothing back and stays open for
-    the user; a thread nobody has
-    answered gets nothing; it waits. Where the keeping agent and the
-    reviewer still dispute a thread the review opened, the session escalates
-    it with `escalate_comment` (rule 11) and posts no comment for it. The user
-    sees it in Needs attention, as one item for the thread, the same item the
-    keeping agent's escalation raises (031 rule 17).
+    Read owned threads each round. Verify `Fixed in <short sha>:` at the head and resolve silently when fixed.
+    Otherwise reply once `Still there: <what the head shows>.`.
+    Await push news for fixes outside the worktree revision.
+    Resolve `Not changed:` on a P2.
+    On the first P0 or P1 rejection, reply once with a current-head reproduction or withdraw and resolve.
+    On the second rejection, call `escalate_comment` on the first comment and post nothing more.
+    Give a one-sentence reason; escalate again only after a new dispute.
+    Plain disagreement without proof also counts as rejection.
+    Check disproof, reply `Withdrawn: <why>.`, and resolve.
+    Answer each question once in one sentence. Give thanks and unanswered threads no reply.
+    Leave threads another login opened.
+    Escalated threads reach Needs attention (031 rule 17).
 
     A draft gets the same round. News of a head equal to the reviewed
     revision needs no tool call. Where the head moves during a round, the
@@ -396,7 +389,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   the forge and marks the comment. Any other comment gets 403 and no mark
   (rule 11):
   `kept_requests.rs::the_review_session_escalates_only_a_comment_the_review_posted`.
-- The `pr-reviewer` skill escalates a disputed thread once and posts nothing
+- After one evidence exchange, the `pr-reviewer` skill escalates a disputed thread and posts nothing
   in it, and its `Thread` line accepts `escalated` (rule 17):
   `skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`.
 - The reviewer seat lists `escalate_comment` beside its request tools, and

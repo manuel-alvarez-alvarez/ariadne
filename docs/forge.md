@@ -79,14 +79,18 @@ decision, a merge, or a close — and leaves an idle agent alone in between.
 A session that starts with the request already open — after a restart —
 skips straight to reading that news instead of opening the request again.
 
+The agent batches all accepted asks, suggestions and failures its change causes in each wake.
+It pushes once, then replies once per comment.
+A fix gets `Fixed in <short sha>:` and one sentence on what changed.
+Kept code gets `Not changed:` and one sentence on why it stays.
 The agent **answers each inline review comment once, in the shape it
 calls for**: a requested change goes onto the branch as a new commit, with
 the changed tests and lint run again before it is pushed, and the reply
 names the commit or says why the code stays; a question gets one short
-answer; a thanks gets no reply; a follow-up in a thread it already
+sentence; a thanks gets no reply; a follow-up in a thread it already
 answered gets a new answer; and a reviewer's `Still there:` reply gets one
 more try, verified at the head — a second fix or a reason the code stays
-— and then you decide what happens next. It also answers,
+— and a second rejection goes to you without another reply or fix. It also answers,
 once, a comment of yours on the conversation: it cannot reply twice to
 the same one, and it cannot reply to its own earlier words there. It
 posts no status comment: the daemon readiness item below is how it reaches
@@ -100,7 +104,8 @@ it; a failure from the base branch, a flaky test or the forge goes to
 the orchestrator — or, for a keeper, to you — and it changes nothing for
 it. It never pushes to another branch. Before it runs the checks of the
 files a fix changed, it integrates a moved base branch
-as the repository's history rules require. Where those rules require a
+only inside a fix batch or when news says the forge requires it.
+It follows the repository's history rules. Where those rules require a
 linear request branch in words, it rebases; otherwise it merges.
 After a merge, it pushes normally; a base update with no fix runs no
 check of its own, since the push hook and the forge's checks run anyway.
@@ -177,60 +182,36 @@ It posts its findings at one of three priorities:
 | P1 | a proven defect, unmet requirement, or written repository-rule violation; must change |
 | P2 | an optional improvement |
 
-Each round posts its new findings as one review, always a `comment` and
-never an approval. Each finding
-is an inline comment of its own on the line of the defect, opening on
-**[P0] Title**, then four paragraphs. `Trigger:` names the input or state
-that causes it. `Failure:` states the expected and the observed behavior.
-`Proof:` gives the command the reviewer ran at the reviewed revision and
-its result, and can give the steps to reproduce; for a text defect it
-quotes the two lines that disagree. `Fix:` names the file, the line and
-the change. A finding keeps the priority of its severity even where the
-reviewer could not reproduce it: then `Proof:` opens with `Unverified:`
-and says why. A
-defect the change causes on a line the diff does not show sits on the
-changed line that causes it. Where the fix
-replaces the commented line alone, the comment carries a `suggestion`
-block, holding the new text of that one line, the author can apply
-directly; a fix across lines, across files, or one that needs a test,
-stays prose. This is one API call carrying every inline comment.
+The reviewer reads the request's purpose and linked issue before the diff.
+It judges that ask with fresh checks at the reviewed commit.
+It checks test integrity and tries to disprove each finding before posting.
+Claims from the author do not prove correctness.
 
-Every round, even one with no new finding, carries a short body above its
-inline findings. Its first line is `Reviewed <sha>.`, naming the commit
-it reviewed. Then one short prose paragraph describes the defects, with no
-bullet, no table and no line per finding or check. One closing sentence
-says whether the author must change the code: for example `Changes
-required: fix the P1 before this lands.` or `No change required.` The
-review posts no status table, separate summary comment, or summary draft.
-Each round ends on one result in the session's console: `Reviewed <sha>:
-comment with <n> findings.`, with `0` where the round found nothing new, then one
-line per finding, ending `unverified` where the reviewer could not
-reproduce it, and one per settled thread, check and failed tool call.
+Each round posts one `comment` review with only new inline findings.
+Each finding opens with `**[Pn] Title**`, then a concise explanation.
+`To reproduce:` gives steps where needed.
+An unsuccessful reproduction keeps its priority and states `Unverified:` with the reason.
+A defect outside shown lines uses the shown line that causes it.
+A one-line fix can carry a suggestion block.
 
-Before it hunts, the reviewer runs the tests, the lint and the format
-check of the files the diff changes. The forge's own checks stand for the
-rest.
+The body starts `Reviewed <short sha>.`.
+It gives at most two sentences on the change and main risk, then one sentence per new finding.
+It ends `Changes required: <what>.` or `No change required.`.
+It carries no check line or finding list, even with zero findings.
+The console result starts `Reviewed <sha>: comment with <n> findings.`.
+It adds applicable finding, thread, check, failed tool and unrelated defect lines.
 
-On a later round the reviewer settles each thread it opened before it
-hunts for more. The author answers in one of three ways: `Fixed in <sha>:
-...`, `Not changed: <why>.`, or a plain answer to a question. Once the
-defect is actually gone at the head, the reviewer resolves the thread without
-a reply.
-Where the
-last reply claims a fix (`Fixed in <sha>: ...`) but the defect is still
-there, the reviewer replies once, `Still there: <why>.`, and never says it
-again in that thread. A question gets one short answer. A reply that
-proves the finding wrong gets one `Withdrawn: <why>.` reply, and the
-reviewer resolves the thread. Any other answered reply that leaves the defect in
-place — a `Not changed:` reply, or any other — gets no reply back and the thread stays open for the user to settle. A
-thread nobody has answered gets nothing: it waits. Where the keeping
-agent and the reviewer still dispute a thread the review opened, the
-reviewer escalates it with `escalate_comment` and posts no comment for it.
-The thread reaches you in [Needs attention](#needs-attention-an-unassigned-review-a-ready-request-an-escalated-thread)
-as an escalated thread. On a request a task's
-agent keeps, the review's findings go to that agent like anyone else's
-comments, though they are posted under your login: it answers each one,
-and fixes what needs fixing.
+Each round reads the threads the reviewer opened.
+The reviewer verifies `Fixed in <short sha>:` at the head and resolves fixed findings silently.
+A failed fix gets one `Still there: <what the head shows>.` reply.
+A P2 kept with `Not changed:` is resolved.
+The first P0 or P1 rejection gets one current-head reproduction, or a withdrawal and resolution.
+The second rejection escalates the first comment through `escalate_comment` and gets no further comment.
+You see that thread in [Needs attention](#needs-attention-an-unassigned-review-a-ready-request-an-escalated-thread).
+Each question gets one sentence. Thanks gets no reply.
+The reviewer leaves threads another login opened.
+
+A separate critic session is a later idea. It is not a current feature.
 
 ## What a `pr-babysit` keeper session does
 
@@ -270,9 +251,11 @@ holds here too: a head branch git itself refuses as a ref name starts no
 worktree and no keeper session. A keeper launch or later report clears its
 own item and does not clear a reviewer's item on the same request. It hears
 the same news a task's keeping agent
-does — a new comment, a check that turned to failure or back to green, a
-changed review decision, a merge or a close — replies and fixes the same
-way, and receives daemon readiness attention the same way. Unlike a self-review,
+does — a comment of the other side, a failed check at final rollup,
+a `mergeable` that reads `behind`, a merge or a close — replies and fixes the same
+way, and receives daemon readiness attention the same way.
+It reports no readiness, marks no draft, posts no status comment and leaves threads open.
+It asks you once about a failure the request did not cause and fixes none. Unlike a self-review,
 which only ends when you stop asking, babysitting also ends on the merge
 or the close: the session, its worktree and its branch all go.
 `ariadne pr babysit <repo-id> <number> --stop` takes it down early.
