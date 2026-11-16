@@ -226,9 +226,13 @@ reads behind them ([026](026-pull-requests.md)).
     no unanswered comment (030 rule 10). A keeper's other differences from
     the task's agent — no opening step, the briefing's push command, and a
     turn that ends on the merge or the close with no task call — are the
-    skill's own two-seats rule, stated once (017 rule 11). A failed check
-    that the request's own change does not cause is fixed by no keeper: it
-    asks the user once with `wait_for_user` (030 rule 10).
+    skill's own two-seats rule, stated once (017 rule 11). The keeper fixes
+    in one batch every failure of the final list that the request's own
+    change causes, replies `Fixed in <sha>:` or `Not changed:` with at most
+    three sentences, and calls `escalate_comment` with no comment where the
+    comment's author rejects that outcome, a `Still there:` reply included
+    (030 rule 10). A failed check that the request's own change does not
+    cause is fixed by no keeper: it asks the user once with `wait_for_user`.
 
 ## Acceptance criteria
 
