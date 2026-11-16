@@ -95,8 +95,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
    with the ban on `--no-verify` and `-n`. What a column does — build,
    review, merge, keep a request — is its skill's to say. The `reviewer` seat
-   text is the pull request review session's (029): the request it reviews,
-   its detached worktree, and that it commits and pushes nothing. It names
+   text is the pull request review session's (029 rule 5).
+   It states the explicit ask, all authors, no required GitHub assignment, and drafts (029 rule 1).
+   It also states its detached worktree and that it commits and pushes nothing. It names
    neither its skill, which the skill index does for every seat, nor the end
    of its turn, which its briefing and the news prompt each end on. The
    `keeper` seat text is the session's that keeps a request of the user's
@@ -164,7 +165,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    the moves it made, and `pr-babysit` never amends a pushed request.
    `spec-writing` commits the spec it wrote once, after the orchestrator
    agrees to it, under the repository's commit rules and with no commit
-   form of its own. No skill divides a task into slices or small commits.
+   form of its own. `documentation` checks the page and commits it once
+   under the repository's commit rules. No skill divides a task into slices
+   or small commits.
 8. The lifecycle briefings are Ariadne's own constants, read from the code on
    every launch and every resume. No route reads or writes one, and no row
    holds one. Because nothing is copied into the database, rewording a default

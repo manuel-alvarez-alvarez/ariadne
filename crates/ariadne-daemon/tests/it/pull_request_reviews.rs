@@ -836,7 +836,7 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
             as_session(
                 &reviews,
                 &session.id,
-                json!({"event": "request_changes", "comments": [
+                json!({"event": "request_changes", "body": "Reviewed abc: request changes with 2 findings.", "comments": [
                     {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": "An empty list panics.", "priority": "P0"},
                     {"path": "a.txt", "line": 2, "title": "Untested",
@@ -856,14 +856,14 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     let (_, review) = review_bodies(&stub).pop().unwrap();
     assert_eq!(
         review,
-        json!({"event": "REQUEST_CHANGES", "commit_id": head, "comments": [
+        json!({"event": "REQUEST_CHANGES", "commit_id": head, "body": "Reviewed abc: request changes with 2 findings.\n\n<!-- ariadne:review -->", "comments": [
             // Each finding is signed the review's, invisibly (029).
             {"path": "a.txt", "line": 1, "side": "RIGHT",
              "body": "**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->"},
             {"path": "a.txt", "line": 2, "side": "RIGHT",
              "body": "**[P1] Untested**\n\nNo test covers the empty list.\n\n<!-- ariadne:review -->"}
         ]}),
-        "the review carries no summary of its own"
+        "the review carries the submitted round body"
     );
     let bodies: Vec<&str> = stored.iter().map(|c| c["body"].as_str().unwrap()).collect();
     assert_eq!(
@@ -880,15 +880,23 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     assert_eq!(marks.len(), 2);
     assert!(marks.iter().all(|m| m.from_review));
 
-    // A later round with no new finding posts no forge review or status.
+    // A later round posts its own body with no inline findings.
     let none: Vec<Value> = h
         .json(
-            as_session(&reviews, &session.id, json!({"event": "request_changes"})),
+            as_session(
+                &reviews,
+                &session.id,
+                json!({"event": "comment", "body": "Reviewed def: comment with 0 findings."}),
+            ),
             StatusCode::CREATED,
         )
         .await;
     assert!(none.is_empty());
-    assert_eq!(review_posts(&stub).len(), 1, "no second review");
+    assert_eq!(review_posts(&stub).len(), 2, "each round posts a review");
+    assert_eq!(
+        review_bodies(&stub)[1].1["body"],
+        "Reviewed def: comment with 0 findings.\n\n<!-- ariadne:review -->"
+    );
     assert_eq!(
         h.store.pull_request_comment_marks(&id).await.unwrap().len(),
         2,

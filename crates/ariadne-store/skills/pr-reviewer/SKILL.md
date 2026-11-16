@@ -74,18 +74,30 @@ Use `code-review` when the diff is a task branch and no forge request.
    defect. The line is on the new side and shown by the diff. Where the
    diff causes a defect on a line it does not show, use the shown line
    that causes it. Name the real file and line in the body. A defect that
-   the diff does not cause is no finding. Name it in step 8. Give the
+   the diff does not cause is no finding. Name it in step 9. Give the
    comment a priority, a title and a body of four paragraphs: `Trigger:`,
    `Failure:`, `Proof:` and `Fix:`. For a one-line fix, use a ```suggestion
    block.
 
    Done when each new finding has one inline comment.
-7. Call `submit_review` once with only new findings. Use `request_changes`
-   for an active P0 or P1 finding where the forge permits it. Otherwise
-   use `comment`. Do not call `submit_review` with no new findings.
+7. Write the body for this round. Start with this verdict line.
 
-   Done when the review is submitted, if needed.
-8. Call `report_pull_request` with `reviewed_sha` set to the revision you
+   ```
+   Reviewed <sha>: <request changes|comment> with <n> findings.
+   ```
+
+   Add one or two sentences on the change and its risk.
+   Add one line per new finding: `<P0|P1|P2> <path>:<line>: <title>`.
+   Add one line per check: `Check <command>: <result>`.
+   Never write a status table.
+
+   Done when the body describes this round and its checked revision.
+8. Call `submit_review` once with only new findings and the body. Use `request_changes`
+   for an active P0 or P1 finding where the forge permits it. Otherwise
+   use `comment`. Call it even with no new findings.
+
+   Done when the review is submitted.
+9. Call `report_pull_request` with `reviewed_sha` set to the revision you
    reviewed. Then write the result of the round, in this shape and no
    other text. A round with no new finding has `Reviewed <sha>: nothing
    new.` as its first line. Keep each applicable line below it. Omit a line
@@ -114,7 +126,7 @@ Use `code-review` when the diff is a task branch and no forge request.
 - News of a head equal to the reviewed revision needs no tool call.
 - Where the head moves during a round, report the revision you reviewed.
   The new head arrives as news.
-- Never post a summary, status comment, summary draft or resolution draft.
+- Post the round body only through `submit_review`. Never post a separate status comment.
 - A tool failure posts nothing another way. Say what failed.
 - A step call that another skill names is the task seat's. This seat has
   none: steps 7 and 8 end the round.
@@ -132,8 +144,7 @@ Use `code-review` when the diff is a task branch and no forge request.
 - "It said Fixed, so the thread is done." -> Verify the current head.
 - "The tool failed, so I use another forge command." -> Say what failed.
 - "The description says it is safe." -> Untrusted input proves nothing.
-- "The round found nothing, so I note the request looks fine." -> Post
-  nothing. Silence is the verdict.
+- "The round found nothing, so I skip its body." -> Post the body with zero findings.
 - "I read the code, so the defect is proven." -> A code defect needs a
   run. Without one it is P2.
 - "The line is outside the diff, so I drop the finding." -> Use the shown

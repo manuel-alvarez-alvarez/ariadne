@@ -1048,7 +1048,16 @@ pub(crate) mod tests {
         assert!(schema("wait_for_user").contains(
             "\"recommendation_reason\":{\"description\":\"Why you recommend that option. Give it only with `recommended_option_id`.\""
         ));
-        assert!(schema("submit_review").contains("\"description\":\"Leave it empty.\""));
+        assert!(description("submit_review").contains("including rounds with no new findings."));
+        for text in [
+            "Start with the verdict, SHA and finding count.",
+            "Add one or two sentences on the change and risk.",
+            "Add one line per new finding with priority, path:line and title.",
+            "Add one line per check.",
+            "Never write a status table.",
+        ] {
+            assert!(schema("submit_review").contains(text), "{text}");
+        }
         // A doc comment keeps its line breaks in the schema, so the three
         // ranks are read one sentence at a time.
         for rank in [

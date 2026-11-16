@@ -90,8 +90,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    its name with a branch of the checkout. No local branch is written.
 5. The briefing names the repository, the worktree and its head, the
    branches, the login, and the last `reviewed_sha`, or `none`. The seat text
-   says to work only in the detached worktree, and to commit and push
-   nothing.
+   states: "You review one open pull or merge request that the user explicitly asks Ariadne to review.
+   The author can be the user, another person or a bot. The user needs no GitHub review assignment.
+   The request can be a draft. Work only in your worktree, detached at the head of the request.
+   Commit nothing and push nothing."
 5a. A review session that went away is resumed on its own row and
    conversation, unless the pin moved since it started: a conversation keeps
    the model it started on, so a new model or effort is a fresh session on
@@ -216,15 +218,21 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     where the checkout holds it, else the local base branch. A `since` that is
     not a hex sha of a commit in the worktree, or is not an ancestor, answers
     400 so rewritten history receives the full diff.
-13. `POST /v1/pull-requests/{id}/reviews` takes `event`, an optional legacy `body`, and
+13. `POST /v1/pull-requests/{id}/reviews` takes `event`, a round `body`, and
     `comments` of `path`, `line`, `title`, `body` and `priority` (`P0`, `P1`
     or `P2`). One call is one round of the review. `comments` are the
     round's new findings, each one inline comment on the line of its
     defect, posted as `**[P0] Title**`, a blank line, then its body: what
     goes wrong and how to fix it, with a trailer an agent's skill appends
-    stripped first (026 rule 16). The daemon never writes a review summary,
-    status comment, or summary draft. A round with no new finding posts no
-    review. Historical summary comments remain untouched and recognisable.
+    stripped first (026 rule 16). The daemon posts `body` above the round's inline findings with the review marker.
+    The marker preserves its identity when the forge returns it.
+    Each round writes its own body, including rounds with no new findings.
+    The body starts with a verdict line containing the SHA and finding count.
+    It gives one or two sentences on the change and its risk.
+    It gives one line per new finding with priority, path:line and title.
+    It gives one line per check. No round writes a status table.
+    The reviewer skill writes this body before calling `submit_review`.
+    Historical summary comments remain untouched and recognisable.
     A comment with no path, no line from 1, no title or no body answers 400,
     and so does a `request_changes` with no P0 or P1 among its comments and
     none of the review's still open: a change request shows its blockers on their
@@ -237,8 +245,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     against, and its comments go on unchecked.
     - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
       `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, every inline
-      comment and no body; a forge whose own answer says the review lacks a
-      body takes it again with a body that is the hidden review mark alone,
+      comment and the round body; an older caller that leaves the body empty
+      takes a retry when the forge says it lacks a body.
+      The retry uses the hidden review mark alone,
       `<!-- ariadne:review -->`, so the retry still shows the reader nothing.
       A forge that refuses answers 502 with its own reason — GitHub's
       `{"message", "errors"}` beside the CLI's line — so the session can act
@@ -250,8 +259,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     reads them back, and answers them with 201. On a request of
     the user's own, or one with a keeper, a `from_review` comment counts as
     another login's: it is told once to the task's author or keeper, as
-    "by the Ariadne review", and waits on it until that agent replies (026 rules 12 to 16). No additional
-    review-level comment is posted: each finding is already inline. The other way, a
+    "by the Ariadne review", and waits on it until that agent replies (026 rules 12 to 16). No separate
+    status comment is posted: each finding is already inline. The other way, a
     comment under the login that no review posted — the author's answer,
     or the user's — in a thread a review opened is the review session's
     news, so the answer to a finding reaches its reviewer. On a request of the user's
@@ -430,9 +439,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   after a verified fix. A thread someone else opened and a resolve
   from another session are refused without a forge mutation:
   `pull_request_reviews.rs::a_review_resolves_its_own_fixed_finding`.
-- A round posts only its inline findings, accepts `request_changes` for active
-  P0 or P1 findings, and refuses approval. A round with no findings does not
-  call the forge:
+- The reviewer skill writes a verdict, change and risk assessment, finding lines and check lines for every round:
+  `skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`.
+- A round posts its submitted body and inline findings, accepts `request_changes` for active
+  P0 or P1 findings, and refuses approval. A round with no findings posts its own body:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
   The author's answer in a review's thread reaches the review:
   `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_pr_agent`.
@@ -479,6 +489,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 - A review's findings are inline comments titled `[Pn] Title`; a change
   request with no P0 inline and a comment with no title are refused:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+- A round body does not answer an earlier conversation comment:
+  `forge::live::tests::a_round_body_does_not_answer_a_conversation_comment`.
 - The review session approves only the forge's current head, refused with
   409 on an earlier head, 400 with no head and 403 from another caller; a
   withdrawal clears it; the list and the request show it beside the forge's
