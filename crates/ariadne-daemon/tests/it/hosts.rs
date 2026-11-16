@@ -72,7 +72,7 @@ async fn configured_hosts_follow_local_in_file_order() {
 /// Each refusal names the host and the key, at startup and in `--check-config`.
 #[test]
 fn a_bad_host_is_refused_by_name_at_startup_and_by_check_config() {
-    let cases: [(&str, &str); 10] = [
+    let cases: [(&str, &str); 12] = [
         ("[hosts.local]\nendpoint = \"/x.sock\"\n", "hosts.local"),
         ("[hosts.\"a b\"]\nendpoint = \"/x.sock\"\n", "hosts.a b"),
         (
@@ -88,6 +88,14 @@ fn a_bad_host_is_refused_by_name_at_startup_and_by_check_config() {
             "hosts.box.endpoint",
         ),
         ("[hosts.box]\nendpoint = \"ssh://\"\n", "hosts.box.endpoint"),
+        (
+            "[hosts.box]\nendpoint = \"SSH://me@box\"\n",
+            "hosts.box.endpoint",
+        ),
+        (
+            "[hosts.box]\nendpoint = \"HTTP://box:1\"\n",
+            "hosts.box.endpoint",
+        ),
         (
             "[hosts.box]\nendpoint = \"http://box:1\"\nremote = \"/x\"\n",
             "hosts.box.remote",

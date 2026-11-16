@@ -305,6 +305,11 @@ fn validate_host_endpoint(name: &str, endpoint: &str) -> Result<()> {
         return Ok(());
     }
     let url = Url::parse(endpoint).map_err(|_| bad())?;
+    // `Url` lowercases the scheme; the rest of the host code matches the text,
+    // so only the lowercase spelling is accepted.
+    if !endpoint.starts_with(&format!("{}://", url.scheme())) {
+        return Err(bad());
+    }
     let bare_path = matches!(url.path(), "" | "/");
     let plain = url.query().is_none() && url.fragment().is_none() && bare_path;
     match url.scheme() {

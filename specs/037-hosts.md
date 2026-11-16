@@ -27,7 +27,8 @@ tasks own them. The transports and the event stream are spec 012's.
    socket path. `remote` is accepted only with `ssh://`, and is an absolute
    socket path or a loopback `host:port`. Any other value is refused by name
    (`hosts.<name>.endpoint`, `hosts.<name>.remote`) at startup and by
-   `ariadned --check-config`, in the same words.
+   `ariadned --check-config`, in the same words. The scheme is lowercase:
+   `SSH://box` is refused, so every later check of the text agrees.
 3. The name `local` is refused. A name has only letters, digits, `-` and `_`.
 4. `GET /v1/hosts` returns `HostDto[]`. The first row is `local`; the others
    follow in file order. `HostDto` has `name`; `kind` (`local`, `direct`,
