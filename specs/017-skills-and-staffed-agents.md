@@ -189,6 +189,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
     It runs each touched test file whole after focused checks.
     It writes the simplest code that meets the criteria in its build step.
     It refers prose-only tasks to `documentation` and checks prose changed with code.
+    `documentation` writes or repairs a prose page in a task with no code
+    change. It reads the area rules and the software before it writes.
+    It runs each example, links the page, runs the page checks and commits once.
+    Its exclusions name `coding`, `spec-writing` and `research`.
     `research` cites a source for every fact and lists what it did not check.
     Its research report names what would change the recommendation.
     It sends the full research report to the orchestrator through `send_message`.
@@ -511,8 +515,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   Its column report references the returned message ID
   (`skill_tests/produce.rs::each_writing_skill_names_its_sibling_and_its_own_proof`).
 - `documentation`, `research` and `spec-writing` each name a sibling, and
-  `research` and `spec-writing` keep their own proof: `spec-writing` names
-  `coding`, sends its questions as one list, marks each unbuilt test and
+  each keeps its own proof. `documentation` reads area rules and software,
+  runs examples and page checks, links the page and commits once.
+  `spec-writing` names `coding`, sends its questions as one list, marks each unbuilt test and
   commits once after the agreement
   (`skill_tests/produce.rs::each_writing_skill_names_its_sibling_and_its_own_proof`).
 - The review skill reviews in place, moves no ref and ends on a step call,
