@@ -3,6 +3,7 @@
 //! one review through the daemon, and taken down once the request ends or no
 //! longer asks for my review.
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -10,12 +11,13 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh,
 };
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::SessionStatus;
 use ariadne_daemon::forge::poll::Mode;
+use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{AgentSession, SessionFilter};
 
 const PIN: &str = "stub:review-model";
@@ -613,9 +615,9 @@ async fn a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_new
     );
 }
 
-/// A push reaches an idle review session on the very next reconcile, with
-/// no wait for the news to settle (029): back-to-back pushes each hand
-/// the agent their own prompt, rather than being folded into one.
+/// A push reaches an idle review session once its head stood still for the
+/// settle interval (029), which the harness sets to nothing here: pushes
+/// that each stood still hand the agent their own prompt.
 #[tokio::test]
 async fn a_push_reaches_an_idle_session_without_a_wait() {
     let stub = stub_forge_cli(json!([]));
@@ -670,7 +672,7 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     assert_eq!(
         h.prompts_to(&session).len(),
         briefed + 1,
-        "the push reaches the idle session at once, with no settle wait"
+        "the push reaches the idle session at once, with a zero settle interval"
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), second);
 
@@ -688,6 +690,88 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
         h.prompts_to(&idle).len(),
         briefed + 2,
         "the next push reaches it too, at once"
+    );
+    assert_eq!(sh(&worktree, "git rev-parse HEAD"), third);
+}
+
+/// A run of pushes inside the settle interval is told once, as the last
+/// head (029 rule 8): the second push restarts the interval, and the
+/// session never hears of the head in between.
+#[tokio::test]
+async fn a_run_of_pushes_is_told_once_when_the_head_stands_still() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness()
+        .scheduler()
+        .timeouts(Timeouts {
+            review_push_settle: Duration::from_secs(3),
+            full_reconcile: Duration::from_millis(100),
+            cancel_grace: RUNS_OUT,
+            turn_end_grace: RUNS_OUT,
+            forge_wake_debounce: Duration::from_millis(1),
+            ..Timeouts::default()
+        })
+        .forge_cli(&stub)
+        .await;
+    let (path, first) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&first)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    eventually(
+        TIMEOUT,
+        "the repository's first fetch to finish",
+        async || stub.fetches() >= 1,
+    )
+    .await;
+    let before = stub.fetches();
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
+    .await;
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+    let briefed = h.prompts_to(&session).len();
+    let commit = |file: &str| {
+        sh(
+            &path,
+            &format!(
+                "git worktree add -q ../burst fix && cd ../burst && echo {file} > {file} && \
+                 git add {file} && git -c user.email=t@t -c user.name=t commit -qm {file} && \
+                 cd - >/dev/null && git worktree remove ../burst"
+            ),
+        );
+        sh(&path, "git rev-parse fix")
+    };
+
+    let second = commit("second.txt");
+    stub.reprogram(script(&Shown::open(&second)));
+    fetch_again(&h, &stub, &repo).await;
+    let third = commit("third.txt");
+    stub.reprogram(script(&Shown::open(&third)));
+    fetch_again(&h, &stub, &repo).await;
+    assert_eq!(
+        h.prompts_to(&session).len(),
+        briefed,
+        "a push inside the interval is not told"
+    );
+    assert_eq!(
+        sh(&worktree, "git rev-parse HEAD"),
+        first,
+        "the worktree stays on the head the session was told"
+    );
+
+    eventually(
+        TIMEOUT,
+        "the last head to reach the session once it stood still",
+        async || h.prompts_to(&session).len() == briefed + 1,
+    )
+    .await;
+    let told = h.prompts_to(&session).last().cloned().unwrap();
+    assert!(told.contains(&third), "the last head is told: {told}");
+    assert!(
+        !told.contains(&second),
+        "the head in between is not: {told}"
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), third);
 }

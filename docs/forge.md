@@ -127,11 +127,12 @@ A request gets a review session of its own once you ask for one — at
 once, even while it is still a draft — staffed on the pin you gave that
 ask, in a worktree detached at the request's head rather than a branch of
 its own.
-The daemon wakes it with the request, then at the next reconcile after a
-later push or a reply in a thread it opened — told at once, with no wait
-for activity to settle. A push also waits for the session to go idle before
-the worktree moves to the new head; a reply alone moves no worktree, so it
-needs no idle session.
+The daemon wakes it with the request, then tells it of a reply in a thread
+it opened at the next reconcile, with no wait. A push is told only once the
+request's head stood unchanged for one minute, so a run of commits is one
+round on the last head; a further push inside that minute restarts it. The
+push also waits for the session to go idle before the worktree moves to the
+new head; a reply alone moves no worktree, so it needs no idle session.
 
 Nothing starts that session on its own: the request is tracked the moment
 it is seen, and Needs attention offers **Review needed**, naming the
