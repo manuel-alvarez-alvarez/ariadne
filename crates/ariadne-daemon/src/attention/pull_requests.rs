@@ -75,7 +75,7 @@ pub(crate) async fn items(store: &Store, cache: &LivePulls) -> Result<Vec<Attent
 
 /// One item per thread the request's keeping agent escalated (026), while
 /// no human has settled it on the forge: the thread is still unresolved,
-/// and no comment later than the escalated one is in it. Each carries its
+/// and no comment later than the escalation is in it. Each carries its
 /// own id, `pull_request:escalated:<request>:<comment>`, and the attention
 /// source revision of that id, which a write of the mark's `escalated_at`
 /// moves (migration 0010): a dismissal of one thread hides no other, and a
@@ -103,10 +103,14 @@ async fn escalated_items(
         let mut thread = comments
             .iter()
             .filter(|c| c.thread_id == escalated.thread_id);
+        let since = chrono::DateTime::parse_from_rfc3339(&escalated_at).ok();
         let settled = escalated.resolved
-            || thread
-                .clone()
-                .any(|c| c.created_at.as_str() > escalated.created_at.as_str());
+            || thread.clone().any(|c| {
+                matches!(
+                    (chrono::DateTime::parse_from_rfc3339(&c.created_at).ok(), since),
+                    (Some(at), Some(since)) if at > since
+                )
+            });
         if settled {
             continue;
         }

@@ -4504,7 +4504,7 @@ async fn each_escalated_thread_raises_its_own_item_until_the_forge_settles_it() 
     reply.forge_id = "rc-2".into();
     reply.author_login = "alice".into();
     reply.in_reply_to = Some("rc-1".into());
-    reply.created_at = "2026-10-02T00:00:00Z".into();
+    reply.created_at = "2999-01-01T00:00:00Z".into();
     answered.push(reply);
     seed_threads(&h, &pull, answered.clone());
     let list: AttentionListDto = h.get("/v1/attention").await;
@@ -4519,6 +4519,45 @@ async fn each_escalated_thread_raises_its_own_item_until_the_forge_settles_it() 
         }
     }
     seed_threads(&h, &pull, answered);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(escalations(&list).is_empty(), "{:?}", list.items);
+}
+
+/// A reply that came before the escalation does not settle it (031): the
+/// review opens a finding, the author answers, and the review session then
+/// escalates its own finding. The thread's item stands until a comment
+/// later than the escalation, or a resolve, clears it.
+#[tokio::test]
+async fn a_reply_before_the_escalation_does_not_settle_the_thread() {
+    let h = harness().await;
+    let mut threads = disputed_threads();
+    threads.truncate(1);
+    threads[0].author_login = "ariadne-bot".into();
+    threads[0].from_review = true;
+    let mut reply = crate::common::forge::open_review_comment();
+    reply.forge_id = "rc-2".into();
+    reply.author_login = "alice".into();
+    reply.in_reply_to = Some("rc-1".into());
+    reply.created_at = "2026-10-02T00:00:00Z".into();
+    threads.push(reply);
+    let (pull, keeper) = kept_by_hand(&h, threads.clone()).await;
+    h.store
+        .mark_review_comments(&pull.id, &["rc-1".to_string()])
+        .await
+        .unwrap();
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+
+    let mut later = crate::common::forge::open_review_comment();
+    later.forge_id = "rc-3".into();
+    later.author_login = "alice".into();
+    later.in_reply_to = Some("rc-1".into());
+    later.created_at = "2999-01-01T00:00:00Z".into();
+    threads.push(later);
+    seed_threads(&h, &pull, threads);
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert!(escalations(&list).is_empty(), "{:?}", list.items);
 }

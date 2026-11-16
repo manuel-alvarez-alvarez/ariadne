@@ -729,8 +729,9 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     thread on the forge." Its `target` is the request, and its `since` is
     the mark's `escalated_at`.
     The item clears when the forge reports the thread resolved, or when
-    the last read holds a comment in that thread later than the escalated
-    one. A dismissal also hides it. A merged or closed request raises
+    the last read holds a comment in that thread later than the
+    escalation itself (`escalated_at`), not later than the escalated
+    comment. A reply that came before the escalation settles nothing. A dismissal also hides it. A merged or closed request raises
     none, and nor does a comment the last read no longer holds.
 
 ### Individual dismissal
@@ -1222,8 +1223,8 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   `scheduler_attention.rs::a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart`).
 - Each escalated thread raises its own item, named by its path and first
   line, asking to answer or resolve it on the forge, targeting the
-  request, dated from the escalation; a later comment in the thread or a
-  resolve on the forge clears it
+  request, dated from the escalation; a comment in the thread later than
+  the escalation, or a resolve on the forge, clears it
   (`attention.rs::each_escalated_thread_raises_its_own_item_until_the_forge_settles_it`).
   A merged or closed request raises none
   (`attention.rs::a_closed_request_raises_no_escalation_item`). A dismissal
@@ -1233,6 +1234,8 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   same item, with the same summary, action, target and dating, and clears
   the same way
   (`attention.rs::a_review_sessions_escalation_raises_the_same_item_as_a_keepers`).
+  A reply that came before the escalation does not settle it
+  (`attention.rs::a_reply_before_the_escalation_does_not_settle_the_thread`).
 - A mergeability-only transition still publishes `pull_requests_changed`,
   both directions, and an unchanged fetch after it still raises nothing:
   (`pull_requests.rs::a_mergeability_only_transition_publishes_pull_requests_changed`).
