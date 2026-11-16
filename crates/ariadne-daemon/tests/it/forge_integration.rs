@@ -498,3 +498,30 @@ async fn detect_refuses_a_relative_or_non_git_path() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn marking_an_already_ready_request_sends_no_mutation() {
+    let stub = stub_forge_cli(json!([
+        answer(
+            &["api", "repos/acme/widgets/pulls/1"],
+            0,
+            r#"{"node_id":"PR_one","draft":false}"#
+        ),
+        answer(
+            &["api", "graphql"],
+            0,
+            r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}"#
+        )
+    ]));
+    let h = harness().forge_cli(&stub).await;
+    let client = ariadne_daemon::forge::ForgeClient::new(&h.launcher.cfg, ForgeKind::Github);
+    client
+        .mark_ready_for_review("github.com/acme/widgets", 1)
+        .await
+        .unwrap();
+    assert!(!stub.invocations().iter().any(|call| {
+        call.args
+            .iter()
+            .any(|arg| arg.contains("markPullRequestReadyForReview"))
+    }));
+}

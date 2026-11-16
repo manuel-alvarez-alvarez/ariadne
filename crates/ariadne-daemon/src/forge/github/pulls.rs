@@ -178,6 +178,9 @@ impl Github {
             ])
             .await?;
         let pull: serde_json::Value = serde_json::from_str(&output).map_err(|e| e.to_string())?;
+        if pull["draft"] == false {
+            return Ok(());
+        }
         let id = pull["node_id"]
             .as_str()
             .ok_or("the request has no node id")?;
