@@ -251,14 +251,10 @@ pub(crate) async fn ready_evidence(
         .filter(|c| !live::is_review_summary(c, &login))
         .cloned()
         .collect();
-    if !live::waiting_threads(
+    Ok(live::waiting_threads(
         &actionable,
         live::comment_role(&pull.role, pull.babysit_asked),
         &login,
     )
-    .is_empty()
-    {
-        return Ok(false);
-    }
-    Ok(true)
+    .is_empty())
 }
