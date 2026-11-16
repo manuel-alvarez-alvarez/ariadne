@@ -19,7 +19,11 @@ use super::*;
 /// on the whole change, and the verdict takes one literal shape, since
 /// a prose shape was compressed to "Criteria 3–10 not fully judged". A
 /// must-fix finding opens with `Trigger:` and ends the step on
-/// `fail_step`; an optional one never does.
+/// `fail_step`; an optional one never does. The two step calls are the
+/// task seat's: a review session (029) loads this skill beside
+/// `pr-reviewer` — 18 of 48 review goals did in November 2026 — and has
+/// neither tool, so the step says which seat the calls serve and that
+/// `pr-reviewer` ends the round there.
 #[test]
 fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
     let text = unwrapped(default_skill_document("code-review").unwrap());
@@ -74,8 +78,10 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         "Never rerun a check whose result you already hold for this verdict.",
         "Never fail the step on an optional finding.",
         "Open each must-fix finding with `Trigger:`.",
+        "The two step calls are the task seat's.",
         "On a must-fix finding, call `fail_step` with the return report.",
         "Else call `complete_step` with the verdict and the optional findings.",
+        "Beside `pr-reviewer`, post each finding as that skill says. That skill ends the round.",
         "Done when `git rev-parse HEAD` prints the reviewed revision and the column has ended.",
     ] {
         assert!(text.contains(rule), "the code-review skill and {rule}");
@@ -185,6 +191,13 @@ fn architecture_review_adds_to_the_one_verdict_of_its_column() {
             "the pr-reviewer skill names {call}, a call a forge session never makes"
         );
     }
+    // A picked skill may still name one: the seat says whose it is.
+    assert!(
+        pr.contains(
+            "A step call that another skill names is the task seat's. This seat has none: steps 7 and 8 end the round."
+        ),
+        "the pr-reviewer skill does not disown a step call another skill names"
+    );
 }
 
 /// The reviewer session is fed by the daemon too (029), and the user
@@ -283,6 +296,7 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "News of a head equal to the reviewed revision needs no tool call.",
         "Where the head moves during a round, report the revision you reviewed.",
         "A round with no new finding has `Reviewed <sha>: nothing new.` as its first line.",
+        "This seat has none: steps 7 and 8 end the round.",
         "Never land the request.",
         "Never edit a file.",
     ] {

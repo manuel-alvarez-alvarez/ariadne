@@ -116,6 +116,8 @@ Use `code-review` when the diff is a task branch and no forge request.
   The new head arrives as news.
 - Never post a summary, status comment, summary draft or resolution draft.
 - A tool failure posts nothing another way. Say what failed.
+- A step call that another skill names is the task seat's. This seat has
+  none: steps 7 and 8 end the round.
 
 ## Never
 

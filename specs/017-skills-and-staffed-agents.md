@@ -215,7 +215,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
 
     One column has one verdict. `code-review` ends the column: it fails the
     step on a must-fix finding, completes it otherwise, and never fails it
-    on an optional one. `architecture-review` adds its findings to the one
+    on an optional one. It says those two step calls are the task seat's,
+    and that beside `pr-reviewer` it posts each finding as that skill says
+    and that skill ends the round: a review session (029) loads it beside
+    `pr-reviewer` — 18 of 48 review goals did — and has neither tool.
+    `pr-reviewer` states once that a step call another skill names is the
+    task seat's, and that its own steps 7 and 8 end the round, so a picked
+    skill such as `documentation` cannot send the seat to a tool it lacks.
+    `architecture-review` adds its findings to the one
     verdict of the skill loaded beside it, as one `Architecture` line
     under the repository conventions heading beside `code-review`, and as
     inline comments with no line and no clean-review text beside

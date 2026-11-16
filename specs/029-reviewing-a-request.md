@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-11-15
+updated: 2026-11-16
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -363,7 +363,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     in the turn text, in a literal shape: `Reviewed <sha>:` with the verdict
     and the count, or `nothing new`, then one line per finding, settled
     thread, check, failed tool call and defect outside the diff. That text
-    is all the user reads of a round that posts nothing.
+    is all the user reads of a round that posts nothing. The round ends on
+    `submit_review` and `report_pull_request` alone: the skill states that
+    a step call another skill names — `complete_step` or `fail_step` in a
+    picked `code-review` or `documentation` — is the task seat's, and that
+    this seat has none, since the seat lists neither tool (rule 11).
 
 18. A review posted, or a request reported ready, notifies nobody by
     itself: the approval and the merge stay the user's to give in their own
