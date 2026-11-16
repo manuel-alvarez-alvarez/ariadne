@@ -779,12 +779,15 @@ export interface paths {
         put?: never;
         /**
          * Escalate the thread of one comment to a human (026): the keeping agent
-         *     and the reviewer disagree, and a person settles it on the forge. Only
-         *     the request's keeping agent escalates: the current column agent of the
-         *     task that opened it (`Seat::Agent`), or the keeper of a request kept by
-         *     hand (`Seat::Keeper`, 032). The daemon marks the comment and raises a
-         *     `pull_request` attention item for its thread (031). It calls no forge
-         *     and posts nothing: the comment is looked up in the last read alone.
+         *     and the reviewer disagree, and a person settles it on the forge. The
+         *     request's keeping agent escalates any comment: the current column agent
+         *     of the task that opened it (`Seat::Agent`), or the keeper of a request
+         *     kept by hand (`Seat::Keeper`, 032). Its review session (`Seat::Reviewer`,
+         *     029) escalates only a comment the review posted alone: a `from_review`
+         *     comment of the integration login. The daemon marks the comment and
+         *     raises a `pull_request` attention item for its thread (031), the same
+         *     whichever seat escalated. It calls no forge and posts nothing: the
+         *     comment is looked up in the last read alone.
          */
         post: operations["pull-requests_escalate"];
         delete?: never;

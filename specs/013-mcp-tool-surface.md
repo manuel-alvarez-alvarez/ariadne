@@ -143,14 +143,14 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      set and seat `reviewer` (029): `get_pull_request`, `get_diff` (on a
      request it reads `/v1/pull-requests/{id}/diff`, and `since` narrows it
      to the commits after that sha), `list_comments`, `get_comment`,
-     `reply_comment`, `submit_review` (one round: an
+     `reply_comment`, `escalate_comment` (one `comment_id` of a thread it
+     opened, and a `reason`; rule 16), `submit_review` (one round: an
      `event` of `request_changes` or `comment`, and the round's new inline
      `comments` of `path`, `line`, `body` and a `priority` of
      `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
      opened, once a push fixed it) and `report_pull_request` (which takes
-     `reviewed_sha` beside `ready` and `state`). Ten tools, and no
-     task tool and no message tool. It escalates no thread: the keeping
-     agent does (rule 16): the task a review operation's goal
+     `reviewed_sha` beside `ready` and `state`). Eleven tools, and no
+     task tool and no message tool: the task a review operation's goal
      gives the session is the daemon's (029 rule 10b), so the session has
      no step or task to write to, and the user reaches it through its
      console. No tool approves or merges: the user does. A tool is added
@@ -248,9 +248,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     short `reason`. It posts the trimmed reason to
     `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate` (026
     rule 15), and refuses an empty reason before any call. The call
-    posts no comment on the forge. The agent seat and the keeper seat list
-    it beside their request tools. The reviewer and orchestrator seats do
-    not list it. The user sees the thread in Needs attention (031 rule 17).
+    posts no comment on the forge. The agent seat, the keeper seat and the
+    reviewer seat list it beside their request tools. The orchestrator seat
+    does not list it. The reviewer seat calls it on a thread its own review
+    opened, and the daemon refuses any other comment (026 rule 15, 029
+    rule 11). The user sees the thread in Needs attention (031 rule 17).
 
 ## Acceptance criteria
 
@@ -280,7 +282,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - `escalate_comment` posts its trimmed reason to the escalate route of the
   comment, and refuses an empty reason with no call
   (`tools.rs::escalating_a_comment_posts_its_reason_to_the_escalate_route`).
-  The agent and keeper seats list it, and the reviewer seat does not
+  The agent, keeper and reviewer seats list it
   (`mcp.rs::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`,
   `::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`,
   `::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`).
@@ -365,10 +367,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::the_repository_and_session_reads_start_before_either_is_answered`).
 - A message to `orchestrator` makes no task read
   (`tools.rs::the_orchestrator_is_addressed_by_name_and_needs_no_agent_id`).
-- The pull request reviewer seat lists its ten tools and no task or
+- The pull request reviewer seat lists its eleven tools and no task or
   message tool
   (`mcp.rs::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`);
-  its diff, review and report call the routes of the session's request
+  its diff, review, report, resolve and escalation call the routes of the
+  session's request
   (`tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`).
 - A review session's MCP server is told the request, and the seat decides
   its tools: a goal and task in its environment give it no task tool
