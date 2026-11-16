@@ -992,6 +992,11 @@ pub struct CommentMark {
     pub forge_id: String,
     pub told_at: Option<String>,
     pub from_review: bool,
+    /// When the request's keeping agent last escalated the comment's
+    /// thread to a human (026).
+    pub escalated_at: Option<String>,
+    /// Why it escalated the thread, in the agent's own words.
+    pub escalation_reason: Option<String>,
 }
 
 /// One comment on a pull request, as the forge holds it and the daemon's

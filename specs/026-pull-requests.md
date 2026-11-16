@@ -29,6 +29,7 @@ tests:
   - crates/ariadne-daemon/tests/it/adapters.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-daemon/tests/it/attention.rs
   - crates/ariadne-cli/src/commands/pr.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
@@ -153,7 +154,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
     `answered` holds where a later comment in the thread is the integration login's own side's.
-    What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, and `from_review`, once an Ariadne review posted it (029). The marks go with their row.
+    What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, `from_review`, once an Ariadne review posted it (029), and `escalated_at` with `escalation_reason`, once the keeping agent escalated its thread (rule 15, migration `0010_escalated_comments.sql`). The marks go with their row.
     What Ariadne posts itself is held beside the last read until the next fetch reads it back.
 11. The DTO joins the forge's read and the row.
     It includes the request's fields, `failed_checks`, `behind_base`, `id`, `origin_task_id`, `ready`, review ask, and `session_id`.
@@ -179,10 +180,16 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## Tools and replies
 
-15. The agent seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment` and `report_pull_request` beside its task tools (013).
+15. The agent seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment`, `escalate_comment` and `report_pull_request` beside its task tools (013).
     `get_pull_request`, `list_comments` and `get_comment` read the forge at the call: what a session works from is never an earlier read.
     Each finds the request its task opened through `GET /v1/pull-requests?task=<id>&role=author`; with none, it says to call `open_pull_request` first.
     The task agent has no thread-resolution tool. A review session resolves a thread it opened once a push fixed it (029).
+    `escalate_comment` (013 rule 16) calls `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate` with `{reason}`. The keeping agent calls it when it and the reviewer disagree on a thread, and a human must settle it.
+    The route accepts the current column agent of the task that opened the request (`Seat::Agent`) and the keeper of a request kept by hand (`Seat::Keeper`, 032 rule 12).
+    It refuses a review session of the same request, any other session, and a call with no session, with 403. It refuses an empty reason with 400.
+    It finds the comment in the request's last read. A comment the request does not hold gets 404.
+    It stamps the comment's mark with `escalated_at` and `escalation_reason`, publishes `attention_changed`, and answers the comment with 200.
+    It makes no forge call and posts nothing. The `pull_request` attention producer raises one item for the thread (031 rule 17).
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
     The current column agent's `reply_comment` answers an inline review comment, the thread of the defect. In the conversation, it answers a comment of the other side once. It may not answer a comment of its own side. A `from_review` comment, a review's own summary, is one of those. It may not answer a comment that its own side already answered in the conversation. The daemon reads the seat (`Seat::Agent`), as for rule 17. A review session is never this seat. The daemon refuses any other conversation reply of the agent with 400, and makes no forge call. A review session keeps its wider reach, into the conversation and a defect's thread alike (029).
@@ -267,6 +274,7 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `GET /v1/pull-requests/{id}/comments/{comment_id}` | One comment, read off the forge now. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI. Return 201. |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. |
+| `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate` | Take `{reason}` from the request's keeping agent, mark the comment escalated, and make no forge call (rule 15). Return 200. |
 | `POST /v1/pull-requests/{id}/report` | Take `ready`, `head_sha` (required with `ready: true`), and `reviewed_sha` (029), from the request's own session. |
 | `GET /v1/sessions?pull_request=` | List the sessions of one request (012). |
 
@@ -316,6 +324,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it`.
 - Comment marks are claimed once, released whole, keep the review's mark, and go with their row:
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
+- An escalation stamps its mark with its time and reason, keeps the rest of the mark, moves its own thread's attention revision alone, and goes with the row:
+  `store.rs::an_escalation_stamps_its_mark_moves_its_own_revision_and_goes_with_the_row`.
+- The task's `pr` agent escalates a thread with no forge call. A comment the request does not hold is 404, and an empty reason is 400. A review session of the same request, another session and a call with no session get 403 (rule 15):
+  `kept_requests.rs::the_pr_agent_escalates_a_thread_without_a_forge_call_and_no_other_session_may`.
+- The keeper of a request kept by hand escalates a thread (rule 15, 032 rule 12):
+  `attention.rs::each_escalated_thread_raises_its_own_item_until_the_forge_settles_it`.
 - A row is deleted only as the pass read it: an ask that landed since the read, a repeated one included, keeps the row and its sessions, and the row goes once read as it is:
   `store.rs::deleting_a_request_is_refused_where_an_ask_landed_since_the_read`.
 - The held list answers the fetch's own read, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked the moment it is seen, and nothing adds or removes a row by hand:

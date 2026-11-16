@@ -1,10 +1,11 @@
 //! The pull-request producer: a request's next step.
 //!
-//! Two items, both raised from the forge's own evidence of the last fetch
-//! (026) rather than a guess: a review request nobody is assigned to, and
-//! a request a babysitting task has claimed is ready to merge, confirmed
+//! Three items, each raised from the forge's own evidence of the last fetch
+//! (026) rather than a guess: a review request nobody is assigned to, a
+//! request a babysitting task has claimed is ready to merge, confirmed
 //! against the forge's own approval, comment, check and mergeability
-//! evidence for the current head. A request automatic recovery has given
+//! evidence for the current head, and a review thread its keeping agent
+//! escalated that no human has settled yet. A request automatic recovery has given
 //! up starting a reviewer for (`PullRequestRow::reviewer_given_up_at`) is
 //! `recovery`'s own item (009, 031); this producer never raises a second
 //! one for it, since both would carry the same underlying request.
@@ -65,6 +66,76 @@ pub(crate) async fn items(store: &Store, cache: &LivePulls) -> Result<Vec<Attent
                 items.push(item);
             }
         }
+        if pull.state == "open" {
+            items.extend(escalated_items(store, cache, &pull, &repo).await?);
+        }
+    }
+    Ok(items)
+}
+
+/// One item per thread the request's keeping agent escalated (026), while
+/// no human has settled it on the forge: the thread is still unresolved,
+/// and no comment later than the escalated one is in it. Each carries its
+/// own id, `pull_request:escalated:<request>:<comment>`, and the attention
+/// source revision of that id, which a write of the mark's `escalated_at`
+/// moves (migration 0010): a dismissal of one thread hides no other, and a
+/// later escalation of a dismissed thread brings it back. A comment the
+/// last read no longer holds raises nothing, as missing evidence.
+async fn escalated_items(
+    store: &Store,
+    cache: &LivePulls,
+    pull: &PullRequest,
+    repo: &str,
+) -> Result<Vec<AttentionItemDto>> {
+    let marks = store.pull_request_comment_marks(&pull.id).await?;
+    if marks.iter().all(|m| m.escalated_at.is_none()) {
+        return Ok(Vec::new());
+    }
+    let comments = live::comments_of(store, cache, pull).await?;
+    let mut items = Vec::new();
+    for mark in marks {
+        let Some(escalated_at) = mark.escalated_at else {
+            continue;
+        };
+        let Some(escalated) = comments.iter().find(|c| c.forge_id == mark.forge_id) else {
+            continue;
+        };
+        let mut thread = comments
+            .iter()
+            .filter(|c| c.thread_id == escalated.thread_id);
+        let settled = escalated.resolved
+            || thread
+                .clone()
+                .any(|c| c.created_at.as_str() > escalated.created_at.as_str());
+        if settled {
+            continue;
+        }
+        let opening = thread.next().unwrap_or(escalated);
+        let place = match escalated.path.as_deref() {
+            Some(path) => format!("on {path}"),
+            None => "in the conversation".into(),
+        };
+        let first_line = opening.body.lines().next().unwrap_or_default().trim();
+        let reason = mark.escalation_reason.unwrap_or_default();
+        let id = format!("pull_request:escalated:{}:{}", pull.id, mark.forge_id);
+        items.push(AttentionItemDto {
+            occurrence: escalated_at.clone(),
+            id,
+            producer: AttentionProducer::PullRequest,
+            reason: AttentionCause::Unknown,
+            summary: format!(
+                "{}: the agent escalated the thread {place} that starts \"{first_line}\". {reason}",
+                label(pull, repo)
+            )
+            .trim_end()
+            .to_string(),
+            required_action: "Answer or resolve the thread on the forge.".into(),
+            since: escalated_at,
+            affected: vec![subject(pull, repo)],
+            target: AttentionTarget::PullRequest {
+                pull_request_id: pull.id.clone(),
+            },
+        });
     }
     Ok(items)
 }

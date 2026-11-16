@@ -876,6 +876,8 @@ mod tests {
             forge_id: forge_id.into(),
             told_at: told.then(|| "2026-10-03T00:00:00Z".into()),
             from_review,
+            escalated_at: None,
+            escalation_reason: None,
         }
     }
 

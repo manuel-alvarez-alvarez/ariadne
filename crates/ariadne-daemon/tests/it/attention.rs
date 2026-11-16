@@ -4349,3 +4349,231 @@ async fn keeper_failure_does_not_restore_a_dismissed_review_request() {
 async fn keeper_failure_does_not_restore_a_dismissed_ready_request() {
     recovery_does_not_restore_a_dismissed_pull_request_action(true).await;
 }
+
+/// Two disputed threads on a request kept by hand, as the forge holds
+/// them: `rc-1` on `src/lib.rs` and `rc-5` on `src/main.rs`, each the only
+/// comment of its thread, neither resolved.
+fn disputed_threads() -> Vec<ariadne_store::NewPullRequestComment> {
+    let mut lib = crate::common::forge::open_review_comment();
+    lib.body = "Rename this to `retry_budget`.\nIt reads better.".into();
+    let mut main = crate::common::forge::open_review_comment();
+    main.forge_id = "rc-5".into();
+    main.thread_id = "T5".into();
+    main.path = Some("src/main.rs".into());
+    main.body = "Drop the second loop.".into();
+    vec![lib, main]
+}
+
+/// A request kept by hand, its comments as `comments` gives them, and its
+/// keeper session.
+async fn kept_by_hand(
+    h: &Harness,
+    comments: Vec<ariadne_store::NewPullRequestComment>,
+) -> (ariadne_store::PullRequestRow, ariadne_store::AgentSession) {
+    let cast = h.cast().await;
+    crate::common::forge::enable_integration(h, &cast.repo.id, "ariadne-bot").await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: cast.repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    seed_threads(h, &pull, comments);
+    let keeper = h
+        .store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Keeper),
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(pull.id.clone()),
+        })
+        .await
+        .unwrap();
+    (pull, keeper)
+}
+
+/// What the last fetch of `pull` found: its open head and `comments`.
+fn seed_threads(
+    h: &Harness,
+    pull: &ariadne_store::PullRequestRow,
+    comments: Vec<ariadne_store::NewPullRequestComment>,
+) {
+    crate::common::forge::seed_review_evidence(
+        h,
+        pull,
+        crate::common::forge::ReviewEvidence {
+            checks: "pending",
+            review_decision: "none",
+            mergeable: "clean",
+            head_sha: "abc",
+            details_head_sha: None,
+            evidence_ok: true,
+            comments,
+        },
+    );
+}
+
+async fn escalate(h: &Harness, keeper: &ariadne_store::AgentSession, pull: &str, comment: &str) {
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{pull}/comments/{comment}/escalate"),
+                &keeper.id,
+                serde_json::json!({"reason": "The reviewer and I disagree."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+}
+
+fn escalations(list: &AttentionListDto) -> Vec<&ariadne_api::attention::AttentionItemDto> {
+    list.items
+        .iter()
+        .filter(|item| item.id.starts_with("pull_request:escalated:"))
+        .collect()
+}
+
+/// One item per escalated thread (031): it names the thread by its path
+/// and its first line, asks the user to answer or resolve it on the
+/// forge, targets the request, and dates from the escalation. A comment
+/// later than the escalated one clears its thread's item, and so does a
+/// resolve on the forge.
+#[tokio::test]
+async fn each_escalated_thread_raises_its_own_item_until_the_forge_settles_it() {
+    let h = harness().await;
+    let (pull, keeper) = kept_by_hand(&h, disputed_threads()).await;
+    let none: AttentionListDto = h.get("/v1/attention").await;
+    assert!(escalations(&none).is_empty(), "{:?}", none.items);
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    escalate(&h, &keeper, &pull.id, "rc-5").await;
+    let marks = h.store.pull_request_comment_marks(&pull.id).await.unwrap();
+    let escalated_at = |id: &str| {
+        marks
+            .iter()
+            .find(|m| m.forge_id == id)
+            .and_then(|m| m.escalated_at.clone())
+            .expect("an escalated mark")
+    };
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.complete);
+    let found = escalations(&list);
+    assert_eq!(found.len(), 2, "{found:?}");
+    let lib = found
+        .iter()
+        .find(|item| item.id == format!("pull_request:escalated:{}:rc-1", pull.id))
+        .expect("the src/lib.rs thread's item");
+    assert_eq!(lib.producer, AttentionProducer::PullRequest);
+    assert!(lib.summary.contains("src/lib.rs"), "{}", lib.summary);
+    assert!(
+        lib.summary.contains("Rename this to `retry_budget`."),
+        "{}",
+        lib.summary
+    );
+    assert!(!lib.summary.contains("It reads better."), "{}", lib.summary);
+    assert_eq!(
+        lib.required_action,
+        "Answer or resolve the thread on the forge."
+    );
+    assert_eq!(lib.since, escalated_at("rc-1"));
+    assert_eq!(
+        lib.target,
+        AttentionTarget::PullRequest {
+            pull_request_id: pull.id.clone()
+        }
+    );
+    let main = found
+        .iter()
+        .find(|item| item.id == format!("pull_request:escalated:{}:rc-5", pull.id))
+        .expect("the src/main.rs thread's item");
+    assert!(main.summary.contains("src/main.rs"), "{}", main.summary);
+    assert_eq!(main.since, escalated_at("rc-5"));
+
+    // A human answers the src/lib.rs thread on the forge.
+    let mut answered = disputed_threads();
+    let mut reply = crate::common::forge::open_review_comment();
+    reply.forge_id = "rc-2".into();
+    reply.author_login = "alice".into();
+    reply.in_reply_to = Some("rc-1".into());
+    reply.created_at = "2026-10-02T00:00:00Z".into();
+    answered.push(reply);
+    seed_threads(&h, &pull, answered.clone());
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].id.ends_with(":rc-5"), "{found:?}");
+
+    // A human resolves the src/main.rs thread on the forge.
+    for comment in &mut answered {
+        if comment.thread_id == "T5" {
+            comment.resolved = true;
+        }
+    }
+    seed_threads(&h, &pull, answered);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(escalations(&list).is_empty(), "{:?}", list.items);
+}
+
+/// A dismissal hides one thread's item alone (031): the other thread's
+/// stays. A later escalation of the dismissed thread brings it back.
+#[tokio::test]
+async fn dismissing_one_escalated_thread_hides_no_other_and_a_new_escalation_returns_it() {
+    let h = harness().await;
+    let (pull, keeper) = kept_by_hand(&h, disputed_threads()).await;
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    escalate(&h, &keeper, &pull.id, "rc-5").await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let lib = escalations(&list)
+        .into_iter()
+        .find(|item| item.id.ends_with(":rc-1"))
+        .expect("the src/lib.rs thread's item")
+        .clone();
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/attention/{}/dismiss", lib.id),
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].id.ends_with(":rc-5"), "{found:?}");
+
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 2, "{found:?}");
+    let back = found
+        .iter()
+        .find(|item| item.id == lib.id)
+        .expect("the escalated thread is back");
+    assert_ne!(back.occurrence, lib.occurrence);
+}
+
+/// A merged or closed request raises no escalation item, whatever its
+/// marks hold (031).
+#[tokio::test]
+async fn a_closed_request_raises_no_escalation_item() {
+    let h = harness().await;
+    let (pull, keeper) = kept_by_hand(&h, disputed_threads()).await;
+    escalate(&h, &keeper, &pull.id, "rc-1").await;
+    let open: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(escalations(&open).len(), 1, "{:?}", open.items);
+    for state in ["closed", "merged"] {
+        let mut live = h.launcher.live.get(&pull.id).expect("the seeded read");
+        live.pull.state = state.into();
+        h.launcher.live.set(&pull.id, live);
+        let list: AttentionListDto = h.get("/v1/attention").await;
+        assert!(escalations(&list).is_empty(), "{state}: {:?}", list.items);
+    }
+}
