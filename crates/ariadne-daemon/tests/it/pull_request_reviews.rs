@@ -856,7 +856,7 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     let (_, review) = review_bodies(&stub).pop().unwrap();
     assert_eq!(
         review,
-        json!({"event": "REQUEST_CHANGES", "commit_id": head, "body": "Reviewed abc: request changes with 2 findings.", "comments": [
+        json!({"event": "REQUEST_CHANGES", "commit_id": head, "body": "Reviewed abc: request changes with 2 findings.\n\n<!-- ariadne:review -->", "comments": [
             // Each finding is signed the review's, invisibly (029).
             {"path": "a.txt", "line": 1, "side": "RIGHT",
              "body": "**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->"},
@@ -895,7 +895,7 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     assert_eq!(review_posts(&stub).len(), 2, "each round posts a review");
     assert_eq!(
         review_bodies(&stub)[1].1["body"],
-        "Reviewed def: comment with 0 findings."
+        "Reviewed def: comment with 0 findings.\n\n<!-- ariadne:review -->"
     );
     assert_eq!(
         h.store.pull_request_comment_marks(&id).await.unwrap().len(),

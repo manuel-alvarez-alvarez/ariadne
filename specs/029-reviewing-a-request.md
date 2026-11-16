@@ -222,7 +222,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     round's new findings, each one inline comment on the line of its
     defect, posted as `**[P0] Title**`, a blank line, then its body: what
     goes wrong and how to fix it, with a trailer an agent's skill appends
-    stripped first (026 rule 16). The daemon posts `body` above the round's inline findings.
+    stripped first (026 rule 16). The daemon posts `body` above the round's inline findings with the review marker.
+    The marker preserves its identity when the forge returns it.
     Each round writes its own body, including rounds with no new findings.
     The body starts with a verdict line containing the SHA and finding count.
     It gives one or two sentences on the change and its risk.
@@ -482,6 +483,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 - A review's findings are inline comments titled `[Pn] Title`; a change
   request with no P0 inline and a comment with no title are refused:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+- A round body does not answer an earlier conversation comment:
+  `forge::live::tests::a_round_body_does_not_answer_a_conversation_comment`.
 - The review session approves only the forge's current head, refused with
   409 on an earlier head, 400 with no head and 403 from another caller; a
   withdrawal clears it; the list and the request show it beside the forge's

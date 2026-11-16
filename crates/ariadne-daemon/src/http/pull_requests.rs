@@ -1203,7 +1203,11 @@ pub(super) async fn submit_review(
             &ReviewDraft {
                 request_changes,
                 head_sha: pull.head_sha.clone(),
-                body: req.body,
+                body: if req.body.is_empty() {
+                    req.body
+                } else {
+                    pulls::signed(&req.body, false)
+                },
                 comments,
             },
             &login,
