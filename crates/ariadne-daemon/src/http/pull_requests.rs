@@ -839,12 +839,15 @@ pub(super) async fn resolve(
 }
 
 /// Escalate the thread of one comment to a human (026): the keeping agent
-/// and the reviewer disagree, and a person settles it on the forge. Only
-/// the request's keeping agent escalates: the current column agent of the
-/// task that opened it (`Seat::Agent`), or the keeper of a request kept by
-/// hand (`Seat::Keeper`, 032). The daemon marks the comment and raises a
-/// `pull_request` attention item for its thread (031). It calls no forge
-/// and posts nothing: the comment is looked up in the last read alone.
+/// and the reviewer disagree, and a person settles it on the forge. The
+/// request's keeping agent escalates any comment: the current column agent
+/// of the task that opened it (`Seat::Agent`), or the keeper of a request
+/// kept by hand (`Seat::Keeper`, 032). Its review session (`Seat::Reviewer`,
+/// 029) escalates only a comment the review posted alone: a `from_review`
+/// comment of the integration login. The daemon marks the comment and
+/// raises a `pull_request` attention item for its thread (031), the same
+/// whichever seat escalated. It calls no forge and posts nothing: the
+/// comment is looked up in the last read alone.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/escalate", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     request_body = EscalateCommentRequest,
@@ -860,7 +863,7 @@ pub(super) async fn escalate(
     // `own_session` lets an `Agent` seat through only as the current column
     // agent of the task that opened the row, and a `Keeper` only as the
     // keeper of this row. A reviewer of the same row passes it too, and is
-    // refused here.
+    // held to its own comments below.
     let keeping_agent = match session.seat() {
         Some(ariadne_core::Seat::Agent) => {
             row.origin_task_id.is_some() && session.task_id == row.origin_task_id
@@ -868,7 +871,8 @@ pub(super) async fn escalate(
         Some(ariadne_core::Seat::Keeper) => session.pull_request_id.as_deref() == Some(&row.id),
         _ => false,
     };
-    if !keeping_agent {
+    let reviewer = session.seat() == Some(ariadne_core::Seat::Reviewer);
+    if !keeping_agent && !reviewer {
         return Err(ApiError::forbidden(format!(
             "only the keeping agent of pull request {} escalates a thread",
             row.id
@@ -892,6 +896,16 @@ pub(super) async fn escalate(
             entity: "pull_request_comment",
             id: comment_id.clone(),
         })?;
+    if reviewer && !keeping_agent {
+        let forge = integration(&state, &pull.repository_id).await?;
+        let login = forge.login.clone().unwrap_or_default();
+        if !comment.from_review || !comment.author_login.eq_ignore_ascii_case(&login) {
+            return Err(ApiError::forbidden(format!(
+                "a review session escalates only a comment its own review posted on pull request {}",
+                pull.id
+            )));
+        }
+    }
     let mark = state
         .store
         .escalate_comment(&pull.id, &comment.forge_id, reason)

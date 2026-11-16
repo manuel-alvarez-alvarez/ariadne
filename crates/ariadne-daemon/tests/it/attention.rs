@@ -4523,6 +4523,95 @@ async fn each_escalated_thread_raises_its_own_item_until_the_forge_settles_it() 
     assert!(escalations(&list).is_empty(), "{:?}", list.items);
 }
 
+/// A review session's escalation raises the same item as a keeper's (031):
+/// the same producer, summary shape, action, target and dating, and the
+/// same clearing. The reviewer escalates a thread its own review opened;
+/// the keeper escalates the other.
+#[tokio::test]
+async fn a_review_sessions_escalation_raises_the_same_item_as_a_keepers() {
+    let h = harness().await;
+    let mut threads = disputed_threads();
+    for comment in &mut threads {
+        comment.author_login = "ariadne-bot".into();
+        comment.from_review = true;
+    }
+    let (pull, keeper) = kept_by_hand(&h, threads).await;
+    h.store
+        .mark_review_comments(&pull.id, &["rc-1".to_string(), "rc-5".to_string()])
+        .await
+        .unwrap();
+    let reviewer = h
+        .store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(pull.id.clone()),
+        })
+        .await
+        .unwrap();
+    escalate(&h, &reviewer, &pull.id, "rc-1").await;
+    escalate(&h, &keeper, &pull.id, "rc-5").await;
+    let marks = h.store.pull_request_comment_marks(&pull.id).await.unwrap();
+    let escalated_at = |id: &str| {
+        marks
+            .iter()
+            .find(|m| m.forge_id == id)
+            .and_then(|m| m.escalated_at.clone())
+            .expect("an escalated mark")
+    };
+
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 2, "{found:?}");
+    for (comment, path, first_line) in [
+        ("rc-1", "src/lib.rs", "Rename this to `retry_budget`."),
+        ("rc-5", "src/main.rs", "Drop the second loop."),
+    ] {
+        let item = found
+            .iter()
+            .find(|item| item.id == format!("pull_request:escalated:{}:{comment}", pull.id))
+            .unwrap_or_else(|| panic!("the {path} thread's item"));
+        assert_eq!(item.producer, AttentionProducer::PullRequest);
+        assert!(
+            item.summary.ends_with(&format!(
+                "the agent escalated the thread on {path} that starts \"{first_line}\". \
+                 The reviewer and I disagree."
+            )),
+            "{}",
+            item.summary
+        );
+        assert_eq!(
+            item.required_action,
+            "Answer or resolve the thread on the forge."
+        );
+        assert_eq!(item.since, escalated_at(comment));
+        assert_eq!(
+            item.target,
+            AttentionTarget::PullRequest {
+                pull_request_id: pull.id.clone()
+            }
+        );
+    }
+
+    // The forge settles the reviewer's thread: its item clears alone.
+    let mut settled = disputed_threads();
+    for comment in &mut settled {
+        comment.author_login = "ariadne-bot".into();
+        comment.from_review = true;
+        comment.resolved = comment.thread_id == "T1";
+    }
+    seed_threads(&h, &pull, settled);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    let found = escalations(&list);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].id.ends_with(":rc-5"), "{found:?}");
+}
+
 /// A dismissal hides one thread's item alone (031): the other thread's
 /// stays. A later escalation of the dismissed thread brings it back.
 #[tokio::test]

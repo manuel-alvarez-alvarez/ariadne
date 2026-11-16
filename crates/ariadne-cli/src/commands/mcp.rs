@@ -90,8 +90,9 @@ impl McpSeat {
             ],
             // No task tool and no message tool: the user reaches the
             // session through its console. It resolves only a thread it
-            // opened, once a push fixed it. No tool approves: the user gives
-            // every approval (029).
+            // opened, once a push fixed it, and escalates only a thread it
+            // opened, when the keeping agent disputes it. No tool approves:
+            // the user gives every approval (029).
             McpSeat::PullRequestReviewer => &[
                 "wait_for_user",
                 "withdraw_wait_for_user",
@@ -100,6 +101,7 @@ impl McpSeat {
                 "list_comments",
                 "get_comment",
                 "reply_comment",
+                "escalate_comment",
                 "resolve_thread",
                 "submit_review",
                 "report_pull_request",
@@ -667,6 +669,7 @@ pub(crate) mod tests {
                     "list_comments",
                     "get_comment",
                     "reply_comment",
+                    "escalate_comment",
                     "resolve_thread",
                     "submit_review",
                     "report_pull_request",
@@ -791,12 +794,11 @@ pub(crate) mod tests {
         assert!(!instructions.contains("01TASK"), "{instructions}");
     }
 
-    /// A reviewer pull request session (029) is listed ten tools: the
+    /// A reviewer pull request session (029) is listed eleven tools: the
     /// request, its diff, its comments, one comment, a reply, the three
-    /// pending-edit tools (013 rule 13), the resolve of a thread it opened, one
-    /// review and the report. It has no task tool and no message tool,
-    /// nothing it is listed approves or merges, and it escalates no thread:
-    /// the keeping agent does.
+    /// pending-edit tools (013 rule 13), the escalation and the resolve of a
+    /// thread it opened, one review and the report. It has no task tool and
+    /// no message tool, and nothing it is listed approves or merges.
     #[test]
     fn the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool() {
         assert_eq!(
@@ -816,6 +818,7 @@ pub(crate) mod tests {
         assert_eq!(
             listed,
             [
+                "escalate_comment",
                 "get_comment",
                 "get_diff",
                 "get_pull_request",
@@ -827,11 +830,10 @@ pub(crate) mod tests {
                 "wait_for_user",
                 "withdraw_wait_for_user",
             ],
-            "the pull request reviewer is listed ten tools"
+            "the pull request reviewer is listed eleven tools"
         );
         for tool in [
             "get_task",
-            "escalate_comment",
             "submit_verdict",
             "pick_winner",
             "send_message",
