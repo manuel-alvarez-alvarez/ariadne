@@ -35,15 +35,14 @@ gets a review session once the user asks Ariadne for one — never on its
 own. The ask makes one goal with one staffed task, and the review session is
 that task's agent (rule 10b). The daemon wakes it with the request and with
 each push. It posts one review in the user's name, and the forge approval stays
-the user's. It can mark the reviewed head Ariadne approved, a status of
-Ariadne's own (rule 15a).
+the user's. Ariadne holds no approval of its own for a request: the status
+rule 15a once gave is retired (rule 15a).
 
 ## Scope
 
 In: which rows want a review session, the manual ask on any request, the
 goal and task it makes, its worktree, its news, its tools and routes, the
-verdict policy, Ariadne's own approval and how it shows, and the attention
-it raises.
+verdict policy, the retired Ariadne approval, and the attention it raises.
 
 Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 ([026](026-pull-requests.md)); the skill catalog and staffing
@@ -286,26 +285,19 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     current state instead of trusting either call, and withholds the
     readiness item once a later push leaves `ready_head_sha` behind the
     request's current head.
-15a. `report_pull_request` also takes `approved` from the review session
-    alone (`Seat::Reviewer`); any other session gets 403. `approved: true`
-    needs `head_sha`, a hex sha, else 400. The daemon reads the request off
-    the forge now, and a `head_sha` that is not a prefix of its head answers
-    409: an outdated head is never approved. A valid approval writes
-    `pull_request_approvals`, keyed by repository and number with the full
-    head, and keeps its first `approved_at` for the same head.
-    `approved: false` deletes it. The table is apart from
-    `pull_requests`, so stopping the review (rule 9), the row's removal and
-    a daemon restart keep it. Each fetch of the open list, and each detail
-    read, deletes an approval whose head differs from the head it read
-    (`Store::clear_moved_pull_request_approvals`), so the old head coming
-    back restores nothing. `PullRequestDto.ariadne_approval`, `head_sha`
-    and `approved_at`, is set only where the approval names the head that
-    answer reads, on a request Ariadne works on or not. It is not
-    `review_decision`, it is not `ready`, and it posts nothing to the forge.
-    The desktop shows **Ariadne approved** on the row and in the panel
-    beside the review decision pill, its hint naming the head. `pr ls` has
-    an `ariadne approval` column, and `pr inspect` an `ariadne approval`
-    row naming the head.
+15a. Ariadne holds no approval of its own for a request. The Ariadne
+    approval this rule once gave — `approved` on `report_pull_request`, the
+    `pull_request_approvals` table, `PullRequestDto.ariadne_approval`, the
+    **Ariadne approved** pill and the `ariadne approval` column — is
+    retired: rule 7 makes checks no news to a reviewer, so a reviewer
+    session never learns when to approve, and the shipped `pr-reviewer`
+    names no Ariadne approval (rule 17). `report_pull_request` takes no
+    `approved`, and `POST /v1/pull-requests/{id}/report` refuses a body that
+    carries one with 422 `invalid_request`, from every session. `head_sha` stays for `ready:
+    true` (rule 15). Migration 0009 drops `pull_request_approvals`, and no
+    store code reads or writes it. The forge approval is the user's alone
+    (rule 14), and the only approval any answer names is the forge's own
+    `review_decision`.
 16. Diffs, reviews and reports are accepted from the request's own session
     alone. Another session, or a call with no session, gets 403.
 16a. `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` resolves
@@ -491,23 +483,14 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
 - A round body does not answer an earlier conversation comment:
   `forge::live::tests::a_round_body_does_not_answer_a_conversation_comment`.
-- The review session approves only the forge's current head, refused with
-  409 on an earlier head, 400 with no head and 403 from another caller; a
-  withdrawal clears it; the list and the request show it beside the forge's
-  own decision; it outlives a stop; a push clears it and the old head
-  coming back restores nothing; no forge review is posted:
-  `pull_request_reviews.rs::an_approval_binds_to_its_head_outlives_a_stop_and_a_push_ends_it`.
-  The approval outlives its row and a reopen of the database:
-  `store.rs::an_approval_outlives_its_row_and_a_reopen_and_a_moved_head_ends_it_for_good`.
-  The reviewer tool sends `approved` with `head_sha`:
+- Ariadne holds no approval of its own (rule 15a): a report that sets
+  `approved` answers 422 even from the review session on the current head,
+  and the request carries no `ariadne_approval` field:
+  `pull_request_reviews.rs::a_report_with_approved_is_refused_and_a_request_carries_no_ariadne_approval`.
+  A migrated database has no `pull_request_approvals` table:
+  `store.rs::a_migrated_database_has_no_pull_request_approvals_table`.
+  The reviewer tool sends `reviewed_sha` with `head_sha` and no `approved`:
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
-  The desktop row and panel show **Ariadne approved** apart from the
-  review decision, and nothing where no approval names the head:
-  `pull-requests-page.test.tsx::shows Ariadne approved beside the forge's own review decision, never in its place`,
-  `pull-request-panel.test.tsx::shows Ariadne approved apart from the forge's decision, naming the approved head`,
-  `::shows no Ariadne approval where none names the head`.
-  `pr ls` and `pr inspect` show it apart from the review decision:
-  `pr.rs::tests::pr_ls_and_inspect_show_ariadne_approval_apart_from_the_forge_decision`.
 - The desktop's request panel starts an Ariadne review of any open request
   on the model and skills picked in its dialog — `pr-reviewer` always on and
   nothing else picked to start with — closes the dialog and opens the new
@@ -534,8 +517,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
-`crates/ariadne-store/migrations/0005_pull_request_approvals.sql`,
-`crates/ariadne-store/src/pull_request_approvals.rs`,
+`crates/ariadne-store/migrations/0009_drop_pull_request_approvals.sql`,
 `crates/ariadne-store/skills/pr-reviewer/SKILL.md`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/forge/news.rs`, `crates/ariadne-daemon/src/forge/poll.rs`,

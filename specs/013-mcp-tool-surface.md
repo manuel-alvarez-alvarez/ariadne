@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-11-15
+updated: 2026-11-16
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -303,9 +303,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - The tool texts read exactly so
   (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`):
   - `report_pull_request` is "Tell Ariadne the state of your request. Set
-    `ready` when readiness changes. Set `reviewed_sha` after a review round.
-    A reviewer sets `approved` with `head_sha` to approve that head, or
-    `approved: false` to withdraw."
+    `ready` when readiness changes. Set `reviewed_sha` after a review round."
+    It takes no `approved`: Ariadne holds no approval of its own (029 rule
+    15a).
   - `list_tasks` says "as a summary".
   - `list_models` says "an agent", not "a slot".
   - `open_pull_request` says it "returns" the URL, not "answers" it.
@@ -322,9 +322,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     data or security. P1 is a proven defect, an unmet requirement or a rule
     violation. P2 is an optional improvement."
 - `report_pull_request` with `ready: true` and no `head_sha` is refused with
-  "Pass `head_sha` with `ready: true`: the head you checked.", and with
-  `approved: true` and no `head_sha` with "Pass `head_sha` with
-  `approved: true`: the head you reviewed.", before any daemon call
+  "Pass `head_sha` with `ready: true`: the head you checked.", before any
+  daemon call
   (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`).
 - Asking the user, the end of a turn, the check block and the trailer rule
   are each written in their owner alone
