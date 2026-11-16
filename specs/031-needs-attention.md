@@ -631,9 +631,10 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     hooks") and `UNSTABLE` ("mergeable with non-passing commit status") —
     `checks` is this producer's own gate on commit status passing, so
     reading `UNSTABLE` as `clean` here never lets a non-passing check
-    through on its own; `UNKNOWN`, or no field at all, is `unknown`; every
-    other named state — `BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT` — is
-    `blocked`, each for its own reason. `unknown` is never read as `clean`: a
+    through on its own; `UNKNOWN`, or no field at all, is `unknown`.
+    `BEHIND` reads `behind` for the keeper's news (026 rule 12).
+    `BLOCKED` and `DIRTY` read `blocked`. Draft evidence follows 026 rule 27.
+    `unknown` is never read as `clean`: a
     readiness item answers for a confirmed mergeability, not an
     unevaluated one
     (`forge/github/pulls.rs::tests::mergeable_reads_every_merge_state_status_by_its_documented_meaning`,

@@ -5,7 +5,7 @@ use super::Github;
 use crate::forge::pulls::{ForgePullRequest, split_slug};
 use serde::Deserialize;
 
-const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,reviewDecision,mergeStateStatus,createdAt,updatedAt,mergeCommit,reviewRequests";
+const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,reviewDecision,mergeStateStatus,mergeable,createdAt,updatedAt,mergeCommit,reviewRequests";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +35,9 @@ struct Pull {
     /// Absent on an older read: unknown mergeability stands for it.
     #[serde(default)]
     merge_state_status: Option<String>,
+    /// Conflict evidence remains available while mergeStateStatus reads DRAFT.
+    #[serde(default)]
+    mergeable: Option<String>,
     created_at: String,
     /// Absent from an older read: the opening time stands for it.
     #[serde(default)]
@@ -129,11 +132,19 @@ impl Pull {
             // this producer's own gate on commit status passing, so
             // reading `UNSTABLE` as `clean` here never lets a non-passing
             // check through on its own. `UNKNOWN` is the forge still
-            // computing it, never read as clean. `BEHIND`, `BLOCKED`,
-            // `DIRTY` and `DRAFT` block a merge right now, each for its
-            // own reason.
+            // computing it, never read as clean. A draft instead uses
+            // GitHub's `mergeable` conflict evidence: `MERGEABLE` lets the
+            // daemon promote it, while unknown or missing evidence waits.
+            // Readiness attention still requires a non-draft (026 rule 27).
+            // Preserve `BEHIND` for the keeper's base-update news.
             mergeable: match self.merge_state_status.as_deref() {
                 Some("CLEAN" | "HAS_HOOKS" | "UNSTABLE") => "clean",
+                Some("DRAFT") if self.is_draft => match self.mergeable.as_deref() {
+                    Some("MERGEABLE") => "clean",
+                    Some("CONFLICTING") => "blocked",
+                    _ => "unknown",
+                },
+                Some("BEHIND") => "behind",
                 Some("UNKNOWN") | None => "unknown",
                 Some(_) => "blocked",
             }
@@ -413,7 +424,7 @@ mod tests {
             ("HAS_HOOKS", "clean"),
             ("UNSTABLE", "clean"),
             ("UNKNOWN", "unknown"),
-            ("BEHIND", "blocked"),
+            ("BEHIND", "behind"),
             ("BLOCKED", "blocked"),
             ("DIRTY", "blocked"),
             ("DRAFT", "blocked"),
@@ -421,6 +432,29 @@ mod tests {
             let pull = provider_shaped(json!({"mergeStateStatus": status}));
             assert_eq!(Pull::normalized(pull).mergeable, expected, "{status}");
         }
+    }
+
+    #[test]
+    fn a_drafts_mergeability_uses_githubs_conflict_evidence() {
+        for (mergeable, expected) in [
+            (Some("MERGEABLE"), "clean"),
+            (Some("CONFLICTING"), "blocked"),
+            (Some("UNKNOWN"), "unknown"),
+            (None, "unknown"),
+        ] {
+            let pull = provider_shaped(json!({
+                "isDraft": true,
+                "mergeStateStatus": "DRAFT",
+                "mergeable": mergeable,
+            }));
+            assert_eq!(Pull::normalized(pull).mergeable, expected, "{mergeable:?}");
+        }
+        let blocked = provider_shaped(json!({
+            "isDraft": false,
+            "mergeStateStatus": "BLOCKED",
+            "mergeable": "MERGEABLE",
+        }));
+        assert_eq!(Pull::normalized(blocked).mergeable, "blocked");
     }
 
     /// A read from before this field existed names none at all: unknown

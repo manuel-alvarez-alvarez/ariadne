@@ -167,6 +167,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 12. For a keeper or task agent, news has only four kinds of line:
     a comment of the other side; failed checks at the final failure rollup as one list;
     `mergeable: behind` asking to merge the base in; and a state that became merged or closed.
+    GitHub's `mergeStateStatus: BEHIND` reads `mergeable: behind`.
     Checks turning green, the review decision and `behind_base` are not news.
     Comments wait until the newest untold comment is `Timeouts::keeper_comment_settle` old.
     The default is 300 seconds. A newer comment restarts the interval.
@@ -315,6 +316,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 
 27. The daemon marks a kept draft ready for review from current forge evidence alone:
     successful checks, clean mergeability and no unanswered comment of the other side.
+    GitHub reads `mergeable` beside `mergeStateStatus` on both lists and single-request reads.
+    For `isDraft: true` with `mergeStateStatus: DRAFT`, `mergeable: MERGEABLE` counts as clean for promotion.
+    `CONFLICTING` blocks promotion. Unknown or missing conflict evidence withholds it.
+    Readiness attention still requires a non-draft with a clean merge state (031 rule 15).
     Only the integration login's own request is marked, at most once per head.
     The forge restarts checks on the mark. The readiness item waits for fresh evidence.
     No seat has a draft-mark tool or route.
@@ -326,6 +331,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `news.rs::tests::comments_wait_for_the_newest_comment_but_failures_and_state_do_not`.
 - The store claims each draft head once:
   `store.rs::a_draft_mark_is_claimed_once_for_each_head`.
+- A draft uses GitHub's conflict evidence; a blocked non-draft stays blocked:
+  `github/pulls.rs::tests::a_drafts_mergeability_uses_githubs_conflict_evidence`.
 - The daemon promotes only its own checked draft once per head:
   `kept_requests.rs::the_daemon_promotes_only_its_own_checked_draft_once_per_head`.
 - Keeper turn wakes a task keeper and refuses an unkept request:

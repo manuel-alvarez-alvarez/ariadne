@@ -2416,6 +2416,8 @@ async fn the_daemon_promotes_only_its_own_checked_draft_once_per_head() {
         let mut read = ready_pull(&head);
         read["author"]["login"] = json!(author);
         read["isDraft"] = json!(true);
+        read["mergeStateStatus"] = json!("DRAFT");
+        read["mergeable"] = json!("MERGEABLE");
         let mut script = script_with_read(&head, &read);
         let entries = script.as_array_mut().unwrap();
         entries.insert(
@@ -2428,6 +2430,14 @@ async fn the_daemon_promotes_only_its_own_checked_draft_once_per_head() {
         );
         entries.insert(0, answer(&["api", "graphql", "--hostname", "github.com", "-f", "query=mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"], 0, r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}"#));
         let Kept { h, stub, repo, .. } = kept_request_running(script).await;
+        assert!(
+            stub.invocations().iter().any(|call| call
+                .args
+                .windows(2)
+                .any(|args| args[0] == "--json"
+                    && args[1].split(',').any(|field| field == "mergeable"))),
+            "the forge read must request conflict evidence"
+        );
         let marks = || {
             stub.invocations()
                 .iter()
