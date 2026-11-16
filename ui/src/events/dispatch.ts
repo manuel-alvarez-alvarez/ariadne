@@ -216,7 +216,7 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       break
     }
     case "host_updated": {
-      // Nothing in the app reads hosts yet.
+      // The UI hosts task adds the handling; nothing reads hosts yet.
       break
     }
     default: {
