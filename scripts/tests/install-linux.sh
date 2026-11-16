@@ -5,6 +5,7 @@
 set -Eeuo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 test_case="${1:?name a test case}"
+export DISPLAY="${DISPLAY:-:99}"
 export TEST_WEBKIT="${2:-present}"
 export TEST_ROOT
 TEST_ROOT="$(mktemp -d)"
@@ -29,11 +30,17 @@ for tool in ariadne ariadned ariadne-desktop; do
     chmod 755 "$TEST_ROOT/payload/$tool"
 done
 cp "$REPO_DIR/ui/src-tauri/icons/icon.png" "$TEST_ROOT/payload/icon.png"
-target="$(uname -m)-unknown-linux-gnu"
+target="x86_64-unknown-linux-gnu"
 tar -czf "$TEST_ROOT/assets/ariadne-$target.tar.gz" -C "$TEST_ROOT/payload" ariadne ariadned
 tar -czf "$TEST_ROOT/assets/ariadne-desktop-$target.tar.gz" -C "$TEST_ROOT/payload" ariadne-desktop icon.png
 touch "$TEST_ROOT/home/.bashrc" "$TEST_ROOT/home/.zshrc"
 export CARGO_TARGET_DIR="$TEST_ROOT/build"
+# Model Linux session indicators on either host without changing system paths.
+cat > "$TEST_ROOT/bin/uname" <<'SH'
+#!/bin/sh
+case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac
+SH
+chmod 755 "$TEST_ROOT/bin/uname"
 export PATH="$TEST_ROOT/bin:$PATH"
 # Keep the caller's HOME unchanged. Only the installer subprocess gets a test home.
 run_install() {
@@ -50,6 +57,29 @@ run_uninstall() {
 prefix="$TEST_ROOT/home/.local/bin"
 entry="$TEST_ROOT/home/.local/share/applications/dev.ariadne.ui.desktop"
 case "$test_case" in
+    headless-preserve)
+        run_install --build-from-source
+        cp "$TEST_ROOT/home/.ariadne/install.env" "$TEST_ROOT/old.env"
+        cp "$entry" "$TEST_ROOT/old.desktop"
+        cp "$prefix/ariadne-desktop" "$TEST_ROOT/old.app"
+        unset DISPLAY WAYLAND_DISPLAY
+        run_install --build-from-source
+        cmp "$TEST_ROOT/old.desktop" "$entry"
+        cmp "$TEST_ROOT/old.app" "$prefix/ariadne-desktop"
+        for key in ARIADNE_APP ARIADNE_DESKTOP_ENTRY ARIADNE_DESKTOP_ICON; do
+            grep "^$key=" "$TEST_ROOT/old.env" > "$TEST_ROOT/expected"
+            grep "^$key=" "$TEST_ROOT/home/.ariadne/install.env" > "$TEST_ROOT/actual"
+            cmp "$TEST_ROOT/expected" "$TEST_ROOT/actual"
+        done
+        ;;
+    headless|source-headless)
+        unset DISPLAY WAYLAND_DISPLAY
+        if [ "$test_case" = source-headless ]; then run_install --build-from-source; else run_install; fi
+        grep -F 'no graphical session' "$TEST_ROOT/output"
+        [ -x "$prefix/ariadne" ]
+        [ ! -e "$prefix/ariadne-desktop" ]
+        if grep -E 'gh release download.*ariadne-desktop|npm |tar .*ariadne-desktop' "$TEST_ROOT/commands"; then exit 1; fi
+        ;;
     missing|source-missing)
         if [ "$test_case" = source-missing ]; then run_install --build-from-source; else run_install; fi
         grep -E 'SKIP.*Installing|SKIP.*Building and installing' "$TEST_ROOT/output"

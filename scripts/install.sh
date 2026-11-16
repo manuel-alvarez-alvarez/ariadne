@@ -389,7 +389,25 @@ ui_log_init "$LOG_FILE"
 # Check before downloading the app too: a missing runtime must not stop the
 # CLI, daemon or completions from installing when no desktop asset is needed.
 APP_SKIP_REASON=""
-if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ] && ! has_webkitgtk; then
+SESSION_SKIP=0
+if [ "$WITH_UI" = 1 ]; then
+    case "$OS" in
+        Linux)
+            if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+                APP_SKIP_REASON="no graphical session (DISPLAY and WAYLAND_DISPLAY are empty)"
+            fi
+            ;;
+        Darwin)
+            if [ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]; then
+                APP_SKIP_REASON="SSH session has no local graphical access"
+            elif [ "$(stat -f %u /dev/console)" != "$(id -u)" ]; then
+                APP_SKIP_REASON="current user has no graphical login"
+            fi
+            ;;
+    esac
+    [ -z "$APP_SKIP_REASON" ] || SESSION_SKIP=1
+fi
+if [ "$WITH_UI" = 1 ] && [ -z "$APP_SKIP_REASON" ] && [ "$OS" = Linux ] && ! has_webkitgtk; then
     APP_SKIP_REASON="libwebkit2gtk-4.1.so.0 not found"
 fi
 
@@ -505,7 +523,11 @@ ARIADNE_DESKTOP_ICON=""
 if [ -n "$APP_SKIP_REASON" ]; then
     step_begin
     APP_STATE="skipped - $APP_SKIP_REASON"
-    step_skip "$APP_SKIP_REASON - install with apt install libwebkit2gtk-4.1-0, dnf install webkit2gtk4.1, or pacman -S webkit2gtk-4.1; re-run the installer"
+    if [ "$SESSION_SKIP" = 1 ]; then
+        step_skip "$APP_SKIP_REASON"
+    else
+        step_skip "$APP_SKIP_REASON - install with apt install libwebkit2gtk-4.1-0, dnf install webkit2gtk4.1, or pacman -S webkit2gtk-4.1; re-run the installer"
+    fi
 elif [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
     step_begin
     case "$OS" in
@@ -749,6 +771,17 @@ EOF
         step_ok
     else
         ui_die "no answer after 30s - see $(ui_tilde "$ARIADNE_HOME/ariadned.log")"
+    fi
+fi
+
+# Keep validated GUI ownership records when this session cannot install a GUI.
+if [ "$SESSION_SKIP" = 1 ]; then
+    APP_PATH="$OLD_APP"
+    ARIADNE_DESKTOP_ICON="$OLD_DESKTOP_ICON"
+    if [ -n "$MANIFEST_DESKTOP_ENTRY" ] \
+        && ui_manifest_path_is_expected ARIADNE_DESKTOP_ENTRY "$MANIFEST_DESKTOP_ENTRY" "$PREFIX"; then
+        ARIADNE_DESKTOP_ENTRY="$MANIFEST_DESKTOP_ENTRY"
+        GNOME_STATE="preserved - $APP_SKIP_REASON"
     fi
 fi
 

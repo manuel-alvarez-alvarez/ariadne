@@ -390,3 +390,16 @@ fails the service step`).
 Local landing acceptance: `scripts/tests/githooks.sh main-push` proves full checks, candidate isolation, and failure rejection.
 `subject-validator` proves shared subject rules, including dependency updates through the validator and commit hook. `merge-message` proves the merge exception.
 `main-merge` rejects main merge commits. Scoped push cases prove task-branch behavior.
+
+### Graphical session access
+
+Release installs and source builds skip all GUI operations without graphical
+access. Linux accepts a nonempty DISPLAY or WAYLAND_DISPLAY, including forwarding.
+Darwin requires the current user to own /dev/console and no SSH_CONNECTION,
+SSH_CLIENT, or SSH_TTY indicator. Detection uses session indicators only.
+A skip preserves the existing GUI, desktop registration, and validated manifest
+records. The installer reports its reason in the step output and summary.
+The --no-ui option and WebKitGTK requirement still apply.
+
+Acceptance: `scripts/tests/install-linux.sh headless` and `source-headless`
+prove that the CLI installs without GUI downloads, extraction, or npm operations.
