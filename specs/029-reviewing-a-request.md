@@ -393,8 +393,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 ## Acceptance criteria
 
 - The review session escalates a thread its own review opened: a
-  `from_review` comment of the integration login, and no other comment, gets
-  403. The call posts nothing on the forge and marks the comment
+  `from_review` comment of the integration login gets 200, posts nothing on
+  the forge and marks the comment. Any other comment gets 403 and no mark
   (rule 11):
   `kept_requests.rs::the_review_session_escalates_only_a_comment_the_review_posted`.
 - The reviewer seat lists `escalate_comment` beside its request tools, and
