@@ -305,6 +305,7 @@ impl super::Scheduler {
         }
         self.launcher.live.remove(id);
         self.pull_request_cleanup_retry.remove(id);
+        self.head_settle.forget(id);
         self.pull_request_read_retry.remove(id);
         self.keeper_skills_applied.remove(id);
         Ok(())
@@ -737,19 +738,35 @@ impl super::Scheduler {
                 .await?;
             return self.start_pull_request_session(pull, pin, owner).await;
         };
-        // A push moves the worktree under the agent, so it waits for the
-        // turn on the old head to end.
+        // A push is news only once the head stood still for the settle
+        // interval, so a run of commits is one round on the last head.
+        let settled = self
+            .head_settle
+            .settled(&pull.id, &pull.head_sha, Instant::now());
         let pushed = pull
             .told_head_sha
             .as_deref()
             .is_some_and(|told| told != pull.head_sha);
-        let idle = session.status() == SessionStatus::Idle;
-        if pushed && idle {
-            let repo = self.store.get_repository(&pull.repository_id).await?;
-            self.launcher.review_worktree(pull, &repo).await?;
-        }
-        if !pushed || idle {
-            self.tell_pull_request(&session, pull, &login).await?;
+        if pushed && !settled {
+            // The push is held back, and the rest of the news goes on: the
+            // session is shown the head it was told, so no line names the
+            // new one.
+            let held = PullRequest {
+                head_sha: pull.told_head_sha.clone().unwrap_or_default(),
+                ..pull.clone()
+            };
+            self.tell_pull_request(&session, &held, &login).await?;
+        } else {
+            // A push moves the worktree under the agent, so it waits for
+            // the turn on the old head to end.
+            let idle = session.status() == SessionStatus::Idle;
+            if pushed && idle {
+                let repo = self.store.get_repository(&pull.repository_id).await?;
+                self.launcher.review_worktree(pull, &repo).await?;
+            }
+            if !pushed || idle {
+                self.tell_pull_request(&session, pull, &login).await?;
+            }
         }
         if session.status() == SessionStatus::Running {
             let repo = self.store.get_repository(&pull.repository_id).await?;

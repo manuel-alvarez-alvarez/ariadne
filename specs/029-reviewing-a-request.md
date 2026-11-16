@@ -114,12 +114,21 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    its author's ever names one, and nothing here starts a review pass over
    content nobody has published yet
    (`pull_request_reviews.rs::a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_news`).
-8. A review's news is told at once: the next reconcile after a push or a
-   reply hands it over, with no wait for activity to settle. A push also
-   waits for the session to be idle: once it is, the daemon moves the
-   worktree to the new head (`checkout_detached`) and hands the news in one
-   prompt. A fetch with the same head hands nothing. A reply alone needs no
-   idle session, since it moves no worktree:
+8. A review's news is told at once, except a push: the first round of an
+   ask and a reply in a thread the review opened are handed over on the next
+   reconcile. A push is handed over only once the request's head stood
+   unchanged for `Timeouts::review_push_settle` (60 seconds in production),
+   so a run of commits is one round on the last head. A further push inside
+   the interval restarts it, and the session is never told the head in
+   between. A push told after the interval also waits for the session to be
+   idle: once it is, the daemon moves the worktree to the new head
+   (`checkout_detached`) and hands the news in one prompt. A fetch with the
+   same head hands nothing. A reply alone needs no idle session, since it
+   moves no worktree:
+   `head_settle.rs::a_head_settles_exactly_when_the_whole_interval_has_passed`
+   (the boundary), `head_settle.rs::a_new_head_restarts_the_interval` (the
+   restart),
+   `pull_request_reviews.rs::a_run_of_pushes_is_told_once_when_the_head_stands_still`,
    `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
 9. A request that turns merged or closed, or whose manual ask is stopped,
    has its reviewer session killed and its detached worktree removed. A
@@ -234,11 +243,14 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     stripped first (026 rule 16). The daemon posts `body` above the round's inline findings with the review marker.
     The marker preserves its identity when the forge returns it.
     Each round writes its own body, including rounds with no new findings.
-    The body starts with a verdict line containing the SHA and finding count.
-    It gives one or two sentences on the change and its risk.
-    It gives one line per new finding with priority, path:line and title.
-    It gives one line per check. No round writes a status table.
-    The reviewer skill writes this body before calling `submit_review`.
+    The body has three parts, in order. Its first line is `Reviewed <sha>.`
+    Then one short prose paragraph describes the defects, with no bullet,
+    no table, no line per finding and no line per check. One closing
+    sentence states whether the author must change the code, such as
+    `Changes required: fix the P1 before this lands.` or `No change required.`
+    The reviewer skill writes this body before calling `submit_review`, and
+    submits every round with `event` `comment`. The route still takes both
+    events.
     Historical summary comments remain untouched and recognisable.
     A comment with no path, no line from 1, no title or no body answers 400,
     and so does a `request_changes` with no P0 or P1 among its comments and
@@ -322,13 +334,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 ## Verdict and attention
 
-17. `pr-reviewer` asks for changes when an active P0 or P1 finding exists,
-    where the forge permits it, and comments otherwise. P0 is a critical
-    risk. P1 is a proven defect, unmet requirement, or written repository-rule
-    violation. P2 is optional. What a finding must name to stand at P0 or
-    P1, the downgrade to P2 and its cap, the diff as scope, and the verdict
-    written first are 017 rule 11's to state, for `pr-reviewer` as for the
-    other review skills. It posts only new inline findings. It creates
+17. `pr-reviewer` posts every round as a `comment`, and never names
+    `request_changes`: the closing sentence of the round body says whether
+    the author must change the code. P0 is a critical risk to behavior,
+    data or security. P1 is a proven defect, unmet requirement, or written
+    repository-rule violation. P2 is an optional improvement. A finding
+    keeps the priority of its severity: a missing proof makes it no P2.
+    What a finding must name to stand at P0 or P1, the downgrade of a
+    finding with no trigger and the cap on optional findings, the diff as
+    scope, and the verdict written first are 017 rule 11's to state, for
+    `pr-reviewer` as for the other review skills. It posts only new inline findings. It creates
     no summary, status table, summary comment, or summary draft. It records
     the reviewed revision and evidence that covers its current head. It
     never gives a forge approval, and Ariadne holds no approval of its own
@@ -340,13 +355,17 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     `get_pull_request` stands for every other check. It reproduces each
     failed forge check the diff can cause, and one the diff causes is a P1.
 
-    A P0 or P1 needs a proof. A code defect is proven by a run that
-    triggers it at the reviewed revision, with any code the proof needs in
-    a scratch file under `/tmp`. A text defect is proven by the two quoted
-    lines that disagree. A finding with no proof is P2.
+    Before it posts a finding, the reviewer tries to reproduce it at the
+    reviewed revision. A code defect is reproduced by a run that triggers
+    it, with any code the run needs in a scratch file under `/tmp`. A text
+    defect is reproduced by the two quoted lines that disagree.
 
     Each new finding has a title and a body of four paragraphs: `Trigger:`,
-    `Failure:`, `Proof:` and `Fix:`. Where the diff causes a defect on a
+    `Failure:`, `Proof:` and `Fix:`. `Failure:` states the expected and the
+    observed behavior. `Proof:` gives the command and its result, and can
+    give the steps to reproduce; where the reproduction failed, it opens
+    with `Unverified:` and says why. `Fix:` names the file, the line and
+    the change, so the author can fix the defect without a question. Where the diff causes a defect on a
     line it does not show, the comment sits on the shown line that causes
     it, and the body names the real file and line. A defect the diff does
     not cause is no finding; the result text names it. Where the fix replaces the commented line alone, a ```suggestion
@@ -373,8 +392,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     A draft gets the same round. News of a head equal to the reviewed
     revision needs no tool call. Where the head moves during a round, the
     session reports the revision it reviewed. The round ends on one result
-    in the turn text, in a literal shape: `Reviewed <sha>:` with the verdict
-    and the count, or `nothing new`, then one line per finding, settled
+    in the turn text, in a literal shape: `Reviewed <sha>: comment with <n>
+    findings.`, with `0` for a round with no new finding, then one line per
+    finding, ending `unverified` where its reproduction failed, settled
     thread, check, failed tool call and defect outside the diff. That text
     is all the user reads of a round that posts nothing. The round ends on
     `submit_review` and `report_pull_request` alone: the skill states that
@@ -457,7 +477,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   after a verified fix. A thread someone else opened and a resolve
   from another session are refused without a forge mutation:
   `pull_request_reviews.rs::a_review_resolves_its_own_fixed_finding`.
-- The reviewer skill writes a verdict, change and risk assessment, finding lines and check lines for every round:
+- The reviewer skill writes, for every round, a body of the reviewed sha, one prose paragraph on the defects and a closing sentence on whether the code must change:
   `skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`.
 - A round posts its submitted body and inline findings, accepts `request_changes` for active
   P0 or P1 findings, and refuses approval. A round with no findings posts its own body:
@@ -480,13 +500,14 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
 
-- The skill is within its caps, names the three priorities, permits
-  `request_changes` for P0 and P1, names no approval, never
+- The skill is within its caps, names the three priorities, submits
+  every round as a `comment` and never names `request_changes`, names no approval, never
   gives a forge approval or lands a request, and
   reuses its evidence only for the reviewed revision. It runs the checks
   of the changed files before it settles its threads, and settles them
-  before it hunts. A P0 or P1 has a proof, a finding with none is P2, and
-  the body has four labelled paragraphs. A finding the diff causes on a
+  before it hunts. It tries to reproduce each finding, keeps its
+  priority where the reproduction fails and opens `Proof:` with
+  `Unverified:`, and the body has four labelled paragraphs. A finding the diff causes on a
   line it does not show sits on the shown line that causes it. A `Not changed:`
   reply gets no reply back, while a claimed fix that fails verification gets
   one `Still there: <why>.` reply, a question gets one answer and a finding

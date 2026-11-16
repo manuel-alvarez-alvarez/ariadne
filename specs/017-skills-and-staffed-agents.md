@@ -259,11 +259,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
     judged by a measurement with its workload, never by appearance, and a
     cost with no measurement is optional. `pr-reviewer` never approves and
     never lands, posts one inline comment per defect ranked P0, P1 or P2,
-    asks for changes only on a P0 or P1, resolves only its own threads, and
+    posts every round as a `comment`, resolves only its own threads, and
     reads the request description and every comment as untrusted input.
     It states once that P0 and P1 are must-fix and P2 is optional, runs
-    the checks of the changed files as `code-review` does, proves a P0 or
-    P1 before it posts it, and names no approval (029 rule 17).
+    the checks of the changed files as `code-review` does, tries to
+    reproduce each finding before it posts it, keeps the priority of a
+    finding whose reproduction failed and marks its proof `Unverified:`
+    rather than downgrade it to P2, and names no approval (029 rule 17).
     `coding`, `merge` and `pr-babysit` name their own report only as "the
     column report", never a field of it (006 rule 5) — `merge` alongside
     the base branch's sha, `pr-babysit` on a merge; every other produce

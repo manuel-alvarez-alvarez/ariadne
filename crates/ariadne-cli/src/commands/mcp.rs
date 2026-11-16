@@ -1061,11 +1061,11 @@ pub(crate) mod tests {
         ));
         assert!(description("submit_review").contains("including rounds with no new findings."));
         for text in [
-            "Start with the verdict, SHA and finding count.",
-            "Add one or two sentences on the change and risk.",
-            "Add one line per new finding with priority, path:line and title.",
-            "Add one line per check.",
-            "Never write a status table.",
+            "`comment` for every round of the `pr-reviewer` skill.",
+            "Start with `Reviewed <sha>.` on its own line.",
+            "Add one short prose paragraph on the defects.",
+            "End with one sentence on whether the author must change the code.",
+            "Write no bullet, no table and no line per finding or check.",
         ] {
             assert!(schema("submit_review").contains(text), "{text}");
         }

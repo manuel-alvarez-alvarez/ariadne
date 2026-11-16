@@ -127,11 +127,12 @@ A request gets a review session of its own once you ask for one — at
 once, even while it is still a draft — staffed on the pin you gave that
 ask, in a worktree detached at the request's head rather than a branch of
 its own.
-The daemon wakes it with the request, then at the next reconcile after a
-later push or a reply in a thread it opened — told at once, with no wait
-for activity to settle. A push also waits for the session to go idle before
-the worktree moves to the new head; a reply alone moves no worktree, so it
-needs no idle session.
+The daemon wakes it with the request, then tells it of a reply in a thread
+it opened at the next reconcile, with no wait. A push is told only once the
+request's head stood unchanged for one minute, so a run of commits is one
+round on the last head; a further push inside that minute restarts it. The
+push also waits for the session to go idle before the worktree moves to the
+new head; a reply alone moves no worktree, so it needs no idle session.
 
 Nothing starts that session on its own: the request is tracked the moment
 it is seen, and Needs attention offers **Review needed**, naming the
@@ -168,29 +169,39 @@ It posts its findings at one of three priorities:
 
 | Priority | Meaning |
 | --- | --- |
-| P0 | breaks behavior, data or security; must change before the request lands |
-| P1 | a proven defect, unmet requirement, or written repository-rule violation |
-| P2 | worth fixing |
+| P0 | a critical risk to behavior, data or security; must change before the request lands |
+| P1 | a proven defect, unmet requirement, or written repository-rule violation; must change |
+| P2 | an optional improvement |
 
-Each round posts its new findings as one review — `request_changes` while
-a P0 or P1 finding is open, `comment` otherwise — never an approval. Each finding
+Each round posts its new findings as one review, always a `comment` and
+never an approval. Each finding
 is an inline comment of its own on the line of the defect, opening on
-**[P0] Title**, then four paragraphs: `Trigger:`, `Failure:`, `Proof:` and
-`Fix:`. A P0 or P1 carries a proof: a run that triggers a code defect, or
-the two quoted lines of a text defect. A finding with no proof is P2. A
+**[P0] Title**, then four paragraphs. `Trigger:` names the input or state
+that causes it. `Failure:` states the expected and the observed behavior.
+`Proof:` gives the command the reviewer ran at the reviewed revision and
+its result, and can give the steps to reproduce; for a text defect it
+quotes the two lines that disagree. `Fix:` names the file, the line and
+the change. A finding keeps the priority of its severity even where the
+reviewer could not reproduce it: then `Proof:` opens with `Unverified:`
+and says why. A
 defect the change causes on a line the diff does not show sits on the
 changed line that causes it. Where the fix
 replaces the commented line alone, the comment carries a `suggestion`
 block, holding the new text of that one line, the author can apply
 directly; a fix across lines, across files, or one that needs a test,
-stays prose. A change request whose P0 or P1 findings are not on their lines is
-refused. This is one API call carrying every inline comment.
+stays prose. This is one API call carrying every inline comment.
 
-The review posts no generated summary, status table, summary comment, or
-summary draft. A round with no new finding publishes nothing. Each round
-ends on one result in the session's console: `Reviewed <sha>:` with the
-verdict and the count, or `nothing new`, then one line per finding,
-settled thread, check and failed tool call.
+Every round, even one with no new finding, carries a short body above its
+inline findings. Its first line is `Reviewed <sha>.`, naming the commit
+it reviewed. Then one short prose paragraph describes the defects, with no
+bullet, no table and no line per finding or check. One closing sentence
+says whether the author must change the code: for example `Changes
+required: fix the P1 before this lands.` or `No change required.` The
+review posts no status table, separate summary comment, or summary draft.
+Each round ends on one result in the session's console: `Reviewed <sha>:
+comment with <n> findings.`, with `0` where the round found nothing new, then one
+line per finding, ending `unverified` where the reviewer could not
+reproduce it, and one per settled thread, check and failed tool call.
 
 Before it hunts, the reviewer runs the tests, the lint and the format
 check of the files the diff changes. The forge's own checks stand for the
@@ -263,7 +274,7 @@ or the close: the session, its worktree and its branch all go.
 ## Nothing approves or merges in your name
 
 No session can post an approval or merge a request — there is no tool for
-either. `pr-reviewer` posts `request_changes` or `comment`, never an
+either. `pr-reviewer` posts every round as a `comment`, never an
 approval; the approving call, and the merge, are always yours. Ariadne
 holds no approval of its own for a request. The one
 thread a session resolves is a review thread it opened itself: on a later
