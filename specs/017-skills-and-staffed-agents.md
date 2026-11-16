@@ -193,8 +193,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
     change. It reads the area rules and the software before it writes.
     It runs each example, links the page, runs the page checks and commits once.
     Its exclusions name `coding`, `spec-writing` and `research`.
-    `research` cites a source for every fact and lists what it did not
-    check. `spec-writing` writes the spec that later tasks build against,
+    `research` cites a source for every fact and lists what it did not check.
+    Its research report names what would change the recommendation.
+    It sends the full research report to the orchestrator through `send_message`.
+    The column report references the returned message ID.
+    `spec-writing` writes the spec that later tasks build against,
     before its code exists: it reads the repository's spec format first,
     sends the orchestrator its open questions as one list with options and a
     pick each, names the test of every criterion and marks each test that
@@ -507,6 +510,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
   respects repository document layouts, and proves each whole claim with independent values and public interfaces.
   It runs touched test files whole and refers prose-only tasks to `documentation`
   (`skill_tests/produce.rs::coding_routes_changes_and_proves_each_claim`).
+- `research` names what would change its recommendation.
+  It messages the full research report to the orchestrator.
+  Its column report references the returned message ID
+  (`skill_tests/produce.rs::each_writing_skill_names_its_sibling_and_its_own_proof`).
 - `documentation`, `research` and `spec-writing` each name a sibling, and
   each keeps its own proof. `documentation` reads area rules and software,
   runs examples and page checks, links the page and commits once.
