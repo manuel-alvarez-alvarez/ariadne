@@ -114,8 +114,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `unanswered_only` narrows it to the threads that wait on the login),
      `get_comment` (one `comment_id`, read off the forge at the call),
      `reply_comment` (one `comment_id` and a `body`; the daemon posts it),
+     `escalate_comment` (one `comment_id` and a `reason`; rule 16),
      `mark_ready_for_review` (`head_sha`) and `report_pull_request` (`ready`) — `send_message` and
-     `read_messages`. Sixteen tools. It works one workflow column on its
+     `read_messages`. Seventeen tools. It works one workflow column on its
      task, and its instructions name the task and the column.
      `complete_step` moves to the next column, or ends the task from the
      last; `fail_step` moves to the previous column, or fails the task
@@ -148,7 +149,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
      opened, once a push fixed it) and `report_pull_request` (which takes
      `reviewed_sha` beside `ready` and `state`). Ten tools, and no
-     task tool and no message tool: the task a review operation's goal
+     task tool and no message tool. It escalates no thread: the keeping
+     agent does (rule 16): the task a review operation's goal
      gives the session is the daemon's (029 rule 10b), so the session has
      no step or task to write to, and the user reaches it through its
      console. No tool approves or merges: the user does. A tool is added
@@ -159,10 +161,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    - **pull request keeper** — a session with `ARIADNE_PULL_REQUEST_ID`
      set and seat `keeper` (032), on a request of the user's own asked for
      by hand: `get_pull_request`, `get_diff`, `list_comments`,
-     `get_comment`, `reply_comment`, `mark_ready_for_review` and
-     `report_pull_request` — the same seven request tools the agent seat
-     has — beside `wait_for_user` and `withdraw_wait_for_user`. Nine
-     tools, and no task tool and no message tool, the same as the
+     `get_comment`, `reply_comment`, `escalate_comment`,
+     `mark_ready_for_review` and `report_pull_request` — the same eight
+     request tools the agent seat has — beside `wait_for_user` and
+     `withdraw_wait_for_user`. Ten tools, and no task tool and no message tool, the same as the
      reviewer's: it has no goal, task or staffed agent to write to, and
      the user reaches it through its console. It resolves no thread and
      submits no review: those stay the reviewer seat's alone.
@@ -242,6 +244,13 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     `reason`, `get_comment` with no `comment_id`, `get_pull_request` on a
     task with no request, and a `wait_for_user` repeat under one hint with
     another question.
+16. `escalate_comment` takes a `comment_id`, `rc-<n>` or `ic-<n>`, and a
+    short `reason`. It posts the trimmed reason to
+    `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate` (026
+    rule 15), and refuses an empty reason before any call. The call
+    posts no comment on the forge. The agent seat and the keeper seat list
+    it beside their request tools. The reviewer and orchestrator seats do
+    not list it. The user sees the thread in Needs attention (031 rule 17).
 
 ## Acceptance criteria
 
@@ -266,8 +275,15 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::a_workflow_task_staffs_one_agent_for_each_column`,
   `::a_created_task_is_pinned_to_what_the_orchestrator_named`,
   `::an_edit_takes_default_for_the_effort_and_refuses_it_as_a_model`).
-- The agent seat lists its sixteen step tools and nothing of a review
+- The agent seat lists its seventeen step tools and nothing of a review
   (`mcp.rs::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`).
+- `escalate_comment` posts its trimmed reason to the escalate route of the
+  comment, and refuses an empty reason with no call
+  (`tools.rs::escalating_a_comment_posts_its_reason_to_the_escalate_route`).
+  The agent and keeper seats list it, and the reviewer seat does not
+  (`mcp.rs::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`,
+  `::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`,
+  `::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`).
 - Step calls post their bodies to the complete and fail routes
   (`tools.rs::step_tools_post_their_bodies_to_the_step_routes`).
 - `complete_step`'s description names the column report's five fields in
@@ -357,7 +373,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - A review session's MCP server is told the request, and the seat decides
   its tools: a goal and task in its environment give it no task tool
   (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
-- The pull request keeper seat lists its seven request tools beside
+- The pull request keeper seat lists its eight request tools beside
   `wait_for_user` and no task or message tool (032)
   (`mcp.rs::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`).
 - A refused call reaches the agent in the daemon's words

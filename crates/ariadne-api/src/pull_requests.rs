@@ -155,6 +155,14 @@ pub struct ReplyCommentRequest {
     pub body: String,
 }
 
+/// Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate`:
+/// why the request's keeping agent hands the thread to a human.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EscalateCommentRequest {
+    pub reason: String,
+}
+
 /// Body of `POST /v1/pull-requests/{id}/report`: what the request's session
 /// says of it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]

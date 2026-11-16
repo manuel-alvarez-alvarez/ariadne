@@ -64,6 +64,35 @@ impl Store {
         Ok(())
     }
 
+    /// Escalate the thread of one comment to a human (026): the comment's
+    /// mark records when and why. A later escalation of the same comment
+    /// stamps it again, which moves its attention revision (031). Publishes
+    /// `attention_changed`, since the thread's item appears.
+    pub async fn escalate_comment(
+        &self,
+        pull_request_id: &str,
+        forge_id: &str,
+        reason: &str,
+    ) -> Result<CommentMark> {
+        let mark = sqlx::query_as(
+            "INSERT INTO pull_request_comment_marks
+                    (pull_request_id, forge_id, escalated_at, escalation_reason)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT (pull_request_id, forge_id) DO UPDATE
+                SET escalated_at = excluded.escalated_at,
+                    escalation_reason = excluded.escalation_reason
+             RETURNING *",
+        )
+        .bind(pull_request_id)
+        .bind(forge_id)
+        .bind(now())
+        .bind(reason)
+        .fetch_one(self.w())
+        .await?;
+        self.publish(crate::Change::AttentionChanged);
+        Ok(mark)
+    }
+
     /// Claim a pull request's news, right before the prompt that tells it
     /// goes out (026): its comments are marked told, and the row takes the
     /// told mark the news leaves and the time it was told.

@@ -82,6 +82,7 @@ impl McpSeat {
                 "list_comments",
                 "get_comment",
                 "reply_comment",
+                "escalate_comment",
                 "mark_ready_for_review",
                 "report_pull_request",
                 "send_message",
@@ -114,6 +115,7 @@ impl McpSeat {
                 "list_comments",
                 "get_comment",
                 "reply_comment",
+                "escalate_comment",
                 "mark_ready_for_review",
                 "report_pull_request",
             ],
@@ -648,6 +650,7 @@ pub(crate) mod tests {
                     "list_comments",
                     "get_comment",
                     "reply_comment",
+                    "escalate_comment",
                     "mark_ready_for_review",
                     "report_pull_request",
                     "send_message",
@@ -679,6 +682,7 @@ pub(crate) mod tests {
                     "list_comments",
                     "get_comment",
                     "reply_comment",
+                    "escalate_comment",
                     "mark_ready_for_review",
                     "report_pull_request",
                 ][..],
@@ -694,6 +698,7 @@ pub(crate) mod tests {
             "complete_goal",
             "complete_step",
             "create_task",
+            "escalate_comment",
             "fail_step",
             "fail_task",
             "finalize_plan",
@@ -734,9 +739,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// The agent of a column is listed its sixteen tools: the task, the
+    /// The agent of a column is listed its seventeen tools: the task, the
     /// two step calls, the failure, the diff, the request its task opens and
-    /// the request's five tools (013), and the two message tools. No seat
+    /// the request's six tools (013), and the two message tools. No seat
     /// word of the old pipeline names a seat, and no seat of a session with
     /// a request in its environment is a column's agent. Nothing it is
     /// listed resolves a thread.
@@ -752,11 +757,12 @@ pub(crate) mod tests {
             McpSeat::Agent,
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
-        assert_eq!(mcp.seat.tools().len(), 16);
+        assert_eq!(mcp.seat.tools().len(), 17);
         for tool in [
             "get_pull_request",
             "list_comments",
             "reply_comment",
+            "escalate_comment",
             "mark_ready_for_review",
             "report_pull_request",
             "open_pull_request",
@@ -788,8 +794,9 @@ pub(crate) mod tests {
     /// A reviewer pull request session (029) is listed ten tools: the
     /// request, its diff, its comments, one comment, a reply, the three
     /// pending-edit tools (013 rule 13), the resolve of a thread it opened, one
-    /// review and the report. It has no task tool and no message tool, and
-    /// nothing it is listed approves or merges.
+    /// review and the report. It has no task tool and no message tool,
+    /// nothing it is listed approves or merges, and it escalates no thread:
+    /// the keeping agent does.
     #[test]
     fn the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool() {
         assert_eq!(
@@ -824,6 +831,7 @@ pub(crate) mod tests {
         );
         for tool in [
             "get_task",
+            "escalate_comment",
             "submit_verdict",
             "pick_winner",
             "send_message",
@@ -842,10 +850,10 @@ pub(crate) mod tests {
         assert!(!instructions.contains("01PR"), "{instructions}");
     }
 
-    /// A keeper pull request session (032) is listed eleven tools:
-    /// `wait_for_user` and `withdraw_wait_for_user`, and nine of its own —
+    /// A keeper pull request session (032) is listed ten tools:
+    /// `wait_for_user` and `withdraw_wait_for_user`, and eight of its own —
     /// the request, its diff, its comments, one comment, a reply, the
-    /// three pending-edit tools (013 rule 13), and the report. It has no task
+    /// escalation of a thread, the mark ready and the report. It has no task
     /// tool, no message tool, and nothing it is listed resolves a thread
     /// or submits a review: those are the reviewer seat's alone.
     #[test]
@@ -871,6 +879,7 @@ pub(crate) mod tests {
         assert_eq!(
             listed,
             [
+                "escalate_comment",
                 "get_comment",
                 "get_diff",
                 "get_pull_request",
@@ -881,7 +890,7 @@ pub(crate) mod tests {
                 "wait_for_user",
                 "withdraw_wait_for_user",
             ],
-            "the pull request keeper is listed nine tools"
+            "the pull request keeper is listed ten tools"
         );
         for tool in [
             "get_task",

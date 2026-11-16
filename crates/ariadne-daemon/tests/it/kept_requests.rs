@@ -787,6 +787,89 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
     assert_eq!(dto["id"], id);
 }
 
+/// The task's `pr` agent escalates a disputed thread with one call (026):
+/// the comment's mark takes the time and the reason, and the forge sees no
+/// call at all. A comment the request does not hold is 404. A reviewer
+/// session of the same request, any other session and a call from no
+/// session are refused.
+#[tokio::test]
+async fn the_pr_agent_escalates_a_thread_without_a_forge_call_and_no_other_session_may() {
+    let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
+    let Kept {
+        h, stub, agent, id, ..
+    } = kept_request(script("OPEN", &comments, json!([]))).await;
+    let escalate = |comment: &str| format!("/v1/pull-requests/{id}/comments/{comment}/escalate");
+    let reason = json!({"reason": "The reviewer wants a rename I refused."});
+    let before = stub.invocations().len();
+    let escalated: Value = h
+        .json(
+            as_session(&escalate("rc-101"), &agent.id, reason.clone()),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(escalated["id"], "rc-101");
+    assert_eq!(
+        stub.invocations().len(),
+        before,
+        "an escalation calls no forge"
+    );
+    let mark = h
+        .store
+        .pull_request_comment_marks(&id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.forge_id == "rc-101")
+        .expect("the escalated comment's mark");
+    assert!(mark.escalated_at.is_some());
+    assert_eq!(
+        mark.escalation_reason.as_deref(),
+        Some("The reviewer wants a rename I refused.")
+    );
+    h.error(
+        as_session(&escalate("rc-999"), &agent.id, reason.clone()),
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    h.error(
+        as_session(&escalate("rc-101"), &agent.id, json!({"reason": "  "})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+
+    let stranger = h.lone_session("stranger").await;
+    h.error(
+        as_session(&escalate("rc-101"), &stranger.id, reason.clone()),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    h.error(
+        post_json(&escalate("rc-101"), reason.clone()),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    let reviewer = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(id.clone()),
+        })
+        .await
+        .unwrap();
+    h.error(
+        as_session(&escalate("rc-101"), &reviewer.id, reason),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    assert_eq!(stub.invocations().len(), before, "a refusal calls no forge");
+}
+
 /// `open_pull_request`'s body reaches the forge without a trailer an
 /// agent's skill appends: the daemon strips it before the request ever
 /// opens.

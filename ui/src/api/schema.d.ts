@@ -768,6 +768,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pull-requests/{id}/comments/{comment_id}/escalate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Escalate the thread of one comment to a human (026): the keeping agent
+         *     and the reviewer disagree, and a person settles it on the forge. Only
+         *     the request's keeping agent escalates: the current column agent of the
+         *     task that opened it (`Seat::Agent`), or the keeper of a request kept by
+         *     hand (`Seat::Keeper`, 032). The daemon marks the comment and raises a
+         *     `pull_request` attention item for its thread (031). It calls no forge
+         *     and posts nothing: the comment is looked up in the last read alone.
+         */
+        post: operations["pull-requests_escalate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/pull-requests/{id}/comments/{comment_id}/reply": {
         parameters: {
             query?: never;
@@ -2540,6 +2565,13 @@ export interface components {
             description?: string | null;
             /** @example high */
             id: string;
+        };
+        /**
+         * @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate`:
+         *     why the request's keeping agent hands the thread to a human.
+         */
+        EscalateCommentRequest: {
+            reason: string;
         };
         /**
          * @description Which end of the recorded events a page of `GET /v1/events` is taken from.
@@ -5284,6 +5316,50 @@ export interface operations {
                 content?: never;
             };
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_escalate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EscalateCommentRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
