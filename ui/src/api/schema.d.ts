@@ -864,8 +864,7 @@ export interface paths {
          *     believes every required approval and check reads green, on the head
          *     (`head_sha`, required with `ready: true`) it actually confirmed that
          *     against; and the head a review session posted its review on
-         *     (`reviewed_sha`), and the review session's own approval of the head
-         *     (`approved`, on `head_sha`). None raises `waiting_user` on the session by
+         *     (`reviewed_sha`). Neither raises `waiting_user` on the session by
          *     itself (029): the claim alone is not confirmed evidence, and a
          *     pr-reviewer session finishing its own review must notify nobody — the
          *     `pull_request` attention producer reads the forge's own evidence
@@ -3014,11 +3013,6 @@ export interface components {
          * @enum {string}
          */
         PrOperation: "review" | "babysit";
-        /** @description An Ariadne review session approved the request on this exact head (029). */
-        PullRequestApprovalDto: {
-            approved_at: string;
-            head_sha: string;
-        };
         /**
          * @description One comment on a request, as the forge holds it now, read live (026),
          *     with the marks Ariadne keeps of it.
@@ -3061,7 +3055,6 @@ export interface components {
          *     Ariadne to review.
          */
         PullRequestDto: {
-            ariadne_approval?: components["schemas"]["PullRequestApprovalDto"] | null;
             author_login: string;
             /**
              * @description Whether the user asked Ariadne to keep this request of their own by
@@ -3205,15 +3198,9 @@ export interface components {
          */
         ReportPullRequestRequest: {
             /**
-             * @description The review session approves the request on `head_sha` (`true`), or
-             *     withdraws its approval (`false`) (029). Ariadne's own status alone:
-             *     no forge approval is posted.
-             */
-            approved?: boolean | null;
-            /**
              * @description The head the session actually confirmed `ready` against — read off
              *     its own last `get_pull_request` call, never looked up again here.
-             *     Required wherever `ready` or `approved` is `true`: a push landing between that
+             *     Required wherever `ready` is `true`: a push landing between that
              *     read and this call must still be judged against the head the
              *     session confirmed, not whatever the daemon's own cache has moved
              *     on to since, or a push the session never actually saw could pass
@@ -3494,7 +3481,7 @@ export interface components {
          *     in the name of the integration login.
          */
         SubmitReviewRequest: {
-            /** @description Optional text from older clients. New reviews do not publish it. */
+            /** @description The body of this review round, published above its inline findings. */
             body?: string;
             comments?: components["schemas"]["ReviewCommentRequest"][];
             /** @description `request_changes` or `comment`. Every other event is refused. */
