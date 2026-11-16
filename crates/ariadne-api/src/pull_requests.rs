@@ -207,7 +207,7 @@ pub struct PullRequestDiffQuery {
 pub struct SubmitReviewRequest {
     /// `request_changes` or `comment`. Every other event is refused.
     pub event: String,
-    /// Optional text from older clients. New reviews do not publish it.
+    /// The body of this review round, published above its inline findings.
     #[serde(default)]
     pub body: String,
     #[serde(default)]

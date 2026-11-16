@@ -326,7 +326,7 @@ pub(super) struct ReviewFinding {
 pub(super) struct SubmitReviewReq {
     /// `request_changes` while a P0 or P1 finding is open. Else `comment`.
     pub event: ReviewEvent,
-    /// Leave it empty.
+    /// Verdict with SHA and finding count; change and risk assessment; one line per finding and check.
     #[serde(default)]
     pub body: String,
     /// One inline comment per new finding, on the line of the defect.
@@ -956,7 +956,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one review round in the user's name: the new inline findings in `comments`, under `event`. Call it once per round, and not in a round with no new finding. It resolves no thread: use `resolve_thread`."
+        description = "Post one review round in the user's name: the new inline findings in `comments`, under `event`. Start `body` with the verdict, SHA and finding count. Add one or two sentences on the change and risk. Add one line per new finding with priority, path:line and title. Add one line per check. Call it once every round, including rounds with no new findings. Never write a status table. It resolves no thread: use `resolve_thread`."
     )]
     async fn submit_review(
         &self,

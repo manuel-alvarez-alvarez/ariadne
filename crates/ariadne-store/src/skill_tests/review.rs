@@ -240,6 +240,12 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         }
     }
     for step in [
+        "Write the body for this round.",
+        "Add one or two sentences on the change and its risk.",
+        "Add one line per new finding:",
+        "Add one line per check:",
+        "Never write a status table.",
+        "Call it even with no new findings.",
         "Pin the scope to the diff. Call `get_pull_request` and `get_diff`.",
         "`since`",
         "`submit_review` once with only new findings",
