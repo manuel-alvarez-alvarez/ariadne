@@ -538,7 +538,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::an_agent_with_no_request_is_told_to_open_one`.
 - The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once filling the repository's template or its three sections, starts on the news steps where one is already open, and ends on the merge or the close:
   `skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`, `skill_tests/template.rs::skill_size_caps_hold`.
-- The skill answers each inline review comment once, in one of three shapes, skips a thanks, acts on a follow-up, takes one more try on a reviewer's `Still there:` and then leaves the finding to the user, answers a conversation comment the same way, applies an accepted suggestion block, posts no status comment, and posts no unrelated reply:
+- The skill answers each inline review comment once, in one of three shapes, skips a thanks, acts on a reply that asks a new change, escalates a reply that rejects its outcome (a `Still there:` included) with `escalate_comment` and no comment, answers a conversation comment the same way, applies an accepted suggestion block, posts no status comment, and posts no unrelated reply:
   `skill_tests/operate.rs::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`.
 - The skill fixes a failed check only where the request's own change causes it, routes any other to the orchestrator or the user, and names its two seats once:
   `skill_tests/operate.rs::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`,

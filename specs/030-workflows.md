@@ -342,19 +342,25 @@ every other kebab-case word in it; the wire spells the same gate
     related accepted changes in one coherent commit and verification run,
     keeps unrelated fixes separate, pushes each completed batch once, and
     replies, once per comment, to the accepted changes and suggestions the
-    batch answers, naming the final pushed commit; it gives a reason for
-    keeping the code, one short answer to a question,
-    no reply to a thanks, a new answer to a follow-up, and one more try
-    on a reviewer's `Still there:` reply, verified at the head, after
-    which the user decides: the reviewer posts that reply at most once in
-    a thread (029), so the loop ends at two fixes. It answers a comment of
+    batch answers. After it verifies the defect at the head, a fix reply
+    reads `Fixed in <sha>:` then at most three sentences — what was wrong,
+    what changed, and where — and a kept-code reply reads `Not changed:`
+    then at most three sentences — what the head shows, and why the code
+    stays. It gives one short answer to a question, no reply to a thanks,
+    and acts on a reply that asks a new change. A reply by the comment's
+    author, after its `Fixed in` or `Not changed` reply, that rejects the
+    outcome is a disagreement, a `Still there:` reply included: the agent
+    calls `escalate_comment` with the comment id and a one-line reason,
+    posts nothing in that thread and makes no further fix for it. It answers a comment of
     the other side on the conversation once (026 rule 16), and posts no
     status comment: readiness reaches the user through
     `report_pull_request` alone. A finding carrying a suggestion
     block the agent accepts is applied rather than rewritten, except where
     it fails to compile or pass; one it does not accept keeps the code,
-    with a reason. A failed check is reproduced at the head and fixed in
-    a batch only where the request's own change causes it; any other
+    with a reason. It works from the one list of failed checks the news
+    carries at the final rollup (026 rule 12), reproduces each at the head,
+    and fixes every failure the request's own change causes in one batch;
+    any other
     failure — the base, a flaky test, the forge — is fixed by nobody
     here: the task's agent sends it to the orchestrator through
     `send_message`, and a keeper asks the user once (032). Repository
@@ -493,7 +499,9 @@ every other kebab-case word in it; the wire spells the same gate
   `::only_conflict_resolution_states_how_a_conflict_is_resolved`).
 - The `pr-babysit` skill runs one playbook for the task's agent and the
   keeper, names the two seats once, fixes only what the request's own
-  change breaks, takes one more try on `Still there:`, and reports ready
+  change breaks in one batch from the final list, explains each fix or
+  kept line in at most three sentences, escalates a disagreement with
+  no comment, and reports ready
   on the forge's own fields
   (`skill_tests/operate.rs::the_pr_babysit_skill_names_its_two_seats_once`,
   `::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`,
