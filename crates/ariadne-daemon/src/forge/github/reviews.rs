@@ -38,12 +38,8 @@ struct PostedComment {
 }
 
 impl Github {
-    /// Post `review` as one review of its inline findings, `gh api
-    /// repos/<owner>/<name>/pulls/<n>/reviews`, with no body of its own,
-    /// then read back the comments it holds, so each is stored under the id
-    /// the forge gave it. A forge that refuses a review with no body gets it
-    /// again with a body that is the hidden review mark alone, so the retry
-    /// still shows the reader nothing.
+    /// Post one round with its body and inline findings.
+    /// Read back the comments under the ids the forge assigned.
     pub(crate) async fn submit_review(
         &self,
         repo: &str,
@@ -90,8 +86,11 @@ impl Github {
                 )
                 .await
         };
-        let output = match post(None).await {
-            Err(refusal) if refusal.answer().is_some_and(|a| refused_for_its_body(&a)) => {
+        let output = match post((!review.body.is_empty()).then_some(review.body.as_str())).await {
+            Err(refusal)
+                if review.body.is_empty()
+                    && refusal.answer().is_some_and(|a| refused_for_its_body(&a)) =>
+            {
                 post(Some(REVIEW_MARK))
                     .await
                     .map_err(|refusal| refusal.to_string())?
@@ -255,6 +254,7 @@ sys.stdout.write('{"id": 77, "submitted_at": "2026-10-02T00:00:00Z"}')
                 &ReviewDraft {
                     request_changes: true,
                     head_sha: "abc".into(),
+                    body: String::new(),
                     comments: vec![],
                 },
                 "me",

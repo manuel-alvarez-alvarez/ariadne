@@ -699,7 +699,7 @@ pub fn answered(
 ) -> Vec<PullRequestComment> {
     let mine: Vec<(String, String, String)> = comments
         .iter()
-        .filter(|c| is_mine(c, role, login))
+        .filter(|c| is_mine(c, role, login) && !is_review_summary(c, login))
         .map(|c| (c.thread_id.clone(), c.created_at.clone(), c.id.clone()))
         .collect();
     for comment in &mut comments {
@@ -720,7 +720,9 @@ pub fn waiting_threads(
 ) -> HashSet<String> {
     answered(comments.to_vec(), role, login)
         .iter()
-        .filter(|c| !c.resolved && !c.answered && !is_mine(c, role, login))
+        .filter(|c| {
+            !c.resolved && !c.answered && !is_mine(c, role, login) && !is_review_summary(c, login)
+        })
         .map(|c| c.thread_id.clone())
         .collect()
 }
@@ -915,6 +917,19 @@ mod tests {
         forge.push(comment("1rr", "t1", "alice", "2026-10-05T00:00:00Z"));
         let reopened = answered(comments("p", &forge, &[]), "author", "me");
         assert_eq!(waiting_threads(&reopened, "author", "me").len(), 1);
+    }
+
+    #[test]
+    fn a_round_body_does_not_answer_a_conversation_comment() {
+        let mut body = comment("2", CONVERSATION, "me", "2026-10-03T00:00:00Z");
+        body.body = super::super::pulls::signed("Reviewed head.", false);
+        let forge = [
+            comment("1", CONVERSATION, "alice", "2026-10-02T00:00:00Z"),
+            body,
+        ];
+        let all = comments("p", &forge, &[]);
+        assert_eq!(waiting_threads(&all, "author", "me").len(), 1);
+        assert!(!answered(all, "author", "me")[0].answered);
     }
 
     /// A reviewer session hears of the replies in the threads its login

@@ -29,13 +29,18 @@ task asks for a change, not an answer.
 
    Done when you have hunted the strongest counter-evidence and written
    what you found.
-5. Write the report: question, findings, recommendation, confidence, and
-   what you did not check.
+5. Write the research report: question, findings, recommendation, confidence,
+   what would change the recommendation, and what you did not check.
 
-   Done when the report has all five parts.
-6. Call `complete_step` with the column report.
+   Done when the research report has all six parts.
+6. Send the full research report to `orchestrator` through `send_message`.
 
-   Done when the report has been submitted.
+   Done when the message holds the full research report and the tool
+   returns its message ID.
+7. Reference that message ID in the column report.
+   Call `complete_step` with the column report.
+
+   Done when the column report has been submitted.
 
 ## Rules
 

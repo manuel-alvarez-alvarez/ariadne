@@ -1195,15 +1195,6 @@ pub(super) async fn submit_review(
             "a change request carries each P0 or P1 finding as an inline comment on its line",
         ));
     }
-    if comments.is_empty() {
-        return Ok((
-            StatusCode::CREATED,
-            Json(
-                serde_json::to_value(Vec::<PullRequestCommentDto>::new())
-                    .expect("comments serialize"),
-            ),
-        ));
-    }
     let forge_client = client(&state, &forge);
     let mut posted = forge_client
         .submit_review(
@@ -1212,6 +1203,11 @@ pub(super) async fn submit_review(
             &ReviewDraft {
                 request_changes,
                 head_sha: pull.head_sha.clone(),
+                body: if req.body.is_empty() {
+                    req.body
+                } else {
+                    pulls::signed(&req.body, false)
+                },
                 comments,
             },
             &login,
