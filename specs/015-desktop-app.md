@@ -1121,6 +1121,10 @@ Out: the daemon endpoints themselves (012).
     search combines with the status filters to narrow the board, and an empty
     search result says that nothing matches the search.
 
+50. The request panel offers **Review again** beside **Stop review** while review is asked (029 rule 8).
+    The button calls the round route and shows the daemon's refusal text.
+    Proof: `ui/src/features/pull-requests/pull-request-panel.test.tsx::asks for another review round and shows the daemon refusal`.
+
 ## Acceptance criteria
 
 - The planning guide words the recorded orchestrator session, a recorded wait

@@ -2507,6 +2507,38 @@
         }
       }
     },
+    "/v1/repositories/{id}/pull-requests/{number}/review-round": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Request a reviewer round on the next idle pass.",
+        "operationId": "review_round",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "202": {},
+          "409": {}
+        }
+      }
+    },
     "/v1/sessions": {
       "get": {
         "tags": [

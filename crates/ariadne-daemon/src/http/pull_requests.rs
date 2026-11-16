@@ -1720,3 +1720,21 @@ mod ready_tests {
         assert!(!is_request_column(&columns, None));
     }
 }
+
+/// Request a reviewer round on the next idle pass.
+#[utoipa::path(post, path = "/v1/repositories/{id}/pull-requests/{number}/review-round", tag = "pull-requests",
+    params(("id" = String, Path), ("number" = i64, Path)),
+    responses((status = 202), (status = 409)))]
+pub(super) async fn review_round(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, i64)>,
+) -> ApiResult<StatusCode> {
+    let _operation = state.store.pr_operation_lock(&id, number).await;
+    let row = state.store.pull_request_by_number(&id, number).await?;
+    let row = row
+        .filter(|row| row.review_asked)
+        .ok_or_else(|| ApiError::conflict("no review is asked on this request"))?;
+    state.launcher.live.ask_review_round(&row.id);
+    state.notify_scheduler_pull_request(&row.id);
+    Ok(StatusCode::ACCEPTED)
+}

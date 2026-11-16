@@ -169,7 +169,7 @@ fn checkout(h: &Harness) -> (PathBuf, String) {
 fn push(path: &Path) -> String {
     sh(
         path,
-        "git worktree add -q ../push fix && cd ../push && echo b > b.txt && \
+        "git worktree add -q ../push fix && cd ../push && echo b >> b.txt && \
          git add b.txt && git -c user.email=t@t -c user.name=t commit -qm b && \
          cd - >/dev/null && git worktree remove ../push",
     );
@@ -488,9 +488,11 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
-    stub.reprogram(script(&Shown::open(&first)));
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&first)
+    }));
     let repo = repository(&h, &path).await;
-    let id = the_request(&h).await;
     // The repository's own automatic fetch must fully finish before the ask
     // below wakes a round of its own (`http::pull_requests::ask_review`):
     // capturing the baseline any earlier lets that round's own completion,
@@ -502,7 +504,13 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     )
     .await;
     let before = stub.fetches();
-    ask_review(&h, &id, &repo, 1, PIN).await;
+    let row: Value = h
+        .json(
+            put_review(&repo, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = row["id"].as_str().unwrap().to_string();
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
     // Wait for the ask's own fetch round to finish too: the idle session
@@ -525,22 +533,24 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     let briefed = h.prompts_to(&session).len();
 
     let second = push(&path);
-    stub.reprogram(script(&Shown::open(&second)));
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&second)
+    }));
     fetch_again(&h, &stub, &repo).await;
     eventually(TIMEOUT, "the push to reach the agent", async || {
         h.prompts_to(&session).len() == briefed + 1
     })
     .await;
     let news = h.prompts_to(&session).pop().unwrap();
+    assert!(news.contains("- Review again: settled push."), "{news}");
     assert!(
-        news.contains(&format!(
-            "the head moved to <<<untrusted>>>{second}<<<end untrusted>>>"
-        )),
+        news.contains(&format!("Head: <<<untrusted>>>{second}<<<end untrusted>>>")),
         "{news}"
     );
     assert!(
         news.contains(&format!(
-            "The last sha you reviewed is <<<untrusted>>>{first}<<<end untrusted>>>"
+            "Last reviewed sha: <<<untrusted>>>{first}<<<end untrusted>>>"
         )),
         "{news}"
     );
@@ -623,9 +633,11 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
-    stub.reprogram(script(&Shown::open(&first)));
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&first)
+    }));
     let repo = repository(&h, &path).await;
-    let id = the_request(&h).await;
     // The repository's own automatic fetch must fully finish before the ask
     // below wakes a round of its own (`http::pull_requests::ask_review`):
     // capturing the baseline any earlier lets that round's own completion,
@@ -637,7 +649,13 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     )
     .await;
     let before = stub.fetches();
-    ask_review(&h, &id, &repo, 1, PIN).await;
+    let row: Value = h
+        .json(
+            put_review(&repo, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = row["id"].as_str().unwrap().to_string();
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
     // Wait for the ask's own fetch round to finish too: the idle session
@@ -661,7 +679,10 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     };
 
     let second = commit("second.txt");
-    stub.reprogram(script(&Shown::open(&second)));
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&second)
+    }));
     fetch_again(&h, &stub, &repo).await;
     eventually(
         TIMEOUT,
@@ -678,7 +699,10 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
 
     let idle = idle_session(&h, &id).await;
     let third = commit("third.txt");
-    stub.reprogram(script(&Shown::open(&third)));
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&third)
+    }));
     fetch_again(&h, &stub, &repo).await;
     eventually(
         TIMEOUT,
@@ -713,9 +737,11 @@ async fn a_run_of_pushes_is_told_once_when_the_head_stands_still() {
         .forge_cli(&stub)
         .await;
     let (path, first) = checkout(&h);
-    stub.reprogram(script(&Shown::open(&first)));
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&first)
+    }));
     let repo = repository(&h, &path).await;
-    let id = the_request(&h).await;
     eventually(
         TIMEOUT,
         "the repository's first fetch to finish",
@@ -723,7 +749,13 @@ async fn a_run_of_pushes_is_told_once_when_the_head_stands_still() {
     )
     .await;
     let before = stub.fetches();
-    ask_review(&h, &id, &repo, 1, PIN).await;
+    let row: Value = h
+        .json(
+            put_review(&repo, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = row["id"].as_str().unwrap().to_string();
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
     eventually(TIMEOUT, "the ask's own fetch to finish", async || {
@@ -745,10 +777,16 @@ async fn a_run_of_pushes_is_told_once_when_the_head_stands_still() {
     };
 
     let second = commit("second.txt");
-    stub.reprogram(script(&Shown::open(&second)));
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&second)
+    }));
     fetch_again(&h, &stub, &repo).await;
     let third = commit("third.txt");
-    stub.reprogram(script(&Shown::open(&third)));
+    stub.reprogram(script(&Shown {
+        author: "me",
+        ..Shown::open(&third)
+    }));
     fetch_again(&h, &stub, &repo).await;
     assert_eq!(
         h.prompts_to(&session).len(),
@@ -2342,4 +2380,104 @@ async fn cancelling_a_replaced_review_goal_leaves_its_replacement_alone() {
         h.store.get_pull_request(&id).await.unwrap().review_asked,
         "the replacement's ask stands"
     );
+}
+
+#[tokio::test]
+async fn a_review_round_needs_an_ask_and_runs_on_the_current_head() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, first) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&first)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    let route = format!("/v1/repositories/{repo}/pull-requests/1/review-round");
+    let request = || Request::post(&route).body(Body::empty()).unwrap();
+    h.json::<Value>(request(), StatusCode::CONFLICT).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    fetch_again(&h, &stub, &repo).await;
+    let count = h.prompts_to(&session).len();
+    let second = push(&path);
+    stub.reprogram(script(&Shown::open(&second)));
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        h.prompts_to(&session).len(),
+        count,
+        "another author's push is no round"
+    );
+    assert_eq!(h.send(request()).await.0, StatusCode::ACCEPTED);
+    eventually(TIMEOUT, "the user round", async || {
+        h.prompts_to(&session).len() == count + 1
+    })
+    .await;
+    let prompt = h.prompts_to(&session).pop().unwrap();
+    assert!(prompt.contains("- Review again: user ask."), "{prompt}");
+    assert!(
+        prompt.contains(&format!("Head: <<<untrusted>>>{second}<<<end untrusted>>>")),
+        "{prompt}"
+    );
+    assert_eq!(
+        sh(
+            Path::new(session.worktree_path.as_ref().unwrap()),
+            "git rev-parse HEAD"
+        ),
+        second
+    );
+    idle_session(&h, &id).await;
+    stub.reprogram(script(&Shown {
+        listed: false,
+        timeline: &["review_requested", "review_request_removed"],
+        ..Shown::open(&second)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    assert!(!h.state.launcher.live.get(&id).unwrap().review_requested);
+    let third = push(&path);
+    stub.reprogram(script(&Shown::open(&third)));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the forge re-request round", async || {
+        h.prompts_to(&session).len() == count + 2
+    })
+    .await;
+    let prompt = h.prompts_to(&session).pop().unwrap();
+    assert!(
+        prompt.contains("- Review again: forge re-request."),
+        "{prompt}"
+    );
+    assert!(prompt.contains(&third));
+    assert_eq!(
+        sh(
+            Path::new(session.worktree_path.as_ref().unwrap()),
+            "git rev-parse HEAD"
+        ),
+        third
+    );
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(h.prompts_to(&session).len(), count + 2);
+    idle_session(&h, &id).await;
+    stub.reprogram(script(&Shown {
+        listed: false,
+        timeline: &["review_requested", "reviewed"],
+        ..Shown::open(&third)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    assert!(
+        h.state.launcher.live.get(&id).unwrap().review_requested,
+        "the completed review keeps its ask"
+    );
+    stub.reprogram(script(&Shown {
+        timeline: &["review_requested", "reviewed", "review_requested"],
+        ..Shown::open(&third)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(
+        TIMEOUT,
+        "the re-request after a completed review",
+        async || h.prompts_to(&session).len() == count + 3,
+    )
+    .await;
+    let doc: Value = h.get("/api-docs/openapi.json").await;
+    assert!(doc["paths"]["/v1/repositories/{id}/pull-requests/{number}/review-round"]["post"]["responses"]["202"].is_object());
 }

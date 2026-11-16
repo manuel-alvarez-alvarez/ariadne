@@ -33,8 +33,7 @@ tests:
 Any open request, regardless of its author or assigned reviewers,
 gets a review session once the user asks Ariadne for one — never on its
 own. The ask makes one goal with one staffed task, and the review session is
-that task's agent (rule 10b). The daemon wakes it with the request and with
-each push. It posts one review in the user's name, and the forge approval stays
+that task's agent (rule 10b). The daemon starts rounds as rules 7 and 8 specify. It posts one review in the user's name, and the forge approval stays
 the user's. Ariadne holds no approval of its own for a request: the status
 rule 15a once gave is retired (rule 15a).
 
@@ -100,36 +99,29 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 6. `pull_requests.told_head_sha` is the head the session was last told of.
    Each start and resume writes it to `head_sha`, since the briefing names
    that head.
-7. The news of a reviewer row (`forge/news.rs`) is a push and the replies in
-   the threads the integration login opened, each told once (026 rule 14).
-   A push is a `head_sha` that differs from `told_head_sha`. Its line names
-   the new head and the last `reviewed_sha`, and asks for a review of the
-   commits since it. Checks, the base, the review decision and the state are
-   no news to a reviewer. On a request of the user's own or one with a
-   keeper (032), findings are the keeper's news and replies from the integration login
-   in the review's threads are the reviewer's news. Each is told once.
-   The viewer's own pending review, its body, its comments and its replies
-   give a reviewer row none of this: the detail read drops them from the
-   conversation outright (026 rule 9), so neither this row's own news nor
-   its author's ever names one, and nothing here starts a review pass over
-   content nobody has published yet
-   (`pull_request_reviews.rs::a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_news`).
-8. A review's news is told at once, except a push: the first round of an
-   ask and a reply in a thread the review opened are handed over on the next
-   reconcile. A push is handed over only once the request's head stood
-   unchanged for `Timeouts::review_push_settle` (60 seconds in production),
-   so a run of commits is one round on the last head. A further push inside
-   the interval restarts it, and the session is never told the head in
-   between. A push told after the interval also waits for the session to be
-   idle: once it is, the daemon moves the worktree to the new head
-   (`checkout_detached`) and hands the news in one prompt. A fetch with the
-   same head hands nothing. A reply alone needs no idle session, since it
-   moves no worktree:
-   `head_settle.rs::a_head_settles_exactly_when_the_whole_interval_has_passed`
-   (the boundary), `head_settle.rs::a_new_head_restarts_the_interval` (the
-   restart),
+7. A reviewer receives only round prompts. Comments, thread replies, checks and
+   review decisions never wake it. Each round reads its threads with `list_comments`.
+   The initial briefing asks for a round on the current head.
+   Each later `PULL_REQUEST_NEWS` contains one line starting `- Review again:`.
+   It names the reason: settled push, forge re-request or user ask.
+   The head and last reviewed sha are each fenced as data; an absent reviewed sha reads `none`.
+8. On an `author` request, a changed head starts a round after
+   `Timeouts::review_push_settle`, 300 seconds by default.
+   Each further push restarts that interval. The harness uses zero.
+   On a `reviewer` request, a push alone starts no round.
+   A reviewer-role request that the forge's open list names again after session start, and did not name on the last read, queues a forge re-request round. It does so even where `review_requested` stayed true after a completed review.
+   An assignment already present at session start queues nothing more.
+   A user ask through `POST /v1/repositories/{id}/pull-requests/{number}/review-round`
+   queues a round immediately. The route takes an empty body and answers 202.
+   Without `review_asked`, it answers 409. OpenAPI includes the route.
+   Each queued round waits until the session is idle.
+   The daemon moves the detached worktree to the current head before sending its prompt.
+   Multiple pending asks can share one round.
+   Proof: `head_settle.rs::a_head_settles_exactly_when_the_whole_interval_has_passed`,
+   `::a_new_head_restarts_the_interval`,
    `pull_request_reviews.rs::a_run_of_pushes_is_told_once_when_the_head_stands_still`,
-   `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
+   `::a_push_reaches_an_idle_session_without_a_wait`,
+   `::a_review_round_needs_an_ask_and_runs_on_the_current_head`.
 9. A request that turns merged or closed, or whose manual ask is stopped,
    has its reviewer session killed and its detached worktree removed. A
    merge completes the review goal and its task; a close fails the task and leaves the goal active; a stop cancels
@@ -162,11 +154,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     the skills and takes the session down.
 10a. `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
     S]... [--attach]` and `pr review <repo> <number> --stop` call this route
-    from the CLI (014), on any request: `--model` is required with no
-    `--stop`,
+    from the CLI (014), on any request: `--model` is required with neither
+    `--stop` nor `--again`,
     since there is no repository pin to fall back to any more, and names
     the flag when it is missing. `--attach` waits for the review session
     this starts and opens its console.
+
+10aa. `pr review <repo> <number> --again` calls the round route in rule 8.
+    It conflicts with `--model`, `--effort`, `--skill`, `--attach` and `--stop`.
+    The request panel offers **Review again** beside **Stop review** while review is asked.
+    It shows the daemon's refusal text.
 
 10b. A review ask makes one active goal of the review operation, and a
     stop or an end finishes it. The lifecycle is shared by every PR
@@ -382,7 +379,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     resolves silently; where the last reply claims a fix (`Fixed in <sha>: ...`) and the defect survives, it
     gets one reply, `Still there: <why>.`, never posted twice in the same
     thread; a fix claimed in a revision the worktree does not hold gets
-    nothing, since the push arrives as news; a question gets one short
+    nothing until a later round; a question gets one short
     answer, once per question, and a reply that argues with no new
     question gets none; a reply that proves the finding wrong gets one
     `Withdrawn: <why>.` reply and the thread is resolved; any other

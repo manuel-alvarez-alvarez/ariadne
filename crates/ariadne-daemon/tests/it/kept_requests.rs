@@ -2210,14 +2210,12 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     );
     holds(&mut script, json!(answered), summary);
     stub.reprogram(script);
-    // The answer is posted under the user's login, yet it is news to the
-    // review that opened the thread.
-    let answer_id = answer["id"].as_str().unwrap().to_string();
-    eventually(TIMEOUT, "the answer to reach the review", async || {
-        h.flush_scheduler().await;
-        h.prompted(&review).contains(&answer_id)
-    })
-    .await;
+    // A thread reply does not start a reviewer round.
+    let count = h.prompts_to(&review).len();
+    h.flush_scheduler().await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(h.prompts_to(&review).len(), count);
+    assert!(!h.prompted(&review).contains(answer["id"].as_str().unwrap()));
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(
         dto["unanswered_comments"], 0,

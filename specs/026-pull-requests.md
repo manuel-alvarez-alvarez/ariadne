@@ -164,7 +164,8 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## The news
 
-12. `forge/news.rs` computes what the session has not been told: comments of the other side with no `told_at` mark in a thread nobody answered or resolved, checks that turned to failure, a rolled-up check state that changed, `behind_base` that turned true, a review decision that changed, and a state that turned `merged` or `closed`.
+12. For a keeper or task agent, `forge/news.rs` computes what the session has not been told: comments of the other side with no `told_at` mark in a thread nobody answered or resolved, checks that turned to failure, a rolled-up check state that changed, `behind_base` that turned true, a review decision that changed, and a state that turned `merged` or `closed`.
+    Reviewers receive only round prompts, as 029 rules 7 and 8 specify.
     The check state is what a ready report turns on: checks that end green after an approval, or go back to pending after a report, are news.
     The prompt lists each item on one line, and names each comment by its id.
     While `checks` reads `pending`, the news carries no failed-check line, whatever `failed_checks` names. When `checks` turns `failure`, one prompt lists every failed check of the head, one line each, a check told before the turn included. While `checks` stays `failure`, a check that fails and was not told yet is told.
@@ -290,6 +291,7 @@ The command and screen follow [014](014-command-line-interface.md) and [015](015
 - `pr search --repo <id|path> <query>` searches the repository's last fetched list.
 - `pr refresh [--repo <id|path>]` requests a fetch.
 - `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` calls `PUT .../ariadne-review` with `{asked: true, model, effort, skills}` (029): `--model` is required, since there is no repository pin to fall back to any more, and a usage error names it when it is missing. `--attach` waits for the review session to start and opens its console, as `session new --attach` does. `pr review <repo> <number> --stop` sends `{asked: false}` alone, and conflicts with `--model`, `--effort`, `--skill` and `--attach`.
+- `pr review <repo> <number> --again` requests another round (029 rule 10aa).
 - `pr babysit <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` and `pr babysit <repo> <number> --stop` call `PUT .../ariadne-babysit` the same way `pr review` calls its own route (032).
 
 The sidebar's Forge entry opens the Forge screen, titled "Forge", whose two tabs are Pull requests (`#/forge/pull-requests`, where `#/forge` lands) and Issues (028).
@@ -429,10 +431,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A fetch publishes `issues_changed` and `pull_requests_changed` only when they moved:
   `pull_requests.rs::a_fetch_publishes_issues_changed_only_when_the_open_issues_moved`,
   `::a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved`.
-- A thread waits on the login until it answers, a comment is told once, a reviewer hears of its own threads, and an Ariadne finding on my request is its author's while the answer is the review's:
+- A thread waits on the login until it answers, a comment is told once, a keeper hears unanswered comments in every thread, and an Ariadne finding waits on its author until a reply answers it:
   `live.rs::tests::a_thread_waits_on_the_login_until_it_answers_and_a_comment_is_told_once`,
-  `::a_reviewer_hears_of_the_replies_in_its_own_threads`,
-  `::an_ariadne_finding_on_my_request_is_the_authors_and_its_answer_the_reviews`.
+  `::a_keeper_hears_unanswered_comments_in_every_thread`,
+  `::an_ariadne_finding_on_my_request_is_the_authors_and_a_reply_answers_it`.
+- A reviewer receives only round prompts, as 029 rules 7 and 8 specify:
+  `news.rs::tests::a_reviewer_hears_only_round_prompts`.
 - CLI actions use the pull request routes and preserve search text, `pr ls` asks every open request, mine, or the review requests, and no command adds or removes one:
   `pr.rs::tests::pr_commands_use_the_pull_request_routes_and_preserve_search_text`;
   `--mine` and `--review-requests` do not combine: `::mine_and_review_requests_do_not_combine`.
@@ -573,7 +577,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::each_change_is_told_once` (the check, the decision, the state and
   the "behind the base" lines),
   `::a_change_of_the_checks_is_told_for_the_ready_report`,
-  `::a_push_to_a_request_i_review_is_told_once_with_the_last_reviewed_sha`
+  `::a_reviewer_hears_only_round_prompts`
   (the head sha and the reviewed sha), and the keeper's own (032). A
   comment's path crafted with the closing marker and a fresh instruction
   cannot escape its own fence:

@@ -189,11 +189,86 @@ impl From<&ForgeIntegration> for RepositoryListIdentity {
 /// last list read of every repository, by repository id.
 #[derive(Debug, Clone, Default)]
 pub struct LivePulls {
+    /// Pending round requests belong to the live session and survive busy turns.
+    review_rounds: Arc<RwLock<HashMap<String, ReviewRounds>>>,
     rows: Arc<RwLock<HashMap<String, Live>>>,
     lists: Arc<RwLock<HashMap<String, RepositoryList>>>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ReviewRounds {
+    /// Whether the forge's list of review requests held the request on the
+    /// last read. The list drops it once I reviewed, so a later listing is
+    /// a re-request even where the retained `review_requested` stayed true.
+    listed: bool,
+    generation: u64,
+    pending: Option<&'static str>,
+}
+
 impl LivePulls {
+    pub fn start_review_rounds(&self, id: &str, listed: bool) {
+        self.review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(
+                id.into(),
+                ReviewRounds {
+                    listed,
+                    ..Default::default()
+                },
+            );
+    }
+
+    pub fn observe_review_request(&self, id: &str, listed: bool) {
+        let mut rounds = self
+            .review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(round) = rounds.get_mut(id) {
+            if !round.listed && listed {
+                round.generation += 1;
+                round.pending = Some("forge re-request");
+            }
+            round.listed = listed;
+        }
+    }
+
+    pub fn ask_review_round(&self, id: &str) {
+        let mut rounds = self
+            .review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        let round = rounds.entry(id.into()).or_default();
+        round.generation += 1;
+        round.pending = Some("user ask");
+    }
+
+    pub fn review_round(&self, id: &str) -> Option<(u64, &'static str)> {
+        let rounds = self.review_rounds.read().unwrap_or_else(|p| p.into_inner());
+        let round = rounds.get(id)?;
+        round.pending.map(|reason| (round.generation, reason))
+    }
+
+    /// Preserve any newer ask received while the scheduler moved the worktree.
+    pub fn finish_review_round(&self, id: &str, generation: u64) {
+        let mut rounds = self
+            .review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(round) = rounds.get_mut(id)
+            && round.generation == generation
+        {
+            round.pending = None;
+        }
+    }
+
+    pub fn end_review_rounds(&self, id: &str) {
+        self.review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(id);
+    }
+
     pub fn get(&self, id: &str) -> Option<Live> {
         self.rows
             .read()
@@ -740,62 +815,13 @@ pub fn waiting(
         .collect()
 }
 
-/// The first comment of each thread: who opened it.
-fn openers(comments: &[PullRequestComment]) -> HashMap<&str, &PullRequestComment> {
-    let mut first: HashMap<&str, &PullRequestComment> = HashMap::new();
-    for comment in comments {
-        first.entry(comment.thread_id.as_str()).or_insert(comment);
-    }
-    first
-}
-
-/// The comments the request's session has not been told of: of the other
-/// side, in a thread nobody resolved, and not answered yet. With
-/// `opened_by_login`, only those of a thread the login opened: what a
-/// reviewer session hears of (029).
-pub fn untold(
-    comments: &[PullRequestComment],
-    role: &str,
-    login: &str,
-    opened_by_login: bool,
-) -> Vec<PullRequestComment> {
+/// The comments a keeper or task agent has not been told of: of the other
+/// side, in a thread nobody resolved, and not answered yet.
+pub fn untold(comments: &[PullRequestComment], role: &str, login: &str) -> Vec<PullRequestComment> {
     let comments = answered(comments.to_vec(), role, login);
-    let openers = openers(&comments);
     comments
         .iter()
         .filter(|c| c.told_at.is_none() && !c.answered && !c.resolved && !is_mine(c, role, login))
-        .filter(|c| {
-            !opened_by_login
-                || openers
-                    .get(c.thread_id.as_str())
-                    .is_some_and(|first| first.author_login.eq_ignore_ascii_case(login))
-        })
-        .cloned()
-        .collect()
-}
-
-/// The answers a review session has not been told of on a request of the
-/// user's own (029): comments under the login no review posted — the task
-/// author's replies, or the user's own — in a thread an Ariadne review
-/// opened. Every other comment there is the author's news, so no comment is
-/// told to both.
-pub fn untold_review_replies(
-    comments: &[PullRequestComment],
-    login: &str,
-) -> Vec<PullRequestComment> {
-    let openers = openers(comments);
-    comments
-        .iter()
-        .filter(|c| {
-            c.told_at.is_none()
-                && !c.resolved
-                && !c.from_review
-                && c.author_login.eq_ignore_ascii_case(login)
-                && c.thread_id != CONVERSATION
-                && openers
-                    .get(c.thread_id.as_str())
-                    .is_some_and(|first| first.from_review)
-        })
         .cloned()
         .collect()
 }
@@ -903,7 +929,7 @@ mod tests {
         ];
         let all = answered(comments("p", &forge, &[]), "author", "me");
         assert_eq!(waiting_threads(&all, "author", "me").len(), 1);
-        assert_eq!(ids(&untold(&all, "author", "me", false)), ["1"]);
+        assert_eq!(ids(&untold(&all, "author", "me")), ["1"]);
         assert_eq!(ids(&waiting(&all, "author", "me")), ["1"]);
         assert!(all.iter().find(|c| c.id == "2").unwrap().answered);
 
@@ -912,7 +938,7 @@ mod tests {
             "author",
             "me",
         );
-        assert!(untold(&told, "author", "me", false).is_empty(), "told once");
+        assert!(untold(&told, "author", "me").is_empty(), "told once");
 
         forge.push(comment("1r", "t1", "me", "2026-10-04T00:00:00Z"));
         let answered_now = answered(comments("p", &forge, &[]), "author", "me");
@@ -935,29 +961,26 @@ mod tests {
         assert!(!answered(all, "author", "me")[0].answered);
     }
 
-    /// A reviewer session hears of the replies in the threads its login
-    /// opened alone (029).
+    /// A keeper hears unanswered comments in every thread (026).
     #[test]
-    fn a_reviewer_hears_of_the_replies_in_its_own_threads() {
+    fn a_keeper_hears_unanswered_comments_in_every_thread() {
         let forge = [
             comment("1", "mine", "me", "2026-10-02T00:00:00Z"),
             comment("1r", "mine", "alice", "2026-10-03T00:00:00Z"),
             comment("2", "theirs", "bob", "2026-10-02T00:00:00Z"),
         ];
-        let all = answered(comments("p", &forge, &[]), "reviewer", "me");
-        assert_eq!(ids(&untold(&all, "reviewer", "me", true)), ["1r"]);
-        let untold_all = untold(&all, "reviewer", "me", false);
+        let all = comments("p", &forge, &[]);
+        let untold_all = untold(&all, "author", "me");
         let mut every = ids(&untold_all);
         every.sort();
         assert_eq!(every, ["1r", "2"]);
     }
 
     /// On my own request or one I babysit, an Ariadne review comment is
-    /// another side's (029, 032): it waits on the task's author, and is the author's
-    /// news; the author's reply under my login answers it, and is the
-    /// review's news alone.
+    /// another side's (029, 032): it waits on the task's author.
+    /// The author's reply answers it without waking the reviewer.
     #[test]
-    fn an_ariadne_finding_on_my_request_is_the_authors_and_its_answer_the_reviews() {
+    fn an_ariadne_finding_on_my_request_is_the_authors_and_a_reply_answers_it() {
         let forge = [
             comment("f", "t1", "me", "2026-10-02T00:00:00Z"),
             comment("a", "t1", "me", "2026-10-03T00:00:00Z"),
@@ -968,14 +991,13 @@ mod tests {
                 role,
                 "me",
             );
-            assert_eq!(ids(&untold(&only_the_finding, role, "me", false)), ["f"]);
+            assert_eq!(ids(&untold(&only_the_finding, role, "me")), ["f"]);
             assert_eq!(waiting_threads(&only_the_finding, role, "me").len(), 1);
             let both = answered(comments("p", &forge, &[mark("f", false, true)]), role, "me");
             assert!(
                 waiting_threads(&both, role, "me").is_empty(),
                 "the reply answers it"
             );
-            assert_eq!(ids(&untold_review_replies(&both, "me")), ["a"]);
         }
         // On a request I review, my own review's comments are mine.
         let theirs = answered(

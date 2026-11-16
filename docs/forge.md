@@ -127,12 +127,16 @@ A request gets a review session of its own once you ask for one — at
 once, even while it is still a draft — staffed on the pin you gave that
 ask, in a worktree detached at the request's head rather than a branch of
 its own.
-The daemon wakes it with the request, then tells it of a reply in a thread
-it opened at the next reconcile, with no wait. A push is told only once the
-request's head stood unchanged for one minute, so a run of commits is one
-round on the last head; a further push inside that minute restarts it. The
-push also waits for the session to go idle before the worktree moves to the
-new head; a reply alone moves no worktree, so it needs no idle session.
+The first briefing asks for a review of the current head.
+On your own request, a push starts another round after the head stays unchanged for five minutes.
+A further push restarts that interval.
+On another author's request, a push starts no round.
+A new forge review request starts one when your assignment changes from absent to present.
+Press **Review again** beside **Stop review** to request a round now.
+You can also run `ariadne pr review <repo-id> <number> --again`.
+Each round waits for the session to become idle, then moves its worktree to the current head.
+Comments, thread replies, checks and review decisions start no round.
+The reviewer reads its threads during each round.
 
 Nothing starts that session on its own: the request is tracked the moment
 it is seen, and Needs attention offers **Review needed**, naming the
@@ -150,10 +154,8 @@ with; any other skill can join it. The same is `PUT
 `{"asked": true, "model": "<agent:model>", "effort": "<effort>", "skills":
 [...]}`, from the CLI as `ariadne pr review <repo-id> <number> --model
 <agent:model>`: `--model` is required, since there is no repository
-setting to fall back to. On a request of yours that session hears of
-pushes alone — the comments are the keeping agent's news; on an incoming
-request it hears of pushes and replies — and its review is always posted
-as a comment where the request is your own, since no forge takes a change
+setting to fall back to. The session starts rounds under the rules above.
+It posts its review as a comment on your own request, since no forge takes a change
 request from a request's own author. Starting it closes the dialog and,
 once the daemon has the agent up, opens that session's console in the
 panel. **Stop review** takes it down. Starting a review makes a goal of its
