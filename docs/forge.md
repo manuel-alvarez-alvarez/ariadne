@@ -79,14 +79,18 @@ decision, a merge, or a close — and leaves an idle agent alone in between.
 A session that starts with the request already open — after a restart —
 skips straight to reading that news instead of opening the request again.
 
+The agent batches all accepted asks, suggestions and failures its change causes in each wake.
+It pushes once, then replies once per comment.
+A fix gets `Fixed in <short sha>:` and one sentence on what changed.
+Kept code gets `Not changed:` and one sentence on why it stays.
 The agent **answers each inline review comment once, in the shape it
 calls for**: a requested change goes onto the branch as a new commit, with
 the changed tests and lint run again before it is pushed, and the reply
 names the commit or says why the code stays; a question gets one short
-answer; a thanks gets no reply; a follow-up in a thread it already
+sentence; a thanks gets no reply; a follow-up in a thread it already
 answered gets a new answer; and a reviewer's `Still there:` reply gets one
 more try, verified at the head — a second fix or a reason the code stays
-— and then you decide what happens next. It also answers,
+— and a second rejection goes to you without another reply or fix. It also answers,
 once, a comment of yours on the conversation: it cannot reply twice to
 the same one, and it cannot reply to its own earlier words there. It
 posts no status comment: the daemon readiness item below is how it reaches
@@ -100,7 +104,8 @@ it; a failure from the base branch, a flaky test or the forge goes to
 the orchestrator — or, for a keeper, to you — and it changes nothing for
 it. It never pushes to another branch. Before it runs the checks of the
 files a fix changed, it integrates a moved base branch
-as the repository's history rules require. Where those rules require a
+only inside a fix batch or when news says the forge requires it.
+It follows the repository's history rules. Where those rules require a
 linear request branch in words, it rebases; otherwise it merges.
 After a merge, it pushes normally; a base update with no fix runs no
 check of its own, since the push hook and the forge's checks run anyway.
@@ -268,9 +273,11 @@ holds here too: a head branch git itself refuses as a ref name starts no
 worktree and no keeper session. A keeper launch or later report clears its
 own item and does not clear a reviewer's item on the same request. It hears
 the same news a task's keeping agent
-does — a new comment, a check that turned to failure or back to green, a
-changed review decision, a merge or a close — replies and fixes the same
-way, and receives daemon readiness attention the same way. Unlike a self-review,
+does — a comment of the other side, a failed check at final rollup,
+a `mergeable` that reads `behind`, a merge or a close — replies and fixes the same
+way, and receives daemon readiness attention the same way.
+It reports no readiness, marks no draft, posts no status comment and leaves threads open.
+It asks you once about a failure the request did not cause and fixes none. Unlike a self-review,
 which only ends when you stop asking, babysitting also ends on the merge
 or the close: the session, its worktree and its branch all go.
 `ariadne pr babysit <repo-id> <number> --stop` takes it down early.

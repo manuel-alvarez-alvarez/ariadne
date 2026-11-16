@@ -336,22 +336,21 @@ every other kebab-case word in it; the wire spells the same gate
     waits on the forge without a quiet nudge (009 rule 41) — the session
     rules of its seat say never to check the request on its own instead
     (006 rule 5). The daemon decides readiness from forge evidence alone (031). The agent
-    answers each inline review comment of the other side once: it groups
-    related accepted changes in one coherent commit and verification run,
-    keeps unrelated fixes separate, pushes each completed batch once, and
-    replies, once per comment, to the accepted changes and suggestions the
-    batch answers. After it verifies the defect at the head, a fix reply
-    reads `Fixed in <sha>:` then at most three sentences — what was wrong,
-    what changed, and where — and a kept-code reply reads `Not changed:`
-    then at most three sentences — what the head shows, and why the code
-    stays. It gives one short answer to a question, no reply to a thanks,
-    and acts on a reply that asks a new change. A reply by the comment's
-    author, after its `Fixed in` or `Not changed` reply, that rejects the
-    outcome is a disagreement, a `Still there:` reply included: the agent
-    calls `escalate_comment` with the comment id and a one-line reason,
-    posts nothing in that thread and makes no further fix for it. It answers a comment of
+    reads the request and unanswered comments, and verifies each ask at the head.
+    It puts all accepted asks, suggestions and failures caused by its change in one batch per wake.
+    It keeps related changes in one commit and unrelated changes in separate commits within that batch.
+    It runs the checks of changed files, pushes once, then replies once per comment.
+    A fix reply reads `Fixed in <short sha>:` then one sentence on what changed.
+    A kept-code reply reads `Not changed:` then one sentence on why the code stays.
+    A question gets one sentence; a thanks gets nothing.
+    A new ask gets action.
+    The first rejection of its outcome gets one answer with evidence.
+    This can be a fix or one sentence on what the head does.
+    This includes `Still there:` and a human's pushback.
+    The second rejection gets `escalate_comment` with a one-line reason, no reply and no further fix.
+    It answers a comment of
     the other side on the conversation once (026 rule 16), and posts no
-    status comment: the daemon raises readiness attention from forge evidence. A finding carrying a suggestion
+    status comment. It reports no readiness and marks no draft. A finding carrying a suggestion
     block the agent accepts is applied rather than rewritten, except where
     it fails to compile or pass; one it does not accept keeps the code,
     with a reason. It works from the one list of failed checks the news
@@ -359,9 +358,9 @@ every other kebab-case word in it; the wire spells the same gate
     and fixes every failure the request's own change causes in one batch;
     any other
     failure — the base, a flaky test, the forge — is fixed by nobody
-    here: the task's agent sends it to the orchestrator through
+    here: the task's agent sends it to the orchestrator once through
     `send_message`, and a keeper asks the user once (032). Repository
-    history rules choose its branch update, done
+    history rules choose its branch update, allowed only inside a fix batch or when news says the forge requires it, done
     before the batch's checks run: where they require a linear request
     branch in words it rebases; otherwise it merges. A rebase or merge
     that stops on a conflict goes to `conflict-resolution`, whose document
