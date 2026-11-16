@@ -618,6 +618,7 @@ ariadne pr inspect <repo-id> 42
 ariadne pr refresh --repo <repo-id>
 ariadne pr review <repo-id> 42 --model claude-acp:<model-id>
 ariadne pr review <repo-id> 42 --model claude-acp:<model-id> --skill security-review --attach
+ariadne pr review <repo-id> 42 --again
 ariadne pr review <repo-id> 42 --stop
 ariadne pr babysit <repo-id> 42 --model claude-acp:<model-id>
 ariadne pr babysit <repo-id> 42 --stop
@@ -644,7 +645,7 @@ list.
 
 `ariadne pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
 S]... [--attach]` asks Ariadne to review a request of your own (029):
-`--model` is required with no `--stop`, since there is no repository
+`--model` is required with neither `--stop` nor `--again`, since there is no repository
 setting to fall back to, and the model must be ranked `balanced` or
 `frontier`, the band of the [`pr-review` workflow](workflows.md#the-pr-review-workflow).
 The ask makes one goal with one task; `pr inspect` prints its id as `review
@@ -654,10 +655,14 @@ the review session to start and opens its console, with `ariadne attach`. `ariad
 review and cannot be combined with `--model`, `--effort`, `--skill` or
 `--attach`.
 
+`ariadne pr review <repo> <number> --again` requests another round on the current head.
+It requires an existing review ask and conflicts with `--model`, `--effort`, `--skill`, `--attach` and `--stop`.
+The round runs when the session becomes idle.
+
 `ariadne pr babysit <repo> <number> --model AGENT:MODEL [--effort E]
 [--skill S]... [--attach]` asks Ariadne to keep an open request that
 no task opened (032), the same way `pr review` asks for a review:
-`--model` is required with no `--stop`, and the model must be ranked `fast`
+`--model` is required with neither `--stop` nor `--again`, and the model must be ranked `fast`
 or `balanced`, the band of the [`pr-babysit`
 workflow](workflows.md#the-pr-babysit-workflow). The ask makes one goal with
 one task; `pr inspect` prints its id as `babysit goal`. `--skill` loads another
@@ -844,6 +849,6 @@ the built-in help screen.
 | `session` | `ls` accepts `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `-a`, and `--watch`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
 | `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer\|keeper]`. |
 | `query` | `query EXPR [--at RFC3339\|SPAN \| --since RFC3339\|SPAN [--step SPAN]]`; evaluates the supported PromQL subset at now, at `--at`, or as a range from `--since`. |
-| `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
+| `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop\|--again]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
 | `permissions` | `ai show`, `enable [--wait]`, `disable`, `refresh [--wait]`, `set` with `--allow-threshold`, `--deny-threshold`, `--default-thresholds`, `--flavour`, or `--device`, and `test --tool TEXT --input JSON [--kind] [--option]... [--location]... [--workspace]`; `learned list [--repo]`, `show ID`, `rm ID`, and `scope ID all\|repository`. |
 | `completions`, `mcp` | `completions SHELL [--static]` for bash, elvish, fish, PowerShell, or zsh; `completions install [--shell bash\|zsh\|fish]`; `mcp serve`. |

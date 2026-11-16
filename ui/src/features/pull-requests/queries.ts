@@ -142,3 +142,15 @@ export function useAskBabysit() {
     },
   })
 }
+
+/** Ask for a reviewer round on the current head. */
+export function useReviewRound() {
+  return useMutation({
+    mutationFn: ({ repository_id, number }: { repository_id: string; number: number }) =>
+      unwrap(
+        api().POST("/v1/repositories/{id}/pull-requests/{number}/review-round", {
+          params: { path: { id: repository_id, number } },
+        }),
+      ),
+  })
+}

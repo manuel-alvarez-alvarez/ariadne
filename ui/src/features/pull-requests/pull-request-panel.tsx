@@ -51,7 +51,12 @@ import { useFocusReturn } from "@/hooks/use-focus-return"
 import { shortId, shortSha } from "@/lib/format"
 import { paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 
-import { pullRequestByKeyQueryOptions, useAskBabysit, useAskReview } from "./queries"
+import {
+  pullRequestByKeyQueryOptions,
+  useAskBabysit,
+  useAskReview,
+  useReviewRound,
+} from "./queries"
 import { StartBabysitDialog } from "./start-babysit-dialog"
 import { StartReviewDialog } from "./start-review-dialog"
 import { ARIADNE_BABYSITTING, ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
@@ -224,6 +229,7 @@ function PullRequestHeader({
   onSessionStarted: (seat: Seat) => void
 }) {
   const ask = useAskReview()
+  const round = useReviewRound()
   const babysit = useAskBabysit()
   const [starting, setStarting] = useState(false)
   const [babysitting, setBabysitting] = useState(false)
@@ -242,21 +248,33 @@ function PullRequestHeader({
           <div className="flex items-center gap-2">
             {pull.state === "open" ? (
               pull.review_asked ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  pending={ask.isPending}
-                  onClick={() =>
-                    ask.mutate({
-                      repository_id: pull.repository_id,
-                      number: pull.number,
-                      asked: false,
-                    })
-                  }
-                >
-                  <BotOffIcon />
-                  Stop review
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    pending={round.isPending}
+                    onClick={() =>
+                      round.mutate({ repository_id: pull.repository_id, number: pull.number })
+                    }
+                  >
+                    Review again
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    pending={ask.isPending}
+                    onClick={() =>
+                      ask.mutate({
+                        repository_id: pull.repository_id,
+                        number: pull.number,
+                        asked: false,
+                      })
+                    }
+                  >
+                    <BotOffIcon />
+                    Stop review
+                  </Button>
+                </>
               ) : (
                 <Button size="sm" onClick={() => setStarting(true)}>
                   <BotIcon />
@@ -343,6 +361,11 @@ function PullRequestHeader({
         onOpenChange={setBabysitting}
         onStarted={() => onSessionStarted("keeper")}
       />
+      {round.error ? (
+        <div className="px-4">
+          <ErrorState title="Could not start another review" error={round.error} />
+        </div>
+      ) : null}
       {ask.error ? (
         <div className="px-4">
           <ErrorState title="Could not change Ariadne's review" error={ask.error} />

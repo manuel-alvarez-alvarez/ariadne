@@ -153,7 +153,7 @@ impl AppState {
         pull_requests::comments, pull_requests::comment, pull_requests::reply, pull_requests::resolve,
         pull_requests::escalate,
         pull_requests::report, pull_requests::mark_ready_for_review,
-        pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review,
+        pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review, pull_requests::review_round,
         pull_requests::ask_babysit,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
@@ -262,6 +262,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/pull-requests/{id}/reviews",
             post(pull_requests::submit_review),
+        )
+        .route(
+            "/v1/repositories/{id}/pull-requests/{number}/review-round",
+            post(pull_requests::review_round),
         )
         .route(
             "/v1/repositories/{id}/pull-requests/{number}/ariadne-review",

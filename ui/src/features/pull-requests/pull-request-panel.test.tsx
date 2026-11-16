@@ -381,3 +381,24 @@ it.each(["closed", "merged"] as const)("offers neither start action on a %s PR",
   expect(screen.queryByRole("button", { name: "Start review" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Start babysit" })).toBeNull()
 })
+
+it("asks for another review round and shows the daemon refusal", async () => {
+  const writes: Request[] = []
+  daemon(() => ({ ...pull, review_asked: true }), writes)
+  const answer = daemonFetch.getMockImplementation()
+  daemonFetch.mockImplementation(async (input) => {
+    const request = input as Request
+    if (new URL(request.url).pathname.endsWith("/review-round")) {
+      writes.push(request.clone())
+      return jsonResponse({ error: { code: "conflict", message: "No review is asked" } }, 409)
+    }
+    return answer?.(input) ?? jsonResponse(pull)
+  })
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await userEvent.click(await screen.findByRole("button", { name: "Review again" }))
+  expect(writes.at(0)?.method).toBe("POST")
+  expect(new URL(writes.at(0)?.url ?? "").pathname).toBe(
+    `/v1/repositories/${pull.repository_id}/pull-requests/${pull.number}/review-round`,
+  )
+  expect(await screen.findByText(/No review is asked/)).toBeTruthy()
+})

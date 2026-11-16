@@ -635,6 +635,15 @@ impl super::Scheduler {
         if news.is_empty() {
             return Ok(false);
         }
+        self.tell_request_news(session, pull, news)
+    }
+
+    fn tell_request_news(
+        &mut self,
+        session: &AgentSession,
+        pull: &PullRequest,
+        news: news::News,
+    ) -> anyhow::Result<bool> {
         let text = prompts::pull_request_news(
             ariadne_store::defaults::pull_request_news_prompt(),
             pull,
@@ -693,10 +702,6 @@ impl super::Scheduler {
     ) -> anyhow::Result<()> {
         let integration = self.store.forge_integration(&pull.repository_id).await?;
         let live = self.live_reviewer_sessions(&pull.id).await?;
-        let login = integration
-            .as_ref()
-            .and_then(|i| i.login.clone())
-            .unwrap_or_default();
         if !integration.is_some_and(|i| wants_session(pull, &i)) {
             return self.end_review(pull, &live).await;
         }
@@ -736,10 +741,11 @@ impl super::Scheduler {
             self.store
                 .set_pull_request_told_head(&pull.id, &pull.head_sha)
                 .await?;
+            self.launcher
+                .live
+                .start_review_rounds(&pull.id, pull.review_requested);
             return self.start_pull_request_session(pull, pin, owner).await;
         };
-        // A push is news only once the head stood still for the settle
-        // interval, so a run of commits is one round on the last head.
         let settled = self
             .head_settle
             .settled(&pull.id, &pull.head_sha, Instant::now());
@@ -747,25 +753,19 @@ impl super::Scheduler {
             .told_head_sha
             .as_deref()
             .is_some_and(|told| told != pull.head_sha);
-        if pushed && !settled {
-            // The push is held back, and the rest of the news goes on: the
-            // session is shown the head it was told, so no line names the
-            // new one.
-            let held = PullRequest {
-                head_sha: pull.told_head_sha.clone().unwrap_or_default(),
-                ..pull.clone()
-            };
-            self.tell_pull_request(&session, &held, &login).await?;
-        } else {
-            // A push moves the worktree under the agent, so it waits for
-            // the turn on the old head to end.
-            let idle = session.status() == SessionStatus::Idle;
-            if pushed && idle {
-                let repo = self.store.get_repository(&pull.repository_id).await?;
-                self.launcher.review_worktree(pull, &repo).await?;
-            }
-            if !pushed || idle {
-                self.tell_pull_request(&session, pull, &login).await?;
+        let pending = self.launcher.live.review_round(&pull.id);
+        let reason = pending
+            .map(|(_, reason)| reason)
+            .or_else(|| (pull.role == "author" && pushed && settled).then_some("settled push"));
+        if session.status() == SessionStatus::Idle
+            && let Some(reason) = reason
+        {
+            let repo = self.store.get_repository(&pull.repository_id).await?;
+            self.launcher.review_worktree(pull, &repo).await?;
+            if self.tell_request_news(&session, pull, news::review_round(pull, reason))?
+                && let Some((generation, _)) = pending
+            {
+                self.launcher.live.finish_review_round(&pull.id, generation);
             }
         }
         if session.status() == SessionStatus::Running {
@@ -790,6 +790,8 @@ impl super::Scheduler {
         pull: &PullRequest,
         live: &[AgentSession],
     ) -> anyhow::Result<()> {
+        self.launcher.live.end_review_rounds(&pull.id);
+        self.head_settle.forget(&pull.id);
         // Reached only once `review_pass` has already found the request no
         // longer wants a reviewer session, for any reason — closed, no
         // longer asking, or never asked for directly on its

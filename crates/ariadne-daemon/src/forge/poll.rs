@@ -728,6 +728,9 @@ async fn read_row(
         return Err("the forge returned another request number".into());
     }
     let requested = review_requested(handoff, client, slug, login, row, &read, asks).await;
+    if row.role == "reviewer" {
+        handoff.live.observe_review_request(&row.id, requested);
+    }
     if read.state != "open" {
         handoff.live.set_pull(&row.id, read, requested);
         return Ok(());

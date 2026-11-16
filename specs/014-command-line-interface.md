@@ -343,12 +343,16 @@ same binary also serves (013).
     S]... [--attach]` asks Ariadne to review a request of your own (029);
     `--model` takes the spelling every other `--model` takes and refuses
     `default`, a review pinning a model of its own. `--model` is required
-    with no `--stop`: there is no repository pin to fall back to, so
+    with neither `--stop` nor `--again`: there is no repository pin to fall back to, so
     leaving it out is a usage error naming `--model`. `--attach` waits for
     the review session to start and opens its console, with `ariadne attach`. `pr review <repo> <number> --stop` sends `{asked:
     false}` alone and conflicts with `--model`, `--effort`, `--skill` and
     `--attach`. It prints one styled mutation line, the request id with
     `-q`, and the DTO with `--format json`.
+    `pr review <repo> <number> --again` posts an empty body to the round route (029 rule 8).
+    It conflicts with `--model`, `--effort`, `--skill`, `--attach` and `--stop`.
+    Proof: `commands/pr.rs::pr_review_again_conflicts_with_every_asking_flag`,
+    `::pr_review_again_posts_an_empty_round_request`.
 42a. `pr search --repo <repo> <query>` searches the last fetched open
     requests of that enabled repository that are not yours; `pr refresh
     [--repo <repo>]` requests a fetch for that repository's requests, or

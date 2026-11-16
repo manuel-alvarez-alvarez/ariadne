@@ -189,11 +189,83 @@ impl From<&ForgeIntegration> for RepositoryListIdentity {
 /// last list read of every repository, by repository id.
 #[derive(Debug, Clone, Default)]
 pub struct LivePulls {
+    /// Pending round requests belong to the live session and survive busy turns.
+    review_rounds: Arc<RwLock<HashMap<String, ReviewRounds>>>,
     rows: Arc<RwLock<HashMap<String, Live>>>,
     lists: Arc<RwLock<HashMap<String, RepositoryList>>>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ReviewRounds {
+    requested: bool,
+    generation: u64,
+    pending: Option<&'static str>,
+}
+
 impl LivePulls {
+    pub fn start_review_rounds(&self, id: &str, requested: bool) {
+        self.review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(
+                id.into(),
+                ReviewRounds {
+                    requested,
+                    ..Default::default()
+                },
+            );
+    }
+
+    pub fn observe_review_request(&self, id: &str, requested: bool) {
+        let mut rounds = self
+            .review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(round) = rounds.get_mut(id) {
+            if !round.requested && requested {
+                round.generation += 1;
+                round.pending = Some("forge re-request");
+            }
+            round.requested = requested;
+        }
+    }
+
+    pub fn ask_review_round(&self, id: &str) {
+        let mut rounds = self
+            .review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        let round = rounds.entry(id.into()).or_default();
+        round.generation += 1;
+        round.pending = Some("user ask");
+    }
+
+    pub fn review_round(&self, id: &str) -> Option<(u64, &'static str)> {
+        let rounds = self.review_rounds.read().unwrap_or_else(|p| p.into_inner());
+        let round = rounds.get(id)?;
+        round.pending.map(|reason| (round.generation, reason))
+    }
+
+    /// Preserve any newer ask received while the scheduler moved the worktree.
+    pub fn finish_review_round(&self, id: &str, generation: u64) {
+        let mut rounds = self
+            .review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(round) = rounds.get_mut(id)
+            && round.generation == generation
+        {
+            round.pending = None;
+        }
+    }
+
+    pub fn end_review_rounds(&self, id: &str) {
+        self.review_rounds
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(id);
+    }
+
     pub fn get(&self, id: &str) -> Option<Live> {
         self.rows
             .read()
@@ -774,32 +846,6 @@ pub fn untold(
         .collect()
 }
 
-/// The answers a review session has not been told of on a request of the
-/// user's own (029): comments under the login no review posted — the task
-/// author's replies, or the user's own — in a thread an Ariadne review
-/// opened. Every other comment there is the author's news, so no comment is
-/// told to both.
-pub fn untold_review_replies(
-    comments: &[PullRequestComment],
-    login: &str,
-) -> Vec<PullRequestComment> {
-    let openers = openers(comments);
-    comments
-        .iter()
-        .filter(|c| {
-            c.told_at.is_none()
-                && !c.resolved
-                && !c.from_review
-                && c.author_login.eq_ignore_ascii_case(login)
-                && c.thread_id != CONVERSATION
-                && openers
-                    .get(c.thread_id.as_str())
-                    .is_some_and(|first| first.from_review)
-        })
-        .cloned()
-        .collect()
-}
-
 /// The integration login of a request's repository: whose own comments
 /// are no news.
 pub async fn login_of(
@@ -953,11 +999,10 @@ mod tests {
     }
 
     /// On my own request or one I babysit, an Ariadne review comment is
-    /// another side's (029, 032): it waits on the task's author, and is the author's
-    /// news; the author's reply under my login answers it, and is the
-    /// review's news alone.
+    /// another side's (029, 032): it waits on the task's author.
+    /// The author's reply answers it without waking the reviewer.
     #[test]
-    fn an_ariadne_finding_on_my_request_is_the_authors_and_its_answer_the_reviews() {
+    fn an_ariadne_finding_on_my_request_is_the_authors_and_a_reply_answers_it() {
         let forge = [
             comment("f", "t1", "me", "2026-10-02T00:00:00Z"),
             comment("a", "t1", "me", "2026-10-03T00:00:00Z"),
@@ -975,7 +1020,6 @@ mod tests {
                 waiting_threads(&both, role, "me").is_empty(),
                 "the reply answers it"
             );
-            assert_eq!(ids(&untold_review_replies(&both, "me")), ["a"]);
         }
         // On a request I review, my own review's comments are mine.
         let theirs = answered(

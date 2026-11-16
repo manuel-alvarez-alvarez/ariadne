@@ -9,8 +9,7 @@
 //! carries a told mark for the rest. The ACP driver writes both right before
 //! the prompt goes out, and gives them back where it never did (018).
 //!
-//! A request the user reviews hears of less (029): a push to its head, and
-//! a reply in a thread its session opened.
+//! A reviewer receives only round prompts (029).
 //!
 //! A round of the review's own summary is never news of its own (031): its
 //! findings were already told as inline comments, so the babysitter is
@@ -126,31 +125,28 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
     }
 }
 
-/// The news a review session hears (029): a push to the head, and the
-/// replies `untold` holds.
-fn of_review(pull: &PullRequest, untold: &[PullRequestComment]) -> News {
-    let mut lines = comment_lines(untold);
+/// A reviewer hears no automatic comment or check news (029).
+fn of_review(pull: &PullRequest, _untold: &[PullRequestComment]) -> News {
     let before = told_before(pull);
-    if pull
-        .told_head_sha
-        .as_deref()
-        .is_some_and(|told| told != pull.head_sha)
-    {
-        let reviewed = match &pull.reviewed_sha {
-            Some(sha) => format!(
-                "The last sha you reviewed is {}.",
-                crate::agents::prompts::fence(sha)
-            ),
-            None => "You reviewed no sha yet.".to_string(),
-        };
-        lines.push(format!(
-            "- New commits: the head moved to {}. {reviewed} Review the commits since it.",
-            crate::agents::prompts::fence(&pull.head_sha)
-        ));
-    }
     News {
-        lines,
-        comment_ids: untold.iter().map(|c| c.id.clone()).collect(),
+        lines: Vec::new(),
+        comment_ids: Vec::new(),
+        told: before.clone(),
+        before,
+    }
+}
+
+/// A reviewer receives only an explicit round prompt (029 rules 7 and 8).
+pub fn review_round(pull: &PullRequest, reason: &str) -> News {
+    use crate::agents::prompts::fence;
+    let before = told_before(pull);
+    News {
+        lines: vec![format!(
+            "- Review again: {reason}. Head: {}. Last reviewed sha: {}. Read your threads with list_comments.",
+            fence(&pull.head_sha),
+            fence(pull.reviewed_sha.as_deref().unwrap_or("none"))
+        )],
+        comment_ids: Vec::new(),
         told: PullRequestTold {
             head_sha: pull.head_sha.clone(),
             ..before.clone()
@@ -212,10 +208,7 @@ fn told_before(pull: &PullRequest) -> PullRequestTold {
 /// last read of the forge and the marks: `login` is the integration's,
 /// whose own comments are no news.
 ///
-/// A review session beside a task or keeper (029, 032) hears of a push
-/// and of the answers in the threads it opened: those are posted under my
-/// login, by the keeping agent or by me. Every other comment there is its author's news,
-/// and each is told once (005).
+/// Reviewer rounds are sent explicitly by the scheduler (029).
 pub async fn untold(
     store: &Store,
     live: &super::live::LivePulls,
@@ -223,19 +216,13 @@ pub async fn untold(
     login: &str,
     seat: Option<ariadne_core::Seat>,
 ) -> ariadne_store::Result<News> {
-    let comments = super::live::comments_of(store, live, pull).await?;
-    let reviewing = seat == Some(ariadne_core::Seat::Reviewer);
-    let role = super::live::comment_role(&pull.role, pull.babysit_asked);
-    if reviewing && role == "author" {
-        let answers = super::live::untold_review_replies(&comments, login);
-        return Ok(of_review(pull, &answers));
+    if seat == Some(ariadne_core::Seat::Reviewer) {
+        return Ok(of_review(pull, &[]));
     }
-    let untold = super::live::untold(&comments, role, login, reviewing);
-    Ok(if reviewing {
-        of_review(pull, &untold)
-    } else {
-        of(pull, &untold, login)
-    })
+    let comments = super::live::comments_of(store, live, pull).await?;
+    let role = super::live::comment_role(&pull.role, pull.babysit_asked);
+    let untold = super::live::untold(&comments, role, login, false);
+    Ok(of(pull, &untold, login))
 }
 
 /// The first line of a comment, cut short: the session reads the whole of
@@ -467,40 +454,23 @@ mod tests {
         assert_eq!(news.told.checks, ["lint", "fmt"]);
     }
 
-    /// A request I review is told a push once, by the sha it last
-    /// reviewed, and nothing of its checks or its review decision (029).
     #[test]
-    fn a_push_to_a_request_i_review_is_told_once_with_the_last_reviewed_sha() {
+    fn a_reviewer_hears_only_round_prompts() {
         let pushed = PullRequest {
-            role: "reviewer".into(),
-            told_head_sha: Some("abc".into()),
             head_sha: "def".into(),
+            told_head_sha: Some("abc".into()),
             reviewed_sha: Some("abc".into()),
-            failed_checks: r#"[{"name":"lint","url":"","conclusion":"failure"}]"#.into(),
-            review_decision: "changes_requested".into(),
             ..pull()
         };
-        let news = of_review(&pushed, &[]);
+        assert!(of_review(&pushed, &[comment("reply", "1", "other", true)]).is_empty());
+        let news = review_round(&pushed, "user ask");
         assert_eq!(
             news.lines,
             [
-                "- New commits: the head moved to <<<untrusted>>>def<<<end untrusted>>>. \
-                 The last sha you reviewed is <<<untrusted>>>abc<<<end untrusted>>>. \
-                 Review the commits since it."
+                "- Review again: user ask. Head: <<<untrusted>>>def<<<end untrusted>>>. Last reviewed sha: <<<untrusted>>>abc<<<end untrusted>>>. Read your threads with list_comments."
             ]
         );
-        assert!(
-            of_review(&told(&pushed, &news), &[]).is_empty(),
-            "a push is told once"
-        );
-
-        let unbriefed = PullRequest {
-            told_head_sha: None,
-            ..pushed
-        };
-        let news = of_review(&unbriefed, &[]);
-        assert!(news.is_empty(), "a head no session was told of is no news");
-        assert_eq!(news.recovered().map(|t| t.head_sha.as_str()), Some("def"));
+        assert!(news.comment_ids.is_empty());
     }
 
     /// An approval that lands while checks still run is told, and so is the
@@ -641,7 +611,7 @@ mod tests {
             kind: "review_comment".into(),
             ..comment("rc-1", "1", "them", true)
         };
-        let pushed_and_reviewed = of_review(
+        let pushed_and_reviewed = review_round(
             &PullRequest {
                 role: "reviewer".into(),
                 told_head_sha: Some("abc".into()),
@@ -649,9 +619,9 @@ mod tests {
                 reviewed_sha: Some("abc".into()),
                 ..pull()
             },
-            &[],
+            "settled push",
         );
-        let pushed_and_unreviewed = of_review(
+        let pushed_and_unreviewed = review_round(
             &PullRequest {
                 role: "reviewer".into(),
                 told_head_sha: Some("abc".into()),
@@ -659,7 +629,7 @@ mod tests {
                 reviewed_sha: None,
                 ..pull()
             },
-            &[],
+            "settled push",
         );
 
         let texts = [
