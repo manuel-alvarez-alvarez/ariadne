@@ -214,7 +214,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     and marked unverified, and every optional finding of one review is
     capped at five. Each pins its scope to the diff, reuses evidence only
     where it covers the reviewed revision — `architecture-review` the
-    column report's, `pr-reviewer` its own prior round's, and `code-review`
+    column report's, `pr-reviewer` only checks passed in this round at the
+    reviewed sha, and `code-review`
     a reported result for a check outside the files the diff changes
     alone, since it runs those files' tests, lint and format check itself
     (006 rule 6) — reads outside the diff only to judge a risk it can
@@ -227,7 +228,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     and that skill ends the round: a review session (029) loads it beside
     `pr-reviewer` — 18 of 48 review goals did — and has neither tool.
     `pr-reviewer` states once that a step call another skill names is the
-    task seat's, and that its own steps 8 and 9 end the round, so a picked
+    task seat's, and that `submit_review` ends the round, so a picked
     skill such as `documentation` cannot send the seat to a tool it lacks.
     `architecture-review` adds its findings to the one
     verdict of the skill loaded beside it, as one `Architecture` line
