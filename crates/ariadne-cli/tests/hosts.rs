@@ -20,9 +20,9 @@ async fn named_hosts_and_guards_use_the_local_registry() {
     let remote =
         tokio::spawn(async move { axum::serve(remote_listener, remote_app).await.unwrap() });
     let registry = json!([
-        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null},
-        {"name":"build","kind":"direct","status":"ready","endpoint":remote_endpoint,"error":null,"remote":null},
-        {"name":"offline","kind":"ssh","status":"down","endpoint":null,"error":"no forward","remote":null}
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},
+        {"name":"build","kind":"direct","status":"ready","endpoint":remote_endpoint,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},
+        {"name":"offline","kind":"ssh","status":"down","endpoint":null,"error":"no forward","remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}}
     ]);
     let app = Router::new().route("/v1/hosts", get(move || async move { Json(registry) }));
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -77,7 +77,7 @@ async fn all_hosts_keep_uppercase_rows_and_attention_items() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let registry = json!([
-        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null}
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}}
     ]);
     let skill = json!([{
         "name":"test","seat":"task","summary":"BUILD","document":"","document_is_default":false,
