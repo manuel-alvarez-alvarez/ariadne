@@ -52,7 +52,7 @@ per host — is spec 015's (rules 51 to 60).
    `ssh`); `endpoint` (the address a client on this machine uses: for `local`
    the `tcp_listen` URL when set, else the socket path; for `direct` the
    configured value; for `ssh` null until a forward is up); `status` (`ready`,
-   `connecting`, `down`); `error`; `remote`; `sync` (rule 15).
+   `connecting`, `down`); `error`; `remote`; `sync` (rule 22).
 5. An `ssh` host is `down`, with a null `endpoint` and the error
    `ssh forward not started`, until its forward starts.
 6. `host_updated` carries one `HostDto`. The daemon publishes one event for
@@ -83,25 +83,25 @@ per host — is spec 015's (rules 51 to 60).
 
 ### Sync
 
-15. `sync` is `state` (`in_sync`, `pending`, `failed`), `error` (string or
+22. `sync` is `state` (`in_sync`, `pending`, `failed`), `error` (string or
     null) and `missing_repositories` (`MissingRepositoryDto[]`: the local
     repository's `id`, and `forge`, its `owner/repo`, or null for a
-    repository with no forge) and `skipped_permissions` (rule 20). `local`
+    repository with no forge) and `skipped_permissions` (rule 27). `local`
     is always `in_sync` with an empty list and no skipped permission. A
     configured host starts `pending`.
-16. When a host becomes `ready`, the daemon pushes, in order: every skill
+23. When a host becomes `ready`, the daemon pushes, in order: every skill
     (`PUT /v1/skills/{name}`, else `POST /v1/skills` on a 404), every workflow
-    (the same with the workflow routes), the repositories (rule 19), every
-    learned permission (rule 20) and the AI permission settings (rule 21).
-    Each item is a push of its own (rule 18). A host item with the same name
+    (the same with the workflow routes), the repositories (rule 26), every
+    learned permission (rule 27) and the AI permission settings (rule 28).
+    Each item is a push of its own (rule 25). A host item with the same name
     or key is overwritten. An item that only the host has stays as it is.
     The host is `in_sync` when every push has landed.
-17. After that, each local domain event of those items is pushed as it
-    happens: a created or updated skill or workflow as in rule 16, a deleted
+24. After that, each local domain event of those items is pushed as it
+    happens: a created or updated skill or workflow as in rule 23, a deleted
     one with `DELETE` (a 404 counts as done), and any repository event
-    with rule 19. The host is `pending` while a push runs. A bus that lags
-    is answered with the whole push of rule 16 again.
-18. A failed push makes the host `failed`, with the reason of the last
+    with rule 26. The host is `pending` while a push runs. A bus that lags
+    is answered with the whole push of rule 23 again.
+25. A failed push makes the host `failed`, with the reason of the last
     failure in `error`, while any push stays failed. A failed push holds back
     no other one: the later pushes run, and the failed ones are tried again,
     each on its own, after `host_sync_retry`. The wait is doubled after each
@@ -110,8 +110,8 @@ per host — is spec 015's (rules 51 to 60).
     queued and when it runs, so no retry writes an older version over a
     newer one. When the host leaves `ready`, the tries stop and the host is
     `pending` with a null `error`. Its next `ready` starts the push of rule
-    16 again.
-19. A local repository matches a host repository on the same forge
+    23 again.
+26. A local repository matches a host repository on the same forge
     repository (kind, host, owner, name). One on the same base branch is
     taken first, else the first one left; each host repository matches once.
     For each match the daemon sends `PUT /v1/repositories/{id}` with the
@@ -120,20 +120,20 @@ per host — is spec 015's (rules 51 to 60).
     differ. The host keeps its own `path`. A local repository with no match
     is in `missing_repositories`. Nothing is registered on the host, and a
     missing checkout leaves `state` as it is.
-20. A learned permission is pushed with `POST /v1/permissions/learned` on
-    the host repository its repository matches (rule 19). The route writes
+27. A learned permission is pushed with `POST /v1/permissions/learned` on
+    the host repository its repository matches (rule 26). The route writes
     the whole row; a row with the same repository, tool name, level and key
     keeps its id and `created_at`. An unknown repository is a 404. A deleted
     row deletes the host row with the same repository, tool name, level and
     key. A row whose repository has no match is not pushed: it is counted in
     `skipped_permissions`, recounted on each push of a repository or a
     learned permission, and leaves `state` as it is.
-21. The AI permission settings are pushed with `PUT /v1/permissions/ai`:
+28. The AI permission settings are pushed with `PUT /v1/permissions/ai`:
     `enabled`, the thresholds where they are set by hand (else
     `default_thresholds`), and `flavour`. `device` is not pushed: the host
     picks its own best device for the flavour. A status event that changes
     none of these pushes nothing.
-22. Writes go to the local daemon. Nothing is read back from a host into
+29. Writes go to the local daemon. Nothing is read back from a host into
     this daemon.
 ### Queries on a host
 
@@ -197,28 +197,29 @@ per host — is spec 015's (rules 51 to 60).
   `::an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again`).
 - Rule 13 (`ssh_forward.rs::shutdown_ends_every_ssh_child`).
 - Rule 14 (`ssh_forward.rs::an_event_stream_and_a_post_both_cross_a_ready_forward`).
-- Rules 4, 7 and 15 (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
+- Rules 4, 7 and 22 (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
   `::configured_hosts_follow_local_in_file_order`,
   `::openapi_carries_the_route_the_dto_and_the_event`).
-- Rules 16, 20 and 21
+- Rules 23, 27 and 28
   (`host_sync.rs::a_ready_host_takes_every_item_and_keeps_its_own`).
-- Rule 17
+- Rule 24
   (`host_sync.rs::each_later_change_reaches_the_host_and_a_delete_removes_it`).
-- Rule 18
+- Rule 25
   (`host_sync.rs::a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands`,
   `::a_refused_push_holds_back_no_later_change`,
+  `::a_refused_repository_holds_back_no_other_repository`,
   `::a_newer_push_of_an_item_ends_its_older_failed_push`,
   `ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`).
-- Rule 19
+- Rule 26
   (`host_sync.rs::a_repository_takes_the_local_settings_by_forge_and_a_missing_one_is_listed`,
   `src/hosts/sync.rs::a_repository_pairs_by_forge_and_prefers_its_own_base_branch`,
   `::a_forge_repository_on_another_branch_pairs_once`).
-- Rule 20
+- Rule 27
   (`host_sync.rs::a_ready_host_takes_every_item_and_keeps_its_own`,
   `::each_later_change_reaches_the_host_and_a_delete_removes_it`,
   `::a_learned_permission_without_a_checkout_on_the_host_is_counted_as_skipped`;
   the route is spec 022, rule 21).
-- Rules 6 and 15
+- Rules 6 and 22
   (`host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`).
 
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`

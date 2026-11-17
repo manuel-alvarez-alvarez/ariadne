@@ -68,7 +68,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 18. Kev supports flavours `0.8b`, `4b`, `9b`, and `27b`; available CPU, MLX, or CUDA devices and memory determine valid flavour-device pairs.
 19. A flavour or device update selects a supported pair and reinstalls an enabled model, while startup retains an unsupported stored flavour with a null device and reports its supported fallback pair in status.
 20. The Permissions screen shows the AI controls, thresholds, flavour, device, status, hardware, test action, and refresh action from the status API.
-21. `POST /v1/permissions/learned` records one whole learned row, as a daemon that syncs to this one pushes it (037, rule 20). It writes through the store's upsert on repository, tool name, level and key: a row with the same four keeps its id and `created_at`, and takes the rest from the request. An unknown repository is a 404, and an unknown field is a 422. The OpenAPI document carries the route and `RecordLearnedPermissionRequest`.
+21. `POST /v1/permissions/learned` records one whole learned row, as a daemon that syncs to this one pushes it (037, rule 27). It writes through the store's upsert on repository, tool name, level and key: a row with the same four keeps its id and `created_at`, and takes the rest from the request. An unknown repository is a 404, and an unknown field is a 422. The OpenAPI document carries the route and `RecordLearnedPermissionRequest`.
 
 ## Acceptance criteria
 
