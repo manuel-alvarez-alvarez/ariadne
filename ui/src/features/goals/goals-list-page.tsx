@@ -15,7 +15,7 @@ import { useSearchParams } from "react-router-dom"
 
 import { LOCAL_HOST, useHostLists } from "@/api"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState, RefreshWarning } from "@/components/error-state"
+import { HostListErrors } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
@@ -88,7 +88,6 @@ export function GoalsListPage() {
   const shown = useMemo(() => searchGoals(merged, query), [merged, query])
   const showHost = useRowsShowHost()
   const failedEverywhere = goals.errors.length > 0 && goals.errors.length === hosts.length
-  const [firstError] = goals.errors
   const empty = emptyBoardCopy(statuses)
   const active = sameFilter(statuses, ACTIVE_FILTER)
   const all = statuses.length === 0
@@ -196,30 +195,14 @@ export function GoalsListPage() {
         }
       />
 
-      {/* One warning per host that failed, while the others still show. */}
-      {failedEverywhere && merged.length === 0
-        ? null
-        : goals.errors.map(({ host, error }) => (
-            <RefreshWarning
-              key={host}
-              what={host === LOCAL_HOST ? "goals" : `goals on ${host}`}
-              error={error}
-              onRetry={goals.refetch}
-            />
-          ))}
-
-      {firstError && failedEverywhere && merged.length === 0 ? (
-        <ErrorState
-          showIcon
-          title={
-            firstError.host === LOCAL_HOST || hosts.length > 1
-              ? "Could not load goals"
-              : `Could not load goals on ${firstError.host}`
-          }
-          error={firstError.error}
-          onRetry={goals.refetch}
-        />
-      ) : null}
+      <HostListErrors
+        what="goals"
+        errors={goals.errors}
+        hostCount={hosts.length}
+        hasRows={merged.length > 0}
+        onRetry={goals.refetch}
+        showIcon
+      />
 
       {goals.isPending ? <BoardSkeleton /> : null}
 

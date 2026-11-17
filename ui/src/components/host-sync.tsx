@@ -27,24 +27,34 @@ export function HostSync({ skippedPermissions = false }: { skippedPermissions?: 
   const named = hosts.filter((host) => host.name !== LOCAL_HOST)
   if (named.length === 0) return null
   return (
-    <ul aria-label="Sync" className="flex flex-col gap-1 text-xs text-muted-foreground">
-      {named.map((host) => (
-        <li key={host.name} className="flex items-center gap-2" data-testid={`sync-${host.name}`}>
-          <span aria-hidden className={cn("size-1.5 rounded-full", STATE_TONE[host.sync.state])} />
-          <span className="font-mono">{host.name}</span>
-          <span>
-            {STATE_LABEL[host.sync.state]}
-            {host.sync.state === "failed" && host.sync.error ? `: ${host.sync.error}` : ""}
-          </span>
-          {skippedPermissions && host.sync.skipped_permissions > 0 ? (
+    <section className="flex flex-col gap-2 text-xs text-muted-foreground">
+      <p data-testid="local-note">
+        This screen shows and writes the settings of <span className="font-mono">local</span>,
+        whichever host the picker has selected. Ariadne pushes them to the other hosts.
+      </p>
+      <h2 className="font-medium text-foreground">Sync to other hosts</h2>
+      <ul aria-label="Sync" className="flex flex-col gap-1">
+        {named.map((host) => (
+          <li key={host.name} className="flex items-center gap-2" data-testid={`sync-${host.name}`}>
+            <span
+              aria-hidden
+              className={cn("size-1.5 rounded-full", STATE_TONE[host.sync.state])}
+            />
+            <span className="font-mono">{host.name}</span>
             <span>
-              · {host.sync.skipped_permissions} learned{" "}
-              {host.sync.skipped_permissions === 1 ? "permission" : "permissions"} skipped, no
-              checkout of their repository
+              {STATE_LABEL[host.sync.state]}
+              {host.sync.state === "failed" && host.sync.error ? `: ${host.sync.error}` : ""}
             </span>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+            {skippedPermissions && host.sync.skipped_permissions > 0 ? (
+              <span>
+                · {host.sync.skipped_permissions} learned{" "}
+                {host.sync.skipped_permissions === 1 ? "permission" : "permissions"} skipped, no
+                checkout of their repository
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
