@@ -13,9 +13,9 @@ import {
   useHostLists,
 } from "@/api"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
+import { HostLabel } from "@/components/host-label"
 import { ScrollEdge } from "@/components/scroll-edge"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -262,11 +262,7 @@ function Lane({
         </Tooltip>
         {/* A dot, not a badge: the lane is one line. Its text is for a screen
             reader, which would otherwise hear nothing of the goal's status. */}
-        {showHost ? (
-          <Badge variant="outline" className="shrink-0 font-mono" title="Host">
-            {goal.host}
-          </Badge>
-        ) : null}
+        {showHost ? <HostLabel host={goal.host} /> : null}
         <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
         <span className="sr-only">{status.label}</span>
         <span className="whitespace-nowrap text-xs text-muted-foreground">

@@ -60,7 +60,7 @@ async fn configured_hosts_follow_local_in_file_order() {
             name: "zeta".into(),
             kind: HostKind::Direct,
             endpoint: Some("http://10.0.0.2:7676".into()),
-            status: HostStatus::Ready,
+            status: HostStatus::Connecting,
             error: None,
             remote: None,
             sync: pending(),
@@ -85,8 +85,12 @@ async fn configured_hosts_follow_local_in_file_order() {
 /// Each refusal names the host and the key, at startup and in `--check-config`.
 #[test]
 fn a_bad_host_is_refused_by_name_at_startup_and_by_check_config() {
-    let cases: [(&str, &str); 12] = [
+    let cases: [(&str, &str); 13] = [
         ("[hosts.local]\nendpoint = \"/x.sock\"\n", "hosts.local"),
+        (
+            "[hosts.all]\nendpoint = \"/x.sock\"\n",
+            "hosts.all: the name all selects every host",
+        ),
         ("[hosts.\"a b\"]\nendpoint = \"/x.sock\"\n", "hosts.a b"),
         (
             "[hosts.box]\nendpoint = \"relative.sock\"\n",

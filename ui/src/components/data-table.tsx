@@ -19,8 +19,8 @@
 
 import { Fragment, type ReactNode } from "react"
 
-import { ApiError } from "@/api"
-import { ErrorState, RefreshWarning } from "@/components/error-state"
+import { type Host, LOCAL_HOST } from "@/api"
+import { ErrorState, hostErrorDescription, RefreshWarning } from "@/components/error-state"
 import { ScrollableTable } from "@/components/scroll-edge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -54,6 +54,7 @@ export function DataTable<T>({
   rowKey,
   renderRow,
   pinnedEnd = false,
+  host = LOCAL_HOST,
 }: {
   query: ListQuery<T>
   /** "Could not load profiles" — the alert's heading when the read fails. */
@@ -72,19 +73,16 @@ export function DataTable<T>({
    * needs to inherit.
    */
   pinnedEnd?: boolean
+  /** The host the list is read from; its name goes on the error. */
+  host?: Host
 }) {
   const stale = query.isError && query.data !== undefined
   if (query.isError && !stale) {
     return (
       <ErrorState
-        title={errorTitle}
+        title={host === LOCAL_HOST ? errorTitle : `${errorTitle} on ${host}`}
         error={query.error}
-        // A daemon that never answered has nothing to say about why.
-        description={
-          ApiError.is(query.error) && query.error.isNetworkError
-            ? "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
-            : undefined
-        }
+        description={hostErrorDescription(host, query.error)}
         onRetry={() => void query.refetch()}
       />
     )

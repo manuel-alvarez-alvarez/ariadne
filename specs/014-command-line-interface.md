@@ -250,7 +250,7 @@ same binary also serves (013).
     With `--host NAME`, `set --device` alone is written to that host's
     `PUT /v1/permissions/ai`. The device stays on that host until `local`
     changes the flavour (spec 037, rule 28). Any other `set` flag on a named
-    host other than `local` is refused locally (rule 47).
+    host other than `local` is refused locally (rule 48).
     `permissions ai show --host all` prints one block per ready host, in
     registry order, headed by its name, with a warning for each host that fails.
 33. `ariadne permissions ai test --tool <title> [--kind <K>] --input <json>
@@ -364,36 +364,66 @@ same binary also serves (013).
     [--repo <repo>]` requests a fetch for that repository's requests, or
     every enabled repository's where none is named. It returns after the
     fetch wakes, so a following `pr ls` can still show the previous list.
-43. `--host NAME|all` selects the host a command runs on. A value that looks
-    like an endpoint is refused; `--endpoint` takes an endpoint. The CLI reads
-    the host registry from `GET /v1/hosts` on the local daemon (spec 037, rule 4).
-44. A host that is unknown or not `ready` is a usage error that lists each
-    host with its status. `local` keeps the endpoint the CLI resolved. A
-    named host is reached on the `endpoint` of its registry row.
-45. With `all`, a listing (`ls`, `list`, `search`, `attention`) runs on each
-    ready host in registry order. A table has a `HOST` column first, and JSON
-    rows carry a `host` key. A host that is not ready or fails gets a
-    warning on stderr, and the listing succeeds while one host answers.
-46. With `all`, a read of one item (`inspect`, `show`, `get`, `logs`,
-    `status`, `history`, `messages`, `diff`, `version`) prints the answer of
-    the first host that answers. `attach` goes to the first ready host that
-    has the ID. A command that writes is refused with `all`, and the refusal
-    lists the hosts.
-47. On a named host other than `local`, `skill`, `workflow`, `permissions`
-    and `repo` commands that write are refused, because those settings are
-    written on `local` and synced (spec 037, rules 22 to 28). The one
-    exception is `permissions ai set --device` alone (rule 32), and its
-    refusal of other flags says that only `--device` is per host.
-48. On a named host other than `local`, a `daemon` command other than `status`
-    and `logs` is refused: lifecycle commands require `local`.
+43. `--host local|NAME|all` selects the host a command runs on. A value with
+    `/`, `:`, `.` or `@`, or that starts with `~`, looks like an address: it is
+    refused, and the refusal names `--endpoint`. The CLI reads the host
+    registry from `GET /v1/hosts` on the local daemon (spec 037, rule 4). The
+    help of `--host` names `local`, a host name and `all`, and says that `all`
+    is for reads.
+44. `local` keeps the endpoint the CLI resolved. A named host is reached on
+    the `endpoint` of its registry row. An unknown name is a usage error that
+    names each configured host with its status, even for a local-only command.
+    A host that is not `ready` is a usage error with its status and its error,
+    before any local-only command guard. A local-only command refuses `all`
+    before registry access, even when the local daemon is down. If registry
+    access fails, a local-only command still refuses a named host with its
+    usage message. Each status in a message or a warning is lowercase, as
+    the registry spells it.
+45. Each command path declares one kind, in `hosts.rs` `KINDS`. The kind never
+    comes from the last word of the path. The kinds are: a list; a read of
+    one ID; a read that every host answers (`version`, `doctor`,
+    `completions`, `forge tunnel` with no argument, `workflow check`,
+    `permissions ai test`, `permissions ai show`, `daemon status`); a stream
+    (`events`, `session logs`, `task logs`, `daemon logs`); a write; a
+    host-owned write (`repo add`, `repo update`, `repo rm`,
+    `permissions ai set`); and local only. `forge tunnel on|off` is a write.
+46. With `all`, a list runs on each ready host in registry order. A table has
+    a `HOST` column first, and JSON rows carry a `host` key. A host that is
+    not ready or fails gets a warning on stderr, and the list succeeds while
+    one host answers. Any other read, and a stream, prints the answer of the
+    first host that answers. `attach` goes to the first ready host that has
+    the ID. A write with `all` is refused, and the refusal names only the
+    hosts that take this write: each ready host, or `local` alone for a
+    synced setting.
+47. A local-only command with `--host NAME` or `--host all` is a usage error
+    that names its reason and `--host local`. These are the `skill`,
+    `workflow` and `permissions` writes of synced settings (spec 037, rules
+    22 to 28), `host ls`, which reads the registry of the local daemon,
+    `daemon start`, `stop` and `restart`, `completions install` and
+    `mcp serve`.
+48. A host-owned write runs on the named host. `repo add PATH [--branch]`,
+    `repo update ID --path` and `repo rm ID` are the host's own. A flag of a
+    synced setting (`--description`, `--permission-mode`, `--workflow`,
+    `--forge`, and `--branch` of `repo update`) stays refused on a named
+    host, and the refusal names the flag. `permissions ai set --device` alone
+    is the host's own (rule 32); any other flag is refused, and the refusal
+    says that only `--device` is per host.
+48a. `daemon status --host NAME` shows that host's health and version only: no
+    service manager, pid or TCP setting of this machine. `daemon logs --host
+    NAME` prints that host's log, and fails with the reason when the host does
+    not answer; it never reads the local log file. With `--host local` or
+    without `--host`, both use the daemon of `--home` or `--endpoint`.
 49. `query` accepts `--host NAME|all`. The local daemon serves it under
     `/v1/hosts/{host}` (spec 037, rule 20), so the CLI does not fan it out.
     A named host that is unknown or not ready ends with the usage exit code,
     as for every command; the message names the configured hosts, or gives
     the status. With `all`, `HOST` is the first column of the table, and each
     warning of a host prints on stderr as `warning: <host>: <reason>`.
-50. `host ls` prints name, kind, status, endpoint and error. Completion offers
-    the host names and `all`.
+50. `host ls` prints name, kind, status, endpoint and error. Completion of
+    `--host` reads the registry of the daemon that `--endpoint` on the command
+    line names, and offers `local` and `all` when that daemon does not answer or
+    lists only `local`. Completion of an ID reads the host that `--host NAME`
+    names, and every ready host for `--host all`.
 
 ## Known gap
 
@@ -716,9 +746,25 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `pr ls` carries the branches and the session
   (`::pr_ls_shows_the_branches_and_session_columns`).
 
+- Completion follows the typed `--endpoint` and `--host`, rule 50: host names,
+  the `local` and `all` fallback, one named host and `all`
+  (`tests/hosts.rs::completion_reads_the_typed_endpoint_and_the_typed_host`).
 - Host names differ from endpoints, rule 43 (`cli/tests.rs::host_names_are_distinct_from_endpoints`).
-- Registry routing and guards hold, rules 44 to 48 and 50
-  (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).
+- The help of `--host`, rule 43
+  (`cli/tests.rs::host_help_names_local_a_host_name_and_all_for_reads`).
+- Each command path declares one kind, rule 45
+  (`hosts.rs::tests::every_command_declares_one_kind`,
+  `::reads_that_every_host_answers_are_not_writes`,
+  `::a_tunnel_switch_is_a_write_and_the_bare_tunnel_a_read`).
+- Registry routing and guards hold, rules 44, 46 to 48a and 50
+  (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`,
+  `::each_command_takes_the_hosts_of_its_kind`).
+- A stream with `--host all` reaches stdout while it is open, rule 46
+  (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
+- Rule 48a on `status` and `logs` of a named host
+  (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)
+  and of `local` with `--home`
+  (`tests/hosts.rs::daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home`).
 - Rule 49 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
   `tests/hosts.rs::query_on_an_unknown_or_unready_host_is_a_usage_error`,
   `commands/query.rs::tests::host_all_puts_the_host_column_first`,

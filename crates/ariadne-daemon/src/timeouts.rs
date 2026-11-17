@@ -27,6 +27,13 @@ pub struct Timeouts {
     /// The wait between two probes of a forward that has not answered yet
     /// (037).
     pub ssh_probe_interval: Duration,
+    /// The wait between two health checks of a `ready` host, and of a
+    /// `direct` host that is `down` (037).
+    pub host_check: Duration,
+    /// How long a host may give no good health answer before it is `down`:
+    /// a `ready` host since its last good answer, and a `connecting` host
+    /// since it started to connect (037).
+    pub host_unanswered: Duration,
     /// The first wait before a failed push to a host is tried again (037).
     /// Each failure doubles it, up to 60 seconds; a push that succeeds
     /// resets it.
@@ -167,6 +174,8 @@ impl Default for Timeouts {
             ssh_retry: Duration::from_secs(1),
             ssh_probe: Duration::from_secs(5),
             ssh_probe_interval: Duration::from_millis(200),
+            host_check: Duration::from_secs(5),
+            host_unanswered: Duration::from_secs(15),
             host_sync_retry: Duration::from_secs(1),
             forge_details: Duration::from_secs(30),
             forge_rate_limit_pause: Duration::from_secs(900),
