@@ -32,8 +32,8 @@ import {
 /** `GET /v1/permissions/ai` — the settings, the Python check, and the install's state. */
 export function aiPermissionsStatusQueryOptions() {
   return queryOptions({
-    queryKey: qk.permissions.ai(),
-    queryFn: () => unwrap(api().GET("/v1/permissions/ai")),
+    queryKey: qk.permissions.ai("local"),
+    queryFn: () => unwrap(api("local").GET("/v1/permissions/ai")),
   })
 }
 
@@ -42,8 +42,8 @@ export function useUpdateAiPermissions() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: UpdateAiPermissionsRequest) =>
-      unwrap(api().PUT("/v1/permissions/ai", { body })),
-    onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai(), status),
+      unwrap(api("local").PUT("/v1/permissions/ai", { body })),
+    onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai("local"), status),
   })
 }
 
@@ -51,8 +51,8 @@ export function useUpdateAiPermissions() {
 export function useRefreshAiPermissions() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => unwrap(api().POST("/v1/permissions/ai/refresh")),
-    onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai(), status),
+    mutationFn: () => unwrap(api("local").POST("/v1/permissions/ai/refresh")),
+    onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai("local"), status),
   })
 }
 
@@ -60,17 +60,17 @@ export function useRefreshAiPermissions() {
 export function useTestAiPermission() {
   return useMutation({
     mutationFn: (body: TestAiPermissionRequest) =>
-      unwrap(api().POST("/v1/permissions/ai/test", { body })),
+      unwrap(api("local").POST("/v1/permissions/ai/test", { body })),
   })
 }
 
 /** `GET /v1/permissions/learned` — every recorded row, or one repository's. */
 export function learnedPermissionsQueryOptions(filters: { repository?: string } = {}) {
   return queryOptions({
-    queryKey: qk.learnedPermissions.list(filters),
+    queryKey: qk.learnedPermissions.list("local", filters),
     queryFn: () =>
       unwrap(
-        api().GET("/v1/permissions/learned", {
+        api("local").GET("/v1/permissions/learned", {
           params: { query: { repository: filters.repository } },
         }),
       ).then((response) => response.items),
@@ -80,8 +80,9 @@ export function learnedPermissionsQueryOptions(filters: { repository?: string } 
 /** `GET /v1/permissions/learned/{id}` — one row, for the detail view. */
 export function learnedPermissionQueryOptions(id: string) {
   return queryOptions({
-    queryKey: qk.learnedPermissions.detail(id),
-    queryFn: () => unwrap(api().GET("/v1/permissions/learned/{id}", { params: { path: { id } } })),
+    queryKey: qk.learnedPermissions.detail("local", id),
+    queryFn: () =>
+      unwrap(api("local").GET("/v1/permissions/learned/{id}", { params: { path: { id } } })),
   })
 }
 
@@ -91,12 +92,12 @@ export function useUpdateLearnedPermission() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateLearnedPermissionRequest }) =>
       unwrap(
-        api().PUT("/v1/permissions/learned/{id}", {
+        api("local").PUT("/v1/permissions/learned/{id}", {
           params: { path: { id } },
           body,
         }),
       ),
-    onSuccess: (row) => cacheRow(queryClient, qk.learnedPermissions, row),
+    onSuccess: (row) => cacheRow(queryClient, qk.learnedPermissions, "local", row),
   })
 }
 
@@ -105,7 +106,7 @@ export function useDeleteLearnedPermission() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) =>
-      unwrap(api().DELETE("/v1/permissions/learned/{id}", { params: { path: { id } } })),
-    onSuccess: (_result, id) => dropRow(queryClient, qk.learnedPermissions, id),
+      unwrap(api("local").DELETE("/v1/permissions/learned/{id}", { params: { path: { id } } })),
+    onSuccess: (_result, id) => dropRow(queryClient, qk.learnedPermissions, "local", id),
   })
 }

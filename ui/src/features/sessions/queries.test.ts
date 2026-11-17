@@ -30,7 +30,7 @@ it("reads every page of Ariadne's sessions, ended ones too, as session rows", as
     )
   })
 
-  const sessions = await new QueryClient().fetchQuery(sessionsQueryOptions({ task: "t1" }))
+  const sessions = await new QueryClient().fetchQuery(sessionsQueryOptions("local", { task: "t1" }))
 
   expect(sessions).toEqual([FIRST, SECOND])
   const [first, second] = listings()

@@ -37,10 +37,8 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
     let Some(name) = cli.host.as_deref() else {
         return crate::run(cli, local).await;
     };
-    if path == "query" {
-        return Err(Failure::usage("query does not support --host yet").err());
-    }
-    if name == "local" {
+    // The local daemon fans a query out itself, under `/v1/hosts/{host}` (037).
+    if path == "query" || name == "local" {
         return crate::run(cli, local).await;
     }
     let hosts: Vec<HostDto> = local.get_json("/v1/hosts").await?;

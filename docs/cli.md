@@ -720,7 +720,8 @@ before now. `--since` runs a range query from a span before now (or an RFC
 over 250, rounded up to a whole second. A range adds a `TIME` column and
 prints one row per point. The table flags apply, and `--format json` prints
 the daemon's Prometheus answer whole. A refused query prints the daemon's
-`error` sentence, such as `unsupported function stddev`.
+`error` sentence, such as `unsupported function stddev`. `--host NAME|all` reads
+the metrics of one host or of every ready host.
 
 `ariadne stats` is gone. See [Telemetry](telemetry.md#querying-metrics-and-logs)
 for the supported PromQL and the metric names.
@@ -844,7 +845,7 @@ Commands for one ID, including attach, find the host that has it.
 Writes require one host. Skills, workflows, permissions and repository settings must be written on `local`.
 The local daemon syncs these settings to every host.
 Daemon start, stop and restart require `local`; status and logs accept a host name.
-`query` does not accept `--host` yet.
+`query` accepts a host name or `all`. With `all` the table has a `host` column, and a host that did not answer prints a warning.
 Shell completion offers configured names and `all`.
 Addresses formerly passed through `--host` must use `--endpoint`.
 

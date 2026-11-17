@@ -38,13 +38,14 @@ function laneBand(goal: GoalDto, needsAttention: boolean): number {
  * one created after them and untouched since. The id breaks the ties, so the
  * order is total and two renders of the same board agree.
  */
-export function orderLanes(
-  goals: readonly GoalDto[],
-  needsAttention: (goal: GoalDto) => boolean,
-): GoalDto[] {
-  const bands = new Map(goals.map((goal) => [goal.id, laneBand(goal, needsAttention(goal))]))
+export function orderLanes<G extends GoalDto>(
+  goals: readonly G[],
+  needsAttention: (goal: G) => boolean,
+): G[] {
+  // By the row itself: two hosts may each have a goal of one id.
+  const bands = new Map(goals.map((goal) => [goal, laneBand(goal, needsAttention(goal))]))
   return [...goals].sort((a, b) => {
-    const band = (bands.get(a.id) ?? 0) - (bands.get(b.id) ?? 0)
+    const band = (bands.get(a) ?? 0) - (bands.get(b) ?? 0)
     if (band !== 0) return band
     return b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id)
   })

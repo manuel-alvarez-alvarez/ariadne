@@ -33,10 +33,10 @@
  * terminal/activity strip, which is inside it like any other.
  */
 const PANEL_PARAMS = {
-  pr: ["pr"],
-  goal: ["goal", "task", "tab", "session"],
-  task: ["task", "goal", "tab", "session"],
-  session: ["session", "tab"],
+  pr: ["pr", "host"],
+  goal: ["goal", "task", "tab", "session", "host"],
+  task: ["task", "goal", "tab", "session", "host"],
+  session: ["session", "tab", "host"],
 } as const satisfies Record<string, readonly string[]>
 
 export type Panel = keyof typeof PANEL_PARAMS

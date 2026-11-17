@@ -51,7 +51,7 @@ export function StartBabysitDialog({
   /** Babysitting was asked for: the dialog has closed itself. */
   onStarted?: () => void
 }) {
-  const models = useQuery({ ...modelsQueryOptions(), enabled: open })
+  const models = useQuery({ ...modelsQueryOptions("local"), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const ask = useAskBabysit()
   const [pin, setPin] = useState({ model: "", effort: "" })
@@ -108,6 +108,7 @@ export function StartBabysitDialog({
           <Field>
             <FieldLabel htmlFor="babysit-pin">Model</FieldLabel>
             <PinPicker
+              host="local"
               id="babysit-pin"
               label="Model"
               model={pin.model}

@@ -6,7 +6,7 @@
  * never this list.
  */
 
-import { queryOptions, useQuery } from "@tanstack/react-query"
+import { queryOptions, useQueries } from "@tanstack/react-query"
 import { useMemo } from "react"
 
 import {
@@ -15,10 +15,12 @@ import {
   type AttentionListDto,
   api,
   type GoalDto,
+  type Host,
   qk,
   type SessionDto,
   type TaskDto,
   unwrap,
+  useHostLists,
 } from "@/api"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import {
@@ -29,16 +31,24 @@ import {
 } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
 import { sessionColumn } from "@/features/tasks/steps"
+import { useHostFilter } from "@/hooks/use-host-filter"
 import { shortId } from "@/lib/format"
 import { paths, sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
 
 import { goalsQueryOptions } from "./queries"
 
-/** `GET /v1/attention`: the daemon's own authoritative recovery list. */
-function attentionListQueryOptions() {
+/** `GET /v1/attention` of one host: that daemon's own authoritative recovery list. */
+function attentionListQueryOptions(host: Host) {
   return queryOptions({
-    queryKey: qk.attention.list(),
-    queryFn: () => unwrap(api().GET("/v1/attention")),
+    queryKey: qk.attention.list(host),
+    queryFn: () => unwrap(api(host).GET("/v1/attention")),
+  })
+}
+
+/** Each host's attention list, in the order of `hosts`. */
+function useAttentionLists(hosts: readonly Host[]) {
+  return useQueries({
+    queries: hosts.map((host) => attentionListQueryOptions(host)),
   })
 }
 
@@ -70,10 +80,12 @@ export function taskAttentionReason(task: TaskDto): AttentionReason | null {
  * belongs to no task, is a row in its own right.
  */
 export interface AttentionItem {
+  /** The host whose daemon raised the row; every link and answer goes there. */
+  host: Host
   /**
-   * What identifies the row: the task it is about, or the task-less session
-   * that is one. Its React key, and what the toast that announced it
-   * remembers.
+   * What identifies the row on its host: the task it is about, or the
+   * task-less session that is one. With the host, its React key, and what the
+   * toast that announced it remembers.
    */
   id: string
   goalId: string
@@ -135,45 +147,60 @@ const INCOMPLETE_RECOVERY_READ = new Error(
   "the recovery producer could not read all of its evidence",
 )
 
+/** The attention list over every host the header's picker selected. */
 export function useAttention(): Attention {
-  const goals = useQuery(goalsQueryOptions())
-  const tasks = useQuery(taskListQueryOptions())
+  const hosts = useHostFilter()
+  const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
+  const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
   // Keep the shared queries' loading and retry state. Their raw statuses
   // cannot restore rows that the attention endpoint omitted.
-  const sessions = useQuery(sessionsQueryOptions())
-  const recovery = useQuery(attentionListQueryOptions())
+  const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host))
+  const recovery = useAttentionLists(hosts)
 
-  const items = useMemo(() => collectAttention(recovery.data), [recovery.data])
+  const lists = recovery.map((result) => result.data)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each list is compared by identity
+  const items = useMemo(() => collectAttention(hosts, lists), [hosts, ...lists])
 
   const error =
-    goals.error ??
-    tasks.error ??
-    sessions.error ??
-    recovery.error ??
-    (recovery.data?.complete === false ? INCOMPLETE_RECOVERY_READ : null)
+    goals.errors[0]?.error ??
+    tasks.errors[0]?.error ??
+    sessions.errors[0]?.error ??
+    recovery.find((result) => result.error)?.error ??
+    (lists.some((list) => list?.complete === false) ? INCOMPLETE_RECOVERY_READ : null)
 
   return {
     items,
-    isPending: goals.isPending || tasks.isPending || sessions.isPending || recovery.isPending,
+    isPending:
+      goals.isPending ||
+      tasks.isPending ||
+      sessions.isPending ||
+      recovery.length === 0 ||
+      recovery.every((result) => result.isPending),
     error,
     partial: error !== null && items.length > 0,
     refetch: () => {
-      void goals.refetch()
-      void tasks.refetch()
-      void sessions.refetch()
-      void recovery.refetch()
+      goals.refetch()
+      tasks.refetch()
+      sessions.refetch()
+      for (const result of recovery) if (result.error) void result.refetch()
     },
   }
 }
 
 /**
- * Only the shared list supplies rows, including during incomplete reads.
+ * Only the shared lists supply rows, including during incomplete reads.
  * Raw task statuses and session flags cannot say whether an occurrence was
- * dismissed or whether its action still targets live work.
+ * dismissed or whether its action still targets live work. Each host's rows
+ * keep their host, and the hosts' rows are merged newest first.
  */
-function collectAttention(attention: AttentionListDto | undefined): AttentionItem[] {
-  return (attention?.items ?? [])
-    .map((item) => ({
+function collectAttention(
+  hosts: readonly Host[],
+  lists: readonly (AttentionListDto | undefined)[],
+): AttentionItem[] {
+  return hosts
+    .flatMap((host, index) => (lists[index]?.items ?? []).map((item) => ({ host, item })))
+    .map(({ host, item }) => ({
+      host,
       id: item.id,
       goalId: "",
       goal: undefined,
@@ -185,7 +212,10 @@ function collectAttention(attention: AttentionListDto | undefined): AttentionIte
       sessionReason: null,
       recovery: item,
     }))
-    .sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id))
+    .sort(
+      (a, b) =>
+        b.at.localeCompare(a.at) || a.id.localeCompare(b.id) || a.host.localeCompare(b.host),
+    )
 }
 
 /**
@@ -226,12 +256,29 @@ export interface BoardAttention {
   lastActivity: Map<string, string>
 }
 
-export function useBoardAttention(): BoardAttention {
-  const sessions = useQuery(sessionsQueryOptions())
-  const attention = useQuery(attentionListQueryOptions())
+/** Nothing on any card: what a host with no sessions read yet shows. */
+export const NO_BOARD_ATTENTION: BoardAttention = {
+  byTask: new Map(),
+  byGoal: new Map(),
+  lastActivity: new Map(),
+}
+
+/**
+ * Each host's board badges, by host: task and goal ids are only unique on
+ * their own daemon, so every host is indexed apart.
+ */
+export function useBoardAttention(hosts: readonly Host[]): Map<Host, BoardAttention> {
+  const sessions = useQueries({
+    queries: hosts.map((host) => sessionsQueryOptions(host)),
+  }).map((result) => result.data)
+  const lists = useAttentionLists(hosts).map((result) => result.data)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each list is compared by identity
   return useMemo(
-    () => collectBoardAttention(sessions.data, attention.data),
-    [sessions.data, attention.data],
+    () =>
+      new Map(
+        hosts.map((host, index) => [host, collectBoardAttention(sessions[index], lists[index])]),
+      ),
+    [hosts, ...sessions, ...lists],
   )
 }
 
@@ -324,15 +371,16 @@ export function attentionTarget(
   current: URLSearchParams,
   pathname: string,
 ): AttentionNavTarget {
-  if (item.recovery) return recoveryTarget(item.recovery, current, pathname)
+  const { host } = item
+  if (item.recovery) return recoveryTarget(item.recovery, host, current, pathname)
   const { session, sessionReason, taskId } = item
   if (session && (sessionReason === "waiting_permission" || sessionReason === "waiting_input")) {
-    return sessionTerminalFrom(pathname, current, session.id)
+    return sessionTerminalFrom(pathname, current, session.id, host)
   }
   // A row the task itself put on the list is the task's, whatever session sits
   // on it; one that is only a session's opens that session.
-  if (!item.taskReason && session) return sessionPanelFrom(pathname, current, session.id)
-  return taskPanelFrom(pathname, current, taskId ?? item.id)
+  if (!item.taskReason && session) return sessionPanelFrom(pathname, current, session.id, host)
+  return taskPanelFrom(pathname, current, taskId ?? item.id, host)
 }
 
 /**
@@ -343,20 +391,23 @@ export function attentionTarget(
  */
 function recoveryTarget(
   item: AttentionItemDto,
+  host: Host,
   current: URLSearchParams,
   pathname: string,
 ): AttentionNavTarget {
   switch (item.target.kind) {
     case "console":
-      return sessionTerminalFrom(pathname, current, item.target.session_id)
+      return sessionTerminalFrom(pathname, current, item.target.session_id, host)
     case "goal": {
-      const [path, search] = paths.goal(item.target.goal_id).split("?")
+      const [path, search] = paths.goal(item.target.goal_id, host).split("?")
       return { pathname: path, search: search ? `?${search}` : "" }
     }
     case "task":
-      return taskPanelFrom(pathname, current, item.target.task_id)
+      return taskPanelFrom(pathname, current, item.target.task_id, host)
     case "pull_request": {
-      const [path, search] = paths.pullRequest(item.target.pull_request_id, current).split("?")
+      const [path, search] = paths
+        .pullRequest(item.target.pull_request_id, current, host)
+        .split("?")
       return { pathname: path, search: `?${search}` }
     }
     case "settings":
@@ -477,6 +528,6 @@ export function attentionAffectedLinks(
   return sessions.map((subject) => ({
     id: subject.id,
     label: subject.label,
-    to: sessionTerminalFrom(pathname, current, subject.id),
+    to: sessionTerminalFrom(pathname, current, subject.id, item.host),
   }))
 }

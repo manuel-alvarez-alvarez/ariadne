@@ -18,12 +18,13 @@
  */
 
 import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom"
+import { LOCAL_HOST } from "@/api"
 import { GoalPanel } from "@/features/goals/goal-panel"
 import { PullRequestPanel } from "@/features/pull-requests/pull-request-panel"
 import { SessionPanel } from "@/features/sessions/session-panel"
 import { TaskPanel } from "@/features/tasks"
 import { closePanel, type Panel } from "@/routes/panel-history"
-import { paths } from "@/routes/paths"
+import { hostOf, paths } from "@/routes/paths"
 
 export function DetailPanels() {
   const location = useLocation()
@@ -32,8 +33,13 @@ export function DetailPanels() {
 
   const prId = search.get("pr")
   const goalId = search.get("goal")
-  const taskId = search.get("task")
-  const sessionId = search.get("session")
+  // The host the panel's entity lives on; a link without `?host=` is `local`'s.
+  const host = hostOf(search)
+  // The task panel and the session panel read `local` only, so a link that
+  // names another host opens neither rather than showing local's entity.
+  const local = host === LOCAL_HOST
+  const taskId = local ? search.get("task") : null
+  const sessionId = local ? search.get("session") : null
   const onGoalsBoard = location.pathname === paths.goals()
 
   function close(panel: Panel) {
@@ -70,7 +76,7 @@ export function DetailPanels() {
   }
 
   if (goalId) {
-    return <GoalPanel goalId={goalId} onClose={() => close("goal")} />
+    return <GoalPanel host={host} goalId={goalId} onClose={() => close("goal")} />
   }
 
   // Nothing else claims this `?session=`, so it is a session in its own right:

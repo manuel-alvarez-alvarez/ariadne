@@ -121,6 +121,7 @@ function renderPicker({
     pin.effort = value.effort
     return (
       <PinPicker
+        host="local"
         label={LABEL}
         model={value.model}
         effort={value.effort}
@@ -360,7 +361,16 @@ it("keeps the switch across opens, pickers and restarts", async () => {
   await waitFor(() => expect(popup()).toBeNull())
 
   // Another picker, on another form.
-  rerender(<PinPicker label="Other" model="" effort="" onChange={() => {}} models={CATALOG} />)
+  rerender(
+    <PinPicker
+      host="local"
+      label="Other"
+      model=""
+      effort=""
+      onChange={() => {}}
+      models={CATALOG}
+    />,
+  )
   await user.click(screen.getByRole("button", { name: "Other" }))
   expect(
     (await screen.findByRole("switch", { name: "Show disabled" })).getAttribute("aria-checked"),
@@ -550,6 +560,7 @@ it("closes on Escape, and leaves the form dialog open", async () => {
       <DialogContent>
         <DialogTitle>Form</DialogTitle>
         <PinPicker
+          host="local"
           label={LABEL}
           model={pin.model}
           effort={pin.effort}

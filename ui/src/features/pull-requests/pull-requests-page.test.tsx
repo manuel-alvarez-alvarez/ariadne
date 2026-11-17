@@ -72,7 +72,7 @@ it("renders rows, updates from an event, and opens the floating panel", async ()
   ).toBe(pull.url)
   row = { ...pull, checks: "success" }
   act(() =>
-    dispatchDomainEvent(queryClient, {
+    dispatchDomainEvent(queryClient, "local", {
       event: "pull_requests_changed",
       data: { repository_id: "repo" },
     }),
@@ -237,7 +237,7 @@ it("loads the next page near the end, and an event reads the list again from its
 
   requests.length = 0
   act(() =>
-    dispatchDomainEvent(queryClient, {
+    dispatchDomainEvent(queryClient, "local", {
       event: "pull_requests_changed",
       data: { repository_id: "repo" },
     }),

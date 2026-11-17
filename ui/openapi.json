@@ -1049,6 +1049,996 @@
         }
       }
     },
+    "/v1/hosts/{host}/-/healthy": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /-/healthy on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/api/v1/label/{name}/values": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /api/v1/label/{name}/values on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "match[]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/api/v1/labels": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /api/v1/labels on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "match[]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "POST /api/v1/labels on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "match[]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/api/v1/metadata": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /api/v1/metadata on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/api/v1/parse_query": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /api/v1/parse_query on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "POST /api/v1/parse_query on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/api/v1/query": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /api/v1/query on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "POST /api/v1/query on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/api/v1/query_range": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /api/v1/query_range on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "step",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "POST /api/v1/query_range on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "step",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/api/v1/series": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /api/v1/series on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "match[]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "POST /api/v1/series on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "match[]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/loki/api/v1/index/stats": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /loki/api/v1/index/stats on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/loki/api/v1/index/volume": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /loki/api/v1/index/volume on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/loki/api/v1/label/{name}/values": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /loki/api/v1/label/{name}/values on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/loki/api/v1/labels": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /loki/api/v1/labels on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/loki/api/v1/query": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /loki/api/v1/query on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/loki/api/v1/query_range": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /loki/api/v1/query_range on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "step",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
+    "/v1/hosts/{host}/loki/api/v1/series": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "GET /loki/api/v1/series on one host or on all",
+        "description": "`{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "match[]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The host's answer, or the merged answers of every host"
+          },
+          "404": {
+            "description": "Unknown host"
+          },
+          "503": {
+            "description": "The host is not ready"
+          }
+        }
+      }
+    },
     "/v1/logs": {
       "get": {
         "tags": [

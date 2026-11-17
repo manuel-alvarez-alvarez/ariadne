@@ -37,6 +37,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { ConnectionBanner } from "@/components/connection-banner"
 import { ConnectionStatus } from "@/components/connection-status"
 import { DetailPanels } from "@/components/detail-panels"
+import { HostPicker } from "@/components/host-picker"
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog"
 import { PageHeaderContext, type PageHeaderSlot } from "@/components/page-header-context"
 import { SettingsDialog } from "@/components/settings-dialog"
@@ -218,6 +219,8 @@ export function AppShell() {
               <div ref={setActionsSlot} className="ml-auto flex items-center gap-2" />
               <AttentionPopover />
               <div className="flex items-center gap-1">
+                {/* Which hosts every screen reads (`useHostFilter`). */}
+                <HostPicker />
                 {/* The palette's affordance: a chord nobody can see is a chord
                     nobody uses, so the header carries it with its hint. */}
                 <Button
@@ -274,7 +277,7 @@ export function AppShell() {
         <CreateGoalDialog
           open={createGoalOpen}
           onOpenChange={setCreateGoalOpen}
-          onCreated={(goal) => void navigate(paths.goal(goal.id))}
+          onCreated={(goal) => void navigate(paths.goal(goal.id, goal.host))}
         />
       </div>
     </PageHeaderContext.Provider>

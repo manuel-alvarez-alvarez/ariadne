@@ -31,7 +31,7 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
   // The panel floats over whichever screen opened it, and the sessions screen
   // owns two of the params a session panel would otherwise clear.
   const { pathname } = useLocation()
-  const session = useQuery(sessionQueryOptions(sessionId))
+  const session = useQuery(sessionQueryOptions("local", sessionId))
 
   return (
     <PanelSheet onClose={onClose}>

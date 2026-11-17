@@ -76,6 +76,7 @@ it("opens the request named by an attention link", async () => {
     target: { kind: "pull_request", pull_request_id: "pull-42" },
   }
   const item: AttentionItem = {
+    host: "local",
     id: "ready",
     goalId: "",
     goal: undefined,

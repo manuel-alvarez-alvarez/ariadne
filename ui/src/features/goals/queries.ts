@@ -2,7 +2,7 @@
  * Everything the goal screens ask the daemon for.
  *
  * Keys are built from the `qk` helpers, so the SSE dispatcher keeps reaching
- * them: it invalidates `qk.goals.lists()` and patches `qk.goals.detail(id)`,
+ * them: it invalidates `qk.goals.lists(host)` and patches `qk.goals.detail(host, id)`,
  * and every key below is either exactly one of those or nested under it. The
  * cache work each write does is `@/api`'s — see `cacheRow`, `dropRow` and
  * `useRowAction` — and what is left here is what only a goal knows: which
@@ -23,6 +23,7 @@ import {
   dropRow,
   type GoalDto,
   type GoalStatus,
+  type Host,
   qk,
   unwrap,
   useRowAction,
@@ -33,39 +34,46 @@ interface GoalListFilters {
   statuses?: readonly GoalStatus[]
 }
 
-/** `["goals", "list", {statuses?}]` — under `qk.goals.lists()`. */
-function goalListKey({ statuses }: GoalListFilters) {
+/** `[host, "goals", "list", {statuses?}]` — under `qk.goals.lists(host)`. */
+function goalListKey(host: Host, { statuses }: GoalListFilters) {
   // An empty selection is no filter at all, so it keys the same as `{}`: the
   // unfiltered board and the callers that pass nothing share one cache entry.
-  return [...qk.goals.lists(), statuses?.length ? { statuses: [...statuses] } : {}] as const
+  return [...qk.goals.lists(host), statuses?.length ? { statuses: [...statuses] } : {}] as const
 }
 
-export function goalsQueryOptions(filters: GoalListFilters = {}) {
+export function goalsQueryOptions(host: Host, filters: GoalListFilters = {}) {
   // `GET /v1/goals` takes the selection as one comma-separated `status`, and
   // matches a goal in any of them.
   const status = filters.statuses?.length ? filters.statuses.join(",") : undefined
   return queryOptions({
-    queryKey: goalListKey(filters),
-    queryFn: () => unwrap(api().GET("/v1/goals", { params: { query: { status } } })),
+    queryKey: goalListKey(host, filters),
+    queryFn: () => unwrap(api(host).GET("/v1/goals", { params: { query: { status } } })),
     // The daemon orders by id (creation order); the screen shows newest first.
     select: (goals: GoalDto[]) => [...goals].sort((a, b) => b.id.localeCompare(a.id)),
   })
 }
 
-export function goalQueryOptions(goalId: string) {
+export function goalQueryOptions(host: Host, goalId: string) {
   return queryOptions({
-    queryKey: qk.goals.detail(goalId),
-    queryFn: () => unwrap(api().GET("/v1/goals/{id}", { params: { path: { id: goalId } } })),
+    queryKey: qk.goals.detail(host, goalId),
+    queryFn: () => unwrap(api(host).GET("/v1/goals/{id}", { params: { path: { id: goalId } } })),
   })
 }
 
 /** Orchestrator profiles, for the orchestrator picker on the create form. */
 
+/**
+ * `POST /v1/goals` on the host the goal is to live on: its tasks and its
+ * agents run there. The created goal comes back tagged with that host.
+ */
 export function useCreateGoal() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: CreateGoalRequest) => unwrap(api().POST("/v1/goals", { body })),
-    onSuccess: (goal) => cacheRow(queryClient, qk.goals, goal),
+    mutationFn: async ({ host, body }: { host: Host; body: CreateGoalRequest }) => ({
+      ...(await unwrap(api(host).POST("/v1/goals", { body }))),
+      host,
+    }),
+    onSuccess: ({ host, ...goal }) => cacheRow(queryClient, qk.goals, host, goal),
   })
 }
 
@@ -75,17 +83,18 @@ export function useCreateGoal() {
  * on the click. The tear-down it triggers (sessions, unfinished tasks) is not
  * guessed at — those lists are invalidated once the daemon has answered.
  */
-export function useCancelGoal(goalId: string) {
+export function useCancelGoal(host: Host, goalId: string) {
   return useRowAction(
     qk.goals,
+    host,
     goalId,
-    () => unwrap(api().POST("/v1/goals/{id}/cancel", { params: { path: { id: goalId } } })),
+    () => unwrap(api(host).POST("/v1/goals/{id}/cancel", { params: { path: { id: goalId } } })),
     {
       optimistic: "cancelled" satisfies GoalStatus,
       alsoInvalidates: (queryClient) => {
         // Cancelling tears the goal's sessions and tasks down.
-        void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
-        void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+        void queryClient.invalidateQueries({ queryKey: qk.tasks.lists(host) })
+        void queryClient.invalidateQueries({ queryKey: qk.sessions.lists(host) })
       },
     },
   )
@@ -100,16 +109,19 @@ export function useCancelGoal(goalId: string) {
  * orchestrator is gone or will not start. The daemon refuses it while any task
  * is still going, so nothing is optimistic: what comes back is the answer.
  */
-export function useCompleteGoal(goalId: string) {
+export function useCompleteGoal(host: Host, goalId: string) {
   return useRowAction(
     qk.goals,
+    host,
     goalId,
     () =>
-      unwrap(api().POST("/v1/goals/{id}/complete", { params: { path: { id: goalId } }, body: {} })),
+      unwrap(
+        api(host).POST("/v1/goals/{id}/complete", { params: { path: { id: goalId } }, body: {} }),
+      ),
     {
       alsoInvalidates: (queryClient) => {
         // Completing tears the goal's sessions down.
-        void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+        void queryClient.invalidateQueries({ queryKey: qk.sessions.lists(host) })
       },
     },
   )
@@ -125,14 +137,15 @@ export function useCompleteGoal(goalId: string) {
  * dispatcher does for `goal_deleted` — this goal's own entries go, and the
  * lists that name it goal-first are refetched.
  */
-export function useDeleteGoal(goalId: string) {
+export function useDeleteGoal(host: Host, goalId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => unwrap(api().DELETE("/v1/goals/{id}", { params: { path: { id: goalId } } })),
+    mutationFn: () =>
+      unwrap(api(host).DELETE("/v1/goals/{id}", { params: { path: { id: goalId } } })),
     onSuccess: () => {
-      dropRow(queryClient, qk.goals, goalId)
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.all() })
-      void queryClient.invalidateQueries({ queryKey: qk.sessions.all() })
+      dropRow(queryClient, qk.goals, host, goalId)
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.all(host) })
+      void queryClient.invalidateQueries({ queryKey: qk.sessions.all(host) })
     },
   })
 }

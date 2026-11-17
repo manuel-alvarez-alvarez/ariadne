@@ -536,12 +536,12 @@ function usePaletteEntries(open: boolean): {
   entries: PaletteEntries
   goals: GoalDto[] | undefined
 } {
-  const goals = useQuery({ ...goalsQueryOptions(), enabled: open })
-  const tasks = useQuery({ ...taskListQueryOptions(), enabled: open })
-  const sessions = useQuery({ ...sessionsQueryOptions(), enabled: open })
+  const goals = useQuery({ ...goalsQueryOptions("local"), enabled: open })
+  const tasks = useQuery({ ...taskListQueryOptions("local"), enabled: open })
+  const sessions = useQuery({ ...sessionsQueryOptions("local"), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
-  const workflows = useQuery({ ...workflowsQueryOptions(), enabled: open })
-  const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
+  const workflows = useQuery({ ...workflowsQueryOptions("local"), enabled: open })
+  const repositories = useQuery({ ...repositoriesQueryOptions("local"), enabled: open })
 
   const entries = useMemo(
     () =>

@@ -2,7 +2,7 @@
 id: 037
 status: current
 updated: 2026-11-17
-areas: [api, daemon, client, docs]
+areas: [api, daemon, client, cli, docs]
 commits: []
 tests:
   - crates/ariadne-client/src/endpoint.rs
@@ -10,6 +10,9 @@ tests:
   - crates/ariadne-daemon/tests/it/ssh_forward.rs
   - crates/ariadne-daemon/tests/it/host_sync.rs
   - crates/ariadne-daemon/tests/it/learned_permissions.rs
+  - crates/ariadne-daemon/tests/it/host_queries.rs
+  - crates/ariadne-cli/tests/hosts.rs
+  - crates/ariadne-cli/src/commands/query.rs
   - crates/ariadne-daemon/src/hosts.rs
   - crates/ariadne-daemon/src/hosts/sync.rs
 ---
@@ -25,6 +28,12 @@ catalogs and settings to each host. Out: a Rust SSH library, a reverse forward
 from the far daemon, cloning a repository on a host, any write from a host
 back to this daemon and any desktop change. CLI selection follows spec 014.
 The transports and the event stream are spec 012's.
+`GET /v1/hosts` route, `HostDto`, the `host_updated` event, `ssh_bin`, and the
+SSH forward the daemon keeps for each `ssh://` host. Out: a Rust SSH library and
+a reverse forward from the far daemon. CLI selection follows spec 014. The
+transports and the event stream are spec 012's. The desktop app's reading of
+the hosts — the host picker, the Hosts section of its settings and one stream
+per host — is spec 015's (rules 51 to 60).
 
 ## Behavior
 
@@ -126,6 +135,43 @@ The transports and the event stream are spec 012's.
     none of these pushes nothing.
 22. Writes go to the local daemon. Nothing is read back from a host into
     this daemon.
+### Queries on a host
+
+16. Every Prometheus and Loki route of spec 034 is also served under
+    `/v1/hosts/{host}/<same path>`, with the same methods and parameters.
+    `{host}` is a host name or `all`.
+17. A host name sends the request, with its method, query string, form body
+    and content type, to that host's endpoint (an `http://` URL or a socket
+    path) and returns its status, content type and body. `local` is answered
+    by this daemon's own query routes. An unknown host answers `404`, and a
+    host whose status is not `ready` answers `503`, both in the error
+    envelope; the `503` message names the status. A host that cannot be
+    reached answers `502`. A path that is not a query route answers `404`,
+    and a method it does not take answers `405`.
+18. `all` runs the request on every ready host at once and answers
+    `{"status": "success", "data": …}` in the shape of one daemon:
+    - a vector, matrix or stream result is the concatenation of every
+      host's, each series or stream with a `host` label (an attribute already
+      named `host` becomes `exported_host`, with another `exported_` added
+      while that key is taken);
+    - a scalar or string result becomes a vector of one sample per host;
+    - `series` answers every label set with `host`; `labels` adds `host`;
+      the values of the label `host` are the host names; other label values
+      are the union;
+    - `metadata` is the union by metric, and `index/stats` keeps its flat
+      fields (no envelope) and sums them;
+    - `-/healthy` and `parse_query` answer as the first host does, and
+      `parse_query` and `index/stats` carry `warnings` like any other.
+19. A host that is not ready, cannot be reached, or answers a failure is
+    skipped, and `warnings` lists it as `<host>: <reason>`. `warnings` is
+    absent when every host answered. When no host answered: a `4xx` answer
+    of a host is returned as it came, so a bad query is a `400`; otherwise
+    the answer is `502`.
+20. `ariadne query --host NAME|all` sends its route under
+    `/v1/hosts/{host}` to the local daemon, and prints each warning on
+    stderr. With `all` the table has a `HOST` column from the label. Without
+    `--host` the route is unchanged.
+21. The OpenAPI document carries the routes of rule 16.
 
 ## Acceptance criteria
 
@@ -179,6 +225,24 @@ The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync
 tests serve the second harness daemon on a loopback port, and give the local
 one a `direct` host that points at it.
+- Rule 17
+  (`host_queries.rs::a_named_host_answers_from_its_own_daemon_and_local_from_this_one`,
+  `::an_unknown_host_is_404_and_a_host_that_is_not_ready_is_503`).
+- Rules 18 and 19
+  (`host_queries.rs::all_merges_every_ready_host_with_a_host_label_and_lists_failures`,
+  `::all_labels_streams_series_and_label_values_with_the_host`,
+  `::a_query_every_host_refuses_answers_its_400`,
+  `::all_keeps_the_flat_shape_of_the_index_stats`,
+  `::all_keeps_the_warnings_on_a_parsed_query`).
+- Rule 20 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
+  `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
+- Rule 21 (`host_queries.rs::openapi_carries_the_host_query_routes`).
+
+The query tests run two harness daemons: the local one with a `direct` host
+that points at the second, served on a loopback port.
+
+The forward tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
+port to its remote, with a second harness daemon as the far machine.
 
 ## Sources
 
@@ -188,3 +252,6 @@ one a `direct` host that points at it.
 `crates/ariadne-daemon/src/http/hosts.rs`,
 `crates/ariadne-daemon/src/http/permissions.rs`,
 `docs/configuration.md`.
+`crates/ariadne-daemon/src/hosts.rs`, `crates/ariadne-daemon/src/http/hosts.rs`,
+`crates/ariadne-daemon/src/http/query/fan.rs`, `docs/configuration.md`,
+`docs/telemetry.md`.

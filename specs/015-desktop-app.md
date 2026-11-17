@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-14
+updated: 2026-11-17
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -9,6 +9,9 @@ tests:
   - ui/src/features/**/*.test.ts
   - ui/src/routes/**/*.test.tsx
   - ui/src/api/**/*.test.ts
+  - ui/src/api/**/*.test.tsx
+  - ui/src/events/**/*.test.ts
+  - ui/src/events/**/*.test.tsx
   - ui/src/components/**/*.test.tsx
   - ui/src/hooks/**/*.test.tsx
   - ui/src/lib/**/*.test.ts
@@ -1125,8 +1128,61 @@ Out: the daemon endpoints themselves (012).
     The button calls the round route and shows the daemon's refusal text.
     Proof: `ui/src/features/pull-requests/pull-request-panel.test.tsx::asks for another review round and shows the daemon refusal`.
 
+51. The app reads every host of the settings daemon's `GET /v1/hosts` (037).
+    `local` is the settings daemon, at the settings base URL. A named host is
+    reached at its endpoint only when the endpoint is `http://` or `https://`
+    and its `status` is `ready`; any other host is listed as unreachable with
+    its `error`. `host_updated` patches its row.
+52. The settings dialog has a Hosts section. It lists each host's `name`,
+    `kind`, `status`, `endpoint` and `error`, the facts `ariadne host ls`
+    prints, live through `host_updated`. It says the hosts are configured in
+    the `config.toml` of the settings daemon.
+53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
+    builds its stream URL. The app opens one domain stream per reachable host,
+    and each event patches and invalidates the keys of the host it came from.
+    A gap in one host's stream invalidates that host's keys alone. A host
+    that came up or moved since the last hosts list is read again whole, so a
+    `host_updated` missed while `local`'s stream was down leaves nothing
+    stale. The
+    connection banner and status stay about `local`; a named host's state is
+    its row in the host picker.
+54. Every query key starts with its host: `[host, entity, "list" | "detail",
+    ...]`, and `qk.<entity>.lists(host)` invalidates one host's lists.
+55. The header has a host picker: All, `local`, and each named host with its
+    status. The pick is `hostFilter` in the settings store and persists. All
+    reads every reachable host; `useHostFilter()` returns the selected names.
+56. The panel params `?goal=`, `?task=`, `?session=` and `?pr=` have a
+    `?host=` beside them for a named host. A link without `?host=` resolves to
+    `local`.
+57. `useHostLists` runs one list query per selected host. It returns the rows
+    tagged with `host`, and one error per host that failed.
+58. The goals board merges the goals of the selected hosts, newest first, and
+    under All with more than one host each lane names its host. A goal's panel
+    opens on its host, with its tasks and orchestrator sessions read there. A
+    goal lives on one host. The goal dialog shows a host select once there is
+    more than one reachable host. The select defaults to the picked host, or
+    `local` under All. Its repositories, workflows and model pin picker read
+    that host, and a change of host reloads them. The pin picker takes a host.
+59. The attention strip and the attention count merge the selected hosts. A
+    row of a named host shows the host. A `wait_for_user` question is
+    answered in the row, and the answer posts to that host's
+    `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`.
+60. Every other screen reads `local`, and passes `"local"` explicitly. The task
+    form only creates tasks for a goal on `local`, so a named host's goal
+    panel offers no New task, and its planning guide no Create task manually.
+    The task panel and the session console read `local` only, so a named
+    host's task card is not a link, its goal panel's Sessions tab names that
+    and lists nothing, and a `?session=` with a named `?host=` opens no console. A `?task=` or a
+    standalone `?session=` with a named `?host=` opens no panel, so an attention
+    row of a named host opens nothing either.
+
 ## Acceptance criteria
 
+- A task card of a named host is not a link, and a named host's goal panel
+  opens no session console
+  (`ui/src/features/tasks/task-card.test.tsx::links a local card to its panel and leaves a remote card unlinked`,
+  `ui/src/features/goals/hosts.test.tsx::opens no session console of a remote goal, which would read local`,
+  `ui/src/features/goals/hosts.test.tsx::opens no task or session panel of a named host, which would read local`).
 - The planning guide words the recorded orchestrator session, a recorded wait
   before its status, and opens it
   (`ui/src/features/goals/planning-guide.test.tsx::words a recorded %j session as %s`);
@@ -2014,6 +2070,41 @@ Out: the daemon endpoints themselves (012).
   (`::matches the title alone, not a repository path`,
   `::narrows by the title search within the selected statuses`).
 
+- Hosts (rules 51 to 60): `local` maps to the settings base URL and a named
+  host is reachable only over HTTP while ready
+  (`ui/src/api/hosts.test.tsx::maps local to the settings base URL, whatever endpoint it lists`,
+  `::lists a host whose endpoint is not http or https as unreachable, with its error`,
+  `::lists a host that is not ready as unreachable, even at an http endpoint`,
+  `::calls a ready named host at its endpoint`,
+  `::builds a host's stream URL with its filters, and none for an unreachable host`,
+  `::reads GET /v1/hosts from the settings daemon, and points api(host) at each host`,
+  `::reads a host again at its new address once local's stream comes back`);
+  the Hosts section lists the facts live, and the picker picks and keeps a
+  host (`ui/src/components/hosts-settings.test.tsx::lists every host with its name, kind, status, endpoint and error, live through host_updated`,
+  `::picks All, local or a named host with its status, and keeps the pick`);
+  one stream per reachable host under its own keys, with the connection
+  state `local`'s (`ui/src/events/provider-hosts.test.tsx::opens one stream per reachable host, and none for a host that is down`,
+  `::dispatches a named host's event under that host's keys`,
+  `::keeps the connection state about local while a named host's stream drops`);
+  the dispatcher moves one host's keys
+  (`ui/src/events/dispatch.test.ts::patches and invalidates the keys of the host the event came from, and no other`,
+  `::refetches only the host whose stream had a gap`,
+  `::patches the host's row on host_updated, and reads a host that came up again`,
+  `::ignores host_updated from a named host's own stream`);
+  `?host=` (`ui/src/routes/paths.test.ts::writes ?host= beside a named host's panel param`,
+  `::leaves ?host= out for local, and drops the one a named host's panel left`,
+  `::resolves a link without ?host= to local`); `useHostLists`
+  (`ui/src/api/host-lists.test.tsx::tags each host's rows with the host, and reports the host that failed on its own`,
+  `::keeps the other hosts' rows when one host answers with an error`); the
+  board, the panel, the dialog and the attention round trip
+  (`ui/src/features/goals/hosts.test.tsx::merges the goals of every host under All, each lane naming its host`,
+  `::reads only the picked host, and names no host on its lanes`,
+  `::opens a goal's panel on the host its link names`,
+  `::defaults the goal dialog to the picked host, and reloads its lists when the host changes`,
+  `::opens the goal dialog on local under All`,
+  `::shows a question a remote host's stream delivers, and answers it on that host`,
+  `::offers no task form for a planning goal on a named host`).
+
 ## Known gap
 
 The goal panel, the session panel, the session detail view, the sessions
@@ -2030,6 +2121,7 @@ account of the sessions screen in particular rests on reading
 ## Sources
 
 `ui/AGENTS.md` (the layout and the conventions), `ui/src/`, `ui/src-tauri/`,
+037 (`GET /v1/hosts` and `host_updated`),
 `ui/dashboard/`, `ui/src/test/flaky.ts`,
 `ui/dashboard/src/test/flaky.ts` (the explicit bounded test marker).
 

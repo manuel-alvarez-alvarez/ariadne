@@ -23,7 +23,7 @@ beforeEach(() => {
 })
 
 it("keeps the effort beside a middle-cut model and gives the row a whole-pin hint", async () => {
-  renderScreen(<SessionsList filters={{}} onSelect={vi.fn()} />, { route: "/goals" })
+  renderScreen(<SessionsList host="local" filters={{}} onSelect={vi.fn()} />, { route: "/goals" })
 
   const pin = await screen.findByTitle(MODEL)
   const row = pin.closest("tr")
@@ -46,6 +46,7 @@ it("names a row by its workflow step where the caller gives one, and names none 
 
   renderScreen(
     <SessionsList
+      host="local"
       filters={{}}
       sessionStep={(session) => (session.id === staffed.id ? "Build" : undefined)}
       onSelect={vi.fn()}

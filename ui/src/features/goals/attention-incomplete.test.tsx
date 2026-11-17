@@ -95,7 +95,9 @@ it.each([
   { name: "dead goal session", taskId: null, status: "exited" as const },
 ])("shows no board badge for a $name during an incomplete read", async ({ taskId, status }) => {
   sessions = [{ ...permission, task_id: taskId, status }]
-  const { queryClient } = renderScreen(<GoalSwimlanes goals={[goal]} />)
+  const { queryClient } = renderScreen(
+    <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
+  )
   await waitFor(() => expect(queryClient.isFetching()).toBe(0))
 
   expect(screen.getByText(task.title)).not.toBeNull()
@@ -119,7 +121,7 @@ it("retains known items and their board badges while reporting an incomplete rea
   renderScreen(
     <>
       <AttentionPopover />
-      <GoalSwimlanes goals={[goal]} />
+      <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />
     </>,
   )
   fireEvent.click(await screen.findByRole("button", { name: "Needs attention, 1 items" }))
@@ -133,7 +135,7 @@ it("does not reconstruct rows or board badges when the attention read fails", as
   const { queryClient } = renderScreen(
     <>
       <AttentionPopover />
-      <GoalSwimlanes goals={[goal]} />
+      <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />
     </>,
   )
   await waitFor(() => expect(queryClient.isFetching()).toBe(0))

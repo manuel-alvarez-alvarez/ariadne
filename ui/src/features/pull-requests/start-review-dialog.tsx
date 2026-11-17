@@ -50,7 +50,7 @@ export function StartReviewDialog({
   /** The review was asked for: the dialog has closed itself. */
   onStarted?: () => void
 }) {
-  const models = useQuery({ ...modelsQueryOptions(), enabled: open })
+  const models = useQuery({ ...modelsQueryOptions("local"), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const ask = useAskReview()
   const [pin, setPin] = useState({ model: "", effort: "" })
@@ -107,6 +107,7 @@ export function StartReviewDialog({
           <Field>
             <FieldLabel htmlFor="review-pin">Model</FieldLabel>
             <PinPicker
+              host="local"
               id="review-pin"
               label="Model"
               model={pin.model}

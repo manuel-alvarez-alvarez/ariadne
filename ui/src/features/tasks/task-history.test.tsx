@@ -42,8 +42,8 @@ function renderHistory(): void {
   renderScreen(<TaskPanel taskId={TASK.id} onClose={() => {}} />, {
     route: "/goals?tab=history",
     seed: (client) => {
-      client.setQueryData(qk.tasks.detail(TASK.id), TASK)
-      client.setQueryData(qk.goals.detail(goal.id), goal)
+      client.setQueryData(qk.tasks.detail("local", TASK.id), TASK)
+      client.setQueryData(qk.goals.detail("local", goal.id), goal)
     },
   })
 }

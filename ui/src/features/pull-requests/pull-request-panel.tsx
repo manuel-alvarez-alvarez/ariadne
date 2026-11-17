@@ -182,7 +182,7 @@ function useSessionOpening(pullRequestId: string | null, open: (sessionId: strin
   const pending = useRef(false)
   const seat = useRef<Seat | null>(null)
   const reviews = useQuery({
-    ...sessionsQueryOptions({ pull_request: pullRequestId ?? "" }),
+    ...sessionsQueryOptions("local", { pull_request: pullRequestId ?? "" }),
     enabled: pullRequestId !== null,
     refetchInterval: before ? 2000 : false,
   })
@@ -401,7 +401,7 @@ function PullRequestHeader({
 }
 
 function PullRequestFacts({ pull }: { pull: PullRequestDto }) {
-  const repositories = useQuery(repositoriesQueryOptions())
+  const repositories = useQuery(repositoriesQueryOptions("local"))
   const repository = repositories.data?.find((each) => each.id === pull.repository_id)
   const failed = pull.failed_checks ?? []
   return (
@@ -496,6 +496,7 @@ function PullRequestSessions({
         <h3 className="text-sm font-medium">Ariadne sessions</h3>
         {pull.id ? (
           <SessionsList
+            host="local"
             filters={{ pull_request: pull.id }}
             onSelect={(session) => onSelect(session.id)}
           />
@@ -507,6 +508,7 @@ function PullRequestSessions({
         <section className="flex flex-col gap-2">
           <h3 className="text-sm font-medium">Task workflow</h3>
           <SessionsList
+            host="local"
             filters={{ task: pull.origin_task_id, seat: "agent" }}
             onSelect={(session) => onSelect(session.id)}
           />
@@ -532,7 +534,7 @@ function PullRequestSessionView({
   sessionId: string
   onSelect: (sessionId: string | null) => void
 }) {
-  const session = useQuery(sessionQueryOptions(sessionId))
+  const session = useQuery(sessionQueryOptions("local", sessionId))
   const ours =
     session.data !== undefined &&
     ((pullRequestId !== null && session.data.pull_request_id === pullRequestId) ||

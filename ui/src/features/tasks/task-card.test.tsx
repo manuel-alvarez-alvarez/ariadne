@@ -22,7 +22,7 @@ function states() {
 }
 
 function card(overrides: Partial<TaskDto>) {
-  renderScreen(<TaskCard task={aTask(overrides)} steps={STEPS} />)
+  renderScreen(<TaskCard host="local" task={aTask(overrides)} steps={STEPS} />)
 }
 
 it.each([
@@ -191,7 +191,7 @@ it("keeps a long workflow on one line and folds its far steps", () => {
     skills: [],
     ranks: [],
   }))
-  renderScreen(<TaskCard task={aTask({ step: "s11" })} steps={many} />)
+  renderScreen(<TaskCard host="local" task={aTask({ step: "s11" })} steps={many} />)
   const track = screen.getByRole("list", { name: "Workflow steps" })
   expect(within(track).getAllByRole("listitem")).toHaveLength(12)
   expect(track.className).toContain("flex-nowrap")
@@ -202,6 +202,7 @@ it("keeps a long workflow on one line and folds its far steps", () => {
 it("shows the latest of the task's update and its sessions' activity", () => {
   renderScreen(
     <TaskCard
+      host="local"
       task={aTask({ updated_at: "2026-01-01T00:00:00Z" })}
       steps={STEPS}
       lastActivityAt="2026-02-01T00:00:00Z"
@@ -211,7 +212,9 @@ it("shows the latest of the task's update and its sessions' activity", () => {
 })
 
 it("falls back to the task's update without session activity", () => {
-  renderScreen(<TaskCard task={aTask({ updated_at: "2026-01-01T00:00:00Z" })} steps={STEPS} />)
+  renderScreen(
+    <TaskCard host="local" task={aTask({ updated_at: "2026-01-01T00:00:00Z" })} steps={STEPS} />,
+  )
   expect(document.querySelector("time")?.getAttribute("datetime")).toBe("2026-01-01T00:00:00Z")
 })
 
@@ -223,7 +226,9 @@ it("lists the folded steps in the fold marker's tooltip", async () => {
     skills: [],
     ranks: [],
   }))
-  renderScreen(<TaskCard task={aTask({ status: "in_progress", step: "s7" })} steps={many} />)
+  renderScreen(
+    <TaskCard host="local" task={aTask({ status: "in_progress", step: "s7" })} steps={many} />,
+  )
   await userEvent.hover(screen.getByLabelText("6 more steps"))
   expect(await screen.findByText("Does 0.")).toBeTruthy()
 })
@@ -267,4 +272,15 @@ it("anchors task usage and activity at the bottom of the card", () => {
   const link = screen.getByRole("link")
   expect(link.classList.contains("h-full")).toBe(true)
   expect(link.querySelector(".mt-auto")?.textContent).toContain("0")
+})
+
+it("links a local card to its panel and leaves a remote card unlinked", () => {
+  renderScreen(
+    <>
+      <TaskCard host="local" task={aTask({ id: "t-local", title: "Local card" })} steps={STEPS} />
+      <TaskCard host="box" task={aTask({ id: "t-box", title: "Remote card" })} steps={STEPS} />
+    </>,
+  )
+  expect(screen.getByRole("link", { name: /Local card/ })).toBeTruthy()
+  expect(screen.queryByRole("link", { name: /Remote card/ })).toBeNull()
 })

@@ -80,13 +80,15 @@ export function PullRequestsPage() {
   })
   const pages = rows.data?.pages
   const listed = useMemo(() => pages?.flatMap((page) => page.pull_requests), [pages])
-  const repositories = useQuery(repositoriesQueryOptions())
+  const repositories = useQuery(repositoriesQueryOptions("local"))
   const enabled = repositories.data?.filter((each) => each.forge?.enabled) ?? []
   const needsRefresh = useNeedsRefresh(repo ? enabled.filter((each) => each.id === repo) : enabled)
   const refresh = useMutation({
     mutationFn: () =>
       unwrap(
-        api().POST("/v1/pull-requests/refresh", { params: { query: { repo: filters.repo } } }),
+        api("local").POST("/v1/pull-requests/refresh", {
+          params: { query: { repo: filters.repo } },
+        }),
       ),
   })
 

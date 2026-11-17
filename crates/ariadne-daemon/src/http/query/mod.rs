@@ -7,8 +7,11 @@
 //! Prometheus naming rules ([`promql`]) and its log records as Loki streams
 //! ([`logql`]), and answers in each protocol's own JSON shape.
 
+mod fan;
 mod logql;
 mod promql;
+
+pub(super) use fan::QueryRoutes;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -78,6 +81,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/loki/api/v1/series", get(loki_series))
         .route("/loki/api/v1/index/stats", get(loki_index_stats))
         .route("/loki/api/v1/index/volume", get(loki_index_volume))
+        .merge(fan::routes())
 }
 
 // ---- parameters ----

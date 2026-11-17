@@ -56,6 +56,7 @@ export function TaskSessions({
   // this panel drives, so nothing has to be threaded through the panel.
   return (
     <SessionsList
+      host="local"
       filters={{ task: task.id }}
       sessionStep={(session) => sessionStepTitle(task, steps, session)}
       onSelect={(session) => onSelect(session.id)}
@@ -103,7 +104,7 @@ export function TaskSessionView({
   /** Selects another session, or goes back to the task with `null`. */
   onSelect: (sessionId: string | null) => void
 }) {
-  const session = useQuery(sessionQueryOptions(sessionId))
+  const session = useQuery(sessionQueryOptions("local", sessionId))
   // `GET /v1/sessions/{id}` is not scoped to a task, so a link can hand this
   // panel a session of some *other* task (or a goal's orchestrator session, which
   // is nobody's task). It is not one of this task's, and the panel would

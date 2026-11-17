@@ -273,6 +273,7 @@ it("never reads an incomplete recovery read as nothing needing attention", async
 
 function aRecoveryRow(item: AttentionItemDto): AttentionItem {
   return {
+    host: "local",
     id: item.id,
     goalId: "",
     goal: undefined,

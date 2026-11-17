@@ -44,6 +44,17 @@ Both settings are persisted to
 `localStorage` under `ariadne.settings`; the theme lives under `ariadne.theme`.
 Changing the URL clears the query cache and reconnects the event stream.
 
+That daemon is `local`. The app also reads every host its `GET /v1/hosts`
+lists: the `[hosts.<name>]` tables of its `config.toml`. The settings dialog's
+Hosts section lists each host's name, kind, status, endpoint and error, as
+`ariadne host ls` does. A named host is reached at its endpoint when that is
+`http://` or `https://` and the host is `ready`; the app opens one event
+stream per reachable host. The host picker in the header picks All, `local`
+or one named host, and is kept under `ariadne.settings`. The goals board, the
+goal panel, the goal dialog and the Needs attention list read the picked
+hosts; the other screens read `local`. A goal lives on one host: the goal
+dialog's host select says which, and its tasks and agents run there.
+
 The sidebar's last child carries the connection state, and it has exactly one
 source: the event stream. Green while it is open and the daemon is beating,
 amber while the first connection is being made, red once it is gone — which is

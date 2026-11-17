@@ -32,10 +32,10 @@
  */
 
 import { GitPullRequestIcon } from "lucide-react"
-import { useId } from "react"
+import { type ReactNode, useId } from "react"
 import { Link } from "react-router-dom"
 
-import type { TaskDto, WorkflowStepDto } from "@/api"
+import { type Host, LOCAL_HOST, type TaskDto, type WorkflowStepDto } from "@/api"
 import { PrLink, pullRequestNumber, pullRequestText } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
@@ -106,12 +106,33 @@ interface CardState {
   tone: string
 }
 
+function CardBody({
+  to,
+  children,
+  ...props
+}: {
+  to: ReturnType<typeof useTaskPanelTo> | null
+  children: ReactNode
+  "aria-describedby"?: string
+  className: string
+}) {
+  if (!to) return <div {...props}>{children}</div>
+  return (
+    <Link to={to} replace={to.replace} {...props}>
+      {children}
+    </Link>
+  )
+}
+
 export function TaskCard({
+  host,
   task,
   steps,
   attention,
   lastActivityAt,
 }: {
+  /** The host the task runs on, which its panel link carries. */
+  host: Host
   task: TaskDto
   /** The goal's workflow columns, which the step track draws one dot for each. */
   steps: WorkflowStepDto[]
@@ -137,7 +158,7 @@ export function TaskCard({
   // `to.replace` is set exactly when a goal panel is open — the card's own
   // link is replacing it rather than stacking on it, on the board behind it
   // or in the goal's own task list alike (`routes/paths.ts`'s `taskPanelTo`).
-  const to = useTaskPanelTo(task.id)
+  const to = useTaskPanelTo(task.id, host)
   // The reason is still what outlines the card even where the badge for it is
   // dropped: it is the same fact, said once.
   const flagged = attention && !repeatsCard(attention, state) ? attention : null
@@ -155,9 +176,9 @@ export function TaskCard({
         cardBorder(task, attention),
       )}
     >
-      <Link
-        to={to}
-        replace={to.replace}
+      <CardBody
+        // The task panel reads `local` only, so a remote card opens nothing.
+        to={host === LOCAL_HOST ? to : null}
         aria-describedby={hints.length > 0 ? hintsId : undefined}
         className="flex h-full flex-col rounded-lg px-2.5 pt-2.5 pb-1.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >
@@ -212,7 +233,7 @@ export function TaskCard({
             <ActivityTime at={activity} hintTabIndex={NOT_A_STOP} />
           </span>
         </div>
-      </Link>
+      </CardBody>
 
       {/* Everything the link says only to a pointer, in one line for whoever
           is reading the link itself. Outside the anchor, so it describes the

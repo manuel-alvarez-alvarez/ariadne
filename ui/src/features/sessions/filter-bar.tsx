@@ -145,7 +145,7 @@ export function AgentFilter({
   value: string
   onSelect: (value: string) => void
 }) {
-  const agents = useQuery(acpAgentsQueryOptions())
+  const agents = useQuery(acpAgentsQueryOptions("local"))
 
   return (
     <FilterMenu

@@ -81,7 +81,7 @@ export function LearnedPermissionDetail({ id, onClose }: { id: string; onClose: 
 }
 
 function LearnedPermissionDetailView({ learned }: { learned: LearnedPermissionDto }) {
-  const repositories = useQuery(repositoriesQueryOptions())
+  const repositories = useQuery(repositoriesQueryOptions("local"))
   const update = useUpdateLearnedPermission()
 
   const repositoryPath =

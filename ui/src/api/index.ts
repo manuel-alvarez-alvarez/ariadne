@@ -1,5 +1,6 @@
 export * from "./client"
 export * from "./errors"
+export * from "./hosts"
 export * from "./queries"
 export * from "./query-keys"
 export type * from "./types"

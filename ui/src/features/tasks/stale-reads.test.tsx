@@ -37,14 +37,17 @@ function answerEveryRead(body: unknown): void {
 
 it("keeps an empty goal task list under the warning, and clears it on a successful retry", async () => {
   const user = userEvent.setup()
-  const { queryClient } = renderScreen(<GoalTasks goalId={TASK.goal_id} steps={[]} />, {
-    seed: (client) =>
-      client.setQueryData(taskListQueryOptions({ goal: TASK.goal_id }).queryKey, []),
-  })
+  const { queryClient } = renderScreen(
+    <GoalTasks host="local" goalId={TASK.goal_id} steps={[]} />,
+    {
+      seed: (client) =>
+        client.setQueryData(taskListQueryOptions("local", { goal: TASK.goal_id }).queryKey, []),
+    },
+  )
   await screen.findByText("No tasks yet")
 
   failEveryRead()
-  await queryClient.refetchQueries({ queryKey: qk.tasks.lists() })
+  await queryClient.refetchQueries({ queryKey: qk.tasks.lists("local") })
   await screen.findByText("Could not refresh tasks")
   expect(screen.getByText("No tasks yet")).toBeTruthy()
 
@@ -65,16 +68,16 @@ it.each([
     const { queryClient } = renderScreen(<TaskPanel taskId={TASK.id} onClose={() => {}} />, {
       route: `/goals?tab=${tab}`,
       seed: (client) => {
-        client.setQueryData(qk.tasks.detail(TASK.id), TASK)
-        client.setQueryData(qk.goals.detail(goal.id), goal)
-        client.setQueryData(qk.tasks.transitions(TASK.id), [])
-        client.setQueryData(qk.tasks.messages(TASK.id), [])
+        client.setQueryData(qk.tasks.detail("local", TASK.id), TASK)
+        client.setQueryData(qk.goals.detail("local", goal.id), goal)
+        client.setQueryData(qk.tasks.transitions("local", TASK.id), [])
+        client.setQueryData(qk.tasks.messages("local", TASK.id), [])
       },
     })
     await screen.findByText(empty)
 
     failEveryRead()
-    await queryClient.refetchQueries({ queryKey: qk.tasks.detail(TASK.id) })
+    await queryClient.refetchQueries({ queryKey: qk.tasks.detail("local", TASK.id) })
 
     await screen.findByText("Could not refresh this task")
     await screen.findByText(`Could not refresh ${tab}`)
