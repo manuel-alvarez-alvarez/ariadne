@@ -282,16 +282,19 @@ async fn a_ready_host_takes_every_item_and_keeps_its_own() {
     assert_eq!(sync_of(&local).await, HostSyncDto::in_sync());
 }
 
-/// A sync never sends `device` (rule 28): the host picks its own best device
-/// for the flavour it is sent, even where it had chosen another one. Local's
-/// best device is `cuda` and the host's is `mlx`, so a device sent by the sync
-/// would show as local's `cuda` on the host.
+/// The sync sends the flavour and never the device. A device set on the host
+/// by `PUT` with `device` alone stays through a push with the same flavour:
+/// a local change of a threshold (a host that becomes `ready` again is
+/// `ssh_forward.rs`'s). A local change of the flavour makes the
+/// host pick its best device. Local's own best device is `cuda` and the
+/// host's is `mlx`, so a device sent by the sync would show as `cuda`.
 #[tokio::test]
-async fn a_sync_never_sends_the_device_and_the_host_picks_its_best() {
+async fn a_device_set_on_the_host_stays_until_local_changes_the_flavour() {
     let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     serve(&far, listener);
+    let endpoint = format!("http://{address}");
     let linux_cuda = HardwareOverride {
         os: "linux".into(),
         arch: "x86_64".into(),
@@ -299,7 +302,7 @@ async fn a_sync_never_sends_the_device_and_the_host_picks_its_best() {
         gpu_name: Some("NVIDIA".into()),
         vram_gb: Some(24),
     };
-    let (local, _dir) = local_with_host_on(&format!("http://{address}"), linux_cuda).await;
+    let (local, _dir) = local_with_host_on(&endpoint, linux_cuda).await;
     let _: AiPermissionsStatusDto = far
         .json(
             put_json("/v1/permissions/ai", json!({"device": "cpu"})),
@@ -320,10 +323,37 @@ async fn a_sync_never_sends_the_device_and_the_host_picks_its_best() {
 
     local.state.hosts.start();
     until_in_sync(&local).await;
-
     let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
     assert_eq!((ai.allow_threshold, ai.deny_threshold), (0.125, 0.875));
-    assert_eq!(ai.device.as_str(), "mlx");
+    assert_eq!(ai.device.as_str(), "cpu", "the first push keeps the device");
+
+    let _: AiPermissionsStatusDto = local
+        .json(
+            put_json("/v1/permissions/ai", json!({"deny_threshold": 0.75})),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the new threshold on the host", || async {
+        let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+        ai.deny_threshold == 0.75
+    })
+    .await;
+    let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+    assert_eq!(ai.device.as_str(), "cpu", "a threshold change keeps it");
+
+    let _: AiPermissionsStatusDto = local
+        .json(
+            put_json("/v1/permissions/ai", json!({"flavour": "0.8b"})),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the new flavour on the host", || async {
+        let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+        ai.flavour.as_str() == "0.8b"
+    })
+    .await;
+    let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+    assert_eq!(ai.device.as_str(), "mlx", "the host's best device");
 }
 
 #[tokio::test]

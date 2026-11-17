@@ -334,8 +334,9 @@ device, or `0.8b` where nothing on the machine can run `4b`.
 
 The settings are written on `local` and synced to every host, except the
 device. A sync never sends `device`. It does send the flavour, and a flavour
-without a device makes the host pick its best device again. So a device set for
-one host lasts only until the next push of the AI settings to that host. To set
+equal to the one the host stores keeps the host's device. So a device set for
+one host persists until `local` changes the flavour; then the host picks its
+best device. To set
 one host's device, name it: `--device` alone is the only setting a named host
 takes.
 

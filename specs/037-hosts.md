@@ -130,12 +130,13 @@ per host — is spec 015's (rules 51 to 60).
     learned permission, and leaves `state` as it is.
 28. The AI permission settings are pushed with `PUT /v1/permissions/ai`:
     `enabled`, the thresholds where they are set by hand (else
-    `default_thresholds`), and `flavour`. `device` is not pushed: the host
-    picks its own best device for the flavour. A status event that changes
-    none of these pushes nothing. A sync never sends `device`. The flavour it
-    sends makes the host pick its best device again, so a device set on one
-    host with `permissions ai set --device --host NAME` (spec 014, rule 32)
-    lasts only until the next push of the AI settings.
+    `default_thresholds`), and `flavour`. `device` is not pushed. A status event that changes
+    none of these pushes nothing. A sync never sends `device`. A flavour equal
+    to the one the host stores keeps the host's device (spec 022, rule 19), so
+    a device set on one host with `permissions ai set --device --host NAME`
+    (spec 014, rule 32) persists through every push, including the full push
+    when the host becomes `ready` again. It lasts until `local` changes the
+    flavour: a different flavour makes the host pick its best device.
 29. Writes go to the local daemon. Nothing is read back from a host into
     this daemon.
 ### Queries on a host
@@ -224,8 +225,10 @@ per host — is spec 015's (rules 51 to 60).
   the route is spec 022, rule 21).
 - Rules 6 and 22
   (`host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`).
-- Rule 28, device: no sync sends `device`, and the host picks its best device
-  (`host_sync.rs::a_sync_never_sends_the_device_and_the_host_picks_its_best`).
+- Rule 28, device: no sync sends `device`; a device set on the host stays
+  until `local` changes the flavour, then the host picks its best device
+  (`host_sync.rs::a_device_set_on_the_host_stays_until_local_changes_the_flavour`,
+  `ssh_forward.rs::a_device_set_on_the_host_stays_when_the_host_becomes_ready_again`).
 
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync

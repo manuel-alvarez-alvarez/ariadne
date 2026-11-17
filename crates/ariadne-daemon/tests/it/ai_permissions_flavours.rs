@@ -130,6 +130,36 @@ async fn put_with_only_a_flavour_picks_the_best_device() {
     assert_eq!(chosen.device, Device::Cuda);
 }
 
+/// A request with the stored flavour and no device keeps the stored device;
+/// one with another flavour and no device picks the best device for it.
+#[tokio::test]
+async fn put_with_the_stored_flavour_keeps_the_device_and_another_flavour_picks_the_best() {
+    let h = harness()
+        .ai_permissions_hardware(linux(256, Some(256)))
+        .await;
+    let set: AiPermissionsStatusDto = h
+        .json(update(json!({"device": "cpu"})), StatusCode::OK)
+        .await;
+    assert_eq!((set.flavour, set.device), (Flavour::Kev4B, Device::Cpu));
+
+    let same: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "4b"})), StatusCode::OK)
+        .await;
+    assert_eq!(
+        same.device,
+        Device::Cpu,
+        "the same flavour keeps the device"
+    );
+
+    let other: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "9b"})), StatusCode::OK)
+        .await;
+    assert_eq!(
+        (other.flavour, other.device),
+        (Flavour::Kev9B, Device::Cuda)
+    );
+}
+
 /// A request with a device and no flavour keeps the stored flavour.
 #[tokio::test]
 async fn put_with_only_a_device_keeps_the_stored_flavour() {
