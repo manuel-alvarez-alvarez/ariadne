@@ -284,6 +284,9 @@ fn validate_hosts(config: &endpoint::FileConfig) -> Result<()> {
                 "hosts.local: the name local is the daemon itself and cannot be configured"
             );
         }
+        if name == "all" {
+            anyhow::bail!("hosts.all: the name all selects every host and cannot be configured");
+        }
         if name.is_empty()
             || !name
                 .chars()
