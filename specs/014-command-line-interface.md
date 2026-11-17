@@ -749,6 +749,8 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - Registry routing and guards hold, rules 44, 46 to 48a and 50
   (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`,
   `::each_command_takes_the_hosts_of_its_kind`).
+- A stream with `--host all` reaches stdout while it is open, rule 46
+  (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
 - Rule 48a on `status` and `logs` of a named host
   (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)
   and of `local` with `--home`

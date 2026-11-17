@@ -285,6 +285,9 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
         if path == "permissions ai show" {
             return show_each(&cli, &hosts, &local).await;
         }
+        if kind == Kind::Stream {
+            return stream_first(&hosts, &local).await;
+        }
         return fan_out(&cli, &hosts, &local, kind == Kind::List).await;
     }
     let host = host.expect("a named host was checked before command guards");
@@ -506,6 +509,65 @@ async fn fan_out(
         output::print_json(&rows)?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Forward the stream of the first ready host that answers, as it arrives.
+/// A host that fails before it prints anything gives way to the next one.
+async fn stream_first(hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::process::Command;
+
+    let args = forwarded_args();
+    for host in hosts {
+        if host.status != HostStatus::Ready {
+            eprintln!("warning: {}: {}", host.name, status(host.status));
+            continue;
+        }
+        let selected = client(host, local)?;
+        let mut child = Command::new(std::env::current_exe()?)
+            .args(&args)
+            .arg("--endpoint")
+            .arg(selected.endpoint())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+        let mut stdout = child.stdout.take().expect("stdout is piped");
+        let mut stderr = child.stderr.take().expect("stderr is piped");
+        let errors = tokio::spawn(async move {
+            let mut text = Vec::new();
+            let _ = stderr.read_to_end(&mut text).await;
+            text
+        });
+        let mut forwarded = false;
+        let mut out = tokio::io::stdout();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = stdout.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            forwarded = true;
+            out.write_all(&buffer[..read]).await?;
+            out.flush().await?;
+        }
+        let exit = child.wait().await?;
+        let text = errors.await.unwrap_or_default();
+        if exit.success() {
+            return Ok(ExitCode::SUCCESS);
+        }
+        let text = String::from_utf8_lossy(&text);
+        if forwarded {
+            eprint!("{text}");
+            return Ok(ExitCode::from(exit.code().unwrap_or(1) as u8));
+        }
+        eprintln!(
+            "warning: {}: {}",
+            host.name,
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        );
+    }
+    Err(Failure::not_found("no host answered").err())
 }
 
 async fn has_id(client: &Client, id: &str) -> bool {

@@ -631,3 +631,61 @@ async fn daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home() {
     assert_ne!(code, 0, "{text}");
     assert!(text.contains(home), "{text}");
 }
+
+/// A stream on `--host all` reaches stdout while the stream is still open (spec 014, rule 46).
+#[tokio::test]
+async fn all_forwards_a_stream_before_it_ends() {
+    use tokio::io::AsyncBufReadExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let sync =
+        json!({"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0});
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync}
+    ]);
+    let events = json!([{
+        "id":"e1","session_id":"s1","task_id":null,"kind":"session_start",
+        "payload":{},"summary":"started","created_at":"2026-01-01T00:00:00Z"
+    }]);
+    let app = Router::new()
+        .route("/v1/hosts", get(move || async move { Json(registry) }))
+        .route("/v1/events", get(move || async move { Json(events) }))
+        .route(
+            "/v1/events/stream",
+            get(|| async {
+                axum::response::Sse::new(futures_util::stream::pending::<
+                    Result<axum::response::sse::Event, std::convert::Infallible>,
+                >())
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args([
+            "--endpoint",
+            &endpoint,
+            "--host",
+            "all",
+            "events",
+            "-f",
+            "--format",
+            "json",
+        ])
+        .env("ARIADNE_TELEMETRY", "off")
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let line = tokio::time::timeout(std::time::Duration::from_secs(30), lines.next_line())
+        .await
+        .expect("the event reaches stdout while the stream is open")
+        .unwrap()
+        .expect("a line");
+    assert!(
+        line.contains("session_start") || line.contains("started"),
+        "{line}"
+    );
+    child.kill().await.unwrap();
+    server.abort();
+}
