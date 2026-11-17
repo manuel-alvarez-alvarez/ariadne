@@ -74,7 +74,7 @@ serde_json = "1"
 regex = "1"
 serde_urlencoded = "0.7"
 promql-parser = "0.11"
-toml = "1.1"
+toml = { version = "1.1", features = ["preserve_order"] }
 url = "2"
 
 # cli

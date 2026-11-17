@@ -56,6 +56,7 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   dashboard_created: true,
   dashboard_updated: true,
   dashboard_deleted: true,
+  host_updated: true,
 }
 
 const DOMAIN_EVENT_KINDS = Object.keys(DOMAIN_EVENT_KINDS_PRESENT) as DomainEventKind[]

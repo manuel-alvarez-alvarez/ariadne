@@ -14,6 +14,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::dashboards::DashboardDto;
 use crate::events::AgentEventSummaryDto;
 use crate::goals::GoalDto;
+use crate::hosts::HostDto;
 use crate::messages::MessageDto;
 use crate::permissions::{AiPermissionsStatusDto, LearnedPermissionDto};
 use crate::repositories::RepositoryDto;
@@ -129,6 +130,8 @@ pub enum DomainEvent {
     /// The requests of one repository moved: on its forge, or in what
     /// Ariadne keeps of them (026). Read them again; they are the forge's.
     PullRequestsChanged(PullRequestsChangedDto),
+    /// A host's status, endpoint or error changed (037).
+    HostUpdated(HostDto),
 }
 
 /// Payload of `issues_changed`: the repository whose open issues moved.
@@ -177,6 +180,7 @@ impl DomainEvent {
             Self::IssuesChanged(_) => "issues_changed",
             Self::PullRequestsChanged(_) => "pull_requests_changed",
             Self::AttentionChanged(_) => "attention_changed",
+            Self::HostUpdated(_) => "host_updated",
         }
     }
 
@@ -211,6 +215,7 @@ impl DomainEvent {
             | Self::LearnedPermissionDeleted(l) => json(l),
             Self::ForgeSettingsUpdated(t) => json(t),
             Self::IssuesChanged(i) => json(i),
+            Self::HostUpdated(h) => json(h),
         }
     }
 }

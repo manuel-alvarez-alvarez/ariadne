@@ -39,6 +39,9 @@ LIBRARIES = [
 # macro, a derive, serde or utoipa, or a public item whose signature holds the
 # type, so that rustc rejects a private one. `path: name` -> the reason.
 IGNORED = {
+    "crates/ariadne-client/src/endpoint.rs: Hosts": (
+        "the type of the public field `FileConfig::hosts`; serde reads it, in file order (037)"
+    ),
     "crates/ariadne-core/src/lib.rs: UnknownPlaceholders": (
         "the error of the public `validate_template`; its callers print it"
     ),

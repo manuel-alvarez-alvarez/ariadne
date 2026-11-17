@@ -22,6 +22,48 @@ pub struct AcpAgentConfig {
     pub command: Vec<String>,
 }
 
+/// One `[hosts.<name>]` table: another machine's daemon this one lists (037).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostConfig {
+    /// `ssh://[user@]host[:port]`, `http://host:port`, or an absolute socket
+    /// path.
+    pub endpoint: String,
+    /// Where the far daemon listens, for an `ssh://` endpoint only: an
+    /// absolute socket path or a loopback `host:port`.
+    pub remote: Option<String>,
+}
+
+/// The `[hosts]` table, in the order the file wrote it. A map would sort the
+/// names, and the order of the list is the file's.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Hosts(pub Vec<(String, HostConfig)>);
+
+impl<'de> Deserialize<'de> for Hosts {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct InOrder;
+        impl<'de> serde::de::Visitor<'de> for InOrder {
+            type Value = Hosts;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a table of hosts")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Hosts, A::Error> {
+                let mut hosts = Vec::new();
+                while let Some(entry) = map.next_entry::<String, HostConfig>()? {
+                    hosts.push(entry);
+                }
+                Ok(Hosts(hosts))
+            }
+        }
+        deserializer.deserialize_map(InOrder)
+    }
+}
+
 /// Environment variable moving the whole ariadne home directory.
 const HOME_ENV: &str = "ARIADNE_HOME";
 
@@ -110,6 +152,9 @@ pub struct FileConfig {
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,
+    /// Other machines' daemons, by name (037).
+    #[serde(default)]
+    pub hosts: Hosts,
 }
 
 /// Why `<home>/config.toml` could not be read as configuration.
@@ -325,6 +370,46 @@ mod tests {
             .to_string();
         assert!(err.contains("config.toml"), "{err}");
         assert!(err.contains("prevent_slep"), "{err}");
+    }
+
+    #[test]
+    fn hosts_keep_the_order_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            "[hosts.zeta]\nendpoint = \"http://10.0.0.2:7676\"\n\n[hosts.alpha]\nendpoint = \"ssh://me@box\"\nremote = \"/run/ariadne.sock\"\n",
+        );
+        let config = parse_config(dir.path()).unwrap().expect("a config");
+        let names: Vec<_> = config.hosts.0.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["zeta", "alpha"]);
+        assert_eq!(
+            config.hosts.0[1].1.remote.as_deref(),
+            Some("/run/ariadne.sock")
+        );
+        assert_eq!(config.hosts.0[0].1.remote, None);
+    }
+
+    #[test]
+    fn an_unknown_key_in_a_host_is_refused_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            "[hosts.box]\nendpoint = \"ssh://box\"\nremot = \"/x\"\n",
+        );
+        let err = parse_config(dir.path())
+            .expect_err("unknown key")
+            .to_string();
+        assert!(err.contains("remot"), "{err}");
+    }
+
+    #[test]
+    fn a_host_without_an_endpoint_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(dir.path(), "[hosts.box]\nremote = \"/x\"\n");
+        let err = parse_config(dir.path())
+            .expect_err("no endpoint")
+            .to_string();
+        assert!(err.contains("endpoint"), "{err}");
     }
 
     #[test]

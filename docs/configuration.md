@@ -81,7 +81,26 @@ tunnel_subdomain = "my-ariadne"    # the subdomain the tunnel asks for
 [[acp_agents]]                     # an agent of your own, or one the registry
 id = "my-agent"                    # names under another command (default: [])
 command = ["my-agent", "acp"]      # program followed by its arguments
+
+[hosts.build-box]                  # another machine's daemon, listed by
+endpoint = "ssh://me@build.example:2222"
+                                   # GET /v1/hosts: ssh://[user@]host[:port],
+remote = "/home/me/.ariadne/ariadne.sock"
+                                   # http://host:port, or an absolute socket path;
+                                   # remote (ssh:// only) is the far daemon's
+                                   # socket path or loopback host:port
+
+[hosts.lab]
+endpoint = "http://10.0.0.7:7676"
 ```
+
+Each `[hosts.<name>]` table names a daemon on another machine. A name has only
+letters, digits, `-` and `_`, and `local` is taken: it is this daemon, which
+`GET /v1/hosts` always lists first. The configured hosts follow in the order
+of the file. An unknown key in a host, a bad `endpoint`, or a `remote` on a
+host that is not `ssh://` is refused by name at startup and by `ariadned
+--check-config`. This release lists the hosts only: an `ssh://` host shows as
+`down` with the error `ssh forward not started`. See [Hosts](../specs/037-hosts.md).
 
 An `[[acp_agents]]` entry adds an ACP agent the shipped registry snapshot
 does not name, or replaces one it does name, command and all, by reusing its

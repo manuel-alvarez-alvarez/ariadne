@@ -27,6 +27,7 @@ tests:
   - crates/ariadne-store/src/events.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
+  - crates/ariadne-daemon/tests/it/hosts.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
   - crates/ariadne-daemon/src/transcript.rs
 ---
@@ -368,6 +369,15 @@ See [026](026-pull-requests.md) for identity, routes, and event tests.
 
 The daemon publishes it on each switch write and each tunnel state change. It has no goal or task routing scope.
 See [027](027-webhooks-and-tunnel.md) for the tunnel rules and the event test.
+
+## Host events (037)
+
+| Event | Payload |
+| --- | --- |
+| `host_updated` | The complete `HostDto`: `name`, `kind`, `endpoint`, `status`, `error` and `remote`. |
+
+The daemon publishes it when a host's `status`, `endpoint` or `error` changes. It has no goal or task routing scope.
+`GET /v1/hosts` lists the hosts. See [037](037-hosts.md) for the route, the DTO and the event test.
 
 ## Issue events (028)
 
