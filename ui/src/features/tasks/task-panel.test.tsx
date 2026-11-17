@@ -34,7 +34,7 @@ it("shows workflow agents by column", async () => {
       { id: "agent-test", step: "test", skills: ["testing"], model: "codex-acp:o3" },
     ],
   })
-  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
     seed: (client) => {
       client.setQueryData(qk.tasks.detail("local", task.id), task)
       client.setQueryData(qk.goals.detail("local", goal.id), goal)
@@ -48,7 +48,7 @@ it("shows workflow agents by column", async () => {
 it("explains a pending task by the dependencies it waits for", async () => {
   const dependency = aTask({ id: "dep-1", title: "Lay the schema", status: "in_progress" })
   const task = aTask({ status: "pending", step: null, depends_on: [dependency.id] })
-  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
     seed: (client) => {
       client.setQueryData(qk.tasks.detail("local", task.id), task)
       client.setQueryData(qk.tasks.detail("local", dependency.id), dependency)
@@ -62,7 +62,7 @@ it("explains a pending task by the dependencies it waits for", async () => {
 
 it("says the cause is unknown for a pending task with nothing recorded", async () => {
   const task = aTask({ status: "pending", step: null, depends_on: [] })
-  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
     seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
   })
   const summary = await screen.findByRole("region", { name: "Execution summary" })
@@ -71,7 +71,7 @@ it("says the cause is unknown for a pending task with nothing recorded", async (
 
 it("does not claim a blocker while a dependency's status is unresolved", async () => {
   const task = aTask({ status: "pending", step: null, depends_on: ["dep-unloaded"] })
-  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
     seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
   })
   const summary = await screen.findByRole("region", { name: "Execution summary" })
@@ -87,7 +87,7 @@ it("lists unfinished dependencies of a failed task with its reason", async () =>
     reason: "dependency never landed",
     depends_on: [dependency.id],
   })
-  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
     seed: (client) => {
       client.setQueryData(qk.tasks.detail("local", task.id), task)
       client.setQueryData(qk.tasks.detail("local", dependency.id), dependency)
@@ -104,7 +104,7 @@ it("lists unfinished dependencies of a failed task with its reason", async () =>
 it("links a live session that waits for permission", async () => {
   const task = aTask({ status: "in_progress", step: null })
   const session = aSession({ task_id: task.id, attention_reason: "waiting_permission" })
-  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
     seed: (client) => {
       client.setQueryData(qk.tasks.detail("local", task.id), task)
       client.setQueryData(qk.sessions.list("local", { task: task.id }), [session])

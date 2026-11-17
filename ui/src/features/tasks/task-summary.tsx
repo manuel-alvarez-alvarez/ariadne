@@ -24,7 +24,7 @@ import {
   sessionAttention,
 } from "@/features/sessions/session-display"
 import { cn } from "@/lib/format"
-import { usePanelSessionTo, useTaskPanelTo } from "@/routes/paths"
+import { usePanelHost, usePanelSessionTo, useTaskPanelTo } from "@/routes/paths"
 import { taskQueryOptions } from "./queries"
 import { STALLED_META } from "./stalled"
 import { TASK_STATUS_META } from "./status"
@@ -42,7 +42,10 @@ export function TaskSummary({
   /** The task's sessions, once loaded. */
   sessions?: SessionDto[]
 }) {
-  const results = useQueries({ queries: task.depends_on.map((id) => taskQueryOptions(id)) })
+  const host = usePanelHost()
+  const results = useQueries({
+    queries: task.depends_on.map((id) => taskQueryOptions(host, id)),
+  })
   const dependencies: Dependency[] = task.depends_on.map((id, index) => ({
     id,
     task: results[index]?.data,

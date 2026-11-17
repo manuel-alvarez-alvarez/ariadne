@@ -54,10 +54,10 @@ function renderMessages({ stream = false }: { stream?: boolean } = {}): void {
   renderScreen(
     stream ? (
       <EventStreamProvider>
-        <TaskPanel taskId={TASK.id} onClose={() => {}} />
+        <TaskPanel host="local" taskId={TASK.id} onClose={() => {}} />
       </EventStreamProvider>
     ) : (
-      <TaskPanel taskId={TASK.id} onClose={() => {}} />
+      <TaskPanel host="local" taskId={TASK.id} onClose={() => {}} />
     ),
     {
       route: "/goals?tab=messages",

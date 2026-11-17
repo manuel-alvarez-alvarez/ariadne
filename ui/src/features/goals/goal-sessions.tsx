@@ -89,6 +89,7 @@ export function GoalSessionView({
     <>
       {session.data && !foreign ? (
         <SessionPanelHeader
+          host={host}
           session={session.data}
           breadcrumb={breadcrumb}
           // A resume hands back the session to attach to; the panel follows it.
@@ -123,6 +124,7 @@ export function GoalSessionView({
           </Alert>
         ) : (
           <SessionDetailView
+            host={host}
             session={session.data}
             context="goal"
             onResumed={(revived) => onSelect(revived.id)}

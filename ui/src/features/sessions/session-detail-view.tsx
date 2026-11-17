@@ -48,7 +48,7 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { type ReactNode, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
-import type { SessionDto } from "@/api"
+import type { Host, SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
 import { PanelHeader } from "@/components/panel-header"
@@ -88,11 +88,14 @@ import {
  * different breadcrumb — or none — around the same content.
  */
 export function SessionPanelHeader({
+  host,
   session,
   breadcrumb,
   onResumed,
   onSwitched,
 }: {
+  /** The host the session runs on. */
+  host: Host
   session: SessionDto
   /** The goal or task this session is shown inside; omitted for the standalone panel. */
   breadcrumb?: { label: string; onClick: () => void }
@@ -102,7 +105,7 @@ export function SessionPanelHeader({
   onSwitched?: (session: SessionDto) => void
 }) {
   const goal = useQuery({
-    ...goalQueryOptions("local", session.goal_id ?? ""),
+    ...goalQueryOptions(host, session.goal_id ?? ""),
     enabled: Boolean(session.goal_id),
   })
   const attention = shownAttention(session)
@@ -112,6 +115,7 @@ export function SessionPanelHeader({
       title={sessionHeading(session)}
       actions={
         <SessionActions
+          host={host}
           session={session}
           onResumed={onResumed}
           onSwitched={onSwitched}
@@ -131,7 +135,7 @@ export function SessionPanelHeader({
         <CopyableIdMenu
           value={session.id}
           label="session id"
-          entries={sessionCopyEntries(session.id)}
+          entries={sessionCopyEntries(session.id, host)}
         />
       }
       stamps={
@@ -159,11 +163,14 @@ const TABS = ["terminal", "activity"] as const
 type Tab = (typeof TABS)[number]
 
 export function SessionDetailView({
+  host,
   session,
   context,
   onResumed,
   onSwitched,
 }: {
+  /** The host the session runs on. */
+  host: Host
   session: SessionDto
   /** Where to go once the console's Resume hands the session back. */
   onResumed?: (session: SessionDto) => void
@@ -176,14 +183,14 @@ export function SessionDetailView({
   context?: "goal" | "task"
 }) {
   const goal = useQuery({
-    ...goalQueryOptions("local", session.goal_id ?? ""),
+    ...goalQueryOptions(host, session.goal_id ?? ""),
     enabled: Boolean(session.goal_id),
   })
   const task = useQuery({
-    ...taskQueryOptions(session.task_id ?? ""),
+    ...taskQueryOptions(host, session.task_id ?? ""),
     enabled: Boolean(session.task_id),
   })
-  const taskTo = useTaskPanelTo(session.task_id ?? "")
+  const taskTo = useTaskPanelTo(session.task_id ?? "", host)
   const switchedFromTo = usePanelSessionTo(session.switched_from ?? "")
   const [search, setSearch] = useSearchParams()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "terminal"
@@ -239,7 +246,10 @@ export function SessionDetailView({
           <FactList dense>
             {context === "goal" || !session.goal_id ? null : (
               <Fact label="Goal">
-                <Link to={paths.goal(session.goal_id)} className="block truncate hover:underline">
+                <Link
+                  to={paths.goal(session.goal_id, host)}
+                  className="block truncate hover:underline"
+                >
                   {goal.data?.title ?? <Mono>{session.goal_id}</Mono>}
                 </Link>
               </Fact>
@@ -334,6 +344,7 @@ export function SessionDetailView({
         </TabsList>
         <TabsContent value="terminal" className="min-h-0 flex flex-1 flex-col pt-3">
           <SessionConsole
+            host={host}
             sessionId={session.id}
             status={session.status}
             autoFocus={focusTerminal}
@@ -346,7 +357,7 @@ export function SessionDetailView({
           />
         </TabsContent>
         <TabsContent value="activity" className="pt-3">
-          <SessionActivity sessionId={session.id} />
+          <SessionActivity host={host} sessionId={session.id} />
         </TabsContent>
       </Tabs>
     </div>

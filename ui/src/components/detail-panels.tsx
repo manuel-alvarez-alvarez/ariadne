@@ -18,7 +18,6 @@
  */
 
 import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom"
-import { LOCAL_HOST } from "@/api"
 import { GoalPanel } from "@/features/goals/goal-panel"
 import { PullRequestPanel } from "@/features/pull-requests/pull-request-panel"
 import { SessionPanel } from "@/features/sessions/session-panel"
@@ -35,11 +34,8 @@ export function DetailPanels() {
   const goalId = search.get("goal")
   // The host the panel's entity lives on; a link without `?host=` is `local`'s.
   const host = hostOf(search)
-  // The task panel and the session panel read `local` only, so a link that
-  // names another host opens neither rather than showing local's entity.
-  const local = host === LOCAL_HOST
-  const taskId = local ? search.get("task") : null
-  const sessionId = local ? search.get("session") : null
+  const taskId = search.get("task")
+  const sessionId = search.get("session")
   const onGoalsBoard = location.pathname === paths.goals()
 
   function close(panel: Panel) {
@@ -57,7 +53,7 @@ export function DetailPanels() {
   // all still behind it.
   if (location.pathname === paths.sessions()) {
     return sessionId ? (
-      <SessionPanel sessionId={sessionId} onClose={() => close("session")} />
+      <SessionPanel host={host} sessionId={sessionId} onClose={() => close("session")} />
     ) : null
   }
 
@@ -65,7 +61,7 @@ export function DetailPanels() {
   // `?goal=` included, which a hand-written link can still hold even though
   // nothing in the app opens the two together.
   if (taskId) {
-    return <TaskPanel taskId={taskId} onClose={() => close("task")} />
+    return <TaskPanel host={host} taskId={taskId} onClose={() => close("task")} />
   }
 
   // The goal panel belongs to the board, so a `?goal=` link followed from
@@ -83,7 +79,7 @@ export function DetailPanels() {
   // its panel opens over whichever screen it was picked from, list and filters
   // still behind it.
   if (sessionId) {
-    return <SessionPanel sessionId={sessionId} onClose={() => close("session")} />
+    return <SessionPanel host={host} sessionId={sessionId} onClose={() => close("session")} />
   }
 
   return null

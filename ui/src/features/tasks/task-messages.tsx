@@ -9,10 +9,11 @@ import { Markdown } from "@/components/markdown"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
 
+import { usePanelHost } from "@/routes/paths"
 import { taskMessagesQueryOptions } from "./queries"
 
 export function TaskMessages({ task }: { task: TaskDto }) {
-  const messages = useQuery(taskMessagesQueryOptions(task.id))
+  const messages = useQuery(taskMessagesQueryOptions(usePanelHost(), task.id))
 
   if (messages.isPending) {
     return (

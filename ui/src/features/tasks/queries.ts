@@ -41,28 +41,28 @@ export function taskListQueryOptions(host: Host, filters: TaskListFilters = {}) 
   })
 }
 
-export function taskQueryOptions(taskId: string) {
+export function taskQueryOptions(host: Host, taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.detail("local", taskId),
-    queryFn: () => unwrap(api("local").GET("/v1/tasks/{id}", { params: { path: { id: taskId } } })),
+    queryKey: qk.tasks.detail(host, taskId),
+    queryFn: () => unwrap(api(host).GET("/v1/tasks/{id}", { params: { path: { id: taskId } } })),
   })
 }
 
-export function taskTransitionsQueryOptions(taskId: string) {
+export function taskTransitionsQueryOptions(host: Host, taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.transitions("local", taskId),
+    queryKey: qk.tasks.transitions(host, taskId),
     queryFn: () =>
-      unwrap(api("local").GET("/v1/tasks/{id}/transitions", { params: { path: { id: taskId } } })),
+      unwrap(api(host).GET("/v1/tasks/{id}/transitions", { params: { path: { id: taskId } } })),
   })
 }
 
 /** The task channel, in the order the daemon wrote it. */
-export function taskMessagesQueryOptions(taskId: string) {
+export function taskMessagesQueryOptions(host: Host, taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.messages("local", taskId),
+    queryKey: qk.tasks.messages(host, taskId),
     queryFn: () =>
       unwrap(
-        api("local").GET("/v1/tasks/{id}/messages", { params: { path: { id: taskId } } }),
+        api(host).GET("/v1/tasks/{id}/messages", { params: { path: { id: taskId } } }),
       ) as Promise<MessageDto[]>,
   })
 }
@@ -76,12 +76,12 @@ export function taskMessagesQueryOptions(taskId: string) {
  * and on the transition that lands the task — so it follows the app's default
  * staleness like every other read, with no refresh of its own.
  */
-export function taskDiffQueryOptions(taskId: string) {
+export function taskDiffQueryOptions(host: Host, taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.diff("local", taskId),
+    queryKey: qk.tasks.diff(host, taskId),
     queryFn: async () =>
       (await unwrap(
-        api("local").GET("/v1/tasks/{id}/diff", {
+        api(host).GET("/v1/tasks/{id}/diff", {
           params: { path: { id: taskId } },
           parseAs: "text",
         }),
@@ -97,17 +97,17 @@ export function taskDiffQueryOptions(taskId: string) {
  * success the new task is cached and the lists refetched — the `task_created`
  * event will say the same thing, but the stream may be down.
  */
-export function useCreateTask(goalId: string) {
+export function useCreateTask(host: Host, goalId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: CreateTaskRequest) =>
       unwrap(
-        api("local").POST("/v1/goals/{goal_id}/tasks", {
+        api(host).POST("/v1/goals/{goal_id}/tasks", {
           params: { path: { goal_id: goalId } },
           body,
         }),
       ),
-    onSuccess: (task) => cacheRow(queryClient, qk.tasks, "local", task),
+    onSuccess: (task) => cacheRow(queryClient, qk.tasks, host, task),
   })
 }
 
@@ -120,15 +120,15 @@ export function useCreateTask(goalId: string) {
  * but the stream may be down. Transitions are invalidated too: adding a
  * dependency to a `ready` task moves it back to `pending`.
  */
-export function useUpdateTask(taskId: string) {
+export function useUpdateTask(host: Host, taskId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: UpdateTaskRequest) =>
-      unwrap(api("local").PATCH("/v1/tasks/{id}", { params: { path: { id: taskId } }, body })),
+      unwrap(api(host).PATCH("/v1/tasks/{id}", { params: { path: { id: taskId } }, body })),
     onSuccess: (task) => {
-      cacheRow(queryClient, qk.tasks, "local", task)
+      cacheRow(queryClient, qk.tasks, host, task)
       // Adding a dependency to a `ready` task moves it back to `pending`.
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions("local", taskId) })
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(host, taskId) })
     },
   })
 }
@@ -138,10 +138,11 @@ export function useUpdateTask(taskId: string) {
  * moves to `cancelled` on the click and only comes back if the daemon refuses
  * (it does, with a `409`, when the task already left a cancellable state).
  */
-export function useCancelTask(taskId: string) {
+export function useCancelTask(host: Host, taskId: string) {
   return useTaskAction(
+    host,
     taskId,
-    () => unwrap(api("local").POST("/v1/tasks/{id}/cancel", { params: { path: { id: taskId } } })),
+    () => unwrap(api(host).POST("/v1/tasks/{id}/cancel", { params: { path: { id: taskId } } })),
     "cancelled",
   )
 }
@@ -150,23 +151,24 @@ export function useCancelTask(taskId: string) {
  * Retry is not optimistic. The daemon does not just flip a status: it schedules
  * a fresh agent session, and the task's next status is its answer, not ours.
  */
-export function useRetryTask(taskId: string) {
-  return useTaskAction(taskId, () =>
-    unwrap(api("local").POST("/v1/tasks/{id}/retry", { params: { path: { id: taskId } } })),
+export function useRetryTask(host: Host, taskId: string) {
+  return useTaskAction(host, taskId, () =>
+    unwrap(api(host).POST("/v1/tasks/{id}/retry", { params: { path: { id: taskId } } })),
   )
 }
 
 /** Both user actions answer with the updated task and move it between columns. */
 function useTaskAction(
+  host: Host,
   taskId: string,
   mutationFn: () => Promise<TaskDto>,
   /** The status the task lands in, when the client can know it in advance. */
   optimistic?: TaskStatus,
 ) {
-  return useRowAction(qk.tasks, "local", taskId, mutationFn, {
+  return useRowAction(qk.tasks, host, taskId, mutationFn, {
     optimistic,
     // A cancel or a retry is a transition, and the history tab shows it.
     alsoInvalidates: (queryClient) =>
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions("local", taskId) }),
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(host, taskId) }),
   })
 }

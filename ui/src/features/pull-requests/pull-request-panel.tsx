@@ -25,7 +25,7 @@ import { BotIcon, BotOffIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
-import type { PullRequestDto, Seat } from "@/api"
+import { LOCAL_HOST, type PullRequestDto, type Seat } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -547,6 +547,7 @@ function PullRequestSessionView({
     <>
       {session.data && ours ? (
         <SessionPanelHeader
+          host={LOCAL_HOST}
           session={session.data}
           breadcrumb={breadcrumb}
           onResumed={(revived) => onSelect(revived.id)}
@@ -576,7 +577,7 @@ function PullRequestSessionView({
             </AlertDescription>
           </Alert>
         ) : (
-          <SessionDetailView session={session.data} context="task" />
+          <SessionDetailView host={LOCAL_HOST} session={session.data} context="task" />
         )}
       </PaneBody>
     </>

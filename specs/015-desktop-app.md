@@ -1167,22 +1167,46 @@ Out: the daemon endpoints themselves (012).
     row of a named host shows the host. A `wait_for_user` question is
     answered in the row, and the answer posts to that host's
     `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`.
-60. Every other screen reads `local`, and passes `"local"` explicitly. The task
-    form only creates tasks for a goal on `local`, so a named host's goal
-    panel offers no New task, and its planning guide no Create task manually.
-    The task panel and the session console read `local` only, so a named
-    host's task card is not a link, its goal panel's Sessions tab names that
-    and lists nothing, and a `?session=` with a named `?host=` opens no console. A `?task=` or a
-    standalone `?session=` with a named `?host=` opens no panel, so an attention
-    row of a named host opens nothing either.
+60. The task panel (facts, steps, diff, messages, sessions, history) reads and
+    writes through `api(host)` for the `?host=` of its route. Retry, cancel and
+    update post to that host. The task dialog writes to the host of its goal,
+    and its model pin pickers read that host. A task card of a named host
+    links to its panel on that host.
+61. The sessions screen merges the sessions of the selected hosts with
+    `useHostLists`. Under All with more than one host each row shows a host
+    badge. The status, seat, goal and task chips apply to every selected host.
+62. The session panel and the console open their streams on the session's
+    host. `console-view-state.ts` keys its state by host, address and
+    session. Console input, cancel and answers post to the session's host. A
+    switch of a session's model lists the models of that host. A goal panel's
+    Sessions tab opens sessions of a named host the same way.
+63. Every attention target opens its item on its host.
+64. The command palette searches the cached goal, task and session lists of
+    the selected hosts, and the skill list of `local`. Each row carries its
+    host and opens on it. The `ariadne attach <id>` action copies
+    `--host NAME` when the host is not `local`.
+65. Every other screen reads `local`, and passes `"local"` explicitly.
 
 ## Acceptance criteria
 
-- A task card of a named host is not a link, and a named host's goal panel
-  opens no session console
-  (`ui/src/features/tasks/task-card.test.tsx::links a local card to its panel and leaves a remote card unlinked`,
-  `ui/src/features/goals/hosts.test.tsx::opens no session console of a remote goal, which would read local`,
-  `ui/src/features/goals/hosts.test.tsx::opens no task or session panel of a named host, which would read local`).
+- A task card of a named host links to its panel on that host
+  (`ui/src/features/tasks/task-card.test.tsx::links a local card to its panel and a remote card to its panel on its host`).
+- The task panel reads a named host, and its stream refreshes the messages
+  and retry posts there
+  (`ui/src/features/tasks/hosts.test.tsx::reads the task of a named host and refreshes its messages on that host's stream`,
+  `::retries a failed task on the host the panel is open on`).
+- The sessions screen merges hosts, and a remote session's console streams,
+  takes input and cancels on its host
+  (`ui/src/features/sessions/hosts.test.tsx::merges the sessions of every host, each row naming its host, and opens one on its host`,
+  `::applies the picked host to the list and names no host`,
+  `::opens the console stream of a remote session on its host and sends input there`,
+  `::cancels a turn of a remote session on its host and shows the host's stream result`).
+- The palette searches the selected hosts, opens a row on its host and
+  copies `--host`
+  (`ui/src/features/command-palette/hosts.test.tsx::lists the tasks of every selected host, and opens a row on its own host`,
+  `::searches only the picked host`,
+  `::copies the attach command with the host of the open session`,
+  `::copies the attach command of a local task with no host flag`).
 - The planning guide words the recorded orchestrator session, a recorded wait
   before its status, and opens it
   (`ui/src/features/goals/planning-guide.test.tsx::words a recorded %j session as %s`);
@@ -2102,8 +2126,7 @@ Out: the daemon endpoints themselves (012).
   `::opens a goal's panel on the host its link names`,
   `::defaults the goal dialog to the picked host, and reloads its lists when the host changes`,
   `::opens the goal dialog on local under All`,
-  `::shows a question a remote host's stream delivers, and answers it on that host`,
-  `::offers no task form for a planning goal on a named host`).
+  `::shows a question a remote host's stream delivers, and answers it on that host`).
 
 ## Known gap
 
@@ -2116,7 +2139,8 @@ or `*.test.ts` of their own: what they draw is exercised only incidentally,
 through `detail-panels.test.tsx`, `pane-focus.test.tsx` and
 `goal-swimlanes.test.tsx` mounting the screens that hold them. Rule 19's
 account of the sessions screen in particular rests on reading
-`sessions-page.tsx` rather than on a test asserting it.
+`sessions-page.tsx` rather than on a test asserting it, apart from the host
+behaviour of rule 61.
 
 ## Sources
 

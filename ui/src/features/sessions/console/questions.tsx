@@ -114,6 +114,7 @@ export function openQuestion(
 type Submitting = { state: "idle" } | { state: "posting"; what: string } | { state: "accepted" }
 
 export function QuestionCard({
+  host,
   sessionId,
   block,
   live,
@@ -122,6 +123,7 @@ export function QuestionCard({
   folded,
   onToggle,
 }: {
+  host: Host
   sessionId: string
   block: QuestionBlock
   /** The session takes input: a card of a finished session is history. */
@@ -147,7 +149,7 @@ export function QuestionCard({
     setSubmitting({ state: "posting", what })
     setError(null)
     try {
-      await answerRequest("local", sessionId, block.requestId, body)
+      await answerRequest(host, sessionId, block.requestId, body)
       setSubmitting({ state: "accepted" })
       onAnswered?.(block.requestId)
     } catch (failure) {

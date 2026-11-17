@@ -16,6 +16,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useLocation, useSearchParams } from "react-router-dom"
 
+import type { Host } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { PanelSheet } from "@/components/panel-sheet"
 import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
@@ -26,27 +27,40 @@ import { sessionPanelFrom } from "@/routes/paths"
 import { sessionQueryOptions } from "./queries"
 import { SessionDetailView, SessionPanelHeader } from "./session-detail-view"
 
-export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+export function SessionPanel({
+  host,
+  sessionId,
+  onClose,
+}: {
+  host: Host
+  sessionId: string
+  onClose: () => void
+}) {
   const [search, setSearch] = useSearchParams()
   // The panel floats over whichever screen opened it, and the sessions screen
   // owns two of the params a session panel would otherwise clear.
   const { pathname } = useLocation()
-  const session = useQuery(sessionQueryOptions("local", sessionId))
+  const session = useQuery(sessionQueryOptions(host, sessionId))
 
   return (
     <PanelSheet onClose={onClose}>
       {session.data ? (
         <SessionPanelHeader
+          host={host}
           session={session.data}
           // A resume hands back the session to attach to; the panel follows
           // it. It replaces rather than pushes: the revived session is still
           // this one panel, and Back should close it, not walk the sessions
           // it has been pointed at.
           onResumed={(revived) =>
-            setSearch(sessionPanelFrom(pathname, search, revived.id).search, { replace: true })
+            setSearch(sessionPanelFrom(pathname, search, revived.id, host).search, {
+              replace: true,
+            })
           }
           onSwitched={(successor) =>
-            setSearch(sessionPanelFrom(pathname, search, successor.id).search, { replace: true })
+            setSearch(sessionPanelFrom(pathname, search, successor.id, host).search, {
+              replace: true,
+            })
           }
         />
       ) : (
@@ -72,12 +86,17 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
           />
         ) : (
           <SessionDetailView
+            host={host}
             session={session.data}
             onResumed={(revived) =>
-              setSearch(sessionPanelFrom(pathname, search, revived.id).search, { replace: true })
+              setSearch(sessionPanelFrom(pathname, search, revived.id, host).search, {
+                replace: true,
+              })
             }
             onSwitched={(successor) =>
-              setSearch(sessionPanelFrom(pathname, search, successor.id).search, { replace: true })
+              setSearch(sessionPanelFrom(pathname, search, successor.id, host).search, {
+                replace: true,
+              })
             }
           />
         )}

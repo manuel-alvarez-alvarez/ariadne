@@ -51,8 +51,9 @@ Hosts section lists each host's name, kind, status, endpoint and error, as
 `http://` or `https://` and the host is `ready`; the app opens one event
 stream per reachable host. The host picker in the header picks All, `local`
 or one named host, and is kept under `ariadne.settings`. The goals board, the
-goal panel, the goal dialog and the Needs attention list read the picked
-hosts; the other screens read `local`. A goal lives on one host: the goal
+goal panel, the goal dialog, the task panel, the sessions screen, the session
+panel and its console, the Needs attention list and the command palette read
+and write on the host each item belongs to; the other screens read `local`. A goal lives on one host: the goal
 dialog's host select says which, and its tasks and agents run there.
 
 The sidebar's last child carries the connection state, and it has exactly one

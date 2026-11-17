@@ -55,7 +55,7 @@ it("opens the switch dialog, posts its pin, and follows a successor", async () =
   stubDaemon(() => jsonResponse(SUCCESSOR))
   const onSwitched = vi.fn()
   const user = userEvent.setup()
-  renderScreen(<SessionActions session={SESSION} onSwitched={onSwitched} />)
+  renderScreen(<SessionActions host="local" session={SESSION} onSwitched={onSwitched} />)
 
   await switchToSuccessor(user)
 
@@ -70,7 +70,7 @@ it("shows the daemon refusal in the switch dialog", async () => {
   const user = userEvent.setup()
   renderScreen(
     <>
-      <SessionActions session={SESSION} />
+      <SessionActions host="local" session={SESSION} />
       <Toaster />
     </>,
   )
@@ -88,7 +88,7 @@ it("keeps the selected session when the daemon returns its id", async () => {
   stubDaemon(() => jsonResponse({ ...SESSION, model: SUCCESSOR.model, effort: "high" }))
   const onSwitched = vi.fn()
   const user = userEvent.setup()
-  renderScreen(<SessionActions session={SESSION} onSwitched={onSwitched} />)
+  renderScreen(<SessionActions host="local" session={SESSION} onSwitched={onSwitched} />)
 
   await switchToSuccessor(user)
 
