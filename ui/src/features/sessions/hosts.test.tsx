@@ -175,3 +175,39 @@ it("cancels a turn of a remote session on its host and shows the host's stream r
   )
   expect(await screen.findByText("stopped on box")).toBeTruthy()
 })
+
+it("titles each row from its own host when two hosts share a goal and task id", async () => {
+  const sameGoal = aGoal({ id: "01JSAMEGOAL000000000000000", title: "Goal of local" })
+  const sameTask = aTask({
+    id: "01JSAMETASK000000000000000",
+    goal_id: sameGoal.id,
+    title: "Task of local",
+  })
+  const here = aSession({
+    id: "01JSAME00000000000000000L1",
+    goal_id: sameGoal.id,
+    task_id: sameTask.id,
+  })
+  const there = aSession({
+    id: "01JSAME00000000000000000B1",
+    goal_id: sameGoal.id,
+    task_id: sameTask.id,
+  })
+  stubHosts({
+    local: {
+      "/v1/sessions": aSessionPage([here]),
+      "/v1/goals": [sameGoal],
+      "/v1/tasks": [sameTask],
+    },
+    box: {
+      "/v1/sessions": aSessionPage([there]),
+      "/v1/goals": [{ ...sameGoal, title: "Goal of box" }],
+      "/v1/tasks": [{ ...sameTask, title: "Task of box" }],
+    },
+  })
+  renderScreen(<SessionsPage />, { route: "/sessions" })
+
+  expect(await screen.findByRole("row", { name: "Task of box" })).toBeTruthy()
+  expect(screen.getByRole("row", { name: "Task of local" })).toBeTruthy()
+  expect(screen.getByText("Goal of box")).toBeTruthy()
+})

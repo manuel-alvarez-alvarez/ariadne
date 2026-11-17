@@ -198,8 +198,3 @@ export function useSwitchSession(host: Host) {
     onSuccess: (session) => cacheRow(queryClient, qk.sessions, host, session),
   })
 }
-
-/** Index a list response by id, for turning the ids on a session into names. */
-export function byId<T extends { id: string }>(items: T[] | undefined): Map<string, T> {
-  return new Map((items ?? []).map((item) => [item.id, item]))
-}

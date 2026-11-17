@@ -1169,7 +1169,9 @@ Out: the daemon endpoints themselves (012).
     `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`.
 60. The task panel (facts, steps, diff, messages, sessions, history) reads and
     writes through `api(host)` for the `?host=` of its route. Retry, cancel and
-    update post to that host. The task dialog writes to the host of its goal,
+    update post to that host. The Messages tab has a composer that sends the
+    user's message to the orchestrator or one agent with
+    `POST /v1/tasks/{id}/messages` on that host. The task dialog writes to the host of its goal,
     and its model pin pickers read that host. A task card of a named host
     links to its panel on that host.
 61. The sessions screen merges the sessions of the selected hosts with
@@ -1199,6 +1201,7 @@ Out: the daemon endpoints themselves (012).
   takes input and cancels on its host
   (`ui/src/features/sessions/hosts.test.tsx::merges the sessions of every host, each row naming its host, and opens one on its host`,
   `::applies the picked host to the list and names no host`,
+  `::titles each row from its own host when two hosts share a goal and task id`,
   `::opens the console stream of a remote session on its host and sends input there`,
   `::cancels a turn of a remote session on its host and shows the host's stream result`).
 - The palette searches the selected hosts, opens a row on its host and

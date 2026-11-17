@@ -1,18 +1,83 @@
 /** The messages agents exchanged while they worked on one task. */
 
 import { useQuery } from "@tanstack/react-query"
+import { type FormEvent, useState } from "react"
 
 import type { MessageDto, TaskDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Textarea } from "@/components/ui/textarea"
 import { When } from "@/components/when"
+import { describeError } from "@/lib/format"
 
 import { usePanelHost } from "@/routes/paths"
-import { taskMessagesQueryOptions } from "./queries"
+import { taskMessagesQueryOptions, useSendTaskMessage } from "./queries"
 
 export function TaskMessages({ task }: { task: TaskDto }) {
+  return (
+    <div className="space-y-4">
+      <MessageList task={task} />
+      <MessageComposer task={task} />
+    </div>
+  )
+}
+
+/** The user writing to one of the task's agents, or to the orchestrator. */
+function MessageComposer({ task }: { task: TaskDto }) {
+  const send = useSendTaskMessage(usePanelHost(), task.id)
+  const [text, setText] = useState("")
+  const [to, setTo] = useState("orchestrator")
+
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    const body = text.trim()
+    if (!body) return
+    const agent = to === "orchestrator" ? undefined : to
+    send.mutate(
+      { body, to_actor: agent ? "agent" : "orchestrator", to_agent_id: agent },
+      { onSuccess: () => setText("") },
+    )
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-2">
+      <Textarea
+        aria-label="Message"
+        placeholder="Write to an agent or the orchestrator"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+      <div className="flex items-center gap-2">
+        <select
+          aria-label="To"
+          value={to}
+          onChange={(event) => setTo(event.target.value)}
+          className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm"
+        >
+          <option value="orchestrator">orchestrator</option>
+          {task.agents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {partyLabel(task, "agent", agent.id)}
+            </option>
+          ))}
+        </select>
+        <Button type="submit" size="sm" pending={send.isPending} disabled={!text.trim()}>
+          Send
+        </Button>
+        {send.error ? (
+          <span role="alert" className="text-sm text-destructive">
+            {describeError(send.error)}
+          </span>
+        ) : null}
+      </div>
+    </form>
+  )
+}
+
+function MessageList({ task }: { task: TaskDto }) {
   const messages = useQuery(taskMessagesQueryOptions(usePanelHost(), task.id))
 
   if (messages.isPending) {

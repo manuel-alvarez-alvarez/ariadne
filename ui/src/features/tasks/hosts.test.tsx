@@ -9,7 +9,7 @@ import { act, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
-import { api, type MessageDto, unwrap } from "@/api"
+import type { MessageDto } from "@/api"
 import { DetailPanels } from "@/components/detail-panels"
 import { EventStreamProvider } from "@/events/provider"
 import { useSettingsStore } from "@/stores/settings"
@@ -53,6 +53,7 @@ function onBox(seen: SeenRequest[], method: string, path: string) {
 }
 
 it("reads the task of a named host and refreshes its messages on that host's stream", async () => {
+  const user = userEvent.setup()
   const box = { messages: [aMessage("first")] }
   const seen = stubHosts({
     box: {
@@ -75,14 +76,13 @@ it("reads the task of a named host and refreshes its messages on that host's str
   )
   expect(await screen.findByText("first")).toBeTruthy()
 
-  // The message goes to the box daemon's route, never to local's.
-  await unwrap(
-    api("box").POST("/v1/tasks/{id}/messages", {
-      params: { path: { id: TASK.id } },
-      body: { body: "posted to box", to_agent_id: TASK.agents[0]?.id },
-    } as never),
+  // The panel's own composer posts to the box daemon's route, never to local's.
+  await user.type(screen.getByRole("textbox", { name: "Message" }), "posted to box")
+  await user.click(screen.getByRole("button", { name: "Send" }))
+  await waitFor(() => expect(onBox(seen, "POST", `/v1/tasks/${TASK.id}/messages`)).toHaveLength(1))
+  expect(JSON.parse(onBox(seen, "POST", `/v1/tasks/${TASK.id}/messages`)[0]?.body ?? "{}")).toEqual(
+    { body: "posted to box", to_actor: "orchestrator" },
   )
-  expect(onBox(seen, "POST", `/v1/tasks/${TASK.id}/messages`)).toHaveLength(1)
   expect(seen.filter((request) => request.method === "POST" && request.origin !== BOX)).toEqual([])
 
   const stream = FakeEventSource.instances.find((one) => one.url.startsWith(BOX))

@@ -62,7 +62,7 @@ import {
   statusLabel,
   TASK_PARAM,
 } from "./filters"
-import { byId, type SessionListFilters, sessionsQueryOptions } from "./queries"
+import { type SessionListFilters, sessionsQueryOptions } from "./queries"
 import {
   SESSION_STATUS_META,
   SessionAttentionBadge,
@@ -92,13 +92,26 @@ function movedAt(session: SessionDto): string {
 }
 
 /** What a row is about: the task it ran, the goal it planned, or the request it reviewed. */
+/** Ids are one daemon's own, so a lookup is by host and id. */
+function hostKey(host: string, id: string): string {
+  return `${host}:${id}`
+}
+
+function byHostId<T extends { id: string }>(rows: HostRow<T>[]): Map<string, T> {
+  return new Map(rows.map((row) => [hostKey(row.host, row.id), row]))
+}
+
 function ariadneTitle(
-  session: SessionDto,
+  session: HostRow<SessionDto>,
   goalsById: Map<string, GoalDto>,
   tasksById: Map<string, TaskDto>,
 ): string {
-  if (session.task_id) return tasksById.get(session.task_id)?.title ?? shortId(session.task_id)
-  if (session.goal_id) return goalsById.get(session.goal_id)?.title ?? shortId(session.goal_id)
+  if (session.task_id) {
+    return tasksById.get(hostKey(session.host, session.task_id))?.title ?? shortId(session.task_id)
+  }
+  if (session.goal_id) {
+    return goalsById.get(hostKey(session.host, session.goal_id))?.title ?? shortId(session.goal_id)
+  }
   return session.pull_request_id
     ? `Pull request ${shortId(session.pull_request_id)}`
     : shortId(session.id)
@@ -147,8 +160,8 @@ export function SessionsPage() {
   const pickedAll = useSettingsStore((state) => state.hostFilter) === ""
   const { hosts: known } = useHosts()
   const showHost = pickedAll && known.length > 1
-  const goalsById = byId(goals.rows)
-  const tasksById = byId(tasks.rows)
+  const goalsById = byHostId(goals.rows)
+  const tasksById = byHostId(tasks.rows)
 
   const rows = useMemo(
     () =>
@@ -312,12 +325,20 @@ function SessionsTable({
               session={session}
               showHost={showHost}
               title={ariadneTitle(session, goalsById, tasksById)}
-              goalTitle={session.goal_id ? goalsById.get(session.goal_id)?.title : undefined}
-              taskTitle={session.task_id ? tasksById.get(session.task_id)?.title : undefined}
+              goalTitle={
+                session.goal_id
+                  ? goalsById.get(hostKey(session.host, session.goal_id))?.title
+                  : undefined
+              }
+              taskTitle={
+                session.task_id
+                  ? tasksById.get(hostKey(session.host, session.task_id))?.title
+                  : undefined
+              }
               column={sessionColumn(
                 session,
-                tasksById.get(session.task_id ?? ""),
-                goalsById.get(session.goal_id ?? ""),
+                tasksById.get(hostKey(session.host, session.task_id ?? "")),
+                goalsById.get(hostKey(session.host, session.goal_id ?? "")),
               )}
               onSelect={() => onSelect(session)}
               onScope={onScope}

@@ -16,6 +16,7 @@ import {
   type Host,
   type MessageDto,
   qk,
+  type SendMessageRequest,
   type TaskDto,
   type TaskStatus,
   type UpdateTaskRequest,
@@ -86,6 +87,20 @@ export function taskDiffQueryOptions(host: Host, taskId: string) {
           parseAs: "text",
         }),
       )) ?? "",
+  })
+}
+
+/**
+ * `POST /v1/tasks/{id}/messages` — the user speaking in a task's channel, to
+ * one of its agents or to the orchestrator. The messages are refetched on
+ * success; the `message_sent` event will say the same thing.
+ */
+export function useSendTaskMessage(host: Host, taskId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: SendMessageRequest) =>
+      unwrap(api(host).POST("/v1/tasks/{id}/messages", { params: { path: { id: taskId } }, body })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.tasks.messages(host, taskId) }),
   })
 }
 
