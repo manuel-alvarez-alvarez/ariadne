@@ -273,3 +273,14 @@ it("anchors task usage and activity at the bottom of the card", () => {
   expect(link.classList.contains("h-full")).toBe(true)
   expect(link.querySelector(".mt-auto")?.textContent).toContain("0")
 })
+
+it("links a local card to its panel and leaves a remote card unlinked", () => {
+  renderScreen(
+    <>
+      <TaskCard host="local" task={aTask({ id: "t-local", title: "Local card" })} steps={STEPS} />
+      <TaskCard host="box" task={aTask({ id: "t-box", title: "Remote card" })} steps={STEPS} />
+    </>,
+  )
+  expect(screen.getByRole("link", { name: /Local card/ })).toBeTruthy()
+  expect(screen.queryByRole("link", { name: /Remote card/ })).toBeNull()
+})

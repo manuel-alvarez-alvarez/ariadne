@@ -84,7 +84,7 @@ export function GoalPanel({
   // session's now, and the way back is the link it carries. It is checked
   // before the goal query so a link into a session opens on it instead of
   // waiting for the goal it hangs off.
-  if (sessionId) {
+  if (sessionId && host === LOCAL_HOST) {
     return (
       <PanelSheet onClose={onClose} panelRef={panel}>
         <GoalSessionView
@@ -262,7 +262,14 @@ function GoalView({
             />
           </TabsContent>
           <TabsContent value="sessions" className="pt-3">
-            <GoalSessions host={host} goalId={goal.id} onSelect={onSelectSession} />
+            {host === LOCAL_HOST ? (
+              <GoalSessions host={host} goalId={goal.id} onSelect={onSelectSession} />
+            ) : (
+              // The session console and its actions read `local` only.
+              <p className="text-sm text-muted-foreground">
+                Sessions of a goal on host {host} open from that host's own daemon.
+              </p>
+            )}
           </TabsContent>
         </Tabs>
       </PaneBody>

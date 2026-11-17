@@ -228,3 +228,17 @@ it("offers no task form for a planning goal on a named host", async () => {
   expect(screen.queryByRole("button", { name: "Create task manually" })).toBeNull()
   expect(screen.queryByRole("button", { name: "New task" })).toBeNull()
 })
+
+it("opens no session console of a remote goal, which would read local", async () => {
+  stubHosts({ box: { ...EMPTY, [`/v1/goals/${THEIRS.id}`]: THEIRS } })
+  stubEventSource()
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?goal=${THEIRS.id}&host=box&session=remote-session` },
+  )
+
+  expect(await screen.findByRole("heading", { name: THEIRS.title })).toBeTruthy()
+  expect(screen.queryByText(/Session remote-s/)).toBeNull()
+})

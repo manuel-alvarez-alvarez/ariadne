@@ -32,10 +32,10 @@
  */
 
 import { GitPullRequestIcon } from "lucide-react"
-import { useId } from "react"
+import { type ReactNode, useId } from "react"
 import { Link } from "react-router-dom"
 
-import type { Host, TaskDto, WorkflowStepDto } from "@/api"
+import { type Host, LOCAL_HOST, type TaskDto, type WorkflowStepDto } from "@/api"
 import { PrLink, pullRequestNumber, pullRequestText } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
@@ -106,6 +106,24 @@ interface CardState {
   tone: string
 }
 
+function CardBody({
+  to,
+  children,
+  ...props
+}: {
+  to: ReturnType<typeof useTaskPanelTo> | null
+  children: ReactNode
+  "aria-describedby"?: string
+  className: string
+}) {
+  if (!to) return <div {...props}>{children}</div>
+  return (
+    <Link to={to} replace={to.replace} {...props}>
+      {children}
+    </Link>
+  )
+}
+
 export function TaskCard({
   host,
   task,
@@ -158,9 +176,9 @@ export function TaskCard({
         cardBorder(task, attention),
       )}
     >
-      <Link
-        to={to}
-        replace={to.replace}
+      <CardBody
+        // The task panel reads `local` only, so a remote card opens nothing.
+        to={host === LOCAL_HOST ? to : null}
         aria-describedby={hints.length > 0 ? hintsId : undefined}
         className="flex h-full flex-col rounded-lg px-2.5 pt-2.5 pb-1.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >
@@ -215,7 +233,7 @@ export function TaskCard({
             <ActivityTime at={activity} hintTabIndex={NOT_A_STOP} />
           </span>
         </div>
-      </Link>
+      </CardBody>
 
       {/* Everything the link says only to a pointer, in one line for whoever
           is reading the link itself. Outside the anchor, so it describes the
