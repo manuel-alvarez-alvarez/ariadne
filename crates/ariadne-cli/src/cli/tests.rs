@@ -1335,11 +1335,24 @@ fn host_names_are_distinct_from_endpoints() {
         "~/.ariadne",
         "http://box",
         "https://box",
+        "ssh://me@box",
+        "box:7676",
+        "127.0.0.1",
     ] {
         let error = try_parse(&["ariadne", "--host", value, "version"])
             .err()
             .unwrap();
-        assert!(error.to_string().contains("--endpoint"));
+        assert!(error.to_string().contains("--endpoint"), "{value}: {error}");
+    }
+}
+
+#[test]
+fn host_help_names_local_a_host_name_and_all_for_reads() {
+    let help = command().render_long_help().to_string();
+    let (_, host) = help.split_once("--host").unwrap();
+    let host = host.split("\n\n").next().unwrap();
+    for named in ["local", "NAME", "host name", "all", "`all` is for reads"] {
+        assert!(host.contains(named), "{named}: {host}");
     }
 }
 
