@@ -116,6 +116,10 @@ ariadne query 'ariadne_tokens_total{kind="output",model="claude:opus"}' --since 
 ariadne query 'ariadne_tasks_active'
 ```
 
+Add `--host NAME` to read another host's metrics, or `--host all` to read
+every ready host at once, with a `host` column in the table. See
+[Telemetry](telemetry.md#on-another-host-or-on-all-of-them).
+
 A Prometheus data source pointed at the daemon, such as the dashboard's,
 reads the same names.
 

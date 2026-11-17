@@ -21,15 +21,19 @@ pub(crate) async fn run(
     at: Option<String>,
     since: Option<String>,
     step: Option<String>,
+    host: Option<&str>,
     format: Format,
 ) -> Result<()> {
-    let path = path(
-        &expr,
-        at.as_deref(),
-        since.as_deref(),
-        step.as_deref(),
-        Utc::now(),
-    )?;
+    let path = on_host(
+        host,
+        &path(
+            &expr,
+            at.as_deref(),
+            since.as_deref(),
+            step.as_deref(),
+            Utc::now(),
+        )?,
+    );
     let answer: Value = match client.get_json(&path).await {
         Ok(answer) => answer,
         Err(ClientError::Api { message, .. }) if prometheus_error(&message).is_some() => {
@@ -48,7 +52,23 @@ pub(crate) async fn run(
     for message in notes {
         output::note(&message);
     }
+    // `--host all` names the hosts that did not answer (037).
+    for warning in answer["warnings"].as_array().into_iter().flatten() {
+        output::note(&format!(
+            "warning: {}",
+            warning.as_str().unwrap_or_default()
+        ));
+    }
     Ok(())
+}
+
+/// The route as the local daemon serves it for `host`: under
+/// `/v1/hosts/{host}` (037), or as it is without `--host`.
+fn on_host(host: Option<&str>, path: &str) -> String {
+    match host {
+        Some(host) => format!("/v1/hosts/{}{path}", crate::commands::path_segment(host)),
+        None => path.to_string(),
+    }
 }
 
 /// The route and parameters the flags ask for, relative to `now`.
@@ -259,6 +279,18 @@ mod tests {
         assert!(params.contains(&("step".into(), "15".into())));
         let stepped = super::path("up", None, Some("1h"), Some("30s"), now()).unwrap();
         assert!(super::tests::params(&stepped).contains(&("step".into(), "30".into())));
+    }
+
+    #[test]
+    fn a_host_moves_the_route_under_the_hosts_prefix() {
+        assert_eq!(
+            on_host(Some("all"), "/api/v1/query?query=up"),
+            "/v1/hosts/all/api/v1/query?query=up"
+        );
+        assert_eq!(
+            on_host(None, "/api/v1/query?query=up"),
+            "/api/v1/query?query=up"
+        );
     }
 
     #[test]
