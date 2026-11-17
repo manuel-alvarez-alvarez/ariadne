@@ -27,6 +27,10 @@ pub struct Timeouts {
     /// The wait between two probes of a forward that has not answered yet
     /// (037).
     pub ssh_probe_interval: Duration,
+    /// The first wait before a failed push to a host is tried again (037).
+    /// Each failure doubles it, up to 60 seconds; a push that succeeds
+    /// resets it.
+    pub host_sync_retry: Duration,
     /// How long one detail fetch of a pull request may take: its comments,
     /// checks and base, read off the forge after a repository fetch (026).
     pub forge_details: Duration,
@@ -163,6 +167,7 @@ impl Default for Timeouts {
             ssh_retry: Duration::from_secs(1),
             ssh_probe: Duration::from_secs(5),
             ssh_probe_interval: Duration::from_millis(200),
+            host_sync_retry: Duration::from_secs(1),
             forge_details: Duration::from_secs(30),
             forge_rate_limit_pause: Duration::from_secs(900),
             forge_poll_backoff_cap: Duration::from_secs(3600),

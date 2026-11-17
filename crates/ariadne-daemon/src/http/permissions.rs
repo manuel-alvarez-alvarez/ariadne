@@ -10,10 +10,10 @@ use axum::http::StatusCode;
 
 use ariadne_api::permissions::{
     AiPermissionsStatusDto, Device, LearnedPermissionDto, LearnedPermissionQuery,
-    LearnedPermissionsResponse, TestAiPermissionRequest, TestAiPermissionResponse,
-    UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
+    LearnedPermissionsResponse, RecordLearnedPermissionRequest, TestAiPermissionRequest,
+    TestAiPermissionResponse, UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
-use ariadne_store::{AiPermissionSettingsUpdate, StoreError};
+use ariadne_store::{AiPermissionSettingsUpdate, NewLearnedPermission, StoreError};
 
 use crate::ai_permissions::flavours;
 
@@ -61,6 +61,37 @@ pub(super) async fn delete_learned(
         .await
         .map_err(learned_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Write one learned row whole: what another daemon pushes when it syncs
+/// this one (037). A row with the same repository, tool name, level and key
+/// keeps its id and `created_at`.
+#[utoipa::path(post, path = "/v1/permissions/learned", tag = "permissions",
+    request_body = RecordLearnedPermissionRequest,
+    responses((status = 200, body = LearnedPermissionDto), (status = 404), (status = 422)))]
+pub(super) async fn record_learned(
+    State(state): State<AppState>,
+    Json(req): Json<RecordLearnedPermissionRequest>,
+) -> ApiResult<Json<LearnedPermissionDto>> {
+    state.store.get_repository(&req.repository_id).await?;
+    let row = state
+        .store
+        .record_learned_permission(NewLearnedPermission {
+            repository_id: req.repository_id,
+            tool_name: req.tool_name,
+            key: req.key,
+            level: req.level.as_str().to_string(),
+            family: req.family,
+            risk_tags: req.risk_tags,
+            scope: req.scope.as_str().to_string(),
+            tool_call: req.tool_call,
+            options: req.options,
+            selected_option: req.selected_option,
+            target: req.target.as_str().to_string(),
+            output: req.output,
+        })
+        .await?;
+    Ok(Json(learned_permission_dto(row)))
 }
 
 /// Widen or narrow a learned row: the only write a person makes on one.

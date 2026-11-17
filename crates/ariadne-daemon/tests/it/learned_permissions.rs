@@ -30,8 +30,9 @@ fn choice(repository_id: &str, selected: &str) -> NewLearnedPermission {
     }
 }
 
-/// The routes read, delete and widen or narrow recorded choices; nothing
-/// creates one but a decision, so `POST` is gone. `PUT` only ever changes
+/// The routes read, delete and widen or narrow recorded choices. A person
+/// creates none: `POST` takes a whole row, as a daemon that syncs to this one
+/// pushes a decision made there (037). `PUT` only ever changes
 /// `scope`, and refuses an unknown id or a scope that is neither
 /// `repository` nor `all`. Each change publishes its event.
 #[tokio::test]
@@ -51,7 +52,7 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
     let mut rx = h.bus.subscribe();
     let openapi: serde_json::Value = h.get("/api-docs/openapi.json").await;
     assert!(openapi["paths"]["/v1/permissions/learned"]["get"].is_object());
-    assert!(openapi["paths"]["/v1/permissions/learned"]["post"].is_null());
+    assert!(openapi["paths"]["/v1/permissions/learned"]["post"].is_object());
     assert!(openapi["paths"]["/v1/permissions/learned/{id}"]["put"].is_object());
     assert!(openapi["paths"]["/v1/permissions/learned/{id}"]["delete"].is_object());
     assert!(openapi["components"]["schemas"]["CreateLearnedPermissionRequest"].is_null());
@@ -156,7 +157,8 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
             json!({"repository_id": repo.id, "tool_name": "Bash", "kind": "execute"}),
         ))
         .await;
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    // The form a person once filled is no row: refused, field by field.
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     let missing_id = h
         .error(
@@ -219,4 +221,70 @@ async fn learned_permission_routes_read_and_delete_and_publish_fat_events() {
         )
         .await;
     assert_eq!(missing.error.code, "learned_permission_not_found");
+}
+
+/// `POST` writes a whole row as a syncing daemon pushes it (037): a row with
+/// the same repository, tool name, level and key keeps its id, and an
+/// unknown repository is a 404.
+#[tokio::test]
+async fn a_pushed_row_is_recorded_whole_and_keeps_the_id_of_its_key() {
+    let h = harness().await;
+    let repo = h
+        .store
+        .create_repository(NewRepository {
+            default_workflow: None,
+            path: "/tmp/learned-push".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: None,
+        })
+        .await
+        .unwrap();
+    let row = |selected: &str, repository_id: &str| {
+        json!({
+            "repository_id": repository_id,
+            "tool_name": "Bash",
+            "key": r#"{"command":"cargo test"}"#,
+            "level": "command",
+            "family": "cargo test",
+            "risk_tags": ["background_process"],
+            "scope": "all",
+            "tool_call": {"name": "Bash", "rawInput": {"command": "cargo test"}},
+            "options": [{"optionId": selected, "name": "Allow", "kind": "allow_once"}],
+            "selected_option": selected,
+            "target": "learn",
+            "output": null,
+        })
+    };
+    let first: LearnedPermissionDto = h
+        .json(
+            post_json("/v1/permissions/learned", row("yes", &repo.id)),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(first.repository_id, repo.id);
+    assert_eq!(first.scope, LearnedPermissionScope::All);
+    assert_eq!(first.target, LearnedPermissionTarget::Learn);
+    assert_eq!(first.risk_tags, ["background_process"]);
+    let second: LearnedPermissionDto = h
+        .json(
+            post_json("/v1/permissions/learned", row("always", &repo.id)),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.created_at, first.created_at);
+    assert_eq!(second.selected_option, "always");
+    let listed: LearnedPermissionsResponse = h
+        .get(&format!("/v1/permissions/learned?repository={}", repo.id))
+        .await;
+    assert_eq!(listed.items, vec![second]);
+
+    let (status, _) = h
+        .send(post_json(
+            "/v1/permissions/learned",
+            row("yes", "no-such-repository"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

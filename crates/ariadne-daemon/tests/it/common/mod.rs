@@ -496,9 +496,14 @@ impl HarnessBuilder {
             forge_poll.connect_scheduler(sched.clone());
         }
         let _ = launcher.forge_poll.set(forge_poll.clone());
-        // Started by a test about the forwards: a harness runs no `ssh`.
-        let hosts =
-            ariadne_daemon::hosts::Hosts::new(launcher.cfg.clone(), bus.clone(), self.timeouts);
+        // Started by a test about the forwards or the sync: a harness runs
+        // no `ssh` and pushes to no host.
+        let hosts = ariadne_daemon::hosts::Hosts::new(
+            launcher.cfg.clone(),
+            store.clone(),
+            bus.clone(),
+            self.timeouts,
+        );
         let state = AppState {
             tunnel,
             hosts,

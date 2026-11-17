@@ -161,7 +161,7 @@ impl AppState {
         pull_requests::ask_babysit,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
-        permissions::update_learned,
+        permissions::update_learned, permissions::record_learned,
         permissions::test,
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
@@ -187,6 +187,8 @@ impl AppState {
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
         ariadne_api::hosts::HostDto, ariadne_api::hosts::HostKind, ariadne_api::hosts::HostStatus,
+        ariadne_api::hosts::HostSyncDto, ariadne_api::hosts::SyncState,
+        ariadne_api::hosts::MissingRepositoryDto,
         ariadne_api::events::AgentEventDto, ariadne_api::events::AgentEventSummaryDto,
         ariadne_api::events::EventOrder, ariadne_api::events::PermissionReplyDto,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
@@ -347,7 +349,10 @@ pub fn router(state: AppState) -> Router {
             get(permissions::get).put(permissions::update),
         )
         .route("/v1/permissions/ai/refresh", post(permissions::refresh))
-        .route("/v1/permissions/learned", get(permissions::list_learned))
+        .route(
+            "/v1/permissions/learned",
+            get(permissions::list_learned).post(permissions::record_learned),
+        )
         .route(
             "/v1/permissions/learned/{id}",
             get(permissions::get_learned)

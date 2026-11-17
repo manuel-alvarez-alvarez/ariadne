@@ -1,0 +1,411 @@
+//! The sync of this daemon's catalogs and settings to each host (037).
+//!
+//! Two harness daemons: the far one served on a loopback TCP port, and the
+//! local one with a `direct` host that points at it.
+
+use std::path::PathBuf;
+
+use crate::common::{
+    Harness, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json, put_json,
+    sh,
+};
+use ariadne_api::hosts::{HostDto, HostSyncDto, MissingRepositoryDto, SyncState};
+use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
+use ariadne_api::repositories::RepositoryDto;
+use ariadne_api::skills::SkillDto;
+use ariadne_api::stream::DomainEvent;
+use ariadne_api::workflows::WorkflowDto;
+use ariadne_core::PermissionMode;
+use ariadne_daemon::bus::BusEvent;
+use ariadne_daemon::timeouts::Timeouts;
+use ariadne_store::NewLearnedPermission;
+use axum::http::StatusCode;
+use serde_json::json;
+use tokio::sync::broadcast::Receiver;
+
+const WORKFLOW: &str =
+    "workflow shared-flow\n  build[Build]\n    Do the work.\n    skills: coding\n";
+
+/// A skill document named `name` whose summary is `summary`.
+fn skill(name: &str, summary: &str) -> String {
+    format!("---\nname: {name}\ndescription: {summary}\n---\n")
+}
+
+/// A local daemon whose one host `far` is `endpoint`, with a failed push
+/// tried again after `RUNS_OUT`.
+async fn local_with_host(endpoint: &str) -> (Harness, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!("[hosts.far]\nendpoint = \"{endpoint}\"\n"),
+    )
+    .unwrap();
+    let h = harness()
+        .home(home)
+        .timeouts(Timeouts {
+            host_sync_retry: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .await;
+    (h, dir)
+}
+
+/// Serve `far`'s router on `listener`.
+fn serve(far: &Harness, listener: tokio::net::TcpListener) {
+    let router = far.router.clone();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+}
+
+/// The far daemon on a loopback port, and a local daemon whose host `far`
+/// points at it. No sync runs until the test starts the local hosts.
+async fn far_and_local() -> (Harness, Harness, tempfile::TempDir) {
+    let far = harness().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    serve(&far, listener);
+    let (local, dir) = local_with_host(&format!("http://{address}")).await;
+    (far, local, dir)
+}
+
+/// The sync of the host `far`, as `GET /v1/hosts` lists it.
+async fn sync_of(h: &Harness) -> HostSyncDto {
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert_eq!(hosts[1].name, "far");
+    hosts[1].sync.clone()
+}
+
+async fn until_in_sync(h: &Harness) {
+    eventually(TIMEOUT, "the host in sync", || async {
+        sync_of(h).await.state == SyncState::InSync
+    })
+    .await;
+}
+
+/// A checkout under `h` whose `origin` is `owner/name` on GitHub,
+/// registered on `h` with `body`'s other fields.
+async fn forge_repository(
+    h: &Harness,
+    dir: &str,
+    owner_name: &str,
+    body: serde_json::Value,
+) -> RepositoryDto {
+    let path: PathBuf = h.git_repo(dir);
+    sh(
+        &path,
+        &format!("git remote add origin https://github.com/{owner_name}.git"),
+    );
+    let mut body = body;
+    body["path"] = json!(path.display().to_string());
+    h.json(post_json("/v1/repositories", body), StatusCode::CREATED)
+        .await
+}
+
+/// A learned `Bash` approval of `command` on `repository_id`.
+fn approval(repository_id: &str, command: &str) -> NewLearnedPermission {
+    NewLearnedPermission {
+        repository_id: repository_id.into(),
+        tool_name: "Bash".into(),
+        key: json!({"command": command}).to_string(),
+        level: "command".into(),
+        family: command.into(),
+        risk_tags: Vec::new(),
+        scope: "all".into(),
+        tool_call: json!({"name": "Bash", "title": command, "rawInput": {"command": command}}),
+        options: json!([{"optionId": "yes", "name": "Allow", "kind": "allow_once"}]),
+        selected_option: "yes".into(),
+        target: "learn".into(),
+        output: None,
+    }
+}
+
+async fn skill_on(h: &Harness, name: &str) -> Option<SkillDto> {
+    let (status, body) = h.send(get(&format!("/v1/skills/{name}"))).await;
+    (status == StatusCode::OK).then(|| serde_json::from_slice(&body).unwrap())
+}
+
+async fn learned_on(h: &Harness, repository_id: &str) -> LearnedPermissionsResponse {
+    h.get(&format!(
+        "/v1/permissions/learned?repository={repository_id}"
+    ))
+    .await
+}
+
+#[tokio::test]
+async fn a_ready_host_takes_every_item_and_keeps_its_own() {
+    let (far, local, _dir) = far_and_local().await;
+    for (h, summary) in [(&far, "far words"), (&local, "local words")] {
+        let _: SkillDto = h
+            .json(
+                post_json(
+                    "/v1/skills",
+                    json!({"name": "shared", "document": skill("shared", summary)}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+    }
+    let _: SkillDto = far
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "far-only", "document": skill("far-only", "kept")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let _: WorkflowDto = local
+        .json(
+            post_json(
+                "/v1/workflows",
+                json!({"name": "shared-flow", "document": WORKFLOW}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let _: AiPermissionsStatusDto = local
+        .json(
+            put_json(
+                "/v1/permissions/ai",
+                json!({"allow_threshold": 0.125, "deny_threshold": 0.875}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let mine = forge_repository(&local, "mine", "acme/widgets", json!({})).await;
+    let theirs = forge_repository(&far, "theirs", "acme/widgets", json!({})).await;
+    local
+        .store
+        .record_learned_permission(approval(&mine.id, "cargo test"))
+        .await
+        .unwrap();
+
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+
+    let shared = skill_on(&far, "shared").await.unwrap();
+    assert_eq!(shared.summary, "local words");
+    assert_eq!(skill_on(&far, "far-only").await.unwrap().summary, "kept");
+    let flow: WorkflowDto = far.get("/v1/workflows/shared-flow").await;
+    assert_eq!(flow.document, WORKFLOW);
+    let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+    assert_eq!((ai.allow_threshold, ai.deny_threshold), (0.125, 0.875));
+    assert!(!ai.thresholds_default);
+    let learned = learned_on(&far, &theirs.id).await.items;
+    assert_eq!(learned.len(), 1);
+    assert_eq!(learned[0].key, r#"{"command":"cargo test"}"#);
+    assert_eq!(learned[0].repository_id, theirs.id);
+    assert_eq!(sync_of(&local).await, HostSyncDto::in_sync());
+}
+
+#[tokio::test]
+async fn each_later_change_reaches_the_host_and_a_delete_removes_it() {
+    let (far, local, _dir) = far_and_local().await;
+    let mine = forge_repository(&local, "mine", "acme/widgets", json!({})).await;
+    let theirs = forge_repository(&far, "theirs", "acme/widgets", json!({})).await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "later", "document": skill("later", "first")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    eventually(TIMEOUT, "the new skill on the host", || async {
+        skill_on(&far, "later")
+            .await
+            .is_some_and(|s| s.summary == "first")
+    })
+    .await;
+    let _: SkillDto = local
+        .json(
+            put_json(
+                "/v1/skills/later",
+                json!({"document": skill("later", "second")}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the changed skill on the host", || async {
+        skill_on(&far, "later")
+            .await
+            .is_some_and(|s| s.summary == "second")
+    })
+    .await;
+    let (status, _) = local.send(delete("/v1/skills/later")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the skill gone from the host", || async {
+        skill_on(&far, "later").await.is_none()
+    })
+    .await;
+
+    let _: WorkflowDto = local
+        .json(
+            post_json(
+                "/v1/workflows",
+                json!({"name": "shared-flow", "document": WORKFLOW}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    eventually(TIMEOUT, "the workflow on the host", || async {
+        far.send(get("/v1/workflows/shared-flow")).await.0 == StatusCode::OK
+    })
+    .await;
+    let (status, _) = local.send(delete("/v1/workflows/shared-flow")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the workflow gone from the host", || async {
+        far.send(get("/v1/workflows/shared-flow")).await.0 == StatusCode::NOT_FOUND
+    })
+    .await;
+
+    let row = local
+        .store
+        .record_learned_permission(approval(&mine.id, "cargo build"))
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "the learned permission on the host", || async {
+        learned_on(&far, &theirs.id).await.items.len() == 1
+    })
+    .await;
+    local
+        .store
+        .delete_learned_permission(&row.id)
+        .await
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the learned permission gone from the host",
+        || async { learned_on(&far, &theirs.id).await.items.is_empty() },
+    )
+    .await;
+
+    let _: AiPermissionsStatusDto = local
+        .json(
+            put_json(
+                "/v1/permissions/ai",
+                json!({"allow_threshold": 0.25, "deny_threshold": 0.75}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the AI thresholds on the host", || async {
+        let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+        (ai.allow_threshold, ai.deny_threshold) == (0.25, 0.75)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_repository_takes_the_local_settings_by_forge_and_a_missing_one_is_listed() {
+    let (far, local, _dir) = far_and_local().await;
+    let mine = forge_repository(
+        &local,
+        "mine",
+        "acme/widgets",
+        json!({"description": "Local words.", "permission_mode": "ask"}),
+    )
+    .await;
+    let lacking = forge_repository(&local, "lacking", "acme/gadgets", json!({})).await;
+    let theirs = forge_repository(
+        &far,
+        "theirs",
+        "acme/widgets",
+        json!({"description": "Far words."}),
+    )
+    .await;
+    local.state.hosts.start();
+
+    let expected = vec![MissingRepositoryDto {
+        id: lacking.id.clone(),
+        forge: Some("acme/gadgets".into()),
+    }];
+    eventually(TIMEOUT, "the missing checkout listed", || async {
+        let sync = sync_of(&local).await;
+        sync.state == SyncState::InSync && sync.missing_repositories == expected
+    })
+    .await;
+    let after: RepositoryDto = far.get(&format!("/v1/repositories/{}", theirs.id)).await;
+    assert_eq!(after.description.as_deref(), Some("Local words."));
+    assert_eq!(after.permission_mode, PermissionMode::Ask);
+    assert_eq!(after.path, theirs.path);
+    assert_ne!(after.path, mine.path);
+    let all: Vec<RepositoryDto> = far.get("/v1/repositories").await;
+    assert_eq!(
+        all.len(),
+        1,
+        "nothing is registered for the missing checkout"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands() {
+    // A port nothing listens on yet.
+    let address = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap()
+    };
+    let (local, _dir) = local_with_host(&format!("http://{address}")).await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "mine", "document": skill("mine", "local")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    eventually(TIMEOUT, "the push failed", || async {
+        let sync = sync_of(&local).await;
+        sync.state == SyncState::Failed
+            && sync
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("cannot reach"))
+    })
+    .await;
+
+    let far = harness().await;
+    serve(&far, tokio::net::TcpListener::bind(address).await.unwrap());
+    until_in_sync(&local).await;
+    assert_eq!(skill_on(&far, "mine").await.unwrap().summary, "local");
+    assert_eq!(sync_of(&local).await.error, None);
+}
+
+/// The sync of the next `host_updated` on the bus.
+async fn next_sync(rx: &mut Receiver<BusEvent>) -> HostSyncDto {
+    let event = next_event(rx, |event| {
+        matches!(event.event, DomainEvent::HostUpdated(_))
+    })
+    .await;
+    match event.event {
+        DomainEvent::HostUpdated(host) => host.sync,
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn each_change_of_the_sync_publishes_one_host_updated() {
+    let (_far, local, _dir) = far_and_local().await;
+    let mut rx = local.bus.subscribe();
+    local.state.hosts.start();
+    assert_eq!(next_sync(&mut rx).await, HostSyncDto::in_sync());
+
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "later", "document": skill("later", "first")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(next_sync(&mut rx).await.state, SyncState::Pending);
+    assert_eq!(next_sync(&mut rx).await, HostSyncDto::in_sync());
+}

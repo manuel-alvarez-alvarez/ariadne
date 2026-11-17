@@ -660,7 +660,12 @@ export interface paths {
         };
         get: operations["permissions_list_learned"];
         put?: never;
-        post?: never;
+        /**
+         * Write one learned row whole: what another daemon pushes when it syncs
+         *     this one (037). A row with the same repository, tool name, level and key
+         *     keeps its id and `created_at`.
+         */
+        post: operations["permissions_record_learned"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2812,6 +2817,8 @@ export interface components {
             /** @description The far daemon's address, for an `ssh` host with one configured. */
             remote?: string | null;
             status: components["schemas"]["HostStatus"];
+            /** @description How far the host has taken this daemon's catalogs and settings. */
+            sync: components["schemas"]["HostSyncDto"];
         };
         /**
          * @description How a host is reached.
@@ -2823,6 +2830,17 @@ export interface components {
          * @enum {string}
          */
         HostStatus: "ready" | "connecting" | "down";
+        /** @description The sync of one host (037). */
+        HostSyncDto: {
+            /** @description Why the last push failed, when it did. */
+            error?: string | null;
+            /**
+             * @description The local repositories that have no checkout of the same forge
+             *     repository on the host. Nothing is registered for them.
+             */
+            missing_repositories: components["schemas"]["MissingRepositoryDto"][];
+            state: components["schemas"]["SyncState"];
+        };
         IssueDto: {
             assignees: string[];
             body: string;
@@ -2970,6 +2988,13 @@ export interface components {
          * @enum {string}
          */
         MessageKind: "message";
+        /** @description A local repository a host has no checkout of. */
+        MissingRepositoryDto: {
+            /** @description `owner/repo` on its forge; null for a repository with no forge. */
+            forge?: string | null;
+            /** @description The local repository's id. */
+            id: string;
+        };
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: a
          *     registry agent on a model discovery found it offering
@@ -3251,6 +3276,25 @@ export interface components {
              * @example 3.12.1
              */
             version?: string | null;
+        };
+        /**
+         * @description One learned permission to write whole, as another daemon pushes it (037).
+         *     A row with the same repository, tool name, level and key keeps its id and
+         *     `created_at`, and takes everything else from the request.
+         */
+        RecordLearnedPermissionRequest: {
+            family: string;
+            key: string;
+            level: components["schemas"]["LearnedPermissionLevel"];
+            options: unknown;
+            output?: unknown;
+            repository_id: string;
+            risk_tags: string[];
+            scope: components["schemas"]["LearnedPermissionScope"];
+            selected_option: string;
+            target: components["schemas"]["LearnedPermissionTarget"];
+            tool_call: unknown;
+            tool_name: string;
         };
         /** @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`. */
         ReplyCommentRequest: {
@@ -3545,6 +3589,11 @@ export interface components {
              */
             model: string;
         };
+        /**
+         * @description Whether a host holds what this daemon last pushed to it.
+         * @enum {string}
+         */
+        SyncState: "in_sync" | "pending" | "failed";
         /**
          * @description One agent staffed on a task: the column it works, what it knows, and what
          *     it runs on.
@@ -5072,6 +5121,41 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["LearnedPermissionsResponse"];
                 };
+            };
+        };
+    };
+    permissions_record_learned: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordLearnedPermissionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnedPermissionDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -87,6 +87,26 @@ pub struct UpdateLearnedPermissionRequest {
     pub scope: LearnedPermissionScope,
 }
 
+/// One learned permission to write whole, as another daemon pushes it (037).
+/// A row with the same repository, tool name, level and key keeps its id and
+/// `created_at`, and takes everything else from the request.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordLearnedPermissionRequest {
+    pub repository_id: String,
+    pub tool_name: String,
+    pub key: String,
+    pub level: LearnedPermissionLevel,
+    pub family: String,
+    pub risk_tags: Vec<String>,
+    pub scope: LearnedPermissionScope,
+    pub tool_call: serde_json::Value,
+    pub options: serde_json::Value,
+    pub selected_option: String,
+    pub target: LearnedPermissionTarget,
+    pub output: Option<serde_json::Value>,
+}
+
 /// One user choice or denial of an ACP permission request, keyed by the
 /// repository, the tool name, the level and the normalized input.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

@@ -1440,6 +1440,36 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "permissions"
+        ],
+        "summary": "Write one learned row whole: what another daemon pushes when it syncs\nthis one (037). A row with the same repository, tool name, level and key\nkeeps its id and `created_at`.",
+        "operationId": "record_learned",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordLearnedPermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnedPermissionDto"
+                }
+              }
+            }
+          },
+          "404": {},
+          "422": {}
+        }
       }
     },
     "/v1/permissions/learned/{id}": {
@@ -6499,7 +6529,8 @@
         "required": [
           "name",
           "kind",
-          "status"
+          "status",
+          "sync"
         ],
         "properties": {
           "endpoint": {
@@ -6531,6 +6562,10 @@
           },
           "status": {
             "$ref": "#/components/schemas/HostStatus"
+          },
+          "sync": {
+            "$ref": "#/components/schemas/HostSyncDto",
+            "description": "How far the host has taken this daemon's catalogs and settings."
           }
         }
       },
@@ -6551,6 +6586,33 @@
           "connecting",
           "down"
         ]
+      },
+      "HostSyncDto": {
+        "type": "object",
+        "description": "The sync of one host (037).",
+        "required": [
+          "state",
+          "missing_repositories"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last push failed, when it did."
+          },
+          "missing_repositories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MissingRepositoryDto"
+            },
+            "description": "The local repositories that have no checkout of the same forge\nrepository on the host. Nothing is registered for them."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SyncState"
+          }
+        }
       },
       "IssueDto": {
         "type": "object",
@@ -6854,6 +6916,26 @@
         "enum": [
           "message"
         ]
+      },
+      "MissingRepositoryDto": {
+        "type": "object",
+        "description": "A local repository a host has no checkout of.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "forge": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`owner/repo` on its forge; null for a repository with no forge."
+          },
+          "id": {
+            "type": "string",
+            "description": "The local repository's id."
+          }
+        }
       },
       "ModelDto": {
         "type": "object",
@@ -7513,6 +7595,59 @@
             "example": "3.12.1"
           }
         }
+      },
+      "RecordLearnedPermissionRequest": {
+        "type": "object",
+        "description": "One learned permission to write whole, as another daemon pushes it (037).\nA row with the same repository, tool name, level and key keeps its id and\n`created_at`, and takes everything else from the request.",
+        "required": [
+          "repository_id",
+          "tool_name",
+          "key",
+          "level",
+          "family",
+          "risk_tags",
+          "scope",
+          "tool_call",
+          "options",
+          "selected_option",
+          "target"
+        ],
+        "properties": {
+          "family": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/LearnedPermissionLevel"
+          },
+          "options": {},
+          "output": {},
+          "repository_id": {
+            "type": "string"
+          },
+          "risk_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope": {
+            "$ref": "#/components/schemas/LearnedPermissionScope"
+          },
+          "selected_option": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/LearnedPermissionTarget"
+          },
+          "tool_call": {},
+          "tool_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "ReplyCommentRequest": {
         "type": "object",
@@ -8182,6 +8317,15 @@
           }
         },
         "additionalProperties": false
+      },
+      "SyncState": {
+        "type": "string",
+        "description": "Whether a host holds what this daemon last pushed to it.",
+        "enum": [
+          "in_sync",
+          "pending",
+          "failed"
+        ]
       },
       "TaskAgentDto": {
         "type": "object",

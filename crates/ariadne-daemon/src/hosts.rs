@@ -1,6 +1,7 @@
 //! The hosts a client can address (037), and the SSH forward of each
 //! `ssh://` host: one `ssh -N -L` child per host, kept up with a capped
-//! backoff, and its state on `GET /v1/hosts`.
+//! backoff, and its state on `GET /v1/hosts`. Each host is also kept in
+//! sync with this daemon's catalogs and settings ([`sync`]).
 //!
 //! The forward is the user's own `ssh`, so their keys, agent and
 //! `~/.ssh/config` apply. It carries requests, event streams and answers both
@@ -12,11 +13,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ariadne_api::hosts::{HostDto, HostKind, HostStatus};
+use ariadne_api::hosts::{HostDto, HostKind, HostStatus, HostSyncDto, SyncState};
 use ariadne_client::endpoint::HostConfig;
+use ariadne_store::Store;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 use tracing::{info, warn};
@@ -25,6 +28,8 @@ use url::Url;
 use crate::bus::EventBus;
 use crate::config::Config;
 use crate::timeouts::Timeouts;
+
+mod sync;
 
 /// The longest wait between two starts of one forward.
 const BACKOFF_CAP: Duration = Duration::from_secs(60);
@@ -35,39 +40,57 @@ pub struct Hosts(Arc<Inner>);
 
 struct Inner {
     cfg: Arc<Config>,
+    store: Store,
     events: EventBus,
     timeouts: Timeouts,
     /// The configured hosts, in file order, as `GET /v1/hosts` lists them.
     hosts: Mutex<Vec<HostDto>>,
+    /// The endpoint of each configured host while it is `ready`, else
+    /// `None`: what its sync waits on.
+    ready: Vec<watch::Sender<Option<String>>>,
     started: AtomicBool,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Hosts {
-    /// The configured hosts, with no forward started yet.
-    pub fn new(cfg: Arc<Config>, events: EventBus, timeouts: Timeouts) -> Self {
-        let hosts = cfg
+    /// The configured hosts, with no forward and no sync started yet.
+    pub fn new(cfg: Arc<Config>, store: Store, events: EventBus, timeouts: Timeouts) -> Self {
+        let hosts: Vec<HostDto> = cfg
             .hosts
             .iter()
             .map(|(name, host)| initial(name, host))
             .collect();
+        let ready = hosts
+            .iter()
+            .map(|host| watch::Sender::new(ready_endpoint(host)))
+            .collect();
         Self(Arc::new(Inner {
             cfg,
+            store,
             events,
             timeouts,
             hosts: Mutex::new(hosts),
+            ready,
             started: AtomicBool::new(false),
             tasks: Mutex::new(Vec::new()),
         }))
     }
 
-    /// Start and supervise the forward of every `ssh://` host, until
-    /// [`Hosts::shutdown`]. A second call does nothing.
+    /// Start and supervise the forward of every `ssh://` host, and the
+    /// sync of every configured host, until [`Hosts::shutdown`]. A second
+    /// call does nothing.
     pub fn start(&self) {
         if self.0.started.swap(true, Ordering::SeqCst) {
             return;
         }
         let mut tasks = self.0.tasks.lock().unwrap();
+        for index in 0..self.0.cfg.hosts.len() {
+            // Subscribed here, not in the task: a change made after `start`
+            // returns is on the receiver, however late the task runs.
+            let events = self.0.events.subscribe();
+            let inner = self.0.clone();
+            tasks.push(tokio::spawn(sync::run(inner, index, events)));
+        }
         for (index, (_, host)) in self.0.cfg.hosts.iter().enumerate() {
             if !host.endpoint.starts_with("ssh://") {
                 continue;
@@ -99,14 +122,21 @@ impl Hosts {
             status: HostStatus::Ready,
             error: None,
             remote: None,
+            sync: HostSyncDto::in_sync(),
         };
         let configured = self.0.hosts.lock().unwrap().clone();
         std::iter::once(local).chain(configured).collect()
     }
 }
 
-/// A host as it stands before any forward runs.
+/// A host as it stands before any forward or sync runs: nothing is pushed
+/// to it yet.
 fn initial(name: &str, host: &HostConfig) -> HostDto {
+    let sync = HostSyncDto {
+        state: SyncState::Pending,
+        error: None,
+        missing_repositories: Vec::new(),
+    };
     if host.endpoint.starts_with("ssh://") {
         HostDto {
             name: name.into(),
@@ -115,6 +145,7 @@ fn initial(name: &str, host: &HostConfig) -> HostDto {
             status: HostStatus::Down,
             error: Some("ssh forward not started".into()),
             remote: host.remote.clone(),
+            sync,
         }
     } else {
         HostDto {
@@ -124,7 +155,16 @@ fn initial(name: &str, host: &HostConfig) -> HostDto {
             status: HostStatus::Ready,
             error: None,
             remote: None,
+            sync,
         }
+    }
+}
+
+/// The endpoint a sync pushes to, where the host is `ready`.
+fn ready_endpoint(host: &HostDto) -> Option<String> {
+    match host.status {
+        HostStatus::Ready => host.endpoint.clone(),
+        HostStatus::Connecting | HostStatus::Down => None,
     }
 }
 
@@ -185,11 +225,36 @@ impl Inner {
             host.status = status;
             host.endpoint = endpoint;
             host.error = error;
+            self.ready[index].send_if_modified(|ready| {
+                let now = ready_endpoint(host);
+                let moved = *ready != now;
+                *ready = now;
+                moved
+            });
             changed.then(|| host.clone())
         };
         if let Some(host) = changed {
             self.events.host_updated(host);
         }
+    }
+
+    /// Move the sync of host `index`, and publish the host where it changed.
+    fn set_sync(&self, index: usize, change: impl FnOnce(&mut HostSyncDto)) {
+        let changed = {
+            let mut hosts = self.hosts.lock().unwrap();
+            let host = &mut hosts[index];
+            let before = host.sync.clone();
+            change(&mut host.sync);
+            (host.sync != before).then(|| host.clone())
+        };
+        if let Some(host) = changed {
+            self.events.host_updated(host);
+        }
+    }
+
+    /// The sync state of host `index`.
+    fn sync_state(&self, index: usize) -> SyncState {
+        self.hosts.lock().unwrap()[index].sync.state
     }
 
     async fn supervise(&self, index: usize) {
