@@ -869,7 +869,7 @@ async fn run_all(endpoint: &str, args: &[&str]) -> (i32, String, String) {
     )
 }
 
-/// `--host all` draws one list of every ready host (spec 014, rule 49).
+/// `--host all` draws one list of every ready host (spec 014, rules 46 and 46a).
 #[tokio::test]
 async fn all_draws_one_list_of_every_ready_host() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
