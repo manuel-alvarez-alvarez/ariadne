@@ -257,6 +257,39 @@ describe("DashboardsPage", () => {
     ).toBe("box")
   })
 
+  it("shows no host select with local alone", async () => {
+    hostRows = [LOCAL]
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    await screen.findByTitle("Default dashboard")
+    expect(screen.queryByRole("combobox", { name: "Host" })).toBeNull()
+  })
+
+  it("lists a host it cannot reach as a disabled option with its reason, and opens on All over such a pick", async () => {
+    const user = userEvent.setup()
+    hostRows = [LOCAL, { ...BOX, status: "down", endpoint: null, error: "ssh closed" }]
+    useSettingsStore.setState({ hostFilter: "box" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    const iframe = await screen.findByTitle("Default dashboard")
+    expect(
+      new URL(iframe.getAttribute("src") ?? "", "http://localhost").searchParams.get("host"),
+    ).toBe("all")
+
+    await user.click(screen.getByRole("combobox", { name: "Host" }))
+    const option = await screen.findByRole("option", { name: /^box/ })
+    expect(option.textContent).toBe("box (not reachable: ssh closed)")
+    expect(option.getAttribute("aria-disabled")).toBe("true")
+  })
+
+  it("sends no stale host when the saved pick is no longer listed", async () => {
+    hostRows = [LOCAL, BOX]
+    useSettingsStore.setState({ hostFilter: "gone" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    const iframe = await screen.findByTitle("Default dashboard")
+    expect(
+      new URL(iframe.getAttribute("src") ?? "", "http://localhost").searchParams.get("host"),
+    ).toBe("all")
+  })
+
   it("disables Rename and Delete on the built-in dashboard, and enables them on one of your own", async () => {
     const user = userEvent.setup()
     renderScreen(<DashboardsPage />, { route: "/dashboards" })

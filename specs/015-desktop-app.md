@@ -1132,11 +1132,13 @@ Out: the daemon endpoints themselves (012).
     `local` is the settings daemon, at the settings base URL. A named host is
     reached at its endpoint only when the endpoint is `http://` or `https://`
     and its `status` is `ready`; any other host is listed as unreachable with
-    its `error`. `host_updated` patches its row.
+    its `error`. `host_updated` patches its row. The picker, the dashboards
+    host select and the logs host select show only while the daemon lists a
+    named host; a named host that is down counts as listed.
 52. The settings dialog has a Hosts section. It lists each host's `name`,
     `kind`, `status`, `endpoint` and `error`, the facts `ariadne host ls`
     prints, live through `host_updated`. It says the hosts are configured in
-    the `config.toml` of the settings daemon.
+    the `config.toml` of the settings daemon. It stays with `local` alone.
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.
@@ -1148,9 +1150,14 @@ Out: the daemon endpoints themselves (012).
     its row in the host picker.
 54. Every query key starts with its host: `[host, entity, "list" | "detail",
     ...]`, and `qk.<entity>.lists(host)` invalidates one host's lists.
-55. The header has a host picker: All, `local`, and each named host with its
-    status. The pick is `hostFilter` in the settings store and persists. All
-    reads every reachable host; `useHostFilter()` returns the selected names.
+55. The header has a host picker, shown only with a named host: All hosts,
+    `local`, and each named host with its status. A host the app cannot reach
+    reads "not reachable" with its reason, whatever its own status says, so a
+    host with a socket path never reads as ready. The trigger shows the status
+    of a picked named host. The pick is `hostFilter` in the settings store and
+    persists. A pick the daemon no longer lists reads as All hosts in every
+    host control. All hosts reads every reachable host; `useHostFilter()`
+    returns the selected names.
 56. The panel params `?goal=`, `?task=`, `?session=` and `?pr=` have a
     `?host=` beside them for a named host. A link without `?host=` resolves to
     `local`.
@@ -1218,11 +1225,17 @@ Out: the daemon endpoints themselves (012).
     defaults to the row's host, and its models, pin and ask go to the chosen host
     with that host's repository id. A goal dialog filled from an issue is on the
     issue's host.
-71. The daemon logs drawer has a host select. It defaults to the picked host, or
-    `local` under All, and opens the log stream of that host. A host it cannot
-    reach opens none and says why.
-72. The dashboards screen has a host select with All, `local` and each ready
-    host, defaulting to the picked host or All. The iframe takes `host=` beside
+71. The daemon logs drawer has a host select, shown only with a named host. It
+    lists the hosts of the picker, and a host the app cannot reach is a disabled
+    option with its reason. It defaults to the picked host when the app can
+    reach it, else to `local`, and opens the log stream of that host. The host
+    the drawer opened on stays chosen until the user picks another. If it goes
+    unreachable, the drawer opens no stream and says why.
+72. The dashboards screen has a host select, shown only with a named host. It
+    has All hosts and the hosts of the picker, and a host the app cannot reach
+    is a disabled option with its reason. It defaults to the picked host when
+    the app can reach it, else to All hosts, and sends no host the daemon does
+    not list. The iframe takes `host=` beside
     `daemon=`, and its Prometheus and Loki datasources use
     `/v1/hosts/{host}/` of the settings daemon, with `all` for the combined
     view. The shipped dashboard's series names end in `{{host}}`, which the
@@ -2148,7 +2161,12 @@ Out: the daemon endpoints themselves (012).
   `::reads a host again at its new address once local's stream comes back`);
   the Hosts section lists the facts live, and the picker picks and keeps a
   host (`ui/src/components/hosts-settings.test.tsx::lists every host with its name, kind, status, endpoint and error, live through host_updated`,
-  `::picks All, local or a named host with its status, and keeps the pick`);
+  `::picks All, local or a named host with its status, and keeps the pick`,
+  `::shows no host picker while the daemon lists local alone`,
+  `::shows the host picker for a named host that is down`,
+  `::shows a host with a socket path as not reachable, never as ready`,
+  `::shows the status of a picked named host in the trigger`,
+  `::reads a saved pick the daemon no longer lists as All hosts`);
   one stream per reachable host under its own keys, with the connection
   state `local`'s (`ui/src/events/provider-hosts.test.tsx::opens one stream per reachable host, and none for a host that is down`,
   `::dispatches a named host's event under that host's keys`,
@@ -2193,11 +2211,17 @@ Out: the daemon endpoints themselves (012).
   `::merges the issues of every host, and fills the goal dialog on the issue's host`).
 - The logs drawer opens the log of the picked host and of the host its select
   names (`ui/src/features/system/daemon-logs-drawer.test.tsx::opens the log of the picked host, and of local under All, and follows the drawer's own host select`,
-  `::defaults to local under All hosts`).
+  `::defaults to local under All hosts`,
+  `::shows no host select while the daemon lists local alone`,
+  `::lists a host it cannot reach as a disabled option with its reason, and defaults to local over such a pick`,
+  `::keeps the host it opened on when that host goes down, and says why`).
 - The dashboards screen queries the host its select names
   (`crates/ariadne-daemon/tests/it/dashboards.rs::every_named_series_of_the_shipped_dashboard_carries_the_host`,
   `ui/src/routes/dashboards.test.tsx::queries every host under All, the picked host otherwise, and the host the select names`,
-  `::opens on the host the header picker names`); the iframe's datasources point at
+  `::opens on the host the header picker names`,
+  `::shows no host select with local alone`,
+  `::lists a host it cannot reach as a disabled option with its reason, and opens on All over such a pick`,
+  `::sends no stale host when the saved pick is no longer listed`); the iframe's datasources point at
   `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
 

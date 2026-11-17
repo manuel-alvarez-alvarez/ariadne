@@ -20,6 +20,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useHasNamedHosts } from "@/hooks/use-host-filter"
 import { cn } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
 
@@ -33,12 +34,25 @@ const STATUS_META: Record<HostView["status"], { label: string; dot: string }> = 
   down: { label: "down", dot: "bg-status-danger" },
 }
 
+/**
+ * What a named host reads as: a host the app cannot reach is "not reachable"
+ * whatever its own status says, so a socket-path host never reads as ready.
+ */
+export function hostStatus(host: HostView): { label: string; dot: string } {
+  if (host.url === null) return { label: "not reachable", dot: "bg-status-danger" }
+  return STATUS_META[host.status]
+}
+
 export function HostPicker() {
   const { hosts } = useHosts()
   const pick = useSettingsStore((state) => state.hostFilter)
   const setPick = useSettingsStore((state) => state.setHostFilter)
   // A pick the hosts no longer list reads as All, which is what it filters to.
   const shown = hosts.some((host) => host.name === pick) ? pick : ALL
+  const shownHost = hosts.find((host) => host.name === shown)
+  const named = useHasNamedHosts()
+  // With `local` alone there is nothing to pick.
+  if (!named) return null
 
   return (
     <DropdownMenu>
@@ -49,6 +63,12 @@ export function HostPicker() {
       >
         <ServerIcon />
         {shown === ALL ? "All hosts" : shown}
+        {shownHost && shownHost.name !== LOCAL_HOST ? (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span aria-hidden className={cn("size-1.5 rounded-full", hostStatus(shownHost).dot)} />
+            {hostStatus(shownHost).label}
+          </span>
+        ) : null}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuRadioGroup value={shown} onValueChange={(value) => setPick(String(value))}>
@@ -67,7 +87,7 @@ export function HostPicker() {
 
 /** One host: its name, and for a named host its status and why it is down. */
 function HostOption({ host }: { host: HostView }) {
-  const status = STATUS_META[host.status]
+  const status = hostStatus(host)
   return (
     <span className="flex min-w-0 flex-1 flex-col">
       <span className="flex items-center gap-2">

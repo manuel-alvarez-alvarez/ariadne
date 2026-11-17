@@ -41,3 +41,9 @@ export function usePickedHost(): Host | null {
   if (hosts.some((host) => host.name === pick)) return pick
   return pick !== "" && isPending ? null : LOCAL_HOST
 }
+
+/** Whether the settings daemon lists a host besides `local`: the host controls show only then. */
+export function useHasNamedHosts(): boolean {
+  const { hosts } = useHosts()
+  return hosts.some((host) => host.name !== LOCAL_HOST)
+}
