@@ -273,6 +273,37 @@ async fn a_ready_host_takes_every_item_and_keeps_its_own() {
     assert_eq!(sync_of(&local).await, HostSyncDto::in_sync());
 }
 
+/// A sync never sends `device` (rule 28): the host picks its own best device
+/// for the flavour it is sent, even where it had chosen another one.
+#[tokio::test]
+async fn a_sync_never_sends_the_device_and_the_host_picks_its_best() {
+    let (far, local, _dir) = far_and_local().await;
+    let _: AiPermissionsStatusDto = far
+        .json(
+            put_json("/v1/permissions/ai", json!({"device": "cpu"})),
+            StatusCode::OK,
+        )
+        .await;
+    let _: AiPermissionsStatusDto = local
+        .json(
+            put_json(
+                "/v1/permissions/ai",
+                json!({"allow_threshold": 0.125, "deny_threshold": 0.875}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let before: AiPermissionsStatusDto = local.get("/v1/permissions/ai").await;
+    assert_eq!(before.device.as_str(), "mlx");
+
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+
+    let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+    assert_eq!((ai.allow_threshold, ai.deny_threshold), (0.125, 0.875));
+    assert_eq!(ai.device.as_str(), "mlx");
+}
+
 #[tokio::test]
 async fn each_later_change_reaches_the_host_and_a_delete_removes_it() {
     let (far, local, _dir) = far_and_local().await;

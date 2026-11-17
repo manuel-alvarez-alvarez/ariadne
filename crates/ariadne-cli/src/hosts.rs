@@ -182,7 +182,13 @@ async fn show_each(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result<
             eprintln!("warning: {}: {:?}", host.name, host.status);
             continue;
         }
-        let selected = client(host, local)?;
+        let selected = match client(host, local) {
+            Ok(selected) => selected,
+            Err(error) => {
+                eprintln!("warning: {}: {error}", host.name);
+                continue;
+            }
+        };
         let output = tokio::process::Command::new(std::env::current_exe()?)
             .args(&args)
             .arg("--endpoint")

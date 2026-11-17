@@ -193,6 +193,7 @@ async fn permissions_device_is_written_on_the_named_host_only() {
                 Json(json!([
                     {"name":"local","kind":"local","status":"ready","endpoint":local_endpoint,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},
                     {"name":"build","kind":"direct","status":"ready","endpoint":remote_endpoint,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},
+                    {"name":"bare","kind":"direct","status":"ready","endpoint":null,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},
                     {"name":"offline","kind":"ssh","status":"down","endpoint":null,"error":"no forward","remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}}
                 ]))
             }),
@@ -297,10 +298,11 @@ async fn permissions_device_is_written_on_the_named_host_only() {
             ("build".into(), "cpu".into())
         ]
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("warning: offline:"), "{stderr}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("warning: offline:"),
-        "{:?}",
-        output.stderr
+        stderr.contains("warning: bare: host bare has no endpoint"),
+        "{stderr}"
     );
     server.abort();
     remote.abort();

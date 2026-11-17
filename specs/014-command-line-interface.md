@@ -248,7 +248,8 @@ same binary also serves (013).
     enable`; a `python_unavailable` one carries `install Python 3.12 or 3.13,
     or set python_bin in config.toml`.
     With `--host NAME`, `set --device` alone is written to that host's
-    `PUT /v1/permissions/ai`; any other `set` flag on a named host other than
+    `PUT /v1/permissions/ai`, and a later push of the AI settings resets it
+    (spec 037, rule 28); any other `set` flag on a named host other than
     `local` is refused locally, and the refusal says that the settings are
     written on `local` and synced, and that only `--device` is per host.
     `permissions ai show --host all` prints one block per ready host, in
