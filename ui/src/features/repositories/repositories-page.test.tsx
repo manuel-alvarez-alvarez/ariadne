@@ -354,4 +354,19 @@ describe("hosts", () => {
     expect(ariadne?.textContent).toBe("box · checkout")
     expect(sandbox?.textContent).toBe("box · no checkout")
   })
+
+  it("shows a host as pending, not as holding a checkout, until its first sync completes", async () => {
+    hosts = [
+      LOCAL,
+      {
+        ...BOX,
+        sync: { state: "pending", error: null, missing_repositories: [], skipped_permissions: 0 },
+      },
+    ]
+    renderScreen(<RepositoriesPage />)
+
+    const [ariadne, sandbox] = await screen.findAllByRole("list", { name: "Checkouts" })
+    expect(ariadne?.textContent).toBe("box · pending")
+    expect(sandbox?.textContent).toBe("box · pending")
+  })
 })

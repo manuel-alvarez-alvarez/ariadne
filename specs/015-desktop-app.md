@@ -1196,10 +1196,16 @@ Out: the daemon endpoints themselves (012).
     `--host NAME` when the host is not `local`.
 65. The skills, workflows, learned permissions, AI permission and repositories
     screens read and write `local` only, and the host picker does not change
-    them. Each shows a sync line per named host from `HostDto.sync`: in sync,
-    pending, or failed with the error. The Learned tab's line also says how
-    many local learned permissions the host skipped, from
-    `sync.skipped_permissions`.
+    them. While a named host is listed, each says that it shows and writes the
+    settings of `local`, and sets the lines under a heading, "Sync to other
+    hosts": one per named host from `HostDto.sync`: in sync, pending, or failed
+    with the error. The Learned tab's line also says how many local learned
+    permissions the host skipped, from `sync.skipped_permissions`. With only
+    `local` listed, no screen shows the note, the heading or the lines
+    (`ui/src/components/host-sync.test.tsx::says it shows and writes local, and heads the sync lines of the named hosts`,
+    `::shows no note, heading or sync line with only local listed`,
+    `ui/src/features/permissions/permissions-hosts.test.tsx::shows a sync line per host: in sync, pending, or failed with its error`,
+    `::counts the learned rows a host skipped on the Learned tab only`).
 66. The AI permission model's `device` is not synced. The AI tab shows a card
     per host, read from that host's `GET /v1/permissions/ai`, with its install
     state, hardware, Refresh and Device. A device change sends
@@ -1207,7 +1213,12 @@ Out: the daemon endpoints themselves (012).
     thresholds, flavour and test panel are `local`'s card only.
 67. The repositories table has a Hosts column. For each named host it says
     whether the host has a checkout of the repository or lacks one, from
-    `sync.missing_repositories`. The forge tunnel switch is `local`'s.
+    `sync.missing_repositories`. Until the host's first sync completes
+    (`sync.state` is `pending`) it says pending, since the list is empty then
+    and says nothing about a checkout. With only `local` listed the table has no
+    Hosts column. The forge tunnel switch is `local`'s
+    (`ui/src/features/repositories/repositories-page.test.tsx::says which hosts hold a checkout of each repository and which lack one`,
+    `::shows a host as pending, not as holding a checkout, until its first sync completes`).
 68. The agents screen reads the agents and models of the selected hosts. One tab
     holds one agent id. Under more than one selected host its panel has a chip
     per host that has the agent. A flag edit, a model switch and a rank apply to
