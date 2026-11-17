@@ -149,6 +149,18 @@ pub(crate) fn test_pin() -> AgentPin {
 /// index is found on the machine running the tests: the agents of a harness
 /// are the ones it registers itself, unless a test hands it a `PATH` of its
 /// own ([`HarnessBuilder::agents_on_path`]).
+/// Hardware that runs every flavour, so a pushed pair never depends on the
+/// machine the tests run on.
+pub(crate) fn roomy_hardware() -> HardwareOverride {
+    HardwareOverride {
+        os: "macos".into(),
+        arch: "aarch64".into(),
+        memory_gb: 256,
+        gpu_name: None,
+        vram_gb: None,
+    }
+}
+
 pub(crate) fn harness() -> HarnessBuilder {
     HarnessBuilder {
         home: None,

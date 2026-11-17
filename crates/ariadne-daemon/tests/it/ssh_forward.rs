@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::common::acp::pid_is_alive;
 use crate::common::ssh::{StubSsh, stub_ssh};
-use crate::common::{Harness, RUNS_OUT, TIMEOUT, eventually, harness, next_event};
+use crate::common::{Harness, RUNS_OUT, TIMEOUT, eventually, harness, next_event, roomy_hardware};
 use ariadne_api::hosts::{HostDto, HostStatus, SyncState};
 use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_daemon::bus::BusEvent;
@@ -32,6 +32,7 @@ async fn local(stub: &StubSsh, remote: Option<&str>) -> (Harness, tempfile::Temp
         "[hosts.box]\nendpoint = \"ssh://me@box:2222\"\n{remote}"
     ));
     let h = harness()
+        .ai_permissions_hardware(roomy_hardware())
         .home(home)
         .ssh(stub)
         .timeouts(Timeouts {
@@ -224,14 +225,14 @@ async fn a_forward_comes_up_and_goes_down(remote: &str) {
 
 #[tokio::test]
 async fn a_forward_to_a_socket_path_comes_up_and_goes_down() {
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let (socket, _dir) = serve_on_socket(&far).await;
     a_forward_comes_up_and_goes_down(&socket).await;
 }
 
 #[tokio::test]
 async fn a_forward_to_a_tcp_port_comes_up_and_goes_down() {
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let address = serve_on_tcp(&far).await;
     a_forward_comes_up_and_goes_down(&address).await;
 }
@@ -256,7 +257,7 @@ async fn read_until(stream: &mut reqwest::Response, needle: &str) {
 
 #[tokio::test]
 async fn an_event_stream_and_a_post_both_cross_a_ready_forward() {
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let (socket, _dir) = serve_on_socket(&far).await;
     let stub = stub_ssh(json!({"forward": true}));
     let (h, _home) = local(&stub, Some(&socket)).await;
@@ -310,7 +311,11 @@ async fn shutdown_ends_every_ssh_child() {
         "[hosts.one]\nendpoint = \"ssh://one\"\nremote = \"/run/one.sock\"\n\
          [hosts.two]\nendpoint = \"ssh://two\"\nremote = \"/run/two.sock\"\n",
     );
-    let h = harness().home(home).ssh(&stub).await;
+    let h = harness()
+        .ai_permissions_hardware(roomy_hardware())
+        .home(home)
+        .ssh(&stub)
+        .await;
     h.state.hosts.start();
     eventually(TIMEOUT, "both forwards running", || async {
         stub.runs().len() == 2

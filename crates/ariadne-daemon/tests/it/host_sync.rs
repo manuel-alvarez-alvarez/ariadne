@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::common::{
     Harness, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json, put_json,
-    sh,
+    roomy_hardware, sh,
 };
 use ariadne_api::hosts::{HostDto, HostSyncDto, MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
@@ -46,6 +46,7 @@ async fn local_with_host(endpoint: &str) -> (Harness, tempfile::TempDir) {
     )
     .unwrap();
     let h = harness()
+        .ai_permissions_hardware(roomy_hardware())
         .home(home)
         .timeouts(Timeouts {
             host_sync_retry: RUNS_OUT,
@@ -134,7 +135,7 @@ fn serve_gated(far: &Harness, listener: tokio::net::TcpListener, gate: &Gate) {
 /// The far daemon on a loopback port, and a local daemon whose host `far`
 /// points at it. No sync runs until the test starts the local hosts.
 async fn far_and_local() -> (Harness, Harness, tempfile::TempDir) {
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     serve(&far, listener);
@@ -526,7 +527,7 @@ async fn a_refused_push_holds_back_no_later_change() {
 /// the older version over the newer one.
 #[tokio::test]
 async fn a_newer_push_of_an_item_ends_its_older_failed_push() {
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let gate = Gate::new();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -623,7 +624,7 @@ async fn a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands()
     })
     .await;
 
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     serve(&far, tokio::net::TcpListener::bind(address).await.unwrap());
     until_in_sync(&local).await;
     assert_eq!(skill_on(&far, "mine").await.unwrap().summary, "local");
