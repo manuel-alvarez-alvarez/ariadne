@@ -549,7 +549,10 @@ async fn merge_lists(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Resul
             Ok(selected) => selected,
             Err(error) => return Read::Warning(error::human_line(&error)),
         };
-        match commands::listing(&selected, &cli.command, cli.format).await {
+        let read = commands::resolve::CHECK_WHOLE_IDS
+            .scope(true, commands::listing(&selected, &cli.command, cli.format))
+            .await;
+        match read {
             Some(Ok(listing)) => Read::Listed(Box::new(listing)),
             Some(Err(error)) if error::exit(&error) == Exit::NotFound => Read::NotFound(error),
             Some(Err(error)) => Read::Warning(error::human_line(&error)),

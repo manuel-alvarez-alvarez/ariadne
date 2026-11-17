@@ -952,6 +952,14 @@ async fn all_draws_one_list_of_every_ready_host() {
     assert!(!stderr.contains("local"), "{stderr}");
     let (code, _, stderr) = run_all(&endpoint, &["session", "ls", "--goal", "g-none"]).await;
     assert_eq!(code, 4, "{stderr}");
+    // A whole ID is checked on each host too, so an absent one is not found.
+    for args in [
+        ["task", "ls", "--goal", "01m15jmta93b130wka2qdn2p1x"],
+        ["session", "ls", "--goal", "01m15jmta93b130wka2qdn2p1x"],
+    ] {
+        let (code, _, stderr) = run_all(&endpoint, &args).await;
+        assert_eq!(code, 4, "{args:?}: {stderr}");
+    }
 
     // A cursor belongs to one host.
     let (code, _, stderr) = run_all(&endpoint, &["session", "ls", "--cursor", "c2"]).await;
