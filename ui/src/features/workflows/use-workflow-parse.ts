@@ -25,9 +25,9 @@ export function useWorkflowParse(document: string): WorkflowParseResult {
   }, [document])
 
   const parsed = useQuery({
-    queryKey: qk.workflows.parse(settledDocument),
+    queryKey: qk.workflows.parse("local", settledDocument),
     queryFn: () =>
-      unwrap(api().POST("/v1/workflows/parse", { body: { document: settledDocument } })),
+      unwrap(api("local").POST("/v1/workflows/parse", { body: { document: settledDocument } })),
   })
   return { ...parsed, errorLine: parsed.isError ? errorLine(parsed.error) : null }
 }

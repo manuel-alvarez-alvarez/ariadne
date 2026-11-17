@@ -16,31 +16,34 @@ import { useQuery } from "@tanstack/react-query"
 import { PlusIcon } from "lucide-react"
 import { useMemo } from "react"
 
-import type { WorkflowStepDto } from "@/api"
+import type { Host, WorkflowStepDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { compareByAttention, TaskCard, taskListQueryOptions } from "@/features/tasks"
 
-import { useBoardAttention } from "./attention"
+import { NO_BOARD_ATTENTION, useBoardAttention } from "./attention"
 
 export function GoalTasks({
+  host,
   goalId,
   steps,
   onNewTask,
 }: {
+  host: Host
   goalId: string
   /** The goal's workflow columns, which every card draws its step track from. */
   steps: WorkflowStepDto[]
   /** Opens the create-task dialog; absent when the goal no longer takes one. */
   onNewTask?: () => void
 }) {
-  const tasks = useQuery(taskListQueryOptions({ goal: goalId }))
+  const tasks = useQuery(taskListQueryOptions(host, { goal: goalId }))
   // The board's own badges, from the board's own sessions query: a card in the
   // panel says the same thing about a blocked agent as the card in the lane
   // behind it.
-  const attention = useBoardAttention()
+  const hosts = useMemo(() => [host], [host])
+  const attention = useBoardAttention(hosts).get(host) ?? NO_BOARD_ATTENTION
   // What needs a person comes first: the panel is a small window, and the task
   // that is stuck should not be the one below the fold.
   const ordered = useMemo(() => [...(tasks.data ?? [])].sort(compareByAttention), [tasks.data])
@@ -98,6 +101,7 @@ export function GoalTasks({
         {ordered.map((task) => (
           <li key={task.id}>
             <TaskCard
+              host={host}
               task={task}
               steps={steps}
               attention={attention.byTask.get(task.id)}

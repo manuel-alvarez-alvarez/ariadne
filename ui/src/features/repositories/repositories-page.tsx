@@ -53,7 +53,7 @@ export function RepositoriesPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState<RepositoryDto | null>(null)
 
-  const repositories = useQuery(repositoriesQueryOptions())
+  const repositories = useQuery(repositoriesQueryOptions("local"))
   // Whether a polling hook is the tunnel being off or a hook that failed.
   const tunnel = useQuery(tunnelQueryOptions())
 

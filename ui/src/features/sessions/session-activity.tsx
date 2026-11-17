@@ -269,7 +269,7 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
   const tail = useRef<Tail>({ sessionId, cursor: undefined, events: [] })
 
   const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: qk.agentEvents.list({ session: sessionId }),
+    queryKey: qk.agentEvents.list("local", { session: sessionId }),
     queryFn: async () => {
       if (tail.current.sessionId !== sessionId) {
         tail.current = { sessionId, cursor: undefined, events: [] }
@@ -522,7 +522,7 @@ async function sweep(sessionId: string, after: string | undefined): Promise<Agen
   let cursor = after
   for (let page = 0; page < MAX_SWEEP_PAGES; page++) {
     const batch = await unwrap(
-      api().GET("/v1/events", {
+      api("local").GET("/v1/events", {
         params: { query: { session: sessionId, after: cursor, limit: PAGE } },
       }),
     )

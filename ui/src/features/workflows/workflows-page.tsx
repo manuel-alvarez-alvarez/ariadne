@@ -20,7 +20,7 @@ export function WorkflowsPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [search, setSearch] = useSearchParams()
   const selectedName = search.get(WORKFLOW_PARAM)
-  const workflows = useQuery(workflowsQueryOptions())
+  const workflows = useQuery(workflowsQueryOptions("local"))
   const selected = workflows.data?.find((workflow) => workflow.name === selectedName)
   const [dirty, setDirty] = useState(false)
   const blocker = useBlocker(dirty)

@@ -18,8 +18,8 @@ import { copyDashboardDocument } from "./document"
  */
 export function dashboardsQueryOptions() {
   return queryOptions({
-    queryKey: qk.dashboards.list(),
-    queryFn: () => unwrap(api().GET("/v1/dashboards")),
+    queryKey: qk.dashboards.list("local"),
+    queryFn: () => unwrap(api("local").GET("/v1/dashboards")),
   })
 }
 
@@ -28,8 +28,8 @@ export function useCreateDashboard() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: CreateDashboardRequest): Promise<DashboardDto> =>
-      unwrap(api().POST("/v1/dashboards", { body })),
-    onSuccess: (dashboard) => cacheRow(queryClient, qk.dashboards, dashboard),
+      unwrap(api("local").POST("/v1/dashboards", { body })),
+    onSuccess: (dashboard) => cacheRow(queryClient, qk.dashboards, "local", dashboard),
   })
 }
 
@@ -42,8 +42,8 @@ export function useDeleteDashboard() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (name: string) =>
-      unwrap(api().DELETE("/v1/dashboards/{name}", { params: { path: { name } } })),
-    onSuccess: (_result, name) => dropRow(queryClient, qk.dashboards, name),
+      unwrap(api("local").DELETE("/v1/dashboards/{name}", { params: { path: { name } } })),
+    onSuccess: (_result, name) => dropRow(queryClient, qk.dashboards, "local", name),
   })
 }
 
@@ -70,16 +70,18 @@ export function useRenameDashboard() {
       document: unknown
     }): Promise<DashboardDto> => {
       const created = await unwrap(
-        api().POST("/v1/dashboards", {
+        api("local").POST("/v1/dashboards", {
           body: { name: to, document: copyDashboardDocument(document, to) },
         }),
       )
-      await unwrap(api().DELETE("/v1/dashboards/{name}", { params: { path: { name: from } } }))
+      await unwrap(
+        api("local").DELETE("/v1/dashboards/{name}", { params: { path: { name: from } } }),
+      )
       return created
     },
     onSuccess: (dashboard, { from }) => {
-      cacheRow(queryClient, qk.dashboards, dashboard)
-      dropRow(queryClient, qk.dashboards, from)
+      cacheRow(queryClient, qk.dashboards, "local", dashboard)
+      dropRow(queryClient, qk.dashboards, "local", from)
     },
   })
 }
@@ -92,7 +94,7 @@ export function useResetDashboard() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (name: string): Promise<DashboardDto> =>
-      unwrap(api().POST("/v1/dashboards/{name}/reset", { params: { path: { name } } })),
-    onSuccess: (dashboard) => cacheRow(queryClient, qk.dashboards, dashboard),
+      unwrap(api("local").POST("/v1/dashboards/{name}/reset", { params: { path: { name } } })),
+    onSuccess: (dashboard) => cacheRow(queryClient, qk.dashboards, "local", dashboard),
   })
 }

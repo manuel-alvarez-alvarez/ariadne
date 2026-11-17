@@ -10,10 +10,32 @@
  * task's panel), which `src/components/detail-panels.tsx` reads. The sessions
  * screen is the exception because it claims `?goal=` and `?task=` as the
  * filters they are for the daemon's own list endpoint.
+ *
+ * Each panel param has a `?host=` beside it: the host the goal, task, session
+ * or pull request lives on. Every helper that opens a panel takes that host,
+ * and writes `?host=` for a named host only, so a link without one — every
+ * link from before hosts, and every one to `local` — resolves to `local`.
  */
 
 import { useEffect, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
+
+import { type Host, LOCAL_HOST } from "@/api/client"
+
+/** Which host the open panel's entity lives on, under `?host=`. */
+export const HOST_PARAM = "host"
+
+/** The host a panel's params name: `local` without `?host=`. */
+export function hostOf(current: URLSearchParams): Host {
+  return current.get(HOST_PARAM) || LOCAL_HOST
+}
+
+/** `?host=` set for a named host, and dropped for `local`. */
+function withHost(next: URLSearchParams, host: Host = LOCAL_HOST): URLSearchParams {
+  if (host === LOCAL_HOST) next.delete(HOST_PARAM)
+  else next.set(HOST_PARAM, host)
+  return next
+}
 
 /**
  * Which skill is selected, on the skills screen: what {@link paths.skill}
@@ -43,8 +65,8 @@ export const paths = {
   forge: () => "/forge",
   /** The requests that ask for the user's review, Forge's first tab (029). */
   pullRequests: () => "/forge/pull-requests",
-  pullRequest: (id: string, current = new URLSearchParams()) => {
-    const next = new URLSearchParams(current)
+  pullRequest: (id: string, current = new URLSearchParams(), host: Host = LOCAL_HOST) => {
+    const next = withHost(new URLSearchParams(current), host)
     for (const key of ["task", "goal", "session", "tab"]) next.delete(key)
     next.set("pr", id)
     return `/forge/pull-requests?${next.toString()}`
@@ -52,8 +74,9 @@ export const paths = {
   /** The open issues of the enabled repositories, Forge's second tab (028). */
   issues: () => "/forge/issues",
   goals: () => "/goals",
-  /** The goals board with this goal's panel open. */
-  goal: (goalId: string) => `/goals?goal=${goalId}`,
+  /** The goals board with this goal's panel open, on the goal's host. */
+  goal: (goalId: string, host: Host = LOCAL_HOST) =>
+    `/goals?${withHost(new URLSearchParams({ goal: goalId }), host).toString()}`,
   skills: () => "/skills",
   workflows: () => "/workflows",
   workflow: (name: string) => `/workflows?${WORKFLOW_PARAM}=${encodeURIComponent(name)}`,
@@ -81,8 +104,8 @@ export const paths = {
    * panel opens on the board and nowhere else (see `detail-panels.tsx`), so
    * this leaves whatever screen the link was on.
    */
-  goalSession: (goalId: string, sessionId: string) =>
-    `/goals?goal=${goalId}&tab=sessions&session=${sessionId}`,
+  goalSession: (goalId: string, sessionId: string, host: Host = LOCAL_HOST) =>
+    `/goals?${withHost(new URLSearchParams({ goal: goalId, tab: "sessions", session: sessionId }), host).toString()}`,
 } as const
 
 /**
@@ -118,8 +141,12 @@ interface PanelTarget {
  * `replace` this drop asks for by reading it off the returned target —
  * {@link PanelTarget} — rather than working it out again itself.
  */
-export function taskPanelTo(current: URLSearchParams, taskId: string): PanelTarget {
-  const next = withoutArrival(current)
+export function taskPanelTo(
+  current: URLSearchParams,
+  taskId: string,
+  host: Host = LOCAL_HOST,
+): PanelTarget {
+  const next = withHost(withoutArrival(current), host)
   const replace = next.has("goal") || next.has("pr")
   next.delete("pr")
   next.set("task", taskId)
@@ -147,17 +174,21 @@ export function taskPanelFrom(
   pathname: string,
   current: URLSearchParams,
   taskId: string,
+  host: Host = LOCAL_HOST,
 ): PanelTarget {
   return pathname === paths.sessions()
-    ? { pathname: paths.goals(), search: `?task=${taskId}` }
-    : taskPanelTo(current, taskId)
+    ? {
+        pathname: paths.goals(),
+        search: `?${withHost(new URLSearchParams({ task: taskId }), host).toString()}`,
+      }
+    : taskPanelTo(current, taskId, host)
 }
 
 /** `taskPanelFrom` against the current location, for links outside a list. */
-export function useTaskPanelTo(taskId: string): PanelTarget {
+export function useTaskPanelTo(taskId: string, host: Host = LOCAL_HOST): PanelTarget {
   const [search] = useSearchParams()
   const { pathname } = useLocation()
-  return taskPanelFrom(pathname, search, taskId)
+  return taskPanelFrom(pathname, search, taskId, host)
 }
 
 /**
@@ -176,8 +207,9 @@ export function sessionPanelFrom(
   pathname: string,
   current: URLSearchParams,
   sessionId: string,
+  host: Host = LOCAL_HOST,
 ): { search: string } {
-  const next = withoutArrival(current)
+  const next = withHost(withoutArrival(current), host)
   next.set("session", sessionId)
   next.delete("pr")
   // The panel's own tab belongs to whichever session was open before this one.
@@ -240,8 +272,9 @@ export function taskSessionPanelFrom(
   current: URLSearchParams,
   taskId: string,
   sessionId: string,
+  host: Host = LOCAL_HOST,
 ): PanelTarget {
-  const task = taskPanelFrom(pathname, current, taskId)
+  const task = taskPanelFrom(pathname, current, taskId, host)
   return { ...task, search: panelSessionTo(new URLSearchParams(task.search), sessionId).search }
 }
 
@@ -274,8 +307,9 @@ export function sessionTerminalFrom(
   pathname: string,
   current: URLSearchParams,
   sessionId: string,
+  host: Host = LOCAL_HOST,
 ): { search: string } {
-  const next = new URLSearchParams(sessionPanelFrom(pathname, current, sessionId).search)
+  const next = new URLSearchParams(sessionPanelFrom(pathname, current, sessionId, host).search)
   next.set("tab", "terminal")
   return arriving({ search: `?${next.toString()}` }, "terminal")
 }

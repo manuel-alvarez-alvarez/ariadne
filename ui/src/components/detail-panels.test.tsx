@@ -82,7 +82,7 @@ it("gives the task panel's breadcrumb the app's own focus ring, once the task na
   const task = aTask({ id: "t1", goal_id: "g1" })
   renderScreen(<DetailPanels />, {
     route: `${paths.goals()}?task=t1`,
-    seed: (client) => client.setQueryData(qk.tasks.detail(task.id), task),
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
   })
 
   // The goal is still loading, so the button wears the word rather than the
@@ -129,15 +129,18 @@ it("floats a goal over the board, and a click on its scrim closes the goal", asy
   const { location } = renderScreen(
     <>
       <main>
-        <GoalSwimlanes goals={[first, second]} />
+        <GoalSwimlanes
+          hosts={["local"]}
+          goals={[first, second].map((goal) => ({ ...goal, host: "local" }))}
+        />
       </main>
       <DetailPanels />
     </>,
     {
       route: "/goals?goal=g1",
       seed: (client) => {
-        client.setQueryData(qk.goals.detail(first.id), first)
-        client.setQueryData(qk.tasks.list({}), [])
+        client.setQueryData(qk.goals.detail("local", first.id), first)
+        client.setQueryData(qk.tasks.list("local", {}), [])
       },
     },
   )
@@ -163,9 +166,9 @@ it("swaps the open goal for another goal the URL names", async () => {
     {
       route: `${paths.goals()}?goal=g1`,
       seed: (client) => {
-        client.setQueryData(qk.goals.detail(first.id), first)
-        client.setQueryData(qk.goals.detail(second.id), second)
-        client.setQueryData(qk.tasks.list({}), [])
+        client.setQueryData(qk.goals.detail("local", first.id), first)
+        client.setQueryData(qk.goals.detail("local", second.id), second)
+        client.setQueryData(qk.tasks.list("local", {}), [])
       },
     },
   )

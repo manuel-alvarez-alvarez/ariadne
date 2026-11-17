@@ -78,6 +78,13 @@ interface SettingsState {
    */
   showDisabledModels: boolean
   setShowDisabledModels: (show: boolean) => void
+  /**
+   * The host the header's host picker selected: a host's name from
+   * `GET /v1/hosts`, or `""` for All. Read it through `useHostFilter`, which
+   * resolves All to the hosts it means.
+   */
+  hostFilter: string
+  setHostFilter: (host: string) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -104,6 +111,8 @@ export const useSettingsStore = create<SettingsState>()(
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       showDisabledModels: false,
       setShowDisabledModels: (showDisabledModels) => set({ showDisabledModels }),
+      hostFilter: "",
+      setHostFilter: (hostFilter) => set({ hostFilter }),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
@@ -131,6 +140,7 @@ export const useSettingsStore = create<SettingsState>()(
         sidebarCollapsed: state.sidebarCollapsed,
         panelWidth: state.panelWidth,
         showDisabledModels: state.showDisabledModels,
+        hostFilter: state.hostFilter,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) setApiBaseUrl(state.baseUrl)

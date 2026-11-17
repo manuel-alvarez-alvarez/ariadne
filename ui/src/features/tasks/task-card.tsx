@@ -35,7 +35,7 @@ import { GitPullRequestIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
-import type { TaskDto, WorkflowStepDto } from "@/api"
+import type { Host, TaskDto, WorkflowStepDto } from "@/api"
 import { PrLink, pullRequestNumber, pullRequestText } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
@@ -107,11 +107,14 @@ interface CardState {
 }
 
 export function TaskCard({
+  host,
   task,
   steps,
   attention,
   lastActivityAt,
 }: {
+  /** The host the task runs on, which its panel link carries. */
+  host: Host
   task: TaskDto
   /** The goal's workflow columns, which the step track draws one dot for each. */
   steps: WorkflowStepDto[]
@@ -137,7 +140,7 @@ export function TaskCard({
   // `to.replace` is set exactly when a goal panel is open — the card's own
   // link is replacing it rather than stacking on it, on the board behind it
   // or in the goal's own task list alike (`routes/paths.ts`'s `taskPanelTo`).
-  const to = useTaskPanelTo(task.id)
+  const to = useTaskPanelTo(task.id, host)
   // The reason is still what outlines the card even where the badge for it is
   // dropped: it is the same fact, said once.
   const flagged = attention && !repeatsCard(attention, state) ? attention : null

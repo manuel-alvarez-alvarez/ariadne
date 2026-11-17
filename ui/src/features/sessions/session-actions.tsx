@@ -86,7 +86,7 @@ export function SwitchSessionDialog({
   onSwitched?: (session: SessionDto) => void
 }) {
   const switched = useSwitchSession()
-  const models = useQuery({ ...modelsQueryOptions(), enabled: open })
+  const models = useQuery({ ...modelsQueryOptions("local"), enabled: open })
   const form = useForm<SwitchForm>({
     resolver: zodResolver(switchSchema),
     defaultValues: { model: session.model, effort: session.effort ?? "" },
@@ -125,6 +125,7 @@ export function SwitchSessionDialog({
               name="model"
               render={({ field }) => (
                 <PinPicker
+                  host="local"
                   id="switch-session-pin"
                   label="Runs on"
                   model={field.value}

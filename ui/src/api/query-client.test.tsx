@@ -18,7 +18,7 @@ import { qk } from "./query-keys"
 
 /** A screen with one read on it, as every screen in the app is. */
 function Board({ read }: { read: () => Promise<unknown> }) {
-  const { data } = useQuery({ queryKey: qk.repositories.list(), queryFn: read })
+  const { data } = useQuery({ queryKey: qk.repositories.list("local"), queryFn: read })
   return <span>{data ? "loaded" : "loading"}</span>
 }
 
@@ -51,7 +51,7 @@ describe("createQueryClient", () => {
   it("does not read at all when the cache was seeded and nothing invalidated it", async () => {
     const read = vi.fn().mockResolvedValue([])
     const queryClient = createQueryClient()
-    queryClient.setQueryData(qk.repositories.list(), [])
+    queryClient.setQueryData(qk.repositories.list("local"), [])
     render(
       <QueryClientProvider client={queryClient}>
         <Board read={read} />

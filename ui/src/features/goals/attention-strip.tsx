@@ -1,11 +1,13 @@
 /** The shell's persistent entry point to the shared live attention list. */
 
-import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useRef, useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { type FormEvent, useRef, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
-import { api, type GoalDto, qk, unwrap } from "@/api"
+import { type AgentRequestDto, api, type GoalDto, type Host, LOCAL_HOST, qk, unwrap } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Sheet,
@@ -16,6 +18,7 @@ import {
 } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
+import { answerRequest, pendingRequests } from "@/features/sessions/console/questions"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { describeError, shortId } from "@/lib/format"
@@ -87,7 +90,7 @@ export function AttentionPopover() {
           ) : null}
           <ul className="max-h-[min(70vh,32rem)] divide-y overflow-y-auto">
             {attention.items.map((item) => (
-              <Row key={item.id} item={item} onSelect={() => setOpen(false)} />
+              <Row key={rowKey(item)} item={item} onSelect={() => setOpen(false)} />
             ))}
           </ul>
           {attention.partial ? (
@@ -251,7 +254,7 @@ function AttentionDrawer({
       ) : null}
       <ul className="divide-y rounded-md border">
         {shown.map((item) => (
-          <Row key={item.id} item={item} onSelect={onSelect} expanded />
+          <Row key={rowKey(item)} item={item} onSelect={onSelect} expanded />
         ))}
       </ul>
       {attention.partial ? (
@@ -298,8 +301,10 @@ function Row({
   const queryClient = useQueryClient()
   const dismiss = useMutation({
     mutationFn: () =>
-      unwrap(api().POST("/v1/attention/{id}/dismiss", { params: { path: { id: item.id } } })),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.attention.lists() }),
+      unwrap(
+        api(item.host).POST("/v1/attention/{id}/dismiss", { params: { path: { id: item.id } } }),
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.attention.lists(item.host) }),
   })
   const [search] = useSearchParams()
   // Where a row lands depends on the screen as well as its params: the strip is
@@ -348,6 +353,12 @@ function Row({
       <div className="flex w-full items-center gap-2 @2xl:w-auto">
         {/* A pull request's session belongs to no goal to name. */}
         {item.goalId ? <GoalRef goalId={item.goalId} goal={item.goal} /> : null}
+        {/* `local` is the app's own daemon; any other host is named. */}
+        {item.host === LOCAL_HOST ? null : (
+          <Badge variant="outline" className="font-mono" title="Host">
+            {item.host}
+          </Badge>
+        )}
         {/* One label for every row: a task's row moves when the task is
             updated, a session's when it started asking — "last moved" is the
             one thing true of both, and the list is ordered by it. */}
@@ -383,6 +394,9 @@ function Row({
       >
         {content}
       </Link>
+      {item.recovery?.producer === "agent_request" && item.recovery.target.kind === "console" ? (
+        <RequestAnswers host={item.host} sessionId={item.recovery.target.session_id} />
+      ) : null}
       {affectedLinks ? (
         <div className="flex flex-wrap gap-2 px-3 pb-2 pl-9 text-xs text-muted-foreground">
           <span>Open:</span>
@@ -460,6 +474,105 @@ function GoalRef({ goalId, goal }: { goalId: string; goal: GoalDto | undefined }
       </TooltipTrigger>
       <TooltipContent>{title}</TooltipContent>
     </Tooltip>
+  )
+}
+
+/** A row's React key: ids are only unique on the host that raised them. */
+function rowKey(item: AttentionItem): string {
+  return `${item.host}\n${item.id}`
+}
+
+/**
+ * The questions an agent asked through `wait_for_user`, answered in place: one
+ * button per option and a field for an answer of the user's own, posted to the
+ * request's own `POST /v1/sessions/{id}/agent-requests/{request_id}/answer` on
+ * the host the session runs on. The row's own link still opens its console.
+ */
+function RequestAnswers({ host, sessionId }: { host: Host; sessionId: string }) {
+  const requests = useQuery({
+    queryKey: qk.sessions.agentRequests(host, sessionId),
+    queryFn: () => pendingRequests(host, sessionId),
+  })
+  const questions = (requests.data ?? []).filter((request) => request.question)
+  if (questions.length === 0) return null
+  return (
+    <div className="flex flex-col gap-2 px-3 pb-2">
+      {questions.map((request) => (
+        <RequestAnswer key={request.id} host={host} sessionId={sessionId} request={request} />
+      ))}
+    </div>
+  )
+}
+
+function RequestAnswer({
+  host,
+  sessionId,
+  request,
+}: {
+  host: Host
+  sessionId: string
+  request: AgentRequestDto
+}) {
+  const queryClient = useQueryClient()
+  const [custom, setCustom] = useState("")
+  const answer = useMutation({
+    mutationFn: (body: { option_id: string } | { text: string }) =>
+      answerRequest(host, sessionId, request.id, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.sessions.agentRequests(host, sessionId) })
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists(host) })
+    },
+  })
+  const question = request.question
+  if (!question) return null
+  const options = question.options ?? []
+  const settled = answer.isPending || answer.isSuccess
+
+  function submitCustom(event: FormEvent) {
+    event.preventDefault()
+    const text = custom.trim()
+    if (text !== "" && !settled) answer.mutate({ text })
+  }
+
+  return (
+    <section aria-label={`Question · ${request.summary}`} className="flex flex-col gap-1 text-xs">
+      <p className="text-foreground">{question.text}</p>
+      {options.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {options.map((option) => (
+            <Button
+              key={option.id}
+              type="button"
+              size="sm"
+              variant={option.id === question.recommended_option_id ? "default" : "outline"}
+              disabled={settled}
+              onClick={() => answer.mutate({ option_id: option.id })}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+      <form onSubmit={submitCustom} className="flex gap-1">
+        <input
+          aria-label="Your own answer"
+          value={custom}
+          onChange={(event) => setCustom(event.target.value)}
+          disabled={settled}
+          placeholder={options.length > 0 ? "Or type your own answer" : "Type your answer"}
+          className="min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+        />
+        <Button type="submit" size="sm" disabled={settled || custom.trim() === ""}>
+          Answer
+        </Button>
+      </form>
+      {answer.isSuccess ? <p role="status">Answer sent.</p> : null}
+      {answer.error ? (
+        <p role="alert" className="text-destructive">
+          Could not send the answer: {describeError(answer.error)}
+        </p>
+      ) : null}
+    </section>
   )
 }
 

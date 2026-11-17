@@ -194,7 +194,7 @@ describe("DashboardsPage", () => {
     // The SSE dispatcher patches exactly this on a `dashboard_updated` event
     // (`src/events/dispatch.ts`); the screen reacts to the row changing, not
     // to the event itself.
-    queryClient.setQueryData(qk.dashboards.list(), [
+    queryClient.setQueryData(qk.dashboards.list("local"), [
       DEFAULT_DASHBOARD,
       { ...CUSTOM, updated_at: "2026-01-03T00:00:00Z" },
     ])

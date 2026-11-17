@@ -10,7 +10,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { MessagesSquareIcon, PlusIcon } from "lucide-react"
 
-import type { GoalDto, SessionDto } from "@/api"
+import type { GoalDto, Host, SessionDto } from "@/api"
 import { Button } from "@/components/ui/button"
 import { When } from "@/components/when"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
@@ -62,17 +62,19 @@ const HEADLINES: Record<PlanningState["kind"], string> = {
 }
 
 export function PlanningGuide({
+  host,
   goal,
   onOpenConversation,
   onNewTask,
 }: {
+  host: Host
   goal: GoalDto
   /** Opens the orchestrator's session over the panel. */
   onOpenConversation: (sessionId: string) => void
   onNewTask: () => void
 }) {
   // The key the Sessions tab and its count read, so this costs no request.
-  const sessions = useQuery(sessionsQueryOptions({ goal: goal.id, seat: "orchestrator" }))
+  const sessions = useQuery(sessionsQueryOptions(host, { goal: goal.id, seat: "orchestrator" }))
   const state = planningState(sessions.data, sessions.isError)
   const session = "session" in state ? state.session : null
 

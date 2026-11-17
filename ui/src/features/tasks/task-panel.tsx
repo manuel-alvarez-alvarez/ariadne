@@ -71,12 +71,12 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
   // since the dispatcher invalidates both lists. The sessions filter is the
   // one `TaskSessions` itself passes, or the tab's count and the tab's list
   // would be two cache entries and two requests.
-  const sessions = useQuery(sessionsQueryOptions({ task: taskId }))
+  const sessions = useQuery(sessionsQueryOptions("local", { task: taskId }))
   const messages = useQuery(taskMessagesQueryOptions(taskId))
   // The goal's workflow columns, which a stepped task is drawn and named by:
   // the same detail entry the header's breadcrumb reads.
   const goal = useQuery({
-    ...goalQueryOptions(task.data?.goal_id ?? ""),
+    ...goalQueryOptions("local", task.data?.goal_id ?? ""),
     enabled: task.data !== undefined,
   })
   const steps = goal.data?.steps ?? []
@@ -189,7 +189,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
  * replaces this panel with the goal's in the same pane.
  */
 function TaskHeader({ task }: { task: TaskDto }) {
-  const goal = useQuery(goalQueryOptions(task.goal_id))
+  const goal = useQuery(goalQueryOptions("local", task.goal_id))
   const navigate = useNavigate()
   const status = TASK_STATUS_META[task.status]
   return (

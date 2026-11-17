@@ -178,9 +178,9 @@ function alertKey(item: AttentionItem): string {
         item.recovery.since,
         item.recovery.affected.map((subject) => `${subject.kind}:${subject.id}`).sort(),
       ])
-    return `${item.id}:${occurrence}`
+    return `${item.host}:${item.id}:${occurrence}`
   }
-  return `${item.id}:${item.at}:${item.taskReason ?? "-"}:${item.sessionReason ?? "-"}`
+  return `${item.host}:${item.id}:${item.at}:${item.taskReason ?? "-"}:${item.sessionReason ?? "-"}`
 }
 
 /** What the toast leads with: the reason, in the words the badges use. */

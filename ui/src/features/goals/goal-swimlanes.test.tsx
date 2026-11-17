@@ -16,7 +16,9 @@ it("shows all tasks in one area and counts them", async () => {
       aTask({ id: "two", goal_id: goal.id, title: "Second", status: "finished" }),
     ]),
   )
-  renderScreen(<GoalSwimlanes goals={[goal]} />)
+  renderScreen(
+    <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
+  )
   expect(await screen.findByRole("heading", { name: "Tasks (2)" })).toBeTruthy()
   const area = screen.getByRole("group", { name: `${GOAL_TITLE}: Tasks` })
   expect(within(area).getByText("First")).toBeTruthy()
@@ -32,7 +34,13 @@ it("hides terminal tasks under Active while preserving progress", async () => {
       aTask({ id: "three", goal_id: goal.id, title: "Cancelled task", status: "cancelled" }),
     ]),
   )
-  renderScreen(<GoalSwimlanes goals={[goal]} activeOnly />)
+  renderScreen(
+    <GoalSwimlanes
+      hosts={["local"]}
+      goals={[goal].map((goal) => ({ ...goal, host: "local" }))}
+      activeOnly
+    />,
+  )
   expect(await screen.findByRole("heading", { name: "Tasks (1)" })).toBeTruthy()
   expect(screen.getByText("Waiting")).toBeTruthy()
   expect(screen.queryByText("Complete")).toBeNull()
@@ -48,7 +56,9 @@ it("draws a goal as one line: toggle, title link, status, progress and tokens", 
       aTask({ id: "t2", goal_id: goal.id, status: "in_progress" }),
     ]),
   )
-  renderScreen(<GoalSwimlanes goals={[goal]} />)
+  renderScreen(
+    <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
+  )
 
   const link = await screen.findByRole("link", { name: GOAL_TITLE })
   expect(link.getAttribute("href")).toContain(`goal=${goal.id}`)
@@ -63,7 +73,9 @@ it("draws a goal as one line: toggle, title link, status, progress and tokens", 
 it("shows the lane summary in place of the cells once folded", async () => {
   const goal = aGoal({ title: GOAL_TITLE, status: "completed" })
   daemonFetch.mockResolvedValue(jsonResponse([aTask({ goal_id: goal.id, status: "finished" })]))
-  renderScreen(<GoalSwimlanes goals={[goal]} />)
+  renderScreen(
+    <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
+  )
 
   expect(await screen.findByText("1 task finished")).toBeTruthy()
   expect(screen.queryByRole("group", { name: `${GOAL_TITLE}: Tasks` })).toBeNull()

@@ -34,19 +34,19 @@ beforeEach(() => {
 function mount(route: string, status = task.status) {
   return renderScreen(
     <>
-      <GoalSwimlanes goals={[goal]} />
+      <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />
       <DetailPanels />
     </>,
     {
       route,
       seed: (client) => {
-        client.setQueryData(qk.goals.detail(goal.id), goal)
-        client.setQueryData(qk.tasks.detail(task.id), { ...task, status })
-        client.setQueryData(qk.tasks.list({}), [task])
-        client.setQueryData(qk.tasks.list({ goal: goal.id }), [task])
-        client.setQueryData(qk.sessions.detail(session.id), session)
+        client.setQueryData(qk.goals.detail("local", goal.id), goal)
+        client.setQueryData(qk.tasks.detail("local", task.id), { ...task, status })
+        client.setQueryData(qk.tasks.list("local", {}), [task])
+        client.setQueryData(qk.tasks.list("local", { goal: goal.id }), [task])
+        client.setQueryData(qk.sessions.detail("local", session.id), session)
         client.setQueryData(
-          qk.tasks.diff(task.id),
+          qk.tasks.diff("local", task.id),
           "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n",
         )
       },

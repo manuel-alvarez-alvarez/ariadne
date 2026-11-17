@@ -20,6 +20,7 @@ function Harness({ allowInherit }: { allowInherit?: boolean }) {
   const { control } = useForm<{ workflow: string }>({ defaultValues: { workflow: "" } })
   return (
     <WorkflowSelect
+      host="local"
       control={control}
       name="workflow"
       id="workflow"

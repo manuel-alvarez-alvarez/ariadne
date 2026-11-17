@@ -13,6 +13,7 @@ import {
   api,
   type CreateTaskRequest,
   cacheRow,
+  type Host,
   type MessageDto,
   qk,
   type TaskDto,
@@ -28,12 +29,12 @@ interface TaskListFilters {
   status?: TaskStatus
 }
 
-export function taskListQueryOptions(filters: TaskListFilters = {}) {
+export function taskListQueryOptions(host: Host, filters: TaskListFilters = {}) {
   return queryOptions({
-    queryKey: qk.tasks.list(filters),
+    queryKey: qk.tasks.list(host, filters),
     queryFn: () =>
       unwrap(
-        api().GET("/v1/tasks", {
+        api(host).GET("/v1/tasks", {
           params: { query: { goal: filters.goal, status: filters.status } },
         }),
       ),
@@ -42,27 +43,27 @@ export function taskListQueryOptions(filters: TaskListFilters = {}) {
 
 export function taskQueryOptions(taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.detail(taskId),
-    queryFn: () => unwrap(api().GET("/v1/tasks/{id}", { params: { path: { id: taskId } } })),
+    queryKey: qk.tasks.detail("local", taskId),
+    queryFn: () => unwrap(api("local").GET("/v1/tasks/{id}", { params: { path: { id: taskId } } })),
   })
 }
 
 export function taskTransitionsQueryOptions(taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.transitions(taskId),
+    queryKey: qk.tasks.transitions("local", taskId),
     queryFn: () =>
-      unwrap(api().GET("/v1/tasks/{id}/transitions", { params: { path: { id: taskId } } })),
+      unwrap(api("local").GET("/v1/tasks/{id}/transitions", { params: { path: { id: taskId } } })),
   })
 }
 
 /** The task channel, in the order the daemon wrote it. */
 export function taskMessagesQueryOptions(taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.messages(taskId),
+    queryKey: qk.tasks.messages("local", taskId),
     queryFn: () =>
-      unwrap(api().GET("/v1/tasks/{id}/messages", { params: { path: { id: taskId } } })) as Promise<
-        MessageDto[]
-      >,
+      unwrap(
+        api("local").GET("/v1/tasks/{id}/messages", { params: { path: { id: taskId } } }),
+      ) as Promise<MessageDto[]>,
   })
 }
 
@@ -77,10 +78,10 @@ export function taskMessagesQueryOptions(taskId: string) {
  */
 export function taskDiffQueryOptions(taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.diff(taskId),
+    queryKey: qk.tasks.diff("local", taskId),
     queryFn: async () =>
       (await unwrap(
-        api().GET("/v1/tasks/{id}/diff", {
+        api("local").GET("/v1/tasks/{id}/diff", {
           params: { path: { id: taskId } },
           parseAs: "text",
         }),
@@ -101,12 +102,12 @@ export function useCreateTask(goalId: string) {
   return useMutation({
     mutationFn: (body: CreateTaskRequest) =>
       unwrap(
-        api().POST("/v1/goals/{goal_id}/tasks", {
+        api("local").POST("/v1/goals/{goal_id}/tasks", {
           params: { path: { goal_id: goalId } },
           body,
         }),
       ),
-    onSuccess: (task) => cacheRow(queryClient, qk.tasks, task),
+    onSuccess: (task) => cacheRow(queryClient, qk.tasks, "local", task),
   })
 }
 
@@ -123,11 +124,11 @@ export function useUpdateTask(taskId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: UpdateTaskRequest) =>
-      unwrap(api().PATCH("/v1/tasks/{id}", { params: { path: { id: taskId } }, body })),
+      unwrap(api("local").PATCH("/v1/tasks/{id}", { params: { path: { id: taskId } }, body })),
     onSuccess: (task) => {
-      cacheRow(queryClient, qk.tasks, task)
+      cacheRow(queryClient, qk.tasks, "local", task)
       // Adding a dependency to a `ready` task moves it back to `pending`.
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) })
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions("local", taskId) })
     },
   })
 }
@@ -140,7 +141,7 @@ export function useUpdateTask(taskId: string) {
 export function useCancelTask(taskId: string) {
   return useTaskAction(
     taskId,
-    () => unwrap(api().POST("/v1/tasks/{id}/cancel", { params: { path: { id: taskId } } })),
+    () => unwrap(api("local").POST("/v1/tasks/{id}/cancel", { params: { path: { id: taskId } } })),
     "cancelled",
   )
 }
@@ -151,7 +152,7 @@ export function useCancelTask(taskId: string) {
  */
 export function useRetryTask(taskId: string) {
   return useTaskAction(taskId, () =>
-    unwrap(api().POST("/v1/tasks/{id}/retry", { params: { path: { id: taskId } } })),
+    unwrap(api("local").POST("/v1/tasks/{id}/retry", { params: { path: { id: taskId } } })),
   )
 }
 
@@ -162,10 +163,10 @@ function useTaskAction(
   /** The status the task lands in, when the client can know it in advance. */
   optimistic?: TaskStatus,
 ) {
-  return useRowAction(qk.tasks, taskId, mutationFn, {
+  return useRowAction(qk.tasks, "local", taskId, mutationFn, {
     optimistic,
     // A cancel or a retry is a transition, and the history tab shows it.
     alsoInvalidates: (queryClient) =>
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) }),
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions("local", taskId) }),
   })
 }

@@ -64,12 +64,12 @@ function TaskFormDialog({
   onCreated?: (task: TaskDto) => void
 }) {
   const goalId = goal?.id ?? editing?.goal_id ?? ""
-  const detail = useQuery({ ...goalQueryOptions(goalId), enabled: open && !goal })
+  const detail = useQuery({ ...goalQueryOptions("local", goalId), enabled: open && !goal })
   const actualGoal = goal ?? detail.data
   const steps = actualGoal?.steps ?? []
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
-  const models = useQuery({ ...modelsQueryOptions(), enabled: open })
-  const tasks = useQuery({ ...taskListQueryOptions({ goal: goalId }), enabled: open })
+  const models = useQuery({ ...modelsQueryOptions("local"), enabled: open })
+  const tasks = useQuery({ ...taskListQueryOptions("local", { goal: goalId }), enabled: open })
   const create = useCreateTask(goalId)
   const update = useUpdateTask(editing?.id ?? "")
   const submit = editing ? update : create
@@ -167,6 +167,7 @@ function TaskFormDialog({
                     name={`agents.${index}.model`}
                     render={({ field }) => (
                       <PinPicker
+                        host="local"
                         label={`${step.title} runs on`}
                         model={field.value}
                         effort={agentValues[index]?.effort ?? ""}

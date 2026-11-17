@@ -32,6 +32,7 @@ import {
   type GoalDto,
   qk,
   type RepositoryDto,
+  rememberHosts,
   type TaskDto,
 } from "@/api"
 import {
@@ -44,6 +45,7 @@ import {
   aTask,
   aWorkflow,
 } from "@/test/fixtures"
+import { BOX, forgetHosts, LOCAL } from "@/test/hosts"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
@@ -60,9 +62,9 @@ const TASK: TaskDto = aTask()
 /** A client with a list and a detail already in it, as an open screen has. */
 function seeded(): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  queryClient.setQueryData(qk.repositories.list(), [REPOSITORY])
-  queryClient.setQueryData(qk.repositories.detail(REPOSITORY.id), REPOSITORY)
-  queryClient.setQueryData(qk.goals.list(), [])
+  queryClient.setQueryData(qk.repositories.list("local"), [REPOSITORY])
+  queryClient.setQueryData(qk.repositories.detail("local", REPOSITORY.id), REPOSITORY)
+  queryClient.setQueryData(qk.goals.list("local"), [])
   return queryClient
 }
 
@@ -72,18 +74,20 @@ function stale(queryClient: QueryClient, key: readonly unknown[]): boolean {
 }
 
 function dispatch(queryClient: QueryClient, event: DomainEvent): void {
-  dispatchDomainEvent(queryClient, event)
+  dispatchDomainEvent(queryClient, "local", event)
 }
 
 describe("repository events", () => {
   it("writes a created repository into its detail and refetches the list", () => {
     const queryClient = new QueryClient()
-    queryClient.setQueryData(qk.repositories.list(), [])
+    queryClient.setQueryData(qk.repositories.list("local"), [])
 
     dispatch(queryClient, { event: "repository_created", data: REPOSITORY })
 
-    expect(queryClient.getQueryData(qk.repositories.detail(REPOSITORY.id))).toEqual(REPOSITORY)
-    expect(stale(queryClient, qk.repositories.list())).toBe(true)
+    expect(queryClient.getQueryData(qk.repositories.detail("local", REPOSITORY.id))).toEqual(
+      REPOSITORY,
+    )
+    expect(stale(queryClient, qk.repositories.list("local"))).toBe(true)
   })
 
   it("patches an edited repository in place", () => {
@@ -92,8 +96,8 @@ describe("repository events", () => {
 
     dispatch(queryClient, { event: "repository_updated", data: moved })
 
-    expect(queryClient.getQueryData(qk.repositories.detail(REPOSITORY.id))).toEqual(moved)
-    expect(stale(queryClient, qk.repositories.list())).toBe(true)
+    expect(queryClient.getQueryData(qk.repositories.detail("local", REPOSITORY.id))).toEqual(moved)
+    expect(stale(queryClient, qk.repositories.list("local"))).toBe(true)
   })
 
   it("refetches the goals too, because they carry the repository they reference", () => {
@@ -104,7 +108,7 @@ describe("repository events", () => {
       data: { ...REPOSITORY, path: "/srv/ariadne" },
     })
 
-    expect(stale(queryClient, qk.goals.list())).toBe(true)
+    expect(stale(queryClient, qk.goals.list("local"))).toBe(true)
   })
 
   it("drops a removed repository rather than leaving it in the cache", () => {
@@ -112,28 +116,28 @@ describe("repository events", () => {
 
     dispatch(queryClient, { event: "repository_deleted", data: { id: REPOSITORY.id } })
 
-    expect(queryClient.getQueryData(qk.repositories.detail(REPOSITORY.id))).toBeUndefined()
-    expect(stale(queryClient, qk.repositories.list())).toBe(true)
+    expect(queryClient.getQueryData(qk.repositories.detail("local", REPOSITORY.id))).toBeUndefined()
+    expect(stale(queryClient, qk.repositories.list("local"))).toBe(true)
   })
 })
 
 describe("goal events", () => {
   it("drops a deleted goal, and refetches everything that hung off it", () => {
     const queryClient = seeded()
-    queryClient.setQueryData(qk.goals.list(), [GOAL])
-    queryClient.setQueryData(qk.goals.detail(GOAL.id), GOAL)
-    queryClient.setQueryData(qk.tasks.list({ goal: GOAL.id }), [])
-    queryClient.setQueryData(qk.sessions.list({ goal: GOAL.id }), [])
+    queryClient.setQueryData(qk.goals.list("local"), [GOAL])
+    queryClient.setQueryData(qk.goals.detail("local", GOAL.id), GOAL)
+    queryClient.setQueryData(qk.tasks.list("local", { goal: GOAL.id }), [])
+    queryClient.setQueryData(qk.sessions.list("local", { goal: GOAL.id }), [])
 
     dispatch(queryClient, { event: "goal_deleted", data: { id: GOAL.id } })
 
     // The board is what has to lose the row, without anyone touching it.
-    expect(stale(queryClient, qk.goals.list())).toBe(true)
+    expect(stale(queryClient, qk.goals.list("local"))).toBe(true)
     // Nothing of the goal is left to be read back out of the cache.
-    expect(queryClient.getQueryData(qk.goals.detail(GOAL.id))).toBeUndefined()
+    expect(queryClient.getQueryData(qk.goals.detail("local", GOAL.id))).toBeUndefined()
     // Its tasks and their sessions were deleted with it.
-    expect(stale(queryClient, qk.tasks.list({ goal: GOAL.id }))).toBe(true)
-    expect(stale(queryClient, qk.sessions.list({ goal: GOAL.id }))).toBe(true)
+    expect(stale(queryClient, qk.tasks.list("local", { goal: GOAL.id }))).toBe(true)
+    expect(stale(queryClient, qk.sessions.list("local", { goal: GOAL.id }))).toBe(true)
   })
 })
 
@@ -141,10 +145,10 @@ describe("task events", () => {
   /** A client showing the diff tab of a task, next to everything else. */
   function withDiff(): QueryClient {
     const queryClient = seeded()
-    queryClient.setQueryData(qk.tasks.list(), [TASK])
-    queryClient.setQueryData(qk.tasks.detail(TASK.id), TASK)
-    queryClient.setQueryData(qk.tasks.diff(TASK.id), "diff --git a/one b/one\n")
-    queryClient.setQueryData(qk.sessions.list(), [])
+    queryClient.setQueryData(qk.tasks.list("local"), [TASK])
+    queryClient.setQueryData(qk.tasks.detail("local", TASK.id), TASK)
+    queryClient.setQueryData(qk.tasks.diff("local", TASK.id), "diff --git a/one b/one\n")
+    queryClient.setQueryData(qk.sessions.list("local"), [])
     return queryClient
   }
 
@@ -161,7 +165,7 @@ describe("task events", () => {
       },
     })
 
-    expect(stale(queryClient, qk.tasks.diff(TASK.id))).toBe(true)
+    expect(stale(queryClient, qk.tasks.diff("local", TASK.id))).toBe(true)
   })
 
   it("leaves every row alone: a commit changes the diff and nothing else", () => {
@@ -177,12 +181,12 @@ describe("task events", () => {
       },
     })
 
-    expect(queryClient.getQueryData(qk.tasks.detail(TASK.id))).toEqual(TASK)
-    expect(stale(queryClient, qk.tasks.list())).toBe(false)
-    expect(stale(queryClient, qk.goals.list())).toBe(false)
-    expect(stale(queryClient, qk.sessions.list())).toBe(false)
-    expect(stale(queryClient, qk.repositories.list())).toBe(false)
-    expect(stale(queryClient, qk.repositories.detail(REPOSITORY.id))).toBe(false)
+    expect(queryClient.getQueryData(qk.tasks.detail("local", TASK.id))).toEqual(TASK)
+    expect(stale(queryClient, qk.tasks.list("local"))).toBe(false)
+    expect(stale(queryClient, qk.goals.list("local"))).toBe(false)
+    expect(stale(queryClient, qk.sessions.list("local"))).toBe(false)
+    expect(stale(queryClient, qk.repositories.list("local"))).toBe(false)
+    expect(stale(queryClient, qk.repositories.detail("local", REPOSITORY.id))).toBe(false)
   })
 
   it("refetches the diff when the task lands, because it then diffs the merge commit", () => {
@@ -206,7 +210,7 @@ describe("task events", () => {
       },
     })
 
-    expect(stale(queryClient, qk.tasks.diff(TASK.id))).toBe(true)
+    expect(stale(queryClient, qk.tasks.diff("local", TASK.id))).toBe(true)
   })
 
   it("holds on to the diff for an update that is not a transition", () => {
@@ -217,7 +221,7 @@ describe("task events", () => {
       data: { task: { ...TASK, title: "Renamed" }, transition: null },
     })
 
-    expect(stale(queryClient, qk.tasks.diff(TASK.id))).toBe(false)
+    expect(stale(queryClient, qk.tasks.diff("local", TASK.id))).toBe(false)
   })
 })
 
@@ -226,13 +230,15 @@ describe("invalidateEverything", () => {
     const queryClient = createQueryClient()
     const list = vi.fn().mockResolvedValue([REPOSITORY])
     const observer = new QueryObserver(queryClient, {
-      queryKey: qk.repositories.list(),
+      queryKey: qk.repositories.list("local"),
       queryFn: list,
     })
     const unsubscribe = observer.subscribe(() => {})
-    await vi.waitFor(() => expect(queryClient.getQueryData(qk.repositories.list())).toBeDefined())
+    await vi.waitFor(() =>
+      expect(queryClient.getQueryData(qk.repositories.list("local"))).toBeDefined(),
+    )
 
-    invalidateEverything(queryClient)
+    invalidateEverything(queryClient, "local")
 
     await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2))
     unsubscribe()
@@ -240,11 +246,11 @@ describe("invalidateEverything", () => {
 
   it("marks what is off screen stale, so it is read again when it is next shown", () => {
     const queryClient = createQueryClient()
-    queryClient.setQueryData(qk.goals.list(), [GOAL])
+    queryClient.setQueryData(qk.goals.list("local"), [GOAL])
 
-    invalidateEverything(queryClient)
+    invalidateEverything(queryClient, "local")
 
-    expect(stale(queryClient, qk.goals.list())).toBe(true)
+    expect(stale(queryClient, qk.goals.list("local"))).toBe(true)
   })
 })
 
@@ -252,8 +258,8 @@ describe("pull request session events", () => {
   /** A client holding a pull request list and its detail, as its screen and panel do. */
   function withPullRequest(): QueryClient {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(qk.pullRequests.list(), [])
-    queryClient.setQueryData(qk.pullRequests.detail("pull-42"), {})
+    queryClient.setQueryData(qk.pullRequests.list("local"), [])
+    queryClient.setQueryData(qk.pullRequests.detail("local", "pull-42"), {})
     return queryClient
   }
 
@@ -263,20 +269,20 @@ describe("pull request session events", () => {
 
       dispatch(queryClient, { event, data: aSession({ pull_request_id: "pull-42" }) })
 
-      expect(stale(queryClient, qk.pullRequests.list())).toBe(true)
-      expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(true)
+      expect(stale(queryClient, qk.pullRequests.list("local"))).toBe(true)
+      expect(stale(queryClient, qk.pullRequests.detail("local", "pull-42"))).toBe(true)
     }
   })
 
   it("reads every request again on pull_requests_changed, which carries none", () => {
     const queryClient = withPullRequest()
-    queryClient.setQueryData(qk.pullRequests.detail("repo:42"), {})
+    queryClient.setQueryData(qk.pullRequests.detail("local", "repo:42"), {})
 
     dispatch(queryClient, { event: "pull_requests_changed", data: { repository_id: "repo" } })
 
-    expect(stale(queryClient, qk.pullRequests.list())).toBe(true)
-    expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(true)
-    expect(stale(queryClient, qk.pullRequests.detail("repo:42"))).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.list("local"))).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.detail("local", "pull-42"))).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.detail("local", "repo:42"))).toBe(true)
   })
 
   it("leaves the pull requests alone for a session that watches none", () => {
@@ -285,8 +291,8 @@ describe("pull request session events", () => {
 
       dispatch(queryClient, { event, data: aSession() })
 
-      expect(stale(queryClient, qk.pullRequests.list())).toBe(false)
-      expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(false)
+      expect(stale(queryClient, qk.pullRequests.list("local"))).toBe(false)
+      expect(stale(queryClient, qk.pullRequests.detail("local", "pull-42"))).toBe(false)
     }
   })
 })
@@ -294,14 +300,17 @@ describe("pull request session events", () => {
 describe("ai permissions events", () => {
   it("replaces the cached status whole, so a card that read installing reads ready", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(qk.permissions.ai(), anAiPermissionsStatus({ state: "installing" }))
+    queryClient.setQueryData(
+      qk.permissions.ai("local"),
+      anAiPermissionsStatus({ state: "installing" }),
+    )
 
     dispatch(queryClient, {
       event: "ai_permissions_updated",
       data: anAiPermissionsStatus({ state: "ready", installed_release: "v0.1.4" }),
     })
 
-    expect(queryClient.getQueryData(qk.permissions.ai())).toEqual(
+    expect(queryClient.getQueryData(qk.permissions.ai("local"))).toEqual(
       anAiPermissionsStatus({ state: "ready", installed_release: "v0.1.4" }),
     )
   })
@@ -318,12 +327,12 @@ describe("forge settings events", () => {
       since: "2026-10-08T10:00:00.000Z",
       error: null,
     }
-    queryClient.setQueryData(qk.forge.tunnel(), up)
+    queryClient.setQueryData(qk.forge.tunnel("local"), up)
     const off = { ...up, enabled: false, state: "off" as const, url: null }
 
     dispatch(queryClient, { event: "forge_settings_updated", data: off })
 
-    expect(queryClient.getQueryData(qk.forge.tunnel())).toEqual(off)
+    expect(queryClient.getQueryData(qk.forge.tunnel("local"))).toEqual(off)
   })
 })
 
@@ -331,18 +340,18 @@ describe("issue events", () => {
   it("refetches both assignment filters of the repository whose issues moved, and no other", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     for (const key of [
-      qk.issues.list("repo-1", "me"),
-      qk.issues.list("repo-1", "all"),
-      qk.issues.list("repo-2", "me"),
+      qk.issues.list("local", "repo-1", "me"),
+      qk.issues.list("local", "repo-1", "all"),
+      qk.issues.list("local", "repo-2", "me"),
     ]) {
       queryClient.setQueryData(key, [])
     }
 
     dispatch(queryClient, { event: "issues_changed", data: { repository_id: "repo-1" } })
 
-    expect(stale(queryClient, qk.issues.list("repo-1", "me"))).toBe(true)
-    expect(stale(queryClient, qk.issues.list("repo-1", "all"))).toBe(true)
-    expect(stale(queryClient, qk.issues.list("repo-2", "me"))).toBe(false)
+    expect(stale(queryClient, qk.issues.list("local", "repo-1", "me"))).toBe(true)
+    expect(stale(queryClient, qk.issues.list("local", "repo-1", "all"))).toBe(true)
+    expect(stale(queryClient, qk.issues.list("local", "repo-2", "me"))).toBe(false)
   })
 })
 
@@ -353,25 +362,31 @@ describe("learned permission events", () => {
 
   it("patches created and updated details and refetches lists", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const list = qk.learnedPermissions.list({ repository: REPOSITORY.id })
+    const list = qk.learnedPermissions.list("local", { repository: REPOSITORY.id })
     queryClient.setQueryData(list, { items: [] })
     dispatch(queryClient, { event: "learned_permission_created", data: learned })
-    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toEqual(learned)
+    expect(queryClient.getQueryData(qk.learnedPermissions.detail("local", learned.id))).toEqual(
+      learned,
+    )
     expect(stale(queryClient, list)).toBe(true)
 
     const updated = { ...learned, tool_name: "Shell" }
     dispatch(queryClient, { event: "learned_permission_updated", data: updated })
-    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toEqual(updated)
+    expect(queryClient.getQueryData(qk.learnedPermissions.detail("local", learned.id))).toEqual(
+      updated,
+    )
     expect(stale(queryClient, list)).toBe(true)
   })
 
   it("removes a deleted detail and refetches lists", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const list = qk.learnedPermissions.list({})
+    const list = qk.learnedPermissions.list("local", {})
     queryClient.setQueryData(list, { items: [learned] })
-    queryClient.setQueryData(qk.learnedPermissions.detail(learned.id), learned)
+    queryClient.setQueryData(qk.learnedPermissions.detail("local", learned.id), learned)
     dispatch(queryClient, { event: "learned_permission_deleted", data: learned })
-    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toBeUndefined()
+    expect(
+      queryClient.getQueryData(qk.learnedPermissions.detail("local", learned.id)),
+    ).toBeUndefined()
     expect(stale(queryClient, list)).toBe(true)
   })
 })
@@ -379,7 +394,7 @@ describe("learned permission events", () => {
 describe("agent events", () => {
   it("refetches the session activity lists, since the frame carries no payload to apply", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const activity = qk.agentEvents.list({ session: "01JSESSION0000000000000ARI" })
+    const activity = qk.agentEvents.list("local", { session: "01JSESSION0000000000000ARI" })
     queryClient.setQueryData(activity, [])
 
     dispatch(queryClient, {
@@ -401,23 +416,23 @@ describe("agent events", () => {
 describe("recovery attention", () => {
   it("refetches the attention list on a goal's own confirmed-turn or give-up evidence", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(qk.attention.list(), { items: [], complete: true })
+    queryClient.setQueryData(qk.attention.list("local"), { items: [], complete: true })
 
     dispatch(queryClient, { event: "goal_updated", data: GOAL })
 
-    expect(stale(queryClient, qk.attention.list())).toBe(true)
+    expect(stale(queryClient, qk.attention.list("local"))).toBe(true)
   })
 
   it("refetches the attention list on a reviewer session's own give-up evidence", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(qk.attention.list(), { items: [], complete: true })
+    queryClient.setQueryData(qk.attention.list("local"), { items: [], complete: true })
 
     dispatch(queryClient, {
       event: "pull_requests_changed",
       data: { repository_id: "repo" },
     })
 
-    expect(stale(queryClient, qk.attention.list())).toBe(true)
+    expect(stale(queryClient, qk.attention.list("local"))).toBe(true)
   })
 })
 
@@ -425,18 +440,18 @@ describe("workflow events", () => {
   it("patches created and updated workflows, then drops a deleted workflow", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const workflow = aWorkflow()
-    queryClient.setQueryData(qk.workflows.list(), [workflow])
+    queryClient.setQueryData(qk.workflows.list("local"), [workflow])
 
     dispatch(queryClient, { event: "workflow_created", data: workflow })
-    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toEqual(workflow)
-    expect(stale(queryClient, qk.workflows.list())).toBe(true)
+    expect(queryClient.getQueryData(qk.workflows.detail("local", workflow.name))).toEqual(workflow)
+    expect(stale(queryClient, qk.workflows.list("local"))).toBe(true)
 
     const updated = { ...workflow, document: `${workflow.document}\n  done[Done]` }
     dispatch(queryClient, { event: "workflow_updated", data: updated })
-    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toEqual(updated)
+    expect(queryClient.getQueryData(qk.workflows.detail("local", workflow.name))).toEqual(updated)
 
     dispatch(queryClient, { event: "workflow_deleted", data: { id: workflow.name } })
-    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toBeUndefined()
+    expect(queryClient.getQueryData(qk.workflows.detail("local", workflow.name))).toBeUndefined()
   })
 })
 
@@ -444,24 +459,81 @@ describe("dashboard events", () => {
   it("patches created and updated dashboards, then drops a deleted dashboard", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const dashboard = aDashboard()
-    queryClient.setQueryData(qk.dashboards.list(), [dashboard])
+    queryClient.setQueryData(qk.dashboards.list("local"), [dashboard])
 
     dispatch(queryClient, { event: "dashboard_created", data: dashboard })
-    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toEqual(dashboard)
-    expect(stale(queryClient, qk.dashboards.list())).toBe(true)
+    expect(queryClient.getQueryData(qk.dashboards.detail("local", dashboard.name))).toEqual(
+      dashboard,
+    )
+    expect(stale(queryClient, qk.dashboards.list("local"))).toBe(true)
 
     const updated = { ...dashboard, document_is_default: false }
     dispatch(queryClient, { event: "dashboard_updated", data: updated })
-    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toEqual(updated)
+    expect(queryClient.getQueryData(qk.dashboards.detail("local", dashboard.name))).toEqual(updated)
 
     dispatch(queryClient, { event: "dashboard_deleted", data: updated })
-    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toBeUndefined()
+    expect(queryClient.getQueryData(qk.dashboards.detail("local", dashboard.name))).toBeUndefined()
   })
 })
 
 it("invalidates shared attention when another client dismisses an item", () => {
   const queryClient = new QueryClient()
-  queryClient.setQueryData(qk.attention.list(), { items: [], complete: true })
+  queryClient.setQueryData(qk.attention.list("local"), { items: [], complete: true })
   dispatch(queryClient, { event: "attention_changed", data: {} })
-  expect(stale(queryClient, qk.attention.list())).toBe(true)
+  expect(stale(queryClient, qk.attention.list("local"))).toBe(true)
+})
+
+describe("hosts", () => {
+  it("patches and invalidates the keys of the host the event came from, and no other", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    for (const host of ["local", "box"]) {
+      queryClient.setQueryData(qk.goals.detail(host, GOAL.id), GOAL)
+      queryClient.setQueryData(qk.goals.list(host), [GOAL])
+    }
+    const renamed = { ...GOAL, title: "Renamed on box" }
+
+    dispatchDomainEvent(queryClient, "box", { event: "goal_updated", data: renamed })
+
+    expect(queryClient.getQueryData(qk.goals.detail("box", GOAL.id))).toEqual(renamed)
+    expect(stale(queryClient, qk.goals.list("box"))).toBe(true)
+    expect(queryClient.getQueryData(qk.goals.detail("local", GOAL.id))).toEqual(GOAL)
+    expect(stale(queryClient, qk.goals.list("local"))).toBe(false)
+  })
+
+  it("refetches only the host whose stream had a gap", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.goals.list("local"), [])
+    queryClient.setQueryData(qk.goals.list("box"), [])
+
+    invalidateEverything(queryClient, "box")
+
+    expect(stale(queryClient, qk.goals.list("box"))).toBe(true)
+    expect(stale(queryClient, qk.goals.list("local"))).toBe(false)
+  })
+
+  it("patches the host's row on host_updated, and reads a host that came up again", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const down = { ...BOX, status: "down" as const, error: "connection refused" }
+    queryClient.setQueryData(qk.hosts.list(), [LOCAL, down])
+    rememberHosts([LOCAL, down])
+    queryClient.setQueryData(qk.goals.list("box"), [])
+
+    dispatch(queryClient, { event: "host_updated", data: BOX })
+
+    expect(queryClient.getQueryData(qk.hosts.list())).toEqual([LOCAL, BOX])
+    expect(stale(queryClient, qk.goals.list("box"))).toBe(true)
+    forgetHosts()
+  })
+
+  it("ignores host_updated from a named host's own stream", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.hosts.list(), [LOCAL, BOX])
+
+    dispatchDomainEvent(queryClient, "box", {
+      event: "host_updated",
+      data: { ...BOX, status: "down", error: "gone" },
+    })
+
+    expect(queryClient.getQueryData(qk.hosts.list())).toEqual([LOCAL, BOX])
+  })
 })

@@ -20,6 +20,12 @@
  * a goal with no workflow ends its tasks the way its repository's default
  * landing says.
  *
+ * The goal lives on one host, picked here where the app has more than one:
+ * its tasks and its agents run there. It starts on the header's pick, or on
+ * `local` under All. The repositories, the workflows and the models offered
+ * are that host's, so a change of host reloads them and clears the
+ * repositories and the workflow picked on the host before.
+ *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
  * error envelope verbatim.
@@ -33,7 +39,14 @@ import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { z } from "zod"
 
-import { ApiError, type CreateGoalRequest, type GoalDto } from "@/api"
+import {
+  ApiError,
+  type CreateGoalRequest,
+  type GoalDto,
+  type HostRow,
+  LOCAL_HOST,
+  useHosts,
+} from "@/api"
 import { ErrorState } from "@/components/error-state"
 import {
   FormDialog,
@@ -43,6 +56,7 @@ import {
   useClearErrorOnEdit,
   useResetOnOpen,
 } from "@/components/form-dialog"
+import { FormSelect } from "@/components/form-select"
 import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
@@ -54,6 +68,7 @@ import { modelsQueryOptions } from "@/features/models/queries"
 import { NoRepositories as SharedNoRepositories } from "@/features/repositories/no-repositories"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { pickedWorkflow, WorkflowSelect } from "@/features/workflows/workflow-select"
+import { usePickedHost } from "@/hooks/use-host-filter"
 import { paths } from "@/routes/paths"
 
 import { useCreateGoal } from "./queries"
@@ -71,6 +86,8 @@ const formSchema = z.object({
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
   // A workflow's name, or empty for none.
   workflow: z.string(),
+  // The host the goal is created on.
+  host: z.string(),
 })
 
 type CreateGoalForm = z.infer<typeof formSchema>
@@ -82,6 +99,8 @@ const DEFAULT_VALUES: CreateGoalForm = {
   effort: "",
   repository_ids: [],
   workflow: "",
+  // Empty until the dialog opens on a host (see `usePickedHost`).
+  host: "",
 }
 
 export function CreateGoalDialog({
@@ -92,18 +111,28 @@ export function CreateGoalDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreated?: (goal: GoalDto) => void
+  /** The created goal, and the host it lives on. */
+  onCreated?: (goal: HostRow<GoalDto>) => void
+  /** A goal filled from an issue of one of `local`'s repositories. */
   initial?: { title: string; description: string; repository_id: string; issue_url: string }
 }) {
-  const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
-  const models = useQuery({ ...modelsQueryOptions(), enabled: open })
-  const createGoal = useCreateGoal()
-
+  const pickedHost = usePickedHost()
+  const { hosts } = useHosts()
+  const reachable = hosts.filter((one) => one.url !== null)
   const form = useForm<CreateGoalForm>({
     resolver: zodResolver(formSchema),
     defaultValues: DEFAULT_VALUES,
   })
   const errors = form.formState.errors
+  // Empty until the header's pick is known (`usePickedHost`): nothing is
+  // read on a host the goal may not be created on.
+  const chosen = form.watch("host")
+  const host = chosen || LOCAL_HOST
+  const ready = open && chosen !== ""
+
+  const repositories = useQuery({ ...repositoriesQueryOptions(host), enabled: ready })
+  const models = useQuery({ ...modelsQueryOptions(host), enabled: ready })
+  const createGoal = useCreateGoal()
 
   useResetOnOpen(
     open,
@@ -114,11 +143,20 @@ export function CreateGoalDialog({
           title: initial.title,
           description: initial.description,
           repository_ids: [initial.repository_id],
+          host: LOCAL_HOST,
         }
-      : DEFAULT_VALUES,
+      : { ...DEFAULT_VALUES, host: pickedHost ?? "" },
     createGoal,
   )
   useClearErrorOnEdit(form, createGoal)
+
+  // The header's pick is only known once the settings daemon has listed the
+  // hosts, which can be after the dialog opened: follow it until the user
+  // picks a host here. A goal filled from an issue stays on `local`.
+  useEffect(() => {
+    if (!open || initial || pickedHost === null || form.getFieldState("host").isDirty) return
+    form.setValue("host", pickedHost, { shouldDirty: false })
+  }, [open, initial, pickedHost, form])
 
   // The effort the orchestrator is pinned at, which the picker holds beside
   // the model: one control, two fields.
@@ -153,7 +191,7 @@ export function CreateGoalDialog({
       ...(workflow ? { workflow } : {}),
     }
     try {
-      const goal = await createGoal.mutateAsync(body)
+      const goal = await createGoal.mutateAsync({ host: values.host || LOCAL_HOST, body })
       toast.success("Goal created", { description: goal.title })
       onOpenChange(false)
       onCreated?.(goal)
@@ -180,6 +218,29 @@ export function CreateGoalDialog({
         onKeyDown={submitOnChord}
       >
         <FormDialogBody>
+          {/* One host is no choice: the select shows once there are two. */}
+          {reachable.length > 1 || host !== LOCAL_HOST ? (
+            <Field>
+              <FieldLabel htmlFor="goal-host">Host</FieldLabel>
+              <FormSelect
+                control={form.control}
+                name="host"
+                id="goal-host"
+                empty={LOCAL_HOST}
+                options={reachable.map((one) => ({ value: one.name, label: one.name }))}
+                onValueChange={() => {
+                  // Repository ids and workflows are the old host's own.
+                  form.setValue("repository_ids", [], { shouldDirty: true })
+                  form.setValue("workflow", "", { shouldDirty: true })
+                  workflowPicked.current = false
+                }}
+              />
+              <FieldDescription>
+                Where the goal lives: its tasks and its agents run on this host.
+              </FieldDescription>
+            </Field>
+          ) : null}
+
           <Field data-invalid={errors.title ? "" : undefined}>
             <FieldLabel htmlFor="goal-title">Title</FieldLabel>
             <Input
@@ -249,10 +310,11 @@ export function CreateGoalDialog({
           <Field>
             <FieldLabel htmlFor="goal-workflow">Workflow</FieldLabel>
             <WorkflowSelect
+              host={host}
               control={form.control}
               name="workflow"
               id="goal-workflow"
-              enabled={open}
+              enabled={ready}
               allowInherit
               onValueChange={() => {
                 workflowPicked.current = true
@@ -271,6 +333,7 @@ export function CreateGoalDialog({
               name="model"
               render={({ field }) => (
                 <PinPicker
+                  host={host}
                   id="goal-pin"
                   label="Orchestrator runs on"
                   model={field.value}

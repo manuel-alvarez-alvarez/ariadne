@@ -62,8 +62,8 @@ function renderMessages({ stream = false }: { stream?: boolean } = {}): void {
     {
       route: "/goals?tab=messages",
       seed: (client) => {
-        client.setQueryData(qk.tasks.detail(TASK.id), TASK)
-        client.setQueryData(qk.goals.detail(goal.id), goal)
+        client.setQueryData(qk.tasks.detail("local", TASK.id), TASK)
+        client.setQueryData(qk.goals.detail("local", goal.id), goal)
       },
     },
   )

@@ -581,7 +581,7 @@ describe("ranking a model", () => {
 
     await waitFor(() => expect(lastWrite()).toBeDefined())
     const keys = invalidated.mock.calls.map((call) => call[0]?.queryKey)
-    expect(keys).toContainEqual(qk.models.lists())
+    expect(keys).toContainEqual(qk.models.lists("local"))
   })
 
   /**
@@ -636,9 +636,9 @@ describe("refreshing the ACP agents", () => {
     // The ACP registry is not otherwise read by this screen, so its own
     // reload shows only as the invalidation the mutation asked for.
     const keys = invalidated.mock.calls.map((call) => call[0]?.queryKey)
-    expect(keys).toContainEqual(qk.acpAgents.lists())
-    expect(keys).toContainEqual(qk.agents.lists())
-    expect(keys).toContainEqual(qk.models.lists())
+    expect(keys).toContainEqual(qk.acpAgents.lists("local"))
+    expect(keys).toContainEqual(qk.agents.lists("local"))
+    expect(keys).toContainEqual(qk.models.lists("local"))
   })
 
   it("shows a pending state while the call is running", async () => {

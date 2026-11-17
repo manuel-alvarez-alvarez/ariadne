@@ -1,7 +1,7 @@
 ---
 id: 037
 status: current
-updated: 2026-11-16
+updated: 2026-11-17
 areas: [api, daemon, client, docs]
 commits: []
 tests:
@@ -15,8 +15,10 @@ tests:
 
 In: the `[hosts.<name>]` tables of `config.toml`, their validation, the
 `GET /v1/hosts` route, `HostDto` and the `host_updated` event. Out: starting or
-keeping an SSH forward, the CLI `--host` flag and any desktop change; later
-tasks own them. The transports and the event stream are spec 012's.
+keeping an SSH forward and the CLI `--host` flag; later tasks own them. The
+transports and the event stream are spec 012's. The desktop app's reading of
+the hosts — the host picker, the Hosts section of its settings and one stream
+per host — is spec 015's (rules 51 to 60).
 
 ## Behavior
 

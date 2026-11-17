@@ -2,6 +2,7 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 
 import {
   api,
+  type Host,
   type ModelDto,
   qk,
   type SetModelEnabledRequest,
@@ -17,10 +18,10 @@ import {
  * takes no filters — so it is keyed once and shared by every screen that
  * chooses a model.
  */
-export function modelsQueryOptions() {
+export function modelsQueryOptions(host: Host) {
   return queryOptions({
-    queryKey: qk.models.list(),
-    queryFn: () => unwrap(api().GET("/v1/models")),
+    queryKey: qk.models.list(host),
+    queryFn: () => unwrap(api(host).GET("/v1/models")),
   })
 }
 
@@ -39,12 +40,13 @@ export function modelsQueryOptions() {
 export function useSetModelEnabled() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: SetModelEnabledRequest) => unwrap(api().PUT("/v1/models/enabled", { body })),
+    mutationFn: (body: SetModelEnabledRequest) =>
+      unwrap(api("local").PUT("/v1/models/enabled", { body })),
     onSuccess: (updated) => {
-      queryClient.setQueryData(qk.models.list(), (models: ModelDto[] | undefined) =>
+      queryClient.setQueryData(qk.models.list("local"), (models: ModelDto[] | undefined) =>
         models?.map((model) => (model.id === updated.id ? updated : model)),
       )
-      void queryClient.invalidateQueries({ queryKey: qk.models.lists() })
+      void queryClient.invalidateQueries({ queryKey: qk.models.lists("local") })
     },
   })
 }
@@ -58,12 +60,13 @@ export function useSetModelEnabled() {
 export function useSetModelRank() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: SetModelRankRequest) => unwrap(api().PUT("/v1/models/rank", { body })),
+    mutationFn: (body: SetModelRankRequest) =>
+      unwrap(api("local").PUT("/v1/models/rank", { body })),
     onSuccess: (updated) => {
-      queryClient.setQueryData(qk.models.list(), (models: ModelDto[] | undefined) =>
+      queryClient.setQueryData(qk.models.list("local"), (models: ModelDto[] | undefined) =>
         models?.map((model) => (model.id === updated.id ? updated : model)),
       )
-      void queryClient.invalidateQueries({ queryKey: qk.models.lists() })
+      void queryClient.invalidateQueries({ queryKey: qk.models.lists("local") })
     },
   })
 }

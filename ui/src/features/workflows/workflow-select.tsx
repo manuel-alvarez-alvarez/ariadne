@@ -20,6 +20,7 @@
 import { useQuery } from "@tanstack/react-query"
 import type { Control, FieldPath, FieldValues } from "react-hook-form"
 
+import type { Host } from "@/api"
 import { FormSelect } from "@/components/form-select"
 
 import { workflowsQueryOptions } from "./queries"
@@ -34,6 +35,7 @@ export function pickedWorkflow(value: string): string | null {
 }
 
 export function WorkflowSelect<V extends FieldValues>({
+  host,
   control,
   name,
   id,
@@ -41,6 +43,8 @@ export function WorkflowSelect<V extends FieldValues>({
   allowInherit = false,
   onValueChange,
 }: {
+  /** The host whose workflow catalog is offered. */
+  host: Host
   control: Control<V>
   name: FieldPath<V>
   id: string
@@ -50,7 +54,7 @@ export function WorkflowSelect<V extends FieldValues>({
   allowInherit?: boolean
   onValueChange?: (value: string) => void
 }) {
-  const workflows = useQuery({ ...workflowsQueryOptions(), enabled })
+  const workflows = useQuery({ ...workflowsQueryOptions(host), enabled })
   const options = [
     ...(allowInherit ? [{ value: INHERIT, label: "Repository default" }] : []),
     ...(workflows.data ?? [])

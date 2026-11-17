@@ -20,7 +20,7 @@ import { PlusIcon } from "lucide-react"
 import { useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import { ApiError, type GoalDto } from "@/api"
+import { ApiError, type GoalDto, type Host, LOCAL_HOST } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
@@ -60,8 +60,17 @@ type Tab = (typeof TABS)[number]
 /** Where the panel opens when the URL does not say: the tasks, always. */
 const DEFAULT_TAB: Tab = "tasks"
 
-export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => void }) {
-  const goal = useQuery(goalQueryOptions(goalId))
+export function GoalPanel({
+  host,
+  goalId,
+  onClose,
+}: {
+  /** The host the goal lives on: its tasks and its agents run there too. */
+  host: Host
+  goalId: string
+  onClose: () => void
+}) {
+  const goal = useQuery(goalQueryOptions(host, goalId))
   const error = ApiError.is(goal.error) ? goal.error : null
   const [search] = useSearchParams()
   const selectSession = usePanelSessionNavigation()
@@ -79,6 +88,7 @@ export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => 
     return (
       <PanelSheet onClose={onClose} panelRef={panel}>
         <GoalSessionView
+          host={host}
           goalId={goalId}
           goalTitle={goal.data?.title}
           sessionId={sessionId}
@@ -92,6 +102,7 @@ export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => 
     <PanelSheet onClose={onClose} panelRef={panel}>
       {goal.data ? (
         <GoalView
+          host={host}
           goal={goal.data}
           error={error}
           onRetry={() => void goal.refetch()}
@@ -126,12 +137,14 @@ export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => 
 }
 
 function GoalView({
+  host,
   goal,
   error,
   onRetry,
   onSelectSession,
   onDeleted,
 }: {
+  host: Host
   goal: GoalDto
   /** A refetch that failed with this goal already cached; the stale data below is still shown. */
   error: ApiError | null
@@ -147,8 +160,8 @@ function GoalView({
   // The two counted tabs, on the very keys their own tabs read, so the numbers
   // cost nothing beyond the first tab that is opened — and stay live with it,
   // since the dispatcher invalidates both lists.
-  const tasks = useQuery(taskListQueryOptions({ goal: goal.id }))
-  const sessions = useQuery(sessionsQueryOptions({ goal: goal.id, seat: "orchestrator" }))
+  const tasks = useQuery(taskListQueryOptions(host, { goal: goal.id }))
+  const sessions = useQuery(sessionsQueryOptions(host, { goal: goal.id, seat: "orchestrator" }))
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -160,7 +173,10 @@ function GoalView({
   // anything with one: while planning it joins the plan, while active the
   // scheduler picks it up once its dependencies merge. On a terminal goal it
   // would only ever sit in pending, so the button goes away with the goal.
-  const canCreateTask = !isTerminalGoalStatus(goal.status)
+  // The task form reads `local`'s skills, models and workflows, so it only
+  // makes tasks for a goal that lives there; a named host's task form is the
+  // task panel's to carry.
+  const canCreateTask = !isTerminalGoalStatus(goal.status) && host === LOCAL_HOST
 
   return (
     <>
@@ -176,7 +192,7 @@ function GoalView({
             ) : null}
             {/* Deleting takes the goal out from under this panel, so the
                 panel's own close is what the action ends on. */}
-            <GoalActions goal={goal} onDeleted={onDeleted} />
+            <GoalActions host={host} goal={goal} onDeleted={onDeleted} />
           </div>
         }
         status={
@@ -204,10 +220,11 @@ function GoalView({
             one notice above it rather than losing the panel to the error. */}
         {error ? <RefreshWarning what="this goal" error={error} onRetry={onRetry} /> : null}
 
-        <GoalMetadata goal={goal} />
+        <GoalMetadata host={host} goal={goal} />
 
         {goal.status === "planning" && goal.orchestrated ? (
           <PlanningGuide
+            host={host}
             goal={goal}
             onOpenConversation={onSelectSession}
             onNewTask={() => setNewTaskOpen(true)}
@@ -238,13 +255,14 @@ function GoalView({
           </TabsContent>
           <TabsContent value="tasks" className="pt-3">
             <GoalTasks
+              host={host}
               goalId={goal.id}
               steps={goal.steps}
               onNewTask={canCreateTask ? () => setNewTaskOpen(true) : undefined}
             />
           </TabsContent>
           <TabsContent value="sessions" className="pt-3">
-            <GoalSessions goalId={goal.id} onSelect={onSelectSession} />
+            <GoalSessions host={host} goalId={goal.id} onSelect={onSelectSession} />
           </TabsContent>
         </Tabs>
       </PaneBody>
@@ -257,7 +275,9 @@ function GoalView({
         // a lane: `?task=` replaces this goal's panel (see `detail-panels.tsx`).
         // Replaced rather than pushed — the task's panel takes this goal's
         // place in the pane, not a step stacked over it.
-        onCreated={(task) => setSearch(taskPanelTo(search, task.id).search, { replace: true })}
+        onCreated={(task) =>
+          setSearch(taskPanelTo(search, task.id, host).search, { replace: true })
+        }
       />
     </>
   )
@@ -268,9 +288,11 @@ function GoalView({
  * every panel opens on — the stamps that say when are on the meta line above
  * this, beside the id, rather than a fact apiece down here.
  */
-function GoalMetadata({ goal }: { goal: GoalDto }) {
+function GoalMetadata({ host, goal }: { host: Host; goal: GoalDto }) {
   return (
     <FactList dense>
+      {/* The host only where there is more than one to tell apart. */}
+      {host === LOCAL_HOST ? null : <Fact label="Host">{host}</Fact>}
       <Fact label="Orchestrator">
         {/* The goal's pin: what its orchestrator runs on, frozen when the goal
             was created. */}

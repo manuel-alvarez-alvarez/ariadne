@@ -309,7 +309,7 @@ function ConsolePane({
     setHistory({ state: "loading" })
     try {
       const page = await unwrap(
-        api().GET("/v1/events", {
+        api("local").GET("/v1/events", {
           params: {
             query: { session: sessionId, order: "desc", before, limit: HISTORY_PAGE },
           },
@@ -338,7 +338,7 @@ function ConsolePane({
   // failed read says so with a Retry rather than hide those questions.
   const readRequests = useCallback(() => {
     const read = ++reads.current
-    pendingRequests(sessionId).then(
+    pendingRequests("local", sessionId).then(
       (listed) => {
         if (read !== reads.current) return
         setRequests(listed)
@@ -532,7 +532,7 @@ function ConsolePane({
   const post = useCallback(
     (text: string) =>
       unwrap(
-        api().POST("/v1/sessions/{id}/console/input", {
+        api("local").POST("/v1/sessions/{id}/console/input", {
           params: { path: { id: sessionId } },
           body: { text },
         }),
@@ -604,7 +604,7 @@ function ConsolePane({
     const owner = keyRef.current
     if (requestId === undefined) setTranscript((current) => queuePrompt(current, text, id))
     const sent =
-      requestId === undefined ? post(text) : answerRequest(sessionId, requestId, { text })
+      requestId === undefined ? post(text) : answerRequest("local", sessionId, requestId, { text })
     sent.then(
       () => {
         if (requestId !== undefined) setAnswered((now) => new Set(now).add(requestId))
@@ -698,14 +698,16 @@ function ConsolePane({
 
   const cancel = useCallback(() => {
     unwrap(
-      api().POST("/v1/sessions/{id}/console/cancel", { params: { path: { id: sessionId } } }),
+      api("local").POST("/v1/sessions/{id}/console/cancel", {
+        params: { path: { id: sessionId } },
+      }),
     ).catch((error) => fail("Could not cancel the turn", error))
   }, [sessionId, fail])
 
   const cancelChild = useCallback(
     (target: { id: string; title: string }) => {
       unwrap(
-        api().POST("/v1/sessions/{id}/console/cancel", {
+        api("local").POST("/v1/sessions/{id}/console/cancel", {
           params: { path: { id: sessionId } },
           body: { subagent_id: target.id },
         }),

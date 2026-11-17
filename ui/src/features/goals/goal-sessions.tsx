@@ -24,6 +24,8 @@
 
 import { useQuery } from "@tanstack/react-query"
 
+import type { Host } from "@/api"
+
 import { ErrorState } from "@/components/error-state"
 import { PanelHeader } from "@/components/panel-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -35,9 +37,11 @@ import { SessionsList } from "@/features/sessions/sessions-list"
 import { shortId } from "@/lib/format"
 
 export function GoalSessions({
+  host,
   goalId,
   onSelect,
 }: {
+  host: Host
   goalId: string
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
@@ -46,6 +50,7 @@ export function GoalSessions({
   // this panel drives, so nothing has to be threaded through the panel.
   return (
     <SessionsList
+      host={host}
       filters={{ goal: goalId, seat: "orchestrator" }}
       onSelect={(session) => onSelect(session.id)}
     />
@@ -54,11 +59,13 @@ export function GoalSessions({
 
 /** The selected session as the panel's whole body, with the way back to the goal. */
 export function GoalSessionView({
+  host,
   goalId,
   goalTitle,
   sessionId,
   onSelect,
 }: {
+  host: Host
   goalId: string
   /** The goal's own name, when it is already loaded, for the way back. */
   goalTitle?: string
@@ -66,7 +73,7 @@ export function GoalSessionView({
   /** Selects another session, or goes back to the goal with `null`. */
   onSelect: (sessionId: string | null) => void
 }) {
-  const session = useQuery(sessionQueryOptions(sessionId))
+  const session = useQuery(sessionQueryOptions(host, sessionId))
   // `GET /v1/sessions/{id}` is not scoped to a goal, so a link can hand this
   // panel a session of some *other* goal. It is not one of this goal's, and the
   // panel would present it as if it were — with kill and resume on it.

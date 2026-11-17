@@ -37,7 +37,7 @@ const COLUMNS = [
 ]
 
 export function IssuesPage() {
-  const repositories = useQuery(repositoriesQueryOptions())
+  const repositories = useQuery(repositoriesQueryOptions("local"))
   const enabled = repositories.data?.filter((repository) => repository.forge?.enabled) ?? []
   const [repositoryId, setRepositoryId] = useSearchFilter("repo")
   // Assigned to me unless the URL says otherwise.
@@ -53,10 +53,10 @@ export function IssuesPage() {
   const assigned = assignedToMe ? "me" : "all"
   const issueQueries = useQueries({
     queries: visible.map((repository) => ({
-      queryKey: qk.issues.list(repository.id, assigned),
+      queryKey: qk.issues.list("local", repository.id, assigned),
       queryFn: () =>
         unwrap(
-          api().GET("/v1/repositories/{id}/issues", {
+          api("local").GET("/v1/repositories/{id}/issues", {
             params: { path: { id: repository.id }, query: { assigned } },
           }),
         ),

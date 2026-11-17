@@ -6,7 +6,7 @@
  * the one thing in such a mention a reader can follow. It links to the skill
  * itself ({@link paths.skill}, which opens it on the skills screen).
  *
- * The summaries come from the skills list (`qk.skills.list()`), the same key
+ * The summaries come from the skills list (`qk.skills.list(host)`), the same key
  * the skills screen reads: one request serves every name on screen, and
  * whichever screen loads it first serves the others. A name no skill answers
  * to — deleted since, or not loaded yet — still links, and the screen it lands

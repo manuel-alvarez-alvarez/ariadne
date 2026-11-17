@@ -23,7 +23,7 @@ import { PullRequestPanel } from "@/features/pull-requests/pull-request-panel"
 import { SessionPanel } from "@/features/sessions/session-panel"
 import { TaskPanel } from "@/features/tasks"
 import { closePanel, type Panel } from "@/routes/panel-history"
-import { paths } from "@/routes/paths"
+import { hostOf, paths } from "@/routes/paths"
 
 export function DetailPanels() {
   const location = useLocation()
@@ -34,6 +34,8 @@ export function DetailPanels() {
   const goalId = search.get("goal")
   const taskId = search.get("task")
   const sessionId = search.get("session")
+  // The host the panel's entity lives on; a link without `?host=` is `local`'s.
+  const host = hostOf(search)
   const onGoalsBoard = location.pathname === paths.goals()
 
   function close(panel: Panel) {
@@ -70,7 +72,7 @@ export function DetailPanels() {
   }
 
   if (goalId) {
-    return <GoalPanel goalId={goalId} onClose={() => close("goal")} />
+    return <GoalPanel host={host} goalId={goalId} onClose={() => close("goal")} />
   }
 
   // Nothing else claims this `?session=`, so it is a session in its own right:
