@@ -248,10 +248,9 @@ same binary also serves (013).
     enable`; a `python_unavailable` one carries `install Python 3.12 or 3.13,
     or set python_bin in config.toml`.
     With `--host NAME`, `set --device` alone is written to that host's
-    `PUT /v1/permissions/ai`, and a later push of the AI settings resets it
-    (spec 037, rule 28); any other `set` flag on a named host other than
-    `local` is refused locally, and the refusal says that the settings are
-    written on `local` and synced, and that only `--device` is per host.
+    `PUT /v1/permissions/ai`. The device stays on that host until `local`
+    changes the flavour (spec 037, rule 28). Any other `set` flag on a named
+    host other than `local` is refused locally (rule 47).
     `permissions ai show --host all` prints one block per ready host, in
     registry order, headed by its name, with a warning for each host that fails.
 33. `ariadne permissions ai test --tool <title> [--kind <K>] --input <json>
@@ -365,6 +364,32 @@ same binary also serves (013).
     [--repo <repo>]` requests a fetch for that repository's requests, or
     every enabled repository's where none is named. It returns after the
     fetch wakes, so a following `pr ls` can still show the previous list.
+43. `--host NAME|all` selects the host a command runs on. A value that looks
+    like an endpoint is refused; `--endpoint` takes an endpoint. The CLI reads
+    the host registry from `GET /v1/hosts` on the local daemon (spec 037, rule 4).
+44. A host that is unknown or not `ready` is a usage error that lists each
+    host with its status. `local` keeps the endpoint the CLI resolved. A
+    named host is reached on the `endpoint` of its registry row.
+45. With `all`, a listing (`ls`, `list`, `search`, `attention`) runs on each
+    ready host in registry order. A table has a `HOST` column first, and JSON
+    rows carry a `host` key. A host that is not ready or fails gets a
+    warning on stderr, and the listing succeeds while one host answers.
+46. With `all`, a read of one item (`inspect`, `show`, `get`, `logs`,
+    `status`, `history`, `messages`, `diff`, `version`) prints the answer of
+    the first host that answers. `attach` goes to the first ready host that
+    has the ID. A command that writes is refused with `all`, and the refusal
+    lists the hosts.
+47. On a named host other than `local`, `skill`, `workflow`, `permissions`
+    and `repo` commands that write are refused, because those settings are
+    written on `local` and synced (spec 037, rules 22 to 28). The one
+    exception is `permissions ai set --device` alone (rule 32), and its
+    refusal of other flags says that only `--device` is per host.
+48. On a named host other than `local`, a `daemon` command other than `status`
+    and `logs` is refused: lifecycle commands require `local`.
+49. `query` accepts `--host NAME|all`. The local daemon serves it under
+    `/v1/hosts/{host}` (spec 037, rule 20), so the CLI does not fan it out.
+50. `host ls` prints name, kind, status, endpoint and error. Completion offers
+    the host names and `all`.
 
 ## Known gap
 
@@ -374,15 +399,6 @@ derive a tool detail when their summary is empty.
 The CLI test for `--seat` parses `orchestrator`, `agent` and `reviewer`, but
 does not parse `keeper`. `Seat::Keeper` is a valid value. The core seat test
 lists all four values. Add a CLI parser test before relying on this coverage.
-
-Host selection uses `--host NAME|all`; endpoint-like values must use `--endpoint`.
-The local daemon supplies `/v1/hosts`. Unknown or unready hosts cause usage errors with the registry statuses.
-`local` keeps the CLI's resolved endpoint. Lists across all hosts include host labels in registry order.
-Failed hosts produce warnings; one answer succeeds. Single-ID reads and attach find the host that has the ID.
-All-host writes are refused. Remote settings writes require local synchronization,
-except `permissions ai set --device` alone on a named host (rule 32).
-Daemon lifecycle commands require local; status and logs accept named hosts. Query rejects host selection.
-`host ls` prints name, kind, status, endpoint and error. Completion offers host names and all.
 
 ## Acceptance criteria
 
@@ -696,8 +712,11 @@ Daemon lifecycle commands require local; status and logs accept named hosts. Que
   `pr ls` carries the branches and the session
   (`::pr_ls_shows_the_branches_and_session_columns`).
 
-- Host names differ from endpoints (`cli/tests.rs::host_names_are_distinct_from_endpoints`).
-- Registry routing and guards hold (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).
+- Host names differ from endpoints, rule 43 (`cli/tests.rs::host_names_are_distinct_from_endpoints`).
+- Registry routing and guards hold, rules 44 to 48 and 50
+  (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).
+- Rule 49 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
+  `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
 
 ## Sources
 
