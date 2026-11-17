@@ -24,6 +24,7 @@ export const BOX: HostDto = {
   endpoint: "http://box.test:7676",
   error: null,
   remote: null,
+  sync: { state: "in_sync", error: null, missing_repositories: [], skipped_permissions: 0 },
 }
 
 /** `local` as the settings daemon lists it. */
@@ -34,6 +35,7 @@ export const LOCAL: HostDto = {
   endpoint: DEFAULT_BASE_URL,
   error: null,
   remote: null,
+  sync: { state: "in_sync", error: null, missing_repositories: [], skipped_permissions: 0 },
 }
 
 /** What one daemon answers: a body per path, or a handler for the rest. */

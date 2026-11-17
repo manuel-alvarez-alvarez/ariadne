@@ -36,6 +36,7 @@ mod goal_delete;
 mod goal_repositories;
 mod home_skills;
 mod host_queries;
+mod host_sync;
 mod hosts;
 mod issues;
 mod learned_permissions;

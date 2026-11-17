@@ -1,7 +1,7 @@
 ---
 id: ai-permission-mode
 status: current
-updated: 2026-11-08
+updated: 2026-11-17
 areas: [core, api, store, daemon, ui]
 commits: []
 tests:
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/ai_permissions_decisions.rs
   - crates/ariadne-daemon/tests/it/ai_permissions_server.rs
   - crates/ariadne-daemon/tests/it/ai_permissions_flavours.rs
+  - crates/ariadne-daemon/tests/it/learned_permissions.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-console/src/tui/picker.rs
@@ -67,6 +68,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 18. Kev supports flavours `0.8b`, `4b`, `9b`, and `27b`; available CPU, MLX, or CUDA devices and memory determine valid flavour-device pairs.
 19. A flavour or device update selects a supported pair and reinstalls an enabled model, while startup retains an unsupported stored flavour with a null device and reports its supported fallback pair in status.
 20. The Permissions screen shows the AI controls, thresholds, flavour, device, status, hardware, test action, and refresh action from the status API.
+21. `POST /v1/permissions/learned` records one whole learned row, as a daemon that syncs to this one pushes it (037, rule 27). It writes through the store's upsert on repository, tool name, level and key: a row with the same four keeps its id and `created_at`, and takes the rest from the request. An unknown repository is a 404, and an unknown field is a 422. The OpenAPI document carries the route and `RecordLearnedPermissionRequest`.
 
 ## Acceptance criteria
 
@@ -434,6 +436,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   `::hides only the narrow zone label`,
   `::toasts the daemon's own message on a refusal, and puts the value
   back`).
+- Rule 21
+  (`learned_permissions.rs::a_pushed_row_is_recorded_whole_and_keeps_the_id_of_its_key`,
+  `::learned_permission_routes_read_and_delete_and_publish_fat_events`).
 
 ## Sources
 

@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 use crate::common::acp::pid_is_alive;
 use crate::common::ssh::{StubSsh, stub_ssh};
-use crate::common::{Harness, RUNS_OUT, TIMEOUT, eventually, harness, next_event};
-use ariadne_api::hosts::{HostDto, HostStatus};
+use crate::common::{Harness, RUNS_OUT, TIMEOUT, eventually, harness, next_event, roomy_hardware};
+use ariadne_api::hosts::{HostDto, HostStatus, SyncState};
 use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_daemon::bus::BusEvent;
 use ariadne_daemon::timeouts::Timeouts;
@@ -32,6 +32,7 @@ async fn local(stub: &StubSsh, remote: Option<&str>) -> (Harness, tempfile::Temp
         "[hosts.box]\nendpoint = \"ssh://me@box:2222\"\n{remote}"
     ));
     let h = harness()
+        .ai_permissions_hardware(roomy_hardware())
         .home(home)
         .ssh(stub)
         .timeouts(Timeouts {
@@ -61,16 +62,44 @@ async fn serve_on_tcp(remote: &Harness) -> String {
     address
 }
 
-/// The next `host_updated` on the bus.
-async fn next_host(rx: &mut Receiver<BusEvent>) -> HostDto {
-    let event = next_event(rx, |event| {
-        matches!(event.event, DomainEvent::HostUpdated(_))
-    })
-    .await;
-    match event.event {
-        DomainEvent::HostUpdated(host) => host,
-        _ => unreachable!(),
+/// The `host_updated` events of a forward, read off the bus.
+struct Forward {
+    rx: Receiver<BusEvent>,
+    /// The status, endpoint and error of the last one read.
+    last: Option<(HostStatus, Option<String>, Option<String>)>,
+}
+
+impl Forward {
+    fn new(rx: Receiver<BusEvent>) -> Self {
+        Self { rx, last: None }
     }
+
+    /// The next `host_updated` that moves the forward's status, endpoint or
+    /// error. One that moves only the host's sync is skipped.
+    async fn next(&mut self) -> HostDto {
+        loop {
+            let event = next_event(&mut self.rx, |event| {
+                matches!(event.event, DomainEvent::HostUpdated(_))
+            })
+            .await;
+            let DomainEvent::HostUpdated(host) = event.event else {
+                unreachable!()
+            };
+            let now = Some((host.status, host.endpoint.clone(), host.error.clone()));
+            if now != self.last {
+                self.last = now;
+                return host;
+            }
+        }
+    }
+}
+
+/// `listed` is `host`, whatever its sync has moved to since.
+fn same_forward(listed: &HostDto, host: &HostDto) -> bool {
+    HostDto {
+        sync: host.sync.clone(),
+        ..listed.clone()
+    } == *host
 }
 
 /// The port of the `-L` argument of `args`.
@@ -119,16 +148,16 @@ async fn an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again() 
         "exit": 255,
     }));
     let (h, _dir) = local(&stub, Some("/run/far.sock")).await;
-    let mut rx = h.bus.subscribe();
+    let mut rx = Forward::new(h.bus.subscribe());
     h.state.hosts.start();
 
-    let connecting = next_host(&mut rx).await;
+    let connecting = rx.next().await;
     assert_eq!(connecting.name, "box");
     assert_eq!(connecting.status, HostStatus::Connecting);
     assert_eq!(connecting.endpoint, None);
     assert_eq!(connecting.error, None);
 
-    let down = next_host(&mut rx).await;
+    let down = rx.next().await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     assert_eq!(
@@ -136,9 +165,9 @@ async fn an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again() 
         Some("ssh: connect to host box port 2222: Connection refused")
     );
     let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
-    assert_eq!(hosts[1], down);
+    assert!(same_forward(&hosts[1], &down), "{hosts:?}");
 
-    let again = next_host(&mut rx).await;
+    let again = rx.next().await;
     assert_eq!(again.status, HostStatus::Connecting);
     eventually(TIMEOUT, "a second ssh run", || async {
         stub.runs().len() == 2
@@ -158,39 +187,52 @@ async fn a_forward_comes_up_and_goes_down(remote: &str) {
         "exit": 255,
     }));
     let (h, _dir) = local(&stub, Some(remote)).await;
-    let mut rx = h.bus.subscribe();
+    let mut rx = Forward::new(h.bus.subscribe());
     h.state.hosts.start();
 
-    assert_eq!(next_host(&mut rx).await.status, HostStatus::Connecting);
-    let ready = next_host(&mut rx).await;
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
+    let ready = rx.next().await;
     let port = forwarded_port(&stub.runs()[0].args);
     assert_eq!(ready.status, HostStatus::Ready);
     assert_eq!(ready.endpoint, Some(format!("http://127.0.0.1:{port}")));
     assert_eq!(ready.error, None);
     let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
-    assert_eq!(hosts[1], ready);
+    assert!(same_forward(&hosts[1], &ready), "{hosts:?}");
+
+    // The far daemon takes the local catalogs through the forward.
+    eventually(TIMEOUT, "the sync in sync", || async {
+        let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+        hosts[1].sync.state == SyncState::InSync
+    })
+    .await;
 
     std::fs::write(&gone, "").unwrap();
-    let down = next_host(&mut rx).await;
+    let down = rx.next().await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     assert_eq!(
         down.error.as_deref(),
         Some("Connection to box closed by remote host.")
     );
-    assert_eq!(next_host(&mut rx).await.status, HostStatus::Connecting);
+    // What is pushed next waits for the forward to be up again.
+    eventually(TIMEOUT, "the sync pending", || async {
+        let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+        hosts[1].sync.state == SyncState::Pending
+    })
+    .await;
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
 }
 
 #[tokio::test]
 async fn a_forward_to_a_socket_path_comes_up_and_goes_down() {
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let (socket, _dir) = serve_on_socket(&far).await;
     a_forward_comes_up_and_goes_down(&socket).await;
 }
 
 #[tokio::test]
 async fn a_forward_to_a_tcp_port_comes_up_and_goes_down() {
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let address = serve_on_tcp(&far).await;
     a_forward_comes_up_and_goes_down(&address).await;
 }
@@ -215,7 +257,7 @@ async fn read_until(stream: &mut reqwest::Response, needle: &str) {
 
 #[tokio::test]
 async fn an_event_stream_and_a_post_both_cross_a_ready_forward() {
-    let far = harness().await;
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let (socket, _dir) = serve_on_socket(&far).await;
     let stub = stub_ssh(json!({"forward": true}));
     let (h, _home) = local(&stub, Some(&socket)).await;
@@ -269,7 +311,11 @@ async fn shutdown_ends_every_ssh_child() {
         "[hosts.one]\nendpoint = \"ssh://one\"\nremote = \"/run/one.sock\"\n\
          [hosts.two]\nendpoint = \"ssh://two\"\nremote = \"/run/two.sock\"\n",
     );
-    let h = harness().home(home).ssh(&stub).await;
+    let h = harness()
+        .ai_permissions_hardware(roomy_hardware())
+        .home(home)
+        .ssh(&stub)
+        .await;
     h.state.hosts.start();
     eventually(TIMEOUT, "both forwards running", || async {
         stub.runs().len() == 2

@@ -131,6 +131,47 @@ One forward carries everything both ways: requests, event streams and
 answers. A client on this machine uses the `endpoint` as if the far daemon
 were local.
 
+## What this daemon pushes to each host
+
+Make your changes on the local daemon. It pushes them to every host, and a
+host never writes back. A change made on a host directly stays there until
+the local daemon pushes the same item again.
+
+When a host becomes `ready`, the daemon pushes all of these through the
+host's own API:
+
+- every skill and every workflow, matched by name;
+- every learned permission, on the host's checkout of its repository. A row
+  whose repository has no checkout there is not pushed, and
+  `sync.skipped_permissions` counts it.
+- the AI permission settings: on or off, the thresholds and the flavour. The
+  host picks its own device for the flavour.
+- the settings of each repository the host has a checkout of: the default
+  workflow, the base branch, the description, the permission mode and
+  whether the forge integration is on.
+
+An item with the same name on the host is overwritten. An item that only the
+host has stays as it is. After that, each local create, change or delete is
+pushed as it happens.
+
+A repository matches by its forge: the same `owner/repo` on the same forge.
+The host keeps its own checkout path. The daemon does not clone or register
+a repository on a host. A local repository with no checkout there is listed
+under `sync.missing_repositories`, and the host stays `in_sync`.
+
+`GET /v1/hosts` shows the push on each host's `sync`:
+
+- `in_sync`: the host holds every local change.
+- `pending`: a change waits for the host, or a push is under way.
+- `failed`: a push failed, and `error` says why. Your later changes still
+  reach the host. The daemon tries each failed push again after 1 second,
+  and doubles the wait after each failure, up to 60 seconds, while the host
+  stays `ready`. A host refuses a push it would refuse from you: for example,
+  it keeps a skill that one of its own workflows still names.
+
+`local` is always `in_sync`. Each change of `sync` publishes one
+`host_updated` event. See [Hosts](../specs/037-hosts.md).
+
 An `[[acp_agents]]` entry adds an ACP agent the shipped registry snapshot
 does not name, or replaces one it does name, command and all, by reusing its
 id. See [Installing Ariadne](install.md) for how the daemon discovers and

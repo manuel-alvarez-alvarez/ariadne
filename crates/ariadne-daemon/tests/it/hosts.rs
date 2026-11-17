@@ -2,7 +2,7 @@
 
 use crate::common;
 
-use ariadne_api::hosts::{HostDto, HostKind, HostStatus};
+use ariadne_api::hosts::{HostDto, HostKind, HostStatus, HostSyncDto, SyncState};
 use ariadne_daemon::config::Config;
 use common::harness;
 
@@ -15,6 +15,16 @@ fn home_with(toml: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     (dir, home)
 }
 
+/// The sync of a host before anything is pushed to it.
+fn pending() -> HostSyncDto {
+    HostSyncDto {
+        state: SyncState::Pending,
+        error: None,
+        missing_repositories: Vec::new(),
+        skipped_permissions: 0,
+    }
+}
+
 #[tokio::test]
 async fn a_daemon_without_hosts_lists_only_local() {
     let h = harness().await;
@@ -24,6 +34,7 @@ async fn a_daemon_without_hosts_lists_only_local() {
     assert_eq!(hosts[0].kind, HostKind::Local);
     assert_eq!(hosts[0].status, HostStatus::Ready);
     assert_eq!(hosts[0].error, None);
+    assert_eq!(hosts[0].sync, HostSyncDto::in_sync());
     assert_eq!(
         hosts[0].endpoint.as_deref(),
         Some(h.launcher.cfg.socket_path.to_str().unwrap())
@@ -52,6 +63,7 @@ async fn configured_hosts_follow_local_in_file_order() {
             status: HostStatus::Ready,
             error: None,
             remote: None,
+            sync: pending(),
         }
     );
     assert_eq!(
@@ -63,6 +75,7 @@ async fn configured_hosts_follow_local_in_file_order() {
             status: HostStatus::Down,
             error: Some("ssh forward not started".into()),
             remote: Some("/run/ariadne.sock".into()),
+            sync: pending(),
         }
     );
     assert_eq!(hosts[3].kind, HostKind::Direct);
@@ -150,6 +163,18 @@ async fn openapi_carries_the_route_the_dto_and_the_event() {
     let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
     assert!(doc["paths"]["/v1/hosts"]["get"].is_object());
     assert!(doc["components"]["schemas"]["HostDto"].is_object());
+    let host = doc["components"]["schemas"]["HostDto"].to_string();
+    assert!(host.contains("\"sync\""), "{host}");
+    let sync = doc["components"]["schemas"]["HostSyncDto"].to_string();
+    for field in ["missing_repositories", "skipped_permissions"] {
+        assert!(sync.contains(field), "{sync}");
+    }
+    assert!(doc["components"]["schemas"]["MissingRepositoryDto"].is_object());
+    let state = doc["components"]["schemas"]["SyncState"].to_string();
+    for value in ["in_sync", "pending", "failed"] {
+        assert!(state.contains(value), "{state}");
+    }
+    assert!(doc["paths"]["/v1/permissions/learned"]["post"].is_object());
     let event = doc["components"]["schemas"]["DomainEvent"].to_string();
     assert!(event.contains("host_updated"), "{event}");
 }

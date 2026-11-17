@@ -36,4 +36,53 @@ pub struct HostDto {
     pub error: Option<String>,
     /// The far daemon's address, for an `ssh` host with one configured.
     pub remote: Option<String>,
+    /// How far the host has taken this daemon's catalogs and settings.
+    pub sync: HostSyncDto,
+}
+
+/// Whether a host holds what this daemon last pushed to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncState {
+    /// Every local change has reached the host.
+    InSync,
+    /// A change waits for the host, or a push is under way.
+    Pending,
+    /// The last push failed. It is tried again while the host is `ready`.
+    Failed,
+}
+
+/// The sync of one host (037).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct HostSyncDto {
+    pub state: SyncState,
+    /// Why the last push failed, when it did.
+    pub error: Option<String>,
+    /// The local repositories that have no checkout of the same forge
+    /// repository on the host. Nothing is registered for them.
+    pub missing_repositories: Vec<MissingRepositoryDto>,
+    /// How many local learned permissions are not pushed, because the host
+    /// has no checkout of their repository.
+    pub skipped_permissions: u32,
+}
+
+impl HostSyncDto {
+    /// A sync with nothing to push and nothing missing.
+    pub fn in_sync() -> Self {
+        Self {
+            state: SyncState::InSync,
+            error: None,
+            missing_repositories: Vec::new(),
+            skipped_permissions: 0,
+        }
+    }
+}
+
+/// A local repository a host has no checkout of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct MissingRepositoryDto {
+    /// The local repository's id.
+    pub id: String,
+    /// `owner/repo` on its forge; null for a repository with no forge.
+    pub forge: Option<String>,
 }

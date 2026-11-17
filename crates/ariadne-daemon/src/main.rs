@@ -235,6 +235,7 @@ async fn main() -> Result<()> {
     tunnel.start(&webhook_listen);
     let hosts = ariadne_daemon::hosts::Hosts::new(
         config.clone(),
+        store.clone(),
         events.clone(),
         ariadne_daemon::timeouts::Timeouts::default(),
     );

@@ -191,7 +191,9 @@ or in the desktop app's **Permissions** screen. Its Learned tab shows each
 row's tool, level, family, normalized key and scope. Open a row to see its
 risk tags, selected option, target, model output and raw input. Change Scope
 there between **This repository** and **All repositories** to widen or narrow
-the row. You cannot add or edit a row by hand.
+the row. You cannot add or edit a row by hand. A daemon that pushes to this
+one as a host records its own rows here with `POST /v1/permissions/learned`;
+see [What this daemon pushes to each host](configuration.md#what-this-daemon-pushes-to-each-host).
 
 ## The AI permission model
 

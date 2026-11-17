@@ -149,6 +149,18 @@ pub(crate) fn test_pin() -> AgentPin {
 /// index is found on the machine running the tests: the agents of a harness
 /// are the ones it registers itself, unless a test hands it a `PATH` of its
 /// own ([`HarnessBuilder::agents_on_path`]).
+/// Hardware that runs every flavour, so a pushed pair never depends on the
+/// machine the tests run on.
+pub(crate) fn roomy_hardware() -> HardwareOverride {
+    HardwareOverride {
+        os: "macos".into(),
+        arch: "aarch64".into(),
+        memory_gb: 256,
+        gpu_name: None,
+        vram_gb: None,
+    }
+}
+
 pub(crate) fn harness() -> HarnessBuilder {
     HarnessBuilder {
         home: None,
@@ -496,9 +508,14 @@ impl HarnessBuilder {
             forge_poll.connect_scheduler(sched.clone());
         }
         let _ = launcher.forge_poll.set(forge_poll.clone());
-        // Started by a test about the forwards: a harness runs no `ssh`.
-        let hosts =
-            ariadne_daemon::hosts::Hosts::new(launcher.cfg.clone(), bus.clone(), self.timeouts);
+        // Started by a test about the forwards or the sync: a harness runs
+        // no `ssh` and pushes to no host.
+        let hosts = ariadne_daemon::hosts::Hosts::new(
+            launcher.cfg.clone(),
+            store.clone(),
+            bus.clone(),
+            self.timeouts,
+        );
         let state = AppState {
             tunnel,
             hosts,

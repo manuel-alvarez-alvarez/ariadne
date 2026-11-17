@@ -27,7 +27,12 @@ export interface HostView extends HostDto {
 }
 
 /** What `local` is until the settings daemon has answered. */
-const LOCAL_ROW: HostDto = { name: LOCAL_HOST, kind: "local", status: "ready" }
+const LOCAL_ROW: HostDto = {
+  name: LOCAL_HOST,
+  kind: "local",
+  status: "ready",
+  sync: { state: "in_sync", missing_repositories: [], skipped_permissions: 0 },
+}
 
 /** How the app reaches one host's row, or why it cannot. */
 function reach(host: HostDto): Pick<HostView, "url" | "unreachable"> {
