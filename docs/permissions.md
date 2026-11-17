@@ -332,6 +332,20 @@ A combination this machine cannot run is refused with the same reason the
 table shows, and nothing is stored. The default is `4b` on the best available
 device, or `0.8b` where nothing on the machine can run `4b`.
 
+The settings are written on `local` and synced to every host, except the
+device. A sync never sends `device`. It does send the flavour, and a flavour
+without a device makes the host pick its best device again. So a device set for
+one host lasts only until the next push of the AI settings to that host. To set
+one host's device, name it: `--device` alone is the only setting a named host
+takes.
+
+```sh
+ariadne permissions ai set --device cuda --host build
+```
+
+Any other setting with `--host NAME`, where NAME is not `local`, is refused. The
+refusal says that the settings are written on `local`.
+
 A change while the model is on reinstalls at once: `show` says `installing`,
 the server stops, and it starts again on the new flavour and device when the
 install is ready. A change while the model is off is only stored, and

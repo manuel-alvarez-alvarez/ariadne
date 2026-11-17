@@ -18,6 +18,7 @@ use ariadne_api::skills::SkillDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_api::workflows::WorkflowDto;
 use ariadne_core::PermissionMode;
+use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
 use ariadne_daemon::bus::BusEvent;
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::NewLearnedPermission;
@@ -37,6 +38,14 @@ fn skill(name: &str, summary: &str) -> String {
 /// A local daemon whose one host `far` is `endpoint`, with a failed push
 /// tried again after `RUNS_OUT`.
 async fn local_with_host(endpoint: &str) -> (Harness, tempfile::TempDir) {
+    local_with_host_on(endpoint, roomy_hardware()).await
+}
+
+/// [`local_with_host`] on the given hardware.
+async fn local_with_host_on(
+    endpoint: &str,
+    hardware: HardwareOverride,
+) -> (Harness, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -46,7 +55,7 @@ async fn local_with_host(endpoint: &str) -> (Harness, tempfile::TempDir) {
     )
     .unwrap();
     let h = harness()
-        .ai_permissions_hardware(roomy_hardware())
+        .ai_permissions_hardware(hardware)
         .home(home)
         .timeouts(Timeouts {
             host_sync_retry: RUNS_OUT,
@@ -271,6 +280,50 @@ async fn a_ready_host_takes_every_item_and_keeps_its_own() {
     assert_eq!(learned[0].key, r#"{"command":"cargo test"}"#);
     assert_eq!(learned[0].repository_id, theirs.id);
     assert_eq!(sync_of(&local).await, HostSyncDto::in_sync());
+}
+
+/// A sync never sends `device` (rule 28): the host picks its own best device
+/// for the flavour it is sent, even where it had chosen another one. Local's
+/// best device is `cuda` and the host's is `mlx`, so a device sent by the sync
+/// would show as local's `cuda` on the host.
+#[tokio::test]
+async fn a_sync_never_sends_the_device_and_the_host_picks_its_best() {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    serve(&far, listener);
+    let linux_cuda = HardwareOverride {
+        os: "linux".into(),
+        arch: "x86_64".into(),
+        memory_gb: 64,
+        gpu_name: Some("NVIDIA".into()),
+        vram_gb: Some(24),
+    };
+    let (local, _dir) = local_with_host_on(&format!("http://{address}"), linux_cuda).await;
+    let _: AiPermissionsStatusDto = far
+        .json(
+            put_json("/v1/permissions/ai", json!({"device": "cpu"})),
+            StatusCode::OK,
+        )
+        .await;
+    let _: AiPermissionsStatusDto = local
+        .json(
+            put_json(
+                "/v1/permissions/ai",
+                json!({"allow_threshold": 0.125, "deny_threshold": 0.875}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let before: AiPermissionsStatusDto = local.get("/v1/permissions/ai").await;
+    assert_eq!(before.device.as_str(), "cuda");
+
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+
+    let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+    assert_eq!((ai.allow_threshold, ai.deny_threshold), (0.125, 0.875));
+    assert_eq!(ai.device.as_str(), "mlx");
 }
 
 #[tokio::test]
