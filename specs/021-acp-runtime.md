@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-14
+updated: 2026-11-17
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -209,6 +209,11 @@ it leaves nothing to delete.
    by session and launch and refused for a launch that is not the one
    running, so a report of the process before never passes for the current
    one.
+   A cancel answers every open permission request `cancelled`, and an agent
+   reads that as the user refusing the call. So the first daemon prompt
+   after a turn that ended `cancelled` starts with the cancelled-turn note
+   (006 rule 8): the calls were stopped, and nobody refused them. A prompt
+   typed at the console and a slash command carry no note.
 9. The ACP permission mode is the repository's (002), read at launch: a
    task's sessions take its repository's, an orchestrator its goal's first
    repository's, and a PR session its request's repository's. `auto` selects the
@@ -597,6 +602,9 @@ it leaves nothing to delete.
 - A cancel ends the running turn as `cancelled`
   (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), and is
   refused between turns (`::cancel_with_no_turn_running_is_refused`).
+  The next daemon prompt after a cancelled turn starts with the
+  cancelled-turn note, and the one after that does not
+  (`acp_runtime.rs::the_prompt_after_a_cancelled_turn_says_nobody_refused_its_calls`).
 - Prompt usage keeps cache writes in input and counts only cache reads as
   cached input, prefers quota, adds up one
   launch's turns, adds a resumed launch, and leaves an absent report at zero

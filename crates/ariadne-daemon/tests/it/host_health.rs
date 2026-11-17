@@ -36,17 +36,17 @@ fn timeouts() -> Timeouts {
 /// The `GET /v1/health` of a far daemon: on, or a `503`, and how many
 /// times it was asked.
 #[derive(Clone, Default)]
-struct Health {
+pub(crate) struct Health {
     off: Arc<AtomicBool>,
     asked: Arc<AtomicUsize>,
 }
 
 impl Health {
-    fn set_off(&self, off: bool) {
+    pub(crate) fn set_off(&self, off: bool) {
         self.off.store(off, Ordering::SeqCst);
     }
 
-    fn asked(&self) -> usize {
+    pub(crate) fn asked(&self) -> usize {
         self.asked.load(Ordering::SeqCst)
     }
 
@@ -71,7 +71,7 @@ impl Health {
 }
 
 /// The far daemon on a loopback TCP port, behind `health`.
-async fn serve_on_tcp(far: &Harness, health: &Health) -> String {
+pub(crate) async fn serve_on_tcp(far: &Harness, health: &Health) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let router = health.router(far);
@@ -80,7 +80,7 @@ async fn serve_on_tcp(far: &Harness, health: &Health) -> String {
 }
 
 /// The far daemon on a unix socket of its own, behind `health`.
-async fn serve_on_socket(far: &Harness, health: &Health) -> (String, tempfile::TempDir) {
+pub(crate) async fn serve_on_socket(far: &Harness, health: &Health) -> (String, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("far.sock");
     let listener = tokio::net::UnixListener::bind(&path).unwrap();
@@ -91,6 +91,15 @@ async fn serve_on_socket(far: &Harness, health: &Health) -> (String, tempfile::T
 
 /// A local daemon whose one host `far` is `host`, a TOML table body.
 async fn local(host: &str, stub: Option<&StubSsh>) -> (Harness, tempfile::TempDir) {
+    local_with(host, stub, timeouts()).await
+}
+
+/// The same, with `timeouts`.
+pub(crate) async fn local_with(
+    host: &str,
+    stub: Option<&StubSsh>,
+    timeouts: Timeouts,
+) -> (Harness, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let home: PathBuf = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -98,7 +107,7 @@ async fn local(host: &str, stub: Option<&StubSsh>) -> (Harness, tempfile::TempDi
     let mut builder = harness()
         .ai_permissions_hardware(roomy_hardware())
         .home(home)
-        .timeouts(timeouts());
+        .timeouts(timeouts);
     if let Some(stub) = stub {
         builder = builder.ssh(stub);
     }
@@ -106,11 +115,11 @@ async fn local(host: &str, stub: Option<&StubSsh>) -> (Harness, tempfile::TempDi
 }
 
 /// The `host_updated` events of the host, read off the bus.
-struct Updates(Receiver<BusEvent>);
+pub(crate) struct Updates(pub(crate) Receiver<BusEvent>);
 
 impl Updates {
     /// The next `host_updated`, whatever it moved.
-    async fn next(&mut self) -> HostDto {
+    pub(crate) async fn next(&mut self) -> HostDto {
         let event = next_event(&mut self.0, |event| {
             matches!(event.event, DomainEvent::HostUpdated(_))
         })
@@ -123,7 +132,7 @@ impl Updates {
 
     /// The next `host_updated` that moves the status. Each one it skips
     /// moves only the sync and keeps the status `before`.
-    async fn next_status(&mut self, before: HostStatus) -> HostDto {
+    pub(crate) async fn next_status(&mut self, before: HostStatus) -> HostDto {
         loop {
             let host = self.next().await;
             if host.status != before {
@@ -134,7 +143,7 @@ impl Updates {
 }
 
 /// The host `far` as `GET /v1/hosts` lists it.
-async fn listed(h: &Harness) -> HostDto {
+pub(crate) async fn listed(h: &Harness) -> HostDto {
     let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
     hosts[1].clone()
 }

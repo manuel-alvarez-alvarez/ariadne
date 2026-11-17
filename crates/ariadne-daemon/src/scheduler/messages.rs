@@ -60,12 +60,17 @@ impl super::Scheduler {
     async fn deliver(&mut self, waiting: Vec<Message>) {
         for message in waiting {
             let Some(session) = self.recipient_session(&message).await else {
-                debug!(message = %message.id, "nothing live to deliver the message to yet");
+                debug!(message_id = %message.id, "nothing live to deliver the message to yet");
                 continue;
             };
             if session.seat() == Some(Seat::Agent)
                 && !crate::attention::work_is_active(&self.store, &session).await
             {
+                continue;
+            }
+            // Queued behind the turn by an earlier pass: the runtime would
+            // take nothing new, so nothing is built and nothing is said.
+            if self.launcher.acp.holds_message(&session.id, &message.id) {
                 continue;
             }
             let seat = message.from_actor().map_or("agent", |actor| actor.as_str());
@@ -80,7 +85,7 @@ impl super::Scheduler {
                 column.as_deref(),
             );
             info!(
-                message = %message.id,
+                message_id = %message.id,
                 session = %session.id,
                 kind = %message.kind,
                 "delivering a message to the agent it is for"
