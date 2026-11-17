@@ -1523,6 +1523,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/{name}/reconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make one configured host reconnect at once, and answer the host once it
+         *     has acted on it.
+         */
+        post: operations["hosts_reconnect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/logs": {
         parameters: {
             query?: never;
@@ -5866,6 +5886,42 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HostDto"][];
                 };
+            };
+        };
+    };
+    hosts_reconnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description host name; not `local` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostDto"];
+                };
+            };
+            /** @description the name is `local` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no configured host has the name */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/ssh_forward.rs
   - crates/ariadne-daemon/tests/it/host_sync.rs
   - crates/ariadne-daemon/tests/it/host_health.rs
+  - crates/ariadne-daemon/tests/it/host_reconnect.rs
   - crates/ariadne-daemon/tests/it/learned_permissions.rs
   - crates/ariadne-daemon/tests/it/host_queries.rs
   - crates/ariadne-cli/tests/hosts.rs
@@ -23,11 +24,13 @@ tests:
 ## Scope
 
 In: the `[hosts.<name>]` tables of `config.toml`, their validation, the
-`GET /v1/hosts` route, `HostDto`, the `host_updated` event, `ssh_bin`, the
+`GET /v1/hosts` route, the `POST /v1/hosts/{name}/reconnect` route,
+`HostDto`, the `host_updated` event, `ssh_bin`, the
 SSH forward the daemon keeps for each `ssh://` host, the push of the local
 catalogs and settings to each host, and the query routes under
 `/v1/hosts/{host}`. Out: a Rust SSH library, a reverse forward from the far
-daemon, cloning a repository on a host and any write from a host back to this
+daemon, a reconnect of every host in one request, cloning a repository on
+a host and any write from a host back to this
 daemon. CLI selection follows spec 014 (rules 43 to 50). The transports and the
 event stream are spec 012's. The desktop app's reading of the hosts — the host
 picker, the Hosts section of its settings and one stream per host — is spec
@@ -104,6 +107,27 @@ picker, the Hosts section of its settings and one stream per host — is spec
 34. Each change of status publishes one `host_updated` (rule 6). The sync of
     the host stops when it leaves `ready`, and starts again on its next
     `ready` (rule 25).
+
+### Reconnect
+
+35. `POST /v1/hosts/{name}/reconnect` takes no body. It answers `200` with
+    the `HostDto` of the host once the host has acted on the reconnect. The
+    name `local` answers `400`, and an unknown name answers `404`, both in
+    the error envelope.
+36. A `down` `ssh` host starts a new forward at once. Its backoff goes back
+    to `ssh_retry`, so a forward that then exits waits `ssh_retry` (rule 12).
+37. A `connecting` `ssh` host loses its current try: the daemon kills the
+    process and starts a new forward at once, with the backoff of rule 36.
+38. A `ready` `ssh` host takes one health check at once. A good answer
+    changes nothing: the forward and every open stream through it stay up.
+39. A `ready` `ssh` host whose check fails is `down`, with the error
+    `<endpoint> does not answer: <reason>`. The daemon kills the process
+    and starts a new forward at once, with the backoff of rule 36.
+40. A `direct` host takes one health check at once, and its status follows
+    the answer: a good answer makes it `ready`, and a failed one makes it
+    `down` with the error `<endpoint> does not answer: <reason>`.
+41. Each change of the host publishes one `host_updated` (rule 6).
+42. The OpenAPI document carries the route.
 
 ### Queries on a host
 
@@ -284,6 +308,20 @@ picker, the Hosts section of its settings and one stream per host — is spec
 - Rule 20 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
   `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
 - Rule 21 (`host_queries.rs::openapi_carries_the_host_query_routes`).
+- Rule 35
+  (`host_reconnect.rs::local_is_400_and_an_unknown_name_is_404_in_the_error_envelope`,
+  `::a_direct_host_takes_one_check_and_its_status_follows_the_answer`).
+- Rules 36 and 41
+  (`host_reconnect.rs::a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after`).
+- Rule 37
+  (`host_reconnect.rs::a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once`).
+- Rule 38
+  (`host_reconnect.rs::a_ready_forward_takes_one_check_and_a_good_answer_cuts_no_stream`).
+- Rules 39 and 41
+  (`host_reconnect.rs::a_ready_forward_whose_check_fails_is_down_and_starts_again_at_once`).
+- Rules 40 and 41
+  (`host_reconnect.rs::a_direct_host_takes_one_check_and_its_status_follows_the_answer`).
+- Rule 42 (`host_reconnect.rs::openapi_carries_the_reconnect_route`).
 
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync
