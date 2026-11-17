@@ -415,8 +415,11 @@ same binary also serves (013).
     without `--host`, both use the daemon of `--home` or `--endpoint`.
 49. `query` accepts `--host NAME|all`. The local daemon serves it under
     `/v1/hosts/{host}` (spec 037, rule 20), so the CLI does not fan it out.
-50. `host ls` prints name, kind, status, endpoint and error. Completion offers
-    the host names and `all`.
+50. `host ls` prints name, kind, status, endpoint and error. Completion of
+    `--host` reads the registry of the daemon that `--endpoint` on the command
+    line names, and offers `local` and `all` when that daemon does not answer or
+    lists only `local`. Completion of an ID reads the host that `--host NAME`
+    names, and every ready host for `--host all`.
 
 ## Known gap
 
@@ -739,6 +742,9 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `pr ls` carries the branches and the session
   (`::pr_ls_shows_the_branches_and_session_columns`).
 
+- Completion follows the typed `--endpoint` and `--host`, rule 50: host names,
+  the `local` and `all` fallback, one named host and `all`
+  (`tests/hosts.rs::completion_reads_the_typed_endpoint_and_the_typed_host`).
 - Host names differ from endpoints, rule 43 (`cli/tests.rs::host_names_are_distinct_from_endpoints`).
 - The help of `--host`, rule 43
   (`cli/tests.rs::host_help_names_local_a_host_name_and_all_for_reads`).
