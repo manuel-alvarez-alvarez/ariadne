@@ -250,6 +250,33 @@ async fn all_keeps_the_warnings_on_a_parsed_query() {
 }
 
 #[tokio::test]
+async fn all_keeps_an_attribute_already_named_exported_host() {
+    let (local, _far, _dir) = pair().await;
+    local
+        .telemetry_store
+        .write_metrics(&[MetricPoint {
+            name: "collision".into(),
+            kind: MetricKind::Counter,
+            unit: None,
+            description: None,
+            labels: json!({"host": "original", "exported_host": "keep-me"}),
+            timestamp: at(-60),
+            value: 1.0,
+        }])
+        .await
+        .unwrap();
+    let series = data(
+        &local,
+        &query_uri("all", "api/v1/series", &[("match[]", "collision_total")]),
+    )
+    .await;
+    let set = &series["data"][0];
+    assert_eq!(set["host"], "local", "{series}");
+    assert_eq!(set["exported_host"], "keep-me", "{series}");
+    assert_eq!(set["exported_exported_host"], "original", "{series}");
+}
+
+#[tokio::test]
 async fn openapi_carries_the_host_query_routes() {
     let h = harness().await;
     let doc: Value = h.get("/api-docs/openapi.json").await;

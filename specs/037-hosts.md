@@ -87,7 +87,8 @@ follows spec 014. The transports and the event stream are spec 012's.
     `{"status": "success", "data": …}` in the shape of one daemon:
     - a vector, matrix or stream result is the concatenation of every
       host's, each series or stream with a `host` label (an attribute already
-      named `host` becomes `exported_host`);
+      named `host` becomes `exported_host`, with another `exported_` added
+      while that key is taken);
     - a scalar or string result becomes a vector of one sample per host;
     - `series` answers every label set with `host`; `labels` adds `host`;
       the values of the label `host` are the host names; other label values

@@ -372,11 +372,16 @@ impl Relay {
 // ---- merging ----
 
 /// Put the host on a label set. An attribute that is already called `host`
-/// moves to `exported_host`, as `service` does (034, rule 8).
+/// moves to `exported_host`, and another `exported_` is added while that key
+/// is taken, as `service` does (034, rule 8).
 fn label(labels: &mut Value, host: &str) {
     if let Some(map) = labels.as_object_mut() {
         if let Some(old) = map.remove("host") {
-            map.insert("exported_host".into(), old);
+            let mut key = "exported_host".to_string();
+            while map.contains_key(&key) {
+                key.insert_str(0, "exported_");
+            }
+            map.insert(key, old);
         }
         map.insert("host".into(), host.into());
     }
