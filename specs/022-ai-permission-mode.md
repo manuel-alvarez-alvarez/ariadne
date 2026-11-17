@@ -303,8 +303,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`ai_permissions_flavours.rs::put_refuses_an_unsupported_combination_and_leaves_the_row_unchanged`,
   `::put_with_only_a_flavour_picks_the_best_device`,
   `::put_with_the_stored_flavour_keeps_the_device_and_another_flavour_picks_the_best`,
-  `ai_permissions.rs::the_stored_flavour_without_a_device_keeps_the_device_and_starts_no_install`,
-  `::put_with_only_a_device_keeps_the_stored_flavour`).
+  `ai_permissions_flavours.rs::put_with_only_a_device_keeps_the_stored_flavour`,
+  `ai_permissions.rs::the_stored_flavour_without_a_device_keeps_the_device_and_starts_no_install`).
 - A fresh row starts at `4b` with no schedule columns, and the daemon fills
   the device at its next start
   (`store.rs::a_fresh_database_seeds_the_ai_permission_defaults`,
