@@ -115,19 +115,19 @@ export function AgentsPage() {
         />
       ))}
 
-      {/* A host whose agents failed to load is said apart from the hosts that
-          answered, which stay on screen; with none answered the tabs say it. */}
-      {configs.rows.length > 0
-        ? configs.errors.map(({ host, error }) => (
-            <ErrorState
-              key={host}
-              title={`Could not load the agents of ${host}`}
-              error={error}
-              description={networkHint(error)}
-              onRetry={() => configs.refetch()}
-            />
-          ))
-        : null}
+      {/* Each host whose agents failed to load is named, apart from the hosts
+          that answered, which stay on screen — empty or not. */}
+      {configs.errors.map(({ host, error }) => (
+        <ErrorState
+          key={host}
+          title={
+            hosts.length > 1 ? `Could not load the agents of ${host}` : "Could not load the agents"
+          }
+          error={error}
+          description={networkHint(error)}
+          onRetry={() => configs.refetch()}
+        />
+      ))}
 
       <AgentTabs
         hosts={hosts}
@@ -191,20 +191,16 @@ function AgentTabs({
 }) {
   const refresh = useRefreshAcpAgents()
 
-  const [firstError] = configs.errors
-  if (configs.rows.length === 0 && firstError) {
+  // Every selected host failed: the errors above say why, and Refresh stays.
+  if (
+    configs.rows.length === 0 &&
+    configs.errors.length > 0 &&
+    configs.errors.length === hosts.length
+  ) {
     return (
-      <>
-        <div className="flex justify-end">
-          <RefreshAgents refresh={refresh} hosts={hosts} off={off} />
-        </div>
-        <ErrorState
-          title="Could not load the agents"
-          error={firstError.error}
-          description={networkHint(firstError.error)}
-          onRetry={() => configs.refetch()}
-        />
-      </>
+      <div className="flex justify-end">
+        <RefreshAgents refresh={refresh} hosts={hosts} off={off} />
+      </div>
     )
   }
 

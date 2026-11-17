@@ -1194,9 +1194,9 @@ Out: the daemon endpoints themselves (012).
 64. The agents screen reads the agents and models of the selected hosts. One tab
     holds one agent id. Under more than one selected host its panel has a chip
     per host that has the agent. A flag edit, a model switch and a rank apply to
-    the host of the chip picked, and Refresh reprobes every selected host. A host
+    the host of the chip picked, and Refresh reprobes every selected host. Each host
     whose agents failed to load is named in an error with Retry, beside the
-    agents of the hosts that answered.
+    agents of the hosts that answered, and even when none returned an agent.
 65. The Forge tabs merge the pull requests and issues of the selected hosts,
     most recently updated first, with a host badge while more than one host is
     selected. A repository filter names one forge repository, and each host
@@ -2158,7 +2158,9 @@ Out: the daemon endpoints themselves (012).
   writes to the chip's host
   (`ui/src/features/agents/agents-hosts.test.tsx::groups an agent of two hosts under one tab, with a chip per host, and writes to the chip's host`,
   `::reads only the picked host, with no chips`,
-  `::says which host's agents failed to load beside the agents of the host that answered, with a retry`).
+  `::says which host's agents failed to load beside the agents of the host that answered, with a retry`,
+  `::names the failed host beside a host that answered with no agents`,
+  `::names every host whose agents failed, each with a retry, when none answered`).
 - The Forge tabs merge hosts, open a panel on the row's host, offer the hosts of
   a repository for a review, and fill the goal dialog on the issue's host
   (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, badged, and opens a panel on its row's host`,
