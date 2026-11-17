@@ -4,6 +4,8 @@
 //! local one with a `direct` host that points at it.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::common::{
     Harness, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json, put_json,
@@ -21,6 +23,7 @@ use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::NewLearnedPermission;
 use axum::http::StatusCode;
 use serde_json::json;
+use tokio::sync::Semaphore;
 use tokio::sync::broadcast::Receiver;
 
 const WORKFLOW: &str =
@@ -55,6 +58,76 @@ async fn local_with_host(endpoint: &str) -> (Harness, tempfile::TempDir) {
 /// Serve `far`'s router on `listener`.
 fn serve(far: &Harness, listener: tokio::net::TcpListener) {
     let router = far.router.clone();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+}
+
+/// What stands in front of the far daemon: while it holds, each request
+/// waits for a permit the test hands out.
+#[derive(Clone)]
+struct Gate {
+    held: Arc<AtomicBool>,
+    permits: Arc<Semaphore>,
+    /// Each request that waited at the gate, as `METHOD path`.
+    held_requests: Arc<Mutex<Vec<String>>>,
+    /// Each request the far daemon has answered, as `METHOD path`.
+    answered: Arc<Mutex<Vec<String>>>,
+}
+
+impl Gate {
+    fn new() -> Self {
+        Self {
+            held: Arc::new(AtomicBool::new(false)),
+            permits: Arc::new(Semaphore::new(0)),
+            held_requests: Arc::new(Mutex::new(Vec::new())),
+            answered: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn hold(&self) {
+        self.held.store(true, Ordering::SeqCst);
+    }
+
+    /// Let the held requests through one at a time, each answered before
+    /// the next, until `request` is answered.
+    async fn pass_until(&self, request: &str) {
+        loop {
+            let before = self.answered.lock().unwrap().len();
+            self.permits.add_permits(1);
+            eventually(TIMEOUT, "the held request answered", || async {
+                self.answered.lock().unwrap().len() > before
+            })
+            .await;
+            if self.answered.lock().unwrap()[before] == request {
+                return;
+            }
+        }
+    }
+
+    /// Stop holding, and let every held request through.
+    fn release(&self) {
+        self.held.store(false, Ordering::SeqCst);
+        self.permits.add_permits(Semaphore::MAX_PERMITS / 2);
+    }
+}
+
+/// Serve `far`'s router on `listener` behind `gate`.
+fn serve_gated(far: &Harness, listener: tokio::net::TcpListener, gate: &Gate) {
+    let gate = gate.clone();
+    let router = far.router.clone().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let gate = gate.clone();
+            async move {
+                let what = format!("{} {}", request.method(), request.uri());
+                if gate.held.load(Ordering::SeqCst) {
+                    gate.held_requests.lock().unwrap().push(what.clone());
+                    gate.permits.acquire().await.unwrap().forget();
+                }
+                let response = next.run(request).await;
+                gate.answered.lock().unwrap().push(what);
+                response
+            }
+        },
+    ));
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 }
 
@@ -447,6 +520,79 @@ async fn a_refused_push_holds_back_no_later_change() {
     until_in_sync(&local).await;
     assert!(skill_on(&far, "shared").await.is_none());
     assert_eq!(sync_of(&local).await.error, None);
+}
+
+/// A newer push of an item ends its older failed push, so no retry sends
+/// the older version over the newer one.
+#[tokio::test]
+async fn a_newer_push_of_an_item_ends_its_older_failed_push() {
+    let far = harness().await;
+    let gate = Gate::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    serve_gated(&far, listener, &gate);
+    let (local, _dir) = local_with_host(&format!("http://{address}")).await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "shared", "document": skill("shared", "first")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    // A workflow only the host has names the skill, so the host refuses to
+    // delete it.
+    let far_flow = "workflow far-flow\n  build[Build]\n    Do the work.\n    skills: shared\n";
+    let _: WorkflowDto = far
+        .json(
+            post_json(
+                "/v1/workflows",
+                json!({"name": "far-flow", "document": far_flow}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    // The host holds the push of another skill, so both changes of `shared`
+    // are queued before either runs.
+    gate.hold();
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "lead", "document": skill("lead", "held")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    eventually(TIMEOUT, "the push of the other skill held", || async {
+        let held = gate.held_requests.lock().unwrap();
+        held.iter().any(|request| request == "PUT /v1/skills/lead")
+    })
+    .await;
+    let (status, _) = local.send(delete("/v1/skills/shared")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "shared", "document": skill("shared", "second")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    // The host refuses the delete. Then it would take it, if it came again.
+    gate.pass_until("DELETE /v1/skills/shared").await;
+    let (status, _) = far.send(delete("/v1/workflows/far-flow")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    gate.release();
+
+    until_in_sync(&local).await;
+    let shared = skill_on(&far, "shared").await;
+    assert_eq!(shared.map(|skill| skill.summary).as_deref(), Some("second"));
 }
 
 #[tokio::test]

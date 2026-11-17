@@ -213,7 +213,8 @@ struct Pushes {
 
 impl Pushes {
     /// Queue the push a local change asks for, if it asks for one. A newer
-    /// push of the same item replaces a failed one.
+    /// push of the same item replaces a failed one, here and again when it
+    /// runs.
     fn enqueue(&mut self, event: &DomainEvent) {
         let push = match event {
             DomainEvent::SkillCreated(skill) | DomainEvent::SkillUpdated(skill) => {
@@ -273,6 +274,9 @@ impl Pushes {
             }
             return;
         }
+        // The item's older failed push is spent: this one carries the newer
+        // state, and a retry of the older would write it back over this.
+        self.supersede(&push);
         if let Err(error) = pusher.push(&push).await {
             self.fail(pusher, push, error);
         }

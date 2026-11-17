@@ -95,9 +95,11 @@ back to this daemon, the CLI `--host` flag and any desktop change. The transport
     no other one: the later pushes run, and the failed ones are tried again,
     each on its own, after `host_sync_retry`. The wait is doubled after each
     round that leaves one failed, up to 60 seconds, and reset once none is.
-    A later change of the same item replaces its failed push. When the host
-    leaves `ready`, the tries stop and the host is `pending` with a null
-    `error`. Its next `ready` starts the push of rule 16 again.
+    A later push of the same item ends its failed push, both when it is
+    queued and when it runs, so no retry writes an older version over a
+    newer one. When the host leaves `ready`, the tries stop and the host is
+    `pending` with a null `error`. Its next `ready` starts the push of rule
+    16 again.
 19. A local repository matches a host repository on the same forge
     repository (kind, host, owner, name). One on the same base branch is
     taken first, else the first one left; each host repository matches once.
@@ -157,6 +159,7 @@ back to this daemon, the CLI `--host` flag and any desktop change. The transport
 - Rule 18
   (`host_sync.rs::a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands`,
   `::a_refused_push_holds_back_no_later_change`,
+  `::a_newer_push_of_an_item_ends_its_older_failed_push`,
   `ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`).
 - Rule 19
   (`host_sync.rs::a_repository_takes_the_local_settings_by_forge_and_a_missing_one_is_listed`,
