@@ -926,7 +926,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(increase(ariadne_tasks_ended_total{status=\"finished\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$bucket]))",
-                    "seriesNameFormat": "finished",
+                    "seriesNameFormat": "finished {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -939,7 +939,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(increase(ariadne_tasks_ended_total{status=\"cancelled\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$bucket]))",
-                    "seriesNameFormat": "cancelled",
+                    "seriesNameFormat": "cancelled {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -952,7 +952,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(increase(ariadne_tasks_ended_total{status=\"failed\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$bucket]))",
-                    "seriesNameFormat": "failed",
+                    "seriesNameFormat": "failed {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -1001,7 +1001,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(increase(ariadne_tasks_ended_total{status=\"finished\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))",
-                    "seriesNameFormat": "finished"
+                    "seriesNameFormat": "finished {{host}}"
                   }
                 }
               }
@@ -1013,7 +1013,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(increase(ariadne_tasks_ended_total{status=\"cancelled\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))",
-                    "seriesNameFormat": "cancelled"
+                    "seriesNameFormat": "cancelled {{host}}"
                   }
                 }
               }
@@ -1025,7 +1025,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(increase(ariadne_tasks_ended_total{status=\"failed\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))",
-                    "seriesNameFormat": "failed"
+                    "seriesNameFormat": "failed {{host}}"
                   }
                 }
               }
@@ -1073,7 +1073,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "histogram_quantile(0.5, sum by (le) (increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\"}[$bucket]))) and sum(increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\", le=\"+Inf\"}[$bucket])) > 0",
-                    "seriesNameFormat": "median",
+                    "seriesNameFormat": "median {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -1086,7 +1086,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "histogram_quantile(0.9, sum by (le) (increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\"}[$bucket]))) and sum(increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\", le=\"+Inf\"}[$bucket])) > 0",
-                    "seriesNameFormat": "90th percentile",
+                    "seriesNameFormat": "90th percentile {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -1121,7 +1121,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (status) (increase(ariadne_task_status_time_seconds_sum[$__range] @ end())) / sum by (status) (increase(ariadne_task_status_time_seconds_count[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{status}}"
+                    "seriesNameFormat": "{{status}} {{host}}"
                   }
                 }
               }
@@ -1156,7 +1156,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (workflow) (increase(ariadne_tasks_ended_total{status=\"finished\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{workflow}}"
+                    "seriesNameFormat": "{{workflow}} {{host}}"
                   }
                 }
               }
@@ -1191,7 +1191,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (model) (increase(ariadne_tasks_ended_total{status=\"finished\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{model}}"
+                    "seriesNameFormat": "{{model}} {{host}}"
                   }
                 }
               }
@@ -1238,7 +1238,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(increase(ariadne_goals_ended_total{status=\"completed\", repo=~\"${repo:regexliteral}\"}[$__range] @ end()))",
-                    "seriesNameFormat": "completed"
+                    "seriesNameFormat": "completed {{host}}"
                   }
                 }
               }
@@ -1250,7 +1250,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(increase(ariadne_goals_ended_total{status=\"cancelled\", repo=~\"${repo:regexliteral}\"}[$__range] @ end()))",
-                    "seriesNameFormat": "cancelled"
+                    "seriesNameFormat": "cancelled {{host}}"
                   }
                 }
               }
@@ -1297,7 +1297,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum by (model) (increase(ariadne_tokens_total{kind=~\"input|output\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$bucket]))",
-                    "seriesNameFormat": "{{model}}",
+                    "seriesNameFormat": "{{model}} {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -1355,7 +1355,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (model) (increase(ariadne_tokens_total{kind=~\"input|output\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{model}}"
+                    "seriesNameFormat": "{{model}} {{host}}"
                   }
                 }
               }
@@ -1412,7 +1412,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (seat) (increase(ariadne_tokens_total{kind=~\"input|output\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{seat}}"
+                    "seriesNameFormat": "{{seat}} {{host}}"
                   }
                 }
               }
@@ -1469,7 +1469,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (step) (increase(ariadne_tokens_total{kind=~\"input|output\", seat=\"agent\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{step}}"
+                    "seriesNameFormat": "{{step}} {{host}}"
                   }
                 }
               }
@@ -1504,7 +1504,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (repo) (increase(ariadne_tokens_total{kind=~\"input|output\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{repo}}"
+                    "seriesNameFormat": "{{repo}} {{host}}"
                   }
                 }
               }
@@ -1588,7 +1588,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (model) (increase(ariadne_tokens_total{kind=\"output\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) / sum by (model) (increase(ariadne_turns_total{model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{model}}"
+                    "seriesNameFormat": "{{model}} {{host}}"
                   }
                 }
               }
@@ -1635,7 +1635,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum by (model) (increase(ariadne_turns_total{model=~\"${model:regexliteral}\"}[$bucket]))",
-                    "seriesNameFormat": "{{model}}",
+                    "seriesNameFormat": "{{model}} {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -1693,7 +1693,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (seat) (increase(ariadne_sessions_ended_total{model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{seat}}"
+                    "seriesNameFormat": "{{seat}} {{host}}"
                   }
                 }
               }
@@ -1750,7 +1750,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (step) (increase(ariadne_sessions_ended_total{seat=\"agent\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{step}}"
+                    "seriesNameFormat": "{{step}} {{host}}"
                   }
                 }
               }
@@ -1784,7 +1784,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (model) (increase(ariadne_session_lifetime_seconds_sum{model=~\"${model:regexliteral}\"}[$__range] @ end())) / sum by (model) (increase(ariadne_session_lifetime_seconds_count{model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{model}}"
+                    "seriesNameFormat": "{{model}} {{host}}"
                   }
                 }
               }
@@ -1819,7 +1819,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (attention_reason) (increase(ariadne_sessions_ended_total{attention_reason!=\"none\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{attention_reason}}"
+                    "seriesNameFormat": "{{attention_reason}} {{host}}"
                   }
                 }
               }
@@ -1908,7 +1908,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "topk(10, sum by (tool_name) (increase(ariadne_tool_calls_total{model=~\"${model:regexliteral}\"}[$__range] @ end())) > 0)",
-                    "seriesNameFormat": "{{tool_name}}"
+                    "seriesNameFormat": "{{tool_name}} {{host}}"
                   }
                 }
               }
@@ -1955,7 +1955,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum by (reason) (increase(ariadne_attention_raised_total[$bucket]))",
-                    "seriesNameFormat": "{{reason}}",
+                    "seriesNameFormat": "{{reason}} {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -1991,7 +1991,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (reason) (ariadne_attention_pending)) > 0",
-                    "seriesNameFormat": "{{reason}}"
+                    "seriesNameFormat": "{{reason}} {{host}}"
                   }
                 }
               }
@@ -2025,7 +2025,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(histogram_quantile(0.5, sum by (reason, le) (increase(ariadne_attention_wait_seconds_bucket[$__range] @ end())))) > 0",
-                    "seriesNameFormat": "{{reason}}"
+                    "seriesNameFormat": "{{reason}} {{host}}"
                   }
                 }
               }
@@ -2060,7 +2060,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "topk(10, sum by (tool_name) (increase(ariadne_permissions_total[$__range] @ end())) > 0)",
-                    "seriesNameFormat": "{{tool_name}}"
+                    "seriesNameFormat": "{{tool_name}} {{host}}"
                   }
                 }
               }
@@ -2116,7 +2116,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (decided_by) (increase(ariadne_permissions_total[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{decided_by}}"
+                    "seriesNameFormat": "{{decided_by}} {{host}}"
                   }
                 }
               }
@@ -2172,7 +2172,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "(sum by (answer) (increase(ariadne_permissions_total[$__range] @ end()))) > 0",
-                    "seriesNameFormat": "{{answer}}"
+                    "seriesNameFormat": "{{answer}} {{host}}"
                   }
                 }
               }
@@ -2219,7 +2219,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket[$__rate_interval]))) and sum(rate(http_server_request_duration_seconds_bucket{le=\"+Inf\"}[$__rate_interval])) > 0",
-                    "seriesNameFormat": "median"
+                    "seriesNameFormat": "median {{host}}"
                   }
                 }
               }
@@ -2231,7 +2231,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[$__rate_interval]))) and sum(rate(http_server_request_duration_seconds_bucket{le=\"+Inf\"}[$__rate_interval])) > 0",
-                    "seriesNameFormat": "95th percentile"
+                    "seriesNameFormat": "95th percentile {{host}}"
                   }
                 }
               }
@@ -2278,7 +2278,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count[$__rate_interval]))",
-                    "seriesNameFormat": "{{http_response_status_code}}"
+                    "seriesNameFormat": "{{http_response_status_code}} {{host}}"
                   }
                 }
               }
@@ -2325,7 +2325,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "histogram_quantile(0.5, sum by (le) (rate(ariadne_scheduler_tick_duration_seconds_bucket[$__rate_interval]))) and sum(rate(ariadne_scheduler_tick_duration_seconds_bucket{le=\"+Inf\"}[$__rate_interval])) > 0",
-                    "seriesNameFormat": "median"
+                    "seriesNameFormat": "median {{host}}"
                   }
                 }
               }
@@ -2337,7 +2337,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "histogram_quantile(0.95, sum by (le) (rate(ariadne_scheduler_tick_duration_seconds_bucket[$__rate_interval]))) and sum(rate(ariadne_scheduler_tick_duration_seconds_bucket{le=\"+Inf\"}[$__rate_interval])) > 0",
-                    "seriesNameFormat": "95th percentile"
+                    "seriesNameFormat": "95th percentile {{host}}"
                   }
                 }
               }
@@ -2385,7 +2385,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum by (outcome) (increase(ariadne_acp_launches_total[$bucket]))",
-                    "seriesNameFormat": "{{outcome}}",
+                    "seriesNameFormat": "{{outcome}} {{host}}",
                     "minStep": "$bucket"
                   }
                 }
@@ -2434,7 +2434,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum by (file) (ariadne_db_size_bytes)",
-                    "seriesNameFormat": "{{file}}"
+                    "seriesNameFormat": "{{file}} {{host}}"
                   }
                 }
               }
@@ -2482,7 +2482,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "process_memory_usage_bytes",
-                    "seriesNameFormat": "memory"
+                    "seriesNameFormat": "memory {{host}}"
                   }
                 }
               }
@@ -2530,7 +2530,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "rate(process_cpu_time_seconds_total[$__rate_interval])",
-                    "seriesNameFormat": "cores"
+                    "seriesNameFormat": "cores {{host}}"
                   }
                 }
               }
@@ -2578,7 +2578,7 @@
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
                     "query": "sum(ariadne_events_stream_clients)",
-                    "seriesNameFormat": "clients"
+                    "seriesNameFormat": "clients {{host}}"
                   }
                 }
               }

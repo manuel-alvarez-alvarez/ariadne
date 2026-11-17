@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { EmptyState } from "@/components/empty-state"
 import { EntityCombobox } from "@/components/entity-combobox"
 import { ErrorState } from "@/components/error-state"
+import { HostSync } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -46,6 +47,7 @@ export function WorkflowsPage() {
           </Button>
         }
       />
+      <HostSync />
       {workflows.isPending ? (
         <LoadingWorkflows />
       ) : workflows.isError ? (

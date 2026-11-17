@@ -20,11 +20,12 @@
 
 import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
-import type { ForgeTunnelDto, RepositoryDto } from "@/api"
+import type { ForgeTunnelDto, HostDto, RepositoryDto } from "@/api"
 import { aForge, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
+import { BOX, forgetHosts, LOCAL } from "@/test/hosts"
 import { RepositoriesPage } from "./repositories-page"
 
 const ARIADNE: RepositoryDto = aRepository({
@@ -48,6 +49,9 @@ let deleteFailure: { status: number; code: string; message: string } | null = nu
 /** What `GET /v1/forge/tunnel` answers: the tunnel is up unless a test says otherwise. */
 let tunnel: ForgeTunnelDto
 
+/** What `GET /v1/hosts` answers: `local` alone unless a test names another. */
+let hosts: HostDto[]
+
 function aTunnel(overrides: Partial<ForgeTunnelDto> = {}): ForgeTunnelDto {
   return {
     enabled: true,
@@ -63,9 +67,12 @@ function aTunnel(overrides: Partial<ForgeTunnelDto> = {}): ForgeTunnelDto {
 function stubDaemon(repositories: RepositoryDto[]) {
   deleteFailure = null
   tunnel = aTunnel()
+  hosts = [LOCAL]
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
-    if (new URL(request.url).pathname === "/v1/forge/tunnel") return jsonResponse(tunnel)
+    const { pathname } = new URL(request.url)
+    if (pathname === "/v1/forge/tunnel") return jsonResponse(tunnel)
+    if (pathname === "/v1/hosts") return jsonResponse(hosts)
     if (request.method === "DELETE") {
       if (!deleteFailure) return new Response(null, { status: 204 })
       const { status, code, message } = deleteFailure
@@ -321,5 +328,30 @@ describe("removing a repository", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Remove repository" })).toBeNull()
     })
+  })
+})
+
+describe("hosts", () => {
+  afterEach(() => forgetHosts())
+
+  it("says which hosts hold a checkout of each repository and which lack one", async () => {
+    hosts = [
+      LOCAL,
+      {
+        ...BOX,
+        sync: {
+          state: "failed",
+          error: "connection reset",
+          missing_repositories: [{ id: SANDBOX.id, forge: null }],
+          skipped_permissions: 0,
+        },
+      },
+    ]
+    renderScreen(<RepositoriesPage />)
+
+    expect(await screen.findByText("failed: connection reset")).toBeTruthy()
+    const [ariadne, sandbox] = await screen.findAllByRole("list", { name: "Checkouts" })
+    expect(ariadne?.textContent).toBe("box · checkout")
+    expect(sandbox?.textContent).toBe("box · no checkout")
   })
 })

@@ -12,11 +12,13 @@
 
 import { fireEvent, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { type DashboardDto, qk } from "@/api"
+import { type DashboardDto, type HostDto, qk } from "@/api"
+import { useSettingsStore } from "@/stores/settings"
 import { aDashboard } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { BOX, forgetHosts, LOCAL } from "@/test/hosts"
 import { DashboardsPage } from "./dashboards"
 
 /**
@@ -56,8 +58,17 @@ let requests: { method: string; path: string }[] = []
  */
 let dashboards: DashboardDto[] = []
 
+/** What `GET /v1/hosts` answers; empty reads as `local` alone. */
+let hostRows: HostDto[] = []
+
+afterEach(() => {
+  forgetHosts()
+  useSettingsStore.setState({ hostFilter: "" })
+})
+
 beforeEach(() => {
   requests = []
+  hostRows = []
   // `custom` sorts before `default` — the daemon lists dashboards by name —
   // so a test that opens with no `?dashboard=` and still lands on `default`
   // is proof the screen picks the shipped dashboard by name, not by position.
@@ -67,6 +78,7 @@ beforeEach(() => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const url = new URL(request.url)
     requests.push({ method: request.method, path: url.pathname })
+    if (url.pathname === "/v1/hosts") return jsonResponse(hostRows)
     if (request.method === "GET" && url.pathname === "/v1/dashboards") {
       return jsonResponse(dashboards)
     }
@@ -217,6 +229,32 @@ describe("DashboardsPage", () => {
     await vi.waitFor(() => {
       expect(post).toHaveBeenCalledWith({ type: "theme", theme: "dark" }, window.location.origin)
     })
+  })
+
+  it("queries every host under All, the picked host otherwise, and the host the select names", async () => {
+    const user = userEvent.setup()
+    hostRows = [LOCAL, BOX]
+    const hostOf = (iframe: HTMLElement) =>
+      new URL(iframe.getAttribute("src") ?? "", "http://localhost").searchParams.get("host")
+
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    expect(hostOf(await screen.findByTitle("Default dashboard"))).toBe("all")
+
+    await user.click(screen.getByRole("combobox", { name: "Host" }))
+    const options = (await screen.findAllByRole("option")).map((option) => option.textContent)
+    expect(options).toEqual(["All hosts", "local", "box"])
+    await user.click(screen.getByRole("option", { name: "box" }))
+    expect(hostOf(await screen.findByTitle("Default dashboard"))).toBe("box")
+  })
+
+  it("opens on the host the header picker names", async () => {
+    hostRows = [LOCAL, BOX]
+    useSettingsStore.setState({ hostFilter: "box" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    const iframe = await screen.findByTitle("Default dashboard")
+    expect(
+      new URL(iframe.getAttribute("src") ?? "", "http://localhost").searchParams.get("host"),
+    ).toBe("box")
   })
 
   it("disables Rename and Delete on the built-in dashboard, and enables them on one of your own", async () => {

@@ -15,11 +15,13 @@ import { FlaskConicalIcon, RefreshCwIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import type {
-  AiPermissionsStatusDto,
-  PythonDto,
-  TestAiPermissionResponse,
-  UpdateAiPermissionsRequest,
+import {
+  type AiPermissionsStatusDto,
+  type Host,
+  LOCAL_HOST,
+  type PythonDto,
+  type TestAiPermissionResponse,
+  type UpdateAiPermissionsRequest,
 } from "@/api"
 import { Fact, FactList } from "@/components/fact-list"
 import { StatusBadge } from "@/components/status-badge"
@@ -137,9 +139,22 @@ function Code({ children }: { children: string | null | undefined }) {
   return children ? <span className="font-mono text-xs break-all">{children}</span> : <>—</>
 }
 
-export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
-  const update = useUpdateAiPermissions()
-  const refresh = useRefreshAiPermissions()
+/**
+ * One host's AI model. The settings (switch, thresholds, flavour) are synced
+ * from `local`, so only `local`'s card writes them; every card shows its own
+ * host's install state and hardware, picks that host's device and refreshes
+ * that host's install.
+ */
+export function AiCard({
+  status,
+  host = LOCAL_HOST,
+}: {
+  status: AiPermissionsStatusDto
+  host?: Host
+}) {
+  const settings = host === LOCAL_HOST
+  const update = useUpdateAiPermissions(host)
+  const refresh = useRefreshAiPermissions(host)
 
   // Held here, not in the test panel, because the range control needs the
   // danger too: this is what draws its marker, so a dragged or typed
@@ -167,38 +182,44 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
 
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <h2 className="font-heading text-base font-semibold">AI</h2>
+          <h2 className="font-heading text-base font-semibold">
+            {settings ? "AI" : `AI on ${host}`}
+          </h2>
           <StatusBadge label={STATE_LABELS[status.state]} tone={STATE_TONE[status.state]} />
         </div>
 
         <div className="flex items-center gap-3">
-          <Switch
-            aria-label="Enable the AI permission model"
-            checked={status.enabled}
-            disabled={!status.python.ok || update.isPending}
-            onCheckedChange={(checked) =>
-              send(
-                { enabled: checked },
-                checked ? "Could not turn the model on" : "Could not turn the model off",
-              )
-            }
-          />
+          {settings ? (
+            <Switch
+              aria-label="Enable the AI permission model"
+              checked={status.enabled}
+              disabled={!status.python.ok || update.isPending}
+              onCheckedChange={(checked) =>
+                send(
+                  { enabled: checked },
+                  checked ? "Could not turn the model on" : "Could not turn the model off",
+                )
+              }
+            />
+          ) : null}
           <ButtonGroup>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    aria-label="Test a request"
-                    onClick={() => setTestOpen(true)}
-                  />
-                }
-              >
-                <FlaskConicalIcon />
-              </TooltipTrigger>
-              <TooltipContent>Test a request</TooltipContent>
-            </Tooltip>
+            {settings ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      aria-label="Test a request"
+                      onClick={() => setTestOpen(true)}
+                    />
+                  }
+                >
+                  <FlaskConicalIcon />
+                </TooltipTrigger>
+                <TooltipContent>Test a request</TooltipContent>
+              </Tooltip>
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -229,92 +250,98 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
             </Tooltip>
           </ButtonGroup>
         </div>
-        <AiTestPanel
-          open={testOpen}
-          onOpenChange={setTestOpen}
-          status={status}
-          result={testResult}
-          onResult={setTestResult}
-        />
+        {settings ? (
+          <AiTestPanel
+            open={testOpen}
+            onOpenChange={setTestOpen}
+            status={status}
+            result={testResult}
+            onResult={setTestResult}
+          />
+        ) : null}
       </header>
       {!status.python.ok ? (
         <FieldDescription>{pythonReason(status.python)}</FieldDescription>
       ) : null}
 
-      <div className="flex flex-col gap-2">
-        <SectionHeading>Thresholds</SectionHeading>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>
-            {status.thresholds_default
-              ? `The default pair of ${status.flavour}`
-              : "Set by hand; a flavour change keeps it"}
-          </span>
-          {!status.thresholds_default ? (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={update.isPending}
-              onClick={() => send({ default_thresholds: true }, "Could not reset the thresholds")}
-            >
-              Use the flavour default
-            </Button>
-          ) : null}
+      {settings ? (
+        <div className="flex flex-col gap-2">
+          <SectionHeading>Thresholds</SectionHeading>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>
+              {status.thresholds_default
+                ? `The default pair of ${status.flavour}`
+                : "Set by hand; a flavour change keeps it"}
+            </span>
+            {!status.thresholds_default ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={update.isPending}
+                onClick={() => send({ default_thresholds: true }, "Could not reset the thresholds")}
+              >
+                Use the flavour default
+              </Button>
+            ) : null}
+          </div>
+          <ThresholdRange
+            allowThreshold={status.allow_threshold}
+            denyThreshold={status.deny_threshold}
+            danger={
+              testResult && !testResult.ai_error ? (testResult.danger ?? undefined) : undefined
+            }
+            mutate={update.mutate}
+          />
         </div>
-        <ThresholdRange
-          allowThreshold={status.allow_threshold}
-          denyThreshold={status.deny_threshold}
-          danger={testResult && !testResult.ai_error ? (testResult.danger ?? undefined) : undefined}
-          mutate={update.mutate}
-        />
-      </div>
+      ) : null}
 
       <div className="flex flex-col gap-2">
         <SectionHeading>Model</SectionHeading>
         <div className="grid gap-3 sm:grid-cols-2">
+          {settings ? (
+            <Field>
+              <FieldLabel htmlFor="ai-flavour">Flavour</FieldLabel>
+              <Select
+                value={status.flavour}
+                disabled={selectsDisabled}
+                onValueChange={(flavour) => send({ flavour }, "Could not change the model flavour")}
+              >
+                <SelectTrigger id="ai-flavour" aria-label="Flavour" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  {status.flavours.map((option) => {
+                    const runnable = option.devices.filter((device) => device.can_run)
+                    return (
+                      <SelectItem
+                        key={option.flavour}
+                        value={option.flavour}
+                        disabled={runnable.length === 0}
+                      >
+                        <OptionText
+                          name={option.flavour}
+                          meaning={FLAVOUR_MEANINGS[option.flavour]}
+                          note={
+                            runnable.length > 0
+                              ? `Runs on ${runnable.map(({ device }) => device).join(", ")}`
+                              : flavourReason(option.devices)
+                          }
+                        />
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
           <Field>
-            <FieldLabel htmlFor="ai-flavour">Flavour</FieldLabel>
-            <Select
-              value={status.flavour}
-              disabled={selectsDisabled}
-              onValueChange={(flavour) => send({ flavour }, "Could not change the model flavour")}
-            >
-              <SelectTrigger id="ai-flavour" aria-label="Flavour" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                {status.flavours.map((option) => {
-                  const runnable = option.devices.filter((device) => device.can_run)
-                  return (
-                    <SelectItem
-                      key={option.flavour}
-                      value={option.flavour}
-                      disabled={runnable.length === 0}
-                    >
-                      <OptionText
-                        name={option.flavour}
-                        meaning={FLAVOUR_MEANINGS[option.flavour]}
-                        note={
-                          runnable.length > 0
-                            ? `Runs on ${runnable.map(({ device }) => device).join(", ")}`
-                            : flavourReason(option.devices)
-                        }
-                      />
-                    </SelectItem>
-                  )
-                })}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="ai-device">Device</FieldLabel>
+            <FieldLabel htmlFor={`ai-device-${host}`}>Device</FieldLabel>
             <Select
               value={status.device}
               disabled={selectsDisabled}
-              onValueChange={(device) =>
-                send({ flavour: status.flavour, device }, "Could not change the model device")
-              }
+              onValueChange={(device) => send({ device }, "Could not change the model device")}
             >
-              <SelectTrigger id="ai-device" aria-label="Device" className="w-full">
+              <SelectTrigger id={`ai-device-${host}`} aria-label="Device" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent alignItemWithTrigger={false}>

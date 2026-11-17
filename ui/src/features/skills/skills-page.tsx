@@ -18,6 +18,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { EmptyState } from "@/components/empty-state"
 import { EntityCombobox } from "@/components/entity-combobox"
 import { ErrorState } from "@/components/error-state"
+import { HostSync } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -79,6 +80,7 @@ export function SkillsPage() {
           </Button>
         }
       />
+      <HostSync />
 
       {skills.isPending ? (
         <LoadingSkills />

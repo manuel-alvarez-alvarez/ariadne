@@ -18,8 +18,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
 
-import { ApiError } from "@/api"
+import { ApiError, type Host, LOCAL_HOST, useHosts } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { HostSync } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -51,6 +52,8 @@ export function PermissionsPage() {
         description="What a repository's agents may do without asking again — approvals learned from a console pick or added by hand, and the AI model that answers the rest."
       />
 
+      <HostSync skippedPermissions={tab === "learned"} />
+
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <TabsList>
           <TabsTrigger value="learned">Learned</TabsTrigger>
@@ -68,10 +71,28 @@ export function PermissionsPage() {
 }
 
 function AiTab() {
-  const status = useQuery(aiPermissionsStatusQueryOptions())
+  const { hosts } = useHosts()
+  return (
+    <div className="flex flex-col gap-4">
+      <AiHost host={LOCAL_HOST} />
+      {hosts
+        .filter((host) => host.name !== LOCAL_HOST)
+        .map((host) => (
+          <AiHost key={host.name} host={host.name} unreachable={host.unreachable} />
+        ))}
+    </div>
+  )
+}
+
+/** One host's model, read from that host's own `GET /v1/permissions/ai`. */
+function AiHost({ host, unreachable }: { host: Host; unreachable?: string | null }) {
+  const status = useQuery({ ...aiPermissionsStatusQueryOptions(host), enabled: !unreachable })
 
   return (
     <div className="flex flex-col gap-4">
+      {unreachable ? (
+        <ErrorState title={`Host ${host} is not reachable`} error={new Error(unreachable)} />
+      ) : null}
       {status.isPending ? <Skeleton className="h-80 rounded-xl" /> : null}
 
       {status.isError ? (
@@ -83,7 +104,7 @@ function AiTab() {
         />
       ) : null}
 
-      {status.data ? <AiCard status={status.data} /> : null}
+      {status.data ? <AiCard status={status.data} host={host} /> : null}
     </div>
   )
 }

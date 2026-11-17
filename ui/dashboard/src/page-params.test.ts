@@ -4,8 +4,11 @@ import { readPageParams } from "./page-params"
 
 describe("readPageParams", () => {
   it("reads the daemon, the dashboard and the theme off the query string", () => {
-    expect(readPageParams("?daemon=http://127.0.0.1:7676&dashboard=default&theme=dark")).toEqual({
+    expect(
+      readPageParams("?daemon=http://127.0.0.1:7676&host=all&dashboard=default&theme=dark"),
+    ).toEqual({
       daemonUrl: "http://127.0.0.1:7676",
+      host: "all",
       dashboardName: "default",
       theme: "dark",
     })
@@ -18,6 +21,11 @@ describe("readPageParams", () => {
   })
 
   it("defaults the daemon and the dashboard name to the empty string when absent", () => {
-    expect(readPageParams("")).toEqual({ daemonUrl: "", dashboardName: "", theme: "light" })
+    expect(readPageParams("")).toEqual({
+      daemonUrl: "",
+      host: "local",
+      dashboardName: "",
+      theme: "light",
+    })
   })
 })
