@@ -19,6 +19,7 @@ pub mod config;
 pub mod failure_diagnosis;
 pub mod forge;
 pub mod gitwt;
+pub mod hosts;
 pub mod http;
 pub mod launcher;
 pub(crate) mod learned_key;

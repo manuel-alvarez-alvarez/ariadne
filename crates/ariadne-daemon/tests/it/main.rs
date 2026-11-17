@@ -52,6 +52,7 @@ mod scheduler_dependencies;
 mod seat_brief;
 mod session_list;
 mod skill_documents;
+mod ssh_forward;
 mod stub_lifetime;
 mod subagents;
 mod switch;

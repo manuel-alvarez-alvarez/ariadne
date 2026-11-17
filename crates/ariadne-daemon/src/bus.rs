@@ -148,6 +148,12 @@ impl EventBus {
         self.publish(unscoped(DomainEvent::ForgeSettingsUpdated(tunnel)));
     }
 
+    /// Publish a host whose status, endpoint or error moved (037). The
+    /// forward's state is no store row: only the daemon can build it.
+    pub fn host_updated(&self, host: ariadne_api::hosts::HostDto) {
+        self.publish(unscoped(DomainEvent::HostUpdated(host)));
+    }
+
     /// Publish that the open issues of a repository moved on its forge
     /// (028). Issues are no store row: the fetch that read them is the only
     /// one that knows.

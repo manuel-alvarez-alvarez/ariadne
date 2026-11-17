@@ -13,6 +13,7 @@
 
 pub(crate) mod acp;
 pub(crate) mod forge;
+pub(crate) mod ssh;
 
 use std::future::{Future, IntoFuture};
 use std::path::{Path, PathBuf};
@@ -127,6 +128,7 @@ pub(crate) struct HarnessBuilder {
     python_bin: Option<String>,
     nvidia_smi_bin: Option<String>,
     gh_bin: Option<String>,
+    ssh_bin: Option<String>,
     index_fetch: Option<Arc<dyn IndexFetch>>,
 }
 
@@ -181,6 +183,7 @@ pub(crate) fn harness() -> HarnessBuilder {
         python_bin: None,
         nvidia_smi_bin: None,
         gh_bin: None,
+        ssh_bin: None,
         index_fetch: None,
     }
 }
@@ -327,6 +330,13 @@ impl HarnessBuilder {
         self
     }
 
+    /// Run `stub` as `ssh` rather than whatever the machine running the
+    /// tests has (037).
+    pub(crate) fn ssh(mut self, stub: &ssh::StubSsh) -> Self {
+        self.ssh_bin = Some(stub.ssh.clone());
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -394,6 +404,9 @@ impl HarnessBuilder {
         }
         if let Some(gh_bin) = self.gh_bin {
             config.gh_bin = Some(gh_bin);
+        }
+        if let Some(ssh_bin) = self.ssh_bin {
+            config.ssh_bin = Some(ssh_bin);
         }
         let manager_homes = self.manager_homes.unwrap_or_else(|| ManagerHomes {
             volta: dir.path().join("no-volta-home"),
@@ -483,8 +496,12 @@ impl HarnessBuilder {
             forge_poll.connect_scheduler(sched.clone());
         }
         let _ = launcher.forge_poll.set(forge_poll.clone());
+        // Started by a test about the forwards: a harness runs no `ssh`.
+        let hosts =
+            ariadne_daemon::hosts::Hosts::new(launcher.cfg.clone(), bus.clone(), self.timeouts);
         let state = AppState {
             tunnel,
+            hosts,
             forge_poll,
             store: store.clone(),
             started_at: Instant::now(),
