@@ -396,8 +396,11 @@ same binary also serves (013).
 50. `host ls` prints name, kind, status, endpoint, remote, sync (`in_sync`,
     `pending` or `failed`), missing (repositories the host lacks), skipped
     (learned permissions not pushed), error and sync_error. `--columns` selects
-    them, and `--format json` prints the host objects unchanged. Completion
-    offers the host names and `all`.
+    them, and `--format json` prints the host objects unchanged. Completion of
+    `--host` reads the registry of the daemon that `--endpoint` on the command
+    line names, and offers `local` and `all` when that daemon does not answer or
+    lists only `local`. Completion of an ID reads the host that `--host NAME`
+    names, and every ready host for `--host all`.
 
 ## Known gap
 
@@ -720,6 +723,9 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `pr ls` carries the branches and the session
   (`::pr_ls_shows_the_branches_and_session_columns`).
 
+- Completion follows the typed `--endpoint` and `--host`, rule 50: host names,
+  the `local` and `all` fallback, one named host and `all`
+  (`tests/hosts.rs::completion_reads_the_typed_endpoint_and_the_typed_host`).
 - Host names differ from endpoints, rule 43 (`cli/tests.rs::host_names_are_distinct_from_endpoints`).
 - Registry routing and guards hold, rules 44 to 48 and the completion of 50
   (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).

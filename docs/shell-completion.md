@@ -29,7 +29,11 @@ ariadne completions fish > ~/.config/fish/completions/ariadne.fish
 `ariadne completions <shell>` prints that registration, so `source <(ariadne
 completions zsh)` works in a shell you have open now. It prints registrations
 for bash, elvish, fish, PowerShell, and zsh; installation manages startup
-files only for bash, fish, and zsh. A daemon that is down or
+files only for bash, fish, and zsh. Completion follows the command line you have typed. `--host` offers the host
+names in the registry of the daemon that `--endpoint` names, and always offers
+`local` and `all`, even when that daemon does not answer. An ID completes
+from the host that `--host NAME` names, or from every ready host with
+`--host all`. A daemon that is down or
 slow leaves TAB with nothing rather than an error, and `--model` and
 `--effort` complete from a catalog cached under the ariadne home — `--model`
 candidates carry the description the agent gave, and `--effort` candidates
