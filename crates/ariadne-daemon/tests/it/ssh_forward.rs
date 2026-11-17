@@ -352,3 +352,53 @@ fn help_and_check_config_list_ssh_bin() {
         "{set}"
     );
 }
+
+/// A device set on the far daemon stays when its host leaves `ready` and
+/// becomes `ready` again, and the full push that follows sends the flavour
+/// without it. Local's own best device is `mlx`, the far daemon's is set
+/// to `cpu`.
+#[tokio::test]
+async fn a_device_set_on_the_host_stays_when_the_host_becomes_ready_again() {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let (socket, _socket_dir) = serve_on_socket(&far).await;
+    let until = tempfile::tempdir().unwrap();
+    let gone = until.path().join("gone");
+    let script = |until: &std::path::Path| json!({"forward": true, "until": until.display().to_string(), "exit": 255});
+    let stub = stub_ssh(script(&gone));
+    let (local, _dir) = local(&stub, Some(&socket)).await;
+    let _: ariadne_api::permissions::AiPermissionsStatusDto = far
+        .json(
+            crate::common::put_json("/v1/permissions/ai", json!({"device": "cpu"})),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    local.state.hosts.start();
+    let host = &local;
+    let box_is = |status: HostStatus, sync: SyncState| async move {
+        let hosts: Vec<HostDto> = host.get("/v1/hosts").await;
+        hosts[1].status == status && hosts[1].sync.state == sync
+    };
+    eventually(TIMEOUT, "the host ready and in sync", || {
+        box_is(HostStatus::Ready, SyncState::InSync)
+    })
+    .await;
+    let ai: ariadne_api::permissions::AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+    assert_eq!(ai.device.as_str(), "cpu", "the first push keeps the device");
+
+    // The next run of the stub ends only on a file nobody writes.
+    let never = until.path().join("never");
+    let dir = std::path::Path::new(&stub.ssh).parent().unwrap();
+    std::fs::write(dir.join("ssh-script.json"), script(&never).to_string()).unwrap();
+    std::fs::write(&gone, "").unwrap();
+    eventually(TIMEOUT, "the host left ready", || async {
+        let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
+        hosts[1].status != HostStatus::Ready && hosts[1].sync.state == SyncState::Pending
+    })
+    .await;
+    eventually(TIMEOUT, "the host ready again and in sync", || async {
+        stub.runs().len() == 2 && box_is(HostStatus::Ready, SyncState::InSync).await
+    })
+    .await;
+    let ai: ariadne_api::permissions::AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
+    assert_eq!(ai.device.as_str(), "cpu", "the full push keeps the device");
+}

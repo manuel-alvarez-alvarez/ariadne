@@ -284,8 +284,8 @@ async fn a_ready_host_takes_every_item_and_keeps_its_own() {
 
 /// The sync sends the flavour and never the device. A device set on the host
 /// by `PUT` with `device` alone stays through a push with the same flavour:
-/// a local change of `enabled` or of a threshold, and a second full push as
-/// when a host becomes `ready` again. A local change of the flavour makes the
+/// a local change of a threshold (a host that becomes `ready` again is
+/// `ssh_forward.rs`'s). A local change of the flavour makes the
 /// host pick its best device. Local's own best device is `cuda` and the
 /// host's is `mlx`, so a device sent by the sync would show as `cuda`.
 #[tokio::test]
@@ -295,14 +295,14 @@ async fn a_device_set_on_the_host_stays_until_local_changes_the_flavour() {
     let address = listener.local_addr().unwrap();
     serve(&far, listener);
     let endpoint = format!("http://{address}");
-    let linux_cuda = || HardwareOverride {
+    let linux_cuda = HardwareOverride {
         os: "linux".into(),
         arch: "x86_64".into(),
         memory_gb: 64,
         gpu_name: Some("NVIDIA".into()),
         vram_gb: Some(24),
     };
-    let (local, _dir) = local_with_host_on(&endpoint, linux_cuda()).await;
+    let (local, _dir) = local_with_host_on(&endpoint, linux_cuda).await;
     let _: AiPermissionsStatusDto = far
         .json(
             put_json("/v1/permissions/ai", json!({"device": "cpu"})),
@@ -340,14 +340,6 @@ async fn a_device_set_on_the_host_stays_until_local_changes_the_flavour() {
     .await;
     let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
     assert_eq!(ai.device.as_str(), "cpu", "a threshold change keeps it");
-
-    // A new local daemon pushes everything again, as a host that leaves
-    // `ready` and becomes `ready` again does.
-    let (again, _again_dir) = local_with_host_on(&endpoint, linux_cuda()).await;
-    again.state.hosts.start();
-    until_in_sync(&again).await;
-    let ai: AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
-    assert_eq!(ai.device.as_str(), "cpu", "a full push keeps it");
 
     let _: AiPermissionsStatusDto = local
         .json(

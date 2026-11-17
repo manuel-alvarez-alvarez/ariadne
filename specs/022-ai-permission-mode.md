@@ -66,7 +66,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 16. `POST /v1/permissions/ai/test` scores one supplied request without selecting an option, publishing an event, or learning a permission.
 17. The benchmark stores permission cases, derives portable operations and risk tags, and measures model outputs without changing daemon decisions.
 18. Kev supports flavours `0.8b`, `4b`, `9b`, and `27b`; available CPU, MLX, or CUDA devices and memory determine valid flavour-device pairs.
-19. A flavour or device update selects a supported pair and reinstalls an enabled model, while startup retains an unsupported stored flavour with a null device and reports its supported fallback pair in status.
+19. A flavour or device update selects a supported pair and reinstalls an enabled model, except a flavour equal to the stored one sent with no device, which keeps the stored device and starts no install, while startup retains an unsupported stored flavour with a null device and reports its supported fallback pair in status.
 20. The Permissions screen shows the AI controls, thresholds, flavour, device, status, hardware, test action, and refresh action from the status API.
 21. `POST /v1/permissions/learned` records one whole learned row, as a daemon that syncs to this one pushes it (037, rule 27). It writes through the store's upsert on repository, tool name, level and key: a row with the same four keeps its id and `created_at`, and takes the rest from the request. An unknown repository is a 404, and an unknown field is a 422. The OpenAPI document carries the route and `RecordLearnedPermissionRequest`.
 
@@ -303,6 +303,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`ai_permissions_flavours.rs::put_refuses_an_unsupported_combination_and_leaves_the_row_unchanged`,
   `::put_with_only_a_flavour_picks_the_best_device`,
   `::put_with_the_stored_flavour_keeps_the_device_and_another_flavour_picks_the_best`,
+  `ai_permissions.rs::the_stored_flavour_without_a_device_keeps_the_device_and_starts_no_install`,
   `::put_with_only_a_device_keeps_the_stored_flavour`).
 - A fresh row starts at `4b` with no schedule columns, and the daemon fills
   the device at its next start

@@ -227,7 +227,8 @@ per host — is spec 015's (rules 51 to 60).
   (`host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`).
 - Rule 28, device: no sync sends `device`; a device set on the host stays
   until `local` changes the flavour, then the host picks its best device
-  (`host_sync.rs::a_device_set_on_the_host_stays_until_local_changes_the_flavour`).
+  (`host_sync.rs::a_device_set_on_the_host_stays_until_local_changes_the_flavour`,
+  `ssh_forward.rs::a_device_set_on_the_host_stays_when_the_host_becomes_ready_again`).
 
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync

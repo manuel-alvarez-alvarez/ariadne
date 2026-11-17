@@ -987,6 +987,43 @@ async fn a_switch_while_off_is_only_stored_and_the_next_turn_on_installs_it() {
     assert_eq!(recorded(record.path())[3..], ["0.8b", "mlx"]);
 }
 
+/// The stored flavour sent with no device changes nothing: the model stays
+/// `ready`, the device stays, and no install starts. Another flavour does
+/// install.
+#[tokio::test]
+async fn the_stored_flavour_without_a_device_keeps_the_device_and_starts_no_install() {
+    let record = tempfile::NamedTempFile::new().unwrap();
+    let h = with_ai_permissions("3.13.1")
+        .ai_permissions_installer(installer(record.path(), "", "0"))
+        .await;
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": true})), StatusCode::OK)
+        .await;
+    settles_on(&h, AiPermissionsState::Ready).await;
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"device": "cpu"})), StatusCode::OK)
+        .await;
+    settles_on(&h, AiPermissionsState::Ready).await;
+    std::fs::write(record.path(), "").unwrap();
+
+    let same: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "4b"})), StatusCode::OK)
+        .await;
+    assert_eq!(same.state, AiPermissionsState::Ready, "no install started");
+    assert_eq!(same.device.as_str(), "cpu");
+    tokio::time::sleep(QUIET).await;
+    assert!(recorded(record.path()).is_empty(), "nothing installed");
+    assert_eq!(status(&h).await.state, AiPermissionsState::Ready);
+
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "0.8b"})), StatusCode::OK)
+        .await;
+    eventually(TIMEOUT, "the install of the new flavour", || async {
+        recorded(record.path()).get(3).map(String::as_str) == Some("0.8b")
+    })
+    .await;
+}
+
 /// A switch that installs well deletes the Hugging Face cache folders of
 /// every other flavour. One that fails keeps them, so the weights that
 /// worked are still there; a refresh then repairs the stored choice.
