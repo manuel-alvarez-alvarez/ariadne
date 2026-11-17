@@ -206,11 +206,16 @@ minutes, the flag at ten, a relaunch at thirty) and takes neither key.
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
 the socket from it (`--home` > `ARIADNE_HOME` > `~/.ariadne`, then that home's
 `socket_path` > `<home>/ariadne.sock`), so every command addresses the daemon
-of the home it runs in. `--endpoint`
-overrides that with a socket path or `http://host:port`, and so does
+of the home it runs in. `--endpoint` overrides that with a socket path
+or `http://host:port`, and so does
 `ARIADNE_ENDPOINT` — read after the flag and before the home, with the older
 `ARIADNE_SOCKET`, which every agent session is still spawned with, honoured
 after it.
+
+To select a configured host, use `--host NAME`.
+The daemon selected by `--endpoint` supplies the host registry.
+Use `--host all` to read across hosts, or `--host local` to address that daemon.
+See [Selecting a host](cli.md#selecting-a-host) for the flag reference and command restrictions.
 
 `ARIADNE_COMPLETE_DEBUG`, set to anything, makes `ariadne`'s shell-completion
 code print diagnostics to stderr: a round that timed out, a failed daemon
@@ -230,17 +235,3 @@ agent gets `ARIADNE_GOAL_ID` and `ARIADNE_TASK_ID` both.
 `ARIADNE_PULL_REQUEST_ID` is set instead, on a session reviewing or keeping a
 pull request. `ARIADNE_STEP` is the odd one out: the MCP server reads it as the
 task's current column if it is set, but no launcher sets it today.
-
-Use `ariadne host ls` to list configured hosts and their status, endpoint, kind and error.
-Use `--host NAME` to run a command on a ready host from the local daemon's registry.
-`--endpoint` still selects the local daemon that supplies this registry.
-`--host local` selects that same daemon.
-
-Use `--host all` for lists across hosts, with a leading `HOST` column and a JSON `host` field.
-Rows follow registry order. A failed host produces a warning; one successful host gives exit code 0.
-Commands for one ID, including attach, find the host that has it.
-Writes require one host. Skills, workflows, permissions and repository settings must be written on `local`.
-The local daemon syncs these settings to every host.
-Daemon start, stop and restart require `local`; status and logs accept a host name.
-`query` does not accept `--host` yet. Shell completion offers configured names and `all`.
-Addresses formerly passed through `--host` must use `--endpoint`.
