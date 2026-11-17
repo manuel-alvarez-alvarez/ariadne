@@ -101,6 +101,30 @@ it("reads the task of a named host and refreshes its messages on that host's str
   expect(await screen.findByText("said later by an agent")).toBeTruthy()
 })
 
+it("names the host of the task panel under any pick while a named host is listed", async () => {
+  useSettingsStore.setState({ hostFilter: "box" })
+  stubHosts({
+    box: {
+      [`/v1/tasks/${TASK.id}`]: TASK,
+      [`/v1/goals/${GOAL.id}`]: GOAL,
+      "/v1/sessions": aSessionPage([]),
+      [`/v1/tasks/${TASK.id}/transitions`]: [],
+      [`/v1/tasks/${TASK.id}/messages`]: [],
+    },
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?task=${TASK.id}&host=box` },
+  )
+
+  await screen.findByRole("heading", { name: TASK.title })
+  await waitFor(() =>
+    expect(screen.getAllByTitle("Host").map((label) => label.textContent)).toEqual(["box"]),
+  )
+})
+
 it("retries a failed task on the host the panel is open on", async () => {
   const user = userEvent.setup()
   const seen = stubHosts({

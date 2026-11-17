@@ -360,6 +360,10 @@ Which host a screen reads follows who owns what it shows:
   which defaults to the picker. The dashboard iframe takes `host=` and its
   datasources use `/v1/hosts/{host}/` of the settings daemon.
 
+A row or a panel names its host with `HostLabel` (`components/host-label.tsx`),
+and only where `useRowsShowHost()` or `usePanelShowsHost()`
+(`hooks/use-host-label.ts`) says so. Spec 015 rule 74 is the rule they hold.
+
 ### The event stream
 
 `GET /v1/events/stream` is opened **once per reachable host** for the whole

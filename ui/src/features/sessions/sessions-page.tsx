@@ -25,9 +25,9 @@ import {
   type SessionDto,
   type TaskDto,
   useHostLists,
-  useHosts,
 } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { HostLabel } from "@/components/host-label"
 import { PageHeader } from "@/components/page-header"
 import { ScrollableTable } from "@/components/scroll-edge"
 import { TokenFigure } from "@/components/token-figure"
@@ -42,9 +42,9 @@ import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionColumn } from "@/features/tasks/steps"
 import { useHostFilter } from "@/hooks/use-host-filter"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 import { cn, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom } from "@/routes/paths"
-import { useSettingsStore } from "@/stores/settings"
 import { BROWSE_FILTER_PARAMS, type BrowseFilters, useBrowseFilters } from "./browse-filters"
 import { ActivityFilter, AgentFilter, DirectoryFilter, FilterMenu, TypedFilter } from "./filter-bar"
 import {
@@ -156,10 +156,7 @@ export function SessionsPage() {
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host, filters))
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
-  // A host badge on each row where the list can hold more than one host.
-  const pickedAll = useSettingsStore((state) => state.hostFilter) === ""
-  const { hosts: known } = useHosts()
-  const showHost = pickedAll && known.length > 1
+  const showHost = useRowsShowHost()
   const goalsById = byHostId(goals.rows)
   const tasksById = byHostId(tasks.rows)
 
@@ -415,11 +412,7 @@ function SessionRow({
           <span className="truncate" title={title}>
             {title}
           </span>
-          {showHost ? (
-            <Badge variant="outline" className="shrink-0 font-mono" title="Host">
-              {session.host}
-            </Badge>
-          ) : null}
+          {showHost ? <HostLabel host={session.host} /> : null}
         </span>
         {/* Where the agent ran: a goal's or a task's worktree. It rides under
             the title rather than taking a column of its own. */}

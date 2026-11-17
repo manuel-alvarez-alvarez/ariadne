@@ -9,7 +9,7 @@ import { afterEach, expect, it } from "vitest"
 import { useSettingsStore } from "@/stores/settings"
 import { aModel, anAgentConfig } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { AgentsPage } from "./agents-page"
 
 afterEach(() => {
@@ -64,6 +64,17 @@ it("reads only the picked host, with no chips", async () => {
         request.origin === "http://127.0.0.1:7676" && request.url.pathname === "/v1/agents",
     ),
   ).toBe(false)
+})
+
+it("keeps the chip of local when a named host goes down", async () => {
+  stubHosts({ local: answers("--on-local", true) }, [
+    LOCAL,
+    { ...BOX, status: "down", error: "connection refused" },
+  ])
+  renderScreen(<AgentsPage />)
+
+  expect(await screen.findByText("--on-local")).toBeTruthy()
+  await waitFor(() => expect(screen.getByRole("group", { name: "Host" }).textContent).toBe("local"))
 })
 
 it("says which host's agents failed to load beside the agents of the host that answered, with a retry", async () => {

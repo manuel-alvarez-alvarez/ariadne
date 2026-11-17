@@ -13,7 +13,7 @@ import { FilterIcon, PlusIcon, SearchIcon, TargetIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import { LOCAL_HOST, useHostLists, useHosts } from "@/api"
+import { LOCAL_HOST, useHostLists } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
@@ -28,8 +28,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { useHostFilter } from "@/hooks/use-host-filter"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 import { HOST_PARAM } from "@/routes/paths"
-import { useSettingsStore } from "@/stores/settings"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
   DEFAULT_GOAL_STATUS_FILTER,
@@ -86,10 +86,7 @@ export function GoalsListPage() {
     [goals.rows],
   )
   const shown = useMemo(() => searchGoals(merged, query), [merged, query])
-  // A host badge on each lane where the board can hold more than one host.
-  const pickedAll = useSettingsStore((state) => state.hostFilter) === ""
-  const { hosts: known } = useHosts()
-  const showHost = pickedAll && known.length > 1
+  const showHost = useRowsShowHost()
   const failedEverywhere = goals.errors.length > 0 && goals.errors.length === hosts.length
   const [firstError] = goals.errors
   const empty = emptyBoardCopy(statuses)

@@ -11,8 +11,8 @@ import { useState } from "react"
 import { api, type Host, type IssueDto, qk, type RepositoryDto, unwrap } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
+import { HostLabel } from "@/components/host-label"
 import { PageHeader } from "@/components/page-header"
-import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
@@ -32,6 +32,7 @@ import {
 } from "@/features/forge/forge-hosts"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { useHostFilter } from "@/hooks/use-host-filter"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 
 type Row = { host: Host; repository: RepositoryDto; issue: IssueDto }
 
@@ -46,6 +47,7 @@ const COLUMNS = [
 export function IssuesPage() {
   // The hosts the header picker selects, and the repositories each has.
   const hosts = useHostFilter()
+  const showHost = useRowsShowHost()
   const repositories = useHostRepositories(hosts)
   const enabled = distinctEnabled(repositories.rows)
   const [repositoryId, setRepositoryId] = useSearchFilter("repo")
@@ -176,9 +178,9 @@ export function IssuesPage() {
                   #{row.issue.number} {row.issue.title}
                 </a>
                 <span className="text-xs text-muted-foreground">
-                  {hosts.length > 1 ? (
+                  {showHost ? (
                     <>
-                      <StatusBadge size="sm" box="outlined" label={row.host} />{" "}
+                      <HostLabel host={row.host} />{" "}
                     </>
                   ) : null}
                   <span className="font-mono">{forgeName(row.repository)}</span>

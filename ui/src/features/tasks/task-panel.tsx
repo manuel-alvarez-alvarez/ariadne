@@ -22,6 +22,7 @@ import type { Host, TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
+import { HostLabel } from "@/components/host-label"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
@@ -36,6 +37,7 @@ import { goalQueryOptions } from "@/features/goals/queries"
 // imports this feature back (see `sessions-list.tsx`).
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { useFocusReturn } from "@/hooks/use-focus-return"
+import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { taskCopyEntries } from "@/lib/clipboard"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
@@ -200,6 +202,7 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
   const goal = useQuery(goalQueryOptions(host, task.goal_id))
   const navigate = useNavigate()
   const status = TASK_STATUS_META[task.status]
+  const showHost = usePanelShowsHost()
   return (
     <PanelHeader
       breadcrumb={{
@@ -214,6 +217,7 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
         <>
           <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
           {task.stalled && <StalledBadge />}
+          {showHost ? <HostLabel host={host} /> : null}
         </>
       }
       id={

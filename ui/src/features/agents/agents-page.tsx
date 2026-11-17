@@ -50,6 +50,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ModelTable } from "@/features/models/model-table"
 import { modelsQueryOptions } from "@/features/models/queries"
 import { useHostFilter } from "@/hooks/use-host-filter"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 import { cn, describeError, plural } from "@/lib/format"
 
 import { AgentFlagsDialog } from "./agent-flags-dialog"
@@ -267,7 +268,6 @@ function AgentTabs({
         <TabsContent key={agent} value={agent} className="pt-3">
           <AgentPanel
             configs={byAgent.get(agent) ?? []}
-            showHosts={hosts.length > 1}
             // The catalog is one list per host; each tab takes its own agent's.
             models={models.filter((model) => model.agent_id === agent)}
             modelsPending={modelsPending}
@@ -327,21 +327,20 @@ function NoAgents() {
 
 function AgentPanel({
   configs,
-  showHosts,
   models,
   modelsPending,
   onEdit,
 }: {
   /** The agent's config on every host that has it. */
   configs: HostRow<AgentConfigDto>[]
-  /** Whether the selection spans hosts, so each chip names the one it edits. */
-  showHosts: boolean
   models: HostRow<ModelDto>[]
   modelsPending: boolean
   onEdit: (config: HostRow<AgentConfigDto>) => void
 }) {
   // The chip the reader picked: every edit below applies to its host.
   const [chip, setChip] = useState<Host>()
+  // A chip per host where the rows show their host: each names the one it edits.
+  const showHosts = useRowsShowHost()
   const config = configs.find((one) => one.host === chip) ?? (configs[0] as HostRow<AgentConfigDto>)
   const label = config.agent_id
   const customized = !sameFlags(config.extra_flags, config.default_flags)
