@@ -208,6 +208,9 @@ async fn fan_out(
                     rows.push(item);
                 }
             }
+        } else if cli.quiet {
+            // Quiet output has no header: every line is an id, kept as it is.
+            print!("{}", String::from_utf8_lossy(&output.stdout));
         } else {
             // A table's first line is its header; every later line is data.
             let text = String::from_utf8_lossy(&output.stdout);

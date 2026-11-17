@@ -96,6 +96,7 @@ async fn all_hosts_keep_uppercase_rows_and_attention_items() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     for (args, expected) in [
         (vec!["skill", "ls", "--columns", "summary"], "local   BUILD"),
+        (vec!["--quiet", "skill", "ls"], "test"),
         (vec!["attention", "--format", "json"], "\"id\": \"blocked\""),
     ] {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
