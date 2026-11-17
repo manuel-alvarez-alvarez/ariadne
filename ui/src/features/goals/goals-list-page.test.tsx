@@ -253,13 +253,12 @@ it("keeps the cached goals under a retryable warning when a refresh fails, and c
   })
   await queryClient.invalidateQueries({ queryKey: qk.goals.lists("local") })
 
-  await screen.findByText("Could not refresh goals")
+  await screen.findByText("Could not load goals")
   expect(screen.getByText(GOAL.title)).toBeTruthy()
-  expect(screen.queryByText("Could not load goals")).toBeNull()
 
   stubDaemon()
   await user.click(screen.getByRole("button", { name: "Retry" }))
-  await waitFor(() => expect(screen.queryByText("Could not refresh goals")).toBeNull())
+  await waitFor(() => expect(screen.queryByText("Could not load goals")).toBeNull())
   expect(screen.getByText(GOAL.title)).toBeTruthy()
 })
 
@@ -270,7 +269,8 @@ it("shows a load failure, not a refresh warning, when nothing was ever cached", 
   renderBoard("/goals")
 
   await screen.findByText("Could not load goals")
-  expect(screen.queryByText("Could not refresh goals")).toBeNull()
+  expect(screen.getAllByRole("alert")).toHaveLength(1)
+  expect(screen.getByText(/daemon is busy/)).toBeTruthy()
 })
 
 it("narrows the board by title, and names only the search when nothing matches", async () => {

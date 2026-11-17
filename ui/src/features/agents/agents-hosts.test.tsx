@@ -83,13 +83,13 @@ it("says which host's agents failed to load beside the agents of the host that a
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents of box")).toBeTruthy()
+  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
   expect(await screen.findByText("--on-local")).toBeTruthy()
 
   failing = false
   await userEvent.click(screen.getByRole("button", { name: "Retry" }))
   expect(await screen.findByRole("button", { name: "box" })).toBeTruthy()
-  expect(screen.queryByText("Could not load the agents of box")).toBeNull()
+  expect(screen.queryByText("Could not load the agents on box")).toBeNull()
 })
 
 const broken = () =>
@@ -105,7 +105,7 @@ it("names the failed host beside a host that answered with no agents", async () 
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents of box")).toBeTruthy()
+  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
   expect(await screen.findByText("No agents")).toBeTruthy()
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy()
 })
@@ -117,7 +117,7 @@ it("names every host whose agents failed, each with a retry, when none answered"
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents of local")).toBeTruthy()
-  expect(await screen.findByText("Could not load the agents of box")).toBeTruthy()
+  expect(await screen.findByText("Could not load the agents on local")).toBeTruthy()
+  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
   expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(2)
 })
