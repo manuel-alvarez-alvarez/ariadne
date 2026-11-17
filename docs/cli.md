@@ -857,3 +857,17 @@ To wake an existing keeper immediately, run `ariadne pr babysit <repo> <number> 
 This works on requests a task keeps. It sends untold news or asks the keeper to read the request again.
 Do not combine `--again` with `--model`, `--effort`, `--skill`, `--attach` or `--stop`.
 The daemon decides readiness and promotes checked drafts. Sessions make no readiness report.
+
+Use `ariadne host ls` to list configured hosts and their status, endpoint, kind and error.
+Use `--host NAME` to run a command on a ready host from the local daemon's registry.
+`--endpoint` still selects the local daemon that supplies this registry.
+`--host local` selects that same daemon.
+
+Use `--host all` for lists across hosts, with a leading `HOST` column and a JSON `host` field.
+Rows follow registry order. A failed host produces a warning; one successful host gives exit code 0.
+Commands for one ID, including attach, find the host that has it.
+Writes require one host. Skills, workflows, permissions and repository settings must be written on `local`.
+The local daemon syncs these settings to every host.
+Daemon start, stop and restart require `local`; status and logs accept a host name.
+`query` does not accept `--host` yet. Shell completion offers configured names and `all`.
+Addresses formerly passed through `--host` must use `--endpoint`.

@@ -163,16 +163,12 @@ Exit codes:
 )]
 pub(crate) struct Cli {
     /// Daemon endpoint: unix socket path or http://host:port
-    // `--host` was the old name and never meant a host; it stays as an
-    // undocumented alias so existing scripts keep working.
-    //
     // No `env =`: the environment is read where the endpoint is resolved
     // (`Client::resolve`), so no help screen carries the value this shell
     // happens to have, and no usage line reads as though the flag were
     // required.
     #[arg(
         long,
-        alias = "host",
         global = true,
         help_heading = GLOBAL,
         long_help = "Daemon endpoint: a unix socket path, or an http://host:port URL where \
@@ -182,6 +178,11 @@ pub(crate) struct Cli {
             $ARIADNE_HOME or ~/.ariadne — as that home's config.toml names it."
     )]
     pub endpoint: Option<String>,
+
+    /// Run on a configured host, or all hosts
+    #[arg(long, global = true, help_heading = GLOBAL, value_parser = host_name,
+        add = clap_complete::engine::ArgValueCandidates::new(crate::complete::host_names))]
+    pub host: Option<String>,
 
     /// Output format
     #[arg(
@@ -260,6 +261,11 @@ pub(crate) enum Layout {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// List configured hosts
+    Host {
+        #[command(subcommand)]
+        command: HostCommand,
+    },
     /// Show client and daemon version
     Version,
     /// Check the installation: agents, tools, config, daemon and service
@@ -588,6 +594,7 @@ const NO_FORMAT: &[&[&str]] = &[
 /// global so `ariadne -o wide task ls` works; that is also what would
 /// otherwise advertise `--columns` on `task cancel`.
 const LISTINGS: &[&str] = &[
+    "host ls",
     "pr ls",
     "pr search",
     "agent ls",
@@ -784,3 +791,20 @@ fn quiet_arg() -> clap::Arg {
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Subcommand)]
+pub(crate) enum HostCommand {
+    /// List host names, addresses and status
+    Ls,
+}
+
+fn host_name(value: &str) -> Result<String, String> {
+    if ["/", ".", "~", "http://", "https://"]
+        .iter()
+        .any(|prefix| value.starts_with(prefix))
+    {
+        Err("use --endpoint for a daemon address".into())
+    } else {
+        Ok(value.into())
+    }
+}

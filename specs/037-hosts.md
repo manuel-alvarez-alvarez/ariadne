@@ -1,7 +1,7 @@
 ---
 id: 037
 status: current
-updated: 2026-11-16
+updated: 2026-11-17
 areas: [api, daemon, client, docs]
 commits: []
 tests:
@@ -15,8 +15,7 @@ tests:
 
 In: the `[hosts.<name>]` tables of `config.toml`, their validation, the
 `GET /v1/hosts` route, `HostDto` and the `host_updated` event. Out: starting or
-keeping an SSH forward, the CLI `--host` flag and any desktop change; later
-tasks own them. The transports and the event stream are spec 012's.
+keeping an SSH forward, any desktop change. CLI selection follows spec 014. The transports and the event stream are spec 012's.
 
 ## Behavior
 
@@ -43,6 +42,8 @@ tasks own them. The transports and the event stream are spec 012's.
    nothing publishes it yet.
 7. The OpenAPI document carries the route, the DTO and the event.
 8. `ariadned --help` lists the `hosts` table.
+
+9. CLI host selection follows spec 014.
 
 ## Acceptance criteria
 
