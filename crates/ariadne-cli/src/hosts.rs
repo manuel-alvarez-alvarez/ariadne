@@ -22,13 +22,29 @@ pub(crate) async fn list(client: &Client, format: Format) -> Result<()> {
             col("kind", UNCAPPED),
             col("status", UNCAPPED),
             col("endpoint", UNCAPPED),
+            col("remote", UNCAPPED),
+            col("sync", UNCAPPED),
+            col("missing", UNCAPPED),
+            col("skipped", UNCAPPED),
             col("error", UNCAPPED),
+            col("sync_error", UNCAPPED),
         ],
         |host| {
             let value = serde_json::to_value(host).expect("host serializes");
-            ["name", "kind", "status", "endpoint", "error"]
-                .map(|key| value[key].as_str().unwrap_or("-").to_owned())
-                .to_vec()
+            let text = |v: &serde_json::Value| v.as_str().unwrap_or("-").to_owned();
+            let sync = &value["sync"];
+            vec![
+                text(&value["name"]),
+                text(&value["kind"]),
+                text(&value["status"]),
+                text(&value["endpoint"]),
+                text(&value["remote"]),
+                text(&sync["state"]),
+                host.sync.missing_repositories.len().to_string(),
+                host.sync.skipped_permissions.to_string(),
+                text(&value["error"]),
+                text(&sync["error"]),
+            ]
         },
         "",
     )
