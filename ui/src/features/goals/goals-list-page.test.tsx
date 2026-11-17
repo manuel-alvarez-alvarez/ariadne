@@ -254,12 +254,27 @@ it("keeps the cached goals under a retryable warning when a refresh fails, and c
   await queryClient.invalidateQueries({ queryKey: qk.goals.lists("local") })
 
   await screen.findByText("Could not load goals")
+  expect(screen.getByText(/which may be outdated/)).toBeTruthy()
   expect(screen.getByText(GOAL.title)).toBeTruthy()
 
   stubDaemon()
   await user.click(screen.getByRole("button", { name: "Retry" }))
   await waitFor(() => expect(screen.queryByText("Could not load goals")).toBeNull())
   expect(screen.getByText(GOAL.title)).toBeTruthy()
+})
+
+it("keeps the outdated notice when the cached goals were an empty list", async () => {
+  stubDaemon([])
+  const { queryClient } = renderScreen(<GoalsListPage />, { route: "/goals" })
+  await screen.findByText("No goals yet")
+
+  daemonFetch.mockImplementation(() =>
+    Promise.resolve(errorResponse(503, "unavailable", "daemon is busy")),
+  )
+  await queryClient.invalidateQueries({ queryKey: qk.goals.lists("local") })
+
+  await screen.findByText(/which may be outdated/)
+  expect(screen.getByText("Could not load goals")).toBeTruthy()
 })
 
 it("shows a load failure, not a refresh warning, when nothing was ever cached", async () => {

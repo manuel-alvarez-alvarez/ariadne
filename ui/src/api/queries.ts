@@ -67,6 +67,8 @@ export type HostRow<T> = T & { host: Host }
 interface HostError {
   host: Host
   error: Error
+  /** The host answered before, so its last good read, possibly empty, is on screen. */
+  cached: boolean
 }
 
 interface HostLists<T> {
@@ -97,7 +99,15 @@ export function useHostLists<TQueryFnData, TRow, TKey extends QueryKey>(
         (result.data ?? []).map((row) => ({ ...row, host: hosts[index] as Host })),
       ),
       errors: results.flatMap((result, index) =>
-        result.error ? [{ host: hosts[index] as Host, error: result.error }] : [],
+        result.error
+          ? [
+              {
+                host: hosts[index] as Host,
+                error: result.error,
+                cached: result.data !== undefined,
+              },
+            ]
+          : [],
       ),
       isPending: results.length === 0 || results.every((result) => result.isPending),
       refetch: () => {

@@ -76,7 +76,7 @@ export function RefreshWarning({
       <RefreshCwIcon />
       <AlertTitle>Could not refresh {what}</AlertTitle>
       <AlertDescription>
-        Showing what was last loaded, which may be outdated. {describeError(error)}
+        {OUTDATED} {describeError(error)}
       </AlertDescription>
       <AlertAction>
         <Button variant="outline" size="sm" onClick={onRetry}>
@@ -86,6 +86,8 @@ export function RefreshWarning({
     </Alert>
   )
 }
+
+const OUTDATED = "Showing what was last loaded, which may be outdated."
 
 const NETWORK_HINT =
   "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
@@ -120,7 +122,7 @@ export function HostListErrors({
 }: {
   /** What is read, lower case: "goals", "sessions". */
   what: string
-  errors: readonly { host: Host; error: Error }[]
+  errors: readonly { host: Host; error: Error; cached?: boolean }[]
   /** How many hosts are read. */
   hostCount: number
   /** Whether any row is on screen, from a host or from the cache. */
@@ -128,10 +130,11 @@ export function HostListErrors({
   onRetry: () => void
   showIcon?: boolean
 }) {
-  const everywhere = errors.length > 0 && errors.length >= hostCount && !hasRows
+  const everywhere =
+    errors.length > 0 && errors.length >= hostCount && !hasRows && !errors.some((e) => e.cached)
   return (
     <>
-      {errors.map(({ host, error }) => {
+      {errors.map(({ host, error, cached }) => {
         const title = hostTitle(`Could not load ${what}`, host, hostCount)
         return everywhere ? (
           <ErrorState
@@ -147,6 +150,7 @@ export function HostListErrors({
             <TriangleAlertIcon />
             <AlertTitle>{title}</AlertTitle>
             <AlertDescription>
+              {cached ? `${OUTDATED} ` : null}
               {hostErrorDescription(host, error) ?? describeError(error)}
             </AlertDescription>
             <AlertAction>

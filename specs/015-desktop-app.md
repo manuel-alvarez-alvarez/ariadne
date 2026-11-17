@@ -1236,6 +1236,8 @@ Out: the daemon endpoints themselves (012).
     warning per host that failed while another host answers, and an error state
     per failed host only when every host failed and no row is left. Each
     warning and error state names its host and gives its reason, and has Retry.
+    A host that failed a refresh while its last read is on screen, an empty one
+    too, is a warning marked "which may be outdated", never an error state.
 
 
 ## Acceptance criteria
