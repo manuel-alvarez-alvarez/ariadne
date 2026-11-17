@@ -84,7 +84,7 @@ export function GoalPanel({
   // session's now, and the way back is the link it carries. It is checked
   // before the goal query so a link into a session opens on it instead of
   // waiting for the goal it hangs off.
-  if (sessionId && host === LOCAL_HOST) {
+  if (sessionId) {
     return (
       <PanelSheet onClose={onClose} panelRef={panel}>
         <GoalSessionView
@@ -173,10 +173,7 @@ function GoalView({
   // anything with one: while planning it joins the plan, while active the
   // scheduler picks it up once its dependencies merge. On a terminal goal it
   // would only ever sit in pending, so the button goes away with the goal.
-  // The task form reads `local`'s skills, models and workflows, so it only
-  // makes tasks for a goal that lives there; a named host's task form is the
-  // task panel's to carry.
-  const canCreateTask = !isTerminalGoalStatus(goal.status) && host === LOCAL_HOST
+  const canCreateTask = !isTerminalGoalStatus(goal.status)
 
   return (
     <>
@@ -262,20 +259,14 @@ function GoalView({
             />
           </TabsContent>
           <TabsContent value="sessions" className="pt-3">
-            {host === LOCAL_HOST ? (
-              <GoalSessions host={host} goalId={goal.id} onSelect={onSelectSession} />
-            ) : (
-              // The session console and its actions read `local` only.
-              <p className="text-sm text-muted-foreground">
-                Sessions of a goal on host {host} open from that host's own daemon.
-              </p>
-            )}
+            <GoalSessions host={host} goalId={goal.id} onSelect={onSelectSession} />
           </TabsContent>
         </Tabs>
       </PaneBody>
 
       {/* Only for a goal that takes a task from here (`canCreateTask`). */}
       <CreateTaskDialog
+        host={host}
         goal={goal}
         open={canCreateTask && newTaskOpen}
         onOpenChange={setNewTaskOpen}

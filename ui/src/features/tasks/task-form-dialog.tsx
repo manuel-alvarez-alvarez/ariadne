@@ -5,7 +5,7 @@ import { useMemo } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
 
-import { ApiError, type GoalDto, type TaskDto } from "@/api"
+import { ApiError, type GoalDto, type Host, type TaskDto } from "@/api"
 import {
   FormDialog,
   FormDialogBody,
@@ -34,6 +34,8 @@ import {
 } from "./task-form-values"
 
 export function CreateTaskDialog(props: {
+  /** The host of the goal: the task is created there. */
+  host: Host
   goal: GoalDto
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -43,20 +45,30 @@ export function CreateTaskDialog(props: {
 }
 
 export function EditTaskDialog(props: {
+  host: Host
   task: TaskDto
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  return <TaskFormDialog editing={props.task} open={props.open} onOpenChange={props.onOpenChange} />
+  return (
+    <TaskFormDialog
+      host={props.host}
+      editing={props.task}
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+    />
+  )
 }
 
 function TaskFormDialog({
+  host,
   goal,
   editing,
   open,
   onOpenChange,
   onCreated,
 }: {
+  host: Host
   goal?: GoalDto
   editing?: TaskDto
   open: boolean
@@ -64,14 +76,14 @@ function TaskFormDialog({
   onCreated?: (task: TaskDto) => void
 }) {
   const goalId = goal?.id ?? editing?.goal_id ?? ""
-  const detail = useQuery({ ...goalQueryOptions("local", goalId), enabled: open && !goal })
+  const detail = useQuery({ ...goalQueryOptions(host, goalId), enabled: open && !goal })
   const actualGoal = goal ?? detail.data
   const steps = actualGoal?.steps ?? []
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
-  const models = useQuery({ ...modelsQueryOptions("local"), enabled: open })
-  const tasks = useQuery({ ...taskListQueryOptions("local", { goal: goalId }), enabled: open })
-  const create = useCreateTask(goalId)
-  const update = useUpdateTask(editing?.id ?? "")
+  const models = useQuery({ ...modelsQueryOptions(host), enabled: open })
+  const tasks = useQuery({ ...taskListQueryOptions(host, { goal: goalId }), enabled: open })
+  const create = useCreateTask(host, goalId)
+  const update = useUpdateTask(host, editing?.id ?? "")
   const submit = editing ? update : create
   const multiRepo = (actualGoal?.repos.length ?? 0) > 1
   const schema = useMemo(() => makeTaskFormSchema({ requireRepo: multiRepo }), [multiRepo])
@@ -167,7 +179,7 @@ function TaskFormDialog({
                     name={`agents.${index}.model`}
                     render={({ field }) => (
                       <PinPicker
-                        host="local"
+                        host={host}
                         label={`${step.title} runs on`}
                         model={field.value}
                         effort={agentValues[index]?.effort ?? ""}

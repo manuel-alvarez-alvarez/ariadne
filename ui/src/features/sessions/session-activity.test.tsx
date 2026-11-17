@@ -18,7 +18,7 @@ beforeEach(() => {
 })
 
 function renderActivity() {
-  renderScreen(<SessionActivity sessionId={EVENT.session_id ?? ""} />)
+  renderScreen(<SessionActivity host="local" sessionId={EVENT.session_id ?? ""} />)
 }
 
 function row(text: string) {

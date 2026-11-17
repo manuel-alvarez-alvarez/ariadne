@@ -458,7 +458,7 @@ stream (008). It lives in `src/features/sessions/console/`:
   session's children from their `subagent_update` events, and `view` picks
   the blocks of `main` or of one child. A child's permission question is
   the session's, so it stays in `main`.
-- `console-view-state.ts` retains, in memory and per daemon address and
+- `console-view-state.ts` retains, in memory and per host, daemon address and
   session, what a console keeps while it is off screen: the draft, the
   scroll position, whether it follows, the view shown and a fold
   preference per block id. Write to it through `updateViewState`; a pane
@@ -570,6 +570,13 @@ than hand-written paths, so a panel opened from a list keeps the screen and
 the filters behind it. Each helper that opens a panel takes the host last, and
 writes `?host=` for a named host only: a link without `?host=` resolves to
 `local` (`hostOf`). Closing a panel drops its `?host=` with it.
+
+`DetailPanels` hands the `?host=` to `TaskPanel` and `SessionPanel`. A component
+inside the task panel reads it with `usePanelHost()`; the session detail view,
+console and actions take a `host` prop. A console opens its stream at
+`hostBaseUrl(host)` and posts input, cancel and answers with `api(host)`. The
+sessions screen and the palette read the selected hosts with `useHostLists`;
+the palette's skills, workflows and repositories stay `local`.
 
 A **hash router** is used on purpose: in a packaged build the frontend is served
 straight off Tauri's asset protocol with no history fallback, so a reload on a

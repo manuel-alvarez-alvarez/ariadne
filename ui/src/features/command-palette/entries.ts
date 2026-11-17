@@ -12,7 +12,17 @@
  * the live search params.
  */
 
-import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto, WorkflowDto } from "@/api"
+import {
+  type GoalDto,
+  type Host,
+  type HostRow,
+  LOCAL_HOST,
+  type RepositoryDto,
+  type SessionDto,
+  type SkillDto,
+  type TaskDto,
+  type WorkflowDto,
+} from "@/api"
 import {
   type AttentionItem,
   type AttentionNavTarget,
@@ -28,9 +38,9 @@ import { paths, taskPanelFrom, taskSessionPanelFrom } from "@/routes/paths"
 
 /** Where a palette entry goes when it is picked. */
 type PaletteTarget =
-  | { kind: "goal"; goalId: string }
-  | { kind: "task"; taskId: string }
-  | { kind: "session"; sessionId: string; goalId: string; taskId: string | null }
+  | { kind: "goal"; host: Host; goalId: string }
+  | { kind: "task"; host: Host; taskId: string }
+  | { kind: "session"; host: Host; sessionId: string; goalId: string; taskId: string | null }
   /**
    * A row of the attention list, which decides where it goes itself: the
    * thread a question was asked in, the console a prompt is waiting in, or the
@@ -60,15 +70,17 @@ export interface PaletteEntry {
    * `./detail`), so an id or a branch may show without its head.
    */
   detail?: string
+  /** The host a goal, task or session row lives on; the row names it unless it is `local`. */
+  host?: Host
   /** Searchable, literally, without being part of the row's name. */
   keywords: string[]
   target: PaletteTarget
 }
 
 interface PaletteSource {
-  goals: GoalDto[] | undefined
-  tasks: TaskDto[] | undefined
-  sessions: SessionDto[] | undefined
+  goals: HostRow<GoalDto>[] | undefined
+  tasks: HostRow<TaskDto>[] | undefined
+  sessions: HostRow<SessionDto>[] | undefined
   skills: SkillDto[] | undefined
   repositories: RepositoryDto[] | undefined
   workflows: WorkflowDto[] | undefined
@@ -84,6 +96,16 @@ export interface PaletteEntries {
   workflows: PaletteEntry[]
 }
 
+/** Two rows with one title on two hosts are two rows: the host ends the name. */
+function hostSuffix(host: Host): string {
+  return host === LOCAL_HOST ? "" : ` @${host}`
+}
+
+/** What a search by host name matches a named host's row by. */
+function hostWords(host: Host): string[] {
+  return host === LOCAL_HOST ? [] : [host]
+}
+
 export function buildPaletteEntries({
   goals,
   tasks,
@@ -92,51 +114,61 @@ export function buildPaletteEntries({
   repositories,
   workflows,
 }: PaletteSource): PaletteEntries {
-  const goalTitles = new Map((goals ?? []).map((goal) => [goal.id, goal.title]))
-  const taskTitles = new Map((tasks ?? []).map((task) => [task.id, task.title]))
-  const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
-  const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
+  // Ids are one daemon's own, so a goal or a task is looked up under its host.
+  const goalTitles = new Map((goals ?? []).map((goal) => [`${goal.host}:${goal.id}`, goal.title]))
+  const taskTitles = new Map((tasks ?? []).map((task) => [`${task.host}:${task.id}`, task.title]))
+  const tasksById = new Map((tasks ?? []).map((task) => [`${task.host}:${task.id}`, task]))
+  const goalsById = new Map((goals ?? []).map((goal) => [`${goal.host}:${goal.id}`, goal]))
 
   return {
     goals: (goals ?? []).map((goal) => ({
-      value: `${goal.title} ${shortId(goal.id)}`,
+      value: `${goal.title} ${shortId(goal.id)}${hostSuffix(goal.host)}`,
       label: goal.title,
       detail: shortId(goal.id),
-      keywords: [goal.id, goal.status],
-      target: { kind: "goal", goalId: goal.id },
+      host: goal.host,
+      keywords: [goal.id, goal.status, ...hostWords(goal.host)],
+      target: { kind: "goal", host: goal.host, goalId: goal.id },
     })),
 
     tasks: (tasks ?? []).map((task) => ({
       // The branch is what a task is called outside Ariadne, so it names the
       // row as much as the title does — searched for like the title, shown
       // beside it as the secondary text.
-      value: `${task.title} ${task.branch}`,
+      value: `${task.title} ${task.branch}${hostSuffix(task.host)}`,
       label: task.title,
       detail: task.branch,
-      keywords: [task.id, task.status, goalTitles.get(task.goal_id) ?? ""],
-      target: { kind: "task", taskId: task.id },
+      host: task.host,
+      keywords: [
+        task.id,
+        task.status,
+        goalTitles.get(`${task.host}:${task.goal_id}`) ?? "",
+        ...hostWords(task.host),
+      ],
+      target: { kind: "task", host: task.host, taskId: task.id },
     })),
 
     // A session has no name of its own: it is "the reviewer of <task>", and
     // that is also how somebody looking for one describes it.
     sessions: (sessions ?? []).map((session) => {
       const of =
-        (session.task_id ? taskTitles.get(session.task_id) : undefined) ??
-        goalTitles.get(session.goal_id ?? "")
+        (session.task_id ? taskTitles.get(`${session.host}:${session.task_id}`) : undefined) ??
+        goalTitles.get(`${session.host}:${session.goal_id ?? ""}`)
       // A step agent is named by the workflow column it staffs.
       const seat =
         sessionColumn(
           session,
-          tasksById.get(session.task_id ?? ""),
-          goalsById.get(session.goal_id ?? ""),
+          tasksById.get(`${session.host}:${session.task_id ?? ""}`),
+          goalsById.get(`${session.host}:${session.goal_id ?? ""}`),
         ) ?? seatLabel(session.seat)
       return {
-        value: `${seat} ${of ?? ""} ${shortId(session.id)}`,
+        value: `${seat} ${of ?? ""} ${shortId(session.id)}${hostSuffix(session.host)}`,
         label: of ? `${seat} · ${of}` : seat,
         detail: shortId(session.id),
-        keywords: [session.id, session.status, session.model],
+        host: session.host,
+        keywords: [session.id, session.status, session.model, ...hostWords(session.host)],
         target: {
           kind: "session",
+          host: session.host,
           sessionId: session.id,
           goalId: session.goal_id ?? "",
           taskId: session.task_id ?? null,
@@ -200,15 +232,15 @@ export function paletteTargetTo(
 ): string | AttentionNavTarget {
   switch (target.kind) {
     case "goal":
-      return paths.goal(target.goalId)
+      return paths.goal(target.goalId, target.host)
     case "task":
-      return taskPanelFrom(pathname, search, target.taskId)
+      return taskPanelFrom(pathname, search, target.taskId, target.host)
     case "attention":
       return attentionTarget(target.item, search, pathname)
     case "session":
       return target.taskId
-        ? taskSessionPanelFrom(pathname, search, target.taskId, target.sessionId)
-        : paths.goalSession(target.goalId, target.sessionId)
+        ? taskSessionPanelFrom(pathname, search, target.taskId, target.sessionId, target.host)
+        : paths.goalSession(target.goalId, target.sessionId, target.host)
     case "page":
       return target.path
   }
@@ -232,9 +264,10 @@ export function attentionEntries(items: AttentionItem[]): PaletteEntry[] {
     // The shortened id ends it for the reason every other row's does: two
     // tasks can share a title, and two rows with the same value are one row to
     // cmdk — which here would silently drop half the list.
-    value: `${attentionSubject(item)} ${reasonLabel(item)} ${shortId(item.id)}`,
+    value: `${attentionSubject(item)} ${reasonLabel(item)} ${shortId(item.id)}${hostSuffix(item.host)}`,
     label: attentionSubject(item),
     detail: reasonLabel(item),
+    host: item.host,
     keywords: [
       item.id,
       item.taskId ?? "",

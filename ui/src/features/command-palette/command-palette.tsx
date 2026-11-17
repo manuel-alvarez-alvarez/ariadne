@@ -48,7 +48,7 @@ import { useTheme } from "next-themes"
 import { type ReactNode, useMemo, useState } from "react"
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
-import type { GoalDto } from "@/api"
+import { type GoalDto, type Host, type HostRow, LOCAL_HOST, useHostLists } from "@/api"
 import { copyEntry } from "@/components/copyable-id"
 import {
   Command,
@@ -78,10 +78,11 @@ import {
   SIDEBAR_SHORTCUT,
   screenShortcut,
 } from "@/hooks/use-global-shortcuts"
+import { useHostFilter } from "@/hooks/use-host-filter"
 import { attachCommand } from "@/lib/clipboard"
 import { shortId } from "@/lib/format"
 import { keySequenceLabel, shortcutLabel } from "@/lib/shortcuts"
-import { paths, taskPanelFrom } from "@/routes/paths"
+import { hostOf, paths, taskPanelFrom } from "@/routes/paths"
 
 import { splitDetail } from "./detail"
 import {
@@ -134,10 +135,11 @@ export function CommandPalette({
   const { status, retry } = useConnection()
 
   const { entries, goals } = usePaletteEntries(open)
+  const panelHost = hostOf(search)
   // What the screen underneath is showing, which is what the actions below act
   // on: the goal a task would be created in, and the task or session an attach
   // command would be for.
-  const openGoal = goals?.find((goal) => goal.id === search.get("goal"))
+  const openGoal = goals?.find((goal) => goal.id === search.get("goal") && goal.host === panelHost)
   const attachTo = search.get("session") ?? search.get("task")
   /**
    * The goal the create-task dialog is open for. Held here rather than by the
@@ -145,7 +147,7 @@ export function CommandPalette({
    * goal itself, since the palette's own lists stop being read the moment it
    * closes.
    */
-  const [newTaskGoal, setNewTaskGoal] = useState<GoalDto | null>(null)
+  const [newTaskGoal, setNewTaskGoal] = useState<HostRow<GoalDto> | null>(null)
 
   /** A pick always closes the palette; what it then does is the argument. */
   function run(action: () => void) {
@@ -219,7 +221,9 @@ export function CommandPalette({
                   value={ATTACH.label}
                   keywords={["ariadne", "attach", "console", "terminal", attachTo]}
                   onSelect={() =>
-                    run(() => void copyEntry({ ...ATTACH, text: attachCommand(attachTo) }))
+                    run(
+                      () => void copyEntry({ ...ATTACH, text: attachCommand(attachTo, panelHost) }),
+                    )
                   }
                 >
                   <CopyIcon />
@@ -314,6 +318,7 @@ export function CommandPalette({
           closes it and hands the dialog the goal it was made against. */}
       {newTaskGoal ? (
         <CreateTaskDialog
+          host={newTaskGoal.host}
           goal={newTaskGoal}
           open
           onOpenChange={(dialogOpen) => dialogOpen || setNewTaskGoal(null)}
@@ -323,7 +328,7 @@ export function CommandPalette({
           // Replaces rather than pushes when that screen had the goal open
           // (`target.replace`), same as the goal panel's own create button.
           onCreated={(task) => {
-            const target = taskPanelFrom(pathname, search, task.id)
+            const target = taskPanelFrom(pathname, search, task.id, newTaskGoal.host)
             void navigate(target, { replace: target.replace })
           }}
         />
@@ -490,6 +495,11 @@ function EntryGroup({
           {/* The row is named by its title, so the title is what gets the
               room: the detail is capped and truncated around it. */}
           <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+          {entry.host && entry.host !== LOCAL_HOST ? (
+            <span className="shrink-0 rounded border px-1 font-mono text-[0.7rem] leading-4 text-muted-foreground">
+              {entry.host}
+            </span>
+          ) : null}
           {entry.detail ? <EntryDetail text={entry.detail} /> : null}
         </CommandItem>
       ))}
@@ -525,6 +535,8 @@ function EntryDetail({ text }: { text: string }) {
   )
 }
 
+const NO_HOSTS: Host[] = []
+
 /**
  * The four lists, read through the same query options their own screens use so
  * the palette shares their cache entries rather than making four of its own.
@@ -534,11 +546,16 @@ function EntryDetail({ text }: { text: string }) {
  */
 function usePaletteEntries(open: boolean): {
   entries: PaletteEntries
-  goals: GoalDto[] | undefined
+  goals: HostRow<GoalDto>[] | undefined
 } {
-  const goals = useQuery({ ...goalsQueryOptions("local"), enabled: open })
-  const tasks = useQuery({ ...taskListQueryOptions("local"), enabled: open })
-  const sessions = useQuery({ ...sessionsQueryOptions("local"), enabled: open })
+  // The goals, tasks and sessions of every host the header's picker selected,
+  // read only while the palette is open. The skills, workflows and
+  // repositories are `local`'s.
+  const picked = useHostFilter()
+  const hosts = open ? picked : NO_HOSTS
+  const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
+  const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
+  const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host))
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const workflows = useQuery({ ...workflowsQueryOptions("local"), enabled: open })
   const repositories = useQuery({ ...repositoriesQueryOptions("local"), enabled: open })
@@ -546,15 +563,15 @@ function usePaletteEntries(open: boolean): {
   const entries = useMemo(
     () =>
       buildPaletteEntries({
-        goals: goals.data,
-        tasks: tasks.data,
-        sessions: sessions.data,
+        goals: goals.rows,
+        tasks: tasks.rows,
+        sessions: sessions.rows,
         skills: skills.data,
         workflows: workflows.data,
         repositories: repositories.data,
       }),
-    [goals.data, tasks.data, sessions.data, skills.data, repositories.data, workflows.data],
+    [goals.rows, tasks.rows, sessions.rows, skills.data, repositories.data, workflows.data],
   )
 
-  return { entries, goals: goals.data }
+  return { entries, goals: goals.rows }
 }

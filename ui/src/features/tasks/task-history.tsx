@@ -19,6 +19,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
 import { cn } from "@/lib/format"
+import { usePanelHost } from "@/routes/paths"
 import { taskTransitionsQueryOptions } from "./queries"
 import { TASK_STATUS_META } from "./status"
 import { stepTitle } from "./steps"
@@ -31,7 +32,7 @@ export function TaskHistory({
   /** The goal's workflow columns, which a step move is named by. */
   steps?: WorkflowStepDto[]
 }) {
-  const transitions = useQuery(taskTransitionsQueryOptions(taskId))
+  const transitions = useQuery(taskTransitionsQueryOptions(usePanelHost(), taskId))
 
   if (transitions.isPending) {
     return (

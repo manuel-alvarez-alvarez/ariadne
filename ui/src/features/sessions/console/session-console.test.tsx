@@ -60,7 +60,7 @@ function answer(reply: () => Response = () => new Response(null, { status: 204 }
 }
 
 beforeEach(() => {
-  updateViewState(consoleViewKey("http://127.0.0.1:7676", SESSION_ID), {
+  updateViewState(consoleViewKey("local", "http://127.0.0.1:7676", SESSION_ID), {
     draft: "",
     scrollTop: 0,
     following: true,
@@ -83,7 +83,7 @@ function renderConsole(
   snapshot: AgentEventDto[] = [],
   status: "running" | "idle" | "exited" = "idle",
 ) {
-  const view = renderScreen(<SessionConsole sessionId={SESSION_ID} status={status} />)
+  const view = renderScreen(<SessionConsole host="local" sessionId={SESSION_ID} status={status} />)
   const source = latestSource()
   act(() => {
     source.succeed()
@@ -346,7 +346,7 @@ it("moves focus to Collapse on ⌘Escape and cancels nothing", async () => {
 })
 
 it("gives the input the keyboard when asked to on arrival", () => {
-  renderScreen(<SessionConsole sessionId={SESSION_ID} status="idle" autoFocus />)
+  renderScreen(<SessionConsole host="local" sessionId={SESSION_ID} status="idle" autoFocus />)
 
   expect(document.activeElement).toBe(input())
 })

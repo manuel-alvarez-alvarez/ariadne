@@ -21,7 +21,7 @@ it("renders one staffing row for each workflow column", async () => {
       { id: "test", title: "Test", description: "", skills: ["testing"], ranks: [] },
     ],
   })
-  renderScreen(<CreateTaskDialog goal={goal} open onOpenChange={vi.fn()} />)
+  renderScreen(<CreateTaskDialog host="local" goal={goal} open onOpenChange={vi.fn()} />)
   expect(await screen.findByText("Build")).toBeTruthy()
   expect(screen.getByText("Test")).toBeTruthy()
   expect(screen.queryByText("Author skills")).toBeNull()
@@ -46,7 +46,7 @@ it("pins a column's model and effort through the three-column picker", async () 
     steps: [{ id: "build", title: "Build", description: "", skills: ["coding"], ranks: [] }],
   })
   const user = userEvent.setup()
-  renderScreen(<CreateTaskDialog goal={goal} open onOpenChange={vi.fn()} />)
+  renderScreen(<CreateTaskDialog host="local" goal={goal} open onOpenChange={vi.fn()} />)
 
   const trigger = await screen.findByRole("button", { name: "Build runs on" })
   await user.click(trigger)

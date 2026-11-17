@@ -35,7 +35,7 @@ import { GitPullRequestIcon } from "lucide-react"
 import { type ReactNode, useId } from "react"
 import { Link } from "react-router-dom"
 
-import { type Host, LOCAL_HOST, type TaskDto, type WorkflowStepDto } from "@/api"
+import type { Host, TaskDto, WorkflowStepDto } from "@/api"
 import { PrLink, pullRequestNumber, pullRequestText } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
@@ -177,8 +177,7 @@ export function TaskCard({
       )}
     >
       <CardBody
-        // The task panel reads `local` only, so a remote card opens nothing.
-        to={host === LOCAL_HOST ? to : null}
+        to={to}
         aria-describedby={hints.length > 0 ? hintsId : undefined}
         className="flex h-full flex-col rounded-lg px-2.5 pt-2.5 pb-1.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >

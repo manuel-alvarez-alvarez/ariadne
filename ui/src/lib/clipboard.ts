@@ -58,6 +58,8 @@ function copyViaTextarea(text: string): boolean {
   }
 }
 
+import { LOCAL_HOST } from "@/api/client"
+
 /** One line of a copy menu: what it says, and what it puts on the clipboard. */
 export type CopyEntry = {
   /** What the menu item reads, imperatively: "Copy attach command". */
@@ -72,8 +74,13 @@ export type CopyEntry = {
  * three lists below. The command palette offers it for whatever is open, from
  * this same spelling.
  */
-export function attachCommand(id: string): string {
-  return `ariadne attach ${id}`
+export function attachCommand(id: string, host: string = LOCAL_HOST): string {
+  return withHost(`ariadne attach ${id}`, host)
+}
+
+/** The command line, aimed at a named host with the CLI's global `--host`. */
+function withHost(command: string, host: string): string {
+  return host === LOCAL_HOST ? command : `${command} --host ${host}`
 }
 
 export function goalCopyEntries(goalId: string): CopyEntry[] {
@@ -83,19 +90,19 @@ export function goalCopyEntries(goalId: string): CopyEntry[] {
   ]
 }
 
-export function taskCopyEntries(taskId: string): CopyEntry[] {
+export function taskCopyEntries(taskId: string, host: string = LOCAL_HOST): CopyEntry[] {
   return [
     { label: "Copy task ID", text: taskId },
-    { label: "Copy attach command", text: attachCommand(taskId) },
-    { label: "Copy logs command", text: `ariadne task logs ${taskId}` },
-    { label: "Copy diff command", text: `ariadne task diff ${taskId}` },
+    { label: "Copy attach command", text: attachCommand(taskId, host) },
+    { label: "Copy logs command", text: withHost(`ariadne task logs ${taskId}`, host) },
+    { label: "Copy diff command", text: withHost(`ariadne task diff ${taskId}`, host) },
   ]
 }
 
-export function sessionCopyEntries(sessionId: string): CopyEntry[] {
+export function sessionCopyEntries(sessionId: string, host: string = LOCAL_HOST): CopyEntry[] {
   return [
     { label: "Copy session ID", text: sessionId },
-    { label: "Copy attach command", text: attachCommand(sessionId) },
-    { label: "Copy logs command", text: `ariadne session logs ${sessionId}` },
+    { label: "Copy attach command", text: attachCommand(sessionId, host) },
+    { label: "Copy logs command", text: withHost(`ariadne session logs ${sessionId}`, host) },
   ]
 }

@@ -840,10 +840,12 @@ Use `--host NAME` to run a command on a ready host from the local daemon's regis
 
 Use `--host all` for lists across hosts, with a leading `HOST` column and a JSON `host` field.
 Rows follow registry order. A failed host produces a warning.
+`permissions ai show --host all` prints one block per host, headed by the host's name.
 One successful host gives exit code 0.
 Commands for one ID, including attach, find the host that has it.
 Writes require one host. Skills, workflows, permissions and repository settings must be written on `local`.
 The local daemon syncs these settings to every host.
+The one exception is `permissions ai set --device` alone, which is written on the named host only, and which stays until `local` changes the flavour; see [Choosing a flavour and device](permissions.md#choosing-a-flavour-and-device).
 Daemon start, stop and restart require `local`; status and logs accept a host name.
 `query` accepts a host name or `all`. With `all` the table has a `host` column, and a host that did not answer prints a warning.
 Shell completion offers configured names and `all`.

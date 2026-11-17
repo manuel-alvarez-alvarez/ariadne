@@ -39,7 +39,7 @@ function stubTransitions(transitions: TaskTransitionDto[]): void {
 
 function renderHistory(): void {
   const goal = aGoal({ id: TASK.goal_id })
-  renderScreen(<TaskPanel taskId={TASK.id} onClose={() => {}} />, {
+  renderScreen(<TaskPanel host="local" taskId={TASK.id} onClose={() => {}} />, {
     route: "/goals?tab=history",
     seed: (client) => {
       client.setQueryData(qk.tasks.detail("local", TASK.id), TASK)

@@ -581,6 +581,7 @@ function PullRequestSessionView({
     <>
       {session.data && ours ? (
         <SessionPanelHeader
+          host={LOCAL_HOST}
           session={session.data}
           breadcrumb={breadcrumb}
           onResumed={(revived) => onSelect(revived.id)}
@@ -610,7 +611,7 @@ function PullRequestSessionView({
             </AlertDescription>
           </Alert>
         ) : (
-          <SessionDetailView session={session.data} context="task" />
+          <SessionDetailView host={LOCAL_HOST} session={session.data} context="task" />
         )}
       </PaneBody>
     </>

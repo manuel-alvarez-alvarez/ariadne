@@ -30,6 +30,12 @@ export function hostOf(current: URLSearchParams): Host {
   return current.get(HOST_PARAM) || LOCAL_HOST
 }
 
+/** The host of the panel open in the current URL, for a component inside it. */
+export function usePanelHost(): Host {
+  const [search] = useSearchParams()
+  return hostOf(search)
+}
+
 /** `?host=` set for a named host, and dropped for `local`. */
 function withHost(next: URLSearchParams, host: Host = LOCAL_HOST): URLSearchParams {
   if (host === LOCAL_HOST) next.delete(HOST_PARAM)

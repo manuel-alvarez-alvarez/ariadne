@@ -161,15 +161,15 @@ export function sessionQueryOptions(host: Host, id: string) {
  * variable rather than a binding of the hook — the sessions list kills the row
  * that was clicked — which is why this is not `useRowAction`.
  */
-export function useKillSession() {
+export function useKillSession(host: Host) {
   const queryClient = useQueryClient()
   return useMutation<SessionDto, Error, string, CacheSnapshot | undefined>({
     mutationFn: (id: string) =>
-      unwrap(api("local").POST("/v1/sessions/{id}/kill", { params: { path: { id } } })),
+      unwrap(api(host).POST("/v1/sessions/{id}/kill", { params: { path: { id } } })),
     onMutate: (id) =>
-      optimisticStatus(queryClient, qk.sessions, "local", id, "exited" satisfies SessionStatus),
+      optimisticStatus(queryClient, qk.sessions, host, id, "exited" satisfies SessionStatus),
     onError: (_error, _id, snapshot) => restoreCache(queryClient, snapshot),
-    onSuccess: (session) => cacheRow(queryClient, qk.sessions, "local", session),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, host, session),
   })
 }
 
@@ -180,26 +180,21 @@ export function useKillSession() {
  * `409` is the "not resumable" answer (no internal session id, still running,
  * agent cannot resume) and carries the reason in its envelope.
  */
-export function useResumeSession() {
+export function useResumeSession(host: Host) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) =>
-      unwrap(api("local").POST("/v1/sessions/{id}/resume", { params: { path: { id } } })),
-    onSuccess: (session) => cacheRow(queryClient, qk.sessions, "local", session),
+      unwrap(api(host).POST("/v1/sessions/{id}/resume", { params: { path: { id } } })),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, host, session),
   })
 }
 
 /** Start the successor of a session on another pin. */
-export function useSwitchSession() {
+export function useSwitchSession(host: Host) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: SwitchSessionRequest & { id: string }) =>
-      unwrap(api("local").POST("/v1/sessions/{id}/switch", { params: { path: { id } }, body })),
-    onSuccess: (session) => cacheRow(queryClient, qk.sessions, "local", session),
+      unwrap(api(host).POST("/v1/sessions/{id}/switch", { params: { path: { id } }, body })),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, host, session),
   })
-}
-
-/** Index a list response by id, for turning the ids on a session into names. */
-export function byId<T extends { id: string }>(items: T[] | undefined): Map<string, T> {
-  return new Map((items ?? []).map((item) => [item.id, item]))
 }

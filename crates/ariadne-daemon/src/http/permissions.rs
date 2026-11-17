@@ -186,8 +186,16 @@ pub(super) async fn update(
         ));
     }
 
+    // A flavour equal to the stored one, with no device, changes nothing: the
+    // sync pushes the flavour on every AI change, and a device set on this
+    // host stays until the flavour itself changes.
+    let same_flavour = match (req.flavour, req.device) {
+        (Some(flavour), None) => flavour == state.ai_permissions.stored_flavour().await,
+        _ => false,
+    };
     let chosen = match (req.flavour, req.device) {
         (None, None) => None,
+        _ if same_flavour => None,
         (flavour, device) => {
             let hardware = state.ai_permissions.hardware().await;
             let flavour = match flavour {

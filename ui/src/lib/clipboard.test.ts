@@ -88,6 +88,27 @@ describe("taskCopyEntries", () => {
   })
 })
 
+describe("taskCopyEntries on a named host", () => {
+  it("aims every command at the host", () => {
+    expect(taskCopyEntries(ID, "box").map((e) => e.text)).toEqual([
+      ID,
+      `ariadne attach ${ID} --host box`,
+      `ariadne task logs ${ID} --host box`,
+      `ariadne task diff ${ID} --host box`,
+    ])
+  })
+})
+
+describe("sessionCopyEntries on a named host", () => {
+  it("aims every command at the host", () => {
+    expect(sessionCopyEntries(ID, "box").map((e) => e.text)).toEqual([
+      ID,
+      `ariadne attach ${ID} --host box`,
+      `ariadne session logs ${ID} --host box`,
+    ])
+  })
+})
+
 describe("sessionCopyEntries", () => {
   it("offers the id and every command that takes a session id", () => {
     expect(sessionCopyEntries(ID)).toEqual([

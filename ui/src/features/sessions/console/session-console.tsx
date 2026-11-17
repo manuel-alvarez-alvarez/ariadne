@@ -35,6 +35,7 @@
  * of the keys the state takes.
  */
 
+import { skipToken, useQuery } from "@tanstack/react-query"
 import { ArrowDownIcon, Maximize2Icon, Minimize2Icon } from "lucide-react"
 import {
   type KeyboardEvent,
@@ -44,10 +45,18 @@ import {
   useRef,
   useState,
 } from "react"
-
 import { toast } from "sonner"
 
-import { type AgentRequestDto, api, type SessionDto, type SessionStatus, unwrap } from "@/api"
+import {
+  type AgentRequestDto,
+  api,
+  type Host,
+  hostBaseUrl,
+  qk,
+  type SessionDto,
+  type SessionStatus,
+  unwrap,
+} from "@/api"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { copyText } from "@/lib/clipboard"
@@ -112,6 +121,7 @@ import { ConsoleWorkspace } from "./workspace"
 let sendCount = 0
 
 export function SessionConsole({
+  host,
   sessionId,
   status,
   autoFocus,
@@ -122,6 +132,8 @@ export function SessionConsole({
   onResumed,
   onSwitched,
 }: {
+  /** The host the session runs on: its stream and every post go there. */
+  host: Host
   sessionId: string
   status: SessionStatus
   /** Hand the input the keyboard as soon as it is on screen. */
@@ -139,7 +151,7 @@ export function SessionConsole({
   onSwitched?: (session: SessionDto) => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const menu = { session, canSwitch, onResumed, onSwitched }
+  const menu = { host, session, canSwitch, onResumed, onSwitched }
 
   if (expanded) {
     return (
@@ -186,6 +198,7 @@ const TOP_SLACK_PX = 8
 const FOLLOW_SLACK_PX = 24
 
 function ConsolePane({
+  host,
   sessionId,
   status,
   autoFocus,
@@ -198,6 +211,7 @@ function ConsolePane({
   onExpand,
   onCollapse,
 }: {
+  host: Host
   sessionId: string
   status: SessionStatus
   autoFocus?: boolean
@@ -210,8 +224,13 @@ function ConsolePane({
   onExpand?: () => void
   onCollapse?: () => void
 }) {
-  const baseUrl = useBaseUrl()
-  const key = consoleViewKey(baseUrl, sessionId)
+  // Read again when either address moves: the settings base URL for `local`, the
+  // hosts list for a named host.
+  useBaseUrl()
+  // Subscribed only: the shell reads the hosts, and a console must not fetch them.
+  useQuery({ queryKey: qk.hosts.list(), queryFn: skipToken })
+  const baseUrl = hostBaseUrl(host)
+  const key = consoleViewKey(host, baseUrl ?? "", sessionId)
   const keyRef = useRef(key)
   keyRef.current = key
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript)
@@ -309,7 +328,7 @@ function ConsolePane({
     setHistory({ state: "loading" })
     try {
       const page = await unwrap(
-        api("local").GET("/v1/events", {
+        api(host).GET("/v1/events", {
           params: {
             query: { session: sessionId, order: "desc", before, limit: HISTORY_PAGE },
           },
@@ -331,14 +350,14 @@ function ConsolePane({
       loading.current = false
       setHistory({ state: "error", message: describeError(error) })
     }
-  }, [sessionId])
+  }, [host, sessionId])
 
   // A question older than the snapshot's page still waits: the pending
   // requests are read again with every snapshot, a reconnect's too, and a
   // failed read says so with a Retry rather than hide those questions.
   const readRequests = useCallback(() => {
     const read = ++reads.current
-    pendingRequests("local", sessionId).then(
+    pendingRequests(host, sessionId).then(
       (listed) => {
         if (read !== reads.current) return
         setRequests(listed)
@@ -348,7 +367,7 @@ function ConsolePane({
         if (read === reads.current) setRequestsError(describeError(error))
       },
     )
-  }, [sessionId])
+  }, [host, sessionId])
 
   useEffect(() => {
     setTranscript(emptyTranscript())
@@ -356,11 +375,16 @@ function ConsolePane({
     setRequestsError(null)
     setSnapshotted(false)
     resetHistory()
-    const kept = readViewState(consoleViewKey(baseUrl, sessionId))
+    const kept = readViewState(consoleViewKey(host, baseUrl ?? "", sessionId))
     following.current = kept.following
     restore.current = kept.following ? null : kept.scrollTop
     backfill.current = kept.following ? undefined : kept.oldest
     anchored.current = kept.following ? undefined : kept.anchor
+    if (baseUrl === null) {
+      // A host with no address has no stream to open; its own reason is what a send says.
+      setStreamStatus("reconnecting")
+      return
+    }
     const stream = new ConsoleStream(consoleStreamUrl(baseUrl, sessionId), {
       onSnapshot: (events) => {
         resetHistory()
@@ -379,7 +403,7 @@ function ConsolePane({
       reads.current += 1
       stream.stop()
     }
-  }, [baseUrl, sessionId, resetHistory, readRequests])
+  }, [host, baseUrl, sessionId, resetHistory, readRequests])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus request is read once, on arrival
   useEffect(() => {
@@ -532,12 +556,12 @@ function ConsolePane({
   const post = useCallback(
     (text: string) =>
       unwrap(
-        api("local").POST("/v1/sessions/{id}/console/input", {
+        api(host).POST("/v1/sessions/{id}/console/input", {
           params: { path: { id: sessionId } },
           body: { text },
         }),
       ),
-    [sessionId],
+    [host, sessionId],
   )
 
   function edit(text: string, at: number) {
@@ -583,6 +607,7 @@ function ConsolePane({
       onToggle={toggleBlock}
       picker={
         <QuestionCard
+          host={host}
           sessionId={sessionId}
           block={block}
           live={live}
@@ -604,7 +629,7 @@ function ConsolePane({
     const owner = keyRef.current
     if (requestId === undefined) setTranscript((current) => queuePrompt(current, text, id))
     const sent =
-      requestId === undefined ? post(text) : answerRequest("local", sessionId, requestId, { text })
+      requestId === undefined ? post(text) : answerRequest(host, sessionId, requestId, { text })
     sent.then(
       () => {
         if (requestId !== undefined) setAnswered((now) => new Set(now).add(requestId))
@@ -698,16 +723,16 @@ function ConsolePane({
 
   const cancel = useCallback(() => {
     unwrap(
-      api("local").POST("/v1/sessions/{id}/console/cancel", {
+      api(host).POST("/v1/sessions/{id}/console/cancel", {
         params: { path: { id: sessionId } },
       }),
     ).catch((error) => fail("Could not cancel the turn", error))
-  }, [sessionId, fail])
+  }, [host, sessionId, fail])
 
   const cancelChild = useCallback(
     (target: { id: string; title: string }) => {
       unwrap(
-        api("local").POST("/v1/sessions/{id}/console/cancel", {
+        api(host).POST("/v1/sessions/{id}/console/cancel", {
           params: { path: { id: sessionId } },
           body: { subagent_id: target.id },
         }),
@@ -720,7 +745,7 @@ function ConsolePane({
         ),
       )
     },
-    [sessionId],
+    [host, sessionId],
   )
 
   /** Show the view of `to`, or `main` for none, and hand it the keyboard. */
@@ -848,7 +873,7 @@ function ConsolePane({
     updateViewState(keyRef.current, { runExpansions: next })
   }, [])
 
-  const resume = useResumeAction(onResumed)
+  const resume = useResumeAction(host, onResumed)
   const viewName = child ? child.title : "main"
   const menu = (
     <ComposerMenu
@@ -1141,6 +1166,7 @@ function ConsolePane({
       </div>
       {session ? (
         <SwitchSessionDialog
+          host={host}
           session={session}
           open={switchOpen}
           onOpenChange={setSwitchOpen}

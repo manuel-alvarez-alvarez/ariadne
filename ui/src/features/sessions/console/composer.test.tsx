@@ -28,7 +28,7 @@ let pendingList: unknown[] = []
 /** Forget what the console retained, for the sessions these tests open. */
 function resetViewStates() {
   for (const id of [SESSION_ID, "other"]) {
-    updateViewState(consoleViewKey("http://127.0.0.1:7676", id), {
+    updateViewState(consoleViewKey("local", "http://127.0.0.1:7676", id), {
       draft: "",
       scrollTop: 0,
       anchor: undefined,
@@ -85,7 +85,7 @@ function mount(
 ) {
   const view = renderScreen(
     <>
-      <SessionConsole sessionId={SESSION_ID} status={status} {...extra} />
+      <SessionConsole host="local" sessionId={SESSION_ID} status={status} {...extra} />
       <Toaster />
     </>,
   )
@@ -389,10 +389,10 @@ it("brings a session's draft back after the console is unmounted", () => {
 })
 
 it("keeps each daemon's and each session's state apart", () => {
-  updateViewState(consoleViewKey("http://127.0.0.1:7676", SESSION_ID), { draft: "mine" })
+  updateViewState(consoleViewKey("local", "http://127.0.0.1:7676", SESSION_ID), { draft: "mine" })
 
-  expect(readViewState(consoleViewKey("http://127.0.0.1:7676", "other")).draft).toBe("")
-  expect(readViewState(consoleViewKey("http://10.0.0.2:7676", SESSION_ID)).draft).toBe("")
+  expect(readViewState(consoleViewKey("local", "http://127.0.0.1:7676", "other")).draft).toBe("")
+  expect(readViewState(consoleViewKey("local", "http://10.0.0.2:7676", SESSION_ID)).draft).toBe("")
 
   useSettingsStore.getState().setBaseUrl("http://10.0.0.2:7676")
   mount()
@@ -400,7 +400,7 @@ it("keeps each daemon's and each session's state apart", () => {
 })
 
 it("restores the reader's place, not the bottom, when the console comes back", () => {
-  const key = consoleViewKey("http://127.0.0.1:7676", SESSION_ID)
+  const key = consoleViewKey("local", "http://127.0.0.1:7676", SESSION_ID)
   updateViewState(key, { following: false, scrollTop: 37 })
   mount([event("agent_message", { text: "one" })])
 

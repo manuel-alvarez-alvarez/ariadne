@@ -39,7 +39,7 @@ import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView, SessionPanelHeader } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { shortId } from "@/lib/format"
-import { usePanelSessionTo } from "@/routes/paths"
+import { usePanelHost, usePanelSessionTo } from "@/routes/paths"
 
 export function TaskSessions({
   task,
@@ -52,11 +52,12 @@ export function TaskSessions({
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
 }) {
+  const host = usePanelHost()
   // The selected row marks itself: `SessionsList` reads the same `?session=`
   // this panel drives, so nothing has to be threaded through the panel.
   return (
     <SessionsList
-      host="local"
+      host={host}
       filters={{ task: task.id }}
       sessionStep={(session) => sessionStepTitle(task, steps, session)}
       onSelect={(session) => onSelect(session.id)}
@@ -104,7 +105,8 @@ export function TaskSessionView({
   /** Selects another session, or goes back to the task with `null`. */
   onSelect: (sessionId: string | null) => void
 }) {
-  const session = useQuery(sessionQueryOptions("local", sessionId))
+  const host = usePanelHost()
+  const session = useQuery(sessionQueryOptions(host, sessionId))
   // `GET /v1/sessions/{id}` is not scoped to a task, so a link can hand this
   // panel a session of some *other* task (or a goal's orchestrator session, which
   // is nobody's task). It is not one of this task's, and the panel would
@@ -121,6 +123,7 @@ export function TaskSessionView({
     <>
       {session.data && !foreign ? (
         <SessionPanelHeader
+          host={host}
           session={session.data}
           breadcrumb={breadcrumb}
           // A resume hands back the session to attach to; the panel follows it.
@@ -153,6 +156,7 @@ export function TaskSessionView({
           </Alert>
         ) : (
           <SessionDetailView
+            host={host}
             session={session.data}
             context="task"
             onResumed={(revived) => onSelect(revived.id)}
