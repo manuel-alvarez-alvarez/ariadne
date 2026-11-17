@@ -29,6 +29,7 @@ import { ConfirmDialog, isSettling } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { describeError } from "@/lib/format"
+import { usePanelHost } from "@/routes/paths"
 import { useCancelTask, useRetryTask } from "./queries"
 import { canCancel, canEdit, canRetry } from "./status"
 import { EditTaskDialog } from "./task-form-dialog"
@@ -42,8 +43,9 @@ import { EditTaskDialog } from "./task-form-dialog"
 const RETRY_HINT = "Back to ready, same branch and worktree, at the first column"
 
 export function TaskActions({ task }: { task: TaskDto }) {
-  const cancel = useCancelTask(task.id)
-  const retry = useRetryTask(task.id)
+  const host = usePanelHost()
+  const cancel = useCancelTask(host, task.id)
+  const retry = useRetryTask(host, task.id)
   const [open, setOpen] = useState<"edit" | "cancel" | null>(null)
 
   const showEdit = canEdit(task.status)
@@ -112,6 +114,7 @@ export function TaskActions({ task }: { task: TaskDto }) {
       {/* The form resets itself from the task each time it opens, so it never
           shows a previous attempt; `close()` has nothing to clear for it. */}
       <EditTaskDialog
+        host={host}
         task={task}
         open={open === "edit"}
         onOpenChange={(next) => {

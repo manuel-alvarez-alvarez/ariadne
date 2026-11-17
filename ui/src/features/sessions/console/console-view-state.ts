@@ -15,6 +15,8 @@
  * `updateViewState`; a foldable block with no preference starts folded.
  */
 
+import type { Host } from "@/api"
+
 /** A message the daemon refused, kept so it can be sent again or edited. */
 export type FailedSend = {
   id: string
@@ -58,9 +60,9 @@ const initial: ConsoleViewState = {
 
 const states = new Map<string, ConsoleViewState>()
 
-/** The key of one console: the daemon it talks to and the session. */
-export function consoleViewKey(baseUrl: string, sessionId: string): string {
-  return `${baseUrl}\n${sessionId}`
+/** The key of one console: the host and daemon address it talks to, and the session. */
+export function consoleViewKey(host: Host, baseUrl: string, sessionId: string): string {
+  return `${host}\n${baseUrl}\n${sessionId}`
 }
 
 export function readViewState(key: string): ConsoleViewState {

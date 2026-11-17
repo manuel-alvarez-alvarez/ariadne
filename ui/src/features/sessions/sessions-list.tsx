@@ -143,6 +143,7 @@ export function SessionsList({
           {rows.map((session) => (
             <SessionRow
               key={session.id}
+              host={host}
               session={session}
               selected={session.id === selected}
               step={sessionStep?.(session)}
@@ -156,11 +157,13 @@ export function SessionsList({
 }
 
 function SessionRow({
+  host,
   session,
   selected,
   step,
   onSelect,
 }: {
+  host: Host
   session: SessionDto
   selected: boolean
   /** The title of the workflow step the session's agent works, if any. */
@@ -198,7 +201,7 @@ function SessionRow({
             value={session.id}
             display={shortId}
             label="session id"
-            entries={sessionCopyEntries(session.id)}
+            entries={sessionCopyEntries(session.id, host)}
             className="text-xs"
           />
         </span>

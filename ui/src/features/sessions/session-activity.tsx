@@ -17,7 +17,7 @@ import { useQuery } from "@tanstack/react-query"
 import { ChevronRightIcon, DotIcon } from "lucide-react"
 import { useRef, useState } from "react"
 
-import { type AgentEventDto, api, qk, unwrap } from "@/api"
+import { type AgentEventDto, api, type Host, qk, unwrap } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -264,17 +264,17 @@ function diagnosisNotes(events: AgentEventDto[]): Map<string, string> {
   return notes
 }
 
-export function SessionActivity({ sessionId }: { sessionId: string }) {
+export function SessionActivity({ host, sessionId }: { host: Host; sessionId: string }) {
   // Survives refetches, reset when the screen moves to another session.
   const tail = useRef<Tail>({ sessionId, cursor: undefined, events: [] })
 
   const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: qk.agentEvents.list("local", { session: sessionId }),
+    queryKey: qk.agentEvents.list(host, { session: sessionId }),
     queryFn: async () => {
       if (tail.current.sessionId !== sessionId) {
         tail.current = { sessionId, cursor: undefined, events: [] }
       }
-      const fresh = await sweep(sessionId, tail.current.cursor)
+      const fresh = await sweep(host, sessionId, tail.current.cursor)
       const newest = fresh.at(-1)
       if (newest) {
         tail.current = {
@@ -517,12 +517,16 @@ function ExpandableEventPayload({ event }: { event: StoredAgentEvent }) {
 }
 
 /** Walk the cursor forward until the daemon stops filling pages. */
-async function sweep(sessionId: string, after: string | undefined): Promise<AgentEventDto[]> {
+async function sweep(
+  host: Host,
+  sessionId: string,
+  after: string | undefined,
+): Promise<AgentEventDto[]> {
   const collected: AgentEventDto[] = []
   let cursor = after
   for (let page = 0; page < MAX_SWEEP_PAGES; page++) {
     const batch = await unwrap(
-      api("local").GET("/v1/events", {
+      api(host).GET("/v1/events", {
         params: { query: { session: sessionId, after: cursor, limit: PAGE } },
       }),
     )

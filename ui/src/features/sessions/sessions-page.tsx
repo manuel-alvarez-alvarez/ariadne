@@ -13,12 +13,20 @@
  * (see {@link matchesBrowse}).
  */
 
-import { useQuery } from "@tanstack/react-query"
 import { ListChecksIcon, type LucideIcon, SearchIcon, TargetIcon, XIcon } from "lucide-react"
 import { useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
-import { ApiError, type GoalDto, type SessionDto, type TaskDto } from "@/api"
+import {
+  ApiError,
+  type GoalDto,
+  type HostRow,
+  LOCAL_HOST,
+  type SessionDto,
+  type TaskDto,
+  useHostLists,
+  useHosts,
+} from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { ScrollableTable } from "@/components/scroll-edge"
@@ -33,8 +41,10 @@ import { parseModelRef, pinLabel } from "@/features/models/model-ref"
 import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionColumn } from "@/features/tasks/steps"
+import { useHostFilter } from "@/hooks/use-host-filter"
 import { cn, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom } from "@/routes/paths"
+import { useSettingsStore } from "@/stores/settings"
 import { BROWSE_FILTER_PARAMS, type BrowseFilters, useBrowseFilters } from "./browse-filters"
 import { ActivityFilter, AgentFilter, DirectoryFilter, FilterMenu, TypedFilter } from "./filter-bar"
 import {
@@ -52,7 +62,7 @@ import {
   statusLabel,
   TASK_PARAM,
 } from "./filters"
-import { byId, type SessionListFilters, sessionsQueryOptions } from "./queries"
+import { type SessionListFilters, sessionsQueryOptions } from "./queries"
 import {
   SESSION_STATUS_META,
   SessionAttentionBadge,
@@ -82,13 +92,26 @@ function movedAt(session: SessionDto): string {
 }
 
 /** What a row is about: the task it ran, the goal it planned, or the request it reviewed. */
+/** Ids are one daemon's own, so a lookup is by host and id. */
+function hostKey(host: string, id: string): string {
+  return `${host}:${id}`
+}
+
+function byHostId<T extends { id: string }>(rows: HostRow<T>[]): Map<string, T> {
+  return new Map(rows.map((row) => [hostKey(row.host, row.id), row]))
+}
+
 function ariadneTitle(
-  session: SessionDto,
+  session: HostRow<SessionDto>,
   goalsById: Map<string, GoalDto>,
   tasksById: Map<string, TaskDto>,
 ): string {
-  if (session.task_id) return tasksById.get(session.task_id)?.title ?? shortId(session.task_id)
-  if (session.goal_id) return goalsById.get(session.goal_id)?.title ?? shortId(session.goal_id)
+  if (session.task_id) {
+    return tasksById.get(hostKey(session.host, session.task_id))?.title ?? shortId(session.task_id)
+  }
+  if (session.goal_id) {
+    return goalsById.get(hostKey(session.host, session.goal_id))?.title ?? shortId(session.goal_id)
+  }
   return session.pull_request_id
     ? `Pull request ${shortId(session.pull_request_id)}`
     : shortId(session.id)
@@ -128,29 +151,34 @@ export function SessionsPage() {
     goal: goal ?? undefined,
     task: task ?? undefined,
   }
-  const sessions = useQuery(sessionsQueryOptions("local", filters))
-
-  const goals = useQuery(goalsQueryOptions("local"))
-  const tasks = useQuery(taskListQueryOptions("local"))
-  const goalsById = byId(goals.data)
-  const tasksById = byId(tasks.data)
+  // Every host the header's picker selected: the chips and filters apply to each.
+  const hosts = useHostFilter()
+  const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host, filters))
+  const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
+  const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
+  // A host badge on each row where the list can hold more than one host.
+  const pickedAll = useSettingsStore((state) => state.hostFilter) === ""
+  const { hosts: known } = useHosts()
+  const showHost = pickedAll && known.length > 1
+  const goalsById = byHostId(goals.rows)
+  const tasksById = byHostId(tasks.rows)
 
   const rows = useMemo(
     () =>
-      (sessions.data ?? [])
+      sessions.rows
         .filter((session) =>
           matchesBrowse(session, ariadneTitle(session, goalsById, tasksById), browse.filters),
         )
         .sort((a, b) => movedAt(b).localeCompare(movedAt(a))),
-    [sessions.data, browse.filters, goalsById, tasksById],
+    [sessions.rows, browse.filters, goalsById, tasksById],
   )
 
   const filtered =
     status !== null || seat !== null || BROWSE_FILTER_PARAMS.some((param) => browse.values[param])
   const clearFilters = () => clearSessionFilters(BROWSE_FILTER_PARAMS)
 
-  function handleSelect(session: SessionDto) {
-    void navigate(sessionPanelFrom(paths.sessions(), search, session.id))
+  function handleSelect(session: HostRow<SessionDto>) {
+    void navigate(sessionPanelFrom(paths.sessions(), search, session.id, session.host))
   }
 
   return (
@@ -184,7 +212,7 @@ export function SessionsPage() {
 
           <div className="ml-auto flex items-center gap-3">
             <p className="text-sm text-muted-foreground tabular-nums">
-              {rows.length} of {sessions.data?.length ?? 0} sessions
+              {rows.length} of {sessions.rows.length} sessions
             </p>
           </div>
         </div>
@@ -234,17 +262,22 @@ export function SessionsPage() {
 
       <ScopeChips goal={goal} task={task} onClear={filterBy} />
 
-      {sessions.isError ? (
+      {/* One warning per host that failed, while the others still show. */}
+      {sessions.errors.map(({ host, error }) => (
         <ErrorState
-          title="Could not load sessions"
-          error={sessions.error}
-          description={errorDescription(sessions.error)}
-          onRetry={() => void sessions.refetch()}
+          key={host}
+          title={
+            host === LOCAL_HOST ? "Could not load sessions" : `Could not load sessions on ${host}`
+          }
+          error={error}
+          description={errorDescription(error)}
+          onRetry={() => sessions.refetch()}
         />
-      ) : null}
+      ))}
       <SessionsTable
         rows={rows}
         pending={sessions.isPending}
+        showHost={showHost}
         goalsById={goalsById}
         tasksById={tasksById}
         onSelect={handleSelect}
@@ -257,16 +290,18 @@ export function SessionsPage() {
 function SessionsTable({
   rows,
   pending,
+  showHost,
   goalsById,
   tasksById,
   onSelect,
   onScope,
 }: {
-  rows: SessionDto[]
+  rows: HostRow<SessionDto>[]
   pending: boolean
+  showHost: boolean
   goalsById: Map<string, GoalDto>
   tasksById: Map<string, TaskDto>
-  onSelect: (session: SessionDto) => void
+  onSelect: (session: HostRow<SessionDto>) => void
   onScope: (param: FilterParam, id: string) => void
 }) {
   return (
@@ -286,15 +321,24 @@ function SessionsTable({
         ) : rows.length ? (
           rows.map((session) => (
             <SessionRow
-              key={session.id}
+              key={`${session.host}:${session.id}`}
               session={session}
+              showHost={showHost}
               title={ariadneTitle(session, goalsById, tasksById)}
-              goalTitle={session.goal_id ? goalsById.get(session.goal_id)?.title : undefined}
-              taskTitle={session.task_id ? tasksById.get(session.task_id)?.title : undefined}
+              goalTitle={
+                session.goal_id
+                  ? goalsById.get(hostKey(session.host, session.goal_id))?.title
+                  : undefined
+              }
+              taskTitle={
+                session.task_id
+                  ? tasksById.get(hostKey(session.host, session.task_id))?.title
+                  : undefined
+              }
               column={sessionColumn(
                 session,
-                tasksById.get(session.task_id ?? ""),
-                goalsById.get(session.goal_id ?? ""),
+                tasksById.get(hostKey(session.host, session.task_id ?? "")),
+                goalsById.get(hostKey(session.host, session.goal_id ?? "")),
               )}
               onSelect={() => onSelect(session)}
               onScope={onScope}
@@ -328,6 +372,7 @@ function SessionLoadingRows() {
 
 function SessionRow({
   session,
+  showHost,
   title,
   goalTitle,
   taskTitle,
@@ -335,7 +380,9 @@ function SessionRow({
   onSelect,
   onScope,
 }: {
-  session: SessionDto
+  session: HostRow<SessionDto>
+  /** Name the host the session runs on, under All. */
+  showHost: boolean
   title: string
   goalTitle: string | undefined
   taskTitle: string | undefined
@@ -364,8 +411,15 @@ function SessionRow({
       }}
     >
       <TableCell className="max-w-72">
-        <span className="block truncate" title={title}>
-          {title}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate" title={title}>
+            {title}
+          </span>
+          {showHost ? (
+            <Badge variant="outline" className="shrink-0 font-mono" title="Host">
+              {session.host}
+            </Badge>
+          ) : null}
         </span>
         {/* Where the agent ran: a goal's or a task's worktree. It rides under
             the title rather than taking a column of its own. */}
@@ -523,8 +577,9 @@ function ScopeChips({
   task: string | null
   onClear: (param: FilterParam, value: string) => void
 }) {
-  const goals = useQuery({ ...goalsQueryOptions("local"), enabled: goal !== null })
-  const tasks = useQuery({ ...taskListQueryOptions("local"), enabled: task !== null })
+  const hosts = useHostFilter()
+  const goals = useHostLists(goal === null ? [] : hosts, (host) => goalsQueryOptions(host))
+  const tasks = useHostLists(task === null ? [] : hosts, (host) => taskListQueryOptions(host))
 
   if (!goal && !task) return null
   return (
@@ -532,14 +587,14 @@ function ScopeChips({
       {goal ? (
         <ScopeChip
           what="Goal"
-          name={goals.data?.find((one) => one.id === goal)?.title ?? shortId(goal)}
+          name={goals.rows.find((one) => one.id === goal)?.title ?? shortId(goal)}
           onClear={() => onClear(GOAL_PARAM, ALL)}
         />
       ) : null}
       {task ? (
         <ScopeChip
           what="Task"
-          name={tasks.data?.find((one) => one.id === task)?.title ?? shortId(task)}
+          name={tasks.rows.find((one) => one.id === task)?.title ?? shortId(task)}
           onClear={() => onClear(TASK_PARAM, ALL)}
         />
       ) : null}

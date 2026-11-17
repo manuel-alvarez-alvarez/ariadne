@@ -10,7 +10,7 @@ import { PrLink } from "@/components/pr-link"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn, shortSha } from "@/lib/format"
-import { useTaskPanelTo } from "@/routes/paths"
+import { usePanelHost, useTaskPanelTo } from "@/routes/paths"
 import { taskQueryOptions } from "./queries"
 import { TASK_STATUS_META } from "./status"
 import { stepTitle } from "./steps"
@@ -66,7 +66,8 @@ export function TaskFacts({ task, steps = [] }: { task: TaskDto; steps?: Workflo
 }
 
 function Dependencies({ ids }: { ids: string[] }) {
-  const results = useQueries({ queries: ids.map((id) => taskQueryOptions(id)) })
+  const host = usePanelHost()
+  const results = useQueries({ queries: ids.map((id) => taskQueryOptions(host, id)) })
   if (ids.length === 0) return <Muted>nothing</Muted>
   return (
     <ul className="flex flex-col gap-1">
@@ -78,7 +79,7 @@ function Dependencies({ ids }: { ids: string[] }) {
 }
 
 function Dependency({ id, task }: { id: string; task?: TaskDto }) {
-  const to = useTaskPanelTo(id)
+  const to = useTaskPanelTo(id, usePanelHost())
   const status = task ? TASK_STATUS_META[task.status] : undefined
   return (
     <li className="flex items-center gap-1.5">

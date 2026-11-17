@@ -55,7 +55,7 @@ function event(kind: string, payload: unknown = {}): AgentEventDto {
 }
 
 beforeEach(() => {
-  updateViewState(consoleViewKey("http://127.0.0.1:7676", SESSION_ID), {
+  updateViewState(consoleViewKey("local", "http://127.0.0.1:7676", SESSION_ID), {
     draft: "",
     scrollTop: 0,
     following: true,
@@ -68,7 +68,7 @@ beforeEach(() => {
 })
 
 function renderConsole(snapshot: AgentEventDto[]) {
-  renderScreen(<SessionConsole sessionId={SESSION_ID} status="running" />)
+  renderScreen(<SessionConsole host="local" sessionId={SESSION_ID} status="running" />)
   const source = latestSource()
   act(() => {
     source.succeed()

@@ -56,7 +56,7 @@ beforeEach(() => {
   )
 })
 function renderConsole(events: AgentEventDto[] = [tool("Build")]) {
-  renderScreen(<SessionConsole sessionId={`workspace-${++next}`} status="running" />)
+  renderScreen(<SessionConsole host="local" sessionId={`workspace-${++next}`} status="running" />)
   const source = latestSource()
   act(() => {
     source.succeed()

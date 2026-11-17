@@ -65,15 +65,18 @@ it.each([
   async (tab, empty) => {
     const user = userEvent.setup()
     const goal = aGoal({ id: TASK.goal_id })
-    const { queryClient } = renderScreen(<TaskPanel taskId={TASK.id} onClose={() => {}} />, {
-      route: `/goals?tab=${tab}`,
-      seed: (client) => {
-        client.setQueryData(qk.tasks.detail("local", TASK.id), TASK)
-        client.setQueryData(qk.goals.detail("local", goal.id), goal)
-        client.setQueryData(qk.tasks.transitions("local", TASK.id), [])
-        client.setQueryData(qk.tasks.messages("local", TASK.id), [])
+    const { queryClient } = renderScreen(
+      <TaskPanel host="local" taskId={TASK.id} onClose={() => {}} />,
+      {
+        route: `/goals?tab=${tab}`,
+        seed: (client) => {
+          client.setQueryData(qk.tasks.detail("local", TASK.id), TASK)
+          client.setQueryData(qk.goals.detail("local", goal.id), goal)
+          client.setQueryData(qk.tasks.transitions("local", TASK.id), [])
+          client.setQueryData(qk.tasks.messages("local", TASK.id), [])
+        },
       },
-    })
+    )
     await screen.findByText(empty)
 
     failEveryRead()

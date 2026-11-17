@@ -36,6 +36,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn, plural } from "@/lib/format"
+import { usePanelHost } from "@/routes/paths"
 import { DiffEditor, LARGE_FILE_LINES } from "./diff-editor"
 import { DiffFileNav, diffFileDomId } from "./diff-file-nav"
 import { type DiffFile, type ParsedDiff, parseUnifiedDiff } from "./diff-parse"
@@ -50,7 +51,7 @@ const CHANGE_META: Record<DiffFile["change"], { label: string; icon: typeof File
 }
 
 export function TaskDiff({ taskId }: { taskId: string }) {
-  const diff = useQuery(taskDiffQueryOptions(taskId))
+  const diff = useQuery(taskDiffQueryOptions(usePanelHost(), taskId))
   const [raw, setRaw] = useState(false)
   const [expanded, setExpanded] = useState(false)
   // Which file sections the reader has folded open or away, by file id: the

@@ -272,7 +272,9 @@ it("asks the daemon nothing until it is opened", async () => {
 
   // The attention group reads three lists with no `enabled` of their own; what
   // keeps them from being three requests on every screen is that the dialog
-  // unmounts its whole subtree while it is closed.
+  // unmounts its whole subtree while it is closed. Only the hosts list, which
+  // says which hosts the lists would be read from, is asked.
   await Promise.resolve()
-  expect(daemonFetch).not.toHaveBeenCalled()
+  const paths = daemonFetch.mock.calls.map(([input]) => new URL(new Request(input).url).pathname)
+  expect(paths.filter((path) => path !== "/v1/hosts")).toEqual([])
 })

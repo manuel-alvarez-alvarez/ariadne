@@ -21,7 +21,7 @@ import { useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
-import type { SessionDto } from "@/api"
+import type { Host, SessionDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import {
   FormDialog,
@@ -49,8 +49,8 @@ type SwitchForm = z.infer<typeof switchSchema>
  * relaunched it, or untouched when its agent turned out to be alive after all
  * (the scheduler may have respawned it already) — which its status says.
  */
-export function useResumeAction(onResumed?: (session: SessionDto) => void) {
-  const resume = useResumeSession()
+export function useResumeAction(host: Host, onResumed?: (session: SessionDto) => void) {
+  const resume = useResumeSession(host)
   return {
     pending: resume.isPending,
     resume(id: string) {
@@ -75,18 +75,20 @@ export function useResumeAction(onResumed?: (session: SessionDto) => void) {
 
 /** The dialog that starts a session's successor on another agent or model. */
 export function SwitchSessionDialog({
+  host,
   session,
   open,
   onOpenChange,
   onSwitched,
 }: {
+  host: Host
   session: SessionDto
   open: boolean
   onOpenChange: (open: boolean) => void
   onSwitched?: (session: SessionDto) => void
 }) {
-  const switched = useSwitchSession()
-  const models = useQuery({ ...modelsQueryOptions("local"), enabled: open })
+  const switched = useSwitchSession(host)
+  const models = useQuery({ ...modelsQueryOptions(host), enabled: open })
   const form = useForm<SwitchForm>({
     resolver: zodResolver(switchSchema),
     defaultValues: { model: session.model, effort: session.effort ?? "" },
@@ -125,7 +127,7 @@ export function SwitchSessionDialog({
               name="model"
               render={({ field }) => (
                 <PinPicker
-                  host="local"
+                  host={host}
                   id="switch-session-pin"
                   label="Runs on"
                   model={field.value}
@@ -154,11 +156,13 @@ export function SwitchSessionDialog({
 }
 
 export function SessionActions({
+  host,
   session,
   onResumed,
   onSwitched,
   goalCancelled = false,
 }: {
+  host: Host
   session: SessionDto
   /**
    * Handed the revived session — this same one, relaunched. Where to go from
@@ -171,8 +175,8 @@ export function SessionActions({
 }) {
   const [confirmKill, setConfirmKill] = useState(false)
   const [switchOpen, setSwitchOpen] = useState(false)
-  const kill = useKillSession()
-  const resume = useResumeAction(onResumed)
+  const kill = useKillSession(host)
+  const resume = useResumeAction(host, onResumed)
   const live = isLiveStatus(session.status)
 
   return (
@@ -239,6 +243,7 @@ export function SessionActions({
         }}
       />
       <SwitchSessionDialog
+        host={host}
         session={session}
         open={switchOpen}
         onOpenChange={setSwitchOpen}

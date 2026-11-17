@@ -18,7 +18,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useRef } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
-import type { TaskDto } from "@/api"
+import type { Host, TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
@@ -56,9 +56,17 @@ import { WorkflowSteps } from "./workflow-steps"
 const TABS = ["description", "history", "messages", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
-export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
+export function TaskPanel({
+  host,
+  taskId,
+  onClose,
+}: {
+  host: Host
+  taskId: string
+  onClose: () => void
+}) {
   const [search, setSearch] = useSearchParams()
-  const task = useQuery(taskQueryOptions(taskId))
+  const task = useQuery(taskQueryOptions(host, taskId))
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const session = search.get("session") ?? undefined
   const selectSession = usePanelSessionNavigation()
@@ -71,12 +79,12 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
   // since the dispatcher invalidates both lists. The sessions filter is the
   // one `TaskSessions` itself passes, or the tab's count and the tab's list
   // would be two cache entries and two requests.
-  const sessions = useQuery(sessionsQueryOptions("local", { task: taskId }))
-  const messages = useQuery(taskMessagesQueryOptions(taskId))
+  const sessions = useQuery(sessionsQueryOptions(host, { task: taskId }))
+  const messages = useQuery(taskMessagesQueryOptions(host, taskId))
   // The goal's workflow columns, which a stepped task is drawn and named by:
   // the same detail entry the header's breadcrumb reads.
   const goal = useQuery({
-    ...goalQueryOptions("local", task.data?.goal_id ?? ""),
+    ...goalQueryOptions(host, task.data?.goal_id ?? ""),
     enabled: task.data !== undefined,
   })
   const steps = goal.data?.steps ?? []
@@ -126,7 +134,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
         </>
       ) : (
         <>
-          <TaskHeader task={task.data} />
+          <TaskHeader host={host} task={task.data} />
           <PaneBody>
             {task.error ? (
               <RefreshWarning
@@ -188,8 +196,8 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
  * from — every task has one, whatever opened this panel — and clicking it
  * replaces this panel with the goal's in the same pane.
  */
-function TaskHeader({ task }: { task: TaskDto }) {
-  const goal = useQuery(goalQueryOptions("local", task.goal_id))
+function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
+  const goal = useQuery(goalQueryOptions(host, task.goal_id))
   const navigate = useNavigate()
   const status = TASK_STATUS_META[task.status]
   return (
@@ -198,7 +206,7 @@ function TaskHeader({ task }: { task: TaskDto }) {
         label: goal.data?.title ?? "Goal",
         // Replaces rather than pushes: the goal panel takes this one's place
         // in the pane, not a step stacked over it.
-        onClick: () => navigate(paths.goal(task.goal_id), { replace: true }),
+        onClick: () => navigate(paths.goal(task.goal_id, host), { replace: true }),
       }}
       title={task.title}
       actions={<TaskActions task={task} />}
@@ -208,7 +216,9 @@ function TaskHeader({ task }: { task: TaskDto }) {
           {task.stalled && <StalledBadge />}
         </>
       }
-      id={<CopyableIdMenu value={task.id} label="task id" entries={taskCopyEntries(task.id)} />}
+      id={
+        <CopyableIdMenu value={task.id} label="task id" entries={taskCopyEntries(task.id, host)} />
+      }
       stamps={
         <>
           <span>created</span>
