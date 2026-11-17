@@ -221,7 +221,15 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
     {
         return Err(Failure::usage(format!("{reason}; run it with --host local")).err());
     }
-    let hosts: Vec<HostDto> = local.get_json("/v1/hosts").await?;
+    let hosts: Vec<HostDto> = match local.get_json("/v1/hosts").await {
+        Ok(hosts) => hosts,
+        Err(error) => {
+            if let Kind::Local(reason) = kind {
+                return Err(Failure::usage(format!("{reason}; run it with --host local")).err());
+            }
+            return Err(error.into());
+        }
+    };
     let host = if name == "all" {
         None
     } else {

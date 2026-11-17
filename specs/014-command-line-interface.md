@@ -375,8 +375,10 @@ same binary also serves (013).
     names each configured host with its status, even for a local-only command.
     A host that is not `ready` is a usage error with its status and its error,
     before any local-only command guard. A local-only command refuses `all`
-    before registry access, even when the local daemon is down. Each status in a message or
-    a warning is lowercase, as the registry spells it.
+    before registry access, even when the local daemon is down. If registry
+    access fails, a local-only command still refuses a named host with its
+    usage message. Each status in a message or a warning is lowercase, as
+    the registry spells it.
 45. Each command path declares one kind, in `hosts.rs` `KINDS`. The kind never
     comes from the last word of the path. The kinds are: a list; a read of
     one ID; a read that every host answers (`version`, `doctor`,
