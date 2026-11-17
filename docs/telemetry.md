@@ -196,6 +196,27 @@ Its step defaults to the span over 250, rounded up to a whole second.
 `--format json` prints the daemon's answer whole. A refused query prints the
 daemon's `error` sentence.
 
+### On another host, or on all of them
+
+The same routes are served under `/v1/hosts/{host}/`, for example
+`/v1/hosts/build/api/v1/query` or `/v1/hosts/all/loki/api/v1/query_range`.
+`{host}` is a host name from `[hosts.<name>]` in
+[Configuration](configuration.md), `local`, or `all`.
+
+- A host name sends the request to that host's daemon and returns its answer.
+  An unknown host answers `404`. A host that is not `ready` answers `503` and
+  names its status.
+- `local` is answered by this daemon.
+- `all` runs the request on every ready host at once and merges the answers
+  into the shape one daemon returns. Every series, log stream and label set
+  gets a `host` label with the host's name, and `host` is a label and a label
+  value too. A host that fails is skipped and listed in a `warnings` field. A
+  scalar comes back as one sample per host, as a vector.
+
+`ariadne query --host NAME|all` uses these routes. With `all` the table gets
+a `HOST` column, and each warning prints on stderr. See [CLI](cli.md#query-telemetry)
+and spec 037.
+
 ### Point Grafana or Perses at the daemon
 
 The query routes are on both listeners: the Unix socket and the TCP

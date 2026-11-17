@@ -24,7 +24,7 @@ daemon's metrics and logs through two query APIs over the telemetry store
 In: the Prometheus and Loki routes, the Prometheus name translation, the
 supported PromQL and LogQL, the rollup reads, and `ariadne query`.
 
-Out: recording metrics (the exporter is 033's), the stats ledger and
+Out: the same routes on another host or on all hosts (037), recording metrics (the exporter is 033's), the stats ledger and
 `/v1/stats/*` (023), and the dashboards that call these routes (015, 036).
 
 ## Behavior
@@ -63,7 +63,8 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
    in when `start <= ts < end`, exactly, though the store holds
    milliseconds. A log query reads the last hour
    by default, newest first, at most 100 lines.
-5. Both routers serve every route. The TCP router adds CORS for the
+5. Every route is also served under `/v1/hosts/{host}/` (037, rules 16 to
+   19). Both routers serve every route. The TCP router adds CORS for the
    origins it allows (012).
 
 ### Names
@@ -170,6 +171,7 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
     scalar prints one `VALUE`. The table flags of 014 apply, and `-q`
     prints the first column. `--format json` prints the daemon's answer
     whole. A daemon error prints its `error` sentence.
+19a. `ariadne query --host NAME|all` reads another host or all (037, rule 20).
 20. `ariadne stats` is removed, and the CLI no longer reads
     `/v1/stats/*` (023, rule 33).
 

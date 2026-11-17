@@ -23,6 +23,7 @@ mod permissions;
 mod pins;
 mod pull_requests;
 mod query;
+use query::QueryRoutes;
 mod repositories;
 mod sessions;
 mod skills;
@@ -133,6 +134,7 @@ impl AppState {
 
 #[derive(OpenApi)]
 #[openapi(
+    modifiers(&QueryRoutes),
     info(
         title = "Ariadne Daemon API",
         description = "REST API of ariadned, the coding-agent orchestrator daemon.",

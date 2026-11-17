@@ -178,7 +178,9 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             at,
             since,
             step,
-        } => commands::query::run(&client, expr, at, since, step, format).await,
+        } => {
+            commands::query::run(&client, expr, at, since, step, cli.host.as_deref(), format).await
+        }
         Command::Attention { watch, command } => match command {
             Some(cli::AttentionCommand::Dismiss { item_id }) => {
                 client

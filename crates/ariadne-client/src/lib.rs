@@ -177,6 +177,13 @@ enum Transport {
     },
 }
 
+/// An answer relayed by [`Client::forward`].
+pub struct ForwardedResponse {
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub body: Vec<u8>,
+}
+
 /// REST client for `ariadned`.
 pub struct Client {
     transport: Transport,
@@ -465,6 +472,35 @@ impl Client {
     pub async fn get_text(&self, path: &str) -> Result<String, ClientError> {
         let bytes = self.request_raw(Method::GET, path, None::<&()>).await?;
         Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Send a request and hand back the answer as it came, whatever its
+    /// status: a daemon that relays another daemon's reply keeps its status,
+    /// content type and body. Only an unreachable daemon is an error.
+    pub async fn forward(
+        &self,
+        method: Method,
+        path: &str,
+        content_type: Option<&str>,
+        body: Vec<u8>,
+    ) -> Result<ForwardedResponse, ClientError> {
+        let mut builder = Request::builder().method(method);
+        if let Some(content_type) = content_type {
+            builder = builder.header(header::CONTENT_TYPE, content_type);
+        }
+        let response = self.send(builder, path, Bytes::from(body)).await?;
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let body = self.collect(response).await?.to_vec();
+        Ok(ForwardedResponse {
+            status,
+            content_type,
+            body,
+        })
     }
 
     /// Send a request whose successful answer carries no body a caller

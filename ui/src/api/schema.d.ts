@@ -476,6 +476,1053 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/{host}/-/healthy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /-/healthy on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/api/v1/label/{name}/values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /api/v1/label/{name}/values on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    "match[]"?: string;
+                    start?: string;
+                    end?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/api/v1/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /api/v1/labels on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    "match[]"?: string;
+                    start?: string;
+                    end?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * POST /api/v1/labels on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    "match[]"?: string;
+                    start?: string;
+                    end?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/api/v1/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /api/v1/metadata on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    metric?: string;
+                    limit?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/api/v1/parse_query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /api/v1/parse_query on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    query?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * POST /api/v1/parse_query on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    query?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/api/v1/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /api/v1/query on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    query?: string;
+                    time?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * POST /api/v1/query on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    query?: string;
+                    time?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/api/v1/query_range": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /api/v1/query_range on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    query?: string;
+                    start?: string;
+                    end?: string;
+                    step?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * POST /api/v1/query_range on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    query?: string;
+                    start?: string;
+                    end?: string;
+                    step?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/api/v1/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /api/v1/series on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    "match[]"?: string;
+                    start?: string;
+                    end?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * POST /api/v1/series on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    "match[]"?: string;
+                    start?: string;
+                    end?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/loki/api/v1/index/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /loki/api/v1/index/stats on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/loki/api/v1/index/volume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /loki/api/v1/index/volume on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/loki/api/v1/label/{name}/values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /loki/api/v1/label/{name}/values on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    start?: string;
+                    end?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/loki/api/v1/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /loki/api/v1/labels on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    start?: string;
+                    end?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/loki/api/v1/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /loki/api/v1/query on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    query?: string;
+                    time?: string;
+                    limit?: string;
+                    direction?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/loki/api/v1/query_range": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /loki/api/v1/query_range on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    query?: string;
+                    start?: string;
+                    end?: string;
+                    limit?: string;
+                    direction?: string;
+                    step?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{host}/loki/api/v1/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /loki/api/v1/series on one host or on all
+         * @description `{host}` is a host name, `local` or `all`. With `all` the answers of the ready hosts are merged, each series, stream and label set gets a `host` label, and failed hosts are listed in `warnings`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    "match[]"?: string;
+                    start?: string;
+                    end?: string;
+                };
+                header?: never;
+                path: {
+                    host: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The host's answer, or the merged answers of every host */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown host */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The host is not ready */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/logs": {
         parameters: {
             query?: never;

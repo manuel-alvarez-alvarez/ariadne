@@ -41,7 +41,6 @@ async fn named_hosts_and_guards_use_the_local_registry() {
         ("build", vec!["skill", "reset", "coding"], 2, "synced"),
         ("build", vec!["daemon", "stop"], 2, "local"),
         ("all", vec!["daemon", "stop"], 2, "build"),
-        ("all", vec!["query", "up"], 2, "query"),
         (
             "all",
             vec!["host", "ls", "--format", "json"],
@@ -123,5 +122,41 @@ async fn all_hosts_keep_uppercase_rows_and_attention_items() {
         .await
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&quiet.stdout), "test\n");
+    server.abort();
+}
+
+#[tokio::test]
+async fn query_host_all_reads_the_merged_answer_and_prints_a_host_column() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let merged = json!({
+        "status": "success",
+        "data": {"resultType": "vector", "result": [
+            {"metric": {"host": "local", "seat": "agent"}, "value": [1.0, "30"]},
+            {"metric": {"host": "build", "seat": "agent"}, "value": [1.0, "7"]}
+        ]},
+        "warnings": ["offline: host offline is down"]
+    });
+    let app = Router::new().route(
+        "/v1/hosts/all/api/v1/query",
+        get(move || async move { Json(merged) }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args(["--endpoint", &endpoint, "--host", "all", "query", "up"])
+        .env("ARIADNE_TELEMETRY", "off")
+        .output()
+        .await
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let header = stdout.lines().next().unwrap();
+    assert_eq!(
+        header.split_whitespace().collect::<Vec<_>>(),
+        ["HOST", "SEAT", "VALUE"]
+    );
+    assert!(stdout.contains("build"), "{stdout}");
+    assert!(stderr.contains("offline: host offline is down"), "{stderr}");
     server.abort();
 }
