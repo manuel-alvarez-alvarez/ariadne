@@ -1,6 +1,8 @@
 //! Host selection through the executable and a real registry route.
 use std::sync::{Arc, Mutex};
 
+use axum::extract::Request;
+use axum::http::StatusCode;
 use axum::{Json, Router, routing::get};
 use serde_json::json;
 
@@ -38,17 +40,9 @@ async fn named_hosts_and_guards_use_the_local_registry() {
         ),
         ("all", vec!["dashboard", "get", "special"], 0, "remote-only"),
         ("all", vec!["dashboard", "get", "absent"], 4, "no host"),
-        ("missing", vec!["host", "ls"], 2, "offline (down)"),
-        ("offline", vec!["host", "ls"], 2, "build (ready)"),
         ("build", vec!["skill", "reset", "coding"], 2, "synced"),
-        ("build", vec!["daemon", "stop"], 2, "local"),
-        ("all", vec!["daemon", "stop"], 2, "build"),
-        (
-            "all",
-            vec!["host", "ls", "--format", "json"],
-            0,
-            "\"host\": \"local\"",
-        ),
+        ("build", vec!["daemon", "stop"], 2, "--host local"),
+        ("all", vec!["daemon", "stop"], 2, "--host local"),
     ] {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
             .args(["--endpoint", &endpoint, "--host", host])
@@ -321,6 +315,175 @@ async fn permissions_device_is_written_on_the_named_host_only() {
         .await
         .unwrap();
     assert_eq!(output.status.code(), Some(0), "{:?}", output);
+    server.abort();
+    remote.abort();
+}
+
+/// Every request a stub daemon gets, as `METHOD /path`, answered with a 404.
+fn recorder(seen: &Arc<Mutex<Vec<String>>>) -> Router {
+    let seen = Arc::clone(seen);
+    Router::new().fallback(move |request: Request| {
+        let seen = Arc::clone(&seen);
+        async move {
+            seen.lock()
+                .unwrap()
+                .push(format!("{} {}", request.method(), request.uri().path()));
+            StatusCode::NOT_FOUND
+        }
+    })
+}
+
+/// Each command takes the hosts its declared kind allows (spec 014, rules 44 to 48).
+#[tokio::test]
+async fn each_command_takes_the_hosts_of_its_kind() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let remote_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let remote_endpoint = format!("http://{}", remote_listener.local_addr().unwrap());
+    let sync =
+        json!({"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0});
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync},
+        {"name":"build","kind":"direct","status":"ready","endpoint":remote_endpoint,"error":null,"remote":null,"sync":sync},
+        {"name":"offline","kind":"ssh","status":"down","endpoint":null,"error":"no forward","remote":null,"sync":sync}
+    ]);
+    let local_seen = Arc::new(Mutex::new(Vec::new()));
+    let remote_seen = Arc::new(Mutex::new(Vec::new()));
+    let local_app =
+        recorder(&local_seen).route("/v1/hosts", get(move || async move { Json(registry) }));
+    let remote_app = recorder(&remote_seen);
+    let server = tokio::spawn(async move { axum::serve(listener, local_app).await.unwrap() });
+    let remote =
+        tokio::spawn(async move { axum::serve(remote_listener, remote_app).await.unwrap() });
+    let draft = tempfile::NamedTempFile::new().unwrap();
+    let draft = draft.path().to_str().unwrap().to_owned();
+    let run = |host: &str, args: &[&str]| {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"));
+        command
+            .args(["--endpoint", &endpoint, "--host", host])
+            .args(args)
+            .env("ARIADNE_TELEMETRY", "off");
+        async move {
+            let output = command.output().await.unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            (output.status.code(), stderr)
+        }
+    };
+
+    // Reads that are not lists are not refused as writes, on one host or on all.
+    for host in ["build", "all"] {
+        for args in [
+            vec!["events"],
+            vec!["doctor"],
+            vec!["forge", "tunnel"],
+            vec!["workflow", "check", "--file", &draft],
+            vec![
+                "permissions",
+                "ai",
+                "test",
+                "--tool",
+                "Read",
+                "--input",
+                "{}",
+            ],
+            vec!["completions", "bash"],
+        ] {
+            let (_, stderr) = run(host, &args).await;
+            assert!(!stderr.contains("write"), "{host} {args:?}: {stderr}");
+            assert!(!stderr.contains("synced"), "{host} {args:?}: {stderr}");
+        }
+    }
+
+    // A repository's own path and branch are written on the named host.
+    local_seen.lock().unwrap().clear();
+    for (args, request) in [
+        (
+            vec!["repo", "add", "/src/api", "--branch", "main"],
+            "POST /v1/repositories",
+        ),
+        (vec!["repo", "rm", "r1", "--yes"], "GET /v1/repositories"),
+        (
+            vec!["repo", "update", "r1", "--path", "/src/api"],
+            "GET /v1/repositories",
+        ),
+    ] {
+        remote_seen.lock().unwrap().clear();
+        let (code, stderr) = run("build", &args).await;
+        assert_ne!(code, Some(2), "{args:?}: {stderr}");
+        let seen = remote_seen.lock().unwrap().clone();
+        assert!(
+            seen.first().is_some_and(|first| first.starts_with(request)),
+            "{args:?}: {seen:?}"
+        );
+    }
+    assert!(
+        local_seen.lock().unwrap().is_empty(),
+        "{:?}",
+        local_seen.lock().unwrap()
+    );
+
+    remote_seen.lock().unwrap().clear();
+    for (host, args, expected) in [
+        // A synced setting of a repository stays on local.
+        (
+            "build",
+            vec!["repo", "add", "/src/api", "--description", "api"],
+            "`--description` is written on local and synced",
+        ),
+        (
+            "build",
+            vec!["repo", "update", "r1", "--branch", "next"],
+            "`--branch` is written on local and synced",
+        ),
+        // `host ls` reads the registry of the local daemon alone.
+        ("build", vec!["host", "ls"], "registry of the local daemon"),
+        ("all", vec!["host", "ls"], "registry of the local daemon"),
+        // An unknown host names the configured hosts; one not ready says why.
+        (
+            "missing",
+            vec!["task", "ls"],
+            "no host is named missing; the hosts are local (ready), build (ready), offline (down)",
+        ),
+        (
+            "offline",
+            vec!["task", "ls"],
+            "host offline is down: no forward",
+        ),
+        // A write on every host names only the hosts that take it.
+        (
+            "all",
+            vec!["task", "cancel", "t1"],
+            "select one host for this write: local, build\n",
+        ),
+        (
+            "all",
+            vec!["repo", "add", "/src/api"],
+            "select one host for this write: local, build\n",
+        ),
+        (
+            "all",
+            vec!["repo", "add", "/src/api", "--workflow", "w"],
+            "select one host for this write: local\n",
+        ),
+        (
+            "all",
+            vec!["skill", "reset", "coding"],
+            "run it with --host local",
+        ),
+    ] {
+        let (code, stderr) = run(host, &args).await;
+        assert_eq!(code, Some(2), "{host} {args:?}: {stderr}");
+        assert!(stderr.contains(expected), "{host} {args:?}: {stderr}");
+    }
+    assert!(
+        remote_seen.lock().unwrap().is_empty(),
+        "{:?}",
+        remote_seen.lock().unwrap()
+    );
+
+    // A warning names a status in lowercase.
+    let (_, stderr) = run("all", &["task", "ls"]).await;
+    assert!(stderr.contains("warning: offline: down"), "{stderr}");
     server.abort();
     remote.abort();
 }

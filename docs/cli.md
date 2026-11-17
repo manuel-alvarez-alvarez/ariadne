@@ -838,17 +838,34 @@ Use `--host NAME` to run a command on a ready host from the local daemon's regis
 `--endpoint` still selects the local daemon that supplies this registry.
 `--host local` selects that same daemon.
 
-Use `--host all` for lists across hosts, with a leading `HOST` column and a JSON `host` field.
+Use `--host all` for reads only.
+A list across hosts has a leading `HOST` column and a JSON `host` field.
 Rows follow registry order. A failed host produces a warning.
-`permissions ai show --host all` prints one block per host, headed by the host's name.
 One successful host gives exit code 0.
+`permissions ai show --host all` prints one block per host, headed by the host's name.
 Commands for one ID, including attach, find the host that has it.
-Writes require one host. Skills, workflows, permissions and repository settings must be written on `local`.
+Other reads, such as `version`, `doctor`, `events`, `forge tunnel`, `workflow check` and `permissions ai test`, take `--host NAME` and `--host all`.
+
+Writes run on one host. With `--host all`, a write is refused, and the message names the hosts that take it.
+Skills, workflows, permissions and repository settings are written on `local`.
 The local daemon syncs these settings to every host.
-The one exception is `permissions ai set --device` alone, which is written on the named host only, and which stays until `local` changes the flavour; see [Choosing a flavour and device](permissions.md#choosing-a-flavour-and-device).
-Daemon start, stop and restart require `local`; status and logs accept a host name.
+On a named host, these commands write the host's own settings:
+
+- `repo add PATH [--branch BRANCH]`, `repo update ID --path PATH` and `repo rm ID`.
+  A synced flag, such as `--description` or `--workflow`, is refused on a named host.
+- `permissions ai set --device` alone. It stays until `local` changes the flavour; see [Choosing a flavour and device](permissions.md#choosing-a-flavour-and-device).
+
+Some commands run on `local` only, and refuse `--host NAME` and `--host all`:
+
+- `host ls`, which reads the registry of the local daemon.
+- `daemon start`, `daemon stop` and `daemon restart`. `daemon status` and `daemon logs` accept a host name.
+- `completions install`, which writes the shell configuration of this machine.
+
+An unknown host name gets a message that names the configured hosts.
+A host that is not ready gets a message with its status and its error.
 `query` accepts a host name or `all`. With `all` the table has a `host` column, and a host that did not answer prints a warning.
 Shell completion offers configured names and `all`.
+A `--host` value that looks like an address gets a message that names `--endpoint`.
 Addresses formerly passed through `--host` must use `--endpoint`.
 
 See [Addressing another daemon](configuration.md#addressing-another-daemon) for endpoint resolution.
