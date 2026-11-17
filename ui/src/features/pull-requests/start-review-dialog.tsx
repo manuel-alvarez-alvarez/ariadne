@@ -52,7 +52,7 @@ export function StartReviewDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   /** The review was asked for: the dialog has closed itself. */
-  onStarted?: () => void
+  onStarted?: (host: Host) => void
 }) {
   const targets = useReviewTargets(pull, host, open)
   const [chosen, setChosen] = useState<Host | null>(null)
@@ -96,7 +96,7 @@ export function StartReviewDialog({
       {
         onSuccess: () => {
           onOpenChange(false)
-          onStarted?.()
+          onStarted?.(target.host)
         },
       },
     )

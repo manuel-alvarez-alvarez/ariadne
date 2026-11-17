@@ -10,7 +10,7 @@ import { HostPicker } from "@/components/host-picker"
 import { IssuesPage } from "@/features/issues/issues-page"
 import { PullRequestsPage } from "@/features/pull-requests/pull-requests-page"
 import { useSettingsStore } from "@/stores/settings"
-import { aForge, aRepository } from "@/test/fixtures"
+import { aForge, aModel, aRepository } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
 import { forgetHosts, stubHosts } from "@/test/hosts"
 import { pull } from "@/test/pull-request"
@@ -285,4 +285,44 @@ it("lists the issues of every host most recently updated first", async () => {
   expect(
     screen.getAllByRole("link", { name: /-(local|box)$/ }).map((link) => link.textContent),
   ).toEqual(["#7 newer-box", "#7 older-local"])
+})
+
+it("does not wait for a session on the panel's host when Start review picks another host", async () => {
+  stubHosts({
+    local: {
+      "/v1/repositories": [LOCAL_REPO],
+      "/v1/models": [aModel({ id: "stub:review-model" })],
+      "/v1/skills": [],
+      "/v1/repositories/repo-local/pull-requests/42/ariadne-review": (
+        _url: URL,
+        request: Request,
+      ) =>
+        request.method === "PUT" ? jsonResponse({ ...localPull, review_asked: true }) : undefined,
+    },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests/pull-box": boxPull,
+      "/v1/sessions": [],
+    },
+  })
+  renderScreen(
+    <>
+      <HostPicker />
+      <DetailPanels />
+    </>,
+    { route: "/forge/pull-requests?pr=pull-box&host=box" },
+  )
+
+  await userEvent.click(await screen.findByRole("button", { name: "Start review" }))
+  const dialog = await screen.findByRole("dialog", { name: "Start an Ariadne review" })
+  await userEvent.click(within(dialog).getByRole("combobox", { name: "Host" }))
+  await userEvent.click(await screen.findByRole("option", { name: "local" }))
+  await userEvent.click(within(dialog).getByRole("button", { name: "Model" }))
+  const models = await screen.findByRole("listbox", { name: "Models" })
+  await userEvent.click(within(models).getByText("stub:review-model"))
+  await userEvent.keyboard("{Escape}")
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start review" }))
+
+  expect(await screen.findByText(/The session started on host local/)).toBeTruthy()
+  expect(screen.queryByText(/Starting the session/)).toBeNull()
 })

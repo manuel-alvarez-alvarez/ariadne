@@ -82,6 +82,8 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
+  // The host another host's review or babysit started on: its session is not on this panel's host.
+  const [elsewhere, setElsewhere] = useState<Host | null>(null)
   const opened = useSessionOpening(host, workedId, (sessionId) => {
     const params = new URLSearchParams(search)
     params.set("tab", "sessions")
@@ -133,8 +135,9 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
           <PullRequestHeader
             pull={query.data}
             host={host}
-            onSessionStarted={(seat) => {
-              opened.await(seat)
+            onSessionStarted={(seat, startedOn) => {
+              if (startedOn === host) opened.await(seat)
+              else setElsewhere(startedOn)
               setTab("sessions")
             }}
           />
@@ -156,6 +159,11 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
                 {opened.waiting ? (
                   <p className="text-sm text-muted-foreground" role="status">
                     Starting the session… its console opens here once the agent is up.
+                  </p>
+                ) : null}
+                {elsewhere ? (
+                  <p className="text-sm text-muted-foreground" role="status">
+                    The session started on host {elsewhere}. Open the request there to see it.
                   </p>
                 ) : null}
                 <PullRequestSessions pull={query.data} host={host} onSelect={selectSession} />
@@ -241,7 +249,7 @@ function PullRequestHeader({
   /** The host the request is on. */
   host: Host
   /** A review or a babysit was asked for in its dialog, which closed itself. */
-  onSessionStarted: (seat: Seat) => void
+  onSessionStarted: (seat: Seat, startedOn: Host) => void
 }) {
   const ask = useAskReview()
   const round = useReviewRound()
@@ -388,14 +396,14 @@ function PullRequestHeader({
         host={host}
         open={starting}
         onOpenChange={setStarting}
-        onStarted={() => onSessionStarted("reviewer")}
+        onStarted={(startedOn) => onSessionStarted("reviewer", startedOn)}
       />
       <StartBabysitDialog
         pull={pull}
         host={host}
         open={babysitting}
         onOpenChange={setBabysitting}
-        onStarted={() => onSessionStarted("keeper")}
+        onStarted={(startedOn) => onSessionStarted("keeper", startedOn)}
       />
       {keeperTurn.error ? (
         <ErrorState title="Could not start a keeper turn" error={keeperTurn.error} />

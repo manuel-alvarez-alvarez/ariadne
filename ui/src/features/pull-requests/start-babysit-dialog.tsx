@@ -53,7 +53,7 @@ export function StartBabysitDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Babysitting was asked for: the dialog has closed itself. */
-  onStarted?: () => void
+  onStarted?: (host: Host) => void
 }) {
   const targets = useReviewTargets(pull, host, open)
   const [chosen, setChosen] = useState<Host | null>(null)
@@ -97,7 +97,7 @@ export function StartBabysitDialog({
       {
         onSuccess: () => {
           onOpenChange(false)
-          onStarted?.()
+          onStarted?.(target.host)
         },
       },
     )
