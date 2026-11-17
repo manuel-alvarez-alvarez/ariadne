@@ -247,6 +247,12 @@ same binary also serves (013).
     --permission-mode ai` alike — carries the hint `run ariadne permissions ai
     enable`; a `python_unavailable` one carries `install Python 3.12 or 3.13,
     or set python_bin in config.toml`.
+    With `--host NAME`, `set --device` alone is written to that host's
+    `PUT /v1/permissions/ai`; any other `set` flag on a named host other than
+    `local` is refused locally, and the refusal says that the settings are
+    written on `local` and synced, and that only `--device` is per host.
+    `permissions ai show --host all` prints one block per ready host, in
+    registry order, headed by its name, with a warning for each host that fails.
 33. `ariadne permissions ai test --tool <title> [--kind <K>] --input <json>
     [--option <name>]... [--location <path>]... [--workspace <dir>]` sends one
     request to the AI permission model without selecting or recording an
@@ -372,7 +378,8 @@ Host selection uses `--host NAME|all`; endpoint-like values must use `--endpoint
 The local daemon supplies `/v1/hosts`. Unknown or unready hosts cause usage errors with the registry statuses.
 `local` keeps the CLI's resolved endpoint. Lists across all hosts include host labels in registry order.
 Failed hosts produce warnings; one answer succeeds. Single-ID reads and attach find the host that has the ID.
-All-host writes are refused. Remote settings writes require local synchronization.
+All-host writes are refused. Remote settings writes require local synchronization,
+except `permissions ai set --device` alone on a named host (rule 32).
 Daemon lifecycle commands require local; status and logs accept named hosts. Query rejects host selection.
 `host ls` prints name, kind, status, endpoint and error. Completion offers host names and all.
 
@@ -501,6 +508,9 @@ Daemon lifecycle commands require local; status and logs accept named hosts. Que
   `::permissions_group_prints_help_and_refuses_the_old_flat_commands`,
   `::permissions_set_with_no_flag_is_a_usage_error`,
   `::permissions_set_refuses_a_bad_threshold_flavour_or_device_locally`).
+- `set --device` on a named host reaches only that host, a `set` with any other
+  flag on a named host is refused, and `show --host all` prints a block per host
+  (`tests/hosts.rs::permissions_device_is_written_on_the_named_host_only`).
 - `permissions ai test` parses its request, rejects invalid JSON locally, and
   prints its score line and JSON response
   (`cli/tests.rs::every_permissions_verb_parses`,

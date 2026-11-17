@@ -132,7 +132,9 @@ per host — is spec 015's (rules 51 to 60).
     `enabled`, the thresholds where they are set by hand (else
     `default_thresholds`), and `flavour`. `device` is not pushed: the host
     picks its own best device for the flavour. A status event that changes
-    none of these pushes nothing.
+    none of these pushes nothing. A device set on one host with
+    `permissions ai set --device --host NAME` (spec 014, rule 32) stays there:
+    no sync sends it.
 29. Writes go to the local daemon. Nothing is read back from a host into
     this daemon.
 ### Queries on a host
@@ -221,6 +223,8 @@ per host — is spec 015's (rules 51 to 60).
   the route is spec 022, rule 21).
 - Rules 6 and 22
   (`host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`).
+- Rule 28, device half: the device goes to the named host alone
+  (`tests/hosts.rs::permissions_device_is_written_on_the_named_host_only`).
 
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync

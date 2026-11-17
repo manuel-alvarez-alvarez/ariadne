@@ -7,7 +7,8 @@ use ariadne_api::hosts::{HostDto, HostStatus};
 use ariadne_client::Client;
 use serde_json::Value;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Command};
+use crate::commands::permissions::{AiPermissionsCommand, PermissionsCommand};
 use crate::error::Failure;
 use crate::output::{self, Format, UNCAPPED, col};
 
@@ -94,6 +95,9 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
             }
             return Err(Failure::not_found(format!("no host has {id}")).err());
         }
+        if path == "permissions ai show" {
+            return show_each(&cli, &hosts, &local).await;
+        }
         return fan_out(&cli, &hosts, &local, listing).await;
     }
     let host = hosts
@@ -107,14 +111,18 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
             return Err(Failure::usage("daemon lifecycle commands require --host local").err());
         }
         if !reading
+            && !device_only(&cli.command)
             && ["skill ", "workflow ", "permissions ", "repo "]
                 .iter()
                 .any(|prefix| path.starts_with(prefix))
         {
-            return Err(Failure::usage(
-                "these settings are written on local and synced to every host",
-            )
-            .err());
+            let message = if path.starts_with("permissions ") {
+                "these settings are written on local and synced to every host; \
+                 only `permissions ai set --device` is per host"
+            } else {
+                "these settings are written on local and synced to every host"
+            };
+            return Err(Failure::usage(message).err());
         }
     }
     let selected = client(host, &local)?;
@@ -132,14 +140,25 @@ fn client(host: &HostDto, local: &Arc<Client>) -> Result<Arc<Client>> {
     Ok(Arc::new(Client::resolve(Some(endpoint), None)))
 }
 
-// Reuse each command's rendering and error handling in an isolated invocation.
-// This also keeps a failed host from printing partial output into a listing.
-async fn fan_out(
-    cli: &Cli,
-    hosts: &[HostDto],
-    local: &Arc<Client>,
-    listing: bool,
-) -> Result<ExitCode> {
+/// `permissions ai set` that names only `--device`: the one AI setting a host
+/// keeps for itself. Every other `set` is written on local and synced.
+fn device_only(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Permissions {
+            command: PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                allow_threshold: None,
+                deny_threshold: None,
+                default_thresholds: false,
+                flavour: None,
+                device: Some(_),
+            }),
+        }
+    )
+}
+
+/// The command line as typed, without `--host`, so each host runs it alone.
+fn forwarded_args() -> Vec<std::ffi::OsString> {
     let mut args = Vec::new();
     let mut original = std::env::args_os().skip(1);
     while let Some(arg) = original.next() {
@@ -149,6 +168,69 @@ async fn fan_out(
             args.push(arg);
         }
     }
+    args
+}
+
+/// `permissions ai show --host all`: one block per ready host, in registry
+/// order, each headed by the host's name. A host that fails gets a warning.
+async fn show_each(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
+    let args = forwarded_args();
+    let mut answered = false;
+    let mut rows = Vec::new();
+    for host in hosts {
+        if host.status != HostStatus::Ready {
+            eprintln!("warning: {}: {:?}", host.name, host.status);
+            continue;
+        }
+        let selected = client(host, local)?;
+        let output = tokio::process::Command::new(std::env::current_exe()?)
+            .args(&args)
+            .arg("--endpoint")
+            .arg(selected.endpoint())
+            .output()
+            .await?;
+        if !output.status.success() {
+            eprintln!(
+                "warning: {}: {}",
+                host.name,
+                String::from_utf8_lossy(&output.stderr)
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            continue;
+        }
+        if cli.format == Format::Json {
+            let mut value: Value = serde_json::from_slice(&output.stdout)?;
+            value["host"] = host.name.clone().into();
+            rows.push(value);
+        } else {
+            if answered {
+                println!();
+            }
+            println!("{}", host.name);
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+        answered = true;
+    }
+    if !answered {
+        return Err(Failure::usage("no host answered").err());
+    }
+    if cli.format == Format::Json {
+        output::print_json(&rows)?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+// Reuse each command's rendering and error handling in an isolated invocation.
+// This also keeps a failed host from printing partial output into a listing.
+async fn fan_out(
+    cli: &Cli,
+    hosts: &[HostDto],
+    local: &Arc<Client>,
+    listing: bool,
+) -> Result<ExitCode> {
+    let args = forwarded_args();
     let mut answered = false;
     let mut rows = Vec::new();
     let mut header = None;
