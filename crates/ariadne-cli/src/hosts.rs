@@ -213,15 +213,28 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
         return crate::run(cli, local).await;
     }
     let kind = kind(path, &cli.command);
+    if name == "local" {
+        return crate::run(cli, local).await;
+    }
+    let hosts: Vec<HostDto> = local.get_json("/v1/hosts").await?;
+    let host = if name == "all" {
+        None
+    } else {
+        let host = hosts.iter().find(|host| host.name == name).ok_or_else(|| {
+            let names = hosts
+                .iter()
+                .map(|host| format!("{} ({})", host.name, status(host.status)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Failure::usage(format!("no host is named {name}; the hosts are {names}")).err()
+        })?;
+        Some(host)
+    };
     if let Kind::Local(reason) = kind
         && name != "local"
     {
         return Err(Failure::usage(format!("{reason}; run it with --host local")).err());
     }
-    if name == "local" {
-        return crate::run(cli, local).await;
-    }
-    let hosts: Vec<HostDto> = local.get_json("/v1/hosts").await?;
     if name == "all" {
         let accepting = match kind {
             Kind::HostOwned if synced_flag(&cli.command).is_some() => Some(vec!["local"]),
@@ -266,14 +279,7 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
         }
         return fan_out(&cli, &hosts, &local, kind == Kind::List).await;
     }
-    let host = hosts.iter().find(|host| host.name == name).ok_or_else(|| {
-        let names = hosts
-            .iter()
-            .map(|host| format!("{} ({})", host.name, status(host.status)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        Failure::usage(format!("no host is named {name}; the hosts are {names}")).err()
-    })?;
+    let host = host.expect("a named host was checked before command guards");
     if host.status != HostStatus::Ready {
         let error = host
             .error

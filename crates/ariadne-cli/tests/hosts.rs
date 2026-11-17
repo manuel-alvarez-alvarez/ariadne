@@ -445,6 +445,16 @@ async fn each_command_takes_the_hosts_of_its_kind() {
             "no host is named missing; the hosts are local (ready), build (ready), offline (down)",
         ),
         (
+            "missing",
+            vec!["skill", "reset", "coding"],
+            "no host is named missing; the hosts are local (ready), build (ready), offline (down)",
+        ),
+        (
+            "build",
+            vec!["skill", "reset", "coding"],
+            "run it with --host local",
+        ),
+        (
             "offline",
             vec!["task", "ls"],
             "host offline is down: no forward",
