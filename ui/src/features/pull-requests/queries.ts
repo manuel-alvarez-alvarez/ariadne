@@ -259,17 +259,20 @@ export function usePullRequestLists(hosts: readonly { host: Host; filters: PullR
         .sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0)),
     [results, names],
   )
-  const kept = useRef<HostRow<PullRequestDto>[] | undefined>(undefined)
+  // Kept for a new filter over the same hosts only: another host's rows are
+  // never shown for a host that has not answered.
+  const hostsKey = names.join("\n")
+  const kept = useRef<{ hostsKey: string; rows: HostRow<PullRequestDto>[] } | undefined>(undefined)
+  const retained = kept.current?.hostsKey === hostsKey ? kept.current.rows : undefined
   const answered = results.some((result) => result.data !== undefined) || results.length === 0
-  if (answered) kept.current = rows
+  if (answered) kept.current = { hostsKey, rows }
   return {
     /** Every host's rows, or the last answer while a new filter waits for its own. */
-    rows: answered ? rows : kept.current,
+    rows: answered ? rows : retained,
     errors: results.flatMap((result, index) =>
       result.error ? [{ host: names[index] as Host, error: result.error as Error }] : [],
     ),
-    isPending:
-      !answered && kept.current === undefined && results.every((result) => result.isPending),
+    isPending: !answered && retained === undefined && results.every((result) => result.isPending),
     hasNextPage: results.some((result) => result.hasNextPage),
     isFetchingNextPage: results.some((result) => result.isFetchingNextPage),
     pages: results.reduce((count, result) => count + (result.data?.pages.length ?? 0), 0),

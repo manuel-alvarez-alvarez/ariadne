@@ -2,7 +2,7 @@
 
 /** The Forge tabs over a settings daemon and a named host. */
 
-import { screen, waitFor, within } from "@testing-library/react"
+import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, expect, it } from "vitest"
 import { DetailPanels } from "@/components/detail-panels"
@@ -182,4 +182,26 @@ it("merges the issues of every host, and fills the goal dialog on the issue's ho
   await userEvent.click(within(row).getByRole("button", { name: "Create goal" }))
   const host = await screen.findByRole("combobox", { name: "Host" })
   expect(host.textContent).toContain("box")
+})
+
+it("shows no request of the host picked before when the newly picked host fails", async () => {
+  stubHosts({
+    local: { "/v1/repositories": [LOCAL_REPO], "/v1/pull-requests": page([localPull]) },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests": () =>
+        new Response(JSON.stringify({ error: { code: "boom", message: "box is broken" } }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }),
+    },
+  })
+  useSettingsStore.setState({ hostFilter: "local" })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+  await screen.findByRole("row", { name: "Open #42 Local fix" })
+
+  act(() => useSettingsStore.setState({ hostFilter: "box" }))
+
+  expect(await screen.findByText("Could not load pull requests")).toBeTruthy()
+  expect(screen.queryByRole("row", { name: "Open #42 Local fix" })).toBeNull()
 })
