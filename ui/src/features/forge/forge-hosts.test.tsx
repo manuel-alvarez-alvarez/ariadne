@@ -219,6 +219,8 @@ it("keeps the filtered repository when another host, with another id for it, is 
       "/v1/repositories/repo-box/issues": [],
     },
   })
+  // `local` is picked first, so the box's requests are only read once it is picked.
+  useSettingsStore.setState({ hostFilter: "local" })
   const view = renderScreen(
     <>
       <PullRequestsPage />
@@ -226,7 +228,14 @@ it("keeps the filtered repository when another host, with another id for it, is 
     </>,
     { route: "/forge/pull-requests?repo=repo-local" },
   )
-  await screen.findByRole("row", { name: "Open #42 Box fix" })
+  await screen.findByRole("row", { name: "Open #42 Local fix" })
+  expect(
+    seen.some(
+      (request) =>
+        request.origin === "http://box.test:7676" &&
+        request.url.pathname.endsWith("/pull-requests"),
+    ),
+  ).toBe(false)
 
   act(() => useSettingsStore.setState({ hostFilter: "box" }))
 
