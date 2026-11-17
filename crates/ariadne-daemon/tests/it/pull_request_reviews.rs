@@ -2361,6 +2361,84 @@ async fn cancelling_a_replaced_review_goal_leaves_its_replacement_alone() {
     );
 }
 
+/// A forge re-request is seen before the fetch has read the request's
+/// details. A scheduler pass in that window must not run the round on the
+/// head the last read held: the round waits for the read of the new head.
+#[tokio::test]
+async fn a_forge_re_request_round_waits_for_the_read_of_the_new_head() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, first) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&first)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    fetch_again(&h, &stub, &repo).await;
+    stub.reprogram(script(&Shown {
+        listed: false,
+        timeline: &["review_requested", "review_request_removed"],
+        ..Shown::open(&first)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    assert!(!h.state.launcher.live.get(&id).unwrap().review_requested);
+    let count = h.prompts_to(&session).len();
+    let second = push(&path);
+    // Hold the detail read of the reviews, so the fetch has seen the
+    // re-request but has not yet kept the new head.
+    let gate = tempfile::tempdir().unwrap();
+    let open_gate = gate.path().join("open");
+    let mut held = script(&Shown::open(&second));
+    let reviews = held
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["args"] == json!(["api", "repos/acme/widgets/pulls/1/reviews"]))
+        .unwrap();
+    reviews["wait_for"] = json!(open_gate);
+    stub.reprogram(held);
+    let before = stub.fetches();
+    let calls_before = stub.invocations().len();
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the held detail read", async || {
+        stub.invocations().iter().skip(calls_before).any(|call| {
+            call.args.first().is_some_and(|arg| arg == "api")
+                && call
+                    .args
+                    .get(1)
+                    .is_some_and(|arg| arg == "repos/acme/widgets/pulls/1/reviews")
+                && !call.args.iter().any(|arg| arg == "POST")
+        })
+    })
+    .await;
+    h.notify_pull_request(&id);
+    h.flush_scheduler().await;
+    std::fs::write(&open_gate, "").unwrap();
+    eventually(TIMEOUT, "the fetch", async || stub.fetches() > before).await;
+    h.flush_scheduler().await;
+    eventually(TIMEOUT, "the forge re-request round", async || {
+        h.prompts_to(&session).len() == count + 1
+    })
+    .await;
+    let prompt = h.prompts_to(&session).pop().unwrap();
+    assert!(
+        prompt.contains("- Review again: forge re-request."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(&format!("Head: <<<untrusted>>>{second}<<<end untrusted>>>")),
+        "{prompt}"
+    );
+    assert_eq!(
+        sh(
+            Path::new(session.worktree_path.as_ref().unwrap()),
+            "git rev-parse HEAD"
+        ),
+        second
+    );
+}
+
 #[tokio::test]
 async fn a_review_round_needs_an_ask_and_runs_on_the_current_head() {
     let stub = stub_forge_cli(json!([]));
