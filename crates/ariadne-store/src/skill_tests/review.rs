@@ -241,7 +241,6 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "`Withdrawn:",
         "Leave threads another login opened",
         "A thanks or no answer",
-        "**[Pn] Title**",
         "To reproduce:",
         "at most two sentences",
         "one sentence per new finding",
@@ -295,6 +294,36 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
     ] {
         assert!(text.contains(rule), "missing preserved rule: {rule}");
     }
+    // A finding shows its title once, and its comment names no local file.
+    for rule in [
+        "Give the title in the `title` field of `submit_review`, never in the `body`.",
+        "The daemon posts `**[Pn] Title**` from that field.",
+        "Start the `body` with the description.",
+        "Repeat no `**[Pn] Title**` line in it.",
+        "Name no local file in a comment: no file under `/tmp`, no worktree path and no scratch file of yours.",
+        "Show a code block of at most 10 lines, or explain the steps in prose.",
+        "Write a longer one as prose steps.",
+    ] {
+        assert!(text.contains(rule), "missing finding rule: {rule}");
+    }
+    assert!(
+        !text.contains("Open with `**[Pn] Title**`"),
+        "the old instruction to open the body with the title remains"
+    );
+    let example = raw
+        .split("Model example:")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .nth(1)
+        .unwrap();
+    assert!(example.contains("title: A reviewer escalation"));
+    assert!(
+        !example.contains("**[P1]") && !example.contains("tests/it/"),
+        "the model example repeats a title or names a file"
+    );
+    let reproduce = example.split("To reproduce:").nth(1).unwrap();
+    assert!(reproduce.lines().count() <= 10);
     assert!(raw.len() < 8_000);
     assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
 }

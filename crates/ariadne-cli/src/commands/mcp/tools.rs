@@ -299,10 +299,12 @@ pub(super) struct ReviewFinding {
     /// diff shows, numbered as `get_diff` shows it on its new side. A line
     /// the diff does not show is refused.
     pub line: i64,
-    /// A short title of the defect, in a few words.
+    /// A short title of the defect, in a few words. The title goes here
+    /// only: the daemon posts it as `**[Pn] Title**`.
     pub title: String,
     /// What goes wrong: the input and the failure it causes. Then how to
-    /// fix it.
+    /// fix it. Repeat no title in it. Name no local file in it, such as a
+    /// file under `/tmp` or the worktree path.
     pub body: String,
     pub priority: Priority,
 }
