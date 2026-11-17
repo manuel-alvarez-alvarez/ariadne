@@ -130,8 +130,7 @@ per host — is spec 015's (rules 51 to 60).
     learned permission, and leaves `state` as it is.
 28. The AI permission settings are pushed with `PUT /v1/permissions/ai`:
     `enabled`, the thresholds where they are set by hand (else
-    `default_thresholds`), and `flavour`. `device` is not pushed: the host
-    picks its own best device for the flavour. A status event that changes
+    `default_thresholds`), and `flavour`. `device` is not pushed. A status event that changes
     none of these pushes nothing. A sync never sends `device`. A flavour equal
     to the one the host stores keeps the host's device (spec 022, rule 19), so
     a device set on one host with `permissions ai set --device --host NAME`
