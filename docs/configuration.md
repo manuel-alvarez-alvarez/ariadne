@@ -145,6 +145,20 @@ The daemon checks the status of each host again and again, so
   `host_updated` event. Stopping the daemon ends every check and every `ssh`
   it started.
 
+To try one host again at once, send `POST /v1/hosts/<name>/reconnect`.
+The daemon does not wait for the next check or the next start of `ssh`:
+
+- A `down` or `connecting` `ssh://` host starts a new forward now, and the
+  wait after it goes back to 1 second.
+- A `ready` `ssh://` host is checked now. A good answer changes nothing and
+  keeps every open stream. A failed check makes it `down`, and a new forward
+  starts now.
+- An `http://` host or a socket path host is checked now, and its status
+  follows the answer.
+
+The route answers the host as it stands after that. The name `local` is a
+`400`, and an unknown name is a `404`.
+
 One forward carries everything both ways: requests, event streams and
 answers. A client on this machine uses the `endpoint` as if the far daemon
 were local.

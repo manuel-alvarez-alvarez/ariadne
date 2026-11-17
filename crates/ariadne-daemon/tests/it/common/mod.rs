@@ -2135,6 +2135,18 @@ impl Harness {
         query.bind(&session.id).execute(&self.db).await.unwrap();
     }
 
+    /// A message its recipient's agent took `secs` ago.
+    pub(crate) async fn delivered_ago(&self, message_id: &str, secs: i64) {
+        let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        sqlx::query("UPDATE messages SET delivered_at = ? WHERE id = ?")
+            .bind(when)
+            .bind(message_id)
+            .execute(&self.db)
+            .await
+            .unwrap();
+    }
+
     /// Make the next write of this goal's confirmed-failures column fail,
     /// the way a transient database error would, until
     /// [`Self::stop_rejecting_goal_confirm`] undoes it. A trigger rather

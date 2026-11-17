@@ -609,6 +609,16 @@ pub fn exhausted_switch_notice() -> &'static str {
     EXHAUSTED_SWITCH_NOTICE
 }
 
+/// What the daemon's next prompt starts with after a turn ended cancelled
+/// (021). A cancel answers every open permission request `cancelled`, and an
+/// agent reads that as the user refusing the call.
+const CANCELLED_TURN_NOTE: &str = "Your last turn was cancelled. The cancel stopped its open tool calls. Nobody refused them. Do the work that this turn asks for.";
+
+/// The note the first daemon prompt after a cancelled turn starts with.
+pub fn cancelled_turn_note() -> &'static str {
+    CANCELLED_TURN_NOTE
+}
+
 /// The two STE rules a text can be held to by reading it.
 ///
 /// Every text an agent reads here is ASD-STE100 Simplified Technical English:
@@ -752,10 +762,13 @@ pub(crate) mod tests {
                     .map(|kind| (kind.as_str().to_string(), default_prompt_text(kind))),
             )
             .chain(pull_request_texts())
-            .chain([(
-                "exhausted switch notice".to_string(),
-                exhausted_switch_notice(),
-            )])
+            .chain([
+                (
+                    "exhausted switch notice".to_string(),
+                    exhausted_switch_notice(),
+                ),
+                ("cancelled turn note".to_string(), cancelled_turn_note()),
+            ])
             .collect()
     }
 

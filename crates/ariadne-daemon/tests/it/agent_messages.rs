@@ -730,6 +730,55 @@ async fn a_message_is_queued_once_across_scheduler_passes() {
     );
 }
 
+/// A pass that finds a message already queued behind the turn hands it
+/// nothing and says nothing: only the pass that queued it logs a delivery.
+/// An agent away for hours comes back to a backlog, and every pass naming
+/// every message of it again reads, in the log, as a loop.
+#[tokio::test]
+async fn a_message_already_queued_is_logged_as_delivered_once() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let h = harness().await;
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(h.telemetry.log_layer()),
+    );
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let sent: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message("agent", Some(&cast.develop().id), "LOGGED: once."),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    pass(&sched, &cast).await;
+    pass(&sched, &cast).await;
+
+    h.telemetry.flush();
+    let deliveries = h
+        .telemetry_store
+        .read_logs(Default::default())
+        .await
+        .unwrap()
+        .iter()
+        .map(|record| ariadne_api::logs::render_message(record.body.as_deref(), &record.attributes))
+        .filter(|line| {
+            line.starts_with("delivering a message to the agent it is for")
+                && line.contains(&sent.id)
+        })
+        .count();
+    assert_eq!(deliveries, 1, "three passes over one queued message");
+    std::fs::write(&release, "go").unwrap();
+    eventually(TIMEOUT, "the queued prompt to go out", async || {
+        h.prompted(&author).contains("LOGGED:")
+    })
+    .await;
+}
+
 /// Messages keep their order across a read and the queue: a read mid-turn
 /// returns every queued message, oldest first, and none of them is typed at
 /// the agent after the turn.
