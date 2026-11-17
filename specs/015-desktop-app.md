@@ -1172,14 +1172,17 @@ Out: the daemon endpoints themselves (012).
     panel offers no New task, and its planning guide no Create task manually.
     The task panel and the session console read `local` only, so a named
     host's task card is not a link, its goal panel's Sessions tab names that
-    and lists nothing, and a `?session=` with a named `?host=` opens no console.
+    and lists nothing, and a `?session=` with a named `?host=` opens no console. A `?task=` or a
+    standalone `?session=` with a named `?host=` opens no panel, so an attention
+    row of a named host opens nothing either.
 
 ## Acceptance criteria
 
 - A task card of a named host is not a link, and a named host's goal panel
   opens no session console
   (`ui/src/features/tasks/task-card.test.tsx::links a local card to its panel and leaves a remote card unlinked`,
-  `ui/src/features/goals/hosts.test.tsx::opens no session console of a remote goal, which would read local`).
+  `ui/src/features/goals/hosts.test.tsx::opens no session console of a remote goal, which would read local`,
+  `ui/src/features/goals/hosts.test.tsx::opens no task or session panel of a named host, which would read local`).
 - The planning guide words the recorded orchestrator session, a recorded wait
   before its status, and opens it
   (`ui/src/features/goals/planning-guide.test.tsx::words a recorded %j session as %s`);

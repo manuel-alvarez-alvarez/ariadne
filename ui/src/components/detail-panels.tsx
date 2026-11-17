@@ -18,6 +18,7 @@
  */
 
 import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom"
+import { LOCAL_HOST } from "@/api"
 import { GoalPanel } from "@/features/goals/goal-panel"
 import { PullRequestPanel } from "@/features/pull-requests/pull-request-panel"
 import { SessionPanel } from "@/features/sessions/session-panel"
@@ -32,10 +33,13 @@ export function DetailPanels() {
 
   const prId = search.get("pr")
   const goalId = search.get("goal")
-  const taskId = search.get("task")
-  const sessionId = search.get("session")
   // The host the panel's entity lives on; a link without `?host=` is `local`'s.
   const host = hostOf(search)
+  // The task panel and the session panel read `local` only, so a link that
+  // names another host opens neither rather than showing local's entity.
+  const local = host === LOCAL_HOST
+  const taskId = local ? search.get("task") : null
+  const sessionId = local ? search.get("session") : null
   const onGoalsBoard = location.pathname === paths.goals()
 
   function close(panel: Panel) {

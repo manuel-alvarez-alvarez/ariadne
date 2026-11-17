@@ -242,3 +242,25 @@ it("opens no session console of a remote goal, which would read local", async ()
   expect(await screen.findByRole("heading", { name: THEIRS.title })).toBeTruthy()
   expect(screen.queryByText(/Session remote-s/)).toBeNull()
 })
+
+it("opens no task or session panel of a named host, which would read local", async () => {
+  const seen = stubHosts({ local: EMPTY, box: EMPTY })
+  stubEventSource()
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: "/goals?task=remote-task&host=box" },
+  )
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: "/goals?session=remote-session&tab=terminal&host=box" },
+  )
+
+  await act(async () => {})
+  expect(
+    seen.filter((request) => /\/v1\/(tasks|sessions)\/remote-/.test(request.url.pathname)),
+  ).toEqual([])
+})
