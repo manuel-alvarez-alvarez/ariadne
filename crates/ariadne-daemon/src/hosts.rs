@@ -21,7 +21,7 @@ use ariadne_store::Store;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use tracing::{info, warn};
@@ -35,6 +35,18 @@ mod sync;
 
 /// The longest wait between two starts of one forward.
 const BACKOFF_CAP: Duration = Duration::from_secs(60);
+
+/// A reconnect asked of one host: answered once the host has acted on it.
+type Reconnect = oneshot::Sender<()>;
+
+/// Why [`Hosts::reconnect`] refused a name.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReconnectError {
+    /// `local` is this daemon: there is nothing to reconnect.
+    Local,
+    /// No configured host has the name.
+    Unknown,
+}
 
 /// The daemon's configured hosts. Cheap to clone: every clone is the same.
 #[derive(Clone)]
@@ -50,6 +62,11 @@ struct Inner {
     /// The endpoint of each configured host while it is `ready`, else
     /// `None`: what its sync waits on.
     ready: Vec<watch::Sender<Option<String>>>,
+    /// The reconnects asked of each configured host.
+    reconnects: Vec<mpsc::UnboundedSender<Reconnect>>,
+    /// The other end of each of `reconnects`, until [`Hosts::start`] gives
+    /// it to the task of its host.
+    asked: Mutex<Vec<Option<mpsc::UnboundedReceiver<Reconnect>>>>,
     started: AtomicBool,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -66,6 +83,13 @@ impl Hosts {
             .iter()
             .map(|host| watch::Sender::new(ready_endpoint(host)))
             .collect();
+        let (reconnects, asked) = hosts
+            .iter()
+            .map(|_| {
+                let (send, receive) = mpsc::unbounded_channel();
+                (send, Some(receive))
+            })
+            .unzip();
         Self(Arc::new(Inner {
             cfg,
             store,
@@ -73,6 +97,8 @@ impl Hosts {
             timeouts,
             hosts: Mutex::new(hosts),
             ready,
+            reconnects,
+            asked: Mutex::new(asked),
             started: AtomicBool::new(false),
             tasks: Mutex::new(Vec::new()),
         }))
@@ -93,12 +119,16 @@ impl Hosts {
             let inner = self.0.clone();
             tasks.push(tokio::spawn(sync::run(inner, index, events)));
         }
+        let mut asked = self.0.asked.lock().unwrap();
         for (index, (_, host)) in self.0.cfg.hosts.iter().enumerate() {
             let inner = self.0.clone();
+            let asked = asked[index]
+                .take()
+                .expect("the reconnects of an unstarted host");
             tasks.push(if host.endpoint.starts_with("ssh://") {
-                tokio::spawn(async move { inner.supervise(index).await })
+                tokio::spawn(async move { inner.supervise(index, asked).await })
             } else {
-                tokio::spawn(async move { inner.direct(index).await })
+                tokio::spawn(async move { inner.direct(index, asked).await })
             });
         }
     }
@@ -129,6 +159,31 @@ impl Hosts {
         };
         let configured = self.0.hosts.lock().unwrap().clone();
         std::iter::once(local).chain(configured).collect()
+    }
+
+    /// Make host `name` reconnect at once, and answer the host once it has
+    /// acted on it. A `down` or `connecting` `ssh` host starts a new
+    /// forward with the first wait of its backoff. A `ready` `ssh` host and
+    /// a `direct` host take one health check; a failed check makes the host
+    /// `down`, and an `ssh` host then starts a new forward.
+    pub async fn reconnect(&self, name: &str) -> Result<HostDto, ReconnectError> {
+        if name == "local" {
+            return Err(ReconnectError::Local);
+        }
+        let index = self
+            .0
+            .cfg
+            .hosts
+            .iter()
+            .position(|(host, _)| host == name)
+            .ok_or(ReconnectError::Unknown)?;
+        let (done, acted) = oneshot::channel();
+        // Before `start` no task reads the request, and after `shutdown`
+        // none is left: the host answers as it stands.
+        if self.0.started.load(Ordering::SeqCst) && self.0.reconnects[index].send(done).is_ok() {
+            let _ = acted.await;
+        }
+        Ok(self.0.hosts.lock().unwrap()[index].clone())
     }
 }
 
@@ -228,6 +283,21 @@ fn ssh_args(endpoint: &str, remote: &str, port: u16) -> Result<Vec<String>, Stri
     Ok(args)
 }
 
+/// How one run of a forward ended.
+enum Ended {
+    /// The forward is down for this reason: the next one waits the backoff.
+    Down(String),
+    /// A reconnect cut the run: the next one starts at once.
+    Again(Reconnect),
+}
+
+/// Answer the reconnect in `asked`, if any: the host has acted on it.
+fn acted(asked: &mut Option<Reconnect>) {
+    if let Some(reply) = asked.take() {
+        let _ = reply.send(());
+    }
+}
+
 /// A loopback port nothing listens on now.
 async fn free_port() -> std::io::Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
@@ -280,51 +350,124 @@ impl Inner {
 
     /// Keep the status of `direct` host `index` true: `connecting` until
     /// its first good answer or `host_unanswered`, then `ready` while it
-    /// answers and `down` while it does not.
-    async fn direct(&self, index: usize) {
+    /// answers and `down` while it does not. A reconnect asked on
+    /// `requests` checks it at once, and its status follows the answer.
+    async fn direct(&self, index: usize, mut requests: mpsc::UnboundedReceiver<Reconnect>) {
         let (name, host) = &self.cfg.hosts[index];
         let endpoint = &host.endpoint;
         let client = client_for(endpoint);
-        let mut answered = match self.answer_within(&client).await {
+        let probe = self.timeouts.ssh_probe;
+        let mut asked: Option<Reconnect> = None;
+        let first = tokio::select! {
+            answered = self.answer_within(&client) => answered,
+            Some(reply) = requests.recv() => {
+                asked = Some(reply);
+                check(&client, probe).await
+            }
+        };
+        let mut answered = match first {
             Ok(()) => true,
             Err(why) => {
-                let error = format!("{endpoint} does not answer: {why}");
-                warn!(host = %name, %error, "host down");
-                self.set(index, HostStatus::Down, Some(endpoint.clone()), Some(error));
+                self.direct_down(index, name, format!("{endpoint} does not answer: {why}"));
+                acted(&mut asked);
                 false
             }
         };
         loop {
             if !answered {
-                self.until_answered(&client, self.timeouts.host_check).await;
+                tokio::select! {
+                    () = self.until_answered(&client, self.timeouts.host_check) => {}
+                    Some(reply) = requests.recv() => {
+                        if let Err(why) = check(&client, probe).await {
+                            self.direct_down(index, name, format!("{endpoint} does not answer: {why}"));
+                            let _ = reply.send(());
+                            continue;
+                        }
+                        asked = Some(reply);
+                    }
+                }
             }
             info!(host = %name, "host ready");
             self.set(index, HostStatus::Ready, Some(endpoint.clone()), None);
-            let error = self.until_silent(&client, endpoint).await;
-            warn!(host = %name, %error, "host down");
-            self.set(index, HostStatus::Down, Some(endpoint.clone()), Some(error));
+            acted(&mut asked);
+            let error = loop {
+                tokio::select! {
+                    error = self.until_silent(&client, endpoint) => break error,
+                    Some(reply) = requests.recv() => match check(&client, probe).await {
+                        Ok(()) => {
+                            let _ = reply.send(());
+                        }
+                        Err(why) => {
+                            asked = Some(reply);
+                            break format!("{endpoint} does not answer: {why}");
+                        }
+                    },
+                }
+            };
+            self.direct_down(index, name, error);
+            acted(&mut asked);
             answered = false;
         }
     }
 
-    async fn supervise(&self, index: usize) {
+    /// Make `direct` host `index` `down` with `error`. It keeps its
+    /// configured endpoint.
+    fn direct_down(&self, index: usize, name: &str, error: String) {
+        warn!(host = %name, %error, "host down");
+        let endpoint = self.cfg.hosts[index].1.endpoint.clone();
+        self.set(index, HostStatus::Down, Some(endpoint), Some(error));
+    }
+
+    /// Keep the forward of `ssh` host `index` up. A forward that ends is
+    /// started again after the backoff. A reconnect asked on `requests`
+    /// cuts the wait or the current try, and puts the backoff back to its
+    /// first value.
+    async fn supervise(&self, index: usize, mut requests: mpsc::UnboundedReceiver<Reconnect>) {
         let (name, host) = &self.cfg.hosts[index];
         let base = self.timeouts.ssh_retry;
         let mut backoff = base;
+        let mut asked: Option<Reconnect> = None;
         loop {
-            let error = self
-                .forward(index, &host.endpoint, &host.remote, &mut backoff, base)
+            let ended = self
+                .forward(
+                    index,
+                    &host.endpoint,
+                    &host.remote,
+                    &mut backoff,
+                    base,
+                    &mut requests,
+                    &mut asked,
+                )
                 .await;
+            let error = match ended {
+                Ended::Again(reply) => {
+                    asked = Some(reply);
+                    backoff = base;
+                    continue;
+                }
+                Ended::Down(error) => error,
+            };
             warn!(host = %name, %error, "ssh forward down");
             self.set(index, HostStatus::Down, None, Some(error));
-            sleep(backoff).await;
-            backoff = (backoff * 2).min(BACKOFF_CAP);
+            acted(&mut asked);
+            tokio::select! {
+                () = sleep(backoff) => backoff = (backoff * 2).min(BACKOFF_CAP),
+                Some(reply) = requests.recv() => {
+                    asked = Some(reply);
+                    backoff = base;
+                }
+            }
         }
     }
 
-    /// One run of the forward, from its start to its end. Answers why it
-    /// ended. A forward that came up resets `backoff` to `base`. A forward
-    /// whose far daemon does not answer in `host_unanswered` is killed.
+    /// One run of the forward, from its start to its end. A forward that
+    /// came up resets `backoff` to `base`. A forward whose far daemon does
+    /// not answer in `host_unanswered` is killed. A reconnect asked on
+    /// `requests` while it connects kills it. One asked while it is ready
+    /// checks the host at once, and a failed check kills it with the host
+    /// `down`. The reconnect in `asked` is answered once the host is
+    /// `connecting`.
+    #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
         index: usize,
@@ -332,17 +475,19 @@ impl Inner {
         remote: &Option<String>,
         backoff: &mut Duration,
         base: Duration,
-    ) -> String {
+        requests: &mut mpsc::UnboundedReceiver<Reconnect>,
+        asked: &mut Option<Reconnect>,
+    ) -> Ended {
         let port = match free_port().await {
             Ok(port) => port,
-            Err(error) => return format!("cannot pick a loopback port: {error}"),
+            Err(error) => return Ended::Down(format!("cannot pick a loopback port: {error}")),
         };
         let remote = remote
             .clone()
             .unwrap_or_else(|| self.cfg.socket_path.display().to_string());
         let args = match ssh_args(endpoint, &remote, port) {
             Ok(args) => args,
-            Err(error) => return error,
+            Err(error) => return Ended::Down(error),
         };
         self.set(index, HostStatus::Connecting, None, None);
         let ssh = self.cfg.ssh_bin.as_deref().unwrap_or("ssh");
@@ -355,8 +500,9 @@ impl Inner {
             .spawn()
         {
             Ok(child) => child,
-            Err(error) => return format!("cannot run {ssh}: {error}"),
+            Err(error) => return Ended::Down(format!("cannot run {ssh}: {error}")),
         };
+        acted(asked);
         // The last line the process wrote is why it ended.
         let stderr = child.stderr.take().map(|stderr| {
             tokio::spawn(async move {
@@ -375,22 +521,44 @@ impl Inner {
         let answered = tokio::select! {
             status = child.wait() => Err(status),
             answered = self.answer_within(&client) => Ok(answered),
+            Some(reply) = requests.recv() => {
+                let _ = child.kill().await;
+                return Ended::Again(reply);
+            }
         };
         let status = match answered {
             Err(status) => status,
             Ok(Err(why)) => {
                 let _ = child.kill().await;
-                return format!("the far daemon does not answer through the forward: {why}");
+                return Ended::Down(format!(
+                    "the far daemon does not answer through the forward: {why}"
+                ));
             }
             Ok(Ok(())) => {
                 *backoff = base;
                 info!(endpoint = %local, "ssh forward ready");
                 self.set(index, HostStatus::Ready, Some(local.clone()), None);
-                tokio::select! {
-                    status = child.wait() => status,
-                    error = self.until_silent(&client, &local) => {
-                        let _ = child.kill().await;
-                        return error;
+                loop {
+                    tokio::select! {
+                        status = child.wait() => break status,
+                        error = self.until_silent(&client, &local) => {
+                            let _ = child.kill().await;
+                            return Ended::Down(error);
+                        }
+                        Some(reply) = requests.recv() => {
+                            match check(&client, self.timeouts.ssh_probe).await {
+                                Ok(()) => {
+                                    let _ = reply.send(());
+                                }
+                                Err(why) => {
+                                    let _ = child.kill().await;
+                                    let error = format!("{local} does not answer: {why}");
+                                    warn!(endpoint = %local, %error, "ssh forward down");
+                                    self.set(index, HostStatus::Down, None, Some(error));
+                                    return Ended::Again(reply);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -403,10 +571,10 @@ impl Inner {
                 .flatten(),
             None => None,
         };
-        last.unwrap_or_else(|| match status {
+        Ended::Down(last.unwrap_or_else(|| match status {
             Ok(status) => format!("{ssh} exited: {status}"),
             Err(error) => format!("{ssh} could not be waited on: {error}"),
-        })
+        }))
     }
 
     /// Check a `connecting` host every `ssh_probe_interval` until its first
