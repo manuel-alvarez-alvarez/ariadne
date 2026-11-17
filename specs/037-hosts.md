@@ -44,7 +44,9 @@ picker, the Hosts section of its settings and one stream per host — is spec
    (`hosts.<name>.endpoint`, `hosts.<name>.remote`) at startup and by
    `ariadned --check-config`, in the same words. The scheme is lowercase:
    `SSH://box` is refused, so every later check of the text agrees.
-3. The name `local` is refused. A name has only letters, digits, `-` and `_`.
+3. The names `local` and `all` are refused by name: `local` is this daemon,
+   and `all` selects every host (spec 014, rule 46). A name has only letters,
+   digits, `-` and `_`.
 4. `GET /v1/hosts` returns `HostDto[]`. The first row is `local`; the others
    follow in file order. `HostDto` has `name`; `kind` (`local`, `direct`,
    `ssh`); `endpoint` (the address a client on this machine uses: for `local`

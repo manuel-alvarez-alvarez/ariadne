@@ -128,6 +128,53 @@ pub(crate) enum RepoCommand {
     },
 }
 
+/// The first flag of `cmd` that names a setting `local` syncs to every host
+/// (spec 037, rule 26), and what the command takes on a named host instead.
+pub(crate) fn synced_flag(cmd: &RepoCommand) -> Option<(&'static str, &'static str)> {
+    let (branch, description, permission_mode, workflow, forge, takes) = match cmd {
+        RepoCommand::Add {
+            description,
+            permission_mode,
+            workflow,
+            forge,
+            ..
+        } => (
+            false,
+            description,
+            permission_mode,
+            workflow,
+            forge,
+            "PATH and --branch",
+        ),
+        RepoCommand::Update {
+            branch,
+            description,
+            permission_mode,
+            workflow,
+            forge,
+            ..
+        } => (
+            branch.is_some(),
+            description,
+            permission_mode,
+            workflow,
+            forge,
+            "ID and --path",
+        ),
+        RepoCommand::Ls | RepoCommand::Inspect { .. } | RepoCommand::Rm { .. } => return None,
+    };
+    [
+        ("branch", branch),
+        ("description", description.is_some()),
+        ("permission-mode", permission_mode.is_some()),
+        ("workflow", workflow.is_some()),
+        ("forge", forge.forge.is_some()),
+    ]
+    .into_iter()
+    .find(|(_, set)| *set)
+    .map(|(flag, _)| (flag, takes))
+}
+
 pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()> {
     match cmd {
         RepoCommand::Add {
