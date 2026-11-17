@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-11-15
+updated: 2026-11-17
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -249,6 +249,13 @@ the ACP runtime that takes a prompt (021).
     idle, or the runtime says no turn is in flight. A turn that never ends
     with a question pending is still flagged and relaunched. Once the
     request is answered, withdrawn or expired, the quiet clock applies again.
+44. An agent between turns whose latest message to the orchestrator (018)
+    has not reached it waits on the orchestrator, as rule 43's agent waits
+    on the user. It is never nudged, never flagged stalled and never
+    relaunched: an orchestrator down for hours on a usage limit does not
+    make the agents that asked it wedged. Once the message is delivered,
+    the quiet clock counts from the delivery where that is later than the
+    agent's own last report.
 
 ## Acceptance criteria
 
@@ -307,6 +314,12 @@ the ACP runtime that takes a prompt (021).
   (`::an_idle_agent_with_a_pending_question_is_left_alone_until_it_closes`).
   An agent stuck inside a turn with a pending question is still relaunched
   (`::an_agent_stuck_in_a_turn_with_a_pending_question_is_still_relaunched`).
+- An idle agent whose question has not reached the orchestrator is not
+  nudged, flagged or relaunched, and one whose question was delivered a
+  minute ago is measured from the delivery
+  (`::an_idle_agent_whose_question_has_not_reached_the_orchestrator_is_left_alone`).
+  One silent long after the delivery is relaunched
+  (`::an_agent_silent_long_after_its_question_was_delivered_is_relaunched`).
 - An orchestrator of a finished goal raises no attention
   (`events.rs::an_orchestrator_of_a_finished_goal_raises_no_attention`).
 - A session waiting on a person is never nudged or relaunched
