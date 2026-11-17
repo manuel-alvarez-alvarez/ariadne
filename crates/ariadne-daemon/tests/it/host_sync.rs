@@ -3,7 +3,7 @@
 //! Two harness daemons: the far one served on a loopback TCP port, and the
 //! local one with a `direct` host that points at it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -413,6 +413,55 @@ async fn a_learned_permission_without_a_checkout_on_the_host_is_counted_as_skipp
         let sync = sync_of(&local).await;
         sync.state == SyncState::InSync && sync.skipped_permissions == 1
     })
+    .await;
+}
+
+#[tokio::test]
+async fn a_refused_repository_holds_back_no_other_repository() {
+    let (far, local, _dir) = far_and_local().await;
+    forge_repository(
+        &local,
+        "a-widgets",
+        "acme/widgets",
+        json!({"base_branch": "next"}),
+    )
+    .await;
+    forge_repository(
+        &local,
+        "b-gadgets",
+        "acme/gadgets",
+        json!({"description": "Local words."}),
+    )
+    .await;
+    let lacking = forge_repository(&local, "c-lacking", "acme/lacking", json!({})).await;
+    let far_widgets = forge_repository(&far, "a-widgets", "acme/widgets", json!({})).await;
+    sh(Path::new(&far_widgets.path), "git branch -D next");
+    let far_gadgets = forge_repository(&far, "b-gadgets", "acme/gadgets", json!({})).await;
+    local.state.hosts.start();
+
+    let expected = vec![MissingRepositoryDto {
+        id: lacking.id.clone(),
+        forge: Some("acme/lacking".into()),
+    }];
+    eventually(
+        TIMEOUT,
+        "the host failed with the missing checkout listed",
+        || async {
+            let sync = sync_of(&local).await;
+            sync.state == SyncState::Failed && sync.missing_repositories == expected
+        },
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the other repository took its settings",
+        || async {
+            let after: RepositoryDto = far
+                .get(&format!("/v1/repositories/{}", far_gadgets.id))
+                .await;
+            after.description.as_deref() == Some("Local words.")
+        },
+    )
     .await;
 }
 

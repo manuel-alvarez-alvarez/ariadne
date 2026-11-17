@@ -505,6 +505,9 @@ impl Pusher<'_> {
     async fn repositories(&self) -> Result<HashMap<String, String>, String> {
         let (ids, pairs) = self.pairs().await?;
         let mut missing = Vec::new();
+        // A host may refuse one repository's settings: the others still go,
+        // and the missing checkouts are still recorded.
+        let mut refused = Vec::new();
         for Pair { local, remote } in &pairs {
             let Some(remote) = remote else {
                 missing.push(MissingRepositoryDto {
@@ -532,15 +535,22 @@ impl Pusher<'_> {
                 forge: (enabled != remote.forge.as_ref().map(|forge| forge.enabled))
                     .then_some(ForgeUpdate { enabled }),
             };
-            self.client
+            if let Err(error) = self
+                .client
                 .put_json::<RepositoryDto, _>(&format!("/v1/repositories/{}", remote.id), &request)
                 .await
-                .map_err(|error| format!("repository {}: {error}", local.id))?;
+            {
+                refused.push(format!("repository {}: {error}", local.id));
+            }
         }
         self.inner
             .set_sync(self.index, |sync| sync.missing_repositories = missing);
         self.count_skipped(&ids).await?;
-        Ok(ids)
+        if refused.is_empty() {
+            Ok(ids)
+        } else {
+            Err(refused.join("; "))
+        }
     }
 
     /// Record how many local learned permissions are on a repository the
