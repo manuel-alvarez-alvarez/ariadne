@@ -24,7 +24,12 @@ import {
   useNeedsRefresh,
   useSearchFilter,
 } from "@/features/forge/forge-filters"
-import { distinctEnabled, repositoryOn, useHostRepositories } from "@/features/forge/forge-hosts"
+import {
+  distinctEnabled,
+  filterOption,
+  repositoryOn,
+  useHostRepositories,
+} from "@/features/forge/forge-hosts"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { useHostFilter } from "@/hooks/use-host-filter"
 
@@ -55,7 +60,7 @@ export function IssuesPage() {
     (repository) =>
       repository.forge?.enabled &&
       (!repositoryId ||
-        repositoryOn(repositories.rows, repositoryId, repository.host) === repository.id),
+        repositoryOn(repositories.known, repositoryId, repository.host) === repository.id),
   )
   const needsRefresh = useNeedsRefresh(visible)
   const assigned = assignedToMe ? "me" : "all"
@@ -121,7 +126,7 @@ export function IssuesPage() {
       />
       <ForgeFilters
         repositories={enabled}
-        repository={repositoryId}
+        repository={filterOption(enabled, repositories.known, repositoryId)}
         onRepository={setRepositoryId}
         query={text}
         onQuery={setText}

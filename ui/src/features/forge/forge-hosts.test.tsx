@@ -205,3 +205,47 @@ it("shows no request of the host picked before when the newly picked host fails"
   expect(await screen.findByText("Could not load pull requests")).toBeTruthy()
   expect(screen.queryByRole("row", { name: "Open #42 Local fix" })).toBeNull()
 })
+
+it("keeps the filtered repository when another host, with another id for it, is picked", async () => {
+  const seen = stubHosts({
+    local: {
+      "/v1/repositories": [LOCAL_REPO],
+      "/v1/pull-requests": page([localPull]),
+      "/v1/repositories/repo-local/issues": [],
+    },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests": page([boxPull]),
+      "/v1/repositories/repo-box/issues": [],
+    },
+  })
+  const view = renderScreen(
+    <>
+      <PullRequestsPage />
+      <IssuesPage />
+    </>,
+    { route: "/forge/pull-requests?repo=repo-local" },
+  )
+  await screen.findByRole("row", { name: "Open #42 Box fix" })
+
+  act(() => useSettingsStore.setState({ hostFilter: "box" }))
+
+  await waitFor(() => {
+    const onBox = seen.filter((request) => request.origin === "http://box.test:7676")
+    // Pull requests read the box's own id for the repository...
+    expect(
+      onBox
+        .filter((request) => request.url.pathname === "/v1/pull-requests")
+        .map((request) => request.url.searchParams.get("repo")),
+    ).toEqual(["repo-box"])
+    // ...and so do the issues, which are read per repository.
+    expect(
+      onBox.some((request) => request.url.pathname === "/v1/repositories/repo-box/issues"),
+    ).toBe(true)
+  })
+  // The filter still names the repository, in both tabs.
+  for (const trigger of screen.getAllByRole("combobox", { name: "Filter by repository" })) {
+    expect(trigger.textContent).toContain("acme/widgets")
+  }
+  view.queryClient.clear()
+})

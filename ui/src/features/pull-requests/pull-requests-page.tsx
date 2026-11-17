@@ -38,7 +38,12 @@ import {
   useNeedsRefresh,
   useSearchFilter,
 } from "@/features/forge/forge-filters"
-import { distinctEnabled, repositoryOn, useHostRepositories } from "@/features/forge/forge-hosts"
+import {
+  distinctEnabled,
+  filterOption,
+  repositoryOn,
+  useHostRepositories,
+} from "@/features/forge/forge-hosts"
 import { useHostFilter } from "@/hooks/use-host-filter"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 
@@ -78,14 +83,18 @@ export function PullRequestsPage() {
   const repositories = useHostRepositories(hosts)
   const enabled = distinctEnabled(repositories.rows)
   const queried = hosts.flatMap((host) => {
-    const id = repo ? repositoryOn(repositories.rows, repo, host) : undefined
+    const id = repo ? repositoryOn(repositories.known, repo, host) : undefined
     if (repo && id === undefined) return []
     return [{ host, filters: { repo: id, ...whose.query, q: text?.trim() || undefined } }]
   })
   const rows = usePullRequestLists(queried)
   const listed = rows.rows
   const needsRefresh = useNeedsRefresh(
-    repositories.rows.filter((each) => each.forge?.enabled && (!repo || each.id === repo)),
+    repositories.rows.filter(
+      (each) =>
+        each.forge?.enabled &&
+        (!repo || repositoryOn(repositories.known, repo, each.host) === each.id),
+    ),
   )
   const refresh = useMutation({
     mutationFn: () =>
@@ -125,7 +134,7 @@ export function PullRequestsPage() {
       />
       <ForgeFilters
         repositories={enabled}
-        repository={repo}
+        repository={filterOption(enabled, repositories.known, repo)}
         onRepository={setRepo}
         query={text}
         onQuery={setText}
