@@ -23,7 +23,7 @@ import { BanIcon, CircleCheckIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import type { GoalDto } from "@/api"
+import type { GoalDto, Host } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { DeleteDialog } from "@/components/delete-dialog"
 import { Button } from "@/components/ui/button"
@@ -31,9 +31,11 @@ import { useCancelGoal, useCompleteGoal, useDeleteGoal } from "./queries"
 import { isTerminalGoalStatus } from "./status"
 
 export function GoalActions({
+  host,
   goal,
   onDeleted,
 }: {
+  host: Host
   goal: GoalDto
   /**
    * The goal has stopped existing, so whatever is showing it has to stop too.
@@ -45,8 +47,8 @@ export function GoalActions({
   const [completeOpen, setCompleteOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const cancel = useCancelGoal(goal.id)
-  const complete = useCompleteGoal(goal.id)
+  const cancel = useCancelGoal(host, goal.id)
+  const complete = useCompleteGoal(host, goal.id)
 
   const terminal = isTerminalGoalStatus(goal.status)
   const canCancel = !terminal
@@ -93,6 +95,7 @@ export function GoalActions({
         cancel={cancel}
       />
       <DeleteGoalDialog
+        host={host}
         goal={goal}
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
@@ -216,17 +219,19 @@ function CancelGoalDialog({
  * profile's and the repository's.
  */
 function DeleteGoalDialog({
+  host,
   goal,
   open,
   onOpenChange,
   onDeleted,
 }: {
+  host: Host
   goal: GoalDto
   open: boolean
   onOpenChange: (open: boolean) => void
   onDeleted?: () => void
 }) {
-  const deleteGoal = useDeleteGoal(goal.id)
+  const deleteGoal = useDeleteGoal(host, goal.id)
 
   return (
     <DeleteDialog

@@ -89,7 +89,7 @@ export function LearnedPermissionsTab() {
   const [search, setSearch] = useSearchParams()
   const repositoryFilter = search.get(REPOSITORY_PARAM) ?? undefined
 
-  const repositories = useQuery(repositoriesQueryOptions())
+  const repositories = useQuery(repositoriesQueryOptions("local"))
   const learned = useQuery(learnedPermissionsQueryOptions({ repository: repositoryFilter }))
 
   const [deleteOpen, setDeleteOpen] = useState(false)

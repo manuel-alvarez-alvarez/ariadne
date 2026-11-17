@@ -17,13 +17,13 @@
  */
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
-import { type AgentConfigDto, api, qk, unwrap } from "@/api"
+import { type AgentConfigDto, api, type Host, qk, unwrap } from "@/api"
 
 /** `GET /v1/agents` — every registry agent's flags, current and default. */
 export function agentConfigsQueryOptions() {
   return queryOptions({
-    queryKey: qk.agents.list(),
-    queryFn: () => unwrap(api().GET("/v1/agents")),
+    queryKey: qk.agents.list("local"),
+    queryFn: () => unwrap(api("local").GET("/v1/agents")),
   })
 }
 
@@ -32,10 +32,10 @@ export function agentConfigsQueryOptions() {
  * cached discovery result: whether it is `ready` or `rejected`, and what it
  * can do.
  */
-export function acpAgentsQueryOptions() {
+export function acpAgentsQueryOptions(host: Host) {
   return queryOptions({
-    queryKey: qk.acpAgents.list(),
-    queryFn: () => unwrap(api().GET("/v1/acp-agents")),
+    queryKey: qk.acpAgents.list(host),
+    queryFn: () => unwrap(api(host).GET("/v1/acp-agents")),
   })
 }
 
@@ -51,11 +51,11 @@ export function acpAgentsQueryOptions() {
 export function useRefreshAcpAgents() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => unwrap(api().POST("/v1/acp-agents/refresh")),
+    mutationFn: () => unwrap(api("local").POST("/v1/acp-agents/refresh")),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: qk.agents.lists() })
-      void queryClient.invalidateQueries({ queryKey: qk.acpAgents.lists() })
-      void queryClient.invalidateQueries({ queryKey: qk.models.lists() })
+      void queryClient.invalidateQueries({ queryKey: qk.agents.lists("local") })
+      void queryClient.invalidateQueries({ queryKey: qk.acpAgents.lists("local") })
+      void queryClient.invalidateQueries({ queryKey: qk.models.lists("local") })
     },
   })
 }
@@ -72,7 +72,7 @@ export function useUpdateAgentConfig() {
   return useMutation({
     mutationFn: ({ agentId, extraFlags }: { agentId: string; extraFlags: string[] }) =>
       unwrap(
-        api().PUT("/v1/agents/{id}", {
+        api("local").PUT("/v1/agents/{id}", {
           params: { path: { id: agentId } },
           body: { extra_flags: extraFlags },
         }),
@@ -80,10 +80,10 @@ export function useUpdateAgentConfig() {
     // The updated agent back into the list, in place, and a refetch behind it.
     // There are no detail keys to patch, so this is not `cacheRow`.
     onSuccess: (config) => {
-      queryClient.setQueryData(qk.agents.list(), (configs?: AgentConfigDto[]) =>
+      queryClient.setQueryData(qk.agents.list("local"), (configs?: AgentConfigDto[]) =>
         configs?.map((current) => (current.agent_id === config.agent_id ? config : current)),
       )
-      void queryClient.invalidateQueries({ queryKey: qk.agents.lists() })
+      void queryClient.invalidateQueries({ queryKey: qk.agents.lists("local") })
     },
   })
 }

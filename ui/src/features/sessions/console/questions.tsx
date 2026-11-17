@@ -16,7 +16,7 @@
 import { CircleHelpIcon, Loader2Icon } from "lucide-react"
 import { type FormEvent, useState } from "react"
 
-import { type AgentRequestDto, api, unwrap } from "@/api"
+import { type AgentRequestDto, api, type Host, unwrap } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { describeError, formatClock } from "@/lib/format"
@@ -32,9 +32,9 @@ export type QuestionBlock = Extract<Block, { type: "question" }>
  * snapshot: a console opens on the newest page of events, and a question
  * asked before it has no opening line there.
  */
-export async function pendingRequests(sessionId: string): Promise<AgentRequestDto[]> {
+export async function pendingRequests(host: Host, sessionId: string): Promise<AgentRequestDto[]> {
   const listed = await unwrap(
-    api().GET("/v1/sessions/{id}/agent-requests", { params: { path: { id: sessionId } } }),
+    api(host).GET("/v1/sessions/{id}/agent-requests", { params: { path: { id: sessionId } } }),
   )
   return Array.isArray(listed) ? listed : []
 }
@@ -75,16 +75,17 @@ export function restoredQuestions(
 
 /**
  * Post an answer for one request: an option's id or the user's own text. The
- * card and the composer both answer through this, so neither can reach the
- * console input route.
+ * card, the composer and the attention strip all answer through this, so none
+ * of them can reach the console input route. The host is the session's.
  */
 export async function answerRequest(
+  host: Host,
   sessionId: string,
   requestId: string,
   body: { option_id: string } | { text: string },
 ): Promise<void> {
   await unwrap(
-    api().POST("/v1/sessions/{session_id}/agent-requests/{request_id}/answer", {
+    api(host).POST("/v1/sessions/{session_id}/agent-requests/{request_id}/answer", {
       params: { path: { session_id: sessionId, request_id: requestId } },
       body,
     }),
@@ -146,7 +147,7 @@ export function QuestionCard({
     setSubmitting({ state: "posting", what })
     setError(null)
     try {
-      await answerRequest(sessionId, block.requestId, body)
+      await answerRequest("local", sessionId, block.requestId, body)
       setSubmitting({ state: "accepted" })
       onAnswered?.(block.requestId)
     } catch (failure) {

@@ -23,6 +23,7 @@ import {
   api,
   type CacheSnapshot,
   cacheRow,
+  type Host,
   optimisticStatus,
   qk,
   restoreCache,
@@ -67,14 +68,17 @@ export interface SessionListFilters {
   attention?: boolean
 }
 
-export function sessionsQueryOptions({ seat, live, attention, ...query }: SessionListFilters = {}) {
+export function sessionsQueryOptions(
+  host: Host,
+  { seat, live, attention, ...query }: SessionListFilters = {},
+) {
   const narrowed = (session: SessionDto) =>
     (!seat || session.seat === seat) &&
     (!live || isLiveStatus(session.status)) &&
     (!attention || sessionAttention(session) !== null)
   return queryOptions({
-    queryKey: qk.sessions.list(query),
-    queryFn: () => everyAriadneSession(query),
+    queryKey: qk.sessions.list(host, query),
+    queryFn: () => everyAriadneSession(host, query),
     select:
       seat || live || attention ? (sessions: SessionDto[]) => sessions.filter(narrowed) : undefined,
   })
@@ -92,12 +96,15 @@ const PAGE_LIMIT = 200
  * sessions, a goal's orchestrators, every stuck agent — so it sets `all` and
  * reads on until the last page.
  */
-async function everyAriadneSession(query: Omit<SessionListFilters, "seat" | "live" | "attention">) {
+async function everyAriadneSession(
+  host: Host,
+  query: Omit<SessionListFilters, "seat" | "live" | "attention">,
+) {
   const sessions: SessionDto[] = []
   let cursor: string | undefined
   do {
     const page = await unwrap(
-      api().GET("/v1/sessions", {
+      api(host).GET("/v1/sessions", {
         params: { query: { ...query, all: true, limit: PAGE_LIMIT, cursor } },
       }),
     )
@@ -137,10 +144,10 @@ function ariadneSession(entry: SessionEntryDto): SessionDto {
   }
 }
 
-export function sessionQueryOptions(id: string) {
+export function sessionQueryOptions(host: Host, id: string) {
   return queryOptions({
-    queryKey: qk.sessions.detail(id),
-    queryFn: () => unwrap(api().GET("/v1/sessions/{id}", { params: { path: { id } } })),
+    queryKey: qk.sessions.detail(host, id),
+    queryFn: () => unwrap(api(host).GET("/v1/sessions/{id}", { params: { path: { id } } })),
   })
 }
 
@@ -158,11 +165,11 @@ export function useKillSession() {
   const queryClient = useQueryClient()
   return useMutation<SessionDto, Error, string, CacheSnapshot | undefined>({
     mutationFn: (id: string) =>
-      unwrap(api().POST("/v1/sessions/{id}/kill", { params: { path: { id } } })),
+      unwrap(api("local").POST("/v1/sessions/{id}/kill", { params: { path: { id } } })),
     onMutate: (id) =>
-      optimisticStatus(queryClient, qk.sessions, id, "exited" satisfies SessionStatus),
+      optimisticStatus(queryClient, qk.sessions, "local", id, "exited" satisfies SessionStatus),
     onError: (_error, _id, snapshot) => restoreCache(queryClient, snapshot),
-    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, "local", session),
   })
 }
 
@@ -177,8 +184,8 @@ export function useResumeSession() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) =>
-      unwrap(api().POST("/v1/sessions/{id}/resume", { params: { path: { id } } })),
-    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
+      unwrap(api("local").POST("/v1/sessions/{id}/resume", { params: { path: { id } } })),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, "local", session),
   })
 }
 
@@ -187,8 +194,8 @@ export function useSwitchSession() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: SwitchSessionRequest & { id: string }) =>
-      unwrap(api().POST("/v1/sessions/{id}/switch", { params: { path: { id } }, body })),
-    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
+      unwrap(api("local").POST("/v1/sessions/{id}/switch", { params: { path: { id } }, body })),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, "local", session),
   })
 }
 

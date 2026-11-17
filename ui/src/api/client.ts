@@ -8,8 +8,8 @@
  *
  * Usage:
  *
- *     const goals = await unwrap(api().GET("/v1/goals", { params: { query: { limit: 50 } } }))
- *     const goal = await unwrap(api().GET("/v1/goals/{id}", { params: { path: { id } } }))
+ *     const goals = await unwrap(api("local").GET("/v1/goals", { params: { query: { limit: 50 } } }))
+ *     const goal = await unwrap(api(host).GET("/v1/goals/{id}", { params: { path: { id } } }))
  *
  * `unwrap` returns the response body and throws [`ApiError`] on anything else,
  * which is the contract TanStack Query expects.
@@ -30,22 +30,83 @@ export function normalizeBaseUrl(url: string): string {
   return trimmed.length > 0 ? trimmed : DEFAULT_BASE_URL
 }
 
+/** A host's name, as `GET /v1/hosts` gives it. */
+export type Host = string
+
+/** The settings daemon: the one the base URL in the settings store points at. */
+export const LOCAL_HOST: Host = "local"
+
+/** Where a host is reached, or why it cannot be. */
+type HostAddress = { url: string; error?: undefined } | { url: null; error: string }
+
 let baseUrl = DEFAULT_BASE_URL
-let client: Client<paths> = createTelemetryClient(baseUrl)
+/** Every named host the settings daemon listed; `local` is never in here. */
+let remotes = new Map<Host, HostAddress>()
+/** One client per address, so a host whose address holds keeps its client. */
+const clients = new Map<string, Client<paths>>()
 
 /**
- * Point the client at another daemon. Called by the settings store; the query
+ * Point `local` at another daemon. Called by the settings store; the query
  * cache is cleared by the caller so nothing from the old daemon survives.
  */
 export function setApiBaseUrl(next: string): void {
-  const normalized = normalizeBaseUrl(next)
-  if (normalized === baseUrl) return
-  baseUrl = normalized
-  client = createTelemetryClient(normalized)
+  baseUrl = normalizeBaseUrl(next)
 }
 
-/** The current typed client. Re-read it per call — it is swapped on URL changes. */
-export function api(): Client<paths> {
+/**
+ * Remember where every named host is, from the settings daemon's
+ * `GET /v1/hosts`. Called by the hosts query and by the dispatcher on
+ * `host_updated`, and by nothing else.
+ */
+export function setHostAddresses(hosts: readonly HostAddressRow[]): void {
+  remotes = new Map(
+    hosts
+      .filter((host) => host.name !== LOCAL_HOST)
+      .map((host) => [
+        host.name,
+        host.url === null
+          ? { url: null, error: host.error ?? "host is not reachable" }
+          : { url: host.url },
+      ]),
+  )
+}
+
+/** What {@link setHostAddresses} takes: a host and the URL a client uses for it. */
+interface HostAddressRow {
+  name: Host
+  /** Null for a host this client cannot reach. */
+  url: string | null
+  error?: string | null
+}
+
+/**
+ * The base URL of a host: the settings base URL for `local`, the endpoint of a
+ * reachable named host, and null for any other.
+ */
+export function hostBaseUrl(host: Host): string | null {
+  if (host === LOCAL_HOST) return baseUrl
+  return remotes.get(host)?.url ?? null
+}
+
+/**
+ * The typed client of one host. Re-read it per call — it is swapped when the
+ * host's address changes.
+ *
+ * A host this client cannot reach throws the same network error a daemon that
+ * is down does, with the host's own reason, so a query over it fails like any
+ * other unreachable read.
+ */
+export function api(host: Host): Client<paths> {
+  const url = hostBaseUrl(host)
+  if (url === null) {
+    const reason = remotes.get(host)?.error ?? `unknown host ${host}`
+    throw ApiError.network(new Error(reason))
+  }
+  let client = clients.get(url)
+  if (!client) {
+    client = createTelemetryClient(url)
+    clients.set(url, client)
+  }
   return client
 }
 
@@ -72,16 +133,16 @@ function createTelemetryClient(url: string): Client<paths> {
 }
 
 /**
- * URL of the SSE endpoint, with the optional goal/task filters applied.
- *
- * `EventSource` is not routed through `openapi-fetch`, so the daemon it should
- * connect to is passed in explicitly rather than read off the module state.
+ * URL of one host's SSE endpoint, with the optional goal/task filters applied,
+ * or null for a host this client cannot reach.
  */
 export function eventStreamUrl(
-  daemonUrl: string,
+  host: Host,
   filters: { goal?: string; task?: string } = {},
-): string {
-  const url = new URL("/v1/events/stream", `${normalizeBaseUrl(daemonUrl)}/`)
+): string | null {
+  const base = hostBaseUrl(host)
+  if (base === null) return null
+  const url = new URL("/v1/events/stream", `${base}/`)
   if (filters.goal) url.searchParams.set("goal", filters.goal)
   if (filters.task) url.searchParams.set("task", filters.task)
   return url.toString()

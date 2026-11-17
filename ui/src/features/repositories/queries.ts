@@ -19,6 +19,7 @@ import {
   cacheRow,
   type DetectForgeRequest,
   dropRow,
+  type Host,
   qk,
   type SetTunnelRequest,
   type UpdateRepositoryRequest,
@@ -26,18 +27,19 @@ import {
 } from "@/api"
 
 /** `GET /v1/repositories` — every registered checkout, path-ordered by the daemon. */
-export function repositoriesQueryOptions() {
+export function repositoriesQueryOptions(host: Host) {
   return queryOptions({
-    queryKey: qk.repositories.list(),
-    queryFn: () => unwrap(api().GET("/v1/repositories")),
+    queryKey: qk.repositories.list(host),
+    queryFn: () => unwrap(api(host).GET("/v1/repositories")),
   })
 }
 
 export function useCreateRepository() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: CreateRepositoryRequest) => unwrap(api().POST("/v1/repositories", { body })),
-    onSuccess: (repository) => cacheRow(queryClient, qk.repositories, repository),
+    mutationFn: (body: CreateRepositoryRequest) =>
+      unwrap(api("local").POST("/v1/repositories", { body })),
+    onSuccess: (repository) => cacheRow(queryClient, qk.repositories, "local", repository),
   })
 }
 
@@ -45,14 +47,14 @@ export function useUpdateRepository() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateRepositoryRequest }) =>
-      unwrap(api().PUT("/v1/repositories/{id}", { params: { path: { id } }, body })),
+      unwrap(api("local").PUT("/v1/repositories/{id}", { params: { path: { id } }, body })),
     onSuccess: (repository) => {
-      cacheRow(queryClient, qk.repositories, repository)
+      cacheRow(queryClient, qk.repositories, "local", repository)
       // Goals reference repositories live and carry them inline as
       // `GoalDto.repos`, so an edit here is stale in every goal that works in
       // this one until the goals are read again. The dispatcher does the same
       // for `repository_updated`.
-      void queryClient.invalidateQueries({ queryKey: qk.goals.all() })
+      void queryClient.invalidateQueries({ queryKey: qk.goals.all("local") })
     },
   })
 }
@@ -61,16 +63,16 @@ export function useDeleteRepository() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) =>
-      unwrap(api().DELETE("/v1/repositories/{id}", { params: { path: { id } } })),
-    onSuccess: (_result, id) => dropRow(queryClient, qk.repositories, id),
+      unwrap(api("local").DELETE("/v1/repositories/{id}", { params: { path: { id } } })),
+    onSuccess: (_result, id) => dropRow(queryClient, qk.repositories, "local", id),
   })
 }
 
 /** `GET /v1/forge/tunnel` — the webhook tunnel's switch, state and bound listener. */
 export function tunnelQueryOptions() {
   return queryOptions({
-    queryKey: qk.forge.tunnel(),
-    queryFn: () => unwrap(api().GET("/v1/forge/tunnel")),
+    queryKey: qk.forge.tunnel("local"),
+    queryFn: () => unwrap(api("local").GET("/v1/forge/tunnel")),
   })
 }
 
@@ -78,8 +80,8 @@ export function tunnelQueryOptions() {
 export function useSetTunnel() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: SetTunnelRequest) => unwrap(api().PUT("/v1/forge/tunnel", { body })),
-    onSuccess: (tunnel) => queryClient.setQueryData(qk.forge.tunnel(), tunnel),
+    mutationFn: (body: SetTunnelRequest) => unwrap(api("local").PUT("/v1/forge/tunnel", { body })),
+    onSuccess: (tunnel) => queryClient.setQueryData(qk.forge.tunnel("local"), tunnel),
   })
 }
 
@@ -90,6 +92,7 @@ export function useSetTunnel() {
  */
 export function useDetectForge() {
   return useMutation({
-    mutationFn: (body: DetectForgeRequest) => unwrap(api().POST("/v1/forge/detect", { body })),
+    mutationFn: (body: DetectForgeRequest) =>
+      unwrap(api("local").POST("/v1/forge/detect", { body })),
   })
 }

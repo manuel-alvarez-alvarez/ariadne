@@ -128,10 +128,10 @@ export function SessionsPage() {
     goal: goal ?? undefined,
     task: task ?? undefined,
   }
-  const sessions = useQuery(sessionsQueryOptions(filters))
+  const sessions = useQuery(sessionsQueryOptions("local", filters))
 
-  const goals = useQuery(goalsQueryOptions())
-  const tasks = useQuery(taskListQueryOptions())
+  const goals = useQuery(goalsQueryOptions("local"))
+  const tasks = useQuery(taskListQueryOptions("local"))
   const goalsById = byId(goals.data)
   const tasksById = byId(tasks.data)
 
@@ -523,8 +523,8 @@ function ScopeChips({
   task: string | null
   onClear: (param: FilterParam, value: string) => void
 }) {
-  const goals = useQuery({ ...goalsQueryOptions(), enabled: goal !== null })
-  const tasks = useQuery({ ...taskListQueryOptions(), enabled: task !== null })
+  const goals = useQuery({ ...goalsQueryOptions("local"), enabled: goal !== null })
+  const tasks = useQuery({ ...taskListQueryOptions("local"), enabled: task !== null })
 
   if (!goal && !task) return null
   return (

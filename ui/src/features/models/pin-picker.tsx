@@ -47,7 +47,7 @@ import {
   useState,
 } from "react"
 
-import type { EffortDto, ModelDto } from "@/api"
+import type { EffortDto, Host, ModelDto } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -71,6 +71,7 @@ interface Pin {
 const AUTO_EFFORT_LABEL = "auto"
 
 export function PinPicker({
+  host,
   model,
   effort,
   onChange,
@@ -80,6 +81,11 @@ export function PinPicker({
   id,
   className,
 }: {
+  /**
+   * The host the pin runs on: `models` is that host's `GET /v1/models`, and
+   * the agents' icons are its `GET /v1/acp-agents`.
+   */
+  host: Host
   /** The chosen model, or the empty string until one is chosen. */
   model: string
   /** The pinned effort, or the empty string for the agent's own. */
@@ -109,7 +115,7 @@ export function PinPicker({
 
   // The registry's icon URLs; without them the bundled icons and the letters
   // still draw, so a failed request needs nothing said about it here.
-  const acpAgents = useQuery(acpAgentsQueryOptions())
+  const acpAgents = useQuery(acpAgentsQueryOptions(host))
   const icons = useMemo(
     () => new Map(acpAgents.data?.map((agent) => [agent.id, agent.icon])),
     [acpAgents.data],

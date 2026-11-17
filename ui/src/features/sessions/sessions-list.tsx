@@ -28,7 +28,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import type { SessionDto } from "@/api"
+import type { Host, SessionDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -81,11 +81,14 @@ function emptyTitle(filters: SessionListFilters): string {
 }
 
 export function SessionsList({
+  host,
   filters,
   selectedId,
   sessionStep,
   onSelect,
 }: {
+  /** The host the sessions run on. */
+  host: Host
   filters: SessionListFilters
   /**
    * Id of the row to mark as selected. Defaults to `?session=` — the one param
@@ -105,7 +108,7 @@ export function SessionsList({
 }) {
   const [search] = useSearchParams()
   const selected = selectedId ?? search.get("session") ?? undefined
-  const sessions = useQuery(sessionsQueryOptions(filters))
+  const sessions = useQuery(sessionsQueryOptions(host, filters))
   const rows = useMemo(() => byLastActivity(sessions.data ?? []), [sessions.data])
 
   return (

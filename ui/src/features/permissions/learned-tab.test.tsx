@@ -405,7 +405,10 @@ describe("the detail view", () => {
     rows = rows.map((row) => (row.id === updated.id ? updated : row))
 
     act(() => {
-      dispatchDomainEvent(queryClient, { event: "learned_permission_updated", data: updated })
+      dispatchDomainEvent(queryClient, "local", {
+        event: "learned_permission_updated",
+        data: updated,
+      })
     })
 
     expect(await screen.findByText("Deny")).toBeDefined()

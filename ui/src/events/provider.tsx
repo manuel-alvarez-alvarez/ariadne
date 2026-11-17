@@ -1,19 +1,24 @@
 /**
- * Wires the single app-wide domain-event stream to the query cache.
+ * Wires the app-wide domain-event streams to the query cache: one per
+ * reachable host.
  *
  * Mounted once, under the `QueryClientProvider`. There is deliberately exactly
- * one stream for the whole app: screens never open their own `EventSource`,
- * they just read the cache.
+ * one stream per host for the whole app: screens never open their own
+ * `EventSource`, they just read the cache. Each stream dispatches under its
+ * own host's keys.
  *
- * It is also the app's only link to the daemon. Nothing polls: the heartbeat
- * the stream carries is what the connection indicator reads, and the stream's
- * own idle budget is what notices a daemon that went away.
+ * The `local` stream is also the app's only link to the settings daemon.
+ * Nothing polls: the heartbeat it carries is what the connection indicator
+ * reads, and its own idle budget is what notices a daemon that went away. A
+ * named host's stream publishes nothing to that indicator — the connection
+ * banner and status stay about `local`, and a named host's state is its row
+ * in `GET /v1/hosts`, which the host picker shows.
  */
 
 import { useQueryClient } from "@tanstack/react-query"
 import { type ReactNode, useEffect, useRef } from "react"
 
-import { eventStreamUrl } from "@/api"
+import { eventStreamUrl, type Host, LOCAL_HOST, useHosts } from "@/api"
 import { dispatchDomainEvent, invalidateEverything } from "@/events/dispatch"
 import { setDomainStream } from "@/events/handle"
 import { DomainEventStream } from "@/events/stream"
@@ -41,7 +46,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
     }
     store.reset()
 
-    const stream = new DomainEventStream(() => eventStreamUrl(baseUrl), {
+    const stream = new DomainEventStream(() => eventStreamUrl(LOCAL_HOST) ?? "", {
       onStatus: (status, error) => {
         useStreamStore.getState().setStatus(status, error)
         if (import.meta.env.DEV) console.debug(`[events] stream ${status}`, error ?? "")
@@ -52,13 +57,13 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
           console.debug(`[events] stream ${reconnected ? "reconnected" : "connected"}`)
         }
         // No replay: whatever happened while we were away has to be refetched.
-        if (reconnected) invalidateEverything(queryClient)
+        if (reconnected) invalidateEverything(queryClient, LOCAL_HOST)
       },
       onReconnect: recordStreamReconnect,
       onEvent: (event) => {
         useStreamStore.getState().markEvent(event.event)
         if (import.meta.env.DEV) console.debug("[events]", event.event, event.data)
-        dispatchDomainEvent(queryClient, event)
+        dispatchDomainEvent(queryClient, LOCAL_HOST, event)
       },
       onHeartbeat: (beat) => {
         useStreamStore.getState().markHeartbeat(beat)
@@ -66,7 +71,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
       onResync: ({ missed }) => {
         console.warn(`[events] daemon dropped ${missed} events for this client; resyncing`)
         useStreamStore.getState().markResync()
-        invalidateEverything(queryClient)
+        invalidateEverything(queryClient, LOCAL_HOST)
       },
     })
     setDomainStream(stream)
@@ -77,5 +82,51 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
     }
   }, [queryClient, baseUrl])
 
-  return children
+  const { hosts } = useHosts()
+  return (
+    <>
+      {hosts
+        .filter((host) => host.name !== LOCAL_HOST && host.url !== null)
+        .map((host) => (
+          // Keyed by the address too: a host that moved is a new stream.
+          <HostEventStream key={`${host.name}\n${host.url}`} host={host.name} />
+        ))}
+      {children}
+    </>
+  )
+}
+
+/**
+ * One named host's stream: the same protocol and recovery as `local`'s, under
+ * that host's keys, and nothing written to the connection store.
+ */
+function HostEventStream({ host }: { host: Host }) {
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    const url = eventStreamUrl(host)
+    if (url === null) return
+    const stream = new DomainEventStream(() => url, {
+      onStatus: (status, error) => {
+        if (import.meta.env.DEV) console.debug(`[events:${host}] stream ${status}`, error ?? "")
+      },
+      onOpen: ({ reconnected }) => {
+        if (reconnected) invalidateEverything(queryClient, host)
+      },
+      onReconnect: recordStreamReconnect,
+      onEvent: (event) => {
+        if (import.meta.env.DEV) console.debug(`[events:${host}]`, event.event, event.data)
+        dispatchDomainEvent(queryClient, host, event)
+      },
+      onHeartbeat: () => {},
+      onResync: ({ missed }) => {
+        console.warn(`[events:${host}] daemon dropped ${missed} events for this client; resyncing`)
+        invalidateEverything(queryClient, host)
+      },
+    })
+    stream.start()
+    return () => stream.stop()
+  }, [queryClient, host])
+
+  return null
 }

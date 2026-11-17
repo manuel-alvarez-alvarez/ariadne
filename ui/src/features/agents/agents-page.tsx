@@ -67,10 +67,10 @@ export function AgentsPage() {
   const [picked, setPicked] = useState<string>()
 
   const configs = useQuery(agentConfigsQueryOptions())
-  const models = useQuery(modelsQueryOptions())
+  const models = useQuery(modelsQueryOptions("local"))
   // The registry's icon URLs; the page reads fine without them, so a failed
   // request leaves the bundled icons and the letters, with no error of its own.
-  const acpAgents = useQuery(acpAgentsQueryOptions())
+  const acpAgents = useQuery(acpAgentsQueryOptions("local"))
   const icons = new Map(acpAgents.data?.map((agent) => [agent.id, agent.icon]))
 
   function openEdit(config: AgentConfigDto) {

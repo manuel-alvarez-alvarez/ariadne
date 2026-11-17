@@ -16,7 +16,9 @@ function mount(sessions: SessionDto[] | "error") {
   )
   const open = vi.fn()
   const goal = aGoal({ status: "planning" })
-  renderScreen(<PlanningGuide goal={goal} onOpenConversation={open} onNewTask={vi.fn()} />)
+  renderScreen(
+    <PlanningGuide host="local" goal={goal} onOpenConversation={open} onNewTask={vi.fn()} />,
+  )
   return open
 }
 
@@ -60,6 +62,7 @@ it("says the state is unavailable when a refetch fails over cached sessions", as
   )
   const { queryClient } = renderScreen(
     <PlanningGuide
+      host="local"
       goal={aGoal({ status: "planning" })}
       onOpenConversation={vi.fn()}
       onNewTask={vi.fn()}

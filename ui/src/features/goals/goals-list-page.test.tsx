@@ -17,7 +17,7 @@ import { cleanup, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
-import type { GoalDto } from "@/api"
+import { type GoalDto, qk } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
 import { aGoal, aRepository, aTask } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
@@ -251,7 +251,7 @@ it("keeps the cached goals under a retryable warning when a refresh fails, and c
         : jsonResponse([]),
     )
   })
-  await queryClient.invalidateQueries({ queryKey: ["goals", "list"] })
+  await queryClient.invalidateQueries({ queryKey: qk.goals.lists("local") })
 
   await screen.findByText("Could not refresh goals")
   expect(screen.getByText(GOAL.title)).toBeTruthy()

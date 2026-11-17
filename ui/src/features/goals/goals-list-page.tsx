@@ -9,11 +9,11 @@
  * without a refresh.
  */
 
-import { useQuery } from "@tanstack/react-query"
 import { FilterIcon, PlusIcon, SearchIcon, TargetIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
+import { LOCAL_HOST, useHostLists, useHosts } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
@@ -27,6 +27,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { useHostFilter } from "@/hooks/use-host-filter"
+import { HOST_PARAM } from "@/routes/paths"
+import { useSettingsStore } from "@/stores/settings"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
   DEFAULT_GOAL_STATUS_FILTER,
@@ -74,18 +77,33 @@ export function GoalsListPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [query, setQuery] = useState("")
 
-  const goals = useQuery(goalsQueryOptions({ statuses }))
-  const shown = useMemo(() => searchGoals(goals.data ?? [], query), [goals.data, query])
+  // Every host the header's picker selected, merged newest first: ids are
+  // ULIDs, so their order is their creation order whichever daemon minted them.
+  const hosts = useHostFilter()
+  const goals = useHostLists(hosts, (host) => goalsQueryOptions(host, { statuses }))
+  const merged = useMemo(
+    () => [...goals.rows].sort((a, b) => b.id.localeCompare(a.id) || a.host.localeCompare(b.host)),
+    [goals.rows],
+  )
+  const shown = useMemo(() => searchGoals(merged, query), [merged, query])
+  // A host badge on each lane where the board can hold more than one host.
+  const pickedAll = useSettingsStore((state) => state.hostFilter) === ""
+  const { hosts: known } = useHosts()
+  const showHost = pickedAll && known.length > 1
+  const failedEverywhere = goals.errors.length > 0 && goals.errors.length === hosts.length
+  const [firstError] = goals.errors
   const empty = emptyBoardCopy(statuses)
   const active = sameFilter(statuses, ACTIVE_FILTER)
   const all = statuses.length === 0
   const finished = sameFilter(statuses, FINISHED_FILTER)
   const custom = !active && !all && !finished
 
-  /** The goal just created opens its own panel — no hunting for it on the board. */
-  function openGoal(goalId: string) {
+  /** The goal just created opens its own panel, on its host — no hunting for it on the board. */
+  function openGoal(goalId: string, host: string) {
     const next = new URLSearchParams(search)
     next.set("goal", goalId)
+    if (host === LOCAL_HOST) next.delete(HOST_PARAM)
+    else next.set(HOST_PARAM, host)
     setSearch(next)
   }
 
@@ -181,22 +199,34 @@ export function GoalsListPage() {
         }
       />
 
-      {goals.error && goals.data ? (
-        <RefreshWarning what="goals" error={goals.error} onRetry={() => void goals.refetch()} />
-      ) : null}
+      {/* One warning per host that failed, while the others still show. */}
+      {failedEverywhere && merged.length === 0
+        ? null
+        : goals.errors.map(({ host, error }) => (
+            <RefreshWarning
+              key={host}
+              what={host === LOCAL_HOST ? "goals" : `goals on ${host}`}
+              error={error}
+              onRetry={goals.refetch}
+            />
+          ))}
 
-      {goals.error && !goals.data ? (
+      {firstError && failedEverywhere && merged.length === 0 ? (
         <ErrorState
           showIcon
-          title="Could not load goals"
-          error={goals.error}
-          onRetry={() => void goals.refetch()}
+          title={
+            firstError.host === LOCAL_HOST || hosts.length > 1
+              ? "Could not load goals"
+              : `Could not load goals on ${firstError.host}`
+          }
+          error={firstError.error}
+          onRetry={goals.refetch}
         />
       ) : null}
 
       {goals.isPending ? <BoardSkeleton /> : null}
 
-      {goals.data?.length && shown.length === 0 ? (
+      {merged.length && shown.length === 0 ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title="No goals match"
@@ -204,7 +234,7 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {goals.data?.length === 0 ? (
+      {!goals.isPending && !failedEverywhere && merged.length === 0 ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title={empty.title}
@@ -220,12 +250,14 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {shown.length ? <GoalSwimlanes goals={shown} activeOnly={active} /> : null}
+      {shown.length ? (
+        <GoalSwimlanes hosts={hosts} goals={shown} activeOnly={active} showHost={showHost} />
+      ) : null}
 
       <CreateGoalDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onCreated={(goal) => openGoal(goal.id)}
+        onCreated={(goal) => openGoal(goal.id, goal.host)}
       />
     </div>
   )

@@ -135,7 +135,7 @@ export function restoreStatusFilter(
 }
 
 /** The goals whose title contains the query, ignoring case and surrounding space. */
-export function searchGoals(goals: readonly GoalDto[], query: string): GoalDto[] {
+export function searchGoals<G extends GoalDto>(goals: readonly G[], query: string): G[] {
   const needle = query.trim().toLowerCase()
   return goals.filter((goal) => goal.title.toLowerCase().includes(needle))
 }

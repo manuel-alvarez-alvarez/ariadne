@@ -405,6 +405,7 @@ export function RepositoryFormDialog({
           <Field data-invalid={formState.errors.default_workflow ? true : undefined}>
             <FieldLabel htmlFor="repository-default-workflow">Default workflow</FieldLabel>
             <WorkflowSelect
+              host="local"
               control={control}
               name="default_workflow"
               id="repository-default-workflow"

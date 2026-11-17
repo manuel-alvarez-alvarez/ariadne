@@ -26,8 +26,8 @@ function splitPullRequestKey(key: string): { repository: string; number: number 
  */
 export function pullRequestQueryOptions(id: string) {
   return queryOptions({
-    queryKey: qk.pullRequests.detail(id),
-    queryFn: () => unwrap(api().GET("/v1/pull-requests/{id}", { params: { path: { id } } })),
+    queryKey: qk.pullRequests.detail("local", id),
+    queryFn: () => unwrap(api("local").GET("/v1/pull-requests/{id}", { params: { path: { id } } })),
   })
 }
 
@@ -39,10 +39,10 @@ export function pullRequestQueryOptions(id: string) {
 export function pullRequestByKeyQueryOptions(key: string) {
   const { repository, number } = splitPullRequestKey(key)
   return queryOptions({
-    queryKey: qk.pullRequests.detail(key),
+    queryKey: qk.pullRequests.detail("local", key),
     queryFn: () =>
       unwrap(
-        api().GET("/v1/repositories/{id}/pull-requests/{number}", {
+        api("local").GET("/v1/repositories/{id}/pull-requests/{number}", {
           params: { path: { id: repository, number } },
         }),
       ),
@@ -63,10 +63,10 @@ export function pullRequestsQueryOptions(filters: {
   q?: string
 }) {
   return infiniteQueryOptions({
-    queryKey: qk.pullRequests.list(filters),
+    queryKey: qk.pullRequests.list("local", filters),
     queryFn: ({ pageParam }) =>
       unwrap(
-        api().GET("/v1/pull-requests", {
+        api("local").GET("/v1/pull-requests", {
           params: { query: { ...filters, cursor: pageParam ?? undefined } },
         }),
       ),
@@ -97,14 +97,14 @@ export function useAskReview() {
       skills?: string[]
     }) =>
       unwrap(
-        api().PUT("/v1/repositories/{id}/pull-requests/{number}/ariadne-review", {
+        api("local").PUT("/v1/repositories/{id}/pull-requests/{number}/ariadne-review", {
           params: { path: { id: repository_id, number } },
           body,
         }),
       ),
     onSuccess: (pull) => {
-      client.setQueryData(qk.pullRequests.detail(pullRequestKey(pull)), pull)
-      void client.invalidateQueries({ queryKey: qk.pullRequests.lists() })
+      client.setQueryData(qk.pullRequests.detail("local", pullRequestKey(pull)), pull)
+      void client.invalidateQueries({ queryKey: qk.pullRequests.lists("local") })
     },
   })
 }
@@ -131,14 +131,14 @@ export function useAskBabysit() {
       skills?: string[]
     }) =>
       unwrap(
-        api().PUT("/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit", {
+        api("local").PUT("/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit", {
           params: { path: { id: repository_id, number } },
           body,
         }),
       ),
     onSuccess: (pull) => {
-      client.setQueryData(qk.pullRequests.detail(pullRequestKey(pull)), pull)
-      void client.invalidateQueries({ queryKey: qk.pullRequests.lists() })
+      client.setQueryData(qk.pullRequests.detail("local", pullRequestKey(pull)), pull)
+      void client.invalidateQueries({ queryKey: qk.pullRequests.lists("local") })
     },
   })
 }
@@ -148,7 +148,7 @@ export function useReviewRound() {
   return useMutation({
     mutationFn: ({ repository_id, number }: { repository_id: string; number: number }) =>
       unwrap(
-        api().POST("/v1/repositories/{id}/pull-requests/{number}/review-round", {
+        api("local").POST("/v1/repositories/{id}/pull-requests/{number}/review-round", {
           params: { path: { id: repository_id, number } },
         }),
       ),
@@ -160,7 +160,7 @@ export function useKeeperTurn() {
   return useMutation({
     mutationFn: ({ repository_id, number }: { repository_id: string; number: number }) =>
       unwrap(
-        api().POST("/v1/repositories/{id}/pull-requests/{number}/keeper-turn", {
+        api("local").POST("/v1/repositories/{id}/pull-requests/{number}/keeper-turn", {
           params: { path: { id: repository_id, number } },
         }),
       ),

@@ -17,9 +17,11 @@ tests:
 
 In: the `[hosts.<name>]` tables of `config.toml`, their validation, the
 `GET /v1/hosts` route, `HostDto`, the `host_updated` event, `ssh_bin`, and the
-SSH forward the daemon keeps for each `ssh://` host. Out: a Rust SSH library, a
-reverse forward from the far daemon and any desktop change. CLI selection
-follows spec 014. The transports and the event stream are spec 012's.
+SSH forward the daemon keeps for each `ssh://` host. Out: a Rust SSH library and
+a reverse forward from the far daemon. CLI selection follows spec 014. The
+transports and the event stream are spec 012's. The desktop app's reading of
+the hosts — the host picker, the Hosts section of its settings and one stream
+per host — is spec 015's (rules 51 to 60).
 
 ## Behavior
 

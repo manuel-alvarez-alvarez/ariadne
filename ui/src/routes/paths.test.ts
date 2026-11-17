@@ -6,6 +6,7 @@ import { BrowserRouter, useLocation } from "react-router-dom"
 import { describe, expect, it } from "vitest"
 import { startAt } from "@/test/harness"
 import {
+  hostOf,
   paths,
   sessionPanelFrom,
   taskPanelFrom,
@@ -170,5 +171,33 @@ describe("pull request panel navigation", () => {
       expect(params.get("repo")).toBe("r1")
       expect(params.get("state")).toBe("all")
     }
+  })
+})
+
+describe("the host param", () => {
+  it("writes ?host= beside a named host's panel param", () => {
+    expect(paths.goal("g1", "box")).toBe("/goals?goal=g1&host=box")
+    expect(
+      new URLSearchParams(taskPanelTo(new URLSearchParams(), "t1", "box").search).get("host"),
+    ).toBe("box")
+    expect(
+      new URLSearchParams(sessionPanelFrom(OVER, new URLSearchParams(), "s1", "box").search).get(
+        "host",
+      ),
+    ).toBe("box")
+    expect(paths.pullRequest("p1", new URLSearchParams(), "box")).toBe(
+      "/forge/pull-requests?host=box&pr=p1",
+    )
+  })
+
+  it("leaves ?host= out for local, and drops the one a named host's panel left", () => {
+    expect(paths.goal("g1", "local")).toBe("/goals?goal=g1")
+    const to = taskPanelTo(new URLSearchParams("goal=g1&host=box"), "t1", "local")
+    expect(new URLSearchParams(to.search).has("host")).toBe(false)
+  })
+
+  it("resolves a link without ?host= to local", () => {
+    expect(hostOf(new URLSearchParams("goal=g1"))).toBe("local")
+    expect(hostOf(new URLSearchParams("goal=g1&host=box"))).toBe("box")
   })
 })

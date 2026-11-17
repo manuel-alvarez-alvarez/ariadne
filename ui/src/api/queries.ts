@@ -18,17 +18,18 @@
  * `invalidateEverything` — see {@link createQueryClient}.
  */
 
-import type { QueryKey } from "@tanstack/react-query"
-import { QueryClient, useMutation, useQueryClient } from "@tanstack/react-query"
+import type { QueryKey, UseQueryOptions } from "@tanstack/react-query"
+import { QueryClient, useMutation, useQueries, useQueryClient } from "@tanstack/react-query"
 
+import type { Host } from "./client"
 import { ApiError } from "./errors"
 
 // ── The cache, per entity ─────────────────────────────────────────────────
 
 /** The `qk` entry of anything the daemon lists and identifies by id. */
 interface EntityKeys {
-  lists: () => QueryKey
-  detail: (id: string) => QueryKey
+  lists: (host: Host) => QueryKey
+  detail: (host: Host, id: string) => QueryKey
 }
 
 /**
@@ -40,20 +41,70 @@ interface EntityKeys {
 export function cacheRow<T extends { id: string } | { name: string }>(
   queryClient: QueryClient,
   keys: EntityKeys,
+  host: Host,
   row: T,
 ): void {
   // Whatever addresses the row is what its detail key is written under: an id
   // for everything the daemon mints one for, and a name for a skill, which is
   // named rather than numbered because that is how an agent loads it.
   const id = "id" in row ? row.id : row.name
-  queryClient.setQueryData(keys.detail(id), row)
-  void queryClient.invalidateQueries({ queryKey: keys.lists() })
+  queryClient.setQueryData(keys.detail(host, id), row)
+  void queryClient.invalidateQueries({ queryKey: keys.lists(host) })
 }
 
 /** The same for a delete: the row's own entries go, the lists are refetched. */
-export function dropRow(queryClient: QueryClient, keys: EntityKeys, id: string): void {
-  queryClient.removeQueries({ queryKey: keys.detail(id) })
-  void queryClient.invalidateQueries({ queryKey: keys.lists() })
+export function dropRow(queryClient: QueryClient, keys: EntityKeys, host: Host, id: string): void {
+  queryClient.removeQueries({ queryKey: keys.detail(host, id) })
+  void queryClient.invalidateQueries({ queryKey: keys.lists(host) })
+}
+
+// ── One list over several hosts ───────────────────────────────────────────
+
+/** A row and the host it was read from. */
+export type HostRow<T> = T & { host: Host }
+
+/** One host's list read that failed, and why. */
+interface HostError {
+  host: Host
+  error: Error
+}
+
+interface HostLists<T> {
+  /** Every host's rows, tagged with their host, in the order the hosts were given. */
+  rows: HostRow<T>[]
+  /** One entry per host whose list failed; its rows, if any, are its last good read. */
+  errors: HostError[]
+  /** No host has answered yet. */
+  isPending: boolean
+  /** Ask every host whose read failed again. */
+  refetch: () => void
+}
+
+/**
+ * One list query per host, merged: what a screen that reads "the selected
+ * hosts" is built on. Each host's query is its own cache entry under its own
+ * keys, so one host's stream keeps its rows live and one host that fails
+ * leaves the others on screen with an error of its own.
+ */
+export function useHostLists<TQueryFnData, TRow, TKey extends QueryKey>(
+  hosts: readonly Host[],
+  options: (host: Host) => UseQueryOptions<TQueryFnData, Error, TRow[], TKey>,
+): HostLists<TRow> {
+  return useQueries({
+    queries: hosts.map((host) => options(host)),
+    combine: (results) => ({
+      rows: results.flatMap((result, index) =>
+        (result.data ?? []).map((row) => ({ ...row, host: hosts[index] as Host })),
+      ),
+      errors: results.flatMap((result, index) =>
+        result.error ? [{ host: hosts[index] as Host, error: result.error }] : [],
+      ),
+      isPending: results.length === 0 || results.every((result) => result.isPending),
+      refetch: () => {
+        for (const result of results) if (result.error) void result.refetch()
+      },
+    }),
+  })
 }
 
 // ── Optimistic status flips ───────────────────────────────────────────────
@@ -93,11 +144,12 @@ interface StatusRow {
 export async function optimisticStatus<S extends string>(
   queryClient: QueryClient,
   keys: EntityKeys,
+  host: Host,
   id: string,
   status: S,
 ): Promise<CacheSnapshot> {
-  const detailKey = keys.detail(id)
-  const listsKey = keys.lists()
+  const detailKey = keys.detail(host, id)
+  const listsKey = keys.lists(host)
   await Promise.all([
     queryClient.cancelQueries({ queryKey: detailKey, exact: true }),
     queryClient.cancelQueries({ queryKey: listsKey }),
@@ -135,6 +187,7 @@ export function restoreCache(queryClient: QueryClient, snapshot: CacheSnapshot |
  */
 export function useRowAction<T extends { id: string }, V = void>(
   keys: EntityKeys,
+  host: Host,
   id: string,
   mutationFn: (variables: V) => Promise<T>,
   options: {
@@ -152,11 +205,11 @@ export function useRowAction<T extends { id: string }, V = void>(
   return useMutation<T, Error, V, CacheSnapshot | undefined>({
     mutationFn,
     onMutate: options.optimistic
-      ? () => optimisticStatus(queryClient, keys, id, options.optimistic as string)
+      ? () => optimisticStatus(queryClient, keys, host, id, options.optimistic as string)
       : undefined,
     onError: (_error, _variables, snapshot) => restoreCache(queryClient, snapshot),
     onSuccess: (row) => {
-      cacheRow(queryClient, keys, row)
+      cacheRow(queryClient, keys, host, row)
       options.alsoInvalidates?.(queryClient)
     },
   })

@@ -162,9 +162,9 @@ module's own and cumulative time.
 src/
   api/             typed HTTP client, generated types, the query-key convention,
                    and the query building blocks the features share
-  events/          the one SSE connection, its dispatcher, the reconnect machinery
+  events/          one SSE connection per host, its dispatcher, the reconnect machinery
   telemetry/       OTLP logs and metrics emitted by the desktop app
-  stores/          zustand: settings (daemon URL), stream status
+  stores/          zustand: settings (daemon URL, host filter), stream status
   hooks/           shared hooks (connection state, global shortcuts, focus return)
   lib/             format, clipboard, keyboard chords, design tokens
   routes/          the route table, URL/panel helpers, the Dashboards page, panel
@@ -232,10 +232,19 @@ webview ignores it.
 import { api, qk, unwrap } from "@/api"
 
 const tasks = useQuery({
-  queryKey: qk.tasks.list({ goal: goalId }),
-  queryFn: () => unwrap(api().GET("/v1/tasks", { params: { query: { goal: goalId } } })),
+  queryKey: qk.tasks.list(host, { goal: goalId }),
+  queryFn: () => unwrap(api(host).GET("/v1/tasks", { params: { query: { goal: goalId } } })),
 })
 ```
+
+`api(host)` is the typed client of one host. `local` is the settings daemon,
+at the settings store's base URL. A named host is the settings daemon's
+`GET /v1/hosts` row, reached at its endpoint only when that is `http://` or
+`https://` and its `status` is `ready` (`src/api/hosts.ts`). A call to any
+other host fails as a network error with the host's own `error`. The hosts
+query (`qk.hosts.list()`, `useHosts()`) writes those addresses, and so does
+the dispatcher on `host_updated`. A screen that is not host-aware yet passes
+`"local"` explicitly.
 
 Paths, query parameters, bodies and responses are all typed from the generated
 schema. `unwrap` returns the response body and throws an `ApiError` carrying the
@@ -273,13 +282,16 @@ are unaffected.
 ### Query keys
 
 Defined once in `src/api/query-keys.ts` and used through the `qk` helper — never
-write a key literal. Every key is `[entity, "list" | "detail", ...]`:
+write a key literal. Every key is `[host, entity, "list" | "detail", ...]`,
+the host first; below, the host is left out of each key for brevity:
 
 ```
 ["goals",        "list", filters]   ["goals",    "detail", id]
 ["tasks",        "list", filters]   ["tasks",    "detail", id]
 ["tasks",        "detail", id, "messages" | "transitions" | "diff"]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
+["sessions",     "detail", id, "agent-requests"]
+["hosts",        "list", {}]         (always under "local")
 ["skills",       "list", filters]   ["skills",   "detail", name]
 ["workflows",    "list", {}]        ["workflows", "detail", name]
 ["workflows",    "parse", document]
@@ -295,6 +307,11 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
 ["dashboards",   "list", {}]       ["dashboards", "detail", name]
 ```
+
+Every `qk` helper takes the host first: `qk.goals.lists(host)` invalidates
+one host's goal lists and no other's, and `qk.host(host)` is one host's whole
+cache. Ids are a daemon's own, so two hosts never share an entry.
+`qk.hosts.list()` takes no host: the hosts are the settings daemon's.
 
 `workflows.parse` and `pullRequests.search` are the two keys outside the
 `list`/`detail` convention: each caches one derived read — a parsed document,
@@ -321,23 +338,31 @@ disturbing an open detail view, and invalidating a detail key also invalidates
 that entity's sub-resources.
 
 `src/api/queries.ts` holds what the features would otherwise each spell out:
-`cacheRow` / `dropRow` (write the detail entry, refetch the lists) and
+`cacheRow` / `dropRow` (write the detail entry, refetch the lists),
 `useRowAction` (a confirmed action, optimistic where the landing status is
-knowable).
+knowable), each with the host it writes under, and `useHostLists` (one list
+query per host, its rows tagged with `host`, one error per host that failed).
+A screen that reads the header's pick runs `useHostLists` over
+`useHostFilter()` (`src/hooks/use-host-filter.ts`).
 
 ### The event stream
 
-`GET /v1/events/stream` is opened **once** for the whole app, by
-`EventStreamProvider`. Screens must not open their own `EventSource`: they read
-the query cache and it stays live.
+`GET /v1/events/stream` is opened **once per reachable host** for the whole
+app, by `EventStreamProvider`: `local`'s, and one for each named host that
+`GET /v1/hosts` lists as reachable. Screens must not open their own
+`EventSource`: they read the query cache and it stays live. Each stream
+dispatches under its own host's keys, `dispatchDomainEvent(queryClient,
+host, event)`. Only `local`'s stream writes `useStreamStore` and answers the
+connection banner's Retry: the connection banner and status stay about
+`local`, and a named host's state is its row in the header's host picker.
 
 `src/events/dispatch.ts` is the only place events meet the cache. Events are fat
 — each carries the full updated DTO — so for every kind the rule is the same:
 
-- **patch the detail** with `setQueryData(qk.<entity>.detail(id), dto)`, so open
-  detail screens update with no round trip;
-- **invalidate the lists** with `qk.<entity>.lists()`, because list responses are
-  filtered and paginated and cannot be patched blind.
+- **patch the detail** with `setQueryData(qk.<entity>.detail(host, id), dto)`,
+  so open detail screens update with no round trip;
+- **invalidate the lists** with `qk.<entity>.lists(host)`, because list
+  responses are filtered and paginated and cannot be patched blind.
 
 | event | effect |
 |---|---|
@@ -366,6 +391,7 @@ the query cache and it stays live.
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 | `dashboard_created`, `dashboard_updated` | patch `dashboards.detail`, invalidate `dashboards.lists` |
 | `dashboard_deleted` | remove `dashboards.detail`, invalidate `dashboards.lists` |
+| `host_updated` | from `local`'s stream only: patch the row in `hosts.list()`, point `api(host)` at the new address, and invalidate `qk.host(name)` when the host came up or moved |
 
 `dashboard_deleted` is the one `*_deleted` event that is fat like its own
 `*_created`/`*_updated`, carrying the whole `DashboardDto` rather than the
@@ -376,7 +402,8 @@ The daemon has **no replay**: anything that happened while the stream was down
 is gone. So a reconnect — any open that follows a gap, a first connection that
 only came up after failed attempts included — and the daemon's `resync`
 control event (sent just before it hangs up on a client that fell behind)
-invalidate *everything* (`src/events/stream.test.ts` pins both). Reconnection
+invalidate *everything* of that stream's host, `qk.host(host)`
+(`src/events/stream.test.ts` pins both). Reconnection
 itself — capped exponential backoff with jitter — is
 `src/events/reconnecting-stream.ts`, shared with the daemon-log stream and a
 session's console stream; `DomainEventStream` adds the
@@ -483,7 +510,8 @@ dashboard package"), which renders the picked Perses dashboard.
 Goals, tasks and sessions have no pages: their details occupy one **floating pane** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
-a task's panel, `?pr=` for a pull request's panel, `?skill=` and `?workflow=`
+a task's panel, `?pr=` for a pull request's panel, `?host=` beside any of
+those four for the host the entity lives on, `?skill=` and `?workflow=`
 for the selected row on their own screens, `?focus=` for a control a link asks
 the panel it opens to hand the keyboard to), which `src/components/detail-panels.tsx`
 reads. The old `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as
@@ -524,7 +552,9 @@ correctly from every screen it is carried onto.
 Link with the helpers in `src/routes/paths.ts` (`paths.goal`, `taskPanelFrom`,
 `sessionPanelFrom`, `usePanelSessionTo`, `usePanelSessionNavigation`, …) rather
 than hand-written paths, so a panel opened from a list keeps the screen and
-the filters behind it.
+the filters behind it. Each helper that opens a panel takes the host last, and
+writes `?host=` for a named host only: a link without `?host=` resolves to
+`local` (`hostOf`). Closing a panel drops its `?host=` with it.
 
 A **hash router** is used on purpose: in a packaged build the frontend is served
 straight off Tauri's asset protocol with no history fallback, so a reload on a

@@ -17,16 +17,16 @@ import {
  */
 export function skillsQueryOptions() {
   return queryOptions({
-    queryKey: qk.skills.list(),
-    queryFn: () => unwrap(api().GET("/v1/skills")),
+    queryKey: qk.skills.list("local"),
+    queryFn: () => unwrap(api("local").GET("/v1/skills")),
   })
 }
 
 export function useCreateSkill() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: CreateSkillRequest) => unwrap(api().POST("/v1/skills", { body })),
-    onSuccess: (skill) => cacheRow(queryClient, qk.skills, skill),
+    mutationFn: (body: CreateSkillRequest) => unwrap(api("local").POST("/v1/skills", { body })),
+    onSuccess: (skill) => cacheRow(queryClient, qk.skills, "local", skill),
   })
 }
 
@@ -34,8 +34,8 @@ export function useUpdateSkill() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ name, body }: { name: string; body: UpdateSkillRequest }) =>
-      unwrap(api().PUT("/v1/skills/{name}", { params: { path: { name } }, body })),
-    onSuccess: (skill) => cacheRow(queryClient, qk.skills, skill),
+      unwrap(api("local").PUT("/v1/skills/{name}", { params: { path: { name } }, body })),
+    onSuccess: (skill) => cacheRow(queryClient, qk.skills, "local", skill),
   })
 }
 
@@ -48,8 +48,8 @@ export function useDeleteSkill() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (name: string) =>
-      unwrap(api().DELETE("/v1/skills/{name}", { params: { path: { name } } })),
-    onSuccess: (_result, name) => dropRow(queryClient, qk.skills, name),
+      unwrap(api("local").DELETE("/v1/skills/{name}", { params: { path: { name } } })),
+    onSuccess: (_result, name) => dropRow(queryClient, qk.skills, "local", name),
   })
 }
 
@@ -62,7 +62,7 @@ export function useResetSkill() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (name: string) =>
-      unwrap(api().POST("/v1/skills/{name}/document/reset", { params: { path: { name } } })),
-    onSuccess: (skill) => cacheRow(queryClient, qk.skills, skill),
+      unwrap(api("local").POST("/v1/skills/{name}/document/reset", { params: { path: { name } } })),
+    onSuccess: (skill) => cacheRow(queryClient, qk.skills, "local", skill),
   })
 }

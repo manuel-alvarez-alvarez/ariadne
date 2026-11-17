@@ -1,14 +1,21 @@
 /** Goal lanes and their task cards. */
 
-import { useQuery } from "@tanstack/react-query"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { useMemo } from "react"
 import { Link } from "react-router-dom"
 
-import type { GoalDto, TaskDto } from "@/api"
+import {
+  type GoalDto,
+  type Host,
+  type HostRow,
+  LOCAL_HOST,
+  type TaskDto,
+  useHostLists,
+} from "@/api"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { ScrollEdge } from "@/components/scroll-edge"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -18,7 +25,12 @@ import { stepTitle } from "@/features/tasks/steps"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { cn, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
-import { type BoardAttention, taskAttentionReason, useBoardAttention } from "./attention"
+import {
+  type BoardAttention,
+  NO_BOARD_ATTENTION,
+  taskAttentionReason,
+  useBoardAttention,
+} from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
 import { laneCounts, laneSummary, orderLanes } from "./lanes"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
@@ -63,19 +75,26 @@ const BOARD_BOX = "h-full rounded-lg border contain-paint"
 const BOARD_FRAME = "relative min-h-0 flex-1"
 
 export function GoalSwimlanes({
+  hosts,
   goals,
   activeOnly = false,
+  showHost = false,
 }: {
-  goals: GoalDto[]
+  /** The hosts the board reads; each goal's tasks are read on its own host. */
+  hosts: readonly Host[]
+  goals: HostRow<GoalDto>[]
   activeOnly?: boolean
+  /** Name each lane's host: the board shows goals of more than one. */
+  showHost?: boolean
 }) {
-  const tasks = useQuery(taskListQueryOptions({}))
-  const byGoal = useMemo(() => groupByGoal(tasks.data ?? [], goals), [tasks.data, goals])
+  const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host, {}))
+  const byGoal = useMemo(() => groupByGoal(tasks.rows, goals), [tasks.rows, goals])
   // Which cards — and which lanes — are asking for a person, off the sessions
   // query the attention strip above the board already holds. The board is
   // where the work is, and a card that says nothing about its blocked agent is
   // what made the strip the only way to find one.
-  const attention = useBoardAttention()
+  const attentionByHost = useBoardAttention(hosts)
+  const attention = (host: Host) => attentionByHost.get(host) ?? NO_BOARD_ATTENTION
   const { isCollapsed, setCollapsed } = useCollapsedLanes()
   const board = useHorizontalOverflow<HTMLElement>()
   // Active work first: what is asking for a person, then what is still
@@ -83,25 +102,29 @@ export function GoalSwimlanes({
   // every goal finished after it, which is the wrong way round on a board
   // that is open to answer "what now".
   const lanes = useMemo(
-    () => orderLanes(goals, (goal) => laneNeedsAttention(goal.id, byGoal.get(goal.id), attention)),
-    [goals, byGoal, attention],
+    () =>
+      orderLanes(goals, (goal) =>
+        laneNeedsAttention(
+          goal.id,
+          byGoal.get(laneKey(goal.host, goal.id)),
+          attentionByHost.get(goal.host) ?? NO_BOARD_ATTENTION,
+        ),
+      ),
+    [goals, byGoal, attentionByHost],
   )
   const visible = (task: TaskDto) =>
     !activeOnly || (task.status !== "finished" && task.status !== "cancelled")
   const total = goals.reduce(
-    (count, goal) => count + (byGoal.get(goal.id)?.all.filter(visible).length ?? 0),
+    (count, goal) =>
+      count + (byGoal.get(laneKey(goal.host, goal.id))?.all.filter(visible).length ?? 0),
     0,
   )
 
-  const staleTasks = tasks.error && tasks.data !== undefined
-  if (tasks.error && !staleTasks) {
-    return (
-      <ErrorState
-        title="Could not load tasks"
-        error={tasks.error}
-        onRetry={() => void tasks.refetch()}
-      />
-    )
+  // A host whose tasks failed leaves its lanes empty and says so; the board
+  // only gives up when no host answered at all.
+  const [failed] = tasks.errors
+  if (failed && tasks.errors.length === hosts.length && tasks.rows.length === 0) {
+    return <ErrorState title="Could not load tasks" error={failed.error} onRetry={tasks.refetch} />
   }
 
   if (tasks.isPending) {
@@ -112,14 +135,15 @@ export function GoalSwimlanes({
     <>
       {/* Outside the frame: the board fills the frame's whole height, so a
           warning inside it would push the board past the frame's bottom edge. */}
-      {staleTasks ? (
+      {tasks.errors.map(({ host, error }) => (
         <RefreshWarning
-          what="tasks"
-          error={tasks.error}
-          onRetry={() => void tasks.refetch()}
+          key={host}
+          what={host === LOCAL_HOST ? "tasks" : `tasks on ${host}`}
+          error={error}
+          onRetry={tasks.refetch}
           className="shrink-0"
         />
-      ) : null}
+      ))}
       <div className={BOARD_FRAME}>
         {/* A named region the keyboard can put focus into: the board scrolls both
           ways, and a scrollport nothing can focus only scrolls under a pointer
@@ -141,11 +165,12 @@ export function GoalSwimlanes({
               const collapsed = isCollapsed(goal.id, isTerminalGoalStatus(goal.status))
               return (
                 <Lane
-                  key={goal.id}
+                  key={laneKey(goal.host, goal.id)}
                   goal={goal}
-                  tasks={byGoal.get(goal.id)}
+                  showHost={showHost}
+                  tasks={byGoal.get(laneKey(goal.host, goal.id))}
                   visible={visible}
-                  attention={attention}
+                  attention={attention(goal.host)}
                   collapsed={collapsed}
                   onToggle={() => setCollapsed(goal.id, !collapsed)}
                 />
@@ -170,13 +195,15 @@ function ColumnHeaders({ total }: { total: number }) {
 
 function Lane({
   goal,
+  showHost,
   tasks,
   attention,
   visible,
   collapsed,
   onToggle,
 }: {
-  goal: GoalDto
+  goal: HostRow<GoalDto>
+  showHost: boolean
   tasks?: GoalTasks
   /** The whole board's index; the lane takes its own rows out of it. */
   attention: BoardAttention
@@ -211,7 +238,7 @@ function Lane({
           <TooltipTrigger
             render={
               <Link
-                to={paths.goal(goal.id)}
+                to={paths.goal(goal.id, goal.host)}
                 className="min-w-0 truncate text-sm font-medium underline-offset-4 hover:underline"
               />
             }
@@ -235,6 +262,11 @@ function Lane({
         </Tooltip>
         {/* A dot, not a badge: the lane is one line. Its text is for a screen
             reader, which would otherwise hear nothing of the goal's status. */}
+        {showHost ? (
+          <Badge variant="outline" className="shrink-0 font-mono" title="Host">
+            {goal.host}
+          </Badge>
+        ) : null}
         <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
         <span className="sr-only">{status.label}</span>
         <span className="whitespace-nowrap text-xs text-muted-foreground">
@@ -274,6 +306,7 @@ function Lane({
           {(tasks?.all ?? []).filter(visible).map((task) => (
             <TaskCard
               key={task.id}
+              host={goal.host}
               task={task}
               steps={goal.steps}
               attention={attention.byTask.get(task.id)}
@@ -331,18 +364,23 @@ function laneNeedsAttention(
   )
 }
 
-/** Group the listed goals’ tasks for their lanes. */
-function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks> {
+/** A lane's own key: ids are only unique on the host that minted them. */
+function laneKey(host: Host, goalId: string): string {
+  return `${host}\n${goalId}`
+}
+
+/** Group the listed goals’ tasks for their lanes, each on its goal's host. */
+function groupByGoal(tasks: HostRow<TaskDto>[], goals: HostRow<GoalDto>[]): Map<string, GoalTasks> {
   const lanes = new Map<string, GoalTasks>()
-  const goalsById = new Map(goals.map((goal) => [goal.id, goal]))
+  const shown = new Set(goals.map((goal) => laneKey(goal.host, goal.id)))
   for (const task of tasks) {
+    const key = laneKey(task.host, task.goal_id)
     // Only the goals the board shows get a lane.
-    const goal = goalsById.get(task.goal_id)
-    if (!goal) continue
-    let lane = lanes.get(task.goal_id)
+    if (!shown.has(key)) continue
+    let lane = lanes.get(key)
     if (!lane) {
       lane = { all: [] }
-      lanes.set(task.goal_id, lane)
+      lanes.set(key, lane)
     }
     lane.all.push(task)
   }

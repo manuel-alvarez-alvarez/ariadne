@@ -102,7 +102,7 @@ export function SessionPanelHeader({
   onSwitched?: (session: SessionDto) => void
 }) {
   const goal = useQuery({
-    ...goalQueryOptions(session.goal_id ?? ""),
+    ...goalQueryOptions("local", session.goal_id ?? ""),
     enabled: Boolean(session.goal_id),
   })
   const attention = shownAttention(session)
@@ -176,7 +176,7 @@ export function SessionDetailView({
   context?: "goal" | "task"
 }) {
   const goal = useQuery({
-    ...goalQueryOptions(session.goal_id ?? ""),
+    ...goalQueryOptions("local", session.goal_id ?? ""),
     enabled: Boolean(session.goal_id),
   })
   const task = useQuery({
