@@ -976,6 +976,18 @@ impl AcpRuntime {
         sent.map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
 
+    /// Whether this message is queued for the session's running agent
+    /// already, behind a turn: a hand-over now would change nothing.
+    pub(crate) fn holds_message(&self, session_id: &str, message_id: &str) -> bool {
+        let key = Delivery::Message(message_id.to_string()).key();
+        self.inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get(session_id)
+            .is_some_and(|agent| agent.queued_messages.contains(&key))
+    }
+
     /// Take a delivery off this launch's queue: the driver is about to claim
     /// it, and a later hand-over may queue it again. A relaunch has a queue
     /// of its own, which this leaves alone.
@@ -2047,6 +2059,9 @@ struct Rpc {
     /// The seat text and skill index this launch sends in a turn (006).
     /// None for a session with no seat.
     seat_brief: Option<String>,
+    /// Whether the last turn ended cancelled: the next daemon prompt then
+    /// says the calls the cancel cut off were not refused (021).
+    after_cancel: bool,
     /// The seat brief the next turn carries: set at the launch and again
     /// after a model switch, and taken by the first turn after either.
     brief: Option<String>,
@@ -2075,6 +2090,7 @@ impl Rpc {
             in_flight: MessageInFlight::default(),
             seat_brief: None,
             brief: None,
+            after_cancel: false,
         }
     }
 
@@ -3222,6 +3238,19 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         Some(brief) => format!("{brief}\n\n{}", prompt.text),
         None => prompt.text.clone(),
     };
+    // A prompt typed at the console after a cancel is the user's own word on
+    // it, and a slash command carries nothing of ours.
+    let full = if std::mem::take(&mut rpc.after_cancel)
+        && prompt.source == PromptSource::Daemon
+        && !command
+    {
+        format!(
+            "{}\n\n{full}",
+            ariadne_store::defaults::cancelled_turn_note()
+        )
+    } else {
+        full
+    };
     let turn_id = new_id();
     {
         let mut turn = rpc.turn.lock().await;
@@ -3324,6 +3353,7 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         ))
         .context("ACP session/prompt failed");
     }
+    rpc.after_cancel = response.get("stopReason").and_then(Value::as_str) == Some("cancelled");
     let mut stop = json!({
         "session_id": session_id,
         "stop_reason": response.get("stopReason"),

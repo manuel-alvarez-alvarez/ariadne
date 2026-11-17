@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-11-13
+updated: 2026-11-17
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -76,7 +76,10 @@ moves a task through (001), and the wording of the text a message arrives in
      the `session/prompt`: one write that stamps the row only where it is
      unstamped. Where a read took the message first, the claim fails and the
      driver skips the prompt. A message is queued once for each launch,
-     however many scheduler passes hand it. A prompt counts as written once
+     however many scheduler passes hand it. A pass that finds the message
+     queued already builds no prompt and logs no delivery: an agent back
+     from hours away has a backlog, and a line per message per pass reads
+     as a loop. A prompt counts as written once
      the agent's stdin took its whole line. A prompt that was never written
      gives its claim back when its launch ends — a failed write, a closed
      connection or a kill — so the message reaches the next launch. A written
@@ -141,7 +144,9 @@ moves a task through (001), and the wording of the text a message arrives in
   read after that returns nothing
   (`agent_messages.rs::a_message_queued_behind_a_turn_is_stamped_when_its_prompt_goes_out`).
 - A message is queued once across scheduler passes, and one prompt carries
-  it (`agent_messages.rs::a_message_is_queued_once_across_scheduler_passes`).
+  it (`agent_messages.rs::a_message_is_queued_once_across_scheduler_passes`),
+  and only the pass that queued it logs a delivery
+  (`::a_message_already_queued_is_logged_as_delivered_once`).
 - A read mid-turn returns the queued messages oldest first, and no prompt
   carries them after the turn
   (`agent_messages.rs::messages_keep_their_order_across_a_read_and_the_queue`).
