@@ -21,10 +21,11 @@ import { RefreshCwIcon } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
-import { api, type HostRow, LOCAL_HOST, type PullRequestDto, unwrap } from "@/api"
+import { api, type HostRow, type PullRequestDto, unwrap } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { HostLabel } from "@/components/host-label"
 import { PageHeader } from "@/components/page-header"
 import { PrLink } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
@@ -45,6 +46,7 @@ import {
   useHostRepositories,
 } from "@/features/forge/forge-hosts"
 import { useHostFilter } from "@/hooks/use-host-filter"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 
 import { pullRequestKey, usePullRequestLists } from "./queries"
@@ -80,6 +82,7 @@ export function PullRequestsPage() {
   // The hosts the header picker selects. The repository filter is one forge
   // repository, which each host knows under an id of its own.
   const hosts = useHostFilter()
+  const showHost = useRowsShowHost()
   const repositories = useHostRepositories(hosts)
   const enabled = distinctEnabled(repositories.rows)
   const queried = hosts.flatMap((host) => {
@@ -172,19 +175,16 @@ export function PullRequestsPage() {
             description="The open requests of the repositories with their forge enabled show up here."
           />
         }
-        rowKey={(row) => pullRequestKey(row)}
+        rowKey={(row) => `${row.host}:${pullRequestKey(row)}`}
         renderRow={(row) => (
           <PullRequestRow
             row={row}
             repository={forgeName(
               repositories.rows.find((r) => r.host === row.host && r.id === row.repository_id),
             )}
-            host={hosts.length > 1 ? row.host : null}
-            // The session panel reads `local` only.
+            host={showHost ? row.host : null}
             sessionTo={
-              row.session_id && row.host === LOCAL_HOST
-                ? sessionPanelFrom(pathname, search, row.session_id)
-                : null
+              row.session_id ? sessionPanelFrom(pathname, search, row.session_id, row.host) : null
             }
             onInspect={() => navigate(paths.pullRequest(pullRequestKey(row), search, row.host))}
           />
@@ -290,7 +290,7 @@ function PullRequestRow({
             ) : null}
           </span>
           <span className="text-xs text-muted-foreground">
-            {host ? <StatusBadge size="sm" box="outlined" label={host} /> : null}{" "}
+            {host ? <HostLabel host={host} /> : null}{" "}
             <span className="font-mono">{repository || row.repository_id}</span> ·{" "}
             {row.role === "author" ? "by you" : `by ${row.author_login}`} ·{" "}
             <span className="font-mono">{row.head_branch}</span> →{" "}

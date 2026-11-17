@@ -1229,15 +1229,17 @@ Out: the daemon endpoints themselves (012).
     the host of the chip picked, and Refresh reprobes every selected host. Each host
     whose agents or models failed to load follows rule 75.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
-    most recently updated first. A pull request row has a host badge while
-    more than one host is selected. An issue row names its host by rule 74. A repository filter names one forge repository, and each host
+    most recently updated first. A pull request row names its host by rule 74. An issue row names its host by rule 74. A repository filter names one forge repository, and each host
     reads it by its own id for that forge repository; a host without it is
-    skipped. A pull request panel opens on its row's host (`?host=`). On a named
-    host it opens no session or task panel.
+    skipped. A pull request panel opens on its row's host (`?host=`). Its sessions and task links open on that host.
+    Test: `ui/src/features/pull-requests/hosts.test.tsx` (task link);
+    `pull-request-panel.test.tsx` (sessions); `pull-requests-page.test.tsx` (rows).
 70. Start review and Start babysit have a host select, shown when more than one
     host has the request's repository registered. It is limited to those hosts,
     defaults to the row's host, and its models, pin and ask go to the chosen host
-    with that host's repository id. A goal dialog filled from an issue is on the
+    with that host's repository id. The new session opens on the request host.
+    Tests: `pull-request-panel.test.tsx` (review and babysit);
+    `features/forge/forge-hosts.test.tsx` (host select). A goal dialog filled from an issue is on the
     issue's host.
 71. The daemon logs drawer has a host select, shown only with a named host. It
     lists the hosts of the picker, and a host the app cannot reach is a disabled
