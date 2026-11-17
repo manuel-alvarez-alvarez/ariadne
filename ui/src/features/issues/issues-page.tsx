@@ -4,14 +4,15 @@
  * assigned to, and the goal it can start: the repository is the issue's
  * second line rather than a column of its own.
  */
-import { useQueries, useQuery } from "@tanstack/react-query"
+import { useQueries } from "@tanstack/react-query"
 import { RefreshCwIcon, TargetIcon } from "lucide-react"
 import { useState } from "react"
 
-import { api, type IssueDto, qk, type RepositoryDto, unwrap } from "@/api"
+import { api, type Host, type IssueDto, qk, type RepositoryDto, unwrap } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
 import { PageHeader } from "@/components/page-header"
+import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
@@ -23,10 +24,11 @@ import {
   useNeedsRefresh,
   useSearchFilter,
 } from "@/features/forge/forge-filters"
+import { distinctEnabled, repositoryOn, useHostRepositories } from "@/features/forge/forge-hosts"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
-import { repositoriesQueryOptions } from "@/features/repositories/queries"
+import { useHostFilter } from "@/hooks/use-host-filter"
 
-type Row = { repository: RepositoryDto; issue: IssueDto }
+type Row = { host: Host; repository: RepositoryDto; issue: IssueDto }
 
 const COLUMNS = [
   { header: "Issue", className: "min-w-72" },
@@ -37,8 +39,10 @@ const COLUMNS = [
 ]
 
 export function IssuesPage() {
-  const repositories = useQuery(repositoriesQueryOptions("local"))
-  const enabled = repositories.data?.filter((repository) => repository.forge?.enabled) ?? []
+  // The hosts the header picker selects, and the repositories each has.
+  const hosts = useHostFilter()
+  const repositories = useHostRepositories(hosts)
+  const enabled = distinctEnabled(repositories.rows)
   const [repositoryId, setRepositoryId] = useSearchFilter("repo")
   // Assigned to me unless the URL says otherwise.
   const [assignedParam, setAssignedParam] = useSearchFilter("assigned")
@@ -46,17 +50,21 @@ export function IssuesPage() {
   const [text, setText] = useSearchFilter("q")
   const [selected, setSelected] = useState<Row | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const visible = repositoryId
-    ? enabled.filter((repository) => repository.id === repositoryId)
-    : enabled
+  // The repository filter is one forge repository, whichever host has it.
+  const visible = repositories.rows.filter(
+    (repository) =>
+      repository.forge?.enabled &&
+      (!repositoryId ||
+        repositoryOn(repositories.rows, repositoryId, repository.host) === repository.id),
+  )
   const needsRefresh = useNeedsRefresh(visible)
   const assigned = assignedToMe ? "me" : "all"
   const issueQueries = useQueries({
     queries: visible.map((repository) => ({
-      queryKey: qk.issues.list("local", repository.id, assigned),
+      queryKey: qk.issues.list(repository.host, repository.id, assigned),
       queryFn: () =>
         unwrap(
-          api("local").GET("/v1/repositories/{id}/issues", {
+          api(repository.host).GET("/v1/repositories/{id}/issues", {
             params: { path: { id: repository.id }, query: { assigned } },
           }),
         ),
@@ -65,7 +73,9 @@ export function IssuesPage() {
   const rows: Row[] = issueQueries
     .flatMap((query, index) => {
       const repository = visible[index]
-      return repository ? (query.data ?? []).map((issue) => ({ repository, issue })) : []
+      return repository
+        ? (query.data ?? []).map((issue) => ({ host: repository.host, repository, issue }))
+        : []
     })
     .filter(({ issue }) =>
       matchesText(text, [
@@ -79,10 +89,10 @@ export function IssuesPage() {
   const query = {
     data: rows,
     isPending: repositories.isPending || issueQueries.some((result) => result.isPending),
-    isError: repositories.isError || issueQueries.some((result) => result.isError),
-    error: repositories.error ?? issueQueries.find((result) => result.error)?.error,
+    isError: repositories.errors.length > 0 || issueQueries.some((result) => result.isError),
+    error: repositories.errors[0]?.error ?? issueQueries.find((result) => result.error)?.error,
     refetch: () => {
-      void repositories.refetch()
+      repositories.refetch()
       issueQueries.forEach((result) => void result.refetch())
     },
   }
@@ -139,7 +149,7 @@ export function IssuesPage() {
             }
           />
         }
-        rowKey={(row) => `${row.repository.id}-${row.issue.number}`}
+        rowKey={(row) => `${row.host}-${row.repository.id}-${row.issue.number}`}
         renderRow={(row) => (
           <TableRow>
             <TableCell className="max-w-md whitespace-normal">
@@ -152,8 +162,13 @@ export function IssuesPage() {
                 >
                   #{row.issue.number} {row.issue.title}
                 </a>
-                <span className="font-mono text-xs text-muted-foreground">
-                  {forgeName(row.repository)}
+                <span className="text-xs text-muted-foreground">
+                  {hosts.length > 1 ? (
+                    <>
+                      <StatusBadge size="sm" box="outlined" label={row.host} />{" "}
+                    </>
+                  ) : null}
+                  <span className="font-mono">{forgeName(row.repository)}</span>
                 </span>
               </div>
             </TableCell>
@@ -202,6 +217,7 @@ export function IssuesPage() {
                 description: `${selected.issue.body}\n\nIssue: ${selected.issue.url}`,
                 repository_id: selected.repository.id,
                 issue_url: selected.issue.url,
+                host: selected.host,
               }
             : undefined
         }

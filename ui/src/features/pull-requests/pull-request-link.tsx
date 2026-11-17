@@ -11,6 +11,7 @@
 
 import { useQuery } from "@tanstack/react-query"
 
+import { type Host, LOCAL_HOST } from "@/api"
 import { PrLink } from "@/components/pr-link"
 import { cn, shortId } from "@/lib/format"
 
@@ -20,14 +21,17 @@ export function PullRequestLink({
   id,
   title,
   className,
+  host = LOCAL_HOST,
 }: {
+  /** The host the session, and so the request, is on. */
+  host?: Host
   /** The session's `pull_request_id`. */
   id: string
   /** The session's own title, which is the request's title at launch. */
   title?: string | null
   className?: string
 }) {
-  const pull = useQuery(pullRequestQueryOptions(id))
+  const pull = useQuery(pullRequestQueryOptions(host, id))
   const name = pull.data?.title ?? title ?? `Pull request ${shortId(id)}`
   return (
     <span className={cn("flex min-w-0 items-center gap-1", className)}>

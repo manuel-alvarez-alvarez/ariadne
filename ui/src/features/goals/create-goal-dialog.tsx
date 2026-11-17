@@ -43,6 +43,7 @@ import {
   ApiError,
   type CreateGoalRequest,
   type GoalDto,
+  type Host,
   type HostRow,
   LOCAL_HOST,
   useHosts,
@@ -114,7 +115,14 @@ export function CreateGoalDialog({
   /** The created goal, and the host it lives on. */
   onCreated?: (goal: HostRow<GoalDto>) => void
   /** A goal filled from an issue of one of `local`'s repositories. */
-  initial?: { title: string; description: string; repository_id: string; issue_url: string }
+  initial?: {
+    title: string
+    description: string
+    repository_id: string
+    issue_url: string
+    /** The host the issue was read on, which the goal is created on; `local` without it. */
+    host?: Host
+  }
 }) {
   const pickedHost = usePickedHost()
   const { hosts } = useHosts()
@@ -143,7 +151,7 @@ export function CreateGoalDialog({
           title: initial.title,
           description: initial.description,
           repository_ids: [initial.repository_id],
-          host: LOCAL_HOST,
+          host: initial.host ?? LOCAL_HOST,
         }
       : { ...DEFAULT_VALUES, host: pickedHost ?? "" },
     createGoal,
@@ -152,7 +160,7 @@ export function CreateGoalDialog({
 
   // The header's pick is only known once the settings daemon has listed the
   // hosts, which can be after the dialog opened: follow it until the user
-  // picks a host here. A goal filled from an issue stays on `local`.
+  // picks a host here. A goal filled from an issue is on the issue's host.
   useEffect(() => {
     if (!open || initial || pickedHost === null || form.getFieldState("host").isDirty) return
     form.setValue("host", pickedHost, { shouldDirty: false })

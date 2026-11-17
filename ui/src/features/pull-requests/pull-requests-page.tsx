@@ -16,12 +16,12 @@
  * reads it again from its first page; nothing adds or removes a request.
  */
 
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation } from "@tanstack/react-query"
 import { RefreshCwIcon } from "lucide-react"
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useRef } from "react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
-import { api, type PullRequestDto, unwrap } from "@/api"
+import { api, type HostRow, LOCAL_HOST, type PullRequestDto, unwrap } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -38,10 +38,11 @@ import {
   useNeedsRefresh,
   useSearchFilter,
 } from "@/features/forge/forge-filters"
-import { repositoriesQueryOptions } from "@/features/repositories/queries"
+import { distinctEnabled, repositoryOn, useHostRepositories } from "@/features/forge/forge-hosts"
+import { useHostFilter } from "@/hooks/use-host-filter"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 
-import { pullRequestKey, pullRequestsQueryOptions } from "./queries"
+import { pullRequestKey, usePullRequestLists } from "./queries"
 import { ARIADNE_BABYSITTING, ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
 
 /**
@@ -71,26 +72,40 @@ export function PullRequestsPage() {
   const [role, setRole] = useSearchFilter("role")
   const whose = WHOSE.find((each) => each.value === role) ?? WHOSE[0]
   const [text, setText] = useSearchFilter("q")
-  const filters = { repo: repo ?? undefined, ...whose.query }
-  const rows = useInfiniteQuery({
-    ...pullRequestsQueryOptions({ ...filters, q: text?.trim() || undefined }),
-    // A new filter keeps the rows it had on screen until its own answer is
-    // in, so the table does not flash empty on every word typed.
-    placeholderData: keepPreviousData,
+  // The hosts the header picker selects. The repository filter is one forge
+  // repository, which each host knows under an id of its own.
+  const hosts = useHostFilter()
+  const repositories = useHostRepositories(hosts)
+  const enabled = distinctEnabled(repositories.rows)
+  const queried = hosts.flatMap((host) => {
+    const id = repo ? repositoryOn(repositories.rows, repo, host) : undefined
+    if (repo && id === undefined) return []
+    return [{ host, filters: { repo: id, ...whose.query, q: text?.trim() || undefined } }]
   })
-  const pages = rows.data?.pages
-  const listed = useMemo(() => pages?.flatMap((page) => page.pull_requests), [pages])
-  const repositories = useQuery(repositoriesQueryOptions("local"))
-  const enabled = repositories.data?.filter((each) => each.forge?.enabled) ?? []
-  const needsRefresh = useNeedsRefresh(repo ? enabled.filter((each) => each.id === repo) : enabled)
+  const rows = usePullRequestLists(queried)
+  const listed = rows.rows
+  const needsRefresh = useNeedsRefresh(
+    repositories.rows.filter((each) => each.forge?.enabled && (!repo || each.id === repo)),
+  )
   const refresh = useMutation({
     mutationFn: () =>
-      unwrap(
-        api("local").POST("/v1/pull-requests/refresh", {
-          params: { query: { repo: filters.repo } },
-        }),
+      Promise.all(
+        queried.map(({ host, filters }) =>
+          unwrap(
+            api(host).POST("/v1/pull-requests/refresh", {
+              params: { query: { repo: filters.repo } },
+            }),
+          ),
+        ),
       ),
   })
+  const query = {
+    data: listed,
+    isPending: rows.isPending,
+    isError: rows.errors.length > 0,
+    error: rows.errors[0]?.error,
+    refetch: rows.refetch,
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -131,7 +146,7 @@ export function PullRequestsPage() {
       </ForgeFilters>
       {refresh.error ? <ErrorState title="Could not refresh" error={refresh.error} /> : null}
       <DataTable
-        query={{ ...rows, data: listed }}
+        query={query}
         errorTitle="Could not load pull requests"
         columns={COLUMNS}
         empty={
@@ -152,16 +167,24 @@ export function PullRequestsPage() {
         renderRow={(row) => (
           <PullRequestRow
             row={row}
-            repository={forgeName(repositories.data?.find((r) => r.id === row.repository_id))}
-            sessionTo={row.session_id ? sessionPanelFrom(pathname, search, row.session_id) : null}
-            onInspect={() => navigate(paths.pullRequest(pullRequestKey(row), search))}
+            repository={forgeName(
+              repositories.rows.find((r) => r.host === row.host && r.id === row.repository_id),
+            )}
+            host={hosts.length > 1 ? row.host : null}
+            // The session panel reads `local` only.
+            sessionTo={
+              row.session_id && row.host === LOCAL_HOST
+                ? sessionPanelFrom(pathname, search, row.session_id)
+                : null
+            }
+            onInspect={() => navigate(paths.pullRequest(pullRequestKey(row), search, row.host))}
           />
         )}
       />
       <NearEnd
-        armed={rows.hasNextPage && !rows.isFetchingNextPage && !rows.isError}
-        pages={pages?.length ?? 0}
-        onReach={() => void rows.fetchNextPage()}
+        armed={rows.hasNextPage && !rows.isFetchingNextPage && rows.errors.length === 0}
+        pages={rows.pages}
+        onReach={() => rows.fetchNextPage()}
       />
     </div>
   )
@@ -207,11 +230,14 @@ function NearEnd({
 function PullRequestRow({
   row,
   repository,
+  host,
   sessionTo,
   onInspect,
 }: {
-  row: PullRequestDto
+  row: HostRow<PullRequestDto>
   repository: string
+  /** The host the request is on, shown while the list spans hosts. */
+  host: string | null
   sessionTo: ReturnType<typeof sessionPanelFrom> | null
   onInspect: () => void
 }) {
@@ -255,6 +281,7 @@ function PullRequestRow({
             ) : null}
           </span>
           <span className="text-xs text-muted-foreground">
+            {host ? <StatusBadge size="sm" box="outlined" label={host} /> : null}{" "}
             <span className="font-mono">{repository || row.repository_id}</span> ·{" "}
             {row.role === "author" ? "by you" : `by ${row.author_login}`} ·{" "}
             <span className="font-mono">{row.head_branch}</span> →{" "}

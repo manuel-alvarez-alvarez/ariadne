@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query"
 import { BotIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import type { PullRequestDto } from "@/api"
+import type { Host, PullRequestDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -32,6 +32,7 @@ import { skillsQueryOptions } from "@/features/skills/queries"
 import { cn } from "@/lib/format"
 
 import { useAskBabysit } from "./queries"
+import { ReviewHostSelect, type ReviewTarget, useReviewTargets } from "./review-hosts"
 
 /** The keeper session's own playbook: always loaded, never picked. */
 const PLAYBOOK = "pr-babysit"
@@ -41,17 +42,23 @@ const DEFAULT_SKILLS: string[] = []
 
 export function StartBabysitDialog({
   pull,
+  host,
   open,
   onOpenChange,
   onStarted,
 }: {
   pull: PullRequestDto
+  /** The host the request is listed on: where the work starts unless another is picked. */
+  host: Host
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Babysitting was asked for: the dialog has closed itself. */
   onStarted?: () => void
 }) {
-  const models = useQuery({ ...modelsQueryOptions("local"), enabled: open })
+  const targets = useReviewTargets(pull, host, open)
+  const [chosen, setChosen] = useState<Host | null>(null)
+  const target = targets.find((each) => each.host === chosen) ?? (targets[0] as ReviewTarget)
+  const models = useQuery({ ...modelsQueryOptions(target.host), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const ask = useAskBabysit()
   const [pin, setPin] = useState({ model: "", effort: "" })
@@ -61,6 +68,7 @@ export function StartBabysitDialog({
   useEffect(() => {
     if (!open) return
     setPin({ model: pull.babysit_model ?? "", effort: pull.babysit_effort ?? "" })
+    setChosen(null)
     setPicked(pull.babysit_skills?.length ? pull.babysit_skills : DEFAULT_SKILLS)
     ask.reset()
   }, [open, pull.babysit_model, pull.babysit_effort, pull.babysit_skills, ask.reset])
@@ -78,7 +86,8 @@ export function StartBabysitDialog({
   function start() {
     ask.mutate(
       {
-        repository_id: pull.repository_id,
+        host: target.host,
+        repository_id: target.repository_id,
         number: pull.number,
         asked: true,
         model: pin.model,
@@ -105,10 +114,20 @@ export function StartBabysitDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-5 py-2">
+          <ReviewHostSelect
+            id="babysit-host"
+            targets={targets}
+            value={target.host}
+            onChange={(next) => {
+              setChosen(next)
+              // A model of one host is not offered on another.
+              setPin({ model: "", effort: "" })
+            }}
+          />
           <Field>
             <FieldLabel htmlFor="babysit-pin">Model</FieldLabel>
             <PinPicker
-              host="local"
+              host={target.host}
               id="babysit-pin"
               label="Model"
               model={pin.model}

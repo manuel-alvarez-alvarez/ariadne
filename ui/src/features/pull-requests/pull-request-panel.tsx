@@ -25,7 +25,7 @@ import { BotIcon, BotOffIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
-import type { PullRequestDto, Seat } from "@/api"
+import { type Host, LOCAL_HOST, type PullRequestDto, type Seat } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -49,7 +49,7 @@ import { isLiveStatus } from "@/features/sessions/session-display"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { shortId, shortSha } from "@/lib/format"
-import { paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
+import { hostOf, paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 
 import {
   pullRequestByKeyQueryOptions,
@@ -68,18 +68,21 @@ type Tab = (typeof TABS)[number]
 
 export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
+  // The host the request is on, from `?host=` beside `?pr=`.
+  const host = hostOf(search)
   const query = useQuery(
-    id.includes(":") ? pullRequestByKeyQueryOptions(id) : pullRequestQueryOptions(id),
+    id.includes(":") ? pullRequestByKeyQueryOptions(host, id) : pullRequestQueryOptions(host, id),
   )
   // Ariadne's id of the request, while it works on it: what its sessions
   // name.
   const workedId = query.data?.id ?? null
-  const session = search.get("session") ?? undefined
+  // The session panel reads `local` only, so a named host's sessions stay unopened.
+  const session = host === LOCAL_HOST ? (search.get("session") ?? undefined) : undefined
   const selectSession = usePanelSessionNavigation()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
-  const opened = useSessionOpening(workedId, (sessionId) => {
+  const opened = useSessionOpening(host, workedId, (sessionId) => {
     const params = new URLSearchParams(search)
     params.set("tab", "sessions")
     params.set("session", sessionId)
@@ -129,13 +132,14 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
         <>
           <PullRequestHeader
             pull={query.data}
+            host={host}
             onSessionStarted={(seat) => {
               opened.await(seat)
               setTab("sessions")
             }}
           />
           <PaneBody>
-            <PullRequestFacts pull={query.data} />
+            <PullRequestFacts pull={query.data} host={host} />
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
                 <TabsTrigger value="description">Description</TabsTrigger>
@@ -154,7 +158,7 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
                     Starting the session… its console opens here once the agent is up.
                   </p>
                 ) : null}
-                <PullRequestSessions pull={query.data} onSelect={selectSession} />
+                <PullRequestSessions pull={query.data} host={host} onSelect={selectSession} />
               </TabsContent>
             </Tabs>
           </PaneBody>
@@ -174,7 +178,11 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
  * The list follows `session_created` on its own; the interval is what holds
  * while the stream is down.
  */
-function useSessionOpening(pullRequestId: string | null, open: (sessionId: string) => void) {
+function useSessionOpening(
+  host: Host,
+  pullRequestId: string | null,
+  open: (sessionId: string) => void,
+) {
   const [before, setBefore] = useState<string[] | null>(null)
   // Taken the moment a session is handed over, ahead of any render: a later
   // pass of the effect, on a list read again meanwhile, must not hand the
@@ -182,7 +190,7 @@ function useSessionOpening(pullRequestId: string | null, open: (sessionId: strin
   const pending = useRef(false)
   const seat = useRef<Seat | null>(null)
   const reviews = useQuery({
-    ...sessionsQueryOptions("local", { pull_request: pullRequestId ?? "" }),
+    ...sessionsQueryOptions(host, { pull_request: pullRequestId ?? "" }),
     enabled: pullRequestId !== null,
     refetchInterval: before ? 2000 : false,
   })
@@ -226,9 +234,12 @@ function useSessionOpening(pullRequestId: string | null, open: (sessionId: strin
  */
 function PullRequestHeader({
   pull,
+  host,
   onSessionStarted,
 }: {
   pull: PullRequestDto
+  /** The host the request is on. */
+  host: Host
   /** A review or a babysit was asked for in its dialog, which closed itself. */
   onSessionStarted: (seat: Seat) => void
 }) {
@@ -259,7 +270,7 @@ function PullRequestHeader({
                     size="sm"
                     pending={round.isPending}
                     onClick={() =>
-                      round.mutate({ repository_id: pull.repository_id, number: pull.number })
+                      round.mutate({ host, repository_id: pull.repository_id, number: pull.number })
                     }
                   >
                     Review again
@@ -270,6 +281,7 @@ function PullRequestHeader({
                     pending={ask.isPending}
                     onClick={() =>
                       ask.mutate({
+                        host,
                         repository_id: pull.repository_id,
                         number: pull.number,
                         asked: false,
@@ -293,7 +305,11 @@ function PullRequestHeader({
                 size="sm"
                 pending={keeperTurn.isPending}
                 onClick={() =>
-                  keeperTurn.mutate({ repository_id: pull.repository_id, number: pull.number })
+                  keeperTurn.mutate({
+                    host,
+                    repository_id: pull.repository_id,
+                    number: pull.number,
+                  })
                 }
               >
                 Keeper turn
@@ -307,6 +323,7 @@ function PullRequestHeader({
                   pending={babysit.isPending}
                   onClick={() =>
                     babysit.mutate({
+                      host,
                       repository_id: pull.repository_id,
                       number: pull.number,
                       asked: false,
@@ -341,7 +358,7 @@ function PullRequestHeader({
               <StatusBadge label={ARIADNE_REVIEWING.label} tone={ARIADNE_REVIEWING.tone} />
             ) : null}
             {reviewGoal ? (
-              <Link className="text-xs underline" to={paths.goal(reviewGoal.goal_id)}>
+              <Link className="text-xs underline" to={paths.goal(reviewGoal.goal_id, host)}>
                 Review goal
               </Link>
             ) : null}
@@ -349,7 +366,7 @@ function PullRequestHeader({
               <StatusBadge label={ARIADNE_BABYSITTING.label} tone={ARIADNE_BABYSITTING.tone} />
             ) : null}
             {babysitGoal ? (
-              <Link className="text-xs underline" to={paths.goal(babysitGoal.goal_id)}>
+              <Link className="text-xs underline" to={paths.goal(babysitGoal.goal_id, host)}>
                 Babysit goal
               </Link>
             ) : null}
@@ -368,12 +385,14 @@ function PullRequestHeader({
       />
       <StartReviewDialog
         pull={pull}
+        host={host}
         open={starting}
         onOpenChange={setStarting}
         onStarted={() => onSessionStarted("reviewer")}
       />
       <StartBabysitDialog
         pull={pull}
+        host={host}
         open={babysitting}
         onOpenChange={setBabysitting}
         onStarted={() => onSessionStarted("keeper")}
@@ -400,8 +419,8 @@ function PullRequestHeader({
   )
 }
 
-function PullRequestFacts({ pull }: { pull: PullRequestDto }) {
-  const repositories = useQuery(repositoriesQueryOptions("local"))
+function PullRequestFacts({ pull, host }: { pull: PullRequestDto; host: Host }) {
+  const repositories = useQuery(repositoriesQueryOptions(host))
   const repository = repositories.data?.find((each) => each.id === pull.repository_id)
   const failed = pull.failed_checks ?? []
   return (
@@ -431,7 +450,12 @@ function PullRequestFacts({ pull }: { pull: PullRequestDto }) {
       <Fact label="Ariadne">{ariadneWork(pull)}</Fact>
       {pull.origin_task_id ? (
         <Fact label="Kept by">
-          <TaskLink taskId={pull.origin_task_id} />
+          {/* The task panel reads `local` only. */}
+          {host === LOCAL_HOST ? (
+            <TaskLink taskId={pull.origin_task_id} />
+          ) : (
+            <span>the author of task {shortId(pull.origin_task_id)}</span>
+          )}
         </Fact>
       ) : null}
       {failed.length > 0 ? (
@@ -485,9 +509,11 @@ function TaskLink({ taskId }: { taskId: string }) {
  */
 function PullRequestSessions({
   pull,
+  host,
   onSelect,
 }: {
   pull: PullRequestDto
+  host: Host
   onSelect: (sessionId: string) => void
 }) {
   return (
@@ -496,9 +522,9 @@ function PullRequestSessions({
         <h3 className="text-sm font-medium">Ariadne sessions</h3>
         {pull.id ? (
           <SessionsList
-            host="local"
+            host={host}
             filters={{ pull_request: pull.id }}
-            onSelect={(session) => onSelect(session.id)}
+            onSelect={(session) => host === LOCAL_HOST && onSelect(session.id)}
           />
         ) : (
           <EmptyState emphasis="quiet" title="No Ariadne session on this request yet" />
@@ -508,9 +534,9 @@ function PullRequestSessions({
         <section className="flex flex-col gap-2">
           <h3 className="text-sm font-medium">Task workflow</h3>
           <SessionsList
-            host="local"
+            host={host}
             filters={{ task: pull.origin_task_id, seat: "agent" }}
-            onSelect={(session) => onSelect(session.id)}
+            onSelect={(session) => host === LOCAL_HOST && onSelect(session.id)}
           />
         </section>
       ) : null}

@@ -12,7 +12,7 @@ import { useQuery } from "@tanstack/react-query"
 import { BotIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import type { PullRequestDto } from "@/api"
+import type { Host, PullRequestDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -31,6 +31,7 @@ import { skillsQueryOptions } from "@/features/skills/queries"
 import { cn } from "@/lib/format"
 
 import { useAskReview } from "./queries"
+import { ReviewHostSelect, type ReviewTarget, useReviewTargets } from "./review-hosts"
 
 /** The review session's own playbook: always loaded, never picked. */
 const PLAYBOOK = "pr-reviewer"
@@ -40,17 +41,23 @@ const DEFAULT_SKILLS: string[] = []
 
 export function StartReviewDialog({
   pull,
+  host,
   open,
   onOpenChange,
   onStarted,
 }: {
   pull: PullRequestDto
+  /** The host the request is listed on: where the work starts unless another is picked. */
+  host: Host
   open: boolean
   onOpenChange: (open: boolean) => void
   /** The review was asked for: the dialog has closed itself. */
   onStarted?: () => void
 }) {
-  const models = useQuery({ ...modelsQueryOptions("local"), enabled: open })
+  const targets = useReviewTargets(pull, host, open)
+  const [chosen, setChosen] = useState<Host | null>(null)
+  const target = targets.find((each) => each.host === chosen) ?? (targets[0] as ReviewTarget)
+  const models = useQuery({ ...modelsQueryOptions(target.host), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const ask = useAskReview()
   const [pin, setPin] = useState({ model: "", effort: "" })
@@ -60,6 +67,7 @@ export function StartReviewDialog({
   useEffect(() => {
     if (!open) return
     setPin({ model: pull.review_model ?? "", effort: pull.review_effort ?? "" })
+    setChosen(null)
     setPicked(pull.review_skills?.length ? pull.review_skills : DEFAULT_SKILLS)
     ask.reset()
   }, [open, pull.review_model, pull.review_effort, pull.review_skills, ask.reset])
@@ -77,7 +85,8 @@ export function StartReviewDialog({
   function start() {
     ask.mutate(
       {
-        repository_id: pull.repository_id,
+        host: target.host,
+        repository_id: target.repository_id,
         number: pull.number,
         asked: true,
         model: pin.model,
@@ -104,10 +113,20 @@ export function StartReviewDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-5 py-2">
+          <ReviewHostSelect
+            id="review-host"
+            targets={targets}
+            value={target.host}
+            onChange={(next) => {
+              setChosen(next)
+              // A model of one host is not offered on another.
+              setPin({ model: "", effort: "" })
+            }}
+          />
           <Field>
             <FieldLabel htmlFor="review-pin">Model</FieldLabel>
             <PinPicker
-              host="local"
+              host={target.host}
               id="review-pin"
               label="Model"
               model={pin.model}
