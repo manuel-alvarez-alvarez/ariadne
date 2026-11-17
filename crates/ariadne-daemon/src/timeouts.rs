@@ -17,6 +17,16 @@ pub struct Timeouts {
     /// The first wait before the tunnel reconnects. Each failed attempt
     /// doubles it, up to 60 seconds.
     pub tunnel_retry: Duration,
+    /// The first wait before an `ssh://` host's forward is started again
+    /// (037). Each exit doubles it, up to 60 seconds; a forward that came up
+    /// resets it.
+    pub ssh_retry: Duration,
+    /// How long one probe of a forward's port may take: a request through
+    /// the forward to the far daemon (037).
+    pub ssh_probe: Duration,
+    /// The wait between two probes of a forward that has not answered yet
+    /// (037).
+    pub ssh_probe_interval: Duration,
     /// How long one detail fetch of a pull request may take: its comments,
     /// checks and base, read off the forge after a repository fetch (026).
     pub forge_details: Duration,
@@ -150,6 +160,9 @@ impl Default for Timeouts {
             forge_poll: Duration::from_secs(300),
             tunnel_connect: Duration::from_secs(15),
             tunnel_retry: Duration::from_secs(1),
+            ssh_retry: Duration::from_secs(1),
+            ssh_probe: Duration::from_secs(5),
+            ssh_probe_interval: Duration::from_millis(200),
             forge_details: Duration::from_secs(30),
             forge_rate_limit_pause: Duration::from_secs(900),
             forge_poll_backoff_cap: Duration::from_secs(3600),

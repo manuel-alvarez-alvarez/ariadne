@@ -70,6 +70,8 @@ unknown key stops the daemon rather than being ignored):
                            probe runs to find a GPU (default: nvidia-smi on this daemon's PATH)
   gh_bin                   the `gh` the GitHub integration runs (default: gh on
                            this daemon's PATH)
+  ssh_bin                  the `ssh` each ssh:// host's forward runs (default: ssh
+                           on this daemon's PATH)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
   [hosts.<name>]           another machine's daemon, listed by GET /v1/hosts: `endpoint`
                            is ssh://[user@]host[:port], http://host:port or an
@@ -231,6 +233,12 @@ async fn main() -> Result<()> {
         ariadne_daemon::timeouts::Timeouts::default(),
     );
     tunnel.start(&webhook_listen);
+    let hosts = ariadne_daemon::hosts::Hosts::new(
+        config.clone(),
+        events.clone(),
+        ariadne_daemon::timeouts::Timeouts::default(),
+    );
+    hosts.start();
     let sched_tx = ariadne_daemon::scheduler::start(
         store.clone(),
         launcher.clone(),
@@ -252,6 +260,7 @@ async fn main() -> Result<()> {
         agent_registry,
         ai_permissions,
         tunnel: tunnel.clone(),
+        hosts: hosts.clone(),
         reply_locks: Default::default(),
     };
     let ai_permissions_shutdown = state.ai_permissions.clone();
@@ -262,6 +271,7 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         shutdown_signal().await;
         tunnel.shutdown().await;
+        hosts.shutdown().await;
         drop(webhook_listen);
         info!("webhook ingress stopped");
     });

@@ -145,6 +145,9 @@ pub struct FileConfig {
     /// The `gh` the GitHub integration runs (025; default: `gh` on the
     /// daemon's PATH).
     pub gh_bin: Option<String>,
+    /// The `ssh` every `ssh://` host's forward runs (037; default: `ssh` on
+    /// the daemon's PATH).
+    pub ssh_bin: Option<String>,
     /// Retired GitLab CLI location (025). Accepted and ignored, never read:
     /// an old config.toml naming it must still parse, so the daemon reaches
     /// the database's own reset guidance instead of failing on an unknown key.

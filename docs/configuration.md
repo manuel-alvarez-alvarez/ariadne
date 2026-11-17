@@ -65,6 +65,8 @@ ai_failure_diagnosis = true        # ask the AI permission model's local Kev
                                     # exhausted_patterns; see Failure diagnosis.
 gh_bin = "/opt/homebrew/bin/gh"    # the `gh` the GitHub integration runs
                                    # (default: gh on this daemon's PATH)
+ssh_bin = "/usr/bin/ssh"           # the `ssh` each ssh:// host's forward runs
+                                   # (default: ssh on this daemon's PATH)
 webhook_listen = "127.0.0.1:7677"  # the signed webhook listener's address
                                    # (default: 127.0.0.1:0, a random free port)
 webhook_public_url = "https://hooks.example.com"
@@ -99,8 +101,35 @@ letters, digits, `-` and `_`, and `local` is taken: it is this daemon, which
 `GET /v1/hosts` always lists first. The configured hosts follow in the order
 of the file. An unknown key in a host, a bad `endpoint`, or a `remote` on a
 host that is not `ssh://` is refused by name at startup and by `ariadned
---check-config`. This release lists the hosts only: an `ssh://` host shows as
-`down` with the error `ssh forward not started`. See [Hosts](../specs/037-hosts.md).
+--check-config`. See [Hosts](../specs/037-hosts.md).
+
+For each `ssh://` host the daemon keeps a local port forward open. At
+startup it picks a free loopback port and runs:
+
+```sh
+ssh -N -L 127.0.0.1:<port>:<remote> -o ServerAliveInterval=15 \
+    -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o BatchMode=yes \
+    [-p <port>] [user@]host
+```
+
+- `ssh` is `ssh_bin`. The forward is your own `ssh`, so your SSH keys, your
+  agent and your `~/.ssh/config` apply. `BatchMode=yes` means it never asks
+  for a password: set up key or agent login to the host first.
+- `remote` defaults to this daemon's own `socket_path`, for a far daemon at
+  the same path. A socket path forwards to a unix socket; a `host:port`
+  forwards to TCP on the far machine.
+- The host is `connecting` while `ssh` starts. The daemon then asks the far
+  daemon for `/v1/health` through the port. On the first good answer the
+  host is `ready`, and its `endpoint` is `http://127.0.0.1:<port>`.
+- When `ssh` exits, the host is `down` and its `error` is the last line
+  `ssh` wrote to stderr. The daemon starts `ssh` again after 1 second, and
+  doubles the wait after each exit, up to 60 seconds.
+- Each change of a host's `status`, `endpoint` or `error` publishes one
+  `host_updated` event. Stopping the daemon ends every `ssh` it started.
+
+One forward carries everything both ways: requests, event streams and
+answers. A client on this machine uses the `endpoint` as if the far daemon
+were local.
 
 An `[[acp_agents]]` entry adds an ACP agent the shipped registry snapshot
 does not name, or replaces one it does name, command and all, by reusing its
@@ -206,11 +235,16 @@ minutes, the flag at ten, a relaunch at thirty) and takes neither key.
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
 the socket from it (`--home` > `ARIADNE_HOME` > `~/.ariadne`, then that home's
 `socket_path` > `<home>/ariadne.sock`), so every command addresses the daemon
-of the home it runs in. `--endpoint` (whose old spelling `--host` still works)
-overrides that with a socket path or `http://host:port`, and so does
+of the home it runs in. `--endpoint` overrides that with a socket path
+or `http://host:port`, and so does
 `ARIADNE_ENDPOINT` — read after the flag and before the home, with the older
 `ARIADNE_SOCKET`, which every agent session is still spawned with, honoured
 after it.
+
+To select a configured host, use `--host NAME`.
+The daemon selected by `--endpoint` supplies the host registry.
+Use `--host all` to read across hosts, or `--host local` to address that daemon.
+See [Selecting a host](cli.md#selecting-a-host) for the flag reference and command restrictions.
 
 `ARIADNE_COMPLETE_DEBUG`, set to anything, makes `ariadne`'s shell-completion
 code print diagnostics to stderr: a round that timed out, a failed daemon
