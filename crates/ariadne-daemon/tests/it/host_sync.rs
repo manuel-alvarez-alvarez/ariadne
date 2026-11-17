@@ -301,6 +301,47 @@ async fn each_later_change_reaches_the_host_and_a_delete_removes_it() {
     .await;
 }
 
+/// A row on a repository the host has no checkout of is counted, not
+/// pushed, and the host stays `in_sync`. A delete takes it off the count.
+#[tokio::test]
+async fn a_learned_permission_without_a_checkout_on_the_host_is_counted_as_skipped() {
+    let (far, local, _dir) = far_and_local().await;
+    let lacking = forge_repository(&local, "lacking", "acme/gadgets", json!({})).await;
+    let first = local
+        .store
+        .record_learned_permission(approval(&lacking.id, "cargo test"))
+        .await
+        .unwrap();
+    local.state.hosts.start();
+    eventually(TIMEOUT, "one skipped permission", || async {
+        let sync = sync_of(&local).await;
+        sync.state == SyncState::InSync && sync.skipped_permissions == 1
+    })
+    .await;
+    let far_rows: LearnedPermissionsResponse = far.get("/v1/permissions/learned").await;
+    assert!(far_rows.items.is_empty(), "{:?}", far_rows.items);
+
+    local
+        .store
+        .record_learned_permission(approval(&lacking.id, "cargo build"))
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "two skipped permissions", || async {
+        sync_of(&local).await.skipped_permissions == 2
+    })
+    .await;
+    local
+        .store
+        .delete_learned_permission(&first.id)
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "one skipped permission again", || async {
+        let sync = sync_of(&local).await;
+        sync.state == SyncState::InSync && sync.skipped_permissions == 1
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn a_repository_takes_the_local_settings_by_forge_and_a_missing_one_is_listed() {
     let (far, local, _dir) = far_and_local().await;

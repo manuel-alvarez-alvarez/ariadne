@@ -2839,6 +2839,12 @@ export interface components {
              *     repository on the host. Nothing is registered for them.
              */
             missing_repositories: components["schemas"]["MissingRepositoryDto"][];
+            /**
+             * Format: int32
+             * @description How many local learned permissions are not pushed, because the host
+             *     has no checkout of their repository.
+             */
+            skipped_permissions: number;
             state: components["schemas"]["SyncState"];
         };
         IssueDto: {

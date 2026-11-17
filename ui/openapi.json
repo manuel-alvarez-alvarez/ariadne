@@ -6592,7 +6592,8 @@
         "description": "The sync of one host (037).",
         "required": [
           "state",
-          "missing_repositories"
+          "missing_repositories",
+          "skipped_permissions"
         ],
         "properties": {
           "error": {
@@ -6608,6 +6609,12 @@
               "$ref": "#/components/schemas/MissingRepositoryDto"
             },
             "description": "The local repositories that have no checkout of the same forge\nrepository on the host. Nothing is registered for them."
+          },
+          "skipped_permissions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many local learned permissions are not pushed, because the host\nhas no checkout of their repository.",
+            "minimum": 0
           },
           "state": {
             "$ref": "#/components/schemas/SyncState"

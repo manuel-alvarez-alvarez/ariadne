@@ -141,7 +141,9 @@ When a host becomes `ready`, the daemon pushes all of these through the
 host's own API:
 
 - every skill and every workflow, matched by name;
-- every learned permission, on the host's checkout of its repository;
+- every learned permission, on the host's checkout of its repository. A row
+  whose repository has no checkout there is not pushed, and
+  `sync.skipped_permissions` counts it.
 - the AI permission settings: on or off, the thresholds and the flavour. The
   host picks its own device for the flavour.
 - the settings of each repository the host has a checkout of: the default

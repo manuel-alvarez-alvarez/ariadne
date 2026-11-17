@@ -21,6 +21,7 @@ fn pending() -> HostSyncDto {
         state: SyncState::Pending,
         error: None,
         missing_repositories: Vec::new(),
+        skipped_permissions: 0,
     }
 }
 
@@ -164,7 +165,10 @@ async fn openapi_carries_the_route_the_dto_and_the_event() {
     assert!(doc["components"]["schemas"]["HostDto"].is_object());
     let host = doc["components"]["schemas"]["HostDto"].to_string();
     assert!(host.contains("\"sync\""), "{host}");
-    assert!(doc["components"]["schemas"]["HostSyncDto"].is_object());
+    let sync = doc["components"]["schemas"]["HostSyncDto"].to_string();
+    for field in ["missing_repositories", "skipped_permissions"] {
+        assert!(sync.contains(field), "{sync}");
+    }
     assert!(doc["components"]["schemas"]["MissingRepositoryDto"].is_object());
     let state = doc["components"]["schemas"]["SyncState"].to_string();
     for value in ["in_sync", "pending", "failed"] {

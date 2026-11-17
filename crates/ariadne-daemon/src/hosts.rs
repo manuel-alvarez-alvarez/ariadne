@@ -136,6 +136,7 @@ fn initial(name: &str, host: &HostConfig) -> HostDto {
         state: SyncState::Pending,
         error: None,
         missing_repositories: Vec::new(),
+        skipped_permissions: 0,
     };
     if host.endpoint.starts_with("ssh://") {
         HostDto {

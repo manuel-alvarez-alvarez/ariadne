@@ -240,11 +240,13 @@ impl Pusher<'_> {
             Push::Repositories => self.repositories().await.map(drop),
             Push::Learned(row) => {
                 let pairs = self.pairs().await?.0;
-                self.learned(row, &pairs).await
+                self.learned(row, &pairs).await?;
+                self.count_skipped(&pairs).await
             }
             Push::LearnedDeleted(row) => {
                 let pairs = self.pairs().await?.0;
-                self.learned_deleted(row, &pairs).await
+                self.learned_deleted(row, &pairs).await?;
+                self.count_skipped(&pairs).await
             }
             Push::Ai(choice) => self.ai(choice).await,
         }
@@ -412,11 +414,32 @@ impl Pusher<'_> {
         }
         self.inner
             .set_sync(self.index, |sync| sync.missing_repositories = missing);
+        self.count_skipped(&ids).await?;
         Ok(ids)
     }
 
+    /// Record how many local learned permissions are on a repository the
+    /// host has no checkout of. They are not pushed, and leave the state as
+    /// it is.
+    async fn count_skipped(&self, pairs: &HashMap<String, String>) -> Result<(), String> {
+        let rows = self
+            .inner
+            .store
+            .list_learned_permissions(None)
+            .await
+            .map_err(|error| format!("reading the local store: {error}"))?;
+        let skipped = rows
+            .iter()
+            .filter(|row| !pairs.contains_key(&row.repository_id))
+            .count();
+        let skipped = u32::try_from(skipped).unwrap_or(u32::MAX);
+        self.inner
+            .set_sync(self.index, |sync| sync.skipped_permissions = skipped);
+        Ok(())
+    }
+
     /// Record the row on the host's checkout of its repository. A row whose
-    /// repository the host has no checkout of waits for one.
+    /// repository the host has no checkout of is skipped, and counted.
     async fn learned(
         &self,
         row: &LearnedPermissionDto,

@@ -75,8 +75,9 @@ back to this daemon, the CLI `--host` flag and any desktop change. The transport
 15. `sync` is `state` (`in_sync`, `pending`, `failed`), `error` (string or
     null) and `missing_repositories` (`MissingRepositoryDto[]`: the local
     repository's `id`, and `forge`, its `owner/repo`, or null for a
-    repository with no forge). `local` is always `in_sync` with an empty list.
-    A configured host starts `pending`.
+    repository with no forge) and `skipped_permissions` (rule 20). `local`
+    is always `in_sync` with an empty list and no skipped permission. A
+    configured host starts `pending`.
 16. When a host becomes `ready`, the daemon pushes, in order: every skill
     (`PUT /v1/skills/{name}`, else `POST /v1/skills` on a 404), every workflow
     (the same with the workflow routes), the repositories (rule 19), every
@@ -107,7 +108,9 @@ back to this daemon, the CLI `--host` flag and any desktop change. The transport
     the whole row; a row with the same repository, tool name, level and key
     keeps its id and `created_at`. An unknown repository is a 404. A deleted
     row deletes the host row with the same repository, tool name, level and
-    key. A row whose repository has no match is not pushed.
+    key. A row whose repository has no match is not pushed: it is counted in
+    `skipped_permissions`, recounted on each push of a repository or a
+    learned permission, and leaves `state` as it is.
 21. The AI permission settings are pushed with `PUT /v1/permissions/ai`:
     `enabled`, the thresholds where they are set by hand (else
     `default_thresholds`), and `flavour`. `device` is not pushed: the host
@@ -154,8 +157,11 @@ back to this daemon, the CLI `--host` flag and any desktop change. The transport
   (`host_sync.rs::a_repository_takes_the_local_settings_by_forge_and_a_missing_one_is_listed`,
   `src/hosts/sync.rs::a_repository_pairs_by_forge_and_prefers_its_own_base_branch`,
   `::a_forge_repository_on_another_branch_pairs_once`).
-- Rule 20's route
-  (`learned_permissions.rs::a_pushed_row_is_recorded_whole_and_keeps_the_id_of_its_key`).
+- Rule 20
+  (`host_sync.rs::a_ready_host_takes_every_item_and_keeps_its_own`,
+  `::each_later_change_reaches_the_host_and_a_delete_removes_it`,
+  `::a_learned_permission_without_a_checkout_on_the_host_is_counted_as_skipped`;
+  the route is spec 022, rule 21).
 - Rules 6 and 15
   (`host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`).
 

@@ -324,7 +324,7 @@ and the ACP runtime that reports the agent events (021).
     row directly: widening it to every repository, or narrowing it back to
     its own. No route lets a person create a row: only a permission decision
     writes one. `POST /v1/permissions/learned` takes a whole row, as a daemon
-    that syncs to this one pushes a decision made there (037, rule 20).
+    that syncs to this one pushes a decision made there (022, rule 21).
     Lists can filter
     by repository and return newest first. `LearnedPermissionDto` is `id`,
     `repository_id`, `tool_name`, `key` (the normalized input), `level`

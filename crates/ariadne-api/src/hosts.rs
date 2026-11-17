@@ -61,6 +61,9 @@ pub struct HostSyncDto {
     /// The local repositories that have no checkout of the same forge
     /// repository on the host. Nothing is registered for them.
     pub missing_repositories: Vec<MissingRepositoryDto>,
+    /// How many local learned permissions are not pushed, because the host
+    /// has no checkout of their repository.
+    pub skipped_permissions: u32,
 }
 
 impl HostSyncDto {
@@ -70,6 +73,7 @@ impl HostSyncDto {
             state: SyncState::InSync,
             error: None,
             missing_repositories: Vec::new(),
+            skipped_permissions: 0,
         }
     }
 }
