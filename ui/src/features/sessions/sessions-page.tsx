@@ -18,16 +18,14 @@ import { useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
 import {
-  ApiError,
   type GoalDto,
   type HostRow,
-  LOCAL_HOST,
   type SessionDto,
   type TaskDto,
   useHostLists,
   useHosts,
 } from "@/api"
-import { ErrorState } from "@/components/error-state"
+import { HostListErrors } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { ScrollableTable } from "@/components/scroll-edge"
 import { TokenFigure } from "@/components/token-figure"
@@ -80,13 +78,6 @@ const SESSION_COLUMNS = [
   { key: "tokens", header: "Tokens", className: "text-right" },
   { key: "activity", header: "Last activity", className: "text-right" },
 ]
-const NETWORK_ERROR_DESCRIPTION =
-  "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
-
-function errorDescription(error: unknown): string | undefined {
-  return ApiError.is(error) && error.isNetworkError ? NETWORK_ERROR_DESCRIPTION : undefined
-}
-
 function movedAt(session: SessionDto): string {
   return session.last_activity_at ?? session.created_at
 }
@@ -219,6 +210,7 @@ export function SessionsPage() {
         <div className="flex flex-wrap items-center gap-2">
           <AgentFilter
             value={browse.values.agent}
+            hosts={hosts}
             onSelect={(agent) => browse.filterBy("agent", agent)}
           />
           <FilterMenu
@@ -262,18 +254,13 @@ export function SessionsPage() {
 
       <ScopeChips goal={goal} task={task} onClear={filterBy} />
 
-      {/* One warning per host that failed, while the others still show. */}
-      {sessions.errors.map(({ host, error }) => (
-        <ErrorState
-          key={host}
-          title={
-            host === LOCAL_HOST ? "Could not load sessions" : `Could not load sessions on ${host}`
-          }
-          error={error}
-          description={errorDescription(error)}
-          onRetry={() => sessions.refetch()}
-        />
-      ))}
+      <HostListErrors
+        what="sessions"
+        errors={sessions.errors}
+        hostCount={hosts.length}
+        hasRows={rows.length > 0}
+        onRetry={() => sessions.refetch()}
+      />
       <SessionsTable
         rows={rows}
         pending={sessions.isPending}

@@ -1167,8 +1167,9 @@ Out: the daemon endpoints themselves (012).
     under All with more than one host each lane names its host. A goal's panel
     opens on its host, with its tasks and orchestrator sessions read there. A
     goal lives on one host. The goal dialog shows a host select once there is
-    more than one reachable host. The select defaults to the picked host, or
-    `local` under All. Its repositories, workflows and model pin picker read
+    more than one listed host. The select defaults to the picked host when the
+    app can reach it, else to `local`. It lists each listed host; a host the app
+    cannot reach is a disabled option with its reason. Its repositories, workflows and model pin picker read
     that host, and a change of host reloads them. The pin picker takes a host.
 59. The attention strip and the attention count merge the selected hosts. A
     row of a named host shows the host. A `wait_for_user` question is
@@ -1184,6 +1185,7 @@ Out: the daemon endpoints themselves (012).
 61. The sessions screen merges the sessions of the selected hosts with
     `useHostLists`. Under All with more than one host each row shows a host
     badge. The status, seat, goal and task chips apply to every selected host.
+    The Agent filter lists the agents of each selected host.
 62. The session panel and the console open their streams on the session's
     host. `console-view-state.ts` keys its state by host, address and
     session. Console input, cancel and answers post to the session's host. A
@@ -1208,7 +1210,8 @@ Out: the daemon endpoints themselves (012).
     `::counts the learned rows a host skipped on the Learned tab only`).
 66. The AI permission model's `device` is not synced. The AI tab shows a card
     per host, read from that host's `GET /v1/permissions/ai`, with its install
-    state, hardware, Refresh and Device. A device change sends
+    state, hardware, Refresh and Device. A host the app cannot reach shows its
+    reason in place of the card, with no skeleton. A device change sends
     `PUT /v1/permissions/ai` with `device` alone to that host. The switch,
     thresholds, flavour and test panel are `local`'s card only.
 67. The repositories table has a Hosts column. For each named host it says
@@ -1223,8 +1226,7 @@ Out: the daemon endpoints themselves (012).
     holds one agent id. Under more than one selected host its panel has a chip
     per host that has the agent. A flag edit, a model switch and a rank apply to
     the host of the chip picked, and Refresh reprobes every selected host. Each host
-    whose agents failed to load is named in an error with Retry, beside the
-    agents of the hosts that answered, and even when none returned an agent.
+    whose agents or models failed to load follows rule 74.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
     most recently updated first, with a host badge while more than one host is
     selected. A repository filter names one forge repository, and each host
@@ -1252,6 +1254,15 @@ Out: the daemon endpoints themselves (012).
     view. The shipped dashboard's series names end in `{{host}}`, which the
     combined view fills from the `host` label the daemon adds.
 73. Every other screen reads `local`, and passes `"local"` explicitly.
+74. An error of a named host names the host and gives its reason; the hint
+    "Check the URL in settings" shows only for `local`. A list over many hosts
+    (the goals board, the sessions screen and the agents screen) shows one
+    warning per host that failed while another host answers, and an error state
+    per failed host only when every host failed and no row is left. Each
+    warning and error state names its host and gives its reason, and has Retry.
+    A host that failed a refresh while its last read is on screen, an empty one
+    too, is a warning marked "which may be outdated", never an error state.
+
 
 ## Acceptance criteria
 
@@ -2214,6 +2225,18 @@ Out: the daemon endpoints themselves (012).
   `::says which host's agents failed to load beside the agents of the host that answered, with a retry`,
   `::names the failed host beside a host that answered with no agents`,
   `::names every host whose agents failed, each with a retry, when none answered`).
+- A host the app cannot reach is named, with its reason, in each dialog, card
+  and error state (rule 74): the goal dialog's default and disabled option
+  (`ui/src/features/unreachable-hosts.test.tsx::opens the goal dialog on local when the picked host cannot be reached`,
+  `::lists an unreachable host in the goal dialog as a disabled option with its reason`);
+  the AI tab (`::shows the reason of an unreachable host on the AI tab, with no skeleton`);
+  an error of a named host and the hint for `local` alone
+  (`::shows an error state, with the host's reason and no URL hint, when a named host's goals fail`,
+  `::shows the daemon hint only for local, on a table of a named host`);
+  a warning for some hosts and an error state for all
+  (`::warns, not errors, when only one of two hosts fails to list sessions`,
+  `::shows an error state for each host when every host fails to list sessions`);
+  the Agent filter (`::lists the agents of each selected host in the sessions Agent filter`).
 - The Forge tabs merge hosts, open a panel on the row's host, offer the hosts of
   a repository for a review, and fill the goal dialog on the issue's host
   (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, badged, and opens a panel on its row's host`,

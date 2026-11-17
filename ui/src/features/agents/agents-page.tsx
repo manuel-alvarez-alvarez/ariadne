@@ -30,16 +30,9 @@ import { PencilIcon, RefreshCwIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import {
-  type AgentConfigDto,
-  ApiError,
-  type Host,
-  type HostRow,
-  type ModelDto,
-  useHostLists,
-} from "@/api"
+import { type AgentConfigDto, type Host, type HostRow, type ModelDto, useHostLists } from "@/api"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { HostListErrors } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { TabCount } from "@/components/tab-count"
 import { Badge } from "@/components/ui/badge"
@@ -103,31 +96,23 @@ export function AgentsPage() {
         agent, and one thing went wrong. The flags are a separate request and
         still show.
       */}
-      {models.errors.map(({ host, error }) => (
-        <ErrorState
-          key={host}
-          title={
-            hosts.length > 1 ? `Could not load the models of ${host}` : "Could not load the models"
-          }
-          error={error}
-          description={networkHint(error)}
-          onRetry={() => models.refetch()}
-        />
-      ))}
+      <HostListErrors
+        what="the models"
+        errors={models.errors}
+        hostCount={hosts.length}
+        hasRows={models.rows.length > 0}
+        onRetry={() => models.refetch()}
+      />
 
       {/* Each host whose agents failed to load is named, apart from the hosts
           that answered, which stay on screen — empty or not. */}
-      {configs.errors.map(({ host, error }) => (
-        <ErrorState
-          key={host}
-          title={
-            hosts.length > 1 ? `Could not load the agents of ${host}` : "Could not load the agents"
-          }
-          error={error}
-          description={networkHint(error)}
-          onRetry={() => configs.refetch()}
-        />
-      ))}
+      <HostListErrors
+        what="the agents"
+        errors={configs.errors}
+        hostCount={hosts.length}
+        hasRows={configs.rows.length > 0}
+        onRetry={() => configs.refetch()}
+      />
 
       <AgentTabs
         hosts={hosts}
@@ -151,13 +136,6 @@ export function AgentsPage() {
       ) : null}
     </div>
   )
-}
-
-/** A daemon that never answered has nothing to say about why. */
-function networkHint(error: unknown): string | undefined {
-  return ApiError.is(error) && error.isNetworkError
-    ? "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
-    : undefined
 }
 
 /** What this page reads off the agent-config queries of the selected hosts. */
