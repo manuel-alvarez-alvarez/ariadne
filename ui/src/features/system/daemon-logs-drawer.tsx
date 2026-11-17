@@ -89,7 +89,13 @@ export function DaemonLogsDrawer({
   const named = useHasNamedHosts()
   // The picked host when the app can reach it, else `local`.
   const pickedReachable = hosts.find((row) => row.name === picked)?.url != null
-  const host = choice ?? (pickedReachable && picked ? picked : LOCAL_HOST)
+  const fallback = pickedReachable && picked ? picked : LOCAL_HOST
+  const host = choice ?? fallback
+  // Keep the host the drawer opened on, so a later outage shows its reason
+  // rather than switching the stream to `local`.
+  useEffect(() => {
+    if (open && choice === null && picked !== null) setChoice(fallback)
+  }, [open, choice, picked, fallback])
   // A pick the hosts list has not answered for yet opens no stream, rather
   // than one on `local`.
   const waiting = choice === null && picked === null

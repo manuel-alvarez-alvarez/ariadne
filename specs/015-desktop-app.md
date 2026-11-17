@@ -1228,8 +1228,9 @@ Out: the daemon endpoints themselves (012).
 71. The daemon logs drawer has a host select, shown only with a named host. It
     lists the hosts of the picker, and a host the app cannot reach is a disabled
     option with its reason. It defaults to the picked host when the app can
-    reach it, else to `local`, and opens the log stream of that host. A chosen
-    host that goes unreachable opens none and says why.
+    reach it, else to `local`, and opens the log stream of that host. The host
+    the drawer opened on stays chosen until the user picks another. If it goes
+    unreachable, the drawer opens no stream and says why.
 72. The dashboards screen has a host select, shown only with a named host. It
     has All hosts and the hosts of the picker, and a host the app cannot reach
     is a disabled option with its reason. It defaults to the picked host when
@@ -2212,7 +2213,8 @@ Out: the daemon endpoints themselves (012).
   names (`ui/src/features/system/daemon-logs-drawer.test.tsx::opens the log of the picked host, and of local under All, and follows the drawer's own host select`,
   `::defaults to local under All hosts`,
   `::shows no host select while the daemon lists local alone`,
-  `::lists a host it cannot reach as a disabled option with its reason, and defaults to local over such a pick`).
+  `::lists a host it cannot reach as a disabled option with its reason, and defaults to local over such a pick`,
+  `::keeps the host it opened on when that host goes down, and says why`).
 - The dashboards screen queries the host its select names
   (`crates/ariadne-daemon/tests/it/dashboards.rs::every_named_series_of_the_shipped_dashboard_carries_the_host`,
   `ui/src/routes/dashboards.test.tsx::queries every host under All, the picked host otherwise, and the host the select names`,

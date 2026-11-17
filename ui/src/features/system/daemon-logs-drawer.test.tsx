@@ -8,13 +8,13 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-
 import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { dispatchDomainEvent } from "@/events/dispatch"
 import type { useConnection } from "@/hooks/use-connection"
 
 type Connection = ReturnType<typeof useConnection>
@@ -44,6 +44,8 @@ afterEach(() => {
   useSettingsStore.setState({ hostFilter: "" })
 })
 
+let lastClient: QueryClient
+
 function mountShell() {
   startAt("/")
   const router = createBrowserRouter([
@@ -57,6 +59,7 @@ function mountShell() {
       </TooltipProvider>
     </QueryClientProvider>,
   )
+  lastClient = client
   return screen.getByRole("button", { name: "Daemon status — open logs" })
 }
 
@@ -194,4 +197,19 @@ it("lists a host it cannot reach as a disabled option with its reason, and defau
   expect(option.textContent).toBe("box (not reachable: ssh closed)")
   expect(option.getAttribute("aria-disabled")).toBe("true")
   expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
+})
+
+it("keeps the host it opened on when that host goes down, and says why", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, BOX])
+  useSettingsStore.setState({ hostFilter: "box" })
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  await vi.waitFor(() => expect(latestSource().url).toBe("http://box.test:7676/v1/logs/stream"))
+
+  act(() => {
+    dispatchDomainEvent(lastClient, "local", { event: "host_updated", data: BOX_DOWN })
+  })
+  expect(await screen.findByText("Host box is not reachable: ssh closed")).toBeTruthy()
 })
