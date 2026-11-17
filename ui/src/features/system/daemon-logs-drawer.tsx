@@ -21,6 +21,7 @@ import { PlugZapIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import { type Host, hostBaseUrl, LOCAL_HOST, type LogLineDto, useHosts } from "@/api"
+import { hostStatus } from "@/components/host-picker"
 import {
   Select,
   SelectContent,
@@ -35,7 +36,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { usePickedHost } from "@/hooks/use-host-filter"
+import { useHasNamedHosts, usePickedHost } from "@/hooks/use-host-filter"
 import { cn } from "@/lib/format"
 
 import { type DaemonLogStatus, DaemonLogStream, daemonLogStreamUrl } from "./daemon-log-stream"
@@ -85,7 +86,16 @@ export function DaemonLogsDrawer({
   // The picker's host, or `local` under All, until the user picks another here.
   const picked = usePickedHost()
   const [choice, setChoice] = useState<Host | null>(null)
-  const host = choice ?? picked ?? LOCAL_HOST
+  const named = useHasNamedHosts()
+  // The picked host when the app can reach it, else `local`.
+  const pickedReachable = hosts.find((row) => row.name === picked)?.url != null
+  const fallback = pickedReachable && picked ? picked : LOCAL_HOST
+  const host = choice ?? fallback
+  // Keep the host the drawer opened on, so a later outage shows its reason
+  // rather than switching the stream to `local`.
+  useEffect(() => {
+    if (open && choice === null && picked !== null) setChoice(fallback)
+  }, [open, choice, picked, fallback])
   // A pick the hosts list has not answered for yet opens no stream, rather
   // than one on `local`.
   const waiting = choice === null && picked === null
@@ -150,22 +160,26 @@ export function DaemonLogsDrawer({
               </SheetDescription>
             </div>
             <div className="flex items-center gap-2">
-              <Select
-                value={host}
-                onValueChange={(value) => setChoice(value ?? LOCAL_HOST)}
-                items={hosts.map((row) => ({ value: row.name, label: row.name }))}
-              >
-                <SelectTrigger size="sm" className="w-32" aria-label="Host">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  {hosts.map((row) => (
-                    <SelectItem key={row.name} value={row.name}>
-                      {row.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {named ? (
+                <Select
+                  value={host}
+                  onValueChange={(value) => setChoice(value ?? LOCAL_HOST)}
+                  items={hosts.map((row) => ({ value: row.name, label: row.name }))}
+                >
+                  <SelectTrigger size="sm" className="w-32" aria-label="Host">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    {hosts.map((row) => (
+                      <SelectItem key={row.name} value={row.name} disabled={row.url === null}>
+                        {row.url === null
+                          ? `${row.name} (${hostStatus(row).label}: ${row.unreachable ?? ""})`
+                          : row.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
               <Select
                 value={service}
                 onValueChange={(value) => setService(value ?? ALL)}

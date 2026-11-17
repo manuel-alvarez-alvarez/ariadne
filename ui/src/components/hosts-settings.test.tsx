@@ -9,6 +9,7 @@ import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
+import { useHosts } from "@/api"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { useHostFilter } from "@/hooks/use-host-filter"
 import { useSettingsStore } from "@/stores/settings"
@@ -94,11 +95,70 @@ it("picks All, local or a named host with its status, and keeps the pick", async
     "All hosts",
     "local",
     "boxready",
-    "fardownssh forward not started",
+    "farnot reachablessh forward not started",
   ])
   await user.click(options[2] as HTMLElement)
 
   await waitFor(() => expect(screen.getByTestId("selected").textContent).toBe("box"))
   expect(useSettingsStore.getState().hostFilter).toBe("box")
   expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}").state.hostFilter).toBe("box")
+})
+
+/** Says when the hosts list has answered. */
+function Answered() {
+  return <p data-testid="answered">{useHosts().isPending ? "" : "yes"}</p>
+}
+
+it("shows no host picker while the daemon lists local alone", async () => {
+  stubHosts({}, [LOCAL])
+  renderScreen(
+    <>
+      <HostPicker />
+      <Answered />
+    </>,
+  )
+  await waitFor(() => expect(screen.getByTestId("answered").textContent).toBe("yes"))
+  expect(screen.queryByRole("button", { name: "Host" })).toBeNull()
+})
+
+it("shows the host picker for a named host that is down", async () => {
+  stubHosts({}, [LOCAL, FAR])
+  renderScreen(<HostPicker />)
+  expect(await screen.findByRole("button", { name: "Host" })).toBeTruthy()
+})
+
+it("shows a host with a socket path as not reachable, never as ready", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, { ...FAR, status: "ready", endpoint: "/run/ariadned.sock", error: null }])
+  renderScreen(<HostPicker />)
+
+  await user.click(await screen.findByRole("button", { name: "Host" }))
+  const options = await screen.findAllByRole("menuitemradio")
+  expect(options[2]?.textContent).toBe(
+    "farnot reachable/run/ariadned.sock is not an http:// or https:// endpoint",
+  )
+})
+
+it("shows the status of a picked named host in the trigger", async () => {
+  useSettingsStore.setState({ hostFilter: "far" })
+  stubHosts({}, [LOCAL, BOX, FAR])
+  renderScreen(<HostPicker />)
+
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Host" }).textContent).toBe("farnot reachable"),
+  )
+})
+
+it("reads a saved pick the daemon no longer lists as All hosts", async () => {
+  useSettingsStore.setState({ hostFilter: "gone" })
+  stubHosts({}, [LOCAL, BOX])
+  renderScreen(
+    <>
+      <HostPicker />
+      <Selected />
+    </>,
+  )
+
+  await waitFor(() => expect(screen.getByTestId("selected").textContent).toBe("local,box"))
+  expect(screen.getByRole("button", { name: "Host" }).textContent).toBe("All hosts")
 })

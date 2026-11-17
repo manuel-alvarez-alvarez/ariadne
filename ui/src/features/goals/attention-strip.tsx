@@ -4,9 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { type FormEvent, useRef, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
-import { type AgentRequestDto, api, type GoalDto, type Host, LOCAL_HOST, qk, unwrap } from "@/api"
+import { type AgentRequestDto, api, type GoalDto, type Host, qk, unwrap } from "@/api"
+import { HostLabel } from "@/components/host-label"
 import { StatusBadge } from "@/components/status-badge"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
@@ -21,6 +21,7 @@ import { When } from "@/components/when"
 import { answerRequest, pendingRequests } from "@/features/sessions/console/questions"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 import { describeError, shortId } from "@/lib/format"
 
 import {
@@ -299,6 +300,7 @@ function Row({
   expanded?: boolean
 }) {
   const queryClient = useQueryClient()
+  const showHost = useRowsShowHost()
   const dismiss = useMutation({
     mutationFn: () =>
       unwrap(
@@ -353,12 +355,7 @@ function Row({
       <div className="flex w-full items-center gap-2 @2xl:w-auto">
         {/* A pull request's session belongs to no goal to name. */}
         {item.goalId ? <GoalRef goalId={item.goalId} goal={item.goal} /> : null}
-        {/* `local` is the app's own daemon; any other host is named. */}
-        {item.host === LOCAL_HOST ? null : (
-          <Badge variant="outline" className="font-mono" title="Host">
-            {item.host}
-          </Badge>
-        )}
+        {showHost ? <HostLabel host={item.host} /> : null}
         {/* One label for every row: a task's row moves when the task is
             updated, a session's when it started asking — "last moved" is the
             one thing true of both, and the list is ordered by it. */}

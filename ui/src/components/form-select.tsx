@@ -30,6 +30,8 @@ import { cn } from "@/lib/format"
 interface SelectOption {
   label: string
   value: string
+  /** A choice that is listed but cannot be picked. */
+  disabled?: boolean
 }
 
 export function FormSelect<V extends FieldValues>({
@@ -95,7 +97,7 @@ export function FormSelect<V extends FieldValues>({
           </SelectTrigger>
           <SelectContent>
             {options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
+              <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
                 {renderOption ? renderOption(option) : option.label}
               </SelectItem>
             ))}

@@ -8,13 +8,13 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-
 import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { dispatchDomainEvent } from "@/events/dispatch"
 import type { useConnection } from "@/hooks/use-connection"
 
 type Connection = ReturnType<typeof useConnection>
@@ -44,6 +44,8 @@ afterEach(() => {
   useSettingsStore.setState({ hostFilter: "" })
 })
 
+let lastClient: QueryClient
+
 function mountShell() {
   startAt("/")
   const router = createBrowserRouter([
@@ -57,6 +59,7 @@ function mountShell() {
       </TooltipProvider>
     </QueryClientProvider>,
   )
+  lastClient = client
   return screen.getByRole("button", { name: "Daemon status — open logs" })
 }
 
@@ -170,28 +173,43 @@ it("defaults to local under All hosts", async () => {
   expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
 })
 
-it("shows none of a host's log under another host it cannot reach", async () => {
+const BOX_DOWN = { ...BOX, status: "down" as const, endpoint: null, error: "ssh closed" }
+
+it("shows no host select while the daemon lists local alone", async () => {
   const user = userEvent.setup()
-  stubHosts({}, [LOCAL, { ...BOX, status: "down", endpoint: null, error: "ssh closed" }])
+  stubHosts({}, [LOCAL])
   const footerButton = mountShell()
 
   await user.click(footerButton)
-  latestSource().emit("snapshot", {
-    lines: [
-      {
-        ts: "2026-08-18T12:00:00.000000Z",
-        level: "INFO",
-        target: "ariadne_daemon::scheduler",
-        message: "from local",
-        service: "ariadned",
-      },
-    ],
+  expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
+  expect(screen.queryByRole("combobox", { name: "Host" })).toBeNull()
+})
+
+it("lists a host it cannot reach as a disabled option with its reason, and defaults to local over such a pick", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, BOX_DOWN])
+  useSettingsStore.setState({ hostFilter: "box" })
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  await user.click(await screen.findByRole("combobox", { name: "Host" }))
+  const option = await screen.findByRole("option", { name: /^box/ })
+  expect(option.textContent).toBe("box (not reachable: ssh closed)")
+  expect(option.getAttribute("aria-disabled")).toBe("true")
+  expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
+})
+
+it("keeps the host it opened on when that host goes down, and says why", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, BOX])
+  useSettingsStore.setState({ hostFilter: "box" })
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  await vi.waitFor(() => expect(latestSource().url).toBe("http://box.test:7676/v1/logs/stream"))
+
+  act(() => {
+    dispatchDomainEvent(lastClient, "local", { event: "host_updated", data: BOX_DOWN })
   })
-  expect(await screen.findByText("from local")).toBeTruthy()
-
-  await user.click(screen.getByRole("combobox", { name: "Host" }))
-  await user.click(await screen.findByRole("option", { name: "box" }))
-
-  expect(await screen.findByText(/Host box is not reachable: ssh closed/)).toBeTruthy()
-  expect(screen.queryByText("from local")).toBeNull()
+  expect(await screen.findByText("Host box is not reachable: ssh closed")).toBeTruthy()
 })

@@ -41,6 +41,7 @@ import { useHosts } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { hostStatus } from "@/components/host-picker"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
@@ -59,6 +60,7 @@ import {
   useResetDashboard,
 } from "@/features/dashboard/queries"
 import { RenameDashboardDialog } from "@/features/dashboard/rename-dashboard-dialog"
+import { useHasNamedHosts } from "@/hooks/use-host-filter"
 import { cn } from "@/lib/format"
 import { DASHBOARD_PARAM } from "@/routes/paths"
 import { useBaseUrl, useSettingsStore } from "@/stores/settings"
@@ -78,16 +80,30 @@ const DEFAULT_DASHBOARD_NAME = "default"
 export function DashboardsPage() {
   const [search, setSearch] = useSearchParams()
   const baseUrl = useBaseUrl()
-  const { hosts } = useHosts()
+  const { hosts, isPending: hostsPending } = useHosts()
+  const named = useHasNamedHosts()
   const pick = useSettingsStore((state) => state.hostFilter)
-  // The picker's host, or every host under All, until the user picks another here.
+  // The picker's host when the app can reach it, else every host, until the
+  // user picks another here. A pick the hosts no longer list is All.
   const [hostChoice, setHostChoice] = useState<string | null>(null)
-  const queried = hostChoice ?? (pick === "" ? ALL_HOSTS : pick)
+  const pickedRow = hosts.find((host) => host.name === pick)
+  const fallback = pickedRow && pickedRow.url !== null ? pick : ALL_HOSTS
+  const chosenRow = hosts.find((host) => host.name === hostChoice)
+  const queried =
+    chosenRow && chosenRow.url !== null
+      ? chosenRow.name
+      : hostChoice === ALL_HOSTS
+        ? ALL_HOSTS
+        : fallback
+  // A named pick waits for the hosts list, so no iframe opens on All first.
+  const waitingForHosts = pick !== "" && hostsPending
   const hostItems = [
-    { value: ALL_HOSTS, label: "All hosts" },
-    ...hosts
-      .filter((host) => host.url !== null)
-      .map((host) => ({ value: host.name, label: host.name })),
+    { value: ALL_HOSTS, label: "All hosts", reason: null as string | null },
+    ...hosts.map((host) => ({
+      value: host.name,
+      label: host.name,
+      reason: host.url === null ? `${hostStatus(host).label}: ${host.unreachable ?? ""}` : null,
+    })),
   ]
   const { resolvedTheme } = useTheme()
   const theme = resolvedTheme ?? "light"
@@ -150,22 +166,24 @@ export function DashboardsPage() {
         description="A Perses dashboard, read and edited from this window."
         actions={
           <>
-            <Select
-              value={queried}
-              items={hostItems}
-              onValueChange={(value) => value && setHostChoice(value)}
-            >
-              <SelectTrigger aria-label="Host" className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {hostItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {named ? (
+              <Select
+                value={queried}
+                items={hostItems}
+                onValueChange={(value) => value && setHostChoice(value)}
+              >
+                <SelectTrigger aria-label="Host" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {hostItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value} disabled={item.reason !== null}>
+                      {item.reason ? `${item.label} (${item.reason})` : item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
             <Select value={selectedName ?? ""} onValueChange={(value) => value && select(value)}>
               <SelectTrigger aria-label="Dashboard" className="w-56">
                 <SelectValue />
@@ -210,7 +228,7 @@ export function DashboardsPage() {
           </>
         }
       />
-      {dashboards.isPending ? (
+      {dashboards.isPending || waitingForHosts ? (
         <Skeleton className="min-h-0 flex-1" />
       ) : dashboards.isError ? (
         <ErrorState
