@@ -258,3 +258,31 @@ it("keeps the filtered repository when another host, with another id for it, is 
   }
   view.queryClient.clear()
 })
+
+it("lists the issues of every host most recently updated first", async () => {
+  const issue = (title: string, updated_at: string) => ({
+    number: 7,
+    title,
+    body: "",
+    labels: [],
+    assignees: [],
+    url: `https://github.com/acme/widgets/issues/${title}`,
+    updated_at,
+  })
+  stubHosts({
+    local: {
+      "/v1/repositories": [LOCAL_REPO],
+      "/v1/repositories/repo-local/issues": [issue("older-local", "2026-10-01T00:00:00Z")],
+    },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/repositories/repo-box/issues": [issue("newer-box", "2026-10-09T00:00:00Z")],
+    },
+  })
+  renderScreen(<IssuesPage />, { route: "/forge/issues" })
+
+  await screen.findByRole("link", { name: /older-local/ })
+  expect(
+    screen.getAllByRole("link", { name: /-(local|box)$/ }).map((link) => link.textContent),
+  ).toEqual(["#7 newer-box", "#7 older-local"])
+})

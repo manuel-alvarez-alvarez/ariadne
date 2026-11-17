@@ -82,6 +82,14 @@ export function IssuesPage() {
         ? (query.data ?? []).map((issue) => ({ host: repository.host, repository, issue }))
         : []
     })
+    // Most recently updated first, whichever host it is on.
+    .sort((a, b) =>
+      a.issue.updated_at < b.issue.updated_at
+        ? 1
+        : a.issue.updated_at > b.issue.updated_at
+          ? -1
+          : 0,
+    )
     .filter(({ issue }) =>
       matchesText(text, [
         `#${issue.number}`,

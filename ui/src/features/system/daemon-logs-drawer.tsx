@@ -105,12 +105,13 @@ export function DaemonLogsDrawer({
   }, [open])
 
   useEffect(() => {
-    if (!open || baseUrl === null) return
-    // A fresh open (or a changed filter) reads from the bottom, whatever the
-    // last one was doing.
+    if (!open) return
+    // A fresh open (or a changed filter or host) reads from the bottom,
+    // whatever the last one was doing, and shows nothing of it.
     follow.current = true
     setStatus("connecting")
     setLines([])
+    if (baseUrl === null) return
     const url = daemonLogStreamUrl(baseUrl, {
       service: service === ALL ? undefined : service,
       level: level === ALL ? undefined : level,

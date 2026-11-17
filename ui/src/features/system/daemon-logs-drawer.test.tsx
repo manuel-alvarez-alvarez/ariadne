@@ -22,7 +22,7 @@ type Connection = ReturnType<typeof useConnection>
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { startAt } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 
 vi.mock("@/hooks/use-connection", () => ({
   useConnection: (): Connection => ({
@@ -168,4 +168,30 @@ it("defaults to local under All hosts", async () => {
 
   await user.click(footerButton)
   expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
+})
+
+it("shows none of a host's log under another host it cannot reach", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, { ...BOX, status: "down", endpoint: null, error: "ssh closed" }])
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  latestSource().emit("snapshot", {
+    lines: [
+      {
+        ts: "2026-08-18T12:00:00.000000Z",
+        level: "INFO",
+        target: "ariadne_daemon::scheduler",
+        message: "from local",
+        service: "ariadned",
+      },
+    ],
+  })
+  expect(await screen.findByText("from local")).toBeTruthy()
+
+  await user.click(screen.getByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "box" }))
+
+  expect(await screen.findByText(/Host box is not reachable: ssh closed/)).toBeTruthy()
+  expect(screen.queryByText("from local")).toBeNull()
 })
