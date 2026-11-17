@@ -58,7 +58,7 @@ export function pullRequestByKeyQueryOptions(host: Host, key: string) {
  * the daemon applies to every request before it cuts the pages. Every
  * `pull_requests_changed` reads the list again from its first page.
  */
-export function pullRequestsQueryOptions(
+function pullRequestsQueryOptions(
   host: Host,
   filters: {
     repo?: string
