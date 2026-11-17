@@ -1164,14 +1164,15 @@ Out: the daemon endpoints themselves (012).
 57. `useHostLists` runs one list query per selected host. It returns the rows
     tagged with `host`, and one error per host that failed.
 58. The goals board merges the goals of the selected hosts, newest first, and
-    under All with more than one host each lane names its host. A goal's panel
+    each lane names its host by rule 74. A goal's panel
     opens on its host, with its tasks and orchestrator sessions read there. A
     goal lives on one host. The goal dialog shows a host select once there is
-    more than one reachable host. The select defaults to the picked host, or
-    `local` under All. Its repositories, workflows and model pin picker read
+    more than one listed host. The select defaults to the picked host when the
+    app can reach it, else to `local`. It lists each listed host; a host the app
+    cannot reach is a disabled option with its reason. Its repositories, workflows and model pin picker read
     that host, and a change of host reloads them. The pin picker takes a host.
-59. The attention strip and the attention count merge the selected hosts. A
-    row of a named host shows the host. A `wait_for_user` question is
+59. The attention strip and the attention count merge the selected hosts. Each
+    row names its host by rule 74. A `wait_for_user` question is
     answered in the row, and the answer posts to that host's
     `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`.
 60. The task panel (facts, steps, diff, messages, sessions, history) reads and
@@ -1182,8 +1183,9 @@ Out: the daemon endpoints themselves (012).
     and its model pin pickers read that host. A task card of a named host
     links to its panel on that host.
 61. The sessions screen merges the sessions of the selected hosts with
-    `useHostLists`. Under All with more than one host each row shows a host
-    badge. The status, seat, goal and task chips apply to every selected host.
+    `useHostLists`. Each row names its host by rule 74. The status, seat, goal
+    and task chips apply to every selected host.
+    The Agent filter lists the agents of each selected host.
 62. The session panel and the console open their streams on the session's
     host. `console-view-state.ts` keys its state by host, address and
     session. Console input, cancel and answers post to the session's host. A
@@ -1192,8 +1194,9 @@ Out: the daemon endpoints themselves (012).
 63. Every attention target opens its item on its host.
 64. The command palette searches the cached goal, task and session lists of
     the selected hosts, and the skill list of `local`. Each row carries its
-    host and opens on it. The `ariadne attach <id>` action copies
-    `--host NAME` when the host is not `local`.
+    host, names it by rule 74, and opens on it. The `ariadne attach <id>`
+    action copies `--host NAME` when the host is not `local`. "New task" is
+    offered for the open goal, read on the host of its `?host=` under any pick.
 65. The skills, workflows, learned permissions, AI permission and repositories
     screens read and write `local` only, and the host picker does not change
     them. While a named host is listed, each says that it shows and writes the
@@ -1208,7 +1211,8 @@ Out: the daemon endpoints themselves (012).
     `::counts the learned rows a host skipped on the Learned tab only`).
 66. The AI permission model's `device` is not synced. The AI tab shows a card
     per host, read from that host's `GET /v1/permissions/ai`, with its install
-    state, hardware, Refresh and Device. A device change sends
+    state, hardware, Refresh and Device. A host the app cannot reach shows its
+    reason in place of the card, with no skeleton. A device change sends
     `PUT /v1/permissions/ai` with `device` alone to that host. The switch,
     thresholds, flavour and test panel are `local`'s card only.
 67. The repositories table has a Hosts column. For each named host it says
@@ -1220,14 +1224,13 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/repositories/repositories-page.test.tsx::says which hosts hold a checkout of each repository and which lack one`,
     `::shows a host as pending, not as holding a checkout, until its first sync completes`).
 68. The agents screen reads the agents and models of the selected hosts. One tab
-    holds one agent id. Under more than one selected host its panel has a chip
-    per host that has the agent. A flag edit, a model switch and a rank apply to
+    holds one agent id. Its panel has a chip per host that has the agent where
+    rule 74 shows the host on rows. A flag edit, a model switch and a rank apply to
     the host of the chip picked, and Refresh reprobes every selected host. Each host
-    whose agents failed to load is named in an error with Retry, beside the
-    agents of the hosts that answered, and even when none returned an agent.
+    whose agents or models failed to load follows rule 75.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
-    most recently updated first, with a host badge while more than one host is
-    selected. A repository filter names one forge repository, and each host
+    most recently updated first. A pull request row has a host badge while
+    more than one host is selected. An issue row names its host by rule 74. A repository filter names one forge repository, and each host
     reads it by its own id for that forge repository; a host without it is
     skipped. A pull request panel opens on its row's host (`?host=`). On a named
     host it opens no session or task panel.
@@ -1252,6 +1255,29 @@ Out: the daemon endpoints themselves (012).
     view. The shipped dashboard's series names end in `{{host}}`, which the
     combined view fills from the `host` label the daemon adds.
 73. Every other screen reads `local`, and passes `"local"` explicitly.
+74. One rule says where a host label shows, and `HostLabel`
+    (`components/host-label.tsx`) draws every one. `useRowsShowHost()` and
+    `usePanelShowsHost()` (`hooks/use-host-label.ts`) hold the rule:
+    - A row shows its host when the pick is All and `GET /v1/hosts` lists a
+      named host. A row of `local` then shows `local`.
+    - Under one picked host, `local` included, a row shows no host.
+    - The rule reads the listed hosts, not the reachable ones. A host that
+      goes down removes no label from the rows that stay.
+    - A saved pick that `GET /v1/hosts` no longer lists counts as All.
+    - The goal, task and session panels name their host when a named host is
+      listed, under any pick.
+    - With only `local` listed, no row and no panel shows a host.
+    The goal panel's copy menu copies `ariadne attach <id> --host NAME` for a
+    goal of a named host.
+75. An error of a named host names the host and gives its reason; the hint
+    "Check the URL in settings" shows only for `local`. A list over many hosts
+    (the goals board, the sessions screen and the agents screen) shows one
+    warning per host that failed while another host answers, and an error state
+    per failed host only when every host failed and no row is left. Each
+    warning and error state names its host and gives its reason, and has Retry.
+    A host that failed a refresh while its last read is on screen, an empty one
+    too, is a warning marked "which may be outdated", never an error state.
+
 
 ## Acceptance criteria
 
@@ -1268,6 +1294,46 @@ Out: the daemon endpoints themselves (012).
   `::titles each row from its own host when two hosts share a goal and task id`,
   `::opens the console stream of a remote session on its host and sends input there`,
   `::cancels a turn of a remote session on its host and shows the host's stream result`).
+- One rule shows the host of a row and a panel (rule 74): under All with a
+  named host, under one pick, with a host down, under a saved pick no longer
+  listed, and with only `local`
+  (`ui/src/hooks/use-host-label.test.tsx::shows the host on rows and panels under All with a named host listed`,
+  `::shows no host on rows under one picked host, but still on panels`,
+  `::shows no host on rows when local is the picked host`,
+  `::keeps the host on rows when a named host goes down`,
+  `::counts a saved pick the daemon no longer lists as All`,
+  `::shows no host on rows or panels with only local listed`).
+- The goal lanes follow rule 74
+  (`ui/src/features/goals/hosts.test.tsx::merges the goals of every host under All, each lane naming its host`,
+  `::reads only the picked host, and names no host on its lanes`,
+  `::names each lane's host under a saved pick the daemon no longer lists`,
+  `::keeps the host of the lanes that stay when a named host goes down`,
+  `::names no host on the lanes with only local listed`).
+- The attention rows follow rule 74
+  (`ui/src/features/goals/hosts.test.tsx::names local on a local attention row under All`,
+  `::names no host on an attention row under one picked host`).
+- The goal panel names its host and copies `--host`
+  (`ui/src/features/goals/hosts.test.tsx::names the goal panel's host, local included, while a named host is listed`,
+  `::names no host in the goal panel with only local listed`,
+  `::copies the attach command of a goal of a named host with its host`).
+- The task panel and the session panel name their host
+  (`ui/src/features/tasks/hosts.test.tsx::names the host of the task panel under any pick while a named host is listed`,
+  `ui/src/features/sessions/hosts.test.tsx::names the host of the session panel while a named host is listed`).
+- The session rows follow rule 74 under a saved pick no longer listed
+  (`ui/src/features/sessions/hosts.test.tsx::names each row's host under a saved pick the daemon no longer lists`).
+- The issue rows follow rule 74
+  (`ui/src/features/forge/forge-hosts.test.tsx::merges the issues of every host, and fills the goal dialog on the issue's host`,
+  `::names local on a local issue row under All, and keeps it when a named host goes down`,
+  `::names no host on an issue row under one picked host`).
+- The agents screen keeps the chip of the hosts that stay
+  (`ui/src/features/agents/agents-hosts.test.tsx::groups an agent of two hosts under one tab, with a chip per host, and writes to the chip's host`,
+  `::reads only the picked host, with no chips`,
+  `::keeps the chip of local when a named host goes down`).
+- The palette rows follow rule 74, and "New task" reads the open goal on its
+  host
+  (`ui/src/features/command-palette/hosts.test.tsx::names local on a local row under All`,
+  `::names no host on a row under one picked host`,
+  `::offers New task for the open goal on its own host under another pick`).
 - The palette searches the selected hosts, opens a row on its host and
   copies `--host`
   (`ui/src/features/command-palette/hosts.test.tsx::lists the tasks of every selected host, and opens a row on its own host`,
@@ -2214,6 +2280,18 @@ Out: the daemon endpoints themselves (012).
   `::says which host's agents failed to load beside the agents of the host that answered, with a retry`,
   `::names the failed host beside a host that answered with no agents`,
   `::names every host whose agents failed, each with a retry, when none answered`).
+- A host the app cannot reach is named, with its reason, in each dialog, card
+  and error state (rule 75): the goal dialog's default and disabled option
+  (`ui/src/features/unreachable-hosts.test.tsx::opens the goal dialog on local when the picked host cannot be reached`,
+  `::lists an unreachable host in the goal dialog as a disabled option with its reason`);
+  the AI tab (`::shows the reason of an unreachable host on the AI tab, with no skeleton`);
+  an error of a named host and the hint for `local` alone
+  (`::shows an error state, with the host's reason and no URL hint, when a named host's goals fail`,
+  `::shows the daemon hint only for local, on a table of a named host`);
+  a warning for some hosts and an error state for all
+  (`::warns, not errors, when only one of two hosts fails to list sessions`,
+  `::shows an error state for each host when every host fails to list sessions`);
+  the Agent filter (`::lists the agents of each selected host in the sessions Agent filter`).
 - The Forge tabs merge hosts, open a panel on the row's host, offer the hosts of
   a repository for a review, and fill the goal dialog on the issue's host
   (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, badged, and opens a panel on its row's host`,

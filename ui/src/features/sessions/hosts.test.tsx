@@ -77,6 +77,27 @@ it("applies the picked host to the list and names no host", async () => {
   ).toBe(false)
 })
 
+it("names each row's host under a saved pick the daemon no longer lists", async () => {
+  useSettingsStore.setState({ hostFilter: "gone" })
+  stubHosts({
+    local: { "/v1/sessions": aSessionPage([LOCAL]), "/v1/goals": [], "/v1/tasks": [] },
+    box: { "/v1/sessions": aSessionPage([REMOTE]), "/v1/goals": [GOAL], "/v1/tasks": [TASK] },
+  })
+  renderScreen(<SessionsPage />, { route: "/sessions" })
+
+  const title = await screen.findByRole("row", { name: "Task on box" })
+  expect(within(title).getByTitle("Host").textContent).toBe("box")
+})
+
+it("names the host of the session panel while a named host is listed", async () => {
+  boxSession()
+
+  await screen.findByRole("heading", { name: /./ })
+  await waitFor(() =>
+    expect(screen.getAllByTitle("Host").map((label) => label.textContent)).toEqual(["box"]),
+  )
+})
+
 function boxSession() {
   const seen = stubHosts({
     box: {

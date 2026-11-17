@@ -386,6 +386,11 @@ same binary also serves (013).
     refusal of other flags says that only `--device` is per host.
 48. On a named host other than `local`, a `daemon` command other than `status`
     and `logs` is refused: lifecycle commands require `local`.
+    `daemon status --host NAME` shows that host's health and version only: no
+    service manager, pid or TCP setting of this machine. `daemon logs --host
+    NAME` prints that host's log, and fails with the reason when the host does
+    not answer; it never reads the local log file. With `--host local` or
+    without `--host`, both use the daemon of `--home` or `--endpoint`.
 49. `query` accepts `--host NAME|all`. The local daemon serves it under
     `/v1/hosts/{host}` (spec 037, rule 20), so the CLI does not fan it out.
 50. `host ls` prints name, kind, status, endpoint, remote, sync (`in_sync`,
@@ -719,6 +724,10 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - Registry routing and guards hold, rules 44 to 48 and the completion of 50
   (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).
 - Rule 50 columns (`tests/hosts.rs::host_ls_shows_remote_and_sync_state_of_each_host`).
+- Rule 48 on `status` and `logs` of a named host
+  (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)
+  and of `local` with `--home`
+  (`tests/hosts.rs::daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home`).
 - Rule 49 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
   `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
 

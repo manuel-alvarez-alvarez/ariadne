@@ -18,8 +18,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
 
-import { ApiError, type Host, LOCAL_HOST, useHosts } from "@/api"
-import { ErrorState } from "@/components/error-state"
+import { type Host, LOCAL_HOST, useHosts } from "@/api"
+import { ErrorState, hostErrorDescription } from "@/components/error-state"
 import { HostSync } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -93,13 +93,17 @@ function AiHost({ host, unreachable }: { host: Host; unreachable?: string | null
       {unreachable ? (
         <ErrorState title={`Host ${host} is not reachable`} error={new Error(unreachable)} />
       ) : null}
-      {status.isPending ? <Skeleton className="h-80 rounded-xl" /> : null}
+      {status.isPending && !unreachable ? <Skeleton className="h-80 rounded-xl" /> : null}
 
       {status.isError ? (
         <ErrorState
-          title="Could not load the model's settings"
+          title={
+            host === LOCAL_HOST
+              ? "Could not load the model's settings"
+              : `Could not load the model's settings on ${host}`
+          }
           error={status.error}
-          description={networkHint(status.error)}
+          description={hostErrorDescription(host, status.error)}
           onRetry={() => void status.refetch()}
         />
       ) : null}
@@ -107,11 +111,4 @@ function AiHost({ host, unreachable }: { host: Host; unreachable?: string | null
       {status.data ? <AiCard status={status.data} host={host} /> : null}
     </div>
   )
-}
-
-/** A daemon that never answered has nothing to say about why. */
-function networkHint(error: unknown): string | undefined {
-  return ApiError.is(error) && error.isNetworkError
-    ? "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
-    : undefined
 }

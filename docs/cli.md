@@ -848,6 +848,9 @@ Writes require one host. Skills, workflows, permissions and repository settings 
 The local daemon syncs these settings to every host.
 The one exception is `permissions ai set --device` alone, which is written on the named host only, and which stays until `local` changes the flavour; see [Choosing a flavour and device](permissions.md#choosing-a-flavour-and-device).
 Daemon start, stop and restart require `local`; status and logs accept a host name.
+`daemon status --host NAME` shows only that host's health and version, with no service manager or TCP setting of this machine.
+`daemon logs --host NAME` prints that host's log. When the host does not answer, the command fails with the reason and never prints the local log file.
+`daemon --home PATH status --host local` and `daemon --home PATH logs --host local` use the daemon of that home.
 `query` accepts a host name or `all`. With `all` the table has a `host` column, and a host that did not answer prints a warning.
 Shell completion offers configured names and `all`.
 Addresses formerly passed through `--host` must use `--endpoint`.

@@ -110,6 +110,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    Each further push restarts that interval. The harness uses zero.
    On a `reviewer` request, a push alone starts no round.
    A reviewer-role request that the forge's open list names again after session start, and did not name on the last read, queues a forge re-request round. It does so even where `review_requested` stayed true after a completed review.
+   The fetch queues the round only after it keeps the read of that request.
+   The round then names the head of that read and runs on it.
    An assignment already present at session start queues nothing more.
    A user ask through `POST /v1/repositories/{id}/pull-requests/{number}/review-round`
    queues a round immediately. The route takes an empty body and answers 202.
@@ -121,7 +123,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    `::a_new_head_restarts_the_interval`,
    `pull_request_reviews.rs::a_run_of_pushes_is_told_once_when_the_head_stands_still`,
    `::a_push_reaches_an_idle_session_without_a_wait`,
-   `::a_review_round_needs_an_ask_and_runs_on_the_current_head`.
+   `::a_review_round_needs_an_ask_and_runs_on_the_current_head`,
+   `::a_forge_re_request_round_waits_for_the_read_of_the_new_head`.
 9. A request that turns merged or closed, or whose manual ask is stopped,
    has its reviewer session killed and its detached worktree removed. A
    merge completes the review goal and its task; a close fails the task and leaves the goal active; a stop cancels

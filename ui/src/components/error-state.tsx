@@ -9,9 +9,9 @@
  * that lead a screen carry it, the ones inside a panel tab or a dialog do not.
  */
 
-import { AlertCircleIcon, RefreshCwIcon } from "lucide-react"
+import { AlertCircleIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 import type { ReactNode } from "react"
-
+import { ApiError, type Host, LOCAL_HOST } from "@/api"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { describeError } from "@/lib/format"
@@ -76,7 +76,7 @@ export function RefreshWarning({
       <RefreshCwIcon />
       <AlertTitle>Could not refresh {what}</AlertTitle>
       <AlertDescription>
-        Showing what was last loaded, which may be outdated. {describeError(error)}
+        {OUTDATED} {describeError(error)}
       </AlertDescription>
       <AlertAction>
         <Button variant="outline" size="sm" onClick={onRetry}>
@@ -84,5 +84,83 @@ export function RefreshWarning({
         </Button>
       </AlertAction>
     </Alert>
+  )
+}
+
+const OUTDATED = "Showing what was last loaded, which may be outdated."
+
+const NETWORK_HINT =
+  "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
+
+/**
+ * What to say beside a failed read of one host. A daemon that never answered
+ * has nothing to say about why: for `local` that is the settings URL, and for a
+ * named host the reason is the host's own message, which the error carries.
+ */
+export function hostErrorDescription(host: Host, error: unknown): string | undefined {
+  if (host !== LOCAL_HOST) return describeError(error)
+  return ApiError.is(error) && error.isNetworkError ? NETWORK_HINT : undefined
+}
+
+/** `title`, naming the host unless it is `local` and the only one read. */
+function hostTitle(title: string, host: Host, hostCount: number): string {
+  return host === LOCAL_HOST && hostCount <= 1 ? title : `${title} on ${host}`
+}
+
+/**
+ * The failures of a list read over several hosts: a warning for each host that
+ * failed while others answered, and an error state for each only when every
+ * host failed and nothing is left to show. Each names its host and its reason.
+ */
+export function HostListErrors({
+  what,
+  errors,
+  hostCount,
+  hasRows,
+  onRetry,
+  showIcon,
+}: {
+  /** What is read, lower case: "goals", "sessions". */
+  what: string
+  errors: readonly { host: Host; error: Error; cached?: boolean }[]
+  /** How many hosts are read. */
+  hostCount: number
+  /** Whether any row is on screen, from a host or from the cache. */
+  hasRows: boolean
+  onRetry: () => void
+  showIcon?: boolean
+}) {
+  const everywhere =
+    errors.length > 0 && errors.length >= hostCount && !hasRows && !errors.some((e) => e.cached)
+  return (
+    <>
+      {errors.map(({ host, error, cached }) => {
+        const title = hostTitle(`Could not load ${what}`, host, hostCount)
+        return everywhere ? (
+          <ErrorState
+            key={host}
+            title={title}
+            error={error}
+            description={hostErrorDescription(host, error)}
+            onRetry={onRetry}
+            showIcon={showIcon}
+          />
+        ) : (
+          <Alert key={host}>
+            <TriangleAlertIcon />
+            <AlertTitle>{title}</AlertTitle>
+            <AlertDescription>
+              {cached ? `${OUTDATED} ` : null}
+              {hostErrorDescription(host, error) ?? describeError(error)}
+            </AlertDescription>
+            <AlertAction>
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        )
+      })}
+    </>
   )
 }

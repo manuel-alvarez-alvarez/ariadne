@@ -20,11 +20,12 @@ import { PlusIcon } from "lucide-react"
 import { useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import { ApiError, type GoalDto, type Host, LOCAL_HOST } from "@/api"
+import { ApiError, type GoalDto, type Host } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
+import { HostLabel } from "@/components/host-label"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
@@ -42,6 +43,7 @@ import { taskListQueryOptions } from "@/features/tasks"
 import { stepTitle } from "@/features/tasks/steps"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
+import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { goalCopyEntries } from "@/lib/clipboard"
 import { folderName } from "@/lib/format"
 import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
@@ -174,6 +176,7 @@ function GoalView({
   // scheduler picks it up once its dependencies merge. On a terminal goal it
   // would only ever sit in pending, so the button goes away with the goal.
   const canCreateTask = !isTerminalGoalStatus(goal.status)
+  const showHost = usePanelShowsHost()
 
   return (
     <>
@@ -193,13 +196,22 @@ function GoalView({
           </div>
         }
         status={
-          <StatusBadge
-            box="badge"
-            label={GOAL_STATUS_META[goal.status].label}
-            tone={GOAL_STATUS_META[goal.status].badge}
+          <>
+            <StatusBadge
+              box="badge"
+              label={GOAL_STATUS_META[goal.status].label}
+              tone={GOAL_STATUS_META[goal.status].badge}
+            />
+            {showHost ? <HostLabel host={host} /> : null}
+          </>
+        }
+        id={
+          <CopyableIdMenu
+            value={goal.id}
+            label="goal id"
+            entries={goalCopyEntries(goal.id, host)}
           />
         }
-        id={<CopyableIdMenu value={goal.id} label="goal id" entries={goalCopyEntries(goal.id)} />}
         stamps={
           <>
             <span>created</span>
@@ -217,7 +229,7 @@ function GoalView({
             one notice above it rather than losing the panel to the error. */}
         {error ? <RefreshWarning what="this goal" error={error} onRetry={onRetry} /> : null}
 
-        <GoalMetadata host={host} goal={goal} />
+        <GoalMetadata goal={goal} />
 
         {goal.status === "planning" && goal.orchestrated ? (
           <PlanningGuide
@@ -287,11 +299,9 @@ function GoalView({
  * every panel opens on — the stamps that say when are on the meta line above
  * this, beside the id, rather than a fact apiece down here.
  */
-function GoalMetadata({ host, goal }: { host: Host; goal: GoalDto }) {
+function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
     <FactList dense>
-      {/* The host only where there is more than one to tell apart. */}
-      {host === LOCAL_HOST ? null : <Fact label="Host">{host}</Fact>}
       <Fact label="Orchestrator">
         {/* The goal's pin: what its orchestrator runs on, frozen when the goal
             was created. */}
