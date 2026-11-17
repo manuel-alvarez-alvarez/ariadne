@@ -12,7 +12,7 @@ import { PullRequestsPage } from "@/features/pull-requests/pull-requests-page"
 import { useSettingsStore } from "@/stores/settings"
 import { aForge, aModel, aRepository } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { pull } from "@/test/pull-request"
 
 afterEach(() => {
@@ -178,10 +178,52 @@ it("merges the issues of every host, and fills the goal dialog on the issue's ho
   const boxIssue = await screen.findByRole("link", { name: /box-issue/ })
   expect(await screen.findByRole("link", { name: /local-issue/ })).toBeTruthy()
   const row = boxIssue.closest("tr") as HTMLElement
-  expect(within(row).getByText("box")).toBeTruthy()
+  expect(within(row).getByTitle("Host").textContent).toBe("box")
   await userEvent.click(within(row).getByRole("button", { name: "Create goal" }))
   const host = await screen.findByRole("combobox", { name: "Host" })
   expect(host.textContent).toContain("box")
+})
+
+const anIssue = (title: string) => ({
+  number: 7,
+  title,
+  body: "",
+  labels: [],
+  assignees: [],
+  url: `https://github.com/acme/widgets/issues/${title}`,
+  updated_at: "2026-10-07T01:00:00Z",
+})
+
+it("names local on a local issue row under All, and keeps it when a named host goes down", async () => {
+  stubHosts(
+    {
+      local: {
+        "/v1/repositories": [LOCAL_REPO],
+        "/v1/repositories/repo-local/issues": [anIssue("local-issue")],
+      },
+    },
+    [LOCAL, { ...BOX, status: "down", error: "connection refused" }],
+  )
+  renderScreen(<IssuesPage />, { route: "/forge/issues" })
+
+  const row = (await screen.findByRole("link", { name: /local-issue/ })).closest(
+    "tr",
+  ) as HTMLElement
+  await waitFor(() => expect(within(row).getByTitle("Host").textContent).toBe("local"))
+})
+
+it("names no host on an issue row under one picked host", async () => {
+  useSettingsStore.setState({ hostFilter: "box" })
+  stubHosts({
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/repositories/repo-box/issues": [anIssue("box-issue")],
+    },
+  })
+  renderScreen(<IssuesPage />, { route: "/forge/issues" })
+
+  const row = (await screen.findByRole("link", { name: /box-issue/ })).closest("tr") as HTMLElement
+  expect(within(row).queryByTitle("Host")).toBeNull()
 })
 
 it("shows no request of the host picked before when the newly picked host fails", async () => {

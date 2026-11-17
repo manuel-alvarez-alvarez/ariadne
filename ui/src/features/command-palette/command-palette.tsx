@@ -48,8 +48,9 @@ import { useTheme } from "next-themes"
 import { type ReactNode, useMemo, useState } from "react"
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
-import { type GoalDto, type Host, type HostRow, LOCAL_HOST, useHostLists } from "@/api"
+import { type GoalDto, type Host, type HostRow, useHostLists } from "@/api"
 import { copyEntry } from "@/components/copyable-id"
+import { HostLabel } from "@/components/host-label"
 import {
   Command,
   CommandDialog,
@@ -62,7 +63,7 @@ import {
 } from "@/components/ui/command"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAttention } from "@/features/goals/attention"
-import { goalsQueryOptions } from "@/features/goals/queries"
+import { goalQueryOptions, goalsQueryOptions } from "@/features/goals/queries"
 import { isTerminalGoalStatus } from "@/features/goals/status"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
@@ -79,6 +80,7 @@ import {
   screenShortcut,
 } from "@/hooks/use-global-shortcuts"
 import { useHostFilter } from "@/hooks/use-host-filter"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 import { attachCommand } from "@/lib/clipboard"
 import { shortId } from "@/lib/format"
 import { keySequenceLabel, shortcutLabel } from "@/lib/shortcuts"
@@ -134,12 +136,12 @@ export function CommandPalette({
   const { resolvedTheme, setTheme } = useTheme()
   const { status, retry } = useConnection()
 
-  const { entries, goals } = usePaletteEntries(open)
+  const entries = usePaletteEntries(open)
   const panelHost = hostOf(search)
   // What the screen underneath is showing, which is what the actions below act
   // on: the goal a task would be created in, and the task or session an attach
-  // command would be for.
-  const openGoal = goals?.find((goal) => goal.id === search.get("goal") && goal.host === panelHost)
+  // command would be for. The goal is read on its own host, whatever the pick.
+  const openGoal = useOpenGoal(open, search.get("goal"), panelHost)
   const attachTo = search.get("session") ?? search.get("task")
   /**
    * The goal the create-task dialog is open for. Held here rather than by the
@@ -482,6 +484,7 @@ function EntryGroup({
   entries: PaletteEntry[]
   onPick: (entry: PaletteEntry) => void
 }) {
+  const showHost = useRowsShowHost()
   return (
     <CommandGroup heading={heading}>
       {entries.map((entry) => (
@@ -495,11 +498,7 @@ function EntryGroup({
           {/* The row is named by its title, so the title is what gets the
               room: the detail is capped and truncated around it. */}
           <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-          {entry.host && entry.host !== LOCAL_HOST ? (
-            <span className="shrink-0 rounded border px-1 font-mono text-[0.7rem] leading-4 text-muted-foreground">
-              {entry.host}
-            </span>
-          ) : null}
+          {entry.host && showHost ? <HostLabel host={entry.host} /> : null}
           {entry.detail ? <EntryDetail text={entry.detail} /> : null}
         </CommandItem>
       ))}
@@ -538,16 +537,20 @@ function EntryDetail({ text }: { text: string }) {
 const NO_HOSTS: Host[] = []
 
 /**
+ * The goal the screen has open, on the host of its `?host=`: the one "New task"
+ * creates in. It is read on that host whichever host the header picked, from
+ * the cache entry the goal's own panel reads.
+ */
+function useOpenGoal(open: boolean, goalId: string | null, host: Host): HostRow<GoalDto> | null {
+  const goal = useQuery({ ...goalQueryOptions(host, goalId ?? ""), enabled: open && !!goalId })
+  return goal.data && goal.data.id === goalId ? { ...goal.data, host } : null
+}
+
+/**
  * The four lists, read through the same query options their own screens use so
  * the palette shares their cache entries rather than making four of its own.
- *
- * The goals come back as themselves as well as as rows: "New task" needs the
- * goal the screen has open, not a row that would navigate to it.
  */
-function usePaletteEntries(open: boolean): {
-  entries: PaletteEntries
-  goals: HostRow<GoalDto>[] | undefined
-} {
+function usePaletteEntries(open: boolean): PaletteEntries {
   // The goals, tasks and sessions of every host the header's picker selected,
   // read only while the palette is open. The skills, workflows and
   // repositories are `local`'s.
@@ -573,5 +576,5 @@ function usePaletteEntries(open: boolean): {
     [goals.rows, tasks.rows, sessions.rows, skills.data, repositories.data, workflows.data],
   )
 
-  return { entries, goals: goals.rows }
+  return entries
 }

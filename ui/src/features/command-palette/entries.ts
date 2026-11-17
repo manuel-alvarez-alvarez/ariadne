@@ -70,7 +70,10 @@ export interface PaletteEntry {
    * `./detail`), so an id or a branch may show without its head.
    */
   detail?: string
-  /** The host a goal, task or session row lives on; the row names it unless it is `local`. */
+  /**
+   * The host a goal, task or session row lives on. The row draws it with
+   * `HostLabel` where `useRowsShowHost()` says rows show their host.
+   */
   host?: Host
   /** Searchable, literally, without being part of the row's name. */
   keywords: string[]
@@ -96,7 +99,10 @@ export interface PaletteEntries {
   workflows: PaletteEntry[]
 }
 
-/** Two rows with one title on two hosts are two rows: the host ends the name. */
+/**
+ * Two rows with one title on two hosts are two rows: the host ends the value.
+ * It keeps the value unique for cmdk and is never drawn; `HostLabel` draws it.
+ */
 function hostSuffix(host: Host): string {
   return host === LOCAL_HOST ? "" : ` @${host}`
 }
