@@ -231,7 +231,8 @@ per host — is spec 015's (rules 51 to 60).
   (`host_health.rs::a_direct_host_on_a_socket_path_is_checked_through_the_socket`).
 - Rule 34
   (`host_health.rs::a_direct_host_is_ready_while_it_answers_and_down_while_it_does_not`,
-  `host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`).
+  `host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`,
+  `host_sync.rs::sync_stops_blocked_and_queued_pushes_until_the_host_recovers`).
 - Rule 7 (`hosts.rs::openapi_carries_the_route_the_dto_and_the_event`).
 - Rules 8 and 9 (`ssh_forward.rs::help_and_check_config_list_ssh_bin`).
 - Rule 10 (`ssh_forward.rs::a_forward_runs_ssh_to_the_local_socket_path_by_default`,
@@ -266,7 +267,8 @@ per host — is spec 015's (rules 51 to 60).
   `::a_learned_permission_without_a_checkout_on_the_host_is_counted_as_skipped`;
   the route is spec 022, rule 21).
 - Rules 6 and 22
-  (`host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`).
+  (`host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`,
+  `host_sync.rs::sync_stops_blocked_and_queued_pushes_until_the_host_recovers`).
 - Rule 28, device: no sync sends `device`; a device set on the host stays
   until `local` changes the flavour, then the host picks its best device
   (`host_sync.rs::a_device_set_on_the_host_stays_until_local_changes_the_flavour`,
