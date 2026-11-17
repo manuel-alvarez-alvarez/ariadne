@@ -6,7 +6,7 @@
  * host that is not `local`.
  */
 
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
@@ -66,6 +66,41 @@ it("lists the tasks of every selected host, and opens a row on its own host", as
   await user.click(remote)
 
   expect(location.url).toBe(`/goals?host=box&task=${TASK.id}`)
+})
+
+it("names local on a local row under All", async () => {
+  const user = userEvent.setup()
+  renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
+
+  await user.type(screen.getByRole("combobox"), "zebra")
+
+  const mine = await screen.findByRole("option", { name: /^Zebra on local/ })
+  expect(within(mine).getByTitle("Host").textContent).toBe("local")
+  const remote = screen.getByRole("option", { name: /^Zebra on box/ })
+  expect(within(remote).getByTitle("Host").textContent).toBe("box")
+})
+
+it("names no host on a row under one picked host", async () => {
+  useSettingsStore.setState({ hostFilter: "box" })
+  const user = userEvent.setup()
+  renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
+
+  await user.type(screen.getByRole("combobox"), "zebra")
+
+  const remote = await screen.findByRole("option", { name: /^Zebra on box/ })
+  expect(within(remote).queryByText("box")).toBeNull()
+})
+
+it("offers New task for the open goal on its own host under another pick", async () => {
+  useSettingsStore.setState({ hostFilter: "local" })
+  stubHosts({
+    local: { ...EMPTY, "/v1/goals": [], "/v1/tasks": [MINE], "/v1/sessions": aSessionPage([]) },
+    box: { ...EMPTY, [`/v1/goals/${GOAL.id}`]: GOAL },
+  })
+  renderScreen(<CommandPalette open {...handlers} />, { route: `/goals?goal=${GOAL.id}&host=box` })
+
+  const item = await screen.findByRole("option", { name: /^New task/ })
+  expect(item.textContent).toContain(GOAL.title)
 })
 
 it("searches only the picked host", async () => {

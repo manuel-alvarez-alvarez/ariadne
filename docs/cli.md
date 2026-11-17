@@ -863,6 +863,9 @@ Some commands run on `local` only, and refuse `--host NAME` and `--host all`:
 
 An unknown host name gets a message that names the configured hosts.
 A host that is not ready gets a message with its status and its error.
+`daemon status --host NAME` shows only that host's health and version, with no service manager or TCP setting of this machine.
+`daemon logs --host NAME` prints that host's log. When the host does not answer, the command fails with the reason and never prints the local log file.
+`daemon --home PATH status --host local` and `daemon --home PATH logs --host local` use the daemon of that home.
 `query` accepts a host name or `all`. With `all` the table has a `host` column, and a host that did not answer prints a warning.
 Shell completion offers configured names and `all`.
 A `--host` value that looks like an address gets a message that names `--endpoint`.

@@ -1932,6 +1932,12 @@ impl Harness {
         self.wake(SchedEvent::TaskChanged(task_id.to_string()));
     }
 
+    /// The same about a pull request row: what a fetch sends for each row
+    /// it read.
+    pub(crate) fn notify_pull_request(&self, pull_request_id: &str) {
+        self.wake(SchedEvent::PullRequestChanged(pull_request_id.to_string()));
+    }
+
     /// The same about a goal: what a status change sends.
     pub(crate) fn notify_goal(&self, goal_id: &str) {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));

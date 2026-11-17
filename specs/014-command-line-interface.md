@@ -408,6 +408,11 @@ same binary also serves (013).
     host, and the refusal names the flag. `permissions ai set --device` alone
     is the host's own (rule 32); any other flag is refused, and the refusal
     says that only `--device` is per host.
+48a. `daemon status --host NAME` shows that host's health and version only: no
+    service manager, pid or TCP setting of this machine. `daemon logs --host
+    NAME` prints that host's log, and fails with the reason when the host does
+    not answer; it never reads the local log file. With `--host local` or
+    without `--host`, both use the daemon of `--home` or `--endpoint`.
 49. `query` accepts `--host NAME|all`. The local daemon serves it under
     `/v1/hosts/{host}` (spec 037, rule 20), so the CLI does not fan it out.
 50. `host ls` prints name, kind, status, endpoint and error. Completion offers
@@ -741,9 +746,13 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`hosts.rs::tests::every_command_declares_one_kind`,
   `::reads_that_every_host_answers_are_not_writes`,
   `::a_tunnel_switch_is_a_write_and_the_bare_tunnel_a_read`).
-- Registry routing and guards hold, rules 44 and 46 to 48 and 50
+- Registry routing and guards hold, rules 44, 46 to 48a and 50
   (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`,
   `::each_command_takes_the_hosts_of_its_kind`).
+- Rule 48a on `status` and `logs` of a named host
+  (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)
+  and of `local` with `--home`
+  (`tests/hosts.rs::daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home`).
 - Rule 49 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
   `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
 

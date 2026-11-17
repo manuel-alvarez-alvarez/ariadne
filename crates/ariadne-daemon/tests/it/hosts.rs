@@ -60,7 +60,7 @@ async fn configured_hosts_follow_local_in_file_order() {
             name: "zeta".into(),
             kind: HostKind::Direct,
             endpoint: Some("http://10.0.0.2:7676".into()),
-            status: HostStatus::Ready,
+            status: HostStatus::Connecting,
             error: None,
             remote: None,
             sync: pending(),

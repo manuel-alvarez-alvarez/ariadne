@@ -11,7 +11,7 @@ use crate::common::{
     Harness, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json, put_json,
     roomy_hardware, sh,
 };
-use ariadne_api::hosts::{HostDto, HostSyncDto, MissingRepositoryDto, SyncState};
+use ariadne_api::hosts::{HostDto, HostStatus, HostSyncDto, MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::skills::SkillDto;
@@ -23,6 +23,7 @@ use ariadne_daemon::bus::BusEvent;
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::NewLearnedPermission;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use serde_json::json;
 use tokio::sync::Semaphore;
 use tokio::sync::broadcast::Receiver;
@@ -59,6 +60,8 @@ async fn local_with_host_on(
         .home(home)
         .timeouts(Timeouts {
             host_sync_retry: RUNS_OUT,
+            host_unanswered: RUNS_OUT,
+            host_check: RUNS_OUT / 10,
             ..Timeouts::default()
         })
         .await;
@@ -76,6 +79,7 @@ fn serve(far: &Harness, listener: tokio::net::TcpListener) {
 #[derive(Clone)]
 struct Gate {
     held: Arc<AtomicBool>,
+    health_off: Arc<AtomicBool>,
     permits: Arc<Semaphore>,
     /// Each request that waited at the gate, as `METHOD path`.
     held_requests: Arc<Mutex<Vec<String>>>,
@@ -87,6 +91,7 @@ impl Gate {
     fn new() -> Self {
         Self {
             held: Arc::new(AtomicBool::new(false)),
+            health_off: Arc::new(AtomicBool::new(false)),
             permits: Arc::new(Semaphore::new(0)),
             held_requests: Arc::new(Mutex::new(Vec::new())),
             answered: Arc::new(Mutex::new(Vec::new())),
@@ -128,6 +133,12 @@ fn serve_gated(far: &Harness, listener: tokio::net::TcpListener, gate: &Gate) {
             let gate = gate.clone();
             async move {
                 let what = format!("{} {}", request.method(), request.uri());
+                if request.uri().path() == "/v1/health" {
+                    if gate.health_off.load(Ordering::SeqCst) {
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                    return next.run(request).await;
+                }
                 if gate.held.load(Ordering::SeqCst) {
                     gate.held_requests.lock().unwrap().push(what.clone());
                     gate.permits.acquire().await.unwrap().forget();
@@ -728,41 +739,6 @@ async fn a_newer_push_of_an_item_ends_its_older_failed_push() {
     assert_eq!(shared.map(|skill| skill.summary).as_deref(), Some("second"));
 }
 
-#[tokio::test]
-async fn a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands() {
-    // A port nothing listens on yet.
-    let address = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap()
-    };
-    let (local, _dir) = local_with_host(&format!("http://{address}")).await;
-    let _: SkillDto = local
-        .json(
-            post_json(
-                "/v1/skills",
-                json!({"name": "mine", "document": skill("mine", "local")}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    local.state.hosts.start();
-    eventually(TIMEOUT, "the push failed", || async {
-        let sync = sync_of(&local).await;
-        sync.state == SyncState::Failed
-            && sync
-                .error
-                .as_deref()
-                .is_some_and(|error| error.contains("cannot reach"))
-    })
-    .await;
-
-    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
-    serve(&far, tokio::net::TcpListener::bind(address).await.unwrap());
-    until_in_sync(&local).await;
-    assert_eq!(skill_on(&far, "mine").await.unwrap().summary, "local");
-    assert_eq!(sync_of(&local).await.error, None);
-}
-
 /// The sync of the next `host_updated` on the bus.
 async fn next_sync(rx: &mut Receiver<BusEvent>) -> HostSyncDto {
     let event = next_event(rx, |event| {
@@ -780,6 +756,8 @@ async fn each_change_of_the_sync_publishes_one_host_updated() {
     let (_far, local, _dir) = far_and_local().await;
     let mut rx = local.bus.subscribe();
     local.state.hosts.start();
+    // The first event is the host's `ready`, before any push lands.
+    assert_eq!(next_sync(&mut rx).await.state, SyncState::Pending);
     assert_eq!(next_sync(&mut rx).await, HostSyncDto::in_sync());
 
     let _: SkillDto = local
@@ -793,4 +771,67 @@ async fn each_change_of_the_sync_publishes_one_host_updated() {
         .await;
     assert_eq!(next_sync(&mut rx).await.state, SyncState::Pending);
     assert_eq!(next_sync(&mut rx).await, HostSyncDto::in_sync());
+}
+
+#[tokio::test]
+async fn sync_stops_blocked_and_queued_pushes_until_the_host_recovers() {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let gate = Gate::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    serve_gated(&far, listener, &gate);
+    let (local, _dir) = local_with_host(&format!("http://{address}")).await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    gate.hold();
+    for name in ["lead", "queued"] {
+        let _: SkillDto = local
+            .json(
+                post_json(
+                    "/v1/skills",
+                    json!({"name": name, "document": skill(name, "local")}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+        if name == "lead" {
+            eventually(TIMEOUT, "the first push is blocked", || async {
+                gate.held_requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|s| s == "PUT /v1/skills/lead")
+            })
+            .await;
+        }
+    }
+    gate.health_off.store(true, Ordering::SeqCst);
+    eventually(TIMEOUT, "the host is down", || async {
+        let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
+        hosts[1].status == HostStatus::Down
+    })
+    .await;
+    gate.permits.add_permits(1);
+    tokio::time::sleep(crate::common::QUIET).await;
+    assert!(
+        !gate
+            .held_requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s == "PUT /v1/skills/queued")
+    );
+    assert!(
+        !gate
+            .answered
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s == "PUT /v1/skills/lead")
+    );
+    gate.release();
+    gate.health_off.store(false, Ordering::SeqCst);
+    until_in_sync(&local).await;
+    assert!(skill_on(&far, "lead").await.is_some());
+    assert!(skill_on(&far, "queued").await.is_some());
 }

@@ -134,12 +134,13 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             // daemon rather than driving one, and `--endpoint` is how a daemon
             // that is not this host's home is read.
             DaemonCommand::Status => {
-                let client = if cli.host.is_some() {
+                let remote = cli.host.as_deref().is_some_and(|h| h != "local");
+                let client = if remote {
                     Arc::clone(&client)
                 } else {
                     Arc::new(Client::resolve(cli.endpoint.as_deref(), home.clone()))
                 };
-                commands::daemon::status(&client, home, format).await
+                commands::daemon::status(&client, home, remote, format).await
             }
             // Read like `status` rather than driven like the rest: the log
             // comes from the daemon itself, so `--endpoint` reaches the one it
@@ -149,12 +150,13 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
                 service,
                 level,
             } => {
-                let client = if cli.host.is_some() {
+                let remote = cli.host.as_deref().is_some_and(|h| h != "local");
+                let client = if remote {
                     Arc::clone(&client)
                 } else {
                     Arc::new(Client::resolve(cli.endpoint.as_deref(), home.clone()))
                 };
-                commands::daemon::logs(&client, home, follow, service, level).await
+                commands::daemon::logs(&client, home, remote, follow, service, level).await
             }
         },
         Command::Attach { id, seat } => commands::attach::attach_any(&client, &id, seat).await,

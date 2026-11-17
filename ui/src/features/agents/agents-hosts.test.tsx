@@ -9,7 +9,7 @@ import { afterEach, expect, it } from "vitest"
 import { useSettingsStore } from "@/stores/settings"
 import { aModel, anAgentConfig } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { AgentsPage } from "./agents-page"
 
 afterEach(() => {
@@ -66,6 +66,17 @@ it("reads only the picked host, with no chips", async () => {
   ).toBe(false)
 })
 
+it("keeps the chip of local when a named host goes down", async () => {
+  stubHosts({ local: answers("--on-local", true) }, [
+    LOCAL,
+    { ...BOX, status: "down", error: "connection refused" },
+  ])
+  renderScreen(<AgentsPage />)
+
+  expect(await screen.findByText("--on-local")).toBeTruthy()
+  await waitFor(() => expect(screen.getByRole("group", { name: "Host" }).textContent).toBe("local"))
+})
+
 it("says which host's agents failed to load beside the agents of the host that answered, with a retry", async () => {
   let failing = true
   stubHosts({
@@ -83,13 +94,13 @@ it("says which host's agents failed to load beside the agents of the host that a
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents of box")).toBeTruthy()
+  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
   expect(await screen.findByText("--on-local")).toBeTruthy()
 
   failing = false
   await userEvent.click(screen.getByRole("button", { name: "Retry" }))
   expect(await screen.findByRole("button", { name: "box" })).toBeTruthy()
-  expect(screen.queryByText("Could not load the agents of box")).toBeNull()
+  expect(screen.queryByText("Could not load the agents on box")).toBeNull()
 })
 
 const broken = () =>
@@ -105,7 +116,7 @@ it("names the failed host beside a host that answered with no agents", async () 
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents of box")).toBeTruthy()
+  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
   expect(await screen.findByText("No agents")).toBeTruthy()
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy()
 })
@@ -117,7 +128,7 @@ it("names every host whose agents failed, each with a retry, when none answered"
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents of local")).toBeTruthy()
-  expect(await screen.findByText("Could not load the agents of box")).toBeTruthy()
+  expect(await screen.findByText("Could not load the agents on local")).toBeTruthy()
+  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
   expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(2)
 })

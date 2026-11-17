@@ -124,9 +124,13 @@ export function CreateGoalDialog({
     host?: Host
   }
 }) {
-  const pickedHost = usePickedHost()
+  const picked = usePickedHost()
   const { hosts } = useHosts()
-  const reachable = hosts.filter((one) => one.url !== null)
+  // The header's pick, unless the app cannot reach that host: then `local`.
+  const pickedHost =
+    picked !== null && hosts.some((one) => one.name === picked && one.url === null)
+      ? LOCAL_HOST
+      : picked
   const form = useForm<CreateGoalForm>({
     resolver: zodResolver(formSchema),
     defaultValues: DEFAULT_VALUES,
@@ -227,7 +231,7 @@ export function CreateGoalDialog({
       >
         <FormDialogBody>
           {/* One host is no choice: the select shows once there are two. */}
-          {reachable.length > 1 || host !== LOCAL_HOST ? (
+          {hosts.length > 1 || host !== LOCAL_HOST ? (
             <Field>
               <FieldLabel htmlFor="goal-host">Host</FieldLabel>
               <FormSelect
@@ -235,7 +239,11 @@ export function CreateGoalDialog({
                 name="host"
                 id="goal-host"
                 empty={LOCAL_HOST}
-                options={reachable.map((one) => ({ value: one.name, label: one.name }))}
+                options={hosts.map((one) => ({
+                  value: one.name,
+                  label: one.unreachable === null ? one.name : `${one.name} — ${one.unreachable}`,
+                  disabled: one.unreachable !== null,
+                }))}
                 onValueChange={() => {
                   // Repository ids and workflows are the old host's own.
                   form.setValue("repository_ids", [], { shouldDirty: true })

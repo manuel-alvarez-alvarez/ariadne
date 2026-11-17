@@ -33,6 +33,7 @@ import { repositoriesQueryOptions, tunnelQueryOptions } from "./queries"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 import { WebhookPill } from "./webhook-pill"
 
+const HOSTS_COLUMN = { header: "Hosts" }
 const COLUMNS = [
   { header: "Path" },
   { header: "Base branch" },
@@ -40,7 +41,7 @@ const COLUMNS = [
   { header: "Permissions" },
   { header: "Forge" },
   { header: "Webhook", className: "w-28" },
-  { header: "Hosts" },
+  HOSTS_COLUMN,
   // Wide enough to be a sentence rather than a word per line: what made the
   // rows of this table 130px tall was a description with nothing to wrap in.
   { header: "Description", className: "min-w-48" },
@@ -93,7 +94,7 @@ export function RepositoriesPage() {
       <DataTable
         query={repositories}
         errorTitle="Could not load repositories"
-        columns={COLUMNS}
+        columns={named.length === 0 ? COLUMNS.filter((column) => column !== HOSTS_COLUMN) : COLUMNS}
         empty={<NoRepositories onCreate={openCreate} />}
         rowKey={(repository) => repository.id}
         renderRow={(repository) => (
@@ -180,25 +181,27 @@ function RepositoryRow({
           <span className="text-muted-foreground">-</span>
         )}
       </TableCell>
-      <TableCell className="text-xs">
-        {hosts.length === 0 ? (
-          <span className="text-muted-foreground">-</span>
-        ) : (
+      {hosts.length === 0 ? null : (
+        <TableCell className="text-xs">
           <ul aria-label="Checkouts" className="flex flex-col">
             {hosts.map((host) => {
+              const pending = host.sync.state === "pending"
               const missing = host.sync.missing_repositories.some(
                 (entry) => entry.id === repository.id,
               )
               return (
-                <li key={host.name} className={missing ? "text-muted-foreground" : undefined}>
+                <li
+                  key={host.name}
+                  className={missing || pending ? "text-muted-foreground" : undefined}
+                >
                   <span className="font-mono">{host.name}</span>
-                  {missing ? " · no checkout" : " · checkout"}
+                  {pending ? " · pending" : missing ? " · no checkout" : " · checkout"}
                 </li>
               )
             })}
           </ul>
-        )}
-      </TableCell>
+        </TableCell>
+      )}
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}
       </TableCell>
