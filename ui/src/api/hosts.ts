@@ -67,14 +67,19 @@ function hostsQueryOptions() {
     queryKey: qk.hosts.list(),
     queryFn: async ({ client }) => {
       const rows = await unwrap(api(LOCAL_HOST).GET("/v1/hosts"))
+      const views = hostViews(rows)
+      const before = new Map(views.map((host) => [host.name, hostBaseUrl(host.name)]))
       rememberHosts(rows)
-      // A read of a named host that ran before its address was known failed
-      // for that alone, and a network error is not retried: read it again.
-      for (const host of hostViews(rows)) {
+      for (const host of views) {
         if (host.name === LOCAL_HOST || host.url === null) continue
+        // A host that came up or moved since the last list — a `host_updated`
+        // missed while `local`'s stream was down — answers every read again.
+        // Otherwise only a read that ran before its address was known failed
+        // for that alone, and a network error is not retried: read it again.
+        const moved = before.get(host.name) !== host.url
         void client.invalidateQueries({
           queryKey: qk.host(host.name),
-          predicate: (query) => query.state.status === "error",
+          predicate: moved ? undefined : (query) => query.state.status === "error",
         })
       }
       return rows

@@ -6,15 +6,17 @@
  * `ready`, and any other named host not at all, with its reason.
  */
 
-import { QueryClientProvider } from "@tanstack/react-query"
-import { renderHook, waitFor } from "@testing-library/react"
+import { QueryClientProvider, useQuery } from "@tanstack/react-query"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it } from "vitest"
+import { invalidateEverything } from "@/events/dispatch"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { api, DEFAULT_BASE_URL, eventStreamUrl, setApiBaseUrl, unwrap } from "./client"
 import { ApiError } from "./errors"
 import { rememberHosts, useHosts } from "./hosts"
 import { createQueryClient } from "./queries"
+import { qk } from "./query-keys"
 import type { HostDto } from "./types"
 
 afterEach(() => {
@@ -106,5 +108,43 @@ describe("useHosts", () => {
     expect(seen[0]?.url.toString()).toBe("http://127.0.0.1:7676/v1/hosts")
     await unwrap(api("box").GET("/v1/goals"))
     expect(seen.at(-1)?.origin).toBe("http://box.test:7676")
+  })
+})
+
+describe("a missed host_updated", () => {
+  it("reads a host again at its new address once local's stream comes back", async () => {
+    const moved = "http://box-moved.test:7676"
+    const hosts = [LOCAL, BOX]
+    const seen = stubHosts(
+      { box: { "/v1/goals": [] }, at: { [moved]: { "/v1/goals": [] } } },
+      hosts,
+    )
+    const queryClient = createQueryClient()
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(
+      () => {
+        const known = useHosts().hosts.length > 1
+        return useQuery({
+          queryKey: qk.goals.list("box"),
+          queryFn: () => unwrap(api("box").GET("/v1/goals")),
+          enabled: known,
+        })
+      },
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    // The host moved while `local`'s stream was down, so its event is gone;
+    // the reconnect invalidates `local`, the hosts list with it.
+    hosts[1] = { ...BOX, endpoint: moved }
+    act(() => invalidateEverything(queryClient, "local"))
+
+    await waitFor(() =>
+      expect(seen.some((one) => one.origin === moved && one.url.pathname === "/v1/goals")).toBe(
+        true,
+      ),
+    )
   })
 })

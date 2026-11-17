@@ -53,13 +53,15 @@ export interface SeenRequest {
  * settles, as `./setup`'s default is.
  */
 export function stubHosts(
-  answers: { local?: Answers; box?: Answers },
+  answers: { local?: Answers; box?: Answers; at?: Record<string, Answers> },
   hosts: HostDto[] = [LOCAL, BOX],
 ): SeenRequest[] {
   const seen: SeenRequest[] = []
   const byOrigin: Record<string, Answers> = {
     [LOCAL_ORIGIN]: { "/v1/hosts": hosts, ...answers.local },
     [new URL(BOX.endpoint ?? "").origin]: answers.box ?? {},
+    // Any other daemon, by its origin: a host that moved, say.
+    ...answers.at,
   }
   daemonFetch.mockImplementation(async (input: Request | string | URL) => {
     const request = input instanceof Request ? input : new Request(input)

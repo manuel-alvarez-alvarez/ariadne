@@ -227,7 +227,7 @@ function GoalView({
             host={host}
             goal={goal}
             onOpenConversation={onSelectSession}
-            onNewTask={() => setNewTaskOpen(true)}
+            onNewTask={canCreateTask ? () => setNewTaskOpen(true) : undefined}
           />
         ) : null}
 
@@ -267,9 +267,10 @@ function GoalView({
         </Tabs>
       </PaneBody>
 
+      {/* Only for a goal that takes a task from here (`canCreateTask`). */}
       <CreateTaskDialog
         goal={goal}
-        open={newTaskOpen}
+        open={canCreateTask && newTaskOpen}
         onOpenChange={setNewTaskOpen}
         // Opening the new task's panel is the same gesture as opening it from
         // a lane: `?task=` replaces this goal's panel (see `detail-panels.tsx`).

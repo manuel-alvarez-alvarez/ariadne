@@ -212,3 +212,19 @@ function reads(seen: ReturnType<typeof stubHosts>, host: "local" | "box"): strin
     ),
   ].sort()
 }
+
+it("offers no task form for a planning goal on a named host", async () => {
+  stubEventSource()
+  const planning = { ...THEIRS, status: "planning" as const, orchestrated: true }
+  stubHosts({ box: { ...EMPTY, [`/v1/goals/${THEIRS.id}`]: planning } })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?goal=${THEIRS.id}&host=box` },
+  )
+
+  expect(await screen.findByRole("region", { name: "Planning" })).toBeTruthy()
+  expect(screen.queryByRole("button", { name: "Create task manually" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "New task" })).toBeNull()
+})

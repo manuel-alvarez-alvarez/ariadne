@@ -71,7 +71,8 @@ export function PlanningGuide({
   goal: GoalDto
   /** Opens the orchestrator's session over the panel. */
   onOpenConversation: (sessionId: string) => void
-  onNewTask: () => void
+  /** Opens the create-task dialog; absent where the goal takes no task from here. */
+  onNewTask?: () => void
 }) {
   // The key the Sessions tab and its count read, so this costs no request.
   const sessions = useQuery(sessionsQueryOptions(host, { goal: goal.id, seat: "orchestrator" }))
@@ -97,10 +98,12 @@ export function PlanningGuide({
           Open orchestrator conversation
         </Button>
       ) : null}
-      <Button variant="outline" size="sm" onClick={onNewTask}>
-        <PlusIcon />
-        Create task manually
-      </Button>
+      {onNewTask ? (
+        <Button variant="outline" size="sm" onClick={onNewTask}>
+          <PlusIcon />
+          Create task manually
+        </Button>
+      ) : null}
     </section>
   )
 }

@@ -1140,7 +1140,10 @@ Out: the daemon endpoints themselves (012).
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.
-    A gap in one host's stream invalidates that host's keys alone. The
+    A gap in one host's stream invalidates that host's keys alone. A host
+    that came up or moved since the last hosts list is read again whole, so a
+    `host_updated` missed while `local`'s stream was down leaves nothing
+    stale. The
     connection banner and status stay about `local`; a named host's state is
     its row in the host picker.
 54. Every query key starts with its host: `[host, entity, "list" | "detail",
@@ -1166,7 +1169,7 @@ Out: the daemon endpoints themselves (012).
     `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`.
 60. Every other screen reads `local`, and passes `"local"` explicitly. The task
     form only creates tasks for a goal on `local`, so a named host's goal
-    panel offers no New task.
+    panel offers no New task, and its planning guide no Create task manually.
 
 ## Acceptance criteria
 
@@ -2064,7 +2067,8 @@ Out: the daemon endpoints themselves (012).
   `::lists a host that is not ready as unreachable, even at an http endpoint`,
   `::calls a ready named host at its endpoint`,
   `::builds a host's stream URL with its filters, and none for an unreachable host`,
-  `::reads GET /v1/hosts from the settings daemon, and points api(host) at each host`);
+  `::reads GET /v1/hosts from the settings daemon, and points api(host) at each host`,
+  `::reads a host again at its new address once local's stream comes back`);
   the Hosts section lists the facts live, and the picker picks and keeps a
   host (`ui/src/components/hosts-settings.test.tsx::lists every host with its name, kind, status, endpoint and error, live through host_updated`,
   `::picks All, local or a named host with its status, and keeps the pick`);
@@ -2088,7 +2092,8 @@ Out: the daemon endpoints themselves (012).
   `::opens a goal's panel on the host its link names`,
   `::defaults the goal dialog to the picked host, and reloads its lists when the host changes`,
   `::opens the goal dialog on local under All`,
-  `::shows a question a remote host's stream delivers, and answers it on that host`).
+  `::shows a question a remote host's stream delivers, and answers it on that host`,
+  `::offers no task form for a planning goal on a named host`).
 
 ## Known gap
 
