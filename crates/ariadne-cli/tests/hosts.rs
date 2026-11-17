@@ -324,3 +324,95 @@ async fn permissions_device_is_written_on_the_named_host_only() {
     server.abort();
     remote.abort();
 }
+
+/// What fish-style completion offers (one candidate per line) for `words`.
+async fn complete(words: &[&str]) -> Vec<String> {
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .env("COMPLETE", "fish")
+        .env("ARIADNE_TELEMETRY", "off")
+        .env(
+            "ARIADNE_HOME",
+            std::env::temp_dir().join("ariadne-complete-nohome"),
+        )
+        .arg("--")
+        .args(words)
+        .output()
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.split('\t').next().unwrap().to_owned())
+        // Flags are offered beside IDs on an empty word; only names matter here.
+        .filter(|name| !name.starts_with('-'))
+        .collect()
+}
+
+fn host(name: &str, status: &str, endpoint: Option<&str>) -> serde_json::Value {
+    json!({"name":name,"kind":"direct","status":status,"endpoint":endpoint,"error":null,"remote":null,
+        "sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}})
+}
+
+#[tokio::test]
+async fn completion_reads_the_typed_endpoint_and_the_typed_host() {
+    async fn serve(registry: serde_json::Value, tasks: serde_json::Value) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/v1/hosts", get(move || async move { Json(registry) }))
+            .route("/v1/tasks", get(move || async move { Json(tasks) }));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        endpoint
+    }
+    let task = |id: &str| json!({"id":id,"status":"open","title":"t"});
+    let build = serve(json!([]), json!([task("01BUILD")])).await;
+    let down = serve(json!([]), json!([task("01DOWN")])).await;
+    let main = serve(json!([]), json!([task("01LOCAL")])).await;
+    let registry = json!([
+        host("local", "ready", Some(&main)),
+        host("build", "ready", Some(&build)),
+        host("offline", "down", Some(&down)),
+    ]);
+    let typed = serve(registry, json!([task("01LOCAL")])).await;
+    let only_local = serve(json!([host("local", "ready", None)]), json!([])).await;
+
+    // 1: the registry is the one of the daemon `--endpoint` names.
+    let names = complete(&["ariadne", "--endpoint", &typed, "--host", ""]).await;
+    assert!(names.contains(&"build".to_owned()), "{names:?}");
+    assert!(names.contains(&"all".to_owned()), "{names:?}");
+    // 2: a daemon that does not answer still offers `local` and `all`.
+    let names = complete(&["ariadne", "--endpoint", "http://127.0.0.1:1", "--host", ""]).await;
+    assert_eq!(sorted(names), ["all", "local"]);
+    // 5: a registry with only `local` offers `local` and `all`.
+    let names = complete(&["ariadne", "--endpoint", &only_local, "--host", ""]).await;
+    assert_eq!(sorted(names), ["all", "local"]);
+    // 3: an ID is read from the host `--host NAME` names.
+    let ids = complete(&[
+        "ariadne",
+        "--endpoint",
+        &typed,
+        "--host",
+        "build",
+        "task",
+        "inspect",
+        "",
+    ])
+    .await;
+    assert_eq!(ids, ["01BUILD"]);
+    // 4: `--host all` reads every ready host and no other.
+    let ids = complete(&[
+        "ariadne",
+        "--endpoint",
+        &typed,
+        "--host=all",
+        "task",
+        "inspect",
+        "",
+    ])
+    .await;
+    assert_eq!(sorted(ids), ["01BUILD", "01LOCAL"]);
+}
+
+fn sorted(mut names: Vec<String>) -> Vec<String> {
+    names.sort();
+    names
+}

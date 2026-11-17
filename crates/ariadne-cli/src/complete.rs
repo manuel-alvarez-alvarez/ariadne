@@ -91,14 +91,91 @@ async fn get(client: &Client, path: &str) -> Option<Value> {
     }
 }
 
-/// One JSON document from the daemon, fetched on its own round.
-fn fetch_value(path: &str) -> Option<Value> {
-    round(async { get(&Client::from_env(), path).await }).flatten()
+/// The value a flag has on the command line being completed, the last one
+/// typed, as `--flag VALUE` or `--flag=VALUE`.
+fn flag_value(words: &[String], flag: &str) -> Option<String> {
+    let prefix = format!("{flag}=");
+    let mut found = None;
+    let mut iter = words.iter();
+    while let Some(word) = iter.next() {
+        if word == flag {
+            found = iter.next().cloned();
+        } else if let Some(value) = word.strip_prefix(&prefix) {
+            found = Some(value.to_owned());
+        }
+    }
+    found
 }
 
-/// A JSON list from the daemon; anything else is no candidates.
+/// The daemon `--endpoint` names on the command line, else the ambient one.
+fn typed_client(words: &[String]) -> Client {
+    Client::resolve(flag_value(words, "--endpoint").as_deref(), None)
+}
+
+/// The registry of the daemon the command line addresses.
+async fn registry(client: &Client) -> Vec<Value> {
+    rows(get(client, "/v1/hosts").await)
+}
+
+/// The daemons an ID lookup reads: the one `--host NAME` names, every ready
+/// host for `all`, else the daemon the command line addresses. A name the
+/// registry does not know, or a host that is not ready, reads nothing.
+async fn targets(words: &[String]) -> Vec<Client> {
+    let local = typed_client(words);
+    let Some(host) = flag_value(words, "--host") else {
+        return vec![local];
+    };
+    let hosts = registry(&local).await;
+    let reach = |row: &Value| -> Option<Client> {
+        if s(row, "status") != "ready" {
+            return None;
+        }
+        if s(row, "name") == "local" {
+            return Some(Client::resolve(
+                flag_value(words, "--endpoint").as_deref(),
+                None,
+            ));
+        }
+        let endpoint = row.get("endpoint")?.as_str()?;
+        Some(Client::resolve(Some(endpoint), None))
+    };
+    match host.as_str() {
+        "all" => hosts.iter().filter_map(reach).collect(),
+        // With no registry answer, `local` is still this daemon.
+        "local" if hosts.is_empty() => vec![local],
+        name => hosts
+            .iter()
+            .find(|row| s(row, "name") == name)
+            .and_then(reach)
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// One JSON document per host the command line selects, fetched on one round.
+fn fetch_values(path: &str) -> Vec<Value> {
+    let words: Vec<String> = std::env::args().collect();
+    round(async {
+        let mut out = Vec::new();
+        for client in targets(&words).await {
+            out.extend(get(&client, path).await);
+        }
+        out
+    })
+    .unwrap_or_default()
+}
+
+/// One JSON document from the daemon, or nothing at all.
+fn fetch_value(path: &str) -> Option<Value> {
+    fetch_values(path).into_iter().next()
+}
+
+/// A JSON list from each selected host; anything else is no candidates.
 fn fetch(path: &str) -> Vec<Value> {
-    rows(fetch_value(path))
+    fetch_values(path)
+        .into_iter()
+        .flat_map(|value| rows(Some(value)))
+        .collect()
 }
 
 fn rows(value: Option<Value>) -> Vec<Value> {
@@ -237,6 +314,13 @@ fn session_rows(value: Option<Value>) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn fetched_sessions() -> Vec<Value> {
+    fetch_values("/v1/sessions")
+        .into_iter()
+        .flat_map(|page| session_rows(Some(page)))
+        .collect()
+}
+
 /// Sessions arrive newest-first from their paged endpoint, unlike the older
 /// entity lists that [`ids`] reverses before offering their oldest-first rows.
 fn session_candidates(rows: &[Value], help: impl Fn(&Value) -> String) -> Vec<CompletionCandidate> {
@@ -247,7 +331,7 @@ fn session_candidates(rows: &[Value], help: impl Fn(&Value) -> String) -> Vec<Co
 
 /// Session ids, newest first (`session inspect`, `session logs`).
 pub(crate) fn session_ids() -> Vec<CompletionCandidate> {
-    session_candidates(&session_rows(fetch_value("/v1/sessions")), session_help)
+    session_candidates(&fetched_sessions(), session_help)
 }
 
 /// What `session kill` can act on: a session with an agent process to kill.
@@ -255,7 +339,7 @@ pub(crate) fn session_ids() -> Vec<CompletionCandidate> {
 /// is here.
 pub(crate) fn live_session_ids() -> Vec<CompletionCandidate> {
     session_candidates(
-        &session_rows(fetch_value("/v1/sessions"))
+        &fetched_sessions()
             .into_iter()
             .filter(session_is_live)
             .collect::<Vec<_>>(),
@@ -267,7 +351,7 @@ pub(crate) fn live_session_ids() -> Vec<CompletionCandidate> {
 /// it revives.
 pub(crate) fn ended_session_ids() -> Vec<CompletionCandidate> {
     session_candidates(
-        &session_rows(fetch_value("/v1/sessions"))
+        &fetched_sessions()
             .into_iter()
             .filter(session_has_ended)
             .collect::<Vec<_>>(),
@@ -290,17 +374,24 @@ fn session_has_ended(row: &Value) -> bool {
 /// The three lists are read together on one round rather than one after
 /// another, so the budget covers the lot.
 pub(crate) fn attach_ids() -> Vec<CompletionCandidate> {
+    let words: Vec<String> = std::env::args().collect();
     let Some((sessions, tasks, goals)) = round(async {
-        let client = Client::from_env();
-        tokio::join!(
-            get(&client, "/v1/sessions"),
-            get(&client, "/v1/tasks"),
-            get(&client, "/v1/goals"),
-        )
+        let (mut sessions, mut tasks, mut goals) = (Vec::new(), Vec::new(), Vec::new());
+        for client in targets(&words).await {
+            let (s, t, g) = tokio::join!(
+                get(&client, "/v1/sessions"),
+                get(&client, "/v1/tasks"),
+                get(&client, "/v1/goals"),
+            );
+            sessions.extend(session_rows(s));
+            tasks.extend(rows(t));
+            goals.extend(rows(g));
+        }
+        (sessions, tasks, goals)
     }) else {
         return Vec::new();
     };
-    attach_order(session_rows(sessions), rows(tasks), rows(goals))
+    attach_order(sessions, tasks, goals)
 }
 
 /// Live sessions, then tasks and goals, then the sessions that have ended —
@@ -620,7 +711,11 @@ fn model_catalog() -> Option<Vec<Value>> {
         return Some(fresh);
     }
     let fetched = round_within(CATALOG_BUDGET, async {
-        get(&Client::from_env(), "/v1/models").await
+        get(
+            &typed_client(&std::env::args().collect::<Vec<_>>()),
+            "/v1/models",
+        )
+        .await
     })
     .flatten();
     match fetched {
@@ -701,14 +796,26 @@ fn model_help(m: &Value) -> &str {
         .unwrap_or_else(|| s(m, "agent_id"))
 }
 
-/// Configured hosts plus the fan-out selector.
+/// Configured hosts plus the fan-out selector, from the registry of the daemon
+/// `--endpoint` names. A daemon that does not answer, or a registry without
+/// `local`, still offers `local` and `all`.
 pub(crate) fn host_names() -> Vec<CompletionCandidate> {
-    let mut names = vec![CompletionCandidate::new("all")];
+    let words: Vec<String> = std::env::args().collect();
+    let hosts = round(async { registry(&typed_client(&words)).await }).unwrap_or_default();
+    host_candidates(&hosts)
+}
+
+fn host_candidates(hosts: &[Value]) -> Vec<CompletionCandidate> {
+    let mut names = Vec::new();
+    if !hosts.iter().any(|host| s(host, "name") == "local") {
+        names.push(candidate("local", "this daemon".into()));
+    }
     names.extend(
-        fetch("/v1/hosts")
+        hosts
             .iter()
             .map(|host| candidate(s(host, "name"), s(host, "status").into())),
     );
+    names.push(CompletionCandidate::new("all"));
     names
 }
 
