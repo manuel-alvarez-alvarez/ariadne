@@ -85,13 +85,20 @@ it("reads the task of a named host and refreshes its messages on that host's str
   )
   expect(seen.filter((request) => request.method === "POST" && request.origin !== BOX)).toEqual([])
 
+  // The POST's own refresh shows the posted message. A later message the box
+  // writes by itself is not read until the box's stream says so.
+  expect(await screen.findByText("posted to box")).toBeTruthy()
+  box.messages = [...box.messages, aMessage("said later by an agent")]
+  await act(async () => {})
+  expect(screen.queryByText("said later by an agent")).toBeNull()
+
   const stream = FakeEventSource.instances.find((one) => one.url.startsWith(BOX))
   if (!stream) throw new Error("no stream on box")
   act(() => {
     stream.succeed()
     stream.emit("message_sent", box.messages.at(-1))
   })
-  expect(await screen.findByText("posted to box")).toBeTruthy()
+  expect(await screen.findByText("said later by an agent")).toBeTruthy()
 })
 
 it("retries a failed task on the host the panel is open on", async () => {
