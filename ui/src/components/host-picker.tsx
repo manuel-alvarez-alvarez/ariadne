@@ -11,6 +11,7 @@
 import { ServerIcon } from "lucide-react"
 
 import { type HostView, LOCAL_HOST, useHosts } from "@/api"
+import { ReconnectHostButton } from "@/components/reconnect-host-button"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -98,6 +99,7 @@ function HostOption({ host }: { host: HostView }) {
             {status.label}
           </span>
         )}
+        <ReconnectHostButton name={host.name} />
       </span>
       {host.unreachable && host.name !== LOCAL_HOST ? (
         <span className="truncate text-xs text-muted-foreground">{host.unreachable}</span>
