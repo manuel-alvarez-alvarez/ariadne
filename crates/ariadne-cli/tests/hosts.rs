@@ -414,8 +414,13 @@ async fn completion_reads_the_typed_endpoint_and_the_typed_host() {
 
 #[tokio::test]
 async fn completion_of_all_hosts_reads_them_together_within_one_budget() {
-    // Each host answers in 450 ms: read one after another they pass the 800 ms budget.
-    async fn slow(registry: serde_json::Value, task: &'static str) -> String {
+    // Both task handlers answer only once both requests have arrived. Read one
+    // after another, the first never gets its answer and the budget runs out.
+    async fn serve(
+        registry: serde_json::Value,
+        task: &'static str,
+        both: Arc<tokio::sync::Barrier>,
+    ) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let app = Router::new()
@@ -423,20 +428,22 @@ async fn completion_of_all_hosts_reads_them_together_within_one_budget() {
             .route(
                 "/v1/tasks",
                 get(move || async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+                    both.wait().await;
                     Json(json!([{"id":task,"status":"open","title":"t"}]))
                 }),
             );
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         endpoint
     }
-    let build = slow(json!([]), "01BUILD").await;
-    let main = slow(json!([]), "01LOCAL").await;
+    let both = Arc::new(tokio::sync::Barrier::new(2));
+    let build = serve(json!([]), "01BUILD", both.clone()).await;
+    let main = serve(json!([]), "01UNUSED", both.clone()).await;
+    // `local` is read at the endpoint typed on the command line.
     let registry = json!([
         host("local", "ready", Some(&main)),
         host("build", "ready", Some(&build)),
     ]);
-    let typed = slow(registry, "01LOCAL").await;
+    let typed = serve(registry, "01LOCAL", both).await;
     let ids = complete(&[
         "ariadne",
         "--endpoint",
