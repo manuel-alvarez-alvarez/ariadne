@@ -232,7 +232,7 @@ async fn fan(
             )),
         };
     }
-    if route.path == "-/healthy" || route.path == "api/v1/parse_query" {
+    if route.path == "-/healthy" {
         // Nothing here depends on a host: the first answer is the answer.
         return Ok(relayed(answers.swap_remove(0).1));
     }
@@ -250,8 +250,24 @@ async fn fan(
             format!("no host answered: {}", warnings.join("; ")),
         ));
     }
-    let data = merge(route.path, name.as_deref(), &parsed);
-    let mut answer = json!({"status": "success", "data": data});
+    let mut answer = if route.path == "api/v1/parse_query" {
+        // Nothing here depends on a host: the first answer is the answer.
+        parsed.swap_remove(0).1
+    } else if route.path == "loki/api/v1/index/stats" {
+        // Loki's statistics have no envelope: the fields, summed.
+        let mut sum = Map::new();
+        for (_, answer) in &parsed {
+            for (key, value) in answer.as_object().into_iter().flatten() {
+                let total =
+                    sum.get(key).and_then(Value::as_u64).unwrap_or(0) + value.as_u64().unwrap_or(0);
+                sum.insert(key.clone(), json!(total));
+            }
+        }
+        Value::Object(sum)
+    } else {
+        let data = merge(route.path, name.as_deref(), &parsed);
+        json!({"status": "success", "data": data})
+    };
     if !warnings.is_empty() {
         answer["warnings"] = json!(warnings);
     }
@@ -410,17 +426,6 @@ fn merge(path: &str, name: Option<&str>, answers: &[(String, Value)]) -> Value {
             }
         }
         return Value::Object(merged);
-    }
-    if path.ends_with("/index/stats") {
-        let mut sum = Map::new();
-        for (_, answer) in answers {
-            for (key, value) in data(answer).as_object().into_iter().flatten() {
-                let total =
-                    sum.get(key).and_then(Value::as_u64).unwrap_or(0) + value.as_u64().unwrap_or(0);
-                sum.insert(key.clone(), json!(total));
-            }
-        }
-        return Value::Object(sum);
     }
     results(answers)
 }

@@ -228,6 +228,28 @@ async fn a_query_every_host_refuses_answers_its_400() {
 }
 
 #[tokio::test]
+async fn all_keeps_the_flat_shape_of_the_index_stats() {
+    let (local, _far, _dir) = pair().await;
+    let body: Value = local.get("/v1/hosts/all/loki/api/v1/index/stats").await;
+    for key in ["streams", "chunks", "entries", "bytes"] {
+        assert_eq!(body[key], 0, "{body}");
+    }
+    assert!(body["data"].is_null(), "{body}");
+    assert!(body["warnings"].to_string().contains("dead"), "{body}");
+}
+
+#[tokio::test]
+async fn all_keeps_the_warnings_on_a_parsed_query() {
+    let (local, _far, _dir) = pair().await;
+    let body = data(
+        &local,
+        &query_uri("all", "api/v1/parse_query", &[("query", "up")]),
+    )
+    .await;
+    assert!(body["warnings"].to_string().contains("dead"), "{body}");
+}
+
+#[tokio::test]
 async fn openapi_carries_the_host_query_routes() {
     let h = harness().await;
     let doc: Value = h.get("/api-docs/openapi.json").await;
