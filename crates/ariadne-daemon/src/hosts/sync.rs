@@ -5,8 +5,8 @@
 //! settings of each repository the host has a checkout of. After that it
 //! pushes each local change as the bus carries it. Every push goes through
 //! the host's own API, so the host checks it as it checks any other write.
-//! A failed push is tried again with a capped backoff for as long as the
-//! host stays `ready`. Nothing is ever read back from the host into this
+//! A failed push is tried again on its own with a capped backoff for as long
+//! as the host stays `ready`, and holds back no other push. Nothing is ever read back from the host into this
 //! daemon: writes go to the local daemon, and flow one way.
 
 use std::collections::{HashMap, VecDeque};
@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use ariadne_api::hosts::{MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{
-    AiPermissionsStatusDto, Flavour, LearnedPermissionDto, LearnedPermissionsResponse,
-    RecordLearnedPermissionRequest, UpdateAiPermissionsRequest,
+    AiPermissionsStatusDto, Flavour, LearnedPermissionDto, LearnedPermissionLevel,
+    LearnedPermissionsResponse, RecordLearnedPermissionRequest, UpdateAiPermissionsRequest,
 };
 use ariadne_api::repositories::{ForgeUpdate, RepositoryDto, UpdateRepositoryRequest};
 use ariadne_api::skills::{CreateSkillRequest, SkillDto, UpdateSkillRequest};
@@ -26,7 +26,7 @@ use ariadne_client::{Client, ClientError};
 use axum::http::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use tokio::sync::broadcast::{self, error::RecvError, error::TryRecvError};
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep_until};
 use tracing::warn;
 
 use super::Inner;
@@ -39,7 +39,8 @@ const BACKOFF_CAP: Duration = Duration::from_secs(60);
 /// One thing to push to a host.
 enum Push {
     /// Everything: the host has just become `ready`, or this task fell
-    /// behind the bus and cannot tell what it missed.
+    /// behind the bus and cannot tell what it missed. Run as a push of each
+    /// item.
     All,
     Skill(SkillDto),
     SkillDeleted(String),
@@ -51,6 +52,35 @@ enum Push {
     Learned(LearnedPermissionDto),
     LearnedDeleted(LearnedPermissionDto),
     Ai(AiChoice),
+}
+
+/// The item a push is about: a later push of the same item replaces a
+/// failed one.
+#[derive(PartialEq)]
+enum Item<'a> {
+    All,
+    Skill(&'a str),
+    Workflow(&'a str),
+    Repositories,
+    Learned(&'a str, &'a str, LearnedPermissionLevel, &'a str),
+    Ai,
+}
+
+impl Push {
+    fn item(&self) -> Item<'_> {
+        match self {
+            Push::All => Item::All,
+            Push::Skill(skill) => Item::Skill(&skill.name),
+            Push::SkillDeleted(name) => Item::Skill(name),
+            Push::Workflow(workflow) => Item::Workflow(&workflow.name),
+            Push::WorkflowDeleted(name) => Item::Workflow(name),
+            Push::Repositories => Item::Repositories,
+            Push::Learned(row) | Push::LearnedDeleted(row) => {
+                Item::Learned(&row.repository_id, &row.tool_name, row.level, &row.key)
+            }
+            Push::Ai(_) => Item::Ai,
+        }
+    }
 }
 
 /// What the user chose for the AI permission model. The device is not among
@@ -99,60 +129,68 @@ pub(super) async fn run(
             index,
             client: client_for(&endpoint),
             last_ai: None,
+            pairs: None,
         };
-        let mut queue = VecDeque::from([Push::All]);
+        let mut pushes = Pushes {
+            queue: VecDeque::from([Push::All]),
+            failed: Vec::new(),
+        };
         let mut backoff = base;
+        // When the failed pushes are next tried; `None` while none failed.
+        let mut retry_at: Option<Instant> = None;
         'ready: loop {
             loop {
                 match events.try_recv() {
-                    Ok(event) => enqueue(&mut queue, &event.event),
-                    Err(TryRecvError::Lagged(_)) => enqueue_all(&mut queue),
+                    Ok(event) => pushes.enqueue(&event.event),
+                    Err(TryRecvError::Lagged(_)) => pushes.enqueue_all(),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Closed) => return,
                 }
             }
-            let Some(push) = queue.front() else {
-                inner.set_sync(index, |sync| {
-                    sync.state = SyncState::InSync;
-                    sync.error = None;
-                });
+            pushes.show(&inner, index);
+            if let Some(push) = pushes.queue.pop_front() {
+                pushes.run(&mut pusher, push).await;
+                if pushes.failed.is_empty() {
+                    backoff = base;
+                    retry_at = None;
+                } else if retry_at.is_none() {
+                    retry_at = Some(Instant::now() + backoff);
+                }
+                pushes.show(&inner, index);
+                continue;
+            }
+            let Some(at) = retry_at else {
                 tokio::select! {
                     changed = ready.changed() => {
                         if changed.is_err() { return }
                         if ready.borrow().as_deref() != Some(endpoint.as_str()) { break 'ready }
                     }
                     event = events.recv() => match event {
-                        Ok(event) => enqueue(&mut queue, &event.event),
-                        Err(RecvError::Lagged(_)) => enqueue_all(&mut queue),
+                        Ok(event) => pushes.enqueue(&event.event),
+                        Err(RecvError::Lagged(_)) => pushes.enqueue_all(),
                         Err(RecvError::Closed) => return,
                     },
                 }
                 continue;
             };
-            // A failed push stays `failed` while it is tried again.
-            if inner.sync_state(index) == SyncState::InSync {
-                inner.set_sync(index, |sync| sync.state = SyncState::Pending);
-            }
-            match pusher.push(push).await {
-                Ok(()) => {
-                    queue.pop_front();
-                    backoff = base;
-                }
-                Err(error) => {
-                    warn!(host = %inner.cfg.hosts[index].0, %error, "host sync failed");
-                    inner.set_sync(index, |sync| {
-                        sync.state = SyncState::Failed;
-                        sync.error = Some(error);
-                    });
-                    tokio::select! {
-                        () = sleep(backoff) => {}
-                        changed = ready.changed() => {
-                            if changed.is_err() { return }
-                            if ready.borrow().as_deref() != Some(endpoint.as_str()) { break 'ready }
-                        }
-                    }
+            tokio::select! {
+                () = sleep_until(at) => {
+                    pushes.retry(&mut pusher).await;
                     backoff = (backoff * 2).min(BACKOFF_CAP);
+                    retry_at = (!pushes.failed.is_empty()).then(|| Instant::now() + backoff);
+                    if pushes.failed.is_empty() {
+                        backoff = base;
+                    }
                 }
+                changed = ready.changed() => {
+                    if changed.is_err() { return }
+                    if ready.borrow().as_deref() != Some(endpoint.as_str()) { break 'ready }
+                }
+                event = events.recv() => match event {
+                    Ok(event) => pushes.enqueue(&event.event),
+                    Err(RecvError::Lagged(_)) => pushes.enqueue_all(),
+                    Err(RecvError::Closed) => return,
+                },
             }
         }
         // The host left `ready`: what is left waits for the next push of
@@ -160,6 +198,110 @@ pub(super) async fn run(
         inner.set_sync(index, |sync| {
             sync.state = SyncState::Pending;
             sync.error = None;
+        });
+    }
+}
+
+/// What is left to push to a `ready` host.
+struct Pushes {
+    /// The pushes not tried yet, in the order of the changes.
+    queue: VecDeque<Push>,
+    /// The pushes that failed, each with why, tried again on their own
+    /// after the backoff. A failed push holds back no other one.
+    failed: Vec<(Push, String)>,
+}
+
+impl Pushes {
+    /// Queue the push a local change asks for, if it asks for one. A newer
+    /// push of the same item replaces a failed one.
+    fn enqueue(&mut self, event: &DomainEvent) {
+        let push = match event {
+            DomainEvent::SkillCreated(skill) | DomainEvent::SkillUpdated(skill) => {
+                Push::Skill(skill.clone())
+            }
+            DomainEvent::SkillDeleted(deleted) => Push::SkillDeleted(deleted.id.clone()),
+            DomainEvent::WorkflowCreated(workflow) | DomainEvent::WorkflowUpdated(workflow) => {
+                Push::Workflow(workflow.clone())
+            }
+            DomainEvent::WorkflowDeleted(deleted) => Push::WorkflowDeleted(deleted.id.clone()),
+            DomainEvent::RepositoryCreated(_)
+            | DomainEvent::RepositoryUpdated(_)
+            | DomainEvent::RepositoryDeleted(_) => Push::Repositories,
+            DomainEvent::LearnedPermissionCreated(row)
+            | DomainEvent::LearnedPermissionUpdated(row) => Push::Learned(row.clone()),
+            DomainEvent::LearnedPermissionDeleted(row) => Push::LearnedDeleted(row.clone()),
+            DomainEvent::AiPermissionsUpdated(status) => Push::Ai(AiChoice::from(status)),
+            _ => return,
+        };
+        self.supersede(&push);
+        // A push that reads its state afresh covers a later one of its kind.
+        let covered = matches!(push, Push::Repositories)
+            && self
+                .queue
+                .iter()
+                .any(|queued| matches!(queued, Push::All | Push::Repositories));
+        if !covered {
+            self.queue.push_back(push);
+        }
+    }
+
+    /// Push everything again: this task fell behind the bus and cannot tell
+    /// what it missed.
+    fn enqueue_all(&mut self) {
+        self.queue.clear();
+        self.queue.push_back(Push::All);
+    }
+
+    /// Drop the failed push of the item `push` is about.
+    fn supersede(&mut self, push: &Push) {
+        let item = push.item();
+        self.failed.retain(|(failed, _)| failed.item() != item);
+    }
+
+    /// Run one push. The push of everything puts a push of each item at the
+    /// head of the queue, so one item the host refuses holds back no other.
+    async fn run(&mut self, pusher: &mut Pusher<'_>, push: Push) {
+        if let Push::All = push {
+            match pusher.everything().await {
+                Ok(items) => {
+                    for item in items.into_iter().rev() {
+                        self.supersede(&item);
+                        self.queue.push_front(item);
+                    }
+                }
+                Err(error) => self.fail(pusher, push, error),
+            }
+            return;
+        }
+        if let Err(error) = pusher.push(&push).await {
+            self.fail(pusher, push, error);
+        }
+    }
+
+    fn fail(&mut self, pusher: &Pusher<'_>, push: Push, error: String) {
+        warn!(host = %pusher.inner.cfg.hosts[pusher.index].0, %error, "host sync failed");
+        self.supersede(&push);
+        self.failed.push((push, error));
+    }
+
+    /// Try each failed push again, on its own and in the order they failed.
+    async fn retry(&mut self, pusher: &mut Pusher<'_>) {
+        for (push, _) in std::mem::take(&mut self.failed) {
+            self.run(pusher, push).await;
+        }
+    }
+
+    /// Publish where the sync stands: `failed` while any push has failed,
+    /// else `pending` while one waits, else `in_sync`.
+    fn show(&self, inner: &Inner, index: usize) {
+        let (state, error) = match self.failed.last() {
+            Some((_, error)) => (SyncState::Failed, Some(error.clone())),
+            None if self.queue.is_empty() => (SyncState::InSync, None),
+            None => (SyncState::Pending, None),
+        };
+        inner.set_sync(index, |sync| {
+            sync.state = state;
+            sync.error = error;
         });
     }
 }
@@ -174,45 +316,6 @@ fn client_for(endpoint: &str) -> Client {
     }
 }
 
-fn enqueue_all(queue: &mut VecDeque<Push>) {
-    queue.clear();
-    queue.push_back(Push::All);
-}
-
-/// Queue the push a local change asks for, if it asks for one.
-fn enqueue(queue: &mut VecDeque<Push>, event: &DomainEvent) {
-    let push = match event {
-        DomainEvent::SkillCreated(skill) | DomainEvent::SkillUpdated(skill) => {
-            Push::Skill(skill.clone())
-        }
-        DomainEvent::SkillDeleted(deleted) => Push::SkillDeleted(deleted.id.clone()),
-        DomainEvent::WorkflowCreated(workflow) | DomainEvent::WorkflowUpdated(workflow) => {
-            Push::Workflow(workflow.clone())
-        }
-        DomainEvent::WorkflowDeleted(deleted) => Push::WorkflowDeleted(deleted.id.clone()),
-        DomainEvent::RepositoryCreated(_)
-        | DomainEvent::RepositoryUpdated(_)
-        | DomainEvent::RepositoryDeleted(_) => Push::Repositories,
-        DomainEvent::LearnedPermissionCreated(row) | DomainEvent::LearnedPermissionUpdated(row) => {
-            Push::Learned(row.clone())
-        }
-        DomainEvent::LearnedPermissionDeleted(row) => Push::LearnedDeleted(row.clone()),
-        DomainEvent::AiPermissionsUpdated(status) => Push::Ai(AiChoice::from(status)),
-        _ => return,
-    };
-    // A push that reads its state afresh covers a later one of its kind.
-    let covered = match push {
-        Push::Repositories => queue
-            .iter()
-            .skip(1)
-            .any(|queued| matches!(queued, Push::All | Push::Repositories)),
-        _ => false,
-    };
-    if !covered {
-        queue.push_back(push);
-    }
-}
-
 /// Pushes to one `ready` host.
 struct Pusher<'a> {
     inner: &'a Inner,
@@ -221,12 +324,15 @@ struct Pusher<'a> {
     /// The AI choice the host last took: the status event also moves with
     /// every step of an install, which changes no choice.
     last_ai: Option<AiChoice>,
+    /// The local repository ids paired with the host's, as the last push
+    /// of the repositories read them.
+    pairs: Option<HashMap<String, String>>,
 }
 
 impl Pusher<'_> {
     async fn push(&mut self, push: &Push) -> Result<(), String> {
         match push {
-            Push::All => self.all().await,
+            Push::All => unreachable!("the push of everything runs as one push per item"),
             Push::Skill(skill) => self.skill(skill).await,
             Push::SkillDeleted(name) => self
                 .delete(&format!("/v1/skills/{name}"))
@@ -237,14 +343,17 @@ impl Pusher<'_> {
                 .delete(&format!("/v1/workflows/{name}"))
                 .await
                 .map_err(|error| format!("workflow {name}: {error}")),
-            Push::Repositories => self.repositories().await.map(drop),
+            Push::Repositories => {
+                self.pairs = Some(self.repositories().await?);
+                Ok(())
+            }
             Push::Learned(row) => {
-                let pairs = self.pairs().await?.0;
+                let pairs = self.paired().await?;
                 self.learned(row, &pairs).await?;
                 self.count_skipped(&pairs).await
             }
             Push::LearnedDeleted(row) => {
-                let pairs = self.pairs().await?.0;
+                let pairs = self.paired().await?;
                 self.learned_deleted(row, &pairs).await?;
                 self.count_skipped(&pairs).await
             }
@@ -252,34 +361,46 @@ impl Pusher<'_> {
         }
     }
 
-    /// Everything, in the order one item can need another: skills before
-    /// the workflows that name them, workflows before the repositories that
-    /// default to them, and repositories before their learned permissions.
-    async fn all(&mut self) -> Result<(), String> {
+    /// A push of each item, in the order one item can need another: skills
+    /// before the workflows that name them, workflows before the
+    /// repositories that default to them, and repositories before their
+    /// learned permissions.
+    async fn everything(&mut self) -> Result<Vec<Push>, String> {
         let store = &self.inner.store;
         let local = |error: ariadne_store::StoreError| format!("reading the local store: {error}");
+        let mut pushes: Vec<Push> = Vec::new();
         for skill in store.list_skills().await.map_err(local)? {
-            self.skill(&skill_dto(skill)).await?;
+            pushes.push(Push::Skill(skill_dto(skill)));
         }
         for workflow in store.list_workflows().await.map_err(local)? {
-            self.workflow(&workflow_dto(workflow)).await?;
+            pushes.push(Push::Workflow(workflow_dto(workflow)));
         }
-        let pairs = self.repositories().await?;
+        pushes.push(Push::Repositories);
         for row in store.list_learned_permissions(None).await.map_err(local)? {
-            self.learned(&learned_permission_dto(row), &pairs).await?;
+            pushes.push(Push::Learned(learned_permission_dto(row)));
         }
         let settings = store.ai_permission_settings().await.map_err(local)?;
         let flavour: Flavour = serde_json::from_value(serde_json::Value::String(settings.flavour))
             .map_err(|error| format!("reading the local AI flavour: {error}"))?;
         self.last_ai = None;
-        self.ai(&AiChoice {
+        pushes.push(Push::Ai(AiChoice {
             enabled: settings.enabled,
             thresholds: settings
                 .thresholds_hand_set
                 .then_some((settings.allow_threshold, settings.deny_threshold)),
             flavour,
-        })
-        .await
+        }));
+        Ok(pushes)
+    }
+
+    /// The pairs of the last push of the repositories, else read afresh.
+    async fn paired(&mut self) -> Result<HashMap<String, String>, String> {
+        if let Some(pairs) = &self.pairs {
+            return Ok(pairs.clone());
+        }
+        let pairs = self.pairs().await?.0;
+        self.pairs = Some(pairs.clone());
+        Ok(pairs)
     }
 
     /// Write the skill's document over the host's, or create it there.

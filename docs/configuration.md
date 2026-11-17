@@ -163,9 +163,11 @@ under `sync.missing_repositories`, and the host stays `in_sync`.
 
 - `in_sync`: the host holds every local change.
 - `pending`: a change waits for the host, or a push is under way.
-- `failed`: the last push failed, and `error` says why. The daemon tries it
-  again after 1 second, and doubles the wait after each failure, up to 60
-  seconds, while the host stays `ready`.
+- `failed`: a push failed, and `error` says why. Your later changes still
+  reach the host. The daemon tries each failed push again after 1 second,
+  and doubles the wait after each failure, up to 60 seconds, while the host
+  stays `ready`. A host refuses a push it would refuse from you: for example,
+  it keeps a skill that one of its own workflows still names.
 
 `local` is always `in_sync`. Each change of `sync` publishes one
 `host_updated` event. See [Hosts](../specs/037-hosts.md).

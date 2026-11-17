@@ -82,18 +82,22 @@ back to this daemon, the CLI `--host` flag and any desktop change. The transport
     (`PUT /v1/skills/{name}`, else `POST /v1/skills` on a 404), every workflow
     (the same with the workflow routes), the repositories (rule 19), every
     learned permission (rule 20) and the AI permission settings (rule 21).
-    A host item with the same name or key is overwritten. An item that only
-    the host has stays as it is. The host is `in_sync` when the push is over.
+    Each item is a push of its own (rule 18). A host item with the same name
+    or key is overwritten. An item that only the host has stays as it is.
+    The host is `in_sync` when every push has landed.
 17. After that, each local domain event of those items is pushed as it
     happens: a created or updated skill or workflow as in rule 16, a deleted
     one with `DELETE` (a 404 counts as done), and any repository event
     with rule 19. The host is `pending` while a push runs. A bus that lags
     is answered with the whole push of rule 16 again.
-18. A failed push makes the host `failed`, with the reason in `error`. The
-    push is tried again after `host_sync_retry`, doubled after each failure
-    up to 60 seconds, and reset by a success. Later changes wait behind it.
-    When the host leaves `ready`, the tries stop and the host is `pending`
-    with a null `error`. Its next `ready` starts the push of rule 16 again.
+18. A failed push makes the host `failed`, with the reason of the last
+    failure in `error`, while any push stays failed. A failed push holds back
+    no other one: the later pushes run, and the failed ones are tried again,
+    each on its own, after `host_sync_retry`. The wait is doubled after each
+    round that leaves one failed, up to 60 seconds, and reset once none is.
+    A later change of the same item replaces its failed push. When the host
+    leaves `ready`, the tries stop and the host is `pending` with a null
+    `error`. Its next `ready` starts the push of rule 16 again.
 19. A local repository matches a host repository on the same forge
     repository (kind, host, owner, name). One on the same base branch is
     taken first, else the first one left; each host repository matches once.
@@ -152,6 +156,7 @@ back to this daemon, the CLI `--host` flag and any desktop change. The transport
   (`host_sync.rs::each_later_change_reaches_the_host_and_a_delete_removes_it`).
 - Rule 18
   (`host_sync.rs::a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands`,
+  `::a_refused_push_holds_back_no_later_change`,
   `ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`).
 - Rule 19
   (`host_sync.rs::a_repository_takes_the_local_settings_by_forge_and_a_missing_one_is_listed`,

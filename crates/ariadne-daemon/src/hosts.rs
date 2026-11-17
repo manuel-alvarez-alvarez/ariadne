@@ -253,11 +253,6 @@ impl Inner {
         }
     }
 
-    /// The sync state of host `index`.
-    fn sync_state(&self, index: usize) -> SyncState {
-        self.hosts.lock().unwrap()[index].sync.state
-    }
-
     async fn supervise(&self, index: usize) {
         let (name, host) = &self.cfg.hosts[index];
         let base = self.timeouts.ssh_retry;

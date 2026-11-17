@@ -384,6 +384,71 @@ async fn a_repository_takes_the_local_settings_by_forge_and_a_missing_one_is_lis
     );
 }
 
+/// A push the host refuses is tried again on its own: the changes made
+/// after it still reach the host.
+#[tokio::test]
+async fn a_refused_push_holds_back_no_later_change() {
+    let (far, local, _dir) = far_and_local().await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "shared", "document": skill("shared", "local")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    // A workflow only the host has names the skill, so the host refuses to
+    // delete it.
+    let far_flow = "workflow far-flow\n  build[Build]\n    Do the work.\n    skills: shared\n";
+    let _: WorkflowDto = far
+        .json(
+            post_json(
+                "/v1/workflows",
+                json!({"name": "far-flow", "document": far_flow}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let (status, _) = local.send(delete("/v1/skills/shared")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the refused delete failed", || async {
+        let sync = sync_of(&local).await;
+        sync.state == SyncState::Failed
+            && sync
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("skill shared"))
+    })
+    .await;
+
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "later", "document": skill("later", "after")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    eventually(TIMEOUT, "the later skill on the host", || async {
+        skill_on(&far, "later").await.is_some()
+    })
+    .await;
+    assert_eq!(sync_of(&local).await.state, SyncState::Failed);
+    assert!(skill_on(&far, "shared").await.is_some());
+
+    // Once the host lets it go, the delete that was refused lands.
+    let (status, _) = far.send(delete("/v1/workflows/far-flow")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    until_in_sync(&local).await;
+    assert!(skill_on(&far, "shared").await.is_none());
+    assert_eq!(sync_of(&local).await.error, None);
+}
+
 #[tokio::test]
 async fn a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands() {
     // A port nothing listens on yet.
