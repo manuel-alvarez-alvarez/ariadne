@@ -18,8 +18,8 @@ tests:
 In: the `[hosts.<name>]` tables of `config.toml`, their validation, the
 `GET /v1/hosts` route, `HostDto`, the `host_updated` event, `ssh_bin`, and the
 SSH forward the daemon keeps for each `ssh://` host. Out: a Rust SSH library, a
-reverse forward from the far daemon, the CLI `--host` flag and any desktop
-change. The transports and the event stream are spec 012's.
+reverse forward from the far daemon and any desktop change. CLI selection
+follows spec 014. The transports and the event stream are spec 012's.
 
 ## Behavior
 
@@ -65,6 +65,7 @@ change. The transports and the event stream are spec 012's.
 14. One forward carries requests, event streams and answers both ways. The
     forward is the user's own `ssh`: their keys, agent and `~/.ssh/config`
     apply.
+15. CLI host selection follows spec 014.
 
 ## Acceptance criteria
 

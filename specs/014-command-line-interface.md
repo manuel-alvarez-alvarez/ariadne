@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-11-15
+updated: 2026-11-17
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -368,6 +368,14 @@ The CLI test for `--seat` parses `orchestrator`, `agent` and `reviewer`, but
 does not parse `keeper`. `Seat::Keeper` is a valid value. The core seat test
 lists all four values. Add a CLI parser test before relying on this coverage.
 
+Host selection uses `--host NAME|all`; endpoint-like values must use `--endpoint`.
+The local daemon supplies `/v1/hosts`. Unknown or unready hosts cause usage errors with the registry statuses.
+`local` keeps the CLI's resolved endpoint. Lists across all hosts include host labels in registry order.
+Failed hosts produce warnings; one answer succeeds. Single-ID reads and attach find the host that has the ID.
+All-host writes are refused. Remote settings writes require local synchronization.
+Daemon lifecycle commands require local; status and logs accept named hosts. Query rejects host selection.
+`host ls` prints name, kind, status, endpoint and error. Completion offers host names and all.
+
 ## Acceptance criteria
 
 - `ariadne query` accepts instant and range flags, and refuses `--at` with
@@ -676,6 +684,9 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`::pr_inspect_prints_readable_keys_in_order_with_the_body_last`), and
   `pr ls` carries the branches and the session
   (`::pr_ls_shows_the_branches_and_session_columns`).
+
+- Host names differ from endpoints (`cli/tests.rs::host_names_are_distinct_from_endpoints`).
+- Registry routing and guards hold (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).
 
 ## Sources
 

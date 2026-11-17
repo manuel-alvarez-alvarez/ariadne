@@ -828,15 +828,39 @@ ariadne doctor
 registry. It distinguishes an agent command your shell cannot find from one
 the daemon cannot find or cannot use.
 
+## Selecting a host
+
+Without `--host`, commands use the resolved daemon endpoint.
+
+Use `ariadne host ls` to list configured hosts and their status, endpoint, kind and error.
+Use `--host NAME` to run a command on a ready host from the local daemon's registry.
+`--endpoint` still selects the local daemon that supplies this registry.
+`--host local` selects that same daemon.
+
+Use `--host all` for lists across hosts, with a leading `HOST` column and a JSON `host` field.
+Rows follow registry order. A failed host produces a warning.
+One successful host gives exit code 0.
+Commands for one ID, including attach, find the host that has it.
+Writes require one host. Skills, workflows, permissions and repository settings must be written on `local`.
+The local daemon syncs these settings to every host.
+Daemon start, stop and restart require `local`; status and logs accept a host name.
+`query` does not accept `--host` yet.
+Shell completion offers configured names and `all`.
+Addresses formerly passed through `--host` must use `--endpoint`.
+
+See [Addressing another daemon](configuration.md#addressing-another-daemon) for endpoint resolution.
+
 ## Command reference
 
-All commands accept `--endpoint`. Table commands also accept `--format`,
+All commands accept `--endpoint`. Use [`--host`](#selecting-a-host) to select a configured host.
+Table commands also accept `--format`,
 `--color`, `--no-trunc`, `-q`, `--output`, and `--columns`; long output
 accepts `--no-pager`. Use `ariadne help [COMMAND]` or `COMMAND --help` for
 the built-in help screen.
 
 | Group | Commands and options |
 | --- | --- |
+| `host` | `ls` lists configured hosts and their connection status. |
 | `version`, `doctor` | No command-specific options. |
 | `daemon` | `start`, `stop [--timeout SECONDS]`, `restart [--timeout SECONDS]`, `status`, and `logs [-f]`; each accepts `--home PATH`. |
 | `agent` | `ls`, `refresh`, and `update AGENT [--flag FLAG]... [--clear-flags\|--reset]`. |

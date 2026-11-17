@@ -164,6 +164,7 @@ fn an_issue_can_supply_the_goal_title_and_repository() {
 /// what it prints. Hidden internal commands are in here too: `--format`
 /// is global, so it reaches them whether or not anyone meant it to.
 const LEAVES: &[(&str, bool)] = &[
+    ("host ls", true),
     ("agent ls", true),
     ("agent refresh", true),
     ("agent update", true),
@@ -1322,13 +1323,22 @@ fn a_repository_sets_the_default_workflow_for_new_goals() {
     );
 }
 
-/// `--host` was the documented spelling before `--endpoint`; scripts that
-/// still use it must land in the same field.
 #[test]
-fn the_old_host_flag_still_names_the_endpoint() {
-    for flag in ["--endpoint", "--host"] {
-        let cli = parse(&["ariadne", flag, "/tmp/x.sock", "version"]);
-        assert_eq!(cli.endpoint.as_deref(), Some("/tmp/x.sock"), "{flag}");
+fn host_names_are_distinct_from_endpoints() {
+    let cli = parse(&["ariadne", "--host", "build", "version"]);
+    assert_eq!(cli.host.as_deref(), Some("build"));
+    assert!(cli.endpoint.is_none());
+    for value in [
+        "/tmp/x.sock",
+        "./socket",
+        "~/.ariadne",
+        "http://box",
+        "https://box",
+    ] {
+        let error = try_parse(&["ariadne", "--host", value, "version"])
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("--endpoint"));
     }
 }
 
