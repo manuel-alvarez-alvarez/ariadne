@@ -971,6 +971,7 @@ mod tests {
             behind_base: false,
             told_checks: "[]".into(),
             told_behind_base: false,
+            told_conflicts: false,
             told_review_decision: None,
             told_state: None,
             told_check_state: None,

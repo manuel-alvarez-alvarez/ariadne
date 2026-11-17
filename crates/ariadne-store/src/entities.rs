@@ -698,6 +698,7 @@ pub struct PullRequestRow {
     pub told_checks: String,
     /// Whether the session was told the head is behind its base.
     pub told_behind_base: bool,
+    pub told_conflicts: bool,
     /// The review decision and the state the session was last told; None
     /// is the baseline of a fresh row, `none` and `open`.
     pub told_review_decision: Option<String>,
@@ -873,6 +874,7 @@ pub struct PullRequest {
     pub behind_base: bool,
     pub told_checks: String,
     pub told_behind_base: bool,
+    pub told_conflicts: bool,
     pub told_review_decision: Option<String>,
     pub told_state: Option<String>,
     pub told_check_state: Option<String>,
@@ -930,6 +932,7 @@ impl PullRequest {
             behind_base: live.behind_base,
             told_checks: row.told_checks,
             told_behind_base: row.told_behind_base,
+            told_conflicts: row.told_conflicts,
             told_review_decision: row.told_review_decision,
             told_state: row.told_state,
             told_check_state: row.told_check_state,

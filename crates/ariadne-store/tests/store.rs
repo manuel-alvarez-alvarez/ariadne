@@ -5852,6 +5852,7 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
     let told = PullRequestTold {
         checks: vec!["lint".into()],
         behind_base: true,
+        conflicts: true,
         review_decision: "approved".into(),
         state: "open".into(),
         check_state: "failure".into(),
@@ -5860,11 +5861,42 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
     let before = PullRequestTold {
         checks: Vec::new(),
         behind_base: false,
+        conflicts: false,
         review_decision: "none".into(),
         state: "open".into(),
         check_state: "none".into(),
         head_sha: String::new(),
     };
+    let conflict_only = PullRequestTold {
+        conflicts: true,
+        ..before.clone()
+    };
+    assert!(
+        store
+            .claim_pull_request_news(&row.id, &[], &before, &conflict_only)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .claim_pull_request_news(&row.id, &[], &before, &conflict_only)
+            .await
+            .unwrap()
+    );
+    store
+        .release_pull_request_news(&row.id, &[], &before)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .claim_pull_request_news(&row.id, &[], &before, &conflict_only)
+            .await
+            .unwrap()
+    );
+    store
+        .release_pull_request_news(&row.id, &[], &before)
+        .await
+        .unwrap();
     let comment = ["rc-1".to_string()];
     assert!(
         store
@@ -5874,6 +5906,7 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
     );
     let claimed = store.get_pull_request(&row.id).await.unwrap();
     assert!(claimed.news_told_at.is_some());
+    assert!(claimed.told_conflicts);
     assert_eq!(claimed.told_checks, r#"["lint"]"#);
     assert_eq!(claimed.told_check_state.as_deref(), Some("failure"));
     let marks = store.pull_request_comment_marks(&row.id).await.unwrap();
@@ -5894,6 +5927,7 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
     let released = store.get_pull_request(&row.id).await.unwrap();
     assert_eq!(released.told_checks, "[]");
     assert!(!released.told_behind_base);
+    assert!(!released.told_conflicts);
     assert!(
         store.pull_request_comment_marks(&row.id).await.unwrap()[0]
             .told_at

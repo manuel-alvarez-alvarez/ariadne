@@ -5,7 +5,7 @@ description: Keeps an open request answered, checked and current until it merges
 
 # PR babysit
 
-Keep one open request answered, checked and current until a human merges or closes it.
+Keep a request current until a human merges or closes it.
 
 ## When not to use
 
@@ -36,12 +36,14 @@ Use `merge` when the workflow lands the task with no request. Use
    - A reply that asks a new change: a new ask. Act on it.
    - A comment on the conversation: answer it the same way, once per comment.
 
-   Done when each comment has a planned reply or disposition.
+   Done when each comment has a disposition.
 4. A suggestion block you accept: apply it. Write your own code only where it
    does not compile or pass. Else plan a kept line.
 
-   Done when each accepted suggestion has a disposition.
-5. Wait for the final rollup. Take the one list of failed checks the news
+   Done when accepted suggestions have a disposition.
+5. Handle confirmed base conflicts before unrelated pending checks.
+   With pending checks, defer their fixes. Continue to step 6.
+   For failed-check fixes, wait for the final rollup. Take the one list of failed checks the news
    carries. Take the route of the `A failed check` rule for each check in it.
 
    Done when each failed check has its route.
@@ -49,8 +51,8 @@ Use `merge` when the workflow lands the task with no request. Use
    Group related changes in one commit; keep unrelated changes in separate commits within that batch.
 
    Done when the batch has its commits.
-7. With no fix and no required base update, skip to the replies in step 8.
-   Bring the base in only inside a fix batch or when the news says the forge requires it.
+7. With no fix, confirmed conflict or required base update, skip to the replies in step 8.
+   Bring the base in for a fix batch, for confirmed conflicts or when the news says the forge requires it.
    Bring the base in before the checks. Run `git fetch <remote> <base> <head>`.
    Keep every commit others added. The repository's history rules choose the
    branch update:
@@ -84,7 +86,7 @@ Use `merge` when the workflow lands the task with no request. Use
    Done when the head you hold is the current head.
 10. Finish the fixes and replies. Report no readiness and mark no draft.
 
-    Done when the fixes and replies are complete.
+    Done when fixes and replies are complete.
 11. Read the request again when Ariadne asks for another turn.
 
     Done when the request is read.
@@ -160,7 +162,7 @@ the two-seats rule says.
 - Never force-push outside the rebase of step 7. Never force-push another
   branch.
 - Never amend a pushed commit outside the rebase of step 7.
-- Commit only what a comment or a failed check asks for.
+- Commit only what a comment, a failed check or confirmed base conflicts require.
 - Post no new thread, summary or top-level comment, except steps 3 and 8's
   replies. Post nothing after the second rejection.
 - Use only your session's request tools. Report a failed tool; post nothing

@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-11-15
+updated: 2026-11-17
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
@@ -360,12 +360,14 @@ every other kebab-case word in it; the wire spells the same gate
     failure — the base, a flaky test, the forge — is fixed by nobody
     here: the task's agent sends it to the orchestrator once through
     `send_message`, and a keeper asks the user once (032). Repository
-    history rules choose its branch update, allowed only inside a fix batch or when news says the forge requires it, done
+    history rules choose its branch update, allowed inside a fix batch, for confirmed base conflicts or when news says the forge requires it, done
     before the batch's checks run: where they require a linear request
     branch in words it rebases; otherwise it merges. A rebase or merge
     that stops on a conflict goes to `conflict-resolution`, whose document
     the skill locates as `../conflict-resolution/SKILL.md` beside its own,
-    as `merge` does (rule 4). A fix batch runs the tests, the lint and the
+    as `merge` does (rule 4). Confirmed conflicts permit resolution commits without review or CI fixes.
+    They are handled before unrelated pending checks, using the same branch update and push.
+    A fix batch runs the tests, the lint and the
     format check of the files it changed; a base update with no fix runs
     no check, since the hook runs at the push and the forge's checks run
     on the head. After a
@@ -602,6 +604,10 @@ every other kebab-case word in it; the wire spells the same gate
   placeholder
   (`defaults.rs::size_caps_hold`, `::every_default_text_is_simplified_technical_english`,
   `prompts.rs::every_allowed_placeholder_is_one_a_briefing_fills_in`).
+
+
+- Conflict-only work precedes pending checks and permits resolution commits:
+  `skill_tests/operate.rs::the_pr_babysit_skill_handles_conflicts_before_pending_checks`.
 
 ## Sources
 

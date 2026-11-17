@@ -23,6 +23,7 @@ pub struct NewPullRequest {
 pub struct PullRequestTold {
     pub checks: Vec<String>,
     pub behind_base: bool,
+    pub conflicts: bool,
     pub review_decision: String,
     pub state: String,
     /// The rolled-up state of the checks: `pending`, `success`, `failure`

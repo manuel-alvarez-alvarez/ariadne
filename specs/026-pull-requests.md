@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-11-16
+updated: 2026-11-17
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -164,10 +164,14 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## The news
 
-12. For a keeper or task agent, news has only four kinds of line:
+12. For a keeper or task agent, news has five kinds of line:
     a comment of the other side; failed checks at the final failure rollup as one list;
+    `mergeable: conflicting` asking to resolve base conflicts;
     `mergeable: behind` asking to merge the base in; and a state that became merged or closed.
     GitHub's `mergeStateStatus: BEHIND` reads `mergeable: behind`.
+    GitHub's `DIRTY` state or `CONFLICTING` evidence reads `mergeable: conflicting`.
+    Other restrictions remain blocked; unknown evidence remains unknown.
+    Conflict news needs no comment or failed check and does not wait for pending checks.
     Checks turning green, the review decision and `behind_base` are not news.
     Comments wait until the newest untold comment is `Timeouts::keeper_comment_settle` old.
     The default is 300 seconds. A newer comment restarts the interval.
@@ -177,11 +181,15 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     A session still `starting` gets the news once it has its briefing.
     A fetch that finds nothing new hands nothing.
 14. Each change is told once (009 rule 4).
-    A told comment's mark carries `told_at`. The row keeps a told mark for the rest: the failed checks by name (a failed check is marked only when its line is told, so never while `checks` reads `pending`), `behind_base`, the check state, the review decision and the state.
+    A told comment's mark carries `told_at`. The row keeps a told mark for the rest: the failed checks by name (a failed check is marked only when its line is told, so never while `checks` reads `pending`), `behind_base`, the conflict episode, the check state, the review decision and the state.
     The ACP driver writes both right before the prompt goes out, as it claims an agent message (018). A prompt that never went out, a kill before it included, gives them back.
     The claim is a compare and set: it holds only while the row still carries the mark the news was computed from, and every comment it names is untold. A stale news is refused, its prompt is skipped, and the next pass computes the news again.
     News of a request still queued is not queued again.
     A check that turns green, or a head that catches up, writes the mark at once with no prompt, so its next turn is news again.
+
+    Conflict news is told once per episode through the same claim, release and queue contracts.
+    A clean or behind read confirms recovery and clears the conflict mark.
+    Unknown or blocked evidence keeps the mark; a later confirmed conflict starts a new episode after recovery.
 
 ## Tools and replies
 
@@ -609,6 +617,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 GitHub's `reviewRequests` names a team by a slug or a name, never a login.
 A review asked of a team the user belongs to is read as asking nobody, so it
 raises no row and starts no session (029).
+
+
+- Conflict episodes ignore pending checks, retain unknown evidence and rearm after recovery:
+  `forge/news.rs::tests::conflicts_are_told_once_until_confirmed_recovery`.
+- Confirmed GitHub conflicts differ from other restrictions:
+  `forge/github/pulls.rs::tests::confirmed_conflicts_are_distinct_from_merge_restrictions`.
 
 ## Sources
 

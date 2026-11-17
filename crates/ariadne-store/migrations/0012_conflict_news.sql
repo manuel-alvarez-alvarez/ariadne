@@ -1,0 +1,1 @@
+ALTER TABLE pull_requests ADD COLUMN told_conflicts BOOLEAN NOT NULL DEFAULT FALSE;

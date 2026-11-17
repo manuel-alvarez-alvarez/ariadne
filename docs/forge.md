@@ -104,7 +104,10 @@ it; a failure from the base branch, a flaky test or the forge goes to
 the orchestrator — or, for a keeper, to you — and it changes nothing for
 it. It never pushes to another branch. Before it runs the checks of the
 files a fix changed, it integrates a moved base branch
-only inside a fix batch or when news says the forge requires it.
+inside a fix batch, for confirmed conflicts or when news says the forge requires it.
+Confirmed conflicts wake the babysitter even with pending checks and no reviewer comment.
+The babysitter resolves them with the conflict-resolution skill, updates the base and pushes.
+An ordinary base advance alone does not require a branch update.
 It follows the repository's history rules. Where those rules require a
 linear request branch in words, it rebases; otherwise it merges.
 After a merge, it pushes normally; a base update with no fix runs no
@@ -252,7 +255,7 @@ worktree and no keeper session. A keeper launch or later report clears its
 own item and does not clear a reviewer's item on the same request. It hears
 the same news a task's keeping agent
 does — a comment of the other side, a failed check at final rollup,
-a `mergeable` that reads `behind`, a merge or a close — replies and fixes the same
+a confirmed base conflict, a `mergeable` that reads `behind`, a merge or a close — replies and fixes the same
 way, and receives daemon readiness attention the same way.
 It reports no readiness, marks no draft, posts no status comment and leaves threads open.
 It asks you once about a failure the request did not cause and fixes none. Unlike a self-review,

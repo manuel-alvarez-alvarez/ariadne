@@ -137,16 +137,22 @@ impl Pull {
             // daemon promote it, while unknown or missing evidence waits.
             // Readiness attention still requires a non-draft (026 rule 27).
             // Preserve `BEHIND` for the keeper's base-update news.
-            mergeable: match self.merge_state_status.as_deref() {
-                Some("CLEAN" | "HAS_HOOKS" | "UNSTABLE") => "clean",
-                Some("DRAFT") if self.is_draft => match self.mergeable.as_deref() {
-                    Some("MERGEABLE") => "clean",
-                    Some("CONFLICTING") => "blocked",
-                    _ => "unknown",
+            mergeable: match (
+                self.merge_state_status.as_deref(),
+                self.mergeable.as_deref(),
+            ) {
+                (Some("DIRTY"), _) | (_, Some("CONFLICTING")) => "conflicting",
+                (status, _) => match status {
+                    Some("CLEAN" | "HAS_HOOKS" | "UNSTABLE") => "clean",
+                    Some("DRAFT") if self.is_draft => match self.mergeable.as_deref() {
+                        Some("MERGEABLE") => "clean",
+                        Some("CONFLICTING") => "conflicting",
+                        _ => "unknown",
+                    },
+                    Some("BEHIND") => "behind",
+                    Some("UNKNOWN") | None => "unknown",
+                    Some(_) => "blocked",
                 },
-                Some("BEHIND") => "behind",
-                Some("UNKNOWN") | None => "unknown",
-                Some(_) => "blocked",
             }
             .into(),
             updated_at: self.updated_at.unwrap_or_else(|| self.created_at.clone()),
@@ -421,6 +427,15 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_conflicts_are_distinct_from_merge_restrictions() {
+        for status in ["BLOCKED", "DRAFT", "UNKNOWN", "BEHIND"] {
+            let pull =
+                provider_shaped(json!({"mergeStateStatus": status, "mergeable": "CONFLICTING"}));
+            assert_eq!(Pull::normalized(pull).mergeable, "conflicting");
+        }
+    }
+
+    #[test]
     fn mergeable_reads_every_merge_state_status_by_its_documented_meaning() {
         for (status, expected) in [
             ("CLEAN", "clean"),
@@ -429,7 +444,7 @@ mod tests {
             ("UNKNOWN", "unknown"),
             ("BEHIND", "behind"),
             ("BLOCKED", "blocked"),
-            ("DIRTY", "blocked"),
+            ("DIRTY", "conflicting"),
             ("DRAFT", "blocked"),
         ] {
             let pull = provider_shaped(json!({"mergeStateStatus": status}));
@@ -441,7 +456,7 @@ mod tests {
     fn a_drafts_mergeability_uses_githubs_conflict_evidence() {
         for (mergeable, expected) in [
             (Some("MERGEABLE"), "clean"),
-            (Some("CONFLICTING"), "blocked"),
+            (Some("CONFLICTING"), "conflicting"),
             (Some("UNKNOWN"), "unknown"),
             (None, "unknown"),
         ] {

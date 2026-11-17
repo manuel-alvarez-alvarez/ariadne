@@ -331,7 +331,7 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         "Put all accepted asks, accepted suggestion blocks and failed-check fixes of this wake in one batch.",
         "For a fix batch, run the tests, the lint and the format check of the files the batch changed.",
         "For a base update with no fix, run no check: the hook and the forge run them. Then push once:",
-        "Bring the base in only inside a fix batch or when the news says the forge requires it.",
+        "Bring the base in for a fix batch, for confirmed conflicts or when the news says the forge requires it.",
         "Group related changes in one commit; keep unrelated changes in separate commits within that batch.",
         "Never amend a pushed commit outside the rebase of step 7.",
         "Keep every commit others added.",
@@ -394,7 +394,7 @@ fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
         "A suggestion block you accept: apply it.",
         "Else plan a kept line.",
         "Put all accepted asks, accepted suggestion blocks and failed-check fixes of this wake in one batch.",
-        "Commit only what a comment or a failed check asks for.",
+        "Commit only what a comment, a failed check or confirmed base conflicts require.",
         "Leave every thread open.",
         "Post no new thread, summary or top-level comment, except steps 3 and 8's replies.",
         "`reply_comment` is the only post. It has three forms:",
@@ -427,7 +427,7 @@ fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
 fn the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks() {
     let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
     for rule in [
-        "Wait for the final rollup. Take the one list of failed checks the news carries. Take the route of the `A failed check` rule for each check in it.",
+        "For failed-check fixes, wait for the final rollup. Take the one list of failed checks the news carries. Take the route of the `A failed check` rule for each check in it.",
         "Reproduce each failed check of the list at the head.",
         "Fix every failure the request's own change causes in one batch. Fix no other failure: report it as the two-seats rule says.",
         "A failure the request did not cause: the task seat sends it to the orchestrator once with `send_message`.",
@@ -806,4 +806,17 @@ fn the_daemon_decides_keeper_readiness() {
     assert!(doc.contains("Report no readiness and mark no draft."));
     assert!(!doc.contains("report_pull_request"));
     assert!(!doc.contains("mark_ready_for_review"));
+}
+
+#[test]
+fn the_pr_babysit_skill_handles_conflicts_before_pending_checks() {
+    let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+    for rule in [
+        "Handle confirmed base conflicts before unrelated pending checks.",
+        "With no fix, confirmed conflict or required base update, skip to the replies in step 8.",
+        "for a fix batch, for confirmed conflicts or when the news says the forge requires it.",
+        "Commit only what a comment, a failed check or confirmed base conflicts require.",
+    ] {
+        assert!(doc.contains(rule), "missing {rule}");
+    }
 }

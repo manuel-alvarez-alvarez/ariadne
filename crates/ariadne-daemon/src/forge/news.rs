@@ -78,6 +78,12 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
                 .join("; ")
         ));
     }
+    if pull.mergeable == "conflicting" && !before.conflicts {
+        lines.push(
+            "- Resolve the confirmed conflicts with the base branch. Update the base and push."
+                .into(),
+        );
+    }
     if pull.mergeable == "behind" && !pull.told_behind_base {
         lines.push(format!(
             "- Merge {} into the head branch: the request is behind its base.",
@@ -103,6 +109,11 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
                 .map(|c| c.name)
                 .collect(),
             behind_base: pull.mergeable == "behind",
+            conflicts: match pull.mergeable.as_str() {
+                "conflicting" => true,
+                "clean" | "behind" => false,
+                _ => before.conflicts,
+            },
             review_decision: pull.review_decision.clone(),
             state: pull.state.clone(),
             check_state: pull.checks.clone(),
@@ -178,6 +189,7 @@ fn told_before(pull: &PullRequest) -> PullRequestTold {
     PullRequestTold {
         checks: serde_json::from_str(&pull.told_checks).unwrap_or_default(),
         behind_base: pull.told_behind_base,
+        conflicts: pull.told_conflicts,
         review_decision: pull
             .told_review_decision
             .clone()
@@ -283,6 +295,7 @@ mod tests {
             behind_base: false,
             told_checks: "[]".into(),
             told_behind_base: false,
+            told_conflicts: false,
             told_review_decision: None,
             told_state: None,
             told_check_state: None,
@@ -315,6 +328,7 @@ mod tests {
         PullRequest {
             told_checks: serde_json::to_string(&news.told.checks).unwrap(),
             told_behind_base: news.told.behind_base,
+            told_conflicts: news.told.conflicts,
             told_review_decision: Some(news.told.review_decision.clone()),
             told_state: Some(news.told.state.clone()),
             told_check_state: Some(news.told.check_state.clone()),
@@ -358,6 +372,28 @@ mod tests {
         assert!(news.lines[1].starts_with("- Merge "));
         assert!(news.lines[2].contains("merged"));
         assert!(of(&told(&changed, &news), &[], "me").is_empty());
+    }
+
+    #[test]
+    fn conflicts_are_told_once_until_confirmed_recovery() {
+        let mut changed = PullRequest {
+            mergeable: "conflicting".into(),
+            checks: "pending".into(),
+            ..pull()
+        };
+        let news = of(&changed, &[], "me");
+        assert_eq!(news.lines.len(), 1);
+        changed = told(&changed, &news);
+        assert!(of(&changed, &[], "me").is_empty());
+        changed.mergeable = "unknown".into();
+        changed = told(&changed, &of(&changed, &[], "me"));
+        changed.mergeable = "conflicting".into();
+        assert!(of(&changed, &[], "me").is_empty());
+        changed.mergeable = "clean".into();
+        changed = told(&changed, &of(&changed, &[], "me"));
+        changed.mergeable = "conflicting".into();
+        assert_eq!(of(&changed, &[], "me").lines.len(), 1);
+        assert!(of_review(&changed, &[]).is_empty());
     }
 
     #[test]

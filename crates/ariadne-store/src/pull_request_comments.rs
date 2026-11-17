@@ -140,7 +140,7 @@ impl Store {
         let mut tx = self.w().begin().await?;
         let unmoved: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM pull_requests
-                             WHERE id = ? AND told_checks = ? AND told_behind_base = ?
+                             WHERE id = ? AND told_checks = ? AND told_behind_base = ? AND told_conflicts = ?
                                AND COALESCE(told_review_decision, 'none') = ?
                                AND COALESCE(told_state, 'open') = ?
                                AND COALESCE(told_check_state, 'none') = ?
@@ -149,6 +149,7 @@ impl Store {
         .bind(pull_request_id)
         .bind(serde_json::to_string(&before.checks).unwrap_or_else(|_| "[]".into()))
         .bind(before.behind_base)
+        .bind(before.conflicts)
         .bind(&before.review_decision)
         .bind(&before.state)
         .bind(&before.check_state)
@@ -220,13 +221,14 @@ pub(crate) async fn write_told(
     told: &PullRequestTold,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE pull_requests SET told_checks = ?, told_behind_base = ?,
+        "UPDATE pull_requests SET told_checks = ?, told_behind_base = ?, told_conflicts = ?,
                 told_review_decision = ?, told_state = ?, told_check_state = ?,
                 told_head_sha = NULLIF(?, '')
           WHERE id = ?",
     )
     .bind(serde_json::to_string(&told.checks).unwrap_or_else(|_| "[]".into()))
     .bind(told.behind_base)
+    .bind(told.conflicts)
     .bind(&told.review_decision)
     .bind(&told.state)
     .bind(&told.check_state)
