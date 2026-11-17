@@ -96,7 +96,6 @@ async fn all_hosts_keep_uppercase_rows_and_attention_items() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     for (args, expected) in [
         (vec!["skill", "ls", "--columns", "summary"], "local   BUILD"),
-        (vec!["--quiet", "skill", "ls"], "test"),
         (vec!["attention", "--format", "json"], "\"id\": \"blocked\""),
     ] {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
@@ -109,5 +108,20 @@ async fn all_hosts_keep_uppercase_rows_and_attention_items() {
         let text = String::from_utf8_lossy(&output.stdout);
         assert!(text.contains(expected), "{text}");
     }
+    let quiet = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args([
+            "--endpoint",
+            &endpoint,
+            "--host",
+            "all",
+            "--quiet",
+            "skill",
+            "ls",
+        ])
+        .env("ARIADNE_TELEMETRY", "off")
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&quiet.stdout), "test\n");
     server.abort();
 }
