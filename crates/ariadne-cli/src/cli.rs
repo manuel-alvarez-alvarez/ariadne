@@ -796,6 +796,18 @@ mod tests;
 pub(crate) enum HostCommand {
     /// List host names, addresses and status
     Ls,
+    /// Reconnect one named host, or each named host, and show the result
+    ///
+    /// Waits until each host is `ready` or `down`, then prints its row.
+    /// Exits 1 when a host is not `ready` at the end.
+    Reconnect {
+        /// A host name, or `all` for each named host
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reconnect_hosts))]
+        name: String,
+        /// Seconds to wait for each host to be ready or down
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
 }
 
 fn host_name(value: &str) -> Result<String, String> {

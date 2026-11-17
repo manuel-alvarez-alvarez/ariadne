@@ -1,7 +1,12 @@
 //! Host selection through the executable and a real registry route.
 use std::sync::{Arc, Mutex};
 
-use axum::{Json, Router, routing::get};
+use axum::{
+    Json, Router,
+    extract::Path,
+    http::StatusCode,
+    routing::{get, post},
+};
 use serde_json::json;
 
 #[tokio::test]
@@ -402,4 +407,154 @@ async fn daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home() {
     let (code, text) = run_cli(&["--host", "local", "daemon", "--home", home, "status"]).await;
     assert_ne!(code, 0, "{text}");
     assert!(text.contains(home), "{text}");
+}
+
+fn host_row(name: &str, kind: &str, status: &str, error: Option<&str>) -> serde_json::Value {
+    json!({"name":name,"kind":kind,"status":status,"endpoint":null,"error":error,"remote":null,
+        "sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}})
+}
+
+/// A registry whose hosts are `connecting` until reconnected: `build` then
+/// turns `ready`, `lab` turns `down`, and `stuck` stays `connecting`.
+async fn reconnect_registry(names: &[(&str, &str)]) -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let state = Arc::new(Mutex::new(
+        names
+            .iter()
+            .map(|(name, kind)| (name.to_string(), kind.to_string(), "connecting".to_string()))
+            .collect::<Vec<_>>(),
+    ));
+    let posts = Arc::new(Mutex::new(Vec::new()));
+    let list_state = Arc::clone(&state);
+    let post_state = Arc::clone(&state);
+    let post_log = Arc::clone(&posts);
+    let app = Router::new()
+        .route(
+            "/v1/hosts",
+            get(move || {
+                let state = Arc::clone(&list_state);
+                async move {
+                    let rows: Vec<_> = state
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|(name, kind, status)| {
+                            let status = if kind == "local" { "ready" } else { status };
+                            let error = (status == "down").then_some("no route");
+                            host_row(name, kind, status, error)
+                        })
+                        .collect();
+                    Json(rows)
+                }
+            }),
+        )
+        .route(
+            "/v1/hosts/{name}/reconnect",
+            post(move |Path(name): Path<String>| {
+                let state = Arc::clone(&post_state);
+                let log = Arc::clone(&post_log);
+                async move {
+                    log.lock().unwrap().push(name.clone());
+                    let mut rows = state.lock().unwrap();
+                    let Some(row) = rows.iter_mut().find(|row| row.0 == name) else {
+                        return Err(StatusCode::NOT_FOUND);
+                    };
+                    row.2 = match name.as_str() {
+                        "lab" => "down",
+                        "stuck" => "connecting",
+                        _ => "ready",
+                    }
+                    .to_string();
+                    let error = (row.2 == "down").then_some("no route");
+                    Ok(Json(host_row(&name, &row.1, &row.2.clone(), error)))
+                }
+            }),
+        );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (endpoint, posts)
+}
+
+#[tokio::test]
+async fn reconnect_one_host_posts_for_it_and_prints_its_row() {
+    let (endpoint, posts) =
+        reconnect_registry(&[("local", "local"), ("build", "direct"), ("lab", "ssh")]).await;
+    let (code, text) = run_cli(&["--endpoint", &endpoint, "host", "reconnect", "build"]).await;
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("NAME") && text.contains("STATUS"), "{text}");
+    assert!(text.contains("build") && text.contains("ready"), "{text}");
+    assert!(!text.contains("lab"), "{text}");
+    assert_eq!(*posts.lock().unwrap(), ["build"]);
+}
+
+#[tokio::test]
+async fn reconnect_all_posts_for_each_named_host_and_fails_while_one_is_down() {
+    let (endpoint, posts) =
+        reconnect_registry(&[("local", "local"), ("build", "direct"), ("lab", "ssh")]).await;
+    let (code, text) = run_cli(&["--endpoint", &endpoint, "host", "reconnect", "all"]).await;
+    assert_eq!(code, 1, "{text}");
+    assert!(text.contains("build") && text.contains("ready"), "{text}");
+    assert!(text.contains("lab") && text.contains("no route"), "{text}");
+    assert!(!text.contains("local"), "{text}");
+    let mut posted = posts.lock().unwrap().clone();
+    posted.sort();
+    assert_eq!(posted, ["build", "lab"]);
+}
+
+#[tokio::test]
+async fn reconnect_json_prints_the_hosts_and_a_slow_host_fails_after_the_timeout() {
+    let (endpoint, _) =
+        reconnect_registry(&[("local", "local"), ("build", "direct"), ("stuck", "ssh")]).await;
+    let (code, text) = run_cli(&[
+        "--endpoint",
+        &endpoint,
+        "--format",
+        "json",
+        "host",
+        "reconnect",
+        "all",
+        "--timeout",
+        "1",
+    ])
+    .await;
+    assert_eq!(code, 1, "{text}");
+    let hosts: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(hosts[0]["name"], "build");
+    assert_eq!(hosts[0]["status"], "ready");
+    assert_eq!(hosts[1]["name"], "stuck");
+    assert_eq!(hosts[1]["status"], "connecting");
+    assert_eq!(hosts.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn reconnect_refuses_local_unknown_names_and_host_selection() {
+    let (endpoint, posts) =
+        reconnect_registry(&[("local", "local"), ("build", "direct"), ("lab", "ssh")]).await;
+    for (args, expected) in [
+        (vec!["host", "reconnect", "local"], "local"),
+        (vec!["host", "reconnect", "nope"], "build"),
+        (
+            vec!["--host", "build", "host", "reconnect", "build"],
+            "--host",
+        ),
+        (vec!["--host", "all", "host", "reconnect", "all"], "--host"),
+    ] {
+        let mut full = vec!["--endpoint", endpoint.as_str()];
+        full.extend(args.iter());
+        let (code, text) = run_cli(&full).await;
+        assert_eq!(code, 2, "{args:?}: {text}");
+        assert!(text.contains(expected), "{args:?}: {text}");
+    }
+    let (_, text) = run_cli(&["--endpoint", &endpoint, "host", "reconnect", "nope"]).await;
+    assert!(text.contains("lab"), "{text}");
+    assert!(posts.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn reconnect_all_with_only_local_says_no_named_host_is_configured() {
+    let (endpoint, posts) = reconnect_registry(&[("local", "local")]).await;
+    let (code, text) = run_cli(&["--endpoint", &endpoint, "host", "reconnect", "all"]).await;
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("no named host is configured"), "{text}");
+    assert!(posts.lock().unwrap().is_empty());
 }
