@@ -170,28 +170,28 @@ it("defaults to local under All hosts", async () => {
   expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
 })
 
-it("shows none of a host's log under another host it cannot reach", async () => {
+const BOX_DOWN = { ...BOX, status: "down" as const, endpoint: null, error: "ssh closed" }
+
+it("shows no host select while the daemon lists local alone", async () => {
   const user = userEvent.setup()
-  stubHosts({}, [LOCAL, { ...BOX, status: "down", endpoint: null, error: "ssh closed" }])
+  stubHosts({}, [LOCAL])
   const footerButton = mountShell()
 
   await user.click(footerButton)
-  latestSource().emit("snapshot", {
-    lines: [
-      {
-        ts: "2026-08-18T12:00:00.000000Z",
-        level: "INFO",
-        target: "ariadne_daemon::scheduler",
-        message: "from local",
-        service: "ariadned",
-      },
-    ],
-  })
-  expect(await screen.findByText("from local")).toBeTruthy()
+  expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
+  expect(screen.queryByRole("combobox", { name: "Host" })).toBeNull()
+})
 
-  await user.click(screen.getByRole("combobox", { name: "Host" }))
-  await user.click(await screen.findByRole("option", { name: "box" }))
+it("lists a host it cannot reach as a disabled option with its reason, and defaults to local over such a pick", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, BOX_DOWN])
+  useSettingsStore.setState({ hostFilter: "box" })
+  const footerButton = mountShell()
 
-  expect(await screen.findByText(/Host box is not reachable: ssh closed/)).toBeTruthy()
-  expect(screen.queryByText("from local")).toBeNull()
+  await user.click(footerButton)
+  await user.click(await screen.findByRole("combobox", { name: "Host" }))
+  const option = await screen.findByRole("option", { name: /^box/ })
+  expect(option.textContent).toBe("box (not reachable: ssh closed)")
+  expect(option.getAttribute("aria-disabled")).toBe("true")
+  expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
 })
