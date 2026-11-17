@@ -22,6 +22,8 @@ import {
   api,
   cacheRow,
   dropRow,
+  type Host,
+  LOCAL_HOST,
   qk,
   type TestAiPermissionRequest,
   type UpdateAiPermissionsRequest,
@@ -30,29 +32,29 @@ import {
 } from "@/api"
 
 /** `GET /v1/permissions/ai` — the settings, the Python check, and the install's state. */
-export function aiPermissionsStatusQueryOptions() {
+export function aiPermissionsStatusQueryOptions(host: Host = LOCAL_HOST) {
   return queryOptions({
-    queryKey: qk.permissions.ai("local"),
-    queryFn: () => unwrap(api("local").GET("/v1/permissions/ai")),
+    queryKey: qk.permissions.ai(host),
+    queryFn: () => unwrap(api(host).GET("/v1/permissions/ai")),
   })
 }
 
 /** `PUT /v1/permissions/ai` — a partial change; an absent field stays unchanged. */
-export function useUpdateAiPermissions() {
+export function useUpdateAiPermissions(host: Host = LOCAL_HOST) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: UpdateAiPermissionsRequest) =>
-      unwrap(api("local").PUT("/v1/permissions/ai", { body })),
-    onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai("local"), status),
+      unwrap(api(host).PUT("/v1/permissions/ai", { body })),
+    onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai(host), status),
   })
 }
 
 /** `POST /v1/permissions/ai/refresh` — run the install again on the settings as they stand. */
-export function useRefreshAiPermissions() {
+export function useRefreshAiPermissions(host: Host = LOCAL_HOST) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => unwrap(api("local").POST("/v1/permissions/ai/refresh")),
-    onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai("local"), status),
+    mutationFn: () => unwrap(api(host).POST("/v1/permissions/ai/refresh")),
+    onSuccess: (status) => queryClient.setQueryData(qk.permissions.ai(host), status),
   })
 }
 

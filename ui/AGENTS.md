@@ -345,6 +345,21 @@ query per host, its rows tagged with `host`, one error per host that failed).
 A screen that reads the header's pick runs `useHostLists` over
 `useHostFilter()` (`src/hooks/use-host-filter.ts`).
 
+Which host a screen reads follows who owns what it shows:
+
+- The skills, workflows, learned permissions, AI settings and repositories are
+  `local`'s and are pushed to every host (037). Their screens read and write
+  `local`, and `components/host-sync.tsx` shows each host's `HostDto.sync` under
+  them. The AI `device` is the one setting not pushed: the AI tab has a card per
+  host, and a device change goes to that host with `device` alone.
+- The agents screen and the Forge tabs read the selected hosts. A repository id
+  is a host's own, so a repository filter and the hosts a request can be
+  reviewed on go through the forge name (`features/forge/forge-hosts.ts`).
+  `usePullRequestLists` merges one infinite query per host.
+- The logs drawer and the dashboards screen carry a host select of their own,
+  which defaults to the picker. The dashboard iframe takes `host=` and its
+  datasources use `/v1/hosts/{host}/` of the settings daemon.
+
 ### The event stream
 
 `GET /v1/events/stream` is opened **once per reachable host** for the whole
@@ -681,11 +696,11 @@ dashboard/
     page.tsx            the provider tree (query client, MUI theme, Perses
                          charts theme, snackbar host, query-param provider,
                          plugin registry) and ViewDashboard itself
-    page-params.ts       reads `daemon`, `dashboard` and `theme` off this
+    page-params.ts       reads `daemon`, `host`, `dashboard` and `theme` off this
                          page's own query string
     use-host-messages.ts listens for the host's `postMessage`s
     datasource-api.ts    the app's one `DatasourceApi`: a global Prometheus
-                         and a global Loki datasource, `directUrl` the daemon
+                         and a global Loki datasource, `directUrl` the daemon's `/v1/hosts/{host}`
     dashboard-client.ts   `GET`/`PUT /v1/dashboards/{name}`
     plugins.ts            the plugin loader: every datasource, panel and
                          variable kind the task names, through
@@ -710,7 +725,7 @@ of the task that added this package.
 **The message protocol**, between `src/routes/dashboards.tsx` (the host) and this
 package's `page.tsx` — see its own docstring for the fuller rationale:
 
-- the iframe opens on `?daemon=<url>&dashboard=<name>&theme=<light|dark>`;
+- the iframe opens on `?daemon=<url>&host=<name|all>&dashboard=<name>&theme=<light|dark>`;
 - the host posts `{type: "theme", theme}` on every theme change after the
   first paint — the first is already on the query string;
 - the host posts `{type: "reload"}` when the shown dashboard's own

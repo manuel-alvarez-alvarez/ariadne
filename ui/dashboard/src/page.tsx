@@ -82,7 +82,10 @@ export function Page() {
     }
   }, [])
 
-  const datasourceApi = useMemo(() => createDatasourceApi(params.daemonUrl), [params.daemonUrl])
+  const datasourceApi = useMemo(
+    () => createDatasourceApi(params.daemonUrl, params.host),
+    [params.daemonUrl, params.host],
+  )
   const muiTheme = useMemo(() => getTheme(theme, undefined, true), [theme])
   const chartsTheme = useMemo(() => generateChartsTheme(muiTheme, {}), [muiTheme])
 

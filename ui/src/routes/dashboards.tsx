@@ -37,6 +37,7 @@ import { useTheme } from "next-themes"
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
+import { useHosts } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -60,13 +61,16 @@ import {
 import { RenameDashboardDialog } from "@/features/dashboard/rename-dashboard-dialog"
 import { cn } from "@/lib/format"
 import { DASHBOARD_PARAM } from "@/routes/paths"
-import { useBaseUrl } from "@/stores/settings"
+import { useBaseUrl, useSettingsStore } from "@/stores/settings"
 
 /** The dashboard page's own origin: where every `postMessage` here is sent. */
-function iframeSrc(baseUrl: string, name: string, theme: string): string {
-  const params = new URLSearchParams({ daemon: baseUrl, dashboard: name, theme })
+function iframeSrc(baseUrl: string, host: string, name: string, theme: string): string {
+  const params = new URLSearchParams({ daemon: baseUrl, host, dashboard: name, theme })
   return `/dashboard/?${params.toString()}`
 }
+
+/** The datasource host that queries every host at once. */
+const ALL_HOSTS = "all"
 
 /** The shipped dashboard's name — what an empty `?dashboard=` opens on. */
 const DEFAULT_DASHBOARD_NAME = "default"
@@ -74,6 +78,17 @@ const DEFAULT_DASHBOARD_NAME = "default"
 export function DashboardsPage() {
   const [search, setSearch] = useSearchParams()
   const baseUrl = useBaseUrl()
+  const { hosts } = useHosts()
+  const pick = useSettingsStore((state) => state.hostFilter)
+  // The picker's host, or every host under All, until the user picks another here.
+  const [hostChoice, setHostChoice] = useState<string | null>(null)
+  const queried = hostChoice ?? (pick === "" ? ALL_HOSTS : pick)
+  const hostItems = [
+    { value: ALL_HOSTS, label: "All hosts" },
+    ...hosts
+      .filter((host) => host.url !== null)
+      .map((host) => ({ value: host.name, label: host.name })),
+  ]
   const { resolvedTheme } = useTheme()
   const theme = resolvedTheme ?? "light"
   const dashboards = useQuery(dashboardsQueryOptions())
@@ -99,8 +114,8 @@ export function DashboardsPage() {
   // Changing the frozen value back out is keyed to the daemon and the picked
   // dashboard, the two that *should* reopen it on a fresh `src`.
   const srcTheme = useRef({ key: "", theme })
-  if (srcTheme.current.key !== `${baseUrl}|${selected?.name}`) {
-    srcTheme.current = { key: `${baseUrl}|${selected?.name}`, theme }
+  if (srcTheme.current.key !== `${baseUrl}|${queried}|${selected?.name}`) {
+    srcTheme.current = { key: `${baseUrl}|${queried}|${selected?.name}`, theme }
   }
 
   function select(name: string) {
@@ -135,6 +150,22 @@ export function DashboardsPage() {
         description="A Perses dashboard, read and edited from this window."
         actions={
           <>
+            <Select
+              value={queried}
+              items={hostItems}
+              onValueChange={(value) => value && setHostChoice(value)}
+            >
+              <SelectTrigger aria-label="Host" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {hostItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={selectedName ?? ""} onValueChange={(value) => value && select(value)}>
               <SelectTrigger aria-label="Dashboard" className="w-56">
                 <SelectValue />
@@ -192,7 +223,7 @@ export function DashboardsPage() {
         <iframe
           ref={iframeRef}
           title={`${dashboardDisplayName(selected)} dashboard`}
-          src={iframeSrc(baseUrl, selected.name, srcTheme.current.theme)}
+          src={iframeSrc(baseUrl, queried, selected.name, srcTheme.current.theme)}
           className="min-h-0 flex-1 rounded-md border"
         />
       ) : (

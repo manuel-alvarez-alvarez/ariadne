@@ -20,7 +20,7 @@
 import { PlugZapIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
-import type { LogLineDto } from "@/api"
+import { type Host, hostBaseUrl, LOCAL_HOST, type LogLineDto, useHosts } from "@/api"
 import {
   Select,
   SelectContent,
@@ -35,8 +35,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { usePickedHost } from "@/hooks/use-host-filter"
 import { cn } from "@/lib/format"
-import { useBaseUrl } from "@/stores/settings"
 
 import { type DaemonLogStatus, DaemonLogStream, daemonLogStreamUrl } from "./daemon-log-stream"
 
@@ -81,7 +81,16 @@ export function DaemonLogsDrawer({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const baseUrl = useBaseUrl()
+  const { hosts } = useHosts()
+  // The picker's host, or `local` under All, until the user picks another here.
+  const picked = usePickedHost()
+  const [choice, setChoice] = useState<Host | null>(null)
+  const host = choice ?? picked ?? LOCAL_HOST
+  // A pick the hosts list has not answered for yet opens no stream, rather
+  // than one on `local`.
+  const waiting = choice === null && picked === null
+  const baseUrl = waiting ? null : hostBaseUrl(host)
+  const unreachable = hosts.find((row) => row.name === host)?.unreachable ?? null
   const [lines, setLines] = useState<LogLineDto[]>([])
   const [status, setStatus] = useState<DaemonLogStatus>("connecting")
   const [service, setService] = useState(ALL)
@@ -92,12 +101,17 @@ export function DaemonLogsDrawer({
   const follow = useRef(true)
 
   useEffect(() => {
+    if (!open) setChoice(null)
+  }, [open])
+
+  useEffect(() => {
     if (!open) return
-    // A fresh open (or a changed filter) reads from the bottom, whatever the
-    // last one was doing.
+    // A fresh open (or a changed filter or host) reads from the bottom,
+    // whatever the last one was doing, and shows nothing of it.
     follow.current = true
     setStatus("connecting")
     setLines([])
+    if (baseUrl === null) return
     const url = daemonLogStreamUrl(baseUrl, {
       service: service === ALL ? undefined : service,
       level: level === ALL ? undefined : level,
@@ -137,6 +151,22 @@ export function DaemonLogsDrawer({
             </div>
             <div className="flex items-center gap-2">
               <Select
+                value={host}
+                onValueChange={(value) => setChoice(value ?? LOCAL_HOST)}
+                items={hosts.map((row) => ({ value: row.name, label: row.name }))}
+              >
+                <SelectTrigger size="sm" className="w-32" aria-label="Host">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {hosts.map((row) => (
+                    <SelectItem key={row.name} value={row.name}>
+                      {row.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
                 value={service}
                 onValueChange={(value) => setService(value ?? ALL)}
                 items={SERVICES}
@@ -170,6 +200,15 @@ export function DaemonLogsDrawer({
               </Select>
             </div>
           </SheetHeader>
+
+          {baseUrl === null && !waiting ? (
+            <div
+              role="status"
+              className="shrink-0 border-b bg-status-danger-soft px-4 py-1.5 text-xs text-status-danger-fg"
+            >
+              Host {host} is not reachable{unreachable ? `: ${unreachable}` : ""}
+            </div>
+          ) : null}
 
           {status === "reconnecting" ? (
             <div

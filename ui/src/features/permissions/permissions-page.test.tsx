@@ -404,7 +404,7 @@ describe("the model pickers", () => {
     expect(await screen.findByRole("option", { name: /^cpu.*Slow for 0\.8b/ })).toBeDefined()
   })
 
-  it("sends a flavour alone, then sends its flavour and device", async () => {
+  it("sends a flavour alone, then sends a device alone", async () => {
     const user = userEvent.setup()
     renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
@@ -414,7 +414,7 @@ describe("the model pickers", () => {
 
     await user.click(screen.getByRole("combobox", { name: "Device" }))
     await user.click(await screen.findByRole("option", { name: /^cpu/ }))
-    await waitFor(() => expect(lastWrite()?.body).toEqual({ flavour: "0.8b", device: "cpu" }))
+    await waitFor(() => expect(lastWrite()?.body).toEqual({ device: "cpu" }))
   })
 
   it("disables both pickers while installing", async () => {

@@ -24,11 +24,16 @@ function globalDatasource(name: string, kind: string, directUrl: string): Global
   }
 }
 
-/** The app's one `DatasourceApi`: two global datasources, nothing project-scoped. */
-export function createDatasourceApi(daemonUrl: string): DatasourceApi {
+/**
+ * The app's one `DatasourceApi`: two global datasources, nothing
+ * project-scoped. Both query `/v1/hosts/{host}/` of the daemon it was opened
+ * with (037, rules 16 to 19): a host name, or `all` for every host at once.
+ */
+export function createDatasourceApi(daemonUrl: string, host = "local"): DatasourceApi {
+  const directUrl = `${daemonUrl}/v1/hosts/${encodeURIComponent(host)}`
   const datasources = [
-    globalDatasource("prometheus", PROMETHEUS_KIND, daemonUrl),
-    globalDatasource("loki", LOKI_KIND, daemonUrl),
+    globalDatasource("prometheus", PROMETHEUS_KIND, directUrl),
+    globalDatasource("loki", LOKI_KIND, directUrl),
   ]
 
   return {

@@ -16,9 +16,10 @@ import { useQuery } from "@tanstack/react-query"
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
 
-import type { ForgeTunnelDto, RepositoryDto } from "@/api"
+import { type ForgeTunnelDto, type HostView, LOCAL_HOST, type RepositoryDto, useHosts } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { DataTable, RowAction } from "@/components/data-table"
+import { HostSync } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
@@ -39,6 +40,7 @@ const COLUMNS = [
   { header: "Permissions" },
   { header: "Forge" },
   { header: "Webhook", className: "w-28" },
+  { header: "Hosts" },
   // Wide enough to be a sentence rather than a word per line: what made the
   // rows of this table 130px tall was a description with nothing to wrap in.
   { header: "Description", className: "min-w-48" },
@@ -56,6 +58,8 @@ export function RepositoriesPage() {
   const repositories = useQuery(repositoriesQueryOptions("local"))
   // Whether a polling hook is the tunnel being off or a hook that failed.
   const tunnel = useQuery(tunnelQueryOptions())
+  const { hosts } = useHosts()
+  const named = hosts.filter((host) => host.name !== LOCAL_HOST)
 
   function openCreate() {
     setEditing(null)
@@ -84,6 +88,7 @@ export function RepositoriesPage() {
           </Button>
         }
       />
+      <HostSync />
 
       <DataTable
         query={repositories}
@@ -95,6 +100,7 @@ export function RepositoriesPage() {
           <RepositoryRow
             repository={repository}
             tunnel={tunnel.data}
+            hosts={named}
             onEdit={() => openEdit(repository)}
             onDelete={() => openDelete(repository)}
           />
@@ -114,11 +120,13 @@ export function RepositoriesPage() {
 function RepositoryRow({
   repository,
   tunnel,
+  hosts,
   onEdit,
   onDelete,
 }: {
   repository: RepositoryDto
   tunnel: ForgeTunnelDto | undefined
+  hosts: HostView[]
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -170,6 +178,25 @@ function RepositoryRow({
           <WebhookPill forge={repository.forge} tunnel={tunnel} />
         ) : (
           <span className="text-muted-foreground">-</span>
+        )}
+      </TableCell>
+      <TableCell className="text-xs">
+        {hosts.length === 0 ? (
+          <span className="text-muted-foreground">-</span>
+        ) : (
+          <ul aria-label="Checkouts" className="flex flex-col">
+            {hosts.map((host) => {
+              const missing = host.sync.missing_repositories.some(
+                (entry) => entry.id === repository.id,
+              )
+              return (
+                <li key={host.name} className={missing ? "text-muted-foreground" : undefined}>
+                  <span className="font-mono">{host.name}</span>
+                  {missing ? " · no checkout" : " · checkout"}
+                </li>
+              )
+            })}
+          </ul>
         )}
       </TableCell>
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">

@@ -234,3 +234,31 @@ async fn no_panel_query_in_the_shipped_dashboard_gives_nan_over_an_empty_range()
         }
     }
 }
+
+#[tokio::test]
+async fn every_named_series_of_the_shipped_dashboard_carries_the_host() {
+    let h = harness().await;
+    let dashboard: DashboardDto = h.json(get("/v1/dashboards/default"), StatusCode::OK).await;
+    let panels = dashboard.document["spec"]["panels"]
+        .as_object()
+        .expect("the shipped document carries a panels object");
+
+    let mut named = 0;
+    for (name, panel) in panels {
+        for query in panel["spec"]["queries"].as_array().into_iter().flatten() {
+            let spec = &query["spec"]["plugin"]["spec"];
+            let Some(format) = spec["seriesNameFormat"].as_str() else {
+                continue;
+            };
+            named += 1;
+            // The query on every host answers its own series, and `all` adds a
+            // `host` label to each (037, rule 18); the name is what tells two
+            // hosts' series of one panel apart.
+            assert!(
+                format.contains("{{host}}"),
+                "{name} names its series {format:?}, which two hosts share"
+            );
+        }
+    }
+    assert!(named > 0, "the shipped dashboard names no series");
+}

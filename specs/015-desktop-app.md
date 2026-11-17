@@ -1187,7 +1187,47 @@ Out: the daemon endpoints themselves (012).
     the selected hosts, and the skill list of `local`. Each row carries its
     host and opens on it. The `ariadne attach <id>` action copies
     `--host NAME` when the host is not `local`.
-65. Every other screen reads `local`, and passes `"local"` explicitly.
+65. The skills, workflows, learned permissions, AI permission and repositories
+    screens read and write `local` only, and the host picker does not change
+    them. Each shows a sync line per named host from `HostDto.sync`: in sync,
+    pending, or failed with the error. The Learned tab's line also says how
+    many local learned permissions the host skipped, from
+    `sync.skipped_permissions`.
+66. The AI permission model's `device` is not synced. The AI tab shows a card
+    per host, read from that host's `GET /v1/permissions/ai`, with its install
+    state, hardware, Refresh and Device. A device change sends
+    `PUT /v1/permissions/ai` with `device` alone to that host. The switch,
+    thresholds, flavour and test panel are `local`'s card only.
+67. The repositories table has a Hosts column. For each named host it says
+    whether the host has a checkout of the repository or lacks one, from
+    `sync.missing_repositories`. The forge tunnel switch is `local`'s.
+68. The agents screen reads the agents and models of the selected hosts. One tab
+    holds one agent id. Under more than one selected host its panel has a chip
+    per host that has the agent. A flag edit, a model switch and a rank apply to
+    the host of the chip picked, and Refresh reprobes every selected host. Each host
+    whose agents failed to load is named in an error with Retry, beside the
+    agents of the hosts that answered, and even when none returned an agent.
+69. The Forge tabs merge the pull requests and issues of the selected hosts,
+    most recently updated first, with a host badge while more than one host is
+    selected. A repository filter names one forge repository, and each host
+    reads it by its own id for that forge repository; a host without it is
+    skipped. A pull request panel opens on its row's host (`?host=`). On a named
+    host it opens no session or task panel.
+70. Start review and Start babysit have a host select, shown when more than one
+    host has the request's repository registered. It is limited to those hosts,
+    defaults to the row's host, and its models, pin and ask go to the chosen host
+    with that host's repository id. A goal dialog filled from an issue is on the
+    issue's host.
+71. The daemon logs drawer has a host select. It defaults to the picked host, or
+    `local` under All, and opens the log stream of that host. A host it cannot
+    reach opens none and says why.
+72. The dashboards screen has a host select with All, `local` and each ready
+    host, defaulting to the picked host or All. The iframe takes `host=` beside
+    `daemon=`, and its Prometheus and Loki datasources use
+    `/v1/hosts/{host}/` of the settings daemon, with `all` for the combined
+    view. The shipped dashboard's series names end in `{{host}}`, which the
+    combined view fills from the `host` label the daemon adds.
+73. Every other screen reads `local`, and passes `"local"` explicitly.
 
 ## Acceptance criteria
 
@@ -2130,6 +2170,36 @@ Out: the daemon endpoints themselves (012).
   `::defaults the goal dialog to the picked host, and reloads its lists when the host changes`,
   `::opens the goal dialog on local under All`,
   `::shows a question a remote host's stream delivers, and answers it on that host`).
+
+- Catalog screens show a sync line per host, with skipped permissions on the
+  Learned tab (`ui/src/features/permissions/permissions-hosts.test.tsx::shows a sync line per host: in sync, pending, or failed with its error`,
+  `::counts the learned rows a host skipped on the Learned tab only`); the AI tab
+  shows and writes each host's device
+  (`::shows each host's own device and writes a device change to that host alone`);
+  the repositories table names the hosts with and without a checkout
+  (`ui/src/features/repositories/repositories-page.test.tsx::says which hosts hold a checkout of each repository and which lack one`).
+- The agents screen groups an agent under one tab with a chip per host and
+  writes to the chip's host
+  (`ui/src/features/agents/agents-hosts.test.tsx::groups an agent of two hosts under one tab, with a chip per host, and writes to the chip's host`,
+  `::reads only the picked host, with no chips`,
+  `::says which host's agents failed to load beside the agents of the host that answered, with a retry`,
+  `::names the failed host beside a host that answered with no agents`,
+  `::names every host whose agents failed, each with a retry, when none answered`).
+- The Forge tabs merge hosts, open a panel on the row's host, offer the hosts of
+  a repository for a review, and fill the goal dialog on the issue's host
+  (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, badged, and opens a panel on its row's host`,
+  `::narrows to one repository by its forge name on every host, and skips a host without it`,
+  `::offers the hosts where the repository is registered for Start review, the row's host first`,
+  `::merges the issues of every host, and fills the goal dialog on the issue's host`).
+- The logs drawer opens the log of the picked host and of the host its select
+  names (`ui/src/features/system/daemon-logs-drawer.test.tsx::opens the log of the picked host, and of local under All, and follows the drawer's own host select`,
+  `::defaults to local under All hosts`).
+- The dashboards screen queries the host its select names
+  (`crates/ariadne-daemon/tests/it/dashboards.rs::every_named_series_of_the_shipped_dashboard_carries_the_host`,
+  `ui/src/routes/dashboards.test.tsx::queries every host under All, the picked host otherwise, and the host the select names`,
+  `::opens on the host the header picker names`); the iframe's datasources point at
+  `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
+  `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
 
 ## Known gap
 

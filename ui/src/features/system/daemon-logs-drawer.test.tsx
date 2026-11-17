@@ -11,7 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createBrowserRouter, RouterProvider } from "react-router-dom"
-import { beforeEach, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -19,8 +19,10 @@ import type { useConnection } from "@/hooks/use-connection"
 
 type Connection = ReturnType<typeof useConnection>
 
+import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { startAt } from "@/test/harness"
+import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 
 vi.mock("@/hooks/use-connection", () => ({
   useConnection: (): Connection => ({
@@ -35,6 +37,11 @@ vi.mock("@/hooks/use-connection", () => ({
 
 beforeEach(() => {
   stubEventSource()
+})
+
+afterEach(() => {
+  forgetHosts()
+  useSettingsStore.setState({ hostFilter: "" })
 })
 
 function mountShell() {
@@ -137,4 +144,54 @@ it("says out loud when the stream drops", async () => {
   source.onerror?.()
 
   expect(await screen.findByText("Log stream lost — reconnecting")).toBeTruthy()
+})
+
+it("opens the log of the picked host, and of local under All, and follows the drawer's own host select", async () => {
+  const user = userEvent.setup()
+  stubHosts({})
+  useSettingsStore.setState({ hostFilter: "box" })
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  // The picker's pick waits for the hosts list, then opens that host's stream.
+  await vi.waitFor(() => expect(latestSource().url).toBe("http://box.test:7676/v1/logs/stream"))
+
+  await user.click(screen.getByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "local" }))
+  expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
+})
+
+it("defaults to local under All hosts", async () => {
+  const user = userEvent.setup()
+  stubHosts({})
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
+})
+
+it("shows none of a host's log under another host it cannot reach", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, { ...BOX, status: "down", endpoint: null, error: "ssh closed" }])
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  latestSource().emit("snapshot", {
+    lines: [
+      {
+        ts: "2026-08-18T12:00:00.000000Z",
+        level: "INFO",
+        target: "ariadne_daemon::scheduler",
+        message: "from local",
+        service: "ariadned",
+      },
+    ],
+  })
+  expect(await screen.findByText("from local")).toBeTruthy()
+
+  await user.click(screen.getByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "box" }))
+
+  expect(await screen.findByText(/Host box is not reachable: ssh closed/)).toBeTruthy()
+  expect(screen.queryByText("from local")).toBeNull()
 })
