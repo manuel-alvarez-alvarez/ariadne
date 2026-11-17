@@ -297,10 +297,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   `ai_permissions_flavours.rs::a_configured_nvidia_smi_bin_reaches_the_hardware_probe`).
 - A `PUT` with a combination that cannot run is refused with 422
   `flavour_unsupported` and leaves the row unchanged; a `PUT` with only a
-  flavour picks the best device, and one with only a device keeps the stored
-  flavour
+  flavour that differs from the stored one picks the best device, a `PUT`
+  with a flavour equal to the stored one and no device keeps the stored device
+  and starts no reinstall, and one with only a device keeps the stored flavour
   (`ai_permissions_flavours.rs::put_refuses_an_unsupported_combination_and_leaves_the_row_unchanged`,
   `::put_with_only_a_flavour_picks_the_best_device`,
+  `::put_with_the_stored_flavour_keeps_the_device_and_another_flavour_picks_the_best`,
   `::put_with_only_a_device_keeps_the_stored_flavour`).
 - A fresh row starts at `4b` with no schedule columns, and the daemon fills
   the device at its next start

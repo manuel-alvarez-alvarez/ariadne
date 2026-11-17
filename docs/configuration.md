@@ -144,8 +144,9 @@ host's own API:
 - every learned permission, on the host's checkout of its repository. A row
   whose repository has no checkout there is not pushed, and
   `sync.skipped_permissions` counts it.
-- the AI permission settings: on or off, the thresholds and the flavour. The
-  host picks its own device for the flavour.
+- the AI permission settings: on or off, the thresholds and the flavour. A
+  device set on the host stays until `local` changes the flavour; then the
+  host picks its best device.
 - the settings of each repository the host has a checkout of: the default
   workflow, the base branch, the description, the permission mode and
   whether the forge integration is on.
