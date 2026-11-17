@@ -120,12 +120,30 @@ ssh -N -L 127.0.0.1:<port>:<remote> -o ServerAliveInterval=15 \
   forwards to TCP on the far machine.
 - The host is `connecting` while `ssh` starts. The daemon then asks the far
   daemon for `/v1/health` through the port. On the first good answer the
-  host is `ready`, and its `endpoint` is `http://127.0.0.1:<port>`.
+  host is `ready`, and its `endpoint` is `http://127.0.0.1:<port>`. When no
+  good answer comes in 15 seconds, the daemon stops `ssh`, and the host is
+  `down` with the error `the far daemon does not answer through the
+  forward`.
 - When `ssh` exits, the host is `down` and its `error` is the last line
   `ssh` wrote to stderr. The daemon starts `ssh` again after 1 second, and
   doubles the wait after each exit, up to 60 seconds.
+
+The daemon checks the status of each host again and again, so
+`GET /v1/hosts` stays true:
+
+- A `ready` host is asked for `/v1/health` every 5 seconds. When it gives no
+  good answer for 15 seconds, it is `down`, and its `error` says why. An
+  `ssh://` host then loses its forward, and the daemon starts a new one with
+  the wait above.
+- An `http://` host or a socket path host is `connecting` at startup. It is
+  `ready` on its first good answer. When no good answer comes in 15
+  seconds, it is `down` with the reason. A socket path host is checked
+  through its socket.
+- The daemon goes on to check such a host while it is `down`, every 5
+  seconds. The host is `ready` again when it answers.
 - Each change of a host's `status`, `endpoint` or `error` publishes one
-  `host_updated` event. Stopping the daemon ends every `ssh` it started.
+  `host_updated` event. Stopping the daemon ends every check and every `ssh`
+  it started.
 
 One forward carries everything both ways: requests, event streams and
 answers. A client on this machine uses the `endpoint` as if the far daemon

@@ -127,7 +127,7 @@ pub(super) async fn run(
         let mut pusher = Pusher {
             inner: &inner,
             index,
-            client: client_for(&endpoint),
+            client: super::client_for(&endpoint),
             last_ai: None,
             pairs: None,
         };
@@ -307,16 +307,6 @@ impl Pushes {
             sync.state = state;
             sync.error = error;
         });
-    }
-}
-
-/// A client for the endpoint of a `ready` host: an `http://` address, else a
-/// socket path.
-fn client_for(endpoint: &str) -> Client {
-    if endpoint.starts_with("http://") {
-        Client::tcp(endpoint)
-    } else {
-        Client::unix(endpoint)
     }
 }
 

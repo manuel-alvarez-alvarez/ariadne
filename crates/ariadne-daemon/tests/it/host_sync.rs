@@ -728,41 +728,6 @@ async fn a_newer_push_of_an_item_ends_its_older_failed_push() {
     assert_eq!(shared.map(|skill| skill.summary).as_deref(), Some("second"));
 }
 
-#[tokio::test]
-async fn a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands() {
-    // A port nothing listens on yet.
-    let address = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap()
-    };
-    let (local, _dir) = local_with_host(&format!("http://{address}")).await;
-    let _: SkillDto = local
-        .json(
-            post_json(
-                "/v1/skills",
-                json!({"name": "mine", "document": skill("mine", "local")}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    local.state.hosts.start();
-    eventually(TIMEOUT, "the push failed", || async {
-        let sync = sync_of(&local).await;
-        sync.state == SyncState::Failed
-            && sync
-                .error
-                .as_deref()
-                .is_some_and(|error| error.contains("cannot reach"))
-    })
-    .await;
-
-    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
-    serve(&far, tokio::net::TcpListener::bind(address).await.unwrap());
-    until_in_sync(&local).await;
-    assert_eq!(skill_on(&far, "mine").await.unwrap().summary, "local");
-    assert_eq!(sync_of(&local).await.error, None);
-}
-
 /// The sync of the next `host_updated` on the bus.
 async fn next_sync(rx: &mut Receiver<BusEvent>) -> HostSyncDto {
     let event = next_event(rx, |event| {
@@ -780,6 +745,8 @@ async fn each_change_of_the_sync_publishes_one_host_updated() {
     let (_far, local, _dir) = far_and_local().await;
     let mut rx = local.bus.subscribe();
     local.state.hosts.start();
+    // The first event is the host's `ready`, before any push lands.
+    assert_eq!(next_sync(&mut rx).await.state, SyncState::Pending);
     assert_eq!(next_sync(&mut rx).await, HostSyncDto::in_sync());
 
     let _: SkillDto = local

@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-daemon/tests/it/hosts.rs
   - crates/ariadne-daemon/tests/it/ssh_forward.rs
   - crates/ariadne-daemon/tests/it/host_sync.rs
+  - crates/ariadne-daemon/tests/it/host_health.rs
   - crates/ariadne-daemon/tests/it/learned_permissions.rs
   - crates/ariadne-daemon/tests/it/host_queries.rs
   - crates/ariadne-cli/tests/hosts.rs
@@ -54,7 +55,8 @@ per host — is spec 015's (rules 51 to 60).
    configured value; for `ssh` null until a forward is up); `status` (`ready`,
    `connecting`, `down`); `error`; `remote`; `sync` (rule 22).
 5. An `ssh` host is `down`, with a null `endpoint` and the error
-   `ssh forward not started`, until its forward starts.
+   `ssh forward not started`, until its forward starts. A `direct` host is
+   `connecting` until its first health check (rule 30).
 6. `host_updated` carries one `HostDto`. The daemon publishes one event for
    each change of a host's `status`, `endpoint`, `error` or `sync`.
 7. The OpenAPI document carries the route, the DTO and the event.
@@ -70,16 +72,41 @@ per host — is spec 015's (rules 51 to 60).
 11. The host is `connecting` while the process starts. The daemon probes
     `GET /v1/health` through the port every `ssh_probe_interval`, each probe
     bounded by `ssh_probe`. On the first good answer the host is `ready` and
-    its `endpoint` is `http://127.0.0.1:<port>`.
+    its `endpoint` is `http://127.0.0.1:<port>`. When no good answer comes in
+    `host_unanswered`, the daemon kills the process and the host is `down`
+    with the error `the far daemon does not answer through the forward:
+    <reason>`. The restart of rule 12 follows.
 12. When the process exits, the host is `down`, `endpoint` is null and `error`
     is the last non-empty stderr line of the process (else its exit status).
     The daemon starts it again after `ssh_retry`, doubled after each exit up
     to 60 seconds and reset by a `ready`; the host goes back to `connecting`.
-13. Daemon shutdown ends every ssh child process.
+13. Daemon shutdown ends every ssh child process and every health check
+    (rule 30).
 14. One forward carries requests, event streams and answers both ways. The
     forward is the user's own `ssh`: their keys, agent and `~/.ssh/config`
     apply.
 15. CLI host selection follows spec 014.
+
+### Health
+
+30. The daemon checks `GET /v1/health` of each `ready` host every
+    `host_check`, `ssh` and `direct` alike, each check bounded by
+    `ssh_probe`. A good answer is a success with `status` `ok`. A `ready`
+    host with no good answer for `host_unanswered` is `down`, and `error` is
+    `<endpoint> has not answered for <host_unanswered>: <reason>`. An `ssh`
+    host then loses its forward: the daemon kills the process, and rule 12
+    starts a new one with its backoff. A `direct` host keeps its configured
+    `endpoint`.
+31. A `direct` host starts `connecting`. The daemon checks it every
+    `ssh_probe_interval`. Its first good answer makes it `ready`. With no
+    good answer in `host_unanswered` it is `down`, and `error` is
+    `<endpoint> does not answer: <reason>`.
+32. The daemon goes on to check a `direct` host that is `down`, every
+    `host_check`. Its first good answer makes it `ready` again.
+33. A `direct` host with a socket path is checked through that socket.
+34. Each change of status publishes one `host_updated` (rule 6). The sync of
+    the host stops when it leaves `ready`, and starts again on its next
+    `ready` (rule 25).
 
 ### Sync
 
@@ -189,6 +216,22 @@ per host — is spec 015's (rules 51 to 60).
 - Rules 4 and 5
   (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
   `::configured_hosts_follow_local_in_file_order`).
+- Rule 11, no answer through the forward
+  (`host_health.rs::a_forward_whose_far_daemon_does_not_answer_is_down_and_starts_again`).
+- Rules 13 and 30, shutdown
+  (`host_health.rs::shutdown_ends_the_checks_of_a_direct_host`,
+  `ssh_forward.rs::shutdown_ends_every_ssh_child`).
+- Rule 30
+  (`host_health.rs::a_direct_host_is_ready_while_it_answers_and_down_while_it_does_not`,
+  `::a_ready_forward_that_stops_answering_loses_its_forward_and_starts_again`).
+- Rules 31 and 32
+  (`host_health.rs::a_direct_host_that_does_not_answer_is_down_and_ready_once_it_answers`,
+  `::a_direct_host_is_ready_while_it_answers_and_down_while_it_does_not`).
+- Rule 33
+  (`host_health.rs::a_direct_host_on_a_socket_path_is_checked_through_the_socket`).
+- Rule 34
+  (`host_health.rs::a_direct_host_is_ready_while_it_answers_and_down_while_it_does_not`,
+  `host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`).
 - Rule 7 (`hosts.rs::openapi_carries_the_route_the_dto_and_the_event`).
 - Rules 8 and 9 (`ssh_forward.rs::help_and_check_config_list_ssh_bin`).
 - Rule 10 (`ssh_forward.rs::a_forward_runs_ssh_to_the_local_socket_path_by_default`,
@@ -209,8 +252,7 @@ per host — is spec 015's (rules 51 to 60).
 - Rule 24
   (`host_sync.rs::each_later_change_reaches_the_host_and_a_delete_removes_it`).
 - Rule 25
-  (`host_sync.rs::a_failed_push_is_failed_with_its_error_and_tried_again_until_it_lands`,
-  `::a_refused_push_holds_back_no_later_change`,
+  (`host_sync.rs::a_refused_push_holds_back_no_later_change`,
   `::a_refused_repository_holds_back_no_other_repository`,
   `::a_newer_push_of_an_item_ends_its_older_failed_push`,
   `ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`).
@@ -233,7 +275,9 @@ per host — is spec 015's (rules 51 to 60).
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync
 tests serve the second harness daemon on a loopback port, and give the local
-one a `direct` host that points at it.
+one a `direct` host that points at it. The health tests serve the second
+harness daemon behind a switch that turns its `GET /v1/health` off and on,
+and shorten `host_unanswered` and `host_check` through `Timeouts`.
 - Rule 17
   (`host_queries.rs::a_named_host_answers_from_its_own_daemon_and_local_from_this_one`,
   `::an_unknown_host_is_404_and_a_host_that_is_not_ready_is_503`).
@@ -258,6 +302,7 @@ port to its remote, with a second harness daemon as the far machine.
 `crates/ariadne-client/src/endpoint.rs`, `crates/ariadne-api/src/hosts.rs`,
 `crates/ariadne-daemon/src/config.rs`,
 `crates/ariadne-daemon/src/hosts.rs`, `crates/ariadne-daemon/src/hosts/sync.rs`,
+`crates/ariadne-daemon/src/timeouts.rs`,
 `crates/ariadne-daemon/src/http/hosts.rs`,
 `crates/ariadne-daemon/src/http/permissions.rs`,
 `docs/configuration.md`.
