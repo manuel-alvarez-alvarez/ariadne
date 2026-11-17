@@ -72,3 +72,41 @@ async fn named_hosts_and_guards_use_the_local_registry() {
     server.abort();
     remote.abort();
 }
+
+#[tokio::test]
+async fn all_hosts_keep_uppercase_rows_and_attention_items() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null}
+    ]);
+    let skill = json!([{
+        "name":"test","seat":"task","summary":"BUILD","document":"","document_is_default":false,
+        "builtin":false,"created_at":"2026-11-17T00:00:00Z","updated_at":"2026-11-17T00:00:00Z"
+    }]);
+    let attention = json!({"complete":true,"items":[{
+        "id":"blocked","producer":"recovery","reason":"access","summary":"Sign in",
+        "required_action":"Sign in","since":"2026-11-17T00:00:00Z","affected":[],
+        "target":{"kind":"settings","section":"agents"}
+    }]});
+    let app = Router::new()
+        .route("/v1/hosts", get(move || async move { Json(registry) }))
+        .route("/v1/skills", get(move || async move { Json(skill) }))
+        .route("/v1/attention", get(move || async move { Json(attention) }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for (args, expected) in [
+        (vec!["skill", "ls", "--columns", "summary"], "local   BUILD"),
+        (vec!["attention", "--format", "json"], "\"id\": \"blocked\""),
+    ] {
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+            .args(["--endpoint", &endpoint, "--host", "all"])
+            .args(args)
+            .env("ARIADNE_TELEMETRY", "off")
+            .output()
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains(expected), "{text}");
+    }
+    server.abort();
+}

@@ -195,7 +195,12 @@ async fn fan_out(
             let items = value
                 .as_array()
                 .or_else(|| value.get("items").and_then(Value::as_array))
-                .or_else(|| value.get("sessions").and_then(Value::as_array));
+                .or_else(|| value.get("sessions").and_then(Value::as_array))
+                // `attention` keeps its items in `recovery`.
+                .or_else(|| value.get("recovery").and_then(Value::as_array));
+            if value.get("complete") == Some(&Value::Bool(false)) {
+                eprintln!("warning: {}: the list is incomplete", host.name);
+            }
             if let Some(items) = items {
                 for item in items {
                     let mut item = item.clone();
@@ -204,20 +209,17 @@ async fn fan_out(
                 }
             }
         } else {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                if line.is_empty() {
-                    continue;
-                }
-                let is_header = line.chars().any(|c| c.is_ascii_uppercase())
-                    && !line.chars().any(|c| c.is_ascii_lowercase());
-                if is_header {
-                    if header.is_none() {
-                        println!("{:<host_width$}   {line}", "HOST");
-                        header = Some(line.to_owned());
-                    }
-                } else {
-                    println!("{:<host_width$}   {line}", host.name);
-                }
+            // A table's first line is its header; every later line is data.
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut lines = text.lines().filter(|line| !line.is_empty());
+            if let Some(first) = lines.next()
+                && header.is_none()
+            {
+                println!("{:<host_width$}   {first}", "HOST");
+                header = Some(first.to_owned());
+            }
+            for line in lines {
+                println!("{:<host_width$}   {line}", host.name);
             }
         }
     }
