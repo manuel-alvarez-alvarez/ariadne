@@ -21,9 +21,10 @@ use ariadne_client::{Client, ClientError};
 
 use super::{Subject, agent_label, confirm, path_segment, ranks_label};
 use crate::error::Failure;
+use crate::output::listing::Listing;
 use crate::output::{
     Column, Format, UNCAPPED, age, col, dash, empty_state, ok_id_line, pager, print, print_json,
-    print_list, print_table, view, yes_no,
+    print_table, view, yes_no,
 };
 
 /// Columns of `workflow ls`. A workflow is named and marked whether it is one
@@ -105,26 +106,28 @@ pub(crate) enum WorkflowCommand {
     },
 }
 
+/// `workflow ls`, as one host answers it.
+pub(crate) async fn ls(client: &Client) -> Result<Listing> {
+    let workflows: Vec<WorkflowDto> = client.get_json("/v1/workflows").await?;
+    let now = chrono::Utc::now();
+    Listing::of(
+        &workflows,
+        LS,
+        |w| {
+            vec![
+                w.name.clone(),
+                yes_no(w.builtin, "no"),
+                columns_label(&w.steps),
+                age(&w.updated_at, now),
+            ]
+        },
+        empty_state("No workflows are available.", Some("ariadne doctor")),
+    )
+}
+
 pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -> Result<()> {
     match cmd {
-        WorkflowCommand::Ls => {
-            let workflows: Vec<WorkflowDto> = client.get_json("/v1/workflows").await?;
-            let now = chrono::Utc::now();
-            print_list(
-                format,
-                &workflows,
-                LS,
-                |w| {
-                    vec![
-                        w.name.clone(),
-                        yes_no(w.builtin, "no"),
-                        columns_label(&w.steps),
-                        age(&w.updated_at, now),
-                    ]
-                },
-                empty_state("No workflows are available.", Some("ariadne doctor")),
-            )?;
-        }
+        WorkflowCommand::Ls => ls(client).await?.print(format)?,
         WorkflowCommand::Show { name } => {
             let w = get_workflow(client, &name).await?;
             match format {

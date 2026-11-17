@@ -6,6 +6,7 @@ use clap::Subcommand;
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus, AgentConfigDto};
 use ariadne_client::Client;
 
+use crate::output::listing::Listing;
 use crate::output::{
     Column, Format, UNCAPPED, col, empty_state, ok_id_line, print, print_list, view,
 };
@@ -94,22 +95,7 @@ async fn default_flags(client: &Client, agent: &str) -> Result<Vec<String>> {
 
 pub(crate) async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<()> {
     match cmd {
-        AgentCommand::Ls => {
-            let configs: Vec<AgentConfigDto> = client.list_agent_configs().await?;
-            print_list(
-                format,
-                &configs,
-                LS,
-                |c| {
-                    vec![
-                        c.agent_id.clone(),
-                        flags_cell(&c.extra_flags),
-                        flags_cell(&c.default_flags),
-                    ]
-                },
-                empty_state("No agents are in the registry.", Some("ariadne doctor")),
-            )?;
-        }
+        AgentCommand::Ls => ls(client).await?.print(format)?,
         AgentCommand::Refresh => refresh(client, format).await?,
         AgentCommand::Update {
             agent,
@@ -134,6 +120,23 @@ pub(crate) async fn run(client: &Client, cmd: AgentCommand, format: Format) -> R
         }
     }
     Ok(())
+}
+
+/// `agent ls`, as one host answers it.
+pub(crate) async fn ls(client: &Client) -> Result<Listing> {
+    let configs: Vec<AgentConfigDto> = client.list_agent_configs().await?;
+    Listing::of(
+        &configs,
+        LS,
+        |c| {
+            vec![
+                c.agent_id.clone(),
+                flags_cell(&c.extra_flags),
+                flags_cell(&c.default_flags),
+            ]
+        },
+        empty_state("No agents are in the registry.", Some("ariadne doctor")),
+    )
 }
 
 /// Reprobe the ACP registry, then show exactly the snapshot the daemon

@@ -10,9 +10,9 @@ use ariadne_core::models::ModelRank;
 
 use super::parse_model;
 use crate::cli::values::Spelling;
+use crate::output::listing::{Listing, Note};
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, col, empty_state, note, print, print_kv, print_list, status_line,
-    view, yes_no,
+    Column, Format, Kv, UNCAPPED, col, empty_state, print, print_kv, status_line, view, yes_no,
 };
 
 /// Columns of `models ls`. The title is the whole id — `codex-acp:o3`, not
@@ -95,7 +95,7 @@ pub(crate) enum ModelsCommand {
 
 pub(crate) async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<()> {
     match cmd {
-        ModelsCommand::Ls { agent } => ls(client, agent.as_deref(), format).await,
+        ModelsCommand::Ls { agent } => ls(client, agent.as_deref()).await?.print(format),
         ModelsCommand::Show { model } => show(client, &model, format).await,
         ModelsCommand::Enable { model } => set_enabled(client, &model, true, format).await,
         ModelsCommand::Disable { model } => set_enabled(client, &model, false, format).await,
@@ -157,14 +157,14 @@ async fn set_rank(
     Ok(())
 }
 
-async fn ls(client: &Client, agent: Option<&str>, format: Format) -> Result<()> {
+/// `models ls`, as one host answers it.
+pub(crate) async fn ls(client: &Client, agent: Option<&str>) -> Result<Listing> {
     let models: Vec<ModelDto> = client.get_json("/v1/models").await?;
     // `GET /v1/models` takes no filter: the catalogue is the union, so an
     // agent narrows what it answered rather than what was asked for.
     let models = of_agent(models, agent);
     let marks_a_default = models.iter().any(|m| m.efforts.iter().any(|e| e.default));
-    print_list(
-        format,
+    let listing = Listing::of(
         &models,
         LS,
         row,
@@ -178,10 +178,12 @@ async fn ls(client: &Client, agent: Option<&str>, format: Format) -> Result<()> 
     // The star is only ever printed on a table a person is reading, and only
     // when it says something: `--format json`, `-q` and a catalogue with no
     // default at all all go without.
-    if format == Format::Table && !view().quiet && marks_a_default {
-        note("* the effort that agent runs the model at by default");
-    }
-    Ok(())
+    Ok(match marks_a_default {
+        true => listing.note(Note::Legend(
+            "* the effort that agent runs the model at by default".into(),
+        )),
+        false => listing,
+    })
 }
 
 async fn show(client: &Client, model: &str, format: Format) -> Result<()> {

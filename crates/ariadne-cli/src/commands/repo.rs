@@ -15,9 +15,9 @@ use serde_json::json;
 use super::resolve::{self, Kind};
 use super::{Subject, confirm};
 use crate::cli::values::Spelling;
+use crate::output::listing::Listing;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
-    print_list, view,
+    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv, view,
 };
 
 /// Columns of `repo ls`. The path is what a repository is, so it stays
@@ -175,6 +175,18 @@ pub(crate) fn synced_flag(cmd: &RepoCommand) -> Option<(&'static str, &'static s
     .map(|(flag, _)| (flag, takes))
 }
 
+/// `repo ls`, as one host answers it.
+pub(crate) async fn ls(client: &Client) -> Result<Listing> {
+    let repos: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
+    let now = chrono::Utc::now();
+    Listing::of(
+        &repos,
+        LS,
+        |r| ls_row(r, now),
+        empty_state("No repositories yet.", Some("ariadne repo add <path>")),
+    )
+}
+
 pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()> {
     match cmd {
         RepoCommand::Add {
@@ -206,17 +218,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                 )
             })?;
         }
-        RepoCommand::Ls => {
-            let repos: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
-            let now = chrono::Utc::now();
-            print_list(
-                format,
-                &repos,
-                LS,
-                |r| ls_row(r, now),
-                empty_state("No repositories yet.", Some("ariadne repo add <path>")),
-            )?;
-        }
+        RepoCommand::Ls => ls(client).await?.print(format)?,
         RepoCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Repo, &id).await?;
             let r: RepositoryDto = client.get_json(&repo_path(&id)).await?;

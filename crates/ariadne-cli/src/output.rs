@@ -16,6 +16,7 @@
 //! How much of that happens is one decision, taken once from the command line
 //! and the environment ([`init`]) and read back by every renderer ([`view`]).
 
+pub(crate) mod listing;
 pub(crate) mod pager;
 pub(crate) mod style;
 pub(crate) mod table;
