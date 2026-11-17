@@ -37,6 +37,7 @@ mod goal_repositories;
 mod home_skills;
 mod host_health;
 mod host_queries;
+mod host_reconnect;
 mod host_sync;
 mod hosts;
 mod issues;

@@ -1017,3 +1017,44 @@ async fn every_supported_agent_launches_with_the_mcp_server_and_the_skills() {
         }
     }
 }
+
+/// A cancel ends the turn with every open permission answered `cancelled`,
+/// which an agent reads as the user refusing the call. So the daemon's next
+/// prompt after a cancelled turn says the calls were cut off, not refused,
+/// and only that next one does.
+#[tokio::test]
+async fn the_prompt_after_a_cancelled_turn_says_nobody_refused_its_calls() {
+    let h = harness().await;
+    let mut scripted = script();
+    scripted["prompts"] = json!([{"updates": [], "stop_reason": "cancelled"}]);
+    h.agent.reprogram(scripted);
+    let cast = h.cast().await;
+    let session = h.agent_session(&cast, "develop").await;
+    h.agent_runs(&session).await;
+    let note = ariadne_store::defaults::cancelled_turn_note();
+
+    // Queued together: the runtime runs one turn at a time, in order.
+    for text in ["FIRST", "SECOND", "THIRD"] {
+        h.launcher
+            .acp
+            .send_prompt(&session.id, text.into())
+            .unwrap();
+    }
+    eventually(TIMEOUT, "the three turns to reach the agent", || async {
+        h.prompts_to(&session).len() == 3
+    })
+    .await;
+    let prompts = h.prompts_to(&session);
+    assert!(!prompts[0].contains(note), "the first turn: {}", prompts[0]);
+    assert!(
+        prompts[1].starts_with(note) && prompts[1].contains("SECOND"),
+        "the turn after the cancel: {}",
+        prompts[1]
+    );
+    assert!(
+        !prompts[2].contains(note),
+        "the turn after that: {}",
+        prompts[2]
+    );
+    let _ = h.launcher.kill_session(&session.id).await;
+}
