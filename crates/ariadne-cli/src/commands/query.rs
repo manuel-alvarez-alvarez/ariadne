@@ -9,10 +9,12 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Result, bail};
+use ariadne_api::hosts::{HostDto, HostStatus};
 use ariadne_client::{Client, ClientError};
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde_json::Value;
 
+use crate::error::Failure;
 use crate::output::{self, Column, Format, UNCAPPED, col};
 
 pub(crate) async fn run(
@@ -24,6 +26,10 @@ pub(crate) async fn run(
     host: Option<&str>,
     format: Format,
 ) -> Result<()> {
+    if let Some(name) = host.filter(|name| !matches!(*name, "local" | "all")) {
+        let hosts: Vec<HostDto> = client.get_json("/v1/hosts").await?;
+        check_host(name, &hosts)?;
+    }
     let path = on_host(
         host,
         &path(
@@ -44,7 +50,7 @@ pub(crate) async fn run(
     if format == Format::Json {
         return output::print_json(&answer);
     }
-    let (columns, rows) = table(&answer["data"]);
+    let (columns, rows) = table(&answer["data"], host == Some("all"));
     let (text, notes) = output::list_text(&columns, &rows, output::view(), "no series")?;
     if !text.is_empty() {
         println!("{text}");
@@ -60,6 +66,29 @@ pub(crate) async fn run(
         ));
     }
     Ok(())
+}
+
+/// A usage error, as the other commands give, for a host that is not in the
+/// registry or not ready.
+fn check_host(name: &str, hosts: &[HostDto]) -> Result<()> {
+    let names = hosts
+        .iter()
+        .map(|host| format!("{} ({})", host.name, status(host.status)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match hosts.iter().find(|host| host.name == name) {
+        None => Err(Failure::usage(format!("unknown host {name}; hosts: {names}")).err()),
+        Some(host) if host.status != HostStatus::Ready => Err(Failure::usage(format!(
+            "host {name} is {}; hosts: {names}",
+            status(host.status)
+        ))
+        .err()),
+        Some(_) => Ok(()),
+    }
+}
+
+fn status(status: HostStatus) -> String {
+    format!("{status:?}").to_lowercase()
 }
 
 /// The route as the local daemon serves it for `host`: under
@@ -170,8 +199,9 @@ fn prometheus_error(body: &str) -> Option<String> {
     body["error"].as_str().map(str::to_string)
 }
 
-/// The columns and rows of a query's `data`.
-fn table(data: &Value) -> (Vec<Column>, Vec<Vec<String>>) {
+/// The columns and rows of a query's `data`. With `hosts` (`--host all`) the
+/// `host` label is the first column, headed `HOST`.
+fn table(data: &Value, hosts: bool) -> (Vec<Column>, Vec<Vec<String>>) {
     let result = &data["result"];
     let range = data["resultType"] == "matrix";
     if data["resultType"] == "scalar" || data["resultType"] == "string" {
@@ -179,12 +209,16 @@ fn table(data: &Value) -> (Vec<Column>, Vec<Vec<String>>) {
         return (vec![col("VALUE", UNCAPPED)], vec![vec![value]]);
     }
     let series = result.as_array().cloned().unwrap_or_default();
-    let labels: BTreeSet<String> = series
+    let mut labels: BTreeSet<String> = series
         .iter()
         .filter_map(|s| s["metric"].as_object())
         .flat_map(|metric| metric.keys().cloned())
         .collect();
+    let host = hosts && labels.remove("host");
     let mut columns = Vec::new();
+    if host {
+        columns.push(col("HOST", 40).rank(1));
+    }
     if range {
         columns.push(col("TIME", UNCAPPED));
     }
@@ -202,6 +236,7 @@ fn table(data: &Value) -> (Vec<Column>, Vec<Vec<String>>) {
             .iter()
             .map(|label| s["metric"][label].as_str().unwrap_or("").to_string())
             .collect();
+        let host_cell = s["metric"]["host"].as_str().unwrap_or("").to_string();
         let points = if range {
             s["values"].as_array().cloned().unwrap_or_default()
         } else {
@@ -210,6 +245,9 @@ fn table(data: &Value) -> (Vec<Column>, Vec<Vec<String>>) {
         for point in points {
             let t = point[0].as_f64().unwrap_or_default();
             let mut row = Vec::with_capacity(columns.len());
+            if host {
+                row.push(host_cell.clone());
+            }
             if range {
                 row.push(time_cell(t));
             }
@@ -310,7 +348,7 @@ mod tests {
             {"metric": {"seat": "agent"}, "value": [1.0, "30"]},
             {"metric": {"seat": "reviewer", "job": "ariadned"}, "value": [1.0, "3"]},
         ]});
-        let (columns, rows) = table(&data);
+        let (columns, rows) = table(&data, false);
         let text = render_table(&columns, &rows, &View::plain()).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
@@ -326,7 +364,7 @@ mod tests {
             {"metric": {"seat": "agent"}, "values": [[1.0, "1"], [2.0, "2"]]},
             {"metric": {"seat": "reviewer"}, "values": [[1.0, "5"]]},
         ]});
-        let (columns, rows) = table(&data);
+        let (columns, rows) = table(&data, false);
         assert_eq!(
             columns.iter().map(|c| c.header).collect::<Vec<_>>(),
             ["TIME", "seat", "VALUE"]
@@ -336,8 +374,45 @@ mod tests {
     }
 
     #[test]
+    fn host_all_puts_the_host_column_first() {
+        let data = json!({"resultType": "matrix", "result": [
+            {"metric": {"host": "build", "seat": "agent"}, "values": [[1.0, "1"]]},
+        ]});
+        let (columns, rows) = table(&data, true);
+        assert_eq!(
+            columns.iter().map(|c| c.header).collect::<Vec<_>>(),
+            ["HOST", "TIME", "seat", "VALUE"]
+        );
+        assert_eq!(rows[0][0], "build");
+        assert_eq!(rows[0][2], "agent");
+    }
+
+    #[test]
+    fn a_host_that_is_unknown_or_not_ready_is_a_usage_error() {
+        let host = |name: &str, status| {
+            HostDto {
+            name: name.into(),
+            status,
+            ..serde_json::from_value(json!({"name":"x","kind":"direct","status":"ready","endpoint":null,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}})).unwrap()
+        }
+        };
+        let hosts = [
+            host("local", HostStatus::Ready),
+            host("off", HostStatus::Down),
+        ];
+        let unknown = check_host("nope", &hosts).unwrap_err().to_string();
+        assert!(unknown.contains("local (ready), off (down)"), "{unknown}");
+        let down = check_host("off", &hosts).unwrap_err().to_string();
+        assert!(down.contains("is down"), "{down}");
+        assert!(check_host("local", &hosts).is_ok());
+    }
+
+    #[test]
     fn a_scalar_is_one_value() {
-        let (columns, rows) = table(&json!({"resultType": "scalar", "result": [1.0, "7"]}));
+        let (columns, rows) = table(
+            &json!({"resultType": "scalar", "result": [1.0, "7"]}),
+            false,
+        );
         assert_eq!(columns.len(), 1);
         assert_eq!(rows, vec![vec!["7".to_string()]]);
     }

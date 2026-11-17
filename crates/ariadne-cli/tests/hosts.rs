@@ -158,6 +158,8 @@ async fn query_host_all_reads_the_merged_answer_and_prints_a_host_column() {
         header.split_whitespace().collect::<Vec<_>>(),
         ["HOST", "SEAT", "VALUE"]
     );
+    let first: Vec<&str> = stdout.lines().nth(1).unwrap().split_whitespace().collect();
+    assert_eq!(first[0], "local", "{stdout}");
     assert!(stdout.contains("build"), "{stdout}");
     assert!(stderr.contains("offline: host offline is down"), "{stderr}");
     server.abort();
@@ -323,4 +325,33 @@ async fn permissions_device_is_written_on_the_named_host_only() {
     assert_eq!(output.status.code(), Some(0), "{:?}", output);
     server.abort();
     remote.abort();
+}
+
+#[tokio::test]
+async fn query_on_an_unknown_or_unready_host_is_a_usage_error() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let sync =
+        json!({"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0});
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync},
+        {"name":"offline","kind":"ssh","status":"down","endpoint":null,"error":"no forward","remote":null,"sync":sync}
+    ]);
+    let app = Router::new().route("/v1/hosts", get(move || async move { Json(registry) }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for (host, expected) in [
+        ("missing", "local (ready), offline (down)"),
+        ("offline", "is down"),
+    ] {
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+            .args(["--endpoint", &endpoint, "--host", host, "query", "up"])
+            .env("ARIADNE_TELEMETRY", "off")
+            .output()
+            .await
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{stderr}");
+        assert!(stderr.contains(expected), "{stderr}");
+    }
+    server.abort();
 }
