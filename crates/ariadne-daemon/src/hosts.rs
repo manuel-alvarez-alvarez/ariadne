@@ -1,7 +1,8 @@
 //! The hosts a client can address (037), and the SSH forward of each
 //! `ssh://` host: one `ssh -N -L` child per host, kept up with a capped
-//! backoff, and its state on `GET /v1/hosts`. Each host is also kept in
-//! sync with this daemon's catalogs and settings ([`sync`]).
+//! backoff, and its state on `GET /v1/hosts`. The health of each host is
+//! checked again and again, so its status stays true. Each host is also kept
+//! in sync with this daemon's catalogs and settings ([`sync`]).
 //!
 //! The forward is the user's own `ssh`, so their keys, agent and
 //! `~/.ssh/config` apply. It carries requests, event streams and answers both
@@ -14,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ariadne_api::hosts::{HostDto, HostKind, HostStatus, HostSyncDto, SyncState};
+use ariadne_client::Client;
 use ariadne_client::endpoint::HostConfig;
 use ariadne_store::Store;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -21,7 +23,7 @@ use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout};
+use tokio::time::{Instant, sleep, sleep_until, timeout};
 use tracing::{info, warn};
 use url::Url;
 
@@ -76,9 +78,9 @@ impl Hosts {
         }))
     }
 
-    /// Start and supervise the forward of every `ssh://` host, and the
-    /// sync of every configured host, until [`Hosts::shutdown`]. A second
-    /// call does nothing.
+    /// Start and supervise the forward of every `ssh://` host, the health
+    /// checks of every configured host, and the sync of every configured
+    /// host, until [`Hosts::shutdown`]. A second call does nothing.
     pub fn start(&self) {
         if self.0.started.swap(true, Ordering::SeqCst) {
             return;
@@ -92,16 +94,17 @@ impl Hosts {
             tasks.push(tokio::spawn(sync::run(inner, index, events)));
         }
         for (index, (_, host)) in self.0.cfg.hosts.iter().enumerate() {
-            if !host.endpoint.starts_with("ssh://") {
-                continue;
-            }
             let inner = self.0.clone();
-            tasks.push(tokio::spawn(async move { inner.supervise(index).await }));
+            tasks.push(if host.endpoint.starts_with("ssh://") {
+                tokio::spawn(async move { inner.supervise(index).await })
+            } else {
+                tokio::spawn(async move { inner.direct(index).await })
+            });
         }
     }
 
-    /// End every forward: the daemon is stopping. Each child is killed with
-    /// the task that holds it.
+    /// End every forward and every health check: the daemon is stopping.
+    /// Each child is killed with the task that holds it.
     pub async fn shutdown(&self) {
         let tasks = std::mem::take(&mut *self.0.tasks.lock().unwrap());
         for task in tasks {
@@ -129,8 +132,9 @@ impl Hosts {
     }
 }
 
-/// A host as it stands before any forward or sync runs: nothing is pushed
-/// to it yet.
+/// A host as it stands before any forward, check or sync runs: nothing is
+/// pushed to it yet, and a `direct` host is `connecting` until its first
+/// good health answer.
 fn initial(name: &str, host: &HostConfig) -> HostDto {
     let sync = HostSyncDto {
         state: SyncState::Pending,
@@ -153,7 +157,7 @@ fn initial(name: &str, host: &HostConfig) -> HostDto {
             name: name.into(),
             kind: HostKind::Direct,
             endpoint: Some(host.endpoint.clone()),
-            status: HostStatus::Ready,
+            status: HostStatus::Connecting,
             error: None,
             remote: None,
             sync,
@@ -166,6 +170,27 @@ fn ready_endpoint(host: &HostDto) -> Option<String> {
     match host.status {
         HostStatus::Ready => host.endpoint.clone(),
         HostStatus::Connecting | HostStatus::Down => None,
+    }
+}
+
+/// A client for the endpoint of a host: an `http://` address, else a
+/// socket path.
+fn client_for(endpoint: &str) -> Client {
+    if endpoint.starts_with("http://") {
+        Client::tcp(endpoint)
+    } else {
+        Client::unix(endpoint)
+    }
+}
+
+/// One health check of a host: `GET /v1/health` through `client`, bounded
+/// by `bound`. Answers why the check failed.
+pub(crate) async fn check(client: &Client, bound: Duration) -> Result<(), String> {
+    match timeout(bound, client.health()).await {
+        Err(_) => Err(format!("no answer in {bound:?}")),
+        Ok(Err(error)) => Err(error.to_string()),
+        Ok(Ok(health)) if health.status == "ok" => Ok(()),
+        Ok(Ok(health)) => Err(format!("health status {:?}", health.status)),
     }
 }
 
@@ -253,6 +278,35 @@ impl Inner {
         }
     }
 
+    /// Keep the status of `direct` host `index` true: `connecting` until
+    /// its first good answer or `host_unanswered`, then `ready` while it
+    /// answers and `down` while it does not.
+    async fn direct(&self, index: usize) {
+        let (name, host) = &self.cfg.hosts[index];
+        let endpoint = &host.endpoint;
+        let client = client_for(endpoint);
+        let mut answered = match self.answer_within(&client).await {
+            Ok(()) => true,
+            Err(why) => {
+                let error = format!("{endpoint} does not answer: {why}");
+                warn!(host = %name, %error, "host down");
+                self.set(index, HostStatus::Down, Some(endpoint.clone()), Some(error));
+                false
+            }
+        };
+        loop {
+            if !answered {
+                self.until_answered(&client, self.timeouts.host_check).await;
+            }
+            info!(host = %name, "host ready");
+            self.set(index, HostStatus::Ready, Some(endpoint.clone()), None);
+            let error = self.until_silent(&client, endpoint).await;
+            warn!(host = %name, %error, "host down");
+            self.set(index, HostStatus::Down, Some(endpoint.clone()), Some(error));
+            answered = false;
+        }
+    }
+
     async fn supervise(&self, index: usize) {
         let (name, host) = &self.cfg.hosts[index];
         let base = self.timeouts.ssh_retry;
@@ -268,8 +322,9 @@ impl Inner {
         }
     }
 
-    /// One run of the forward, from its start to its exit. Answers why it
-    /// ended. A forward that came up resets `backoff` to `base`.
+    /// One run of the forward, from its start to its end. Answers why it
+    /// ended. A forward that came up resets `backoff` to `base`. A forward
+    /// whose far daemon does not answer in `host_unanswered` is killed.
     async fn forward(
         &self,
         index: usize,
@@ -316,17 +371,28 @@ impl Inner {
             })
         });
         let local = format!("http://127.0.0.1:{port}");
-        let exited = tokio::select! {
-            status = child.wait() => Some(status),
-            () = self.until_answered(&local) => None,
+        let client = client_for(&local);
+        let answered = tokio::select! {
+            status = child.wait() => Err(status),
+            answered = self.answer_within(&client) => Ok(answered),
         };
-        let status = match exited {
-            Some(status) => status,
-            None => {
+        let status = match answered {
+            Err(status) => status,
+            Ok(Err(why)) => {
+                let _ = child.kill().await;
+                return format!("the far daemon does not answer through the forward: {why}");
+            }
+            Ok(Ok(())) => {
                 *backoff = base;
                 info!(endpoint = %local, "ssh forward ready");
-                self.set(index, HostStatus::Ready, Some(local), None);
-                child.wait().await
+                self.set(index, HostStatus::Ready, Some(local.clone()), None);
+                tokio::select! {
+                    status = child.wait() => status,
+                    error = self.until_silent(&client, &local) => {
+                        let _ = child.kill().await;
+                        return error;
+                    }
+                }
             }
         };
         let last = match stderr {
@@ -343,24 +409,54 @@ impl Inner {
         })
     }
 
-    /// Probe `local` until the far daemon answers its health check.
-    async fn until_answered(&self, local: &str) {
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(self.timeouts.ssh_probe)
-            .build()
-            .expect("an HTTP client with no proxy");
-        let health = format!("{local}/v1/health");
-        loop {
-            if let Ok(response) = client.get(&health).send().await
-                && response.status().is_success()
-                && let Ok(body) = response.bytes().await
-                && serde_json::from_slice::<serde_json::Value>(&body)
-                    .is_ok_and(|health| health["status"] == "ok")
-            {
-                return;
+    /// Check a `connecting` host every `ssh_probe_interval` until its first
+    /// good answer. Answers why it failed once `host_unanswered` ran out
+    /// with no good answer.
+    async fn answer_within(&self, client: &Client) -> Result<(), String> {
+        let deadline = Instant::now() + self.timeouts.host_unanswered;
+        let mut why = String::from("no answer yet");
+        let checks = async {
+            loop {
+                match check(client, self.timeouts.ssh_probe).await {
+                    Ok(()) => return,
+                    Err(error) => why = error,
+                }
+                sleep(self.timeouts.ssh_probe_interval).await;
             }
-            sleep(self.timeouts.ssh_probe_interval).await;
+        };
+        tokio::select! {
+            () = checks => Ok(()),
+            () = sleep_until(deadline) => Err(why),
+        }
+    }
+
+    /// Check a host every `interval` until its first good answer.
+    async fn until_answered(&self, client: &Client, interval: Duration) {
+        while check(client, self.timeouts.ssh_probe).await.is_err() {
+            sleep(interval).await;
+        }
+    }
+
+    /// Check a `ready` host every `host_check` until it has given no good
+    /// answer for `host_unanswered`. Answers why it is `down`.
+    async fn until_silent(&self, client: &Client, endpoint: &str) -> String {
+        let unanswered = self.timeouts.host_unanswered;
+        let mut answered = Instant::now();
+        let mut why = String::from("no answer");
+        loop {
+            let next = async {
+                sleep(self.timeouts.host_check).await;
+                check(client, self.timeouts.ssh_probe).await
+            };
+            tokio::select! {
+                checked = next => match checked {
+                    Ok(()) => answered = Instant::now(),
+                    Err(error) => why = error,
+                },
+                () = sleep_until(answered + unanswered) => {
+                    return format!("{endpoint} has not answered for {unanswered:?}: {why}");
+                }
+            }
         }
     }
 }

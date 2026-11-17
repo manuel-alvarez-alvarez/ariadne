@@ -416,3 +416,82 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
     names.sort();
     names
 }
+
+async fn run_cli(args: &[&str]) -> (i32, String) {
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args(args)
+        .env("ARIADNE_TELEMETRY", "off")
+        .env_remove("ARIADNE_ENDPOINT")
+        .env_remove("ARIADNE_SOCKET")
+        .env_remove("ARIADNE_HOME")
+        .output()
+        .await
+        .unwrap();
+    (
+        output.status.code().unwrap(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
+#[tokio::test]
+async fn daemon_status_and_logs_on_a_named_host_show_only_that_host() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let remote_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let remote_endpoint = format!("http://{}", remote_listener.local_addr().unwrap());
+    let remote_app = Router::new()
+        .route(
+            "/v1/health",
+            get(|| async { Json(json!({"status":"ok","uptime_secs":5})) }),
+        )
+        .route(
+            "/v1/version",
+            get(|| async { Json(json!({"name":"ariadned","version":"9.9.9"})) }),
+        );
+    let remote =
+        tokio::spawn(async move { axum::serve(remote_listener, remote_app).await.unwrap() });
+    let sync =
+        json!({"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0});
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync},
+        {"name":"build","kind":"direct","status":"ready","endpoint":remote_endpoint,"error":null,"remote":null,"sync":sync}
+    ]);
+    let app = Router::new().route("/v1/hosts", get(move || async move { Json(registry) }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (code, text) = run_cli(&[
+        "--endpoint",
+        &endpoint,
+        "--host",
+        "build",
+        "daemon",
+        "status",
+    ])
+    .await;
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("9.9.9"), "{text}");
+    assert!(!text.contains("tcp") && !text.contains("service"), "{text}");
+
+    // The remote answers no /v1/logs: the command fails and names the reason.
+    let (code, text) =
+        run_cli(&["--endpoint", &endpoint, "--host", "build", "daemon", "logs"]).await;
+    assert_ne!(code, 0, "{text}");
+    assert!(!text.contains("reading the log file"), "{text}");
+
+    server.abort();
+    remote.abort();
+}
+
+#[tokio::test]
+async fn daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home() {
+    let home = std::env::temp_dir().join(format!("ariadne-no-daemon-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let home = home.to_str().unwrap();
+    let (code, text) = run_cli(&["--host", "local", "daemon", "--home", home, "status"]).await;
+    assert_ne!(code, 0, "{text}");
+    assert!(text.contains(home), "{text}");
+}

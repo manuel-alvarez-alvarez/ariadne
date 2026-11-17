@@ -9,10 +9,10 @@
  * picked.
  */
 
-import { useQuery } from "@tanstack/react-query"
 import { ChevronDownIcon, XIcon } from "lucide-react"
 import { type ComponentProps, useEffect, useRef, useState } from "react"
 
+import { type Host, useHostLists } from "@/api"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -140,12 +140,16 @@ function FilterTrigger({
  */
 export function AgentFilter({
   value,
+  hosts,
   onSelect,
 }: {
   value: string
+  /** The selected hosts, whose agents are listed. */
+  hosts: readonly Host[]
   onSelect: (value: string) => void
 }) {
-  const agents = useQuery(acpAgentsQueryOptions("local"))
+  const agents = useHostLists(hosts, acpAgentsQueryOptions)
+  const ids = [...new Set(agents.rows.map((agent) => agent.id))].sort()
 
   return (
     <FilterMenu
@@ -153,7 +157,7 @@ export function AgentFilter({
       value={value || ALL}
       valueLabel={value || null}
       onSelect={onSelect}
-      options={(agents.data ?? []).map((agent) => ({ value: agent.id, label: agent.id }))}
+      options={ids.map((id) => ({ value: id, label: id }))}
       allLabel="All agents"
     />
   )

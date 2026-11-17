@@ -83,10 +83,10 @@ function withHost(command: string, host: string): string {
   return host === LOCAL_HOST ? command : `${command} --host ${host}`
 }
 
-export function goalCopyEntries(goalId: string): CopyEntry[] {
+export function goalCopyEntries(goalId: string, host: string = LOCAL_HOST): CopyEntry[] {
   return [
     { label: "Copy goal ID", text: goalId },
-    { label: "Copy attach command", text: attachCommand(goalId) },
+    { label: "Copy attach command", text: attachCommand(goalId, host) },
   ]
 }
 

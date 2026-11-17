@@ -51,6 +51,7 @@ import { Link, useSearchParams } from "react-router-dom"
 import type { Host, SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
+import { HostLabel } from "@/components/host-label"
 import { PanelHeader } from "@/components/panel-header"
 import { TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
@@ -64,6 +65,7 @@ import { SeatSummary } from "@/features/models/agent-summary"
 import { ModelPin } from "@/features/models/model-pin"
 import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskQueryOptions } from "@/features/tasks/queries"
+import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
 import { paths, usePanelSessionTo, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
@@ -109,6 +111,7 @@ export function SessionPanelHeader({
     enabled: Boolean(session.goal_id),
   })
   const attention = shownAttention(session)
+  const showHost = usePanelShowsHost()
   return (
     <PanelHeader
       breadcrumb={breadcrumb}
@@ -129,6 +132,7 @@ export function SessionPanelHeader({
               orthogonal — an agent blocked on a permission prompt is still
               running — and the pair is what says what to do about it. */}
           {attention ? <SessionAttentionBadge attention={attention} /> : null}
+          {showHost ? <HostLabel host={host} /> : null}
         </>
       }
       id={

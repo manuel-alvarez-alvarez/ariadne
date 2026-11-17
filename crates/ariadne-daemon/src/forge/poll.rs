@@ -728,11 +728,29 @@ async fn read_row(
         return Err("the forge returned another request number".into());
     }
     let requested = review_requested(handoff, client, slug, login, row, &read, asks).await;
+    let listed = asks && read.state == "open";
+    let kept = keep_read(handoff, client, slug, login, row, read, requested, since).await;
+    // Only after the read is kept (029, rule 8): a round queued earlier
+    // would run on the head of the last read.
     if row.role == "reviewer" {
-        handoff
-            .live
-            .observe_review_request(&row.id, asks && read.state == "open");
+        handoff.live.observe_review_request(&row.id, listed);
     }
+    kept
+}
+
+/// Keep one read of a request in memory: the pull alone where it is no
+/// longer open or nothing a detail read shows moved, else with its details.
+#[allow(clippy::too_many_arguments)]
+async fn keep_read(
+    handoff: &Handoff,
+    client: &ForgeClient,
+    slug: &str,
+    login: &str,
+    row: &PullRequestRow,
+    read: pulls::ForgePullRequest,
+    requested: bool,
+    since: u64,
+) -> Result<(), String> {
     if read.state != "open" {
         handoff.live.set_pull(&row.id, read, requested);
         return Ok(());

@@ -17,13 +17,19 @@ import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
 import { aGoal, aModel, aRepository, aSessionPage } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { AttentionPopover } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import { GoalsListPage } from "./goals-list-page"
 
 const MINE = aGoal({ id: "01JLOCALGOAL0000000000000A", title: "Goal on local" })
 const THEIRS = aGoal({ id: "01JBOXGOAL000000000000000B", title: "Goal on box" })
+
+const copied = vi.hoisted(() => vi.fn())
+vi.mock("@/lib/clipboard", async (original) => ({
+  ...(await original<typeof import("@/lib/clipboard")>()),
+  copyText: copied,
+}))
 
 /** What every list the board and its strip read answers when it has nothing. */
 const EMPTY = {
@@ -72,6 +78,113 @@ it("reads only the picked host, and names no host on its lanes", async () => {
       (request) => request.origin.includes("127.0.0.1") && request.url.pathname === "/v1/goals",
     ),
   ).toBe(false)
+})
+
+it("names each lane's host under a saved pick the daemon no longer lists", async () => {
+  useSettingsStore.setState({ hostFilter: "gone" })
+  stubHosts({
+    local: { ...EMPTY, "/v1/goals": [MINE] },
+    box: { ...EMPTY, "/v1/goals": [THEIRS] },
+  })
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+
+  await screen.findByRole("link", { name: THEIRS.title })
+  await screen.findByRole("link", { name: MINE.title })
+  expect(lanesHosts()).toEqual(["box", "local"])
+})
+
+it("keeps the host of the lanes that stay when a named host goes down", async () => {
+  stubHosts({ local: { ...EMPTY, "/v1/goals": [MINE] } }, [
+    LOCAL,
+    { ...BOX, status: "down", error: "connection refused" },
+  ])
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+
+  await screen.findByRole("link", { name: MINE.title })
+  await waitFor(() => expect(lanesHosts()).toEqual(["local"]))
+})
+
+it("names no host on the lanes with only local listed", async () => {
+  stubHosts({ local: { ...EMPTY, "/v1/goals": [MINE] } }, [LOCAL])
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+
+  await screen.findByRole("link", { name: MINE.title })
+  expect(screen.queryAllByTitle("Host")).toHaveLength(0)
+})
+
+const STUCK: AttentionItemDto = {
+  id: "recovery:resource:descriptor-limit",
+  occurrence: "",
+  producer: "recovery",
+  reason: "resource",
+  summary: "The daemon ran out of file descriptors.",
+  required_action: "Free file descriptors, then retry the task.",
+  since: "2026-11-17T10:00:00Z",
+  affected: [{ kind: "task", id: "01OTHER", label: "another task" }],
+  target: { kind: "task", task_id: "01OTHER" },
+}
+
+it("names local on a local attention row under All", async () => {
+  stubHosts({
+    local: { ...EMPTY, "/v1/goals": [], "/v1/attention": { items: [STUCK], complete: true } },
+    box: { ...EMPTY, "/v1/goals": [] },
+  })
+  renderScreen(<AttentionPopover />, { route: "/goals" })
+
+  fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
+  const row = (await screen.findByText(STUCK.summary)).closest("li") as HTMLElement
+  expect(within(row).getByTitle("Host").textContent).toBe("local")
+})
+
+it("names no host on an attention row under one picked host", async () => {
+  useSettingsStore.setState({ hostFilter: "box" })
+  stubHosts({
+    box: { ...EMPTY, "/v1/goals": [], "/v1/attention": { items: [STUCK], complete: true } },
+  })
+  renderScreen(<AttentionPopover />, { route: "/goals" })
+
+  fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
+  const row = (await screen.findByText(STUCK.summary)).closest("li") as HTMLElement
+  expect(within(row).queryByTitle("Host")).toBeNull()
+})
+
+it("names the goal panel's host, local included, while a named host is listed", async () => {
+  stubEventSource()
+  stubHosts({ local: { ...EMPTY, [`/v1/goals/${MINE.id}`]: MINE } })
+  renderScreen(<DetailPanels />, { route: `/goals?goal=${MINE.id}` })
+
+  await screen.findByRole("heading", { name: MINE.title })
+  await waitFor(() =>
+    expect(screen.getAllByTitle("Host").map((label) => label.textContent)).toEqual(["local"]),
+  )
+})
+
+it("names no host in the goal panel with only local listed", async () => {
+  stubEventSource()
+  stubHosts({ local: { ...EMPTY, [`/v1/goals/${MINE.id}`]: MINE } }, [LOCAL])
+  renderScreen(<DetailPanels />, { route: `/goals?goal=${MINE.id}` })
+
+  await screen.findByRole("heading", { name: MINE.title })
+  expect(screen.queryAllByTitle("Host")).toHaveLength(0)
+})
+
+it("copies the attach command of a goal of a named host with its host", async () => {
+  const user = userEvent.setup()
+  stubEventSource()
+  stubHosts({ box: { ...EMPTY, [`/v1/goals/${THEIRS.id}`]: THEIRS } })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?goal=${THEIRS.id}&host=box` },
+  )
+
+  await screen.findByRole("heading", { name: THEIRS.title })
+  await user.click(screen.getByRole("button", { name: "Copy goal id" }))
+  await user.click(await screen.findByRole("menuitem", { name: "Copy attach command" }))
+
+  await waitFor(() => expect(copied).toHaveBeenCalled())
+  expect(copied.mock.calls[0]?.[0]).toBe(`ariadne attach ${THEIRS.id} --host box`)
 })
 
 it("opens a goal's panel on the host its link names", async () => {
@@ -199,6 +312,14 @@ it("shows a question a remote host's stream delivers, and answers it on that hos
   expect(answer?.url.pathname).toBe("/v1/sessions/s-box/agent-requests/r1/answer")
   expect(JSON.parse(answer?.body ?? "{}")).toEqual({ option_id: "pg" })
 })
+
+/** The host each lane names, sorted. */
+function lanesHosts(): string[] {
+  return screen
+    .getAllByTitle("Host")
+    .map((badge) => badge.textContent ?? "")
+    .sort()
+}
 
 /** The paths a host was asked to read, each once, sorted. */
 function reads(seen: ReturnType<typeof stubHosts>, host: "local" | "box"): string[] {

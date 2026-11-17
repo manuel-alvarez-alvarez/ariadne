@@ -153,12 +153,27 @@ pub(crate) async fn restart(home: Option<PathBuf>, timeout: u64, format: Format)
 ///
 /// Read-only in every part: the health call, and the one question the service
 /// manager is asked about the service this home was installed with.
-pub(crate) async fn status(client: &Client, home: Option<PathBuf>, format: Format) -> Result<()> {
+///
+/// A `remote` daemon is a named host other than `local`: its health and
+/// version are all that can be said of it, so the service manager and the TCP
+/// setting of this machine are never read.
+pub(crate) async fn status(
+    client: &Client,
+    home: Option<PathBuf>,
+    remote: bool,
+    format: Format,
+) -> Result<()> {
     let h = client.health().await?;
     let root = ariadne_home(home);
-    let service = Service::detect(&root).await;
+    let service = match remote {
+        true => None,
+        false => Service::detect(&root).await,
+    };
     let version = client.version().await.ok();
-    let (pid, tcp) = local(client, &root);
+    let (pid, tcp) = match remote {
+        true => (None, None),
+        false => local(client, &root),
+    };
     let payload = json!({
         "status": h.status,
         "uptime_secs": h.uptime_secs,
@@ -175,7 +190,7 @@ pub(crate) async fn status(client: &Client, home: Option<PathBuf>, format: Forma
         })),
     });
     print(format, &payload, || {
-        print_kv(&[
+        let mut rows = vec![
             // A daemon that answered says `ok`: a verdict rather than a
             // lifecycle status, and it reads here in the green `✓` `ariadne
             // doctor` gives the same word.
@@ -191,9 +206,12 @@ pub(crate) async fn status(client: &Client, home: Option<PathBuf>, format: Forma
             ("uptime", duration(h.uptime_secs).into()),
             ("pid", pid.map_or("-".into(), |pid| pid.to_string()).into()),
             ("socket", client.endpoint().into()),
-            ("tcp", tcp.unwrap_or_else(|| "disabled".into()).into()),
-            ("service", management(service.as_ref()).into()),
-        ]);
+        ];
+        if !remote {
+            rows.push(("tcp", tcp.unwrap_or_else(|| "disabled".into()).into()));
+            rows.push(("service", management(service.as_ref()).into()));
+        }
+        print_kv(&rows);
     })
 }
 
@@ -236,6 +254,7 @@ const LOG_TAIL: usize = 200;
 pub(crate) async fn logs(
     client: &Client,
     home: Option<PathBuf>,
+    remote: bool,
     follow: bool,
     service: Option<String>,
     level: Option<String>,
@@ -245,7 +264,9 @@ pub(crate) async fn logs(
         false => print_log(client, service.as_deref(), level.as_deref()).await,
     };
     match served {
-        Err(e) if follow::unreachable(&e) => {
+        // A named host has no file here: its log is its daemon's, so a host
+        // that does not answer is the failure, never this machine's file.
+        Err(e) if !remote && follow::unreachable(&e) => {
             note(&format!(
                 "cannot reach the ariadne daemon at {} — reading the log file instead",
                 client.endpoint()
