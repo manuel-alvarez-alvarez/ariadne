@@ -71,6 +71,9 @@ pub struct Config {
     /// The `gh` the GitHub integration runs (025). `None` looks up `gh` on
     /// the daemon's PATH.
     pub gh_bin: Option<String>,
+    /// The `ssh` every `ssh://` host's forward runs (037). `None` looks up
+    /// `ssh` on the daemon's PATH.
+    pub ssh_bin: Option<String>,
     /// A command that stands in for the whole model install — the venv, pip
     /// and the weights — so the suite proves the install's states without
     /// downloading two gigabytes. Set by the test harness alone: it is not a
@@ -167,6 +170,7 @@ impl Config {
             python_bin: file.python_bin,
             nvidia_smi_bin: file.nvidia_smi_bin,
             gh_bin: file.gh_bin,
+            ssh_bin: file.ssh_bin,
             ai_permissions_installer: None,
             ai_permissions_serve_command: None,
             ai_permissions_endpoint: None,
@@ -217,7 +221,11 @@ impl Config {
         } else {
             format!("{}: none — every default applies", path.display())
         };
-        Ok(format!("{verdict}\nskills_dir = {}", skills_dir.display()))
+        let ssh_bin = file.ssh_bin.as_deref().unwrap_or("ssh");
+        Ok(format!(
+            "{verdict}\nskills_dir = {}\nssh_bin = {ssh_bin}",
+            skills_dir.display()
+        ))
     }
 }
 
