@@ -412,6 +412,45 @@ async fn completion_reads_the_typed_endpoint_and_the_typed_host() {
     assert_eq!(sorted(ids), ["01BUILD", "01LOCAL"]);
 }
 
+#[tokio::test]
+async fn completion_of_all_hosts_reads_them_together_within_one_budget() {
+    // Each host answers in 450 ms: read one after another they pass the 800 ms budget.
+    async fn slow(registry: serde_json::Value, task: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/v1/hosts", get(move || async move { Json(registry) }))
+            .route(
+                "/v1/tasks",
+                get(move || async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+                    Json(json!([{"id":task,"status":"open","title":"t"}]))
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        endpoint
+    }
+    let build = slow(json!([]), "01BUILD").await;
+    let main = slow(json!([]), "01LOCAL").await;
+    let registry = json!([
+        host("local", "ready", Some(&main)),
+        host("build", "ready", Some(&build)),
+    ]);
+    let typed = slow(registry, "01LOCAL").await;
+    let ids = complete(&[
+        "ariadne",
+        "--endpoint",
+        &typed,
+        "--host",
+        "all",
+        "task",
+        "inspect",
+        "",
+    ])
+    .await;
+    assert_eq!(sorted(ids), ["01BUILD", "01LOCAL"]);
+}
+
 fn sorted(mut names: Vec<String>) -> Vec<String> {
     names.sort();
     names

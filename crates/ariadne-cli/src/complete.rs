@@ -152,17 +152,41 @@ async fn targets(words: &[String]) -> Vec<Client> {
     }
 }
 
-/// One JSON document per host the command line selects, fetched on one round.
-fn fetch_values(path: &str) -> Vec<Value> {
+/// `work` for each daemon the command line selects, all at once under one
+/// shared budget. A host that misses the deadline adds nothing; the hosts that
+/// answered in time keep their results.
+fn per_host<T, Fut>(work: impl Fn(Client) -> Fut) -> Vec<T>
+where
+    Fut: Future<Output = T>,
+{
     let words: Vec<String> = std::env::args().collect();
-    round(async {
-        let mut out = Vec::new();
-        for client in targets(&words).await {
-            out.extend(get(&client, path).await);
-        }
-        out
+    let Some(rt) = runtime() else {
+        return Vec::new();
+    };
+    rt.block_on(async {
+        let deadline = tokio::time::Instant::now() + BUDGET;
+        let Ok(clients) = tokio::time::timeout_at(deadline, targets(&words)).await else {
+            debug("timed out", &BUDGET);
+            return Vec::new();
+        };
+        let runs = clients.into_iter().map(|client| {
+            let run = work(client);
+            async move { tokio::time::timeout_at(deadline, run).await.ok() }
+        });
+        futures_util::future::join_all(runs)
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
     })
-    .unwrap_or_default()
+}
+
+/// One JSON document per host the command line selects, fetched together.
+fn fetch_values(path: &str) -> Vec<Value> {
+    per_host(|client| async move { get(&client, path).await })
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// One JSON document from the daemon, or nothing at all.
@@ -374,23 +398,19 @@ fn session_has_ended(row: &Value) -> bool {
 /// The three lists are read together on one round rather than one after
 /// another, so the budget covers the lot.
 pub(crate) fn attach_ids() -> Vec<CompletionCandidate> {
-    let words: Vec<String> = std::env::args().collect();
-    let Some((sessions, tasks, goals)) = round(async {
-        let (mut sessions, mut tasks, mut goals) = (Vec::new(), Vec::new(), Vec::new());
-        for client in targets(&words).await {
-            let (s, t, g) = tokio::join!(
-                get(&client, "/v1/sessions"),
-                get(&client, "/v1/tasks"),
-                get(&client, "/v1/goals"),
-            );
-            sessions.extend(session_rows(s));
-            tasks.extend(rows(t));
-            goals.extend(rows(g));
-        }
-        (sessions, tasks, goals)
-    }) else {
-        return Vec::new();
-    };
+    let (mut sessions, mut tasks, mut goals) = (Vec::new(), Vec::new(), Vec::new());
+    let hosts = per_host(|client| async move {
+        tokio::join!(
+            get(&client, "/v1/sessions"),
+            get(&client, "/v1/tasks"),
+            get(&client, "/v1/goals"),
+        )
+    });
+    for (s, t, g) in hosts {
+        sessions.extend(session_rows(s));
+        tasks.extend(rows(t));
+        goals.extend(rows(g));
+    }
     attach_order(sessions, tasks, goals)
 }
 
