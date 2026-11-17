@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-11-16
+updated: 2026-11-17
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -173,7 +173,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    holds one. Because nothing is copied into the database, rewording a default
    reaches every session started after it. The notice an orchestrator gets
    when the scheduler moved an exhausted agent to another model (021) is one
-   of those constants too.
+   of those constants too, and so is the note the first daemon prompt after
+   a cancelled turn starts with (021 rule 8).
 9. A briefing is rendered by substituting `{name}` tokens. Rendering is
    lenient by construction: an unknown token, an unclosed brace and an empty
    template all render to something, and none of them fails a spawn.

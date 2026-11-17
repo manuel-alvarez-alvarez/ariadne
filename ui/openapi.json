@@ -2039,6 +2039,43 @@
         }
       }
     },
+    "/v1/hosts/{name}/reconnect": {
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "Make one configured host reconnect at once, and answer the host once it\nhas acted on it.",
+        "operationId": "reconnect",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "host name; not `local`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "the name is `local`"
+          },
+          "404": {
+            "description": "no configured host has the name"
+          }
+        }
+      }
+    },
     "/v1/logs": {
       "get": {
         "tags": [

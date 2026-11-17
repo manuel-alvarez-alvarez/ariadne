@@ -179,8 +179,12 @@ pub(crate) struct Cli {
     )]
     pub endpoint: Option<String>,
 
-    /// Run on a configured host, or all hosts
+    /// Run on `local`, a configured host name, or `all` (for reads only)
     #[arg(long, global = true, help_heading = GLOBAL, value_parser = host_name,
+        value_name = "local|NAME|all",
+        long_help = "Run on `local` (the daemon the endpoint names), on a host name from \
+            `ariadne host ls`, or on `all` hosts. `all` is for reads: lists, reads and \
+            streams. A write runs on one host.",
         add = clap_complete::engine::ArgValueCandidates::new(crate::complete::host_names))]
     pub host: Option<String>,
 
@@ -798,12 +802,13 @@ pub(crate) enum HostCommand {
     Ls,
 }
 
+/// A host name has only letters, digits, `-` and `_` (spec 037, rule 3), so
+/// a path, a URL or a `host:port` is an address that `--endpoint` takes.
 fn host_name(value: &str) -> Result<String, String> {
-    if ["/", ".", "~", "http://", "https://"]
-        .iter()
-        .any(|prefix| value.starts_with(prefix))
-    {
-        Err("use --endpoint for a daemon address".into())
+    if value.starts_with('~') || value.contains(['/', ':', '.', '@']) {
+        Err(format!(
+            "{value} looks like an address: use --endpoint for a daemon address"
+        ))
     } else {
         Ok(value.into())
     }
