@@ -372,8 +372,10 @@ same binary also serves (013).
     is for reads.
 44. `local` keeps the endpoint the CLI resolved. A named host is reached on
     the `endpoint` of its registry row. An unknown name is a usage error that
-    names each configured host with its status, even for a local-only command. A host that is not `ready` is
-    a usage error with its status and its error. Each status in a message or
+    names each configured host with its status, even for a local-only command.
+    A host that is not `ready` is a usage error with its status and its error,
+    before any local-only command guard. A local-only command refuses `all`
+    before registry access, even when the local daemon is down. Each status in a message or
     a warning is lowercase, as the registry spells it.
 45. Each command path declares one kind, in `hosts.rs` `KINDS`. The kind never
     comes from the last word of the path. The kinds are: a list; a read of

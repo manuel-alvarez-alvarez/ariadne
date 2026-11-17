@@ -216,6 +216,11 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
     if name == "local" {
         return crate::run(cli, local).await;
     }
+    if name == "all"
+        && let Kind::Local(reason) = kind
+    {
+        return Err(Failure::usage(format!("{reason}; run it with --host local")).err());
+    }
     let hosts: Vec<HostDto> = local.get_json("/v1/hosts").await?;
     let host = if name == "all" {
         None
@@ -230,11 +235,6 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
         })?;
         Some(host)
     };
-    if let Kind::Local(reason) = kind
-        && name != "local"
-    {
-        return Err(Failure::usage(format!("{reason}; run it with --host local")).err());
-    }
     if name == "all" {
         let accepting = match kind {
             Kind::HostOwned if synced_flag(&cli.command).is_some() => Some(vec!["local"]),
@@ -287,6 +287,9 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
             .map(|error| format!(": {error}"))
             .unwrap_or_default();
         return Err(Failure::usage(format!("host {name} is {}{error}", status(host.status))).err());
+    }
+    if let Kind::Local(reason) = kind {
+        return Err(Failure::usage(format!("{reason}; run it with --host local")).err());
     }
     if kind == Kind::HostOwned
         && let Some(message) = synced_flag(&cli.command)

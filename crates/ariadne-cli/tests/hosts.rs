@@ -459,6 +459,11 @@ async fn each_command_takes_the_hosts_of_its_kind() {
             vec!["task", "ls"],
             "host offline is down: no forward",
         ),
+        (
+            "offline",
+            vec!["skill", "reset", "coding"],
+            "host offline is down: no forward",
+        ),
         // A write on every host names only the hosts that take it.
         (
             "all",
@@ -496,4 +501,29 @@ async fn each_command_takes_the_hosts_of_its_kind() {
     assert!(stderr.contains("warning: offline: down"), "{stderr}");
     server.abort();
     remote.abort();
+}
+
+#[tokio::test]
+async fn all_refuses_local_commands_without_a_daemon() {
+    let home = tempfile::tempdir().unwrap();
+    let endpoint = home.path().join("absent.sock");
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args([
+            "--endpoint",
+            endpoint.to_str().unwrap(),
+            "--host",
+            "all",
+            "host",
+            "ls",
+        ])
+        .env("ARIADNE_TELEMETRY", "off")
+        .output()
+        .await
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("registry of the local daemon; run it with --host local"),
+        "{stderr}"
+    );
 }
