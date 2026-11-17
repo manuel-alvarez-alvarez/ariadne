@@ -37,16 +37,16 @@ export function modelsQueryOptions(host: Host) {
  * written into the list in place: a screen of toggles must not flicker back
  * to the old answer while a refetch is in flight.
  */
-export function useSetModelEnabled() {
+export function useSetModelEnabled(host: Host) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: SetModelEnabledRequest) =>
-      unwrap(api("local").PUT("/v1/models/enabled", { body })),
+      unwrap(api(host).PUT("/v1/models/enabled", { body })),
     onSuccess: (updated) => {
-      queryClient.setQueryData(qk.models.list("local"), (models: ModelDto[] | undefined) =>
+      queryClient.setQueryData(qk.models.list(host), (models: ModelDto[] | undefined) =>
         models?.map((model) => (model.id === updated.id ? updated : model)),
       )
-      void queryClient.invalidateQueries({ queryKey: qk.models.lists("local") })
+      void queryClient.invalidateQueries({ queryKey: qk.models.lists(host) })
     },
   })
 }
@@ -57,16 +57,15 @@ export function useSetModelEnabled() {
  * The id rides in the body for the same reason as {@link useSetModelEnabled}:
  * a model id carries `:` and, for opencode's, `/`.
  */
-export function useSetModelRank() {
+export function useSetModelRank(host: Host) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: SetModelRankRequest) =>
-      unwrap(api("local").PUT("/v1/models/rank", { body })),
+    mutationFn: (body: SetModelRankRequest) => unwrap(api(host).PUT("/v1/models/rank", { body })),
     onSuccess: (updated) => {
-      queryClient.setQueryData(qk.models.list("local"), (models: ModelDto[] | undefined) =>
+      queryClient.setQueryData(qk.models.list(host), (models: ModelDto[] | undefined) =>
         models?.map((model) => (model.id === updated.id ? updated : model)),
       )
-      void queryClient.invalidateQueries({ queryKey: qk.models.lists("local") })
+      void queryClient.invalidateQueries({ queryKey: qk.models.lists(host) })
     },
   })
 }

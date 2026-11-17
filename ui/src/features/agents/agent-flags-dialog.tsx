@@ -18,7 +18,7 @@ import { useEffect } from "react"
 import { useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
 
-import type { AgentConfigDto } from "@/api"
+import type { AgentConfigDto, Host } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -48,13 +48,16 @@ export function AgentFlagsDialog({
   open,
   onOpenChange,
   config,
+  host,
 }: {
+  /** The host whose agent is edited: the write goes to its daemon. */
+  host: Host
   open: boolean
   onOpenChange: (open: boolean) => void
   /** The agent being edited, or null while the dialog has never been opened. */
   config: AgentConfigDto | null
 }) {
-  const updateConfig = useUpdateAgentConfig()
+  const updateConfig = useUpdateAgentConfig(host)
 
   const form = useForm<AgentFlagsFormValues>({
     resolver: zodResolver(agentFlagsSchema),

@@ -27,7 +27,7 @@
 
 import { toast } from "sonner"
 
-import type { ModelDto, ModelRank } from "@/api"
+import type { Host, ModelDto, ModelRank } from "@/api"
 import { ScrollableTable } from "@/components/scroll-edge"
 import {
   Select,
@@ -97,7 +97,16 @@ const RANK_ITEMS = [
  */
 const PINNED = "sticky right-0 z-20 bg-inherit pe-3"
 
-export function ModelTable({ models, isPending }: { models: ModelDto[]; isPending: boolean }) {
+/** One agent's catalog on one host: a switch or a rank is written to that host. */
+export function ModelTable({
+  host,
+  models,
+  isPending,
+}: {
+  host: Host
+  models: ModelDto[]
+  isPending: boolean
+}) {
   return (
     <ScrollableTable className="rounded-lg border" pinnedEnd>
       <TableHeader>
@@ -129,7 +138,7 @@ export function ModelTable({ models, isPending }: { models: ModelDto[]; isPendin
             </TableRow>
           ))
         ) : models.length ? (
-          models.map((model) => <ModelRow key={model.id} model={model} />)
+          models.map((model) => <ModelRow key={model.id} host={host} model={model} />)
         ) : (
           <TableRow className="bg-background hover:bg-transparent">
             <TableCell colSpan={4} className="py-6 text-center text-muted-foreground text-sm">
@@ -143,8 +152,8 @@ export function ModelTable({ models, isPending }: { models: ModelDto[]; isPendin
   )
 }
 
-function ModelRow({ model }: { model: ModelDto }) {
-  const setEnabled = useSetModelEnabled()
+function ModelRow({ host, model }: { host: Host; model: ModelDto }) {
+  const setEnabled = useSetModelEnabled(host)
 
   function toggle(enabled: boolean) {
     setEnabled.mutate(
@@ -189,7 +198,7 @@ function ModelRow({ model }: { model: ModelDto }) {
         {model.description ?? <span className="text-muted-foreground italic">nothing known</span>}
       </TableCell>
       <TableCell>
-        <RankPicker model={model} />
+        <RankPicker host={host} model={model} />
       </TableCell>
       <TableCell className={cn("text-right", PINNED)}>
         <Tooltip>
@@ -222,8 +231,8 @@ function ModelRow({ model }: { model: ModelDto }) {
  * clears back to unranked. The list is where the meaning of each rank is
  * said, since there is nowhere else on this screen to put it.
  */
-function RankPicker({ model }: { model: ModelDto }) {
-  const setRank = useSetModelRank()
+function RankPicker({ host, model }: { host: Host; model: ModelDto }) {
+  const setRank = useSetModelRank(host)
 
   function change(value: string | null) {
     const rank = value === null || value === UNRANKED ? null : (value as ModelRank)
