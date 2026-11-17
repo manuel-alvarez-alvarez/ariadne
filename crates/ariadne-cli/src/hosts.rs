@@ -157,14 +157,17 @@ fn device_only(command: &Command) -> bool {
     )
 }
 
-/// The command line as typed, without `--host`, so each host runs it alone.
+/// The command line as typed, without `--host` and `--endpoint`, so each host
+/// runs it alone, on the endpoint the caller adds.
 fn forwarded_args() -> Vec<std::ffi::OsString> {
     let mut args = Vec::new();
     let mut original = std::env::args_os().skip(1);
     while let Some(arg) = original.next() {
-        if arg == "--host" {
+        if arg == "--host" || arg == "--endpoint" {
             original.next();
-        } else if !arg.to_string_lossy().starts_with("--host=") {
+        } else if !arg.to_string_lossy().starts_with("--host=")
+            && !arg.to_string_lossy().starts_with("--endpoint=")
+        {
             args.push(arg);
         }
     }

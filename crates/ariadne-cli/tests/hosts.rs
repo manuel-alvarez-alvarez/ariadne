@@ -304,6 +304,23 @@ async fn permissions_device_is_written_on_the_named_host_only() {
         stderr.contains("warning: bare: host bare has no endpoint"),
         "{stderr}"
     );
+    // An `--endpoint` typed after the subcommand does not reach the children twice.
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args([
+            "--host",
+            "all",
+            "permissions",
+            "ai",
+            "show",
+            "--format",
+            "json",
+        ])
+        .args(["--endpoint", &endpoint])
+        .env("ARIADNE_TELEMETRY", "off")
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{:?}", output);
     server.abort();
     remote.abort();
 }
