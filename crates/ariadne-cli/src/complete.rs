@@ -701,6 +701,17 @@ fn model_help(m: &Value) -> &str {
         .unwrap_or_else(|| s(m, "agent_id"))
 }
 
+/// Configured hosts plus the fan-out selector.
+pub(crate) fn host_names() -> Vec<CompletionCandidate> {
+    let mut names = vec![CompletionCandidate::new("all")];
+    names.extend(
+        fetch("/v1/hosts")
+            .iter()
+            .map(|host| candidate(s(host, "name"), s(host, "status").into())),
+    );
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

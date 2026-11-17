@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod complete;
 mod error;
+mod hosts;
 mod output;
 mod telemetry;
 
@@ -81,7 +82,7 @@ fn block_on(cli: Cli, command: String) -> Result<ExitCode> {
             _ => Telemetry::enabled(Arc::clone(&client)),
         };
         let started = Instant::now();
-        let outcome = run(cli, client).await;
+        let outcome = hosts::run(cli, client, &command).await;
         if let Some(telemetry) = telemetry {
             let result = match &outcome {
                 Ok(code) if code == &ExitCode::SUCCESS => "ok",
@@ -116,6 +117,7 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
     }
 
     let outcome = match cli.command {
+        Command::Host { .. } => hosts::list(&client, format).await,
         Command::Version => commands::version(&client, format).await,
         Command::Completions {
             shell,
@@ -132,7 +134,11 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             // daemon rather than driving one, and `--endpoint` is how a daemon
             // that is not this host's home is read.
             DaemonCommand::Status => {
-                let client = Client::resolve(cli.endpoint.as_deref(), home.clone());
+                let client = if cli.host.is_some() {
+                    Arc::clone(&client)
+                } else {
+                    Arc::new(Client::resolve(cli.endpoint.as_deref(), home.clone()))
+                };
                 commands::daemon::status(&client, home, format).await
             }
             // Read like `status` rather than driven like the rest: the log
@@ -143,7 +149,11 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
                 service,
                 level,
             } => {
-                let client = Client::resolve(cli.endpoint.as_deref(), home.clone());
+                let client = if cli.host.is_some() {
+                    Arc::clone(&client)
+                } else {
+                    Arc::new(Client::resolve(cli.endpoint.as_deref(), home.clone()))
+                };
                 commands::daemon::logs(&client, home, follow, service, level).await
             }
         },

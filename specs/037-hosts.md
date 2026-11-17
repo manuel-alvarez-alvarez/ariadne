@@ -23,7 +23,8 @@ In: the `[hosts.<name>]` tables of `config.toml`, their validation, the
 SSH forward the daemon keeps for each `ssh://` host, and the push of the local
 catalogs and settings to each host. Out: a Rust SSH library, a reverse forward
 from the far daemon, cloning a repository on a host, any write from a host
-back to this daemon, the CLI `--host` flag and any desktop change. The transports and the event stream are spec 012's.
+back to this daemon and any desktop change. CLI selection follows spec 014.
+The transports and the event stream are spec 012's.
 
 ## Behavior
 
@@ -69,6 +70,7 @@ back to this daemon, the CLI `--host` flag and any desktop change. The transport
 14. One forward carries requests, event streams and answers both ways. The
     forward is the user's own `ssh`: their keys, agent and `~/.ssh/config`
     apply.
+15. CLI host selection follows spec 014.
 
 ### Sync
 

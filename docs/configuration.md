@@ -276,11 +276,16 @@ minutes, the flag at ten, a relaunch at thirty) and takes neither key.
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
 the socket from it (`--home` > `ARIADNE_HOME` > `~/.ariadne`, then that home's
 `socket_path` > `<home>/ariadne.sock`), so every command addresses the daemon
-of the home it runs in. `--endpoint` (whose old spelling `--host` still works)
-overrides that with a socket path or `http://host:port`, and so does
+of the home it runs in. `--endpoint` overrides that with a socket path
+or `http://host:port`, and so does
 `ARIADNE_ENDPOINT` — read after the flag and before the home, with the older
 `ARIADNE_SOCKET`, which every agent session is still spawned with, honoured
 after it.
+
+To select a configured host, use `--host NAME`.
+The daemon selected by `--endpoint` supplies the host registry.
+Use `--host all` to read across hosts, or `--host local` to address that daemon.
+See [Selecting a host](cli.md#selecting-a-host) for the flag reference and command restrictions.
 
 `ARIADNE_COMPLETE_DEBUG`, set to anything, makes `ariadne`'s shell-completion
 code print diagnostics to stderr: a round that timed out, a failed daemon

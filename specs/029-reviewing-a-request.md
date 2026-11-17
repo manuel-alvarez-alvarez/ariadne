@@ -289,6 +289,14 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     and posts the review on that head, not on a live forge head fetched since
     (`pull_request_reviews.rs::a_submitted_review_stores_the_checkout_head_when_the_forge_head_moved`).
     No session reports readiness. The daemon decides from forge evidence (031 rule 15).
+    A finding the `pr-reviewer` skill writes follows these rules:
+    - The skill gives the title in the `title` field of `submit_review` only.
+    - The daemon posts `**[Pn] Title**` from it (rule 13), so the body repeats no title.
+    - The body opens with a concise description and has `To reproduce:` steps where needed.
+    - A reproduction is a code block of at most 10 lines, or prose steps.
+    - A longer reproduction becomes prose steps.
+    - A comment names no local file: no file under `/tmp`, no worktree path and no scratch file.
+    - Proof code still goes under `/tmp` for the reviewer's own run.
 15a. Ariadne holds no approval of its own for a request. The user gives approval.
     No tool approves or merges.
 16. Diffs and reviews are accepted from the request's own session
@@ -337,8 +345,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     Refute each candidate with a code citation before posting; drop refuted candidates.
     Failed reproduction keeps severity and states `Unverified:` with its cause.
 
-    Each finding is one inline comment on a shown new-side line, opening `**[Pn] Title**`.
-    Follow with a concise description and `To reproduce:` steps where needed.
+    Each finding is one inline comment on a shown new-side line.
+    The title, body and reproduction rules of a finding are in rule 15.
     Include the trigger, rule, expected behavior, observed failure, evidence and needed change.
     Use the shown causal line for defects elsewhere, naming the real file and line.
     Report unrelated defects only in the turn result.
