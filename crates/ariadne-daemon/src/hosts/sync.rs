@@ -127,7 +127,7 @@ pub(super) async fn run(
         let mut pusher = Pusher {
             inner: &inner,
             index,
-            client: client_for(&endpoint),
+            client: super::client_for(&endpoint),
             last_ai: None,
             pairs: None,
         };
@@ -139,6 +139,9 @@ pub(super) async fn run(
         // When the failed pushes are next tried; `None` while none failed.
         let mut retry_at: Option<Instant> = None;
         'ready: loop {
+            if ready.has_changed().unwrap_or(true) {
+                break 'ready;
+            }
             loop {
                 match events.try_recv() {
                     Ok(event) => pushes.enqueue(&event.event),
@@ -149,7 +152,11 @@ pub(super) async fn run(
             }
             pushes.show(&inner, index);
             if let Some(push) = pushes.queue.pop_front() {
-                pushes.run(&mut pusher, push).await;
+                tokio::select! {
+                    biased;
+                    _ = ready.changed() => break 'ready,
+                    () = pushes.run(&mut pusher, push) => {}
+                }
                 if pushes.failed.is_empty() {
                     backoff = base;
                     retry_at = None;
@@ -175,7 +182,11 @@ pub(super) async fn run(
             };
             tokio::select! {
                 () = sleep_until(at) => {
-                    pushes.retry(&mut pusher).await;
+                    tokio::select! {
+                        biased;
+                        _ = ready.changed() => break 'ready,
+                        () = pushes.retry(&mut pusher) => {}
+                    }
                     backoff = (backoff * 2).min(BACKOFF_CAP);
                     retry_at = (!pushes.failed.is_empty()).then(|| Instant::now() + backoff);
                     if pushes.failed.is_empty() {
@@ -307,16 +318,6 @@ impl Pushes {
             sync.state = state;
             sync.error = error;
         });
-    }
-}
-
-/// A client for the endpoint of a `ready` host: an `http://` address, else a
-/// socket path.
-fn client_for(endpoint: &str) -> Client {
-    if endpoint.starts_with("http://") {
-        Client::tcp(endpoint)
-    } else {
-        Client::unix(endpoint)
     }
 }
 

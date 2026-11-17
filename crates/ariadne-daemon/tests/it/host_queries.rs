@@ -7,10 +7,10 @@ use crate::common;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use ariadne_api::hosts::HostDto;
+use ariadne_api::hosts::{HostDto, HostStatus};
 use ariadne_store::telemetry::{MetricKind, MetricPoint, NewLogRecord};
 
-use common::{Harness, get, harness};
+use common::{Harness, TIMEOUT, eventually, get, harness};
 
 /// 2026-01-01T10:00:00Z, in Unix seconds.
 const T: i64 = 1_767_261_600;
@@ -67,14 +67,24 @@ async fn pair() -> (Harness, Harness, tempfile::TempDir) {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
         home.join("config.toml"),
+        // No `ssh` runs: the forward of `box` cannot start.
         format!(
-            "[hosts.far]\nendpoint = \"http://{address}\"\n\
+            "ssh_bin = \"{}\"\n\
+             [hosts.far]\nendpoint = \"http://{address}\"\n\
              [hosts.dead]\nendpoint = \"http://127.0.0.1:1\"\n\
-             [hosts.box]\nendpoint = \"ssh://me@box\"\n"
+             [hosts.box]\nendpoint = \"ssh://me@box\"\n",
+            dir.path().join("no-ssh").display()
         ),
     )
     .unwrap();
     let local = harness().home(home).await;
+    // The checks make `far` ready. `dead` and `box` never are.
+    local.state.hosts.start();
+    eventually(TIMEOUT, "the host far ready", || async {
+        let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
+        hosts[1].status == HostStatus::Ready
+    })
+    .await;
     seed(&local, 30.0, "local line").await;
     seed(&far, 7.0, "far line").await;
     (local, far, dir)
