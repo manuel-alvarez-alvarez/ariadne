@@ -65,3 +65,29 @@ it("reads only the picked host, with no chips", async () => {
     ),
   ).toBe(false)
 })
+
+it("says which host's agents failed to load beside the agents of the host that answered, with a retry", async () => {
+  let failing = true
+  stubHosts({
+    local: answers("--on-local", true),
+    box: {
+      ...answers("--on-box", true),
+      "/v1/agents": () =>
+        failing
+          ? new Response(JSON.stringify({ error: { code: "boom", message: "box is broken" } }), {
+              status: 500,
+              headers: { "content-type": "application/json" },
+            })
+          : jsonResponse([anAgentConfig({ extra_flags: ["--on-box"], default_flags: [] })]),
+    },
+  })
+  renderScreen(<AgentsPage />)
+
+  expect(await screen.findByText("Could not load the agents of box")).toBeTruthy()
+  expect(await screen.findByText("--on-local")).toBeTruthy()
+
+  failing = false
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }))
+  expect(await screen.findByRole("button", { name: "box" })).toBeTruthy()
+  expect(screen.queryByText("Could not load the agents of box")).toBeNull()
+})

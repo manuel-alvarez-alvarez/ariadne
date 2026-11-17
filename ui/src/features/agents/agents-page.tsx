@@ -115,6 +115,20 @@ export function AgentsPage() {
         />
       ))}
 
+      {/* A host whose agents failed to load is said apart from the hosts that
+          answered, which stay on screen; with none answered the tabs say it. */}
+      {configs.rows.length > 0
+        ? configs.errors.map(({ host, error }) => (
+            <ErrorState
+              key={host}
+              title={`Could not load the agents of ${host}`}
+              error={error}
+              description={networkHint(error)}
+              onRetry={() => configs.refetch()}
+            />
+          ))
+        : null}
+
       <AgentTabs
         hosts={hosts}
         configs={configs}

@@ -1194,7 +1194,9 @@ Out: the daemon endpoints themselves (012).
 64. The agents screen reads the agents and models of the selected hosts. One tab
     holds one agent id. Under more than one selected host its panel has a chip
     per host that has the agent. A flag edit, a model switch and a rank apply to
-    the host of the chip picked, and Refresh reprobes every selected host.
+    the host of the chip picked, and Refresh reprobes every selected host. A host
+    whose agents failed to load is named in an error with Retry, beside the
+    agents of the hosts that answered.
 65. The Forge tabs merge the pull requests and issues of the selected hosts,
     most recently updated first, with a host badge while more than one host is
     selected. A repository filter names one forge repository, and each host
@@ -2155,7 +2157,8 @@ Out: the daemon endpoints themselves (012).
 - The agents screen groups an agent under one tab with a chip per host and
   writes to the chip's host
   (`ui/src/features/agents/agents-hosts.test.tsx::groups an agent of two hosts under one tab, with a chip per host, and writes to the chip's host`,
-  `::reads only the picked host, with no chips`).
+  `::reads only the picked host, with no chips`,
+  `::says which host's agents failed to load beside the agents of the host that answered, with a retry`).
 - The Forge tabs merge hosts, open a panel on the row's host, offer the hosts of
   a repository for a review, and fill the goal dialog on the issue's host
   (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, badged, and opens a panel on its row's host`,
@@ -2166,7 +2169,8 @@ Out: the daemon endpoints themselves (012).
   names (`ui/src/features/system/daemon-logs-drawer.test.tsx::opens the log of the picked host, and of local under All, and follows the drawer's own host select`,
   `::defaults to local under All hosts`).
 - The dashboards screen queries the host its select names
-  (`ui/src/routes/dashboards.test.tsx::queries every host under All, the picked host otherwise, and the host the select names`,
+  (`crates/ariadne-daemon/tests/it/dashboards.rs::every_named_series_of_the_shipped_dashboard_carries_the_host`,
+  `ui/src/routes/dashboards.test.tsx::queries every host under All, the picked host otherwise, and the host the select names`,
   `::opens on the host the header picker names`); the iframe's datasources point at
   `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
