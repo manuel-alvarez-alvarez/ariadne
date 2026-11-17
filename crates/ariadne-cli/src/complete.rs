@@ -942,9 +942,6 @@ mod tests {
         assert!(current_shape(&[]), "a daemon that serves no models");
     }
 
-    /// Ids are ULIDs, so the daemon's oldest-first list read backwards is
-    /// newest-first — which is the one a person is completing nine times in
-    /// ten.
     #[test]
     fn reconnect_offers_the_named_hosts_and_all_but_not_local() {
         let hosts = [
@@ -954,6 +951,9 @@ mod tests {
         assert_eq!(offered(&reconnect_candidates(&hosts)), ["all", "build"]);
     }
 
+    /// Ids are ULIDs, so the daemon's oldest-first list read backwards is
+    /// newest-first — which is the one a person is completing nine times in
+    /// ten.
     #[test]
     fn candidates_come_out_newest_first() {
         let rows = [task("01OLD", "finished"), task("01NEW", "failed")];
