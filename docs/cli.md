@@ -833,7 +833,8 @@ the daemon cannot find or cannot use.
 
 Without `--host`, commands use the resolved daemon endpoint.
 
-Use `ariadne host ls` to list configured hosts and their status, endpoint, kind and error.
+Use `ariadne host ls` to list configured hosts. The columns are `name`, `kind`, `status`, `endpoint`, `remote`, `sync`, `missing`, `skipped`, `error` and `sync_error`.
+The `sync` column is `in_sync`, `pending` or `failed`. `missing` counts the repositories the host lacks. `skipped` counts the learned permissions not pushed. `remote` is the far address of an `ssh` host. `sync_error` is why the last push failed. `--columns` selects them, and `--format json` prints the host objects.
 Use `--host NAME` to run a command on a ready host from the local daemon's registry.
 `--endpoint` still selects the local daemon that supplies this registry.
 `--host local` selects that same daemon.

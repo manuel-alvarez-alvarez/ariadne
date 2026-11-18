@@ -419,7 +419,10 @@ same binary also serves (013).
     as for every command; the message names the configured hosts, or gives
     the status. With `all`, `HOST` is the first column of the table, and each
     warning of a host prints on stderr as `warning: <host>: <reason>`.
-50. `host ls` prints name, kind, status, endpoint and error. Completion of
+50. `host ls` prints name, kind, status, endpoint, remote, sync (`in_sync`,
+    `pending` or `failed`), missing (repositories the host lacks), skipped
+    (learned permissions not pushed), error and sync_error. `--columns` selects
+    them, and `--format json` prints the host objects unchanged. Completion of
     `--host` reads the registry of the daemon that `--endpoint` on the command
     line names, and offers `local` and `all` when that daemon does not answer or
     lists only `local`. Completion of an ID reads the host that `--host NAME`
@@ -761,6 +764,7 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `::each_command_takes_the_hosts_of_its_kind`).
 - A stream with `--host all` reaches stdout while it is open, rule 46
   (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
+- Rule 50 columns (`tests/hosts.rs::host_ls_shows_remote_and_sync_state_of_each_host`).
 - Rule 48a on `status` and `logs` of a named host
   (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)
   and of `local` with `--home`
