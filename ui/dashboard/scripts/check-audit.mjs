@@ -12,11 +12,11 @@ import { execFileSync } from "node:child_process"
 
 export const ALLOWLIST = [
   {
-    id: "GHSA-vfj7-8cjw-p6xm",
-    package: "braces",
+    id: "GHSA-fc5q-39xc-vjpf",
+    package: "picomatch",
     reason:
-      "a stack-exhaustion denial of service reached through patch-package's own find-yarn-workspace-root/micromatch chain — patch-package runs only as this package's postinstall, never in the shipped build, and every published braces release is vulnerable, so there is no version to pin an override to",
-    added: "2026-10-18",
+      "a ReDoS through single-branch repeated extglobs; every published picomatch release is listed vulnerable, so there is no version to pin an override to, and it is reached only by build and dev tools (vite, vitest, patch-package), never by the shipped build",
+    added: "2026-11-17",
   },
 ]
 
