@@ -319,6 +319,60 @@ async fn permissions_device_is_written_on_the_named_host_only() {
     remote.abort();
 }
 
+#[tokio::test]
+async fn host_ls_shows_remote_and_sync_state_of_each_host() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},
+        {"name":"far","kind":"ssh","status":"ready","endpoint":null,"error":null,"remote":"user@far:7000","sync":{"state":"failed","error":"push refused: disk full","missing_repositories":[{"id":"a","forge":"o/a"},{"id":"b","forge":null}],"skipped_permissions":3}}
+    ]);
+    let app = Router::new().route("/v1/hosts", get(move || async move { Json(registry) }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let run = |args: Vec<&'static str>| {
+        let endpoint = endpoint.clone();
+        async move {
+            let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+                .args(["--endpoint", &endpoint])
+                .args(args)
+                .env("ARIADNE_TELEMETRY", "off")
+                .output()
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
+    };
+    let table = run(vec!["host", "ls", "--no-trunc"]).await;
+    for expected in [
+        "SYNC",
+        "MISSING",
+        "SKIPPED",
+        "REMOTE",
+        "failed",
+        "in_sync",
+        "user@far:7000",
+        "push refused: disk full",
+    ] {
+        assert!(table.contains(expected), "{table}");
+    }
+    let far = table.lines().find(|l| l.starts_with("far")).unwrap();
+    assert!(far.split_whitespace().any(|w| w == "2"), "{far}");
+    assert!(far.split_whitespace().any(|w| w == "3"), "{far}");
+    let picked = run(vec!["host", "ls", "--columns", "name,sync,missing,skipped"]).await;
+    let lines: Vec<_> = picked
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>())
+        .collect();
+    assert_eq!(lines[0], ["NAME", "SYNC", "MISSING", "SKIPPED"], "{picked}");
+    assert_eq!(lines[1], ["local", "in_sync", "0", "0"], "{picked}");
+    assert_eq!(lines[2], ["far", "failed", "2", "3"], "{picked}");
+    let json = run(vec!["host", "ls", "--format", "json"]).await;
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed[1]["sync"]["skipped_permissions"], 3);
+    assert_eq!(parsed[1]["remote"], "user@far:7000");
+    server.abort();
+}
+
 /// Every request a stub daemon gets, as `METHOD /path`, answered with a 404.
 fn recorder(seen: &Arc<Mutex<Vec<String>>>) -> Router {
     let seen = Arc::clone(seen);
