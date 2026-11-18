@@ -12,13 +12,13 @@ describe("decide", () => {
     expect(decide({ vulnerabilities: { hono: vuln("hono", "moderate", ["x"]) } })).toBe(true)
   })
 
-  it("passes exactly the documented braces chain", () => {
+  it("passes exactly the documented picomatch chain", () => {
     const report = {
       vulnerabilities: {
-        braces: vuln("braces", "high", [
+        picomatch: vuln("picomatch", "high", [
           { url: `https://github.com/advisories/${ALLOWED_ADVISORY}` },
         ]),
-        micromatch: vuln("micromatch", "high", ["braces"]),
+        micromatch: vuln("micromatch", "high", ["picomatch"]),
         "fast-glob": vuln("fast-glob", "high", ["micromatch"]),
         "@ts-morph/common": vuln("@ts-morph/common", "high", ["fast-glob"]),
         "ts-morph": vuln("ts-morph", "high", ["@ts-morph/common"]),
@@ -31,7 +31,7 @@ describe("decide", () => {
   it("fails a new high finding in a package outside the allowlist", () => {
     const report = {
       vulnerabilities: {
-        braces: vuln("braces", "high", [
+        picomatch: vuln("picomatch", "high", [
           { url: `https://github.com/advisories/${ALLOWED_ADVISORY}` },
         ]),
         "left-pad": vuln("left-pad", "high", [
@@ -45,7 +45,7 @@ describe("decide", () => {
   it("fails a different advisory on the allowlisted package", () => {
     const report = {
       vulnerabilities: {
-        braces: vuln("braces", "high", [
+        picomatch: vuln("picomatch", "high", [
           { url: "https://github.com/advisories/GHSA-1111-1111-1111" },
         ]),
       },
@@ -67,7 +67,7 @@ describe("decide", () => {
   it("fails a high chain whose root advisory is missing from the report", () => {
     const report = {
       vulnerabilities: {
-        micromatch: vuln("micromatch", "high", ["braces"]),
+        micromatch: vuln("micromatch", "high", ["picomatch"]),
       },
     }
     expect(decide(report)).toBe(false)

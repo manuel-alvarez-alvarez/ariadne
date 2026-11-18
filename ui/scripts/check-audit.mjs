@@ -11,11 +11,11 @@ import { execFileSync } from "node:child_process"
 
 export const ALLOWLIST = [
   {
-    id: "GHSA-vfj7-8cjw-p6xm",
-    package: "braces",
+    id: "GHSA-fc5q-39xc-vjpf",
+    package: "picomatch",
     reason:
-      "a stack-exhaustion denial of service in the shadcn codemod chain (ts-morph, fast-glob), reached only by a developer's own local `npx shadcn add` command, never by the shipped app; every published braces release is vulnerable, so there is no version to pin an override to",
-    added: "2026-10-16",
+      "a ReDoS through single-branch repeated extglobs; every published picomatch release is listed vulnerable, so there is no version to pin an override to, and it is reached only by build and dev tools (vite, vitest, the shadcn codemod chain), never by the shipped app",
+    added: "2026-11-17",
   },
 ]
 
