@@ -400,3 +400,15 @@ it("says the last read may be outdated only while one is on screen", async () =>
   expect(await screen.findByText("Could not refresh tasks on local")).toBeTruthy()
   expect(screen.getByText(/may be outdated/)).toBeTruthy()
 })
+
+it("keeps the lanes and says tasks are not loaded when every host's task read fails", async () => {
+  stubHosts({ local: { ...EMPTY, "/v1/goals": [MINE], "/v1/tasks": failing("tasks broke") } }, [
+    LOCAL,
+  ])
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+
+  expect(await screen.findByText("Could not load tasks on local")).toBeTruthy()
+  const lane = screen.getByRole("group", { name: `${MINE.title}: Tasks` })
+  expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
+  expect(within(lane).queryByText(/No tasks/)).toBeNull()
+})

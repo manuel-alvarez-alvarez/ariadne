@@ -1359,7 +1359,8 @@ Out: the daemon endpoints themselves (012).
 - The board says the tasks of a host are not loaded, and its warning names the
   host (rules 58 and 75)
   (`ui/src/features/goals/hosts.test.tsx::says the tasks of a host are not loaded in its lanes, and names the host, local too`,
-  `::says the last read may be outdated only while one is on screen`).
+  `::says the last read may be outdated only while one is on screen`,
+  `::keeps the lanes and says tasks are not loaded when every host's task read fails`).
 - The attention rows follow rule 74
   (`ui/src/features/goals/hosts.test.tsx::names local on a local attention row under All`,
   `::names no host on an attention row under one picked host`).

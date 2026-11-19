@@ -5,7 +5,7 @@ import { useMemo } from "react"
 import { Link } from "react-router-dom"
 
 import { type GoalDto, type Host, type HostRow, type TaskDto, useHostLists } from "@/api"
-import { ErrorState, RefreshWarning } from "@/components/error-state"
+import { RefreshWarning } from "@/components/error-state"
 import { HostLabel } from "@/components/host-label"
 import { ScrollEdge } from "@/components/scroll-edge"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
@@ -123,13 +123,8 @@ export function GoalSwimlanes({
     0,
   )
 
-  // A host whose tasks failed leaves its lanes empty and says so; the board
-  // only gives up when no host answered at all.
-  const [failed] = tasks.errors
-  if (failed && tasks.errors.length === hosts.length && tasks.errors.every((one) => !one.cached)) {
-    return <ErrorState title="Could not load tasks" error={failed.error} onRetry={tasks.refetch} />
-  }
-
+  // A host whose tasks failed keeps its lanes and says they are not loaded,
+  // with a warning of its own, also when every host failed.
   if (tasks.isPending) {
     return <BoardSkeleton />
   }
