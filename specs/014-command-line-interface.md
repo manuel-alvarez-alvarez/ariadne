@@ -23,6 +23,7 @@ tests:
   - crates/ariadne-cli/src/commands/events.rs
   - crates/ariadne-cli/src/commands/console/tui.rs
   - crates/ariadne-cli/src/output/table.rs
+  - crates/ariadne-cli/src/output/listing.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/tests/attention.rs
   - crates/ariadne-cli/src/commands/agent.rs
@@ -252,7 +253,8 @@ same binary also serves (013).
     changes the flavour (spec 037, rule 28). Any other `set` flag on a named
     host other than `local` is refused locally (rule 48).
     `permissions ai show --host all` prints one block per ready host, in
-    registry order, headed by its name, with a warning for each host that fails.
+    registry order, headed by its name, with a warning for each host that
+    fails, as every read that each host answers does (rule 46b).
 33. `ariadne permissions ai test --tool <title> [--kind <K>] --input <json>
     [--option <name>]... [--location <path>]... [--workspace <dir>]` sends one
     request to the AI permission model without selecting or recording an
@@ -383,14 +385,15 @@ same binary also serves (013).
     comes from the last word of the path. The kinds are: a list; a read of
     one ID; a read that every host answers (`version`, `doctor`,
     `completions`, `forge tunnel` with no argument, `workflow check`,
-    `permissions ai test`, `permissions ai show`, `daemon status`); a stream
+    `permissions ai test`, `permissions ai show`, `daemon status`,
+    `models show`, `skill get`, `skill inspect`, `workflow show`); a stream
     (`events`, `session logs`, `task logs`, `daemon logs`); a write; a
     host-owned write (`repo add`, `repo update`, `repo rm`,
     `permissions ai set`); and local only. `forge tunnel on|off` is a write.
-46. With `all`, a list runs on each ready host in registry order. A table has
-    a `HOST` column first, and JSON rows carry a `host` key. A host that is
-    not ready or fails gets a warning on stderr, and the list succeeds while
-    one host answers. Other reads print the answer of the first host that answers.
+46. With `all`, the CLI reads a list from each ready host at the same time,
+    and prints one list in registry order (rule 46a). A host that is not
+    ready, has no endpoint or fails gets one warning on stderr, and the list
+    succeeds while one host answers. A read that is not a list follows rule 46b.
     Watched goal, task, session and PR lists redraw one merged table after
     events from any ready host. Attention redraws its merged view too.
     Event and daemon log followers run concurrently across ready hosts.
@@ -402,9 +405,47 @@ same binary also serves (013).
     Other hosts continue. Dropped hosts are not reconnected.
     Ctrl-C cancels all followers and child processes.
     These forms work with only `local` in the registry.
-    `attach` goes to the first ready host that has the ID. A write with `all` is refused, and the refusal names only the
+    A write with
+    `all` is refused, and the refusal names only the
     hosts that take this write: each ready host, or `local` alone for a
     synced setting.
+46a. A list with `all` has the form of the same list without `--host`, with
+    one table fitted across every host. `HOST` is its first column, also
+    with `--columns`, and with `local` alone. Colour, terminal fit,
+    `--no-trunc` and `-q` (IDs only) are those of the list without `--host`.
+    A summary line, such as `N of M sessions`, prints one time and counts
+    every host. `attention` keeps its bullets, with a `host:` line on each
+    item and `--host NAME` on each command it names. A list that is empty on
+    every host prints its empty note one time. A host's hint and its
+    incomplete-read note start with the host name, and a `Next:` command
+    adds `--host NAME`. `--format json` keeps the JSON form: an array stays
+    an array and an object stays an object, and each item has a `host` key.
+    In an object, arrays join, counts add up, and a flag holds where it holds
+    on every host. The `session ls` `next_cursor` is an object with one cursor
+    for each host name. `--cursor` with `all` is a usage error that names
+    `--host NAME`; `--limit` applies to each host. A host where the ID of a
+    filter (`task ls --goal G`) resolves to nothing adds no rows and no
+    warning. When no host resolves it, the command fails as not found.
+46b. A read that is not a list, with `all`, runs on each ready host at the
+    same time, in this process: the CLI never runs its own binary for it. A
+    host that is not ready or fails gets one warning on stderr,
+    `warning: <host>: <reason>`, with the true error of that host, and the
+    other hosts still print. A read of one ID prints the answer of the one
+    host that has the ID, after a first line `host: <host>`; in JSON the
+    answer has a `host` field. A host that lacks the ID gets no warning. An
+    ID or a prefix that matches on two hosts is a usage error that names
+    each of them. `no host has that ID` (not found) prints only when each
+    ready host answered not found; when a host failed, the command fails
+    with the exit code of that host. `attach`, `goal attach` and
+    `task attach` find the host that has the ID in the same way, and attach
+    there. A read that every host answers prints one block for each host
+    that answered, in registry order, headed by the host name, with an
+    empty line between blocks; in JSON it prints an array, and each item has
+    a `host` field (a payload that is not an object is its `value`). The
+    command exits with the first exit code of a host that is not 0.
+    `daemon logs` without `-f` prints the lines of each host that answered,
+    each led by its host name. With only `local` in the registry, each form
+    keeps the `host:` line, the heading and the `host` field.
 47. A local-only command with `--host NAME` or `--host all` is a usage error
     that names its reason and `--host local`. These are the `skill`,
     `workflow` and `permissions` writes of synced settings (spec 037, rules
@@ -779,9 +820,41 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`hosts.rs::tests::every_command_declares_one_kind`,
   `::reads_that_every_host_answers_are_not_writes`,
   `::a_tunnel_switch_is_a_write_and_the_bare_tunnel_a_read`).
-- Registry routing and guards hold, rules 44, 46 to 48a and 50
+- Registry routing and guards hold, rules 44, 46, 47 to 48a and 50
   (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`,
   `::each_command_takes_the_hosts_of_its_kind`).
+- A list with `--host all` is one list of every ready host, rules 46 and 46a:
+  one aligned table led by `HOST`, one summary line, `-q`, the JSON page
+  with its summed `total` and a `next_cursor` for each host, a warning for a
+  host that is down or has no endpoint, an ID filter that one host lacks or
+  every host lacks, the refused `--cursor`, the `attention` bullets with
+  their host, one empty note, and both hosts read at the same time
+  (`tests/hosts.rs::all_draws_one_list_of_every_ready_host`); `local` alone
+  keeps the column and the field
+  (`::all_with_local_alone_keeps_the_host_column_and_field`); the table, the
+  bullets, the hints and the JSON merge
+  (`output/listing.rs::tests::every_host_is_one_table_led_by_host_and_aligned_across_hosts`,
+  `::columns_keep_host_first`, `::one_summary_counts_every_host_and_is_no_row`,
+  `::an_empty_list_on_every_host_prints_the_one_empty_note`,
+  `::a_hint_names_its_host_and_a_legend_prints_one_time`,
+  `::quiet_prints_only_ids_of_every_host`,
+  `::a_section_names_the_host_of_each_item_and_on_each_command`,
+  `::one_host_without_a_name_prints_the_list_as_it_was`,
+  `::json_keeps_the_form_of_one_host`).
+- A read that is not a list with `--host all`, rule 46b: a read of one ID
+  names its host, warns with the true error of a host that fails, refuses
+  an ID on two hosts, and is on no host only when each ready host lacks it
+  (`tests/hosts.rs::all_reads_one_id_on_the_host_that_has_it`); a read that
+  every host answers prints a block or a JSON item for each host, and
+  `daemon logs` leads each line with its host
+  (`::all_reads_each_host_in_one_block_per_host`); a document piped to
+  `workflow check` reaches each host
+  (`::all_reads_each_host_gives_a_piped_document_to_each_host`); `attach` warns for a host
+  that is down and refuses a prefix on two hosts
+  (`::all_attach_refuses_a_prefix_on_two_hosts`); `local` alone keeps the
+  host (`::all_reads_with_local_alone_keep_the_host`); `permissions ai show`
+  keeps its blocks
+  (`::permissions_device_is_written_on_the_named_host_only`).
 - Concurrent streams carry both host names before either closes, rule 46
   (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
 - Watched attention merges snapshots and redraws after an event, rule 46

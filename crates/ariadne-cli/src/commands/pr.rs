@@ -10,9 +10,9 @@ use super::{
     resolve::{self, Kind},
 };
 use crate::error::Failure;
+use crate::output::listing::Listing;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, col, dash, moment, ok_id_line, print, print_kv, print_list, view,
-    yes_no,
+    Column, Format, Kv, UNCAPPED, col, dash, moment, ok_id_line, print, print_kv, view, yes_no,
 };
 use anyhow::Result;
 use ariadne_api::pull_requests::{
@@ -289,8 +289,78 @@ async fn every_page(client: &Client, query: &PullRequestListQuery) -> Result<Vec
 }
 
 async fn list(client: &Client, query: &PullRequestListQuery, format: Format) -> Result<()> {
+    listing(client, query).await?.print(format)
+}
+
+async fn listing(client: &Client, query: &PullRequestListQuery) -> Result<Listing> {
     let rows = every_page(client, query).await?;
-    print_list(format, &rows, COLUMNS, ls_row, "No pull requests")
+    Listing::of(&rows, COLUMNS, ls_row, "No pull requests")
+}
+
+/// What `pr ls` asks for, with its repository resolved on `client`.
+async fn ls_query(
+    client: &Client,
+    repo: Option<String>,
+    mine: bool,
+    review_requests: bool,
+) -> Result<PullRequestListQuery> {
+    // Every open request with neither flag, as the desktop's All.
+    let (role, requested) = match (mine, review_requests) {
+        (true, _) => (Some("author".into()), None),
+        (_, true) => (Some("reviewer".into()), Some(true)),
+        _ => (None, None),
+    };
+    Ok(PullRequestListQuery {
+        repo: repository(client, repo).await?,
+        role,
+        task: None,
+        requested,
+        q: None,
+        cursor: None,
+    })
+}
+
+/// `pr ls`, as one host answers it.
+pub(crate) async fn ls(
+    client: &Client,
+    repo: Option<String>,
+    mine: bool,
+    review_requests: bool,
+) -> Result<Listing> {
+    let query = ls_query(client, repo, mine, review_requests).await?;
+    listing(client, &query).await
+}
+
+const SEARCH: &[Column] = &[
+    col("number", UNCAPPED).id(),
+    col("title", 48).title(),
+    col("author", 24),
+    col("tracked", 8),
+    col("url", 60),
+];
+
+/// `pr search`, as one host answers it.
+pub(crate) async fn search(client: &Client, repo: &str, query: &str) -> Result<Listing> {
+    let repo = resolve::id(client, Kind::Repo, repo).await?;
+    let path = query_path(
+        &format!("/v1/repositories/{repo}/pull-requests/search"),
+        &json!({"q": query}),
+    )?;
+    let rows: Vec<PullRequestMatchDto> = client.get_json(&path).await?;
+    Listing::of(
+        &rows,
+        SEARCH,
+        |r| {
+            vec![
+                r.number.to_string(),
+                r.title.clone(),
+                r.author_login.clone(),
+                r.tracked.to_string(),
+                r.url.clone(),
+            ]
+        },
+        "No matching pull requests",
+    )
 }
 
 /// One row of `pr ls`.
@@ -319,20 +389,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
             review_requests,
             watch,
         } => {
-            // Every open request with neither flag, as the desktop's All.
-            let (role, requested) = match (mine, review_requests) {
-                (true, _) => (Some("author".into()), None),
-                (_, true) => (Some("reviewer".into()), Some(true)),
-                _ => (None, None),
-            };
-            let query = PullRequestListQuery {
-                repo: repository(client, repo).await?,
-                role,
-                task: None,
-                requested,
-                q: None,
-                cursor: None,
-            };
+            let query = ls_query(client, repo, mine, review_requests).await?;
             if watch {
                 follow::watch(
                     client,
@@ -354,35 +411,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 format,
             )
         }
-        PrCommand::Search { repo, query } => {
-            let repo = resolve::id(client, Kind::Repo, &repo).await?;
-            let path = query_path(
-                &format!("/v1/repositories/{repo}/pull-requests/search"),
-                &json!({"q": query}),
-            )?;
-            let rows: Vec<PullRequestMatchDto> = client.get_json(&path).await?;
-            print_list(
-                format,
-                &rows,
-                &[
-                    col("number", UNCAPPED).id(),
-                    col("title", 48).title(),
-                    col("author", 24),
-                    col("tracked", 8),
-                    col("url", 60),
-                ],
-                |r| {
-                    vec![
-                        r.number.to_string(),
-                        r.title.clone(),
-                        r.author_login.clone(),
-                        r.tracked.to_string(),
-                        r.url.clone(),
-                    ]
-                },
-                "No matching pull requests",
-            )
-        }
+        PrCommand::Search { repo, query } => search(client, &repo, &query).await?.print(format),
         PrCommand::Refresh { repo } => {
             let path = query_path(
                 "/v1/pull-requests/refresh",
@@ -392,7 +421,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 .send_no_content::<()>(http::Method::POST, &path, None)
                 .await?;
             print(format, &json!({"requested": true}), || {
-                println!("Refresh requested")
+                outln!("Refresh requested")
             })
         }
         PrCommand::Review {
@@ -415,7 +444,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                     )
                     .await?;
                 return print(format, &json!({"requested": true}), || {
-                    println!("Review round asked on {repo_id} #{number}.");
+                    outln!("Review round asked on {repo_id} #{number}.");
                 });
             }
             let request = review_request(stop, model, effort, skills)?;
@@ -434,7 +463,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
             let id = pull.id.clone().unwrap_or_else(|| pull.number.to_string());
             let verb = if stop { "stopped" } else { "asked" };
             print(format, &pull, || {
-                println!("{}", ok_id_line(view().color, view().quiet, verb, &id))
+                outln!("{}", ok_id_line(view().color, view().quiet, verb, &id))
             })
         }
         PrCommand::Babysit {
@@ -457,7 +486,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                     )
                     .await?;
                 return print(format, &json!({"requested": true}), || {
-                    println!("Keeper turn asked on {repo_id} #{number}.")
+                    outln!("Keeper turn asked on {repo_id} #{number}.")
                 });
             }
             let request = babysit_request(stop, model, effort, skills)?;
@@ -474,7 +503,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
             let id = pull.id.clone().unwrap_or_else(|| pull.number.to_string());
             let verb = if stop { "stopped" } else { "asked" };
             print(format, &pull, || {
-                println!("{}", ok_id_line(view().color, view().quiet, verb, &id))
+                outln!("{}", ok_id_line(view().color, view().quiet, verb, &id))
             })
         }
     }

@@ -17,9 +17,9 @@ use ariadne_api::skills::{CreateSkillRequest, SkillDto, SkillSeat, UpdateSkillRe
 use ariadne_client::Client;
 
 use super::{Subject, confirm, path_segment};
+use crate::output::listing::Listing;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
-    print_list, view,
+    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv, view,
 };
 
 /// Columns of `skill ls`. A skill is its name and the line it says about
@@ -91,27 +91,29 @@ pub(crate) enum SkillCommand {
     },
 }
 
+/// `skill ls`, as one host answers it.
+pub(crate) async fn ls(client: &Client) -> Result<Listing> {
+    let skills: Vec<SkillDto> = client.get_json("/v1/skills").await?;
+    let now = chrono::Utc::now();
+    Listing::of(
+        &skills,
+        LS,
+        |s| {
+            vec![
+                s.name.clone(),
+                s.summary.clone(),
+                seat_label(s),
+                source_label(s),
+                age(&s.created_at, now),
+            ]
+        },
+        empty_state("No skills are available.", Some("ariadne doctor")),
+    )
+}
+
 pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<()> {
     match cmd {
-        SkillCommand::Ls => {
-            let skills: Vec<SkillDto> = client.get_json("/v1/skills").await?;
-            let now = chrono::Utc::now();
-            print_list(
-                format,
-                &skills,
-                LS,
-                |s| {
-                    vec![
-                        s.name.clone(),
-                        s.summary.clone(),
-                        seat_label(s),
-                        source_label(s),
-                        age(&s.created_at, now),
-                    ]
-                },
-                empty_state("No skills are available.", Some("ariadne doctor")),
-            )?;
-        }
+        SkillCommand::Ls => ls(client).await?.print(format)?,
         SkillCommand::Inspect { name } => {
             let s = get_skill(client, &name).await?;
             print(format, &s, || {
@@ -130,7 +132,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
             // Raw and unadorned, trailing newline included or not exactly as
             // it is stored: `skill get > file` then `skill set --file` has to
             // round-trip.
-            print(format, &skill, || print!("{}", skill.document))?;
+            print(format, &skill, || out!("{}", skill.document))?;
         }
         SkillCommand::Create { name, file } => {
             // Read before anything is sent: a line naming an unreadable file
@@ -146,7 +148,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
                 )
                 .await?;
             print(format, &skill, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &skill.name)
                 )
@@ -163,7 +165,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
                 )
                 .await?;
             print(format, &skill, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "updated", &skill.name)
                 )
@@ -175,7 +177,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
             confirm("reset", &subject, &reset_question(&skill), yes)?;
             let skill = client.reset_skill(&path_segment(&name)).await?;
             print(format, &skill, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "reset", &skill.name)
                 )
@@ -191,7 +193,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
             // The skill is gone, so there is no DTO left to print: what the
             // caller asked about, and that it happened.
             print(format, &json!({ "skill": name, "deleted": true }), || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "deleted", &name)
                 )

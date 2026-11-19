@@ -38,7 +38,104 @@ use ariadne_client::{Client, endpoint};
 use ariadne_core::models::ModelRef;
 use ariadne_core::probe;
 
+use crate::cli::Command;
+use crate::output::listing::Listing;
 use crate::output::{Format, print, print_kv, short_id, warn};
+
+/// Whether `command` is a list that redraws until it is stopped.
+pub(crate) fn watches(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Attention { watch: true, .. }
+            | Command::Goal {
+                command: goal::GoalCommand::Ls { watch: true, .. },
+            }
+            | Command::Pr {
+                command: pr::PrCommand::Ls { watch: true, .. },
+            }
+            | Command::Session {
+                command: session::SessionCommand::Ls { watch: true, .. },
+            }
+            | Command::Task {
+                command: task::TaskCommand::Ls { watch: true, .. },
+            }
+    )
+}
+
+/// The list `command` reads, as one host answers it, for `--host all` to draw
+/// one list of every host. `None` for a command that is no such list: a
+/// watched list redraws, and is not merged here.
+pub(crate) async fn listing(
+    client: &Client,
+    command: &Command,
+    format: Format,
+) -> Option<Result<Listing>> {
+    use permissions::{LearnedPermissionsCommand, PermissionsCommand};
+    Some(match command {
+        Command::Agent {
+            command: agent::AgentCommand::Ls,
+        } => agent::ls(client).await,
+        Command::Attention {
+            command: None,
+            watch: _,
+        } => attention::list(client).await,
+        Command::Dashboard {
+            command: dashboard::DashboardCommand::Ls,
+        } => dashboard::ls(client).await,
+        Command::Goal {
+            command:
+                goal::GoalCommand::Ls {
+                    statuses,
+                    all,
+                    watch: _,
+                },
+        } => goal::list(client, statuses, *all).await,
+        Command::Issue {
+            command: issue::IssueCommand::Ls { repo, all },
+        } => issue::ls(client, repo, *all).await,
+        Command::Models {
+            command: models::ModelsCommand::Ls { agent },
+        } => models::ls(client, agent.as_deref()).await,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::List { repo }),
+        } => permissions::learned_list(client, repo.as_deref()).await,
+        Command::Pr {
+            command:
+                pr::PrCommand::Ls {
+                    repo,
+                    mine,
+                    review_requests,
+                    watch: _,
+                },
+        } => pr::ls(client, repo.clone(), *mine, *review_requests).await,
+        Command::Pr {
+            command: pr::PrCommand::Search { repo, query },
+        } => pr::search(client, repo, query).await,
+        Command::Repo {
+            command: repo::RepoCommand::Ls,
+        } => repo::ls(client).await,
+        Command::Session {
+            command: command @ session::SessionCommand::Ls { .. },
+        } => session::list(client, command, format).await,
+        Command::Skill {
+            command: skill::SkillCommand::Ls,
+        } => skill::ls(client).await,
+        Command::Task {
+            command:
+                task::TaskCommand::Ls {
+                    goal,
+                    statuses,
+                    all,
+                    step,
+                    watch: _,
+                },
+        } => task::list(client, goal.clone(), statuses, *all, step.as_deref()).await,
+        Command::Workflow {
+            command: workflow::WorkflowCommand::Ls,
+        } => workflow::ls(client).await,
+        _ => return None,
+    })
+}
 
 /// `ariadne version` — client version always, daemon version when reachable.
 ///

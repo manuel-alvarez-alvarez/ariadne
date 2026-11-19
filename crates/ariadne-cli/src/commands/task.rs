@@ -21,6 +21,7 @@ use super::follow;
 use super::resolve::{self, Kind};
 use super::{Subject, agent_label, agent_pin_label, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
+use crate::output::listing::Listing;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, local_time, moment, note,
     ok_id_line, pager, print, print_json, print_kv, print_list, status_line, usage_block,
@@ -302,7 +303,7 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                 )
                 .await?;
             print(format, &t, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &t.id)
                 )
@@ -327,7 +328,7 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             })?;
             let t: TaskDto = client.patch_json(&task_path(&id), &body).await?;
             print(format, &t, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "updated", &t.id)
                 )
@@ -486,13 +487,15 @@ async fn ls(
 ) -> Result<()> {
     // Resolved once rather than per redraw: what the caller typed names the
     // same goal every time round, and a watch is not a new question.
+    if !watch {
+        return list(client, goal, &statuses, all, step.as_deref())
+            .await?
+            .print(format);
+    }
     let goal = match goal {
         Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
         None => None,
     };
-    if !watch {
-        return render(client, goal, &statuses, all, step.as_deref(), format).await;
-    }
     // The stream takes the same goal filter the list does, so a watch on one
     // goal is not woken by every other goal in the system.
     let path = query_path(
@@ -516,9 +519,23 @@ async fn ls(
     .await
 }
 
-/// The table as it stands, read afresh. `--step` narrows client-side: the
-/// daemon's own filter is the goal and the one status `one_of` can ask for,
-/// the same split every other listing follows.
+/// `task ls`, as one host answers it: the goal the caller typed, resolved on
+/// that host, and the list under it.
+pub(crate) async fn list(
+    client: &Client,
+    goal: Option<String>,
+    statuses: &[TaskStatus],
+    all: bool,
+    step: Option<&str>,
+) -> Result<Listing> {
+    let goal = match goal {
+        Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
+        None => None,
+    };
+    listing(client, goal, statuses, all, step).await
+}
+
+/// The table as it stands, read afresh.
 async fn render(
     client: &Client,
     goal: Option<String>,
@@ -527,6 +544,21 @@ async fn render(
     step: Option<&str>,
     format: Format,
 ) -> Result<()> {
+    listing(client, goal, statuses, all, step)
+        .await?
+        .print(format)
+}
+
+/// The list as it stands. `--step` narrows client-side: the daemon's own
+/// filter is the goal and the one status `one_of` can ask for, the same split
+/// every other listing follows.
+async fn listing(
+    client: &Client,
+    goal: Option<String>,
+    statuses: &[TaskStatus],
+    all: bool,
+    step: Option<&str>,
+) -> Result<Listing> {
     let filtered = goal.is_some() || !statuses.is_empty() || step.is_some();
     // `GET /v1/tasks` takes one status, so one is asked for and the rest is
     // narrowed on the answer — with the live/finished split.
@@ -535,8 +567,7 @@ async fn render(
     let tasks: Vec<TaskDto> = client.get_json(&path).await?;
     let tasks = visible(tasks, all, statuses, step);
     let now = chrono::Utc::now();
-    print_list(
-        format,
+    Listing::of(
         &tasks,
         LS,
         |t| ls_row(t, now),
@@ -719,7 +750,7 @@ fn cancel_question(t: &TaskDto, subject: &Subject) -> String {
 /// What a mutation prints: the task it produced, or where it got to.
 fn print_status(t: &TaskDto, format: Format) -> Result<()> {
     print(format, t, || {
-        println!(
+        outln!(
             "{}",
             status_line(view().color, view().quiet, "task", &t.id, t.status.as_str())
         )

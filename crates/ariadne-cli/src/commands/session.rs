@@ -21,9 +21,10 @@ use super::follow;
 use super::resolve::{self, Kind};
 use super::{Subject, confirm, one_of, parse_effort_or_default, parse_model, query_path};
 use crate::cli::values::Spelling;
+use crate::output::listing::{Count, Listing, Note};
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, print,
-    print_kv, print_list, short_id, status_line, tokens, usage_block, usage_cell, view,
+    Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, ok_id_line, print,
+    print_kv, short_id, status_line, tokens, usage_block, usage_cell, view,
 };
 use ariadne_console::transcript::{Filters, Since};
 
@@ -271,9 +272,9 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                 };
                 let line = ok_id_line(view().color, view().quiet, "session", &s.id);
                 if view().quiet {
-                    println!("{line}");
+                    outln!("{line}");
                 } else {
-                    println!("{line} · {pin}");
+                    outln!("{line} · {pin}");
                 }
             })?;
         }
@@ -294,7 +295,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
             print(
                 format,
                 &serde_json::json!({"sent": true, "session": id}),
-                || println!("{}", ok_id_line(view().color, view().quiet, "sent", &id)),
+                || outln!("{}", ok_id_line(view().color, view().quiet, "sent", &id)),
             )?;
         }
         SessionCommand::Logs {
@@ -329,7 +330,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                 format,
                 &serde_json::json!({"resumed": resumed, "session": s}),
                 || {
-                    println!(
+                    outln!(
                         "{}",
                         status_line(
                             view().color,
@@ -351,7 +352,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                 .post_empty(&format!("/v1/sessions/{id}/kill"))
                 .await?;
             print(format, &s, || {
-                println!(
+                outln!(
                     "{}",
                     status_line(
                         view().color,
@@ -461,14 +462,18 @@ fn narrow_statuses(page: &mut SessionPageDto, statuses: &[SessionStatus]) {
     page.total = page.sessions.len();
 }
 
-fn session_count(page: &SessionPageDto) -> String {
-    format!("{} of {} sessions", page.sessions.len(), page.total)
+fn session_count(page: &SessionPageDto) -> Count {
+    Count {
+        shown: page.sessions.len(),
+        total: page.total,
+        noun: "sessions",
+    }
 }
 
-fn next_session_note(page: &SessionPageDto, options: &ListOptions) -> Option<String> {
+fn next_session_note(page: &SessionPageDto, options: &ListOptions) -> Option<Note> {
     page.next_cursor
         .as_deref()
-        .map(|cursor| format!("Next: {}", next_session_command(options, cursor)))
+        .map(|cursor| Note::Next(next_session_command(options, cursor)))
 }
 
 fn next_session_command(options: &ListOptions, cursor: &str) -> String {
@@ -550,9 +555,15 @@ fn session_row(
 }
 
 async fn render_page(client: &Client, options: &ListOptions, format: Format) -> Result<()> {
+    page_listing(client, options, format).await?.print(format)
+}
+
+/// One page of sessions. A table reads each pull request and task its rows
+/// name; `--format json` prints the page as the daemon answered it.
+async fn page_listing(client: &Client, options: &ListOptions, format: Format) -> Result<Listing> {
     let mut page = fetch_sessions(client, options).await?;
     if format == Format::Json {
-        return crate::output::print_json(&page);
+        return Listing::new(&page, LS, Vec::new(), "");
     }
     // Each request a row names, read off the forge: what Ariadne still
     // works on. One it stopped working on keeps the title it has.
@@ -586,23 +597,26 @@ async fn render_page(client: &Client, options: &ListOptions, format: Format) -> 
         }
     }
     let steps = step_labels(&tasks);
-    print_list(
-        format,
+    let now = chrono::Utc::now();
+    let rows = page
+        .sessions
+        .iter()
+        .map(|session| session_row(session, now, &steps))
+        .collect();
+    let listing = Listing::new(
         &page.sessions,
         session_columns(&view().columns),
-        |session| session_row(session, chrono::Utc::now(), &steps),
+        rows,
         empty_state(
             "No sessions match that filter.",
             Some("ariadne session ls --all"),
         ),
-    )?;
-    if !view().quiet {
-        println!("{}", session_count(&page));
-        if let Some(line) = next_session_note(&page, options) {
-            note(&line);
-        }
-    }
-    Ok(())
+    )?
+    .count(session_count(&page));
+    Ok(match next_session_note(&page, options) {
+        Some(next) => listing.note(next),
+        None => listing,
+    })
 }
 
 /// Title each pull request session by its request, with the request's URL
@@ -663,19 +677,70 @@ fn watch_path(goal: Option<&str>) -> Result<String> {
     )
 }
 
+/// `session ls`, as one host answers it: the goal and task the caller typed,
+/// resolved on that host, and the page under them.
+pub(crate) async fn list(
+    client: &Client,
+    command: &SessionCommand,
+    format: Format,
+) -> Result<Listing> {
+    let SessionCommand::Ls {
+        agent,
+        task,
+        goal,
+        pull_request,
+        statuses,
+        seat,
+        attention,
+        dir,
+        since,
+        until,
+        search,
+        limit,
+        cursor,
+        all,
+        watch: _,
+    } = command
+    else {
+        unreachable!("only `session ls` is a session list");
+    };
+    let mut options = ListOptions {
+        agent: agent.clone(),
+        task: task.clone(),
+        goal: goal.clone(),
+        pull_request: pull_request.clone(),
+        statuses: statuses.clone(),
+        seat: *seat,
+        attention: *attention,
+        dir: dir.clone(),
+        since: since.clone(),
+        until: until.clone(),
+        search: search.clone(),
+        limit: *limit,
+        cursor: cursor.clone(),
+        all: *all,
+    };
+    resolve_scope(client, &mut options).await?;
+    page_listing(client, &options, format).await
+}
+
+/// The goal and task of `options`, as full ids on `client`.
+async fn resolve_scope(client: &Client, options: &mut ListOptions) -> Result<()> {
+    if let Some(goal) = &options.goal {
+        options.goal = Some(resolve::id(client, Kind::Goal, goal).await?);
+    }
+    if let Some(task) = &options.task {
+        options.task = Some(resolve::id(client, Kind::Task, task).await?);
+    }
+    Ok(())
+}
+
 /// `session ls [--watch]`: the table, and with `--watch` the table again
 /// every time a session changes.
 async fn ls(client: &Client, mut options: ListOptions, watch: bool, format: Format) -> Result<()> {
     // Resolved once rather than per redraw: what the caller typed names the
     // same goal and task every time round, and a watch is not a new question.
-    options.goal = match options.goal {
-        Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
-        None => None,
-    };
-    options.task = match options.task {
-        Some(task) => Some(resolve::id(client, Kind::Task, &task).await?),
-        None => None,
-    };
+    resolve_scope(client, &mut options).await?;
     if !watch {
         return render_page(client, &options, format).await;
     }
@@ -1062,16 +1127,14 @@ mod tests {
             ..options()
         };
         assert_eq!(
-            next_session_note(&page(&["one"], Some("after-one"), 8), &options).as_deref(),
-            Some(
-                "Next: ariadne session ls --agent codex-acp --dir '/work/api service' --search 'rate limit' --limit 25 --cursor after-one"
-            )
+            next_session_note(&page(&["one"], Some("after-one"), 8), &options),
+            Some(Note::Next(
+                "ariadne session ls --agent codex-acp --dir '/work/api service' --search 'rate limit' --limit 25 --cursor after-one".into()
+            ))
         );
         assert_eq!(next_session_note(&page(&["one"], None, 1), &options), None);
-        assert_eq!(
-            session_count(&page(&["one", "two"], Some("more"), 17)),
-            "2 of 17 sessions"
-        );
+        let count = session_count(&page(&["one", "two"], Some("more"), 17));
+        assert_eq!((count.shown, count.total, count.noun), (2, 17, "sessions"));
     }
 
     /// A pull request session is titled by its request, with the request's

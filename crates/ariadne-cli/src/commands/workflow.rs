@@ -21,9 +21,10 @@ use ariadne_client::{Client, ClientError};
 
 use super::{Subject, agent_label, confirm, path_segment, ranks_label};
 use crate::error::Failure;
+use crate::output::listing::Listing;
 use crate::output::{
     Column, Format, UNCAPPED, age, col, dash, empty_state, ok_id_line, pager, print, print_json,
-    print_list, print_table, view, yes_no,
+    print_table, view, yes_no,
 };
 
 /// Columns of `workflow ls`. A workflow is named and marked whether it is one
@@ -105,26 +106,28 @@ pub(crate) enum WorkflowCommand {
     },
 }
 
+/// `workflow ls`, as one host answers it.
+pub(crate) async fn ls(client: &Client) -> Result<Listing> {
+    let workflows: Vec<WorkflowDto> = client.get_json("/v1/workflows").await?;
+    let now = chrono::Utc::now();
+    Listing::of(
+        &workflows,
+        LS,
+        |w| {
+            vec![
+                w.name.clone(),
+                yes_no(w.builtin, "no"),
+                columns_label(&w.steps),
+                age(&w.updated_at, now),
+            ]
+        },
+        empty_state("No workflows are available.", Some("ariadne doctor")),
+    )
+}
+
 pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -> Result<()> {
     match cmd {
-        WorkflowCommand::Ls => {
-            let workflows: Vec<WorkflowDto> = client.get_json("/v1/workflows").await?;
-            let now = chrono::Utc::now();
-            print_list(
-                format,
-                &workflows,
-                LS,
-                |w| {
-                    vec![
-                        w.name.clone(),
-                        yes_no(w.builtin, "no"),
-                        columns_label(&w.steps),
-                        age(&w.updated_at, now),
-                    ]
-                },
-                empty_state("No workflows are available.", Some("ariadne doctor")),
-            )?;
-        }
+        WorkflowCommand::Ls => ls(client).await?.print(format)?,
         WorkflowCommand::Show { name } => {
             let w = get_workflow(client, &name).await?;
             match format {
@@ -149,7 +152,7 @@ pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -
                 )
                 .await?;
             print(format, &w, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &w.name)
                 )
@@ -166,7 +169,7 @@ pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -
                 )
                 .await?;
             print(format, &w, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "updated", &w.name)
                 )
@@ -180,7 +183,7 @@ pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -
                 .post_empty(&format!("{}/reset", workflow_path(&name)))
                 .await?;
             print(format, &w, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "reset", &w.name)
                 )
@@ -197,7 +200,7 @@ pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -
                 format,
                 &json!({ "workflow": name, "deleted": true }),
                 || {
-                    println!(
+                    outln!(
                         "{}",
                         ok_id_line(view().color, view().quiet, "deleted", &name)
                     )
@@ -296,10 +299,18 @@ fn read_document(file: Option<PathBuf>) -> Result<String> {
             if std::io::stdin().is_terminal() {
                 bail!("nothing to read: pass --file <path>, or pipe the document in");
             }
+            // `--host all` runs the command on each host in this process: the
+            // first host drains stdin and every host is given the same text.
+            static STDIN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+            let mut read = STDIN.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(text) = read.as_ref() {
+                return Ok(text.clone());
+            }
             let mut buf = String::new();
             std::io::stdin()
                 .read_to_string(&mut buf)
                 .context("reading the document from stdin")?;
+            *read = Some(buf.clone());
             Ok(buf)
         }
     }

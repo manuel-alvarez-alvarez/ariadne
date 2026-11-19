@@ -21,7 +21,7 @@ import { When } from "@/components/when"
 import { answerRequest, pendingRequests } from "@/features/sessions/console/questions"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
-import { useRowsShowHost } from "@/hooks/use-host-label"
+import { useHasNamedHosts } from "@/hooks/use-host-filter"
 import { describeError, shortId } from "@/lib/format"
 
 import {
@@ -33,6 +33,7 @@ import {
   attentionTarget,
   recoveryHeadline,
   useAttention,
+  useFollowAttention,
 } from "./attention"
 
 /** The shared attention list, available from every screen. */
@@ -83,22 +84,18 @@ export function AttentionPopover() {
               Loading attention…
             </p>
           ) : null}
-          {unavailable ? (
-            <p className="px-3 py-2">
-              Could not load attention — {describeError(attention.error)}.{" "}
-              <Retry onClick={attention.refetch} />
-            </p>
-          ) : null}
+          {unavailable ? <HostErrors attention={attention} className="px-3 py-2" /> : null}
           <ul className="max-h-[min(70vh,32rem)] divide-y overflow-y-auto">
             {attention.items.map((item) => (
               <Row key={rowKey(item)} item={item} onSelect={() => setOpen(false)} />
             ))}
           </ul>
           {attention.partial ? (
-            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-              Some items could not load — {describeError(attention.error)}.{" "}
-              <Retry onClick={attention.refetch} />
-            </p>
+            <HostErrors
+              attention={attention}
+              className="border-t px-3 py-2 text-xs text-muted-foreground"
+              partial
+            />
           ) : null}
         </PopoverContent>
       </Popover>
@@ -241,12 +238,7 @@ function AttentionDrawer({
       {attention.isPending && attention.items.length === 0 ? (
         <p role="status">Loading attention…</p>
       ) : null}
-      {unavailable ? (
-        <p>
-          Could not load attention — {describeError(attention.error)}.{" "}
-          <Retry onClick={attention.refetch} />
-        </p>
-      ) : null}
+      {unavailable ? <HostErrors attention={attention} /> : null}
       {!attention.isPending && !unavailable && attention.items.length === 0 ? (
         <p>Nothing needs attention.</p>
       ) : null}
@@ -259,13 +251,31 @@ function AttentionDrawer({
         ))}
       </ul>
       {attention.partial ? (
-        <p className="text-xs text-muted-foreground">
-          Some items could not load — {describeError(attention.error)}.{" "}
-          <Retry onClick={attention.refetch} />
-        </p>
+        <HostErrors attention={attention} className="text-xs text-muted-foreground" partial />
       ) : null}
     </>
   )
+}
+
+/**
+ * One line per host whose attention read failed, naming it and giving its
+ * reason, each with its own Retry. The other hosts' items stay on the list.
+ */
+function HostErrors({
+  attention,
+  className,
+  partial = false,
+}: {
+  attention: ReturnType<typeof useAttention>
+  className?: string
+  partial?: boolean
+}) {
+  return attention.errors.map(({ host, error }) => (
+    <p key={host} className={className}>
+      {partial ? "Some items could not load" : "Could not load attention"} on {host} —{" "}
+      {describeError(error)}. <Retry onClick={attention.refetch} />
+    </p>
+  ))
 }
 
 function Retry({ onClick }: { onClick: () => void }) {
@@ -300,7 +310,8 @@ function Row({
   expanded?: boolean
 }) {
   const queryClient = useQueryClient()
-  const showHost = useRowsShowHost()
+  // The list spans every reachable host whatever the pick.
+  const showHost = useHasNamedHosts()
   const dismiss = useMutation({
     mutationFn: () =>
       unwrap(
@@ -315,6 +326,7 @@ function Row({
   const { pathname } = useLocation()
   const status = item.taskReason && item.task ? TASK_STATUS_META[item.task.status] : null
   const target = attentionTarget(item, search, pathname)
+  const follow = useFollowAttention()
   // A grouped quota item's own target opens only one of its sessions;
   // every one of them gets its own small link below, so none of them is
   // unreachable just because another one happened to be first.
@@ -386,7 +398,10 @@ function Row({
         // Set exactly when the target is a task panel replacing an open
         // goal's, rather than stacking on it (`target.replace`).
         replace={target.replace}
-        onClick={onSelect}
+        onClick={() => {
+          follow(target)
+          onSelect?.()
+        }}
         className={className}
       >
         {content}

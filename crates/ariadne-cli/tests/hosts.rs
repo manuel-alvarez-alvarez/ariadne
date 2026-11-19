@@ -1048,6 +1048,199 @@ async fn all_forwards_a_stream_before_it_ends() {
     server.abort();
 }
 
+/// A stub daemon for the lists of `--host all`: its sessions, goals, skills
+/// and attention, and a barrier that `GET /v1/skills` waits at.
+fn list_daemon(
+    sessions: serde_json::Value,
+    goals: serde_json::Value,
+    attention: serde_json::Value,
+    barrier: Arc<tokio::sync::Barrier>,
+) -> Router {
+    Router::new()
+        .route("/v1/sessions", get(move || async move { Json(sessions) }))
+        .route("/v1/goals", get(move || async move { Json(goals) }))
+        .route("/v1/attention", get(move || async move { Json(attention) }))
+        .route(
+            "/v1/skills",
+            get(move || {
+                let barrier = Arc::clone(&barrier);
+                async move {
+                    // Each host answers only once the other host is asked too.
+                    barrier.wait().await;
+                    Json(json!([]))
+                }
+            }),
+        )
+}
+
+/// The output of `ariadne --endpoint ENDPOINT --host all ARGS`.
+async fn run_all(endpoint: &str, args: &[&str]) -> (i32, String, String) {
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args(["--endpoint", endpoint, "--host", "all"])
+        .args(args)
+        .env("ARIADNE_TELEMETRY", "off")
+        .output()
+        .await
+        .unwrap();
+    (
+        output.status.code().unwrap(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// `--host all` draws one list of every ready host (spec 014, rules 46 and 46a).
+#[tokio::test]
+async fn all_draws_one_list_of_every_ready_host() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let remote_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let remote_endpoint = format!("http://{}", remote_listener.local_addr().unwrap());
+    let registry = json!([
+        host("local", "ready", Some(&endpoint)),
+        host("build", "ready", Some(&remote_endpoint)),
+        host("offline", "down", None),
+        host("bare", "ready", None),
+    ]);
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let local_app = list_daemon(
+        json!({"sessions": [{"id": "s-local", "agent_id": "codex", "title": "Local work"}],
+               "next_cursor": null, "total": 4}),
+        json!([]),
+        json!({"complete": true, "items": [{
+            "id": "blocked", "producer": "recovery", "reason": "access", "summary": "Sign in",
+            "required_action": "Sign in", "since": "2026-11-17T00:00:00Z", "affected": [],
+            "target": {"kind": "settings", "section": "agents"}
+        }]}),
+        Arc::clone(&barrier),
+    )
+    .route("/v1/hosts", get(move || async move { Json(registry) }));
+    let remote_app = list_daemon(
+        json!({"sessions": [
+                   {"id": "s-build-with-a-long-id", "agent_id": "claude", "title": "Build work"},
+                   {"id": "s-build-2", "agent_id": "claude", "title": "More"}
+               ],
+               "next_cursor": "c2", "total": 8}),
+        json!([{"id": "g-build", "title": "Only on build"}]),
+        json!({"complete": false, "items": []}),
+        barrier,
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, local_app).await.unwrap() });
+    let remote =
+        tokio::spawn(async move { axum::serve(remote_listener, remote_app).await.unwrap() });
+
+    // One table led by HOST, aligned across hosts, with one summary line.
+    let (code, stdout, stderr) = run_all(&endpoint, &["session", "ls"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 5, "{stdout}");
+    assert!(lines[0].starts_with("HOST "), "{stdout}");
+    let title = lines[0].find("TITLE").unwrap();
+    assert_eq!(lines[1].find("Local work"), Some(title), "{stdout}");
+    assert_eq!(lines[2].find("Build work"), Some(title), "{stdout}");
+    assert!(lines[1].starts_with("local "), "{stdout}");
+    assert!(lines[3].starts_with("build "), "{stdout}");
+    assert_eq!(lines[4], "3 of 12 sessions");
+    // A host that is not ready, or has no endpoint, gets one warning.
+    assert!(stderr.contains("warning: offline: down\n"), "{stderr}");
+    assert!(
+        stderr.contains("warning: bare: host bare has no endpoint\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("build: Next: ariadne session ls --cursor c2 --host build"),
+        "{stderr}"
+    );
+
+    // JSON keeps the page object, with the sums and a cursor for each host.
+    let (code, stdout, stderr) = run_all(&endpoint, &["--format", "json", "session", "ls"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let page: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(page["total"], 12);
+    assert_eq!(page["next_cursor"], json!({"local": null, "build": "c2"}));
+    assert_eq!(page["sessions"][0]["host"], "local");
+    assert_eq!(page["sessions"][2]["host"], "build");
+
+    // `-q` prints only IDs.
+    let (_, stdout, _) = run_all(&endpoint, &["-q", "session", "ls"]).await;
+    assert_eq!(stdout, "s-local\ns-build-with-a-long-id\ns-build-2\n");
+
+    // A host that lacks the ID of a filter adds no rows and no warning.
+    let (code, stdout, stderr) = run_all(&endpoint, &["session", "ls", "--goal", "g-build"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!stdout.contains("local "), "{stdout}");
+    assert!(!stderr.contains("local"), "{stderr}");
+    let (code, _, stderr) = run_all(&endpoint, &["session", "ls", "--goal", "g-none"]).await;
+    assert_eq!(code, 4, "{stderr}");
+    // A whole ID is checked on each host too, so an absent one is not found.
+    for args in [
+        ["task", "ls", "--goal", "01m15jmta93b130wka2qdn2p1x"],
+        ["session", "ls", "--goal", "01m15jmta93b130wka2qdn2p1x"],
+    ] {
+        let (code, _, stderr) = run_all(&endpoint, &args).await;
+        assert_eq!(code, 4, "{args:?}: {stderr}");
+    }
+
+    // A cursor belongs to one host.
+    let (code, _, stderr) = run_all(&endpoint, &["session", "ls", "--cursor", "c2"]).await;
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("--host NAME"), "{stderr}");
+
+    // `attention` keeps its bullets, with the host of each item.
+    let (code, stdout, stderr) = run_all(&endpoint, &["attention"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.starts_with("NEEDS ATTENTION\n"), "{stdout}");
+    assert!(stdout.contains("  host: local\n"), "{stdout}");
+    assert!(
+        stdout.contains("  dismiss: ariadne attention dismiss blocked --host local\n"),
+        "{stdout}"
+    );
+    assert!(
+        stderr.contains("build: Some of what needs attention could not be read"),
+        "{stderr}"
+    );
+
+    // An empty list on every host says so one time; both hosts are read at once.
+    let (code, stdout, stderr) = run_all(&endpoint, &["skill", "ls"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        stdout.lines().next().unwrap().split_whitespace().next(),
+        Some("HOST")
+    );
+    assert_eq!(
+        stderr.matches("No skills are available.").count(),
+        1,
+        "{stderr}"
+    );
+    server.abort();
+    remote.abort();
+}
+
+/// With `local` alone, a list of every host still has its `HOST` column and
+/// its `host` field.
+#[tokio::test]
+async fn all_with_local_alone_keeps_the_host_column_and_field() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let registry = json!([host("local", "ready", Some(&endpoint))]);
+    let app = list_daemon(
+        json!({"sessions": [{"id": "s-local", "agent_id": "codex"}], "next_cursor": null, "total": 1}),
+        json!([]),
+        json!({"complete": true, "items": []}),
+        Arc::new(tokio::sync::Barrier::new(1)),
+    )
+    .route("/v1/hosts", get(move || async move { Json(registry) }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_, stdout, _) = run_all(&endpoint, &["session", "ls"]).await;
+    assert!(stdout.starts_with("HOST "), "{stdout}");
+    assert!(stdout.contains("\nlocal "), "{stdout}");
+    let (_, stdout, _) = run_all(&endpoint, &["--format", "json", "session", "ls"]).await;
+    let page: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(page["sessions"][0]["host"], "local");
+    assert_eq!(page["next_cursor"], json!({"local": null}));
+    server.abort();
+}
+
 #[tokio::test]
 async fn query_on_an_unknown_or_unready_host_is_a_usage_error() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1158,8 +1351,8 @@ async fn watched_attention_merges_ready_hosts_before_streams_end() {
     let value = tokio::time::timeout(std::time::Duration::from_secs(30), read)
         .await
         .unwrap();
-    assert_eq!(value[0]["host"], "local");
-    assert_eq!(value[1]["host"], "build");
+    assert_eq!(value["recovery"][0]["host"], "local");
+    assert_eq!(value["recovery"][1]["host"], "build");
     changed.store(true, std::sync::atomic::Ordering::SeqCst);
     notify.notify_one();
     let redraw = async {
@@ -1167,7 +1360,9 @@ async fn watched_attention_merges_ready_hosts_before_streams_end() {
         while let Some(line) = lines.next_line().await.unwrap() {
             text.push_str(&line);
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                if value[0]["summary"] == "Changed" && value[1]["summary"] == "Changed" {
+                if value["recovery"][0]["summary"] == "Changed"
+                    && value["recovery"][1]["summary"] == "Changed"
+                {
                     return;
                 }
                 text.clear();
@@ -1270,6 +1465,316 @@ async fn daemon_follow_keeps_other_hosts_after_a_drop_and_stops_on_interrupt() {
     remote.abort();
 }
 
+/// A stub daemon on a port of its own: its endpoint, and the task that serves it.
+async fn serve(app: Router) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (endpoint, server)
+}
+
+/// A daemon that fails every request with its own error.
+fn broken_daemon() -> Router {
+    Router::new().fallback(|| async {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"code": "internal", "message": "the disk is full"}})),
+        )
+    })
+}
+
+fn dashboard(name: &str, title: &str) -> serde_json::Value {
+    json!({
+        "name": name, "document": {"title": title}, "builtin": false,
+        "document_is_default": false, "created_at": "2026-01-01", "updated_at": "2026-01-01"
+    })
+}
+
+/// A local daemon that serves `registry` and the dashboards in `dashboards`.
+fn local_daemon(
+    registry: Arc<Mutex<serde_json::Value>>,
+    dashboards: Vec<serde_json::Value>,
+) -> Router {
+    named_dashboards(dashboards).route(
+        "/v1/hosts",
+        get(move || {
+            let registry = Arc::clone(&registry);
+            async move { Json(registry.lock().unwrap().clone()) }
+        }),
+    )
+}
+
+fn named_dashboards(dashboards: Vec<serde_json::Value>) -> Router {
+    Router::new().route(
+        "/v1/dashboards/{name}",
+        get(move |Path(name): Path<String>| {
+            let found = dashboards
+                .iter()
+                .find(|d| d["name"] == name.as_str())
+                .cloned();
+            async move {
+                match found {
+                    Some(found) => Ok(Json(found)),
+                    None => Err((
+                        StatusCode::NOT_FOUND,
+                        Json(
+                            json!({"error": {"code": "not_found", "message": "no such dashboard"}}),
+                        ),
+                    )),
+                }
+            }
+        }),
+    )
+}
+
+/// A read of one ID with `--host all` names the one host that has it, says
+/// the true error of each host that fails, and refuses an ID on two hosts
+/// (spec 014, rule 46b).
+#[tokio::test]
+async fn all_reads_one_id_on_the_host_that_has_it() {
+    let registry = Arc::new(Mutex::new(json!([])));
+    let (endpoint, server) = serve(local_daemon(
+        Arc::clone(&registry),
+        vec![dashboard("shared", "on local")],
+    ))
+    .await;
+    let (build, remote) = serve(named_dashboards(vec![
+        dashboard("shared", "on build"),
+        dashboard("theirs", "only on build"),
+    ]))
+    .await;
+    let (broken, failing) = serve(broken_daemon()).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([
+        local.clone(),
+        host("build", "ready", Some(&build)),
+        host("broken", "ready", Some(&broken)),
+        host("offline", "down", None),
+    ]);
+
+    // The host that has the ID answers, and is named on the first line.
+    let (code, stdout, stderr) = run_all(&endpoint, &["dashboard", "get", "theirs"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.lines().next(), Some("host: build"), "{stdout}");
+    assert!(stdout.contains("only on build"), "{stdout}");
+    // The host that fails and the host that is down each get one warning.
+    assert_eq!(
+        stderr.lines().collect::<Vec<_>>(),
+        [
+            "warning: broken: the disk is full",
+            "warning: offline: down"
+        ],
+        "{stderr}"
+    );
+
+    // In JSON, the host is a field of the answer.
+    let (code, stdout, stderr) = run_all(
+        &endpoint,
+        &["dashboard", "get", "theirs", "--format", "json"],
+    )
+    .await;
+    assert_eq!(code, 0, "{stderr}");
+    let shown: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(shown["host"], "build", "{stdout}");
+    assert_eq!(shown["title"], "only on build", "{stdout}");
+
+    // An ID on two hosts is refused, and the refusal names both.
+    let (code, stdout, stderr) = run_all(&endpoint, &["dashboard", "get", "shared"]).await;
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("the ID matches on hosts local, build"),
+        "{stderr}"
+    );
+
+    // A host that fails is not a host that lacks the ID.
+    let (code, _, stderr) = run_all(&endpoint, &["dashboard", "get", "absent"]).await;
+    assert_ne!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("warning: broken: the disk is full"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("no host has that ID"), "{stderr}");
+
+    // Only when each ready host answers not found is the ID on no host.
+    *registry.lock().unwrap() = json!([
+        local,
+        host("build", "ready", Some(&build)),
+        host("offline", "down", None),
+    ]);
+    let (code, _, stderr) = run_all(&endpoint, &["dashboard", "get", "absent"]).await;
+    assert_eq!(code, 4, "{stderr}");
+    assert!(stderr.contains("no host has that ID"), "{stderr}");
+    server.abort();
+    remote.abort();
+    failing.abort();
+}
+
+/// A stub daemon that answers `version`, `skill get` and `daemon logs` as
+/// the daemon `name`.
+fn answering_daemon(name: &'static str) -> Router {
+    Router::new()
+        .route(
+            "/v1/version",
+            get(move || async move { Json(json!({"name": "ariadned", "version": name})) }),
+        )
+        .route(
+            "/v1/skills/{skill}",
+            get(move |Path(skill): Path<String>| async move {
+                Json(json!({
+                    "name": skill, "seat": "task", "summary": "s",
+                    "document": format!("the {skill} skill of {name}\n"),
+                    "document_is_default": false, "builtin": false,
+                    "created_at": "2026-11-17T00:00:00Z", "updated_at": "2026-11-17T00:00:00Z"
+                }))
+            }),
+        )
+        .route(
+            "/v1/logs",
+            get(move || async move {
+                Json(json!({"lines": [{
+                    "ts": "2026-11-17T00:00:00Z", "level": "INFO", "target": "ariadne_daemon",
+                    "message": format!("started on {name}"), "service": "ariadned"
+                }]}))
+            }),
+        )
+}
+
+/// A read that every host answers prints one block for each ready host,
+/// headed by its name, or a JSON array with a `host` on each item (spec 014,
+/// rule 46b). `daemon logs` leads each line with its host.
+#[tokio::test]
+async fn all_reads_each_host_in_one_block_per_host() {
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = answering_daemon("1.0.0").merge(local_daemon(Arc::clone(&registry), vec![]));
+    let (endpoint, server) = serve(local_app).await;
+    let (build, remote) = serve(answering_daemon("2.0.0")).await;
+    let (broken, failing) = serve(broken_daemon()).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([
+        local,
+        host("build", "ready", Some(&build)),
+        host("broken", "ready", Some(&broken)),
+        host("offline", "down", None),
+    ]);
+
+    let (code, stdout, stderr) = run_all(&endpoint, &["skill", "get", "coding"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        stdout,
+        "local\nthe coding skill of 1.0.0\n\nbuild\nthe coding skill of 2.0.0\n"
+    );
+    assert_eq!(
+        stderr.lines().collect::<Vec<_>>(),
+        [
+            "warning: broken: the disk is full",
+            "warning: offline: down"
+        ],
+        "{stderr}"
+    );
+
+    let (code, stdout, stderr) = run_all(&endpoint, &["version", "--format", "json"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let shown: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    // `version` answers for a daemon that fails, with the daemon's error.
+    let rows: Vec<(&str, &serde_json::Value)> = shown
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["host"].as_str().unwrap(), &row["daemon"]))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("local", &json!({"name": "ariadned", "version": "1.0.0"})),
+            ("build", &json!({"name": "ariadned", "version": "2.0.0"})),
+            ("broken", &json!({"error": "the disk is full"})),
+        ],
+        "{stdout}"
+    );
+
+    let (code, stdout, stderr) = run_all(&endpoint, &["daemon", "logs"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(lines[0].starts_with("local     "), "{stdout}");
+    assert!(lines[0].ends_with("started on 1.0.0"), "{stdout}");
+    assert!(lines[1].starts_with("build     "), "{stdout}");
+    assert!(lines[1].ends_with("started on 2.0.0"), "{stdout}");
+    assert!(stderr.contains("warning: broken:"), "{stderr}");
+    server.abort();
+    remote.abort();
+    failing.abort();
+}
+
+/// A document piped to `workflow check --host all` reaches every ready host,
+/// not only the first one (spec 014, rule 46b).
+#[tokio::test]
+async fn all_reads_each_host_gives_a_piped_document_to_each_host() {
+    fn parser() -> Router {
+        Router::new().route(
+            "/v1/workflows/parse",
+            post(|Json(body): Json<serde_json::Value>| async move {
+                let document = body["document"].as_str().unwrap_or_default().to_owned();
+                if document.trim().is_empty() {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": {
+                            "code": "workflow_invalid", "message": "the document is empty",
+                            "details": {"line": 1}
+                        }})),
+                    );
+                }
+                (
+                    StatusCode::OK,
+                    Json(json!({"name": "x", "steps": [
+                        {"id": "a", "title": "A", "description": "", "skills": [],
+                         "ranks": [], "gate": null}
+                    ]})),
+                )
+            }),
+        )
+    }
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = parser().merge(local_daemon(Arc::clone(&registry), vec![]));
+    let (endpoint, server) = serve(local_app).await;
+    let (build, remote) = serve(parser()).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([local, host("build", "ready", Some(&build))]);
+
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args(["--endpoint", &endpoint, "--host", "all"])
+        .args(["workflow", "check", "--format", "json"])
+        .env("ARIADNE_TELEMETRY", "off")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(b"workflow x\n  a[A]\n").await.unwrap();
+    }
+    let output = child.wait_with_output().await.unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let shown: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let hosts: Vec<&str> = shown
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["host"].as_str().unwrap())
+        .collect();
+    assert_eq!(hosts, ["local", "build"], "{shown} {stderr}");
+    assert_eq!(stderr, "", "{stderr}");
+    server.abort();
+    remote.abort();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn watched_snapshot_failure_warns_once_and_stops_reading_that_host() {
@@ -1367,7 +1872,14 @@ async fn watched_snapshot_failure_warns_once_and_stops_reading_that_host() {
     let mut stderr = child.stderr.take().unwrap();
     let follow = async {
         for _ in 0..4 {
-            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("[]"));
+            let mut text = String::new();
+            loop {
+                text.push_str(&lines.next_line().await.unwrap().unwrap());
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                    assert_eq!(value["recovery"], json!([]));
+                    break;
+                }
+            }
             changes.send(()).unwrap();
         }
         let status = tokio::process::Command::new("kill")
@@ -1388,4 +1900,79 @@ async fn watched_snapshot_failure_warns_once_and_stops_reading_that_host() {
     remote.abort();
     assert_eq!(errors.matches("warning: build:").count(), 1, "{errors}");
     assert_eq!(requests.load(Ordering::SeqCst), 1);
+}
+
+/// A daemon that has the one task `id` among its sessions, tasks and goals.
+fn task_daemon(id: &'static str) -> Router {
+    Router::new()
+        .route(
+            "/v1/sessions",
+            get(|| async { Json(json!({"sessions": [], "next_cursor": null, "total": 0})) }),
+        )
+        .route(
+            "/v1/tasks",
+            get(move || async move { Json(json!([{"id": id, "title": "work"}])) }),
+        )
+        .route("/v1/goals", get(|| async { Json(json!([])) }))
+        .route(
+            "/v1/tasks/{id}",
+            get(move || async move { Json(json!({"id": id, "title": "work"})) }),
+        )
+}
+
+/// `attach --host all` warns for each host that is not ready, and refuses a
+/// prefix that matches on two hosts (spec 014, rule 46b).
+#[tokio::test]
+async fn all_attach_refuses_a_prefix_on_two_hosts() {
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = task_daemon("01aaaaaaaaaaaaaaaaaaaaaaaa")
+        .merge(local_daemon(Arc::clone(&registry), vec![]));
+    let (endpoint, server) = serve(local_app).await;
+    let (build, remote) = serve(task_daemon("01aaaaaaaaaaaaaaaaaaaaaaab")).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([
+        local,
+        host("build", "ready", Some(&build)),
+        host("offline", "down", None),
+    ]);
+    let (code, _, stderr) = run_all(&endpoint, &["attach", "01aaaa"]).await;
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("warning: offline: down"), "{stderr}");
+    assert!(
+        stderr.contains("the ID matches on hosts local, build"),
+        "{stderr}"
+    );
+    server.abort();
+    remote.abort();
+}
+
+/// With only `local` in the registry, the reads of every host keep their
+/// form: the `host:` line, the heading and the `host` field (spec 014, rule
+/// 46b).
+#[tokio::test]
+async fn all_reads_with_local_alone_keep_the_host() {
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = answering_daemon("1.0.0").merge(local_daemon(
+        Arc::clone(&registry),
+        vec![dashboard("mine", "on local")],
+    ));
+    let (endpoint, server) = serve(local_app).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([local]);
+
+    let (code, stdout, stderr) = run_all(&endpoint, &["dashboard", "get", "mine"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.lines().next(), Some("host: local"), "{stdout}");
+    let (code, stdout, stderr) = run_all(&endpoint, &["skill", "get", "coding"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "local\nthe coding skill of 1.0.0\n");
+    let (code, stdout, stderr) =
+        run_all(&endpoint, &["skill", "get", "coding", "--format", "json"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let shown: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(shown[0]["host"], "local", "{stdout}");
+    assert_eq!(shown.as_array().unwrap().len(), 1, "{stdout}");
+    server.abort();
 }

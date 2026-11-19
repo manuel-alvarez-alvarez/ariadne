@@ -30,8 +30,10 @@ const LESS: &str = "FRX";
 /// something to show: the text goes to stdout instead.
 pub(crate) fn page(text: &str) -> Result<()> {
     let Some(mut child) = spawn() else {
-        print!("{text}");
-        std::io::stdout().flush()?;
+        super::stdout(text);
+        if !super::holding() {
+            std::io::stdout().flush()?;
+        }
         return Ok(());
     };
     if let Some(mut stdin) = child.stdin.take() {
@@ -50,7 +52,7 @@ pub(crate) fn page(text: &str) -> Result<()> {
 /// The pager, started and waiting for the text — or nothing at all when
 /// paging is off, stdout is not a terminal, or `$PAGER` cannot be run.
 fn spawn() -> Option<std::process::Child> {
-    if !view().pager || !std::io::stdout().is_terminal() {
+    if !view().pager || super::holding() || !std::io::stdout().is_terminal() {
         return None;
     }
     let configured = std::env::var("PAGER").ok().filter(|p| !p.trim().is_empty());

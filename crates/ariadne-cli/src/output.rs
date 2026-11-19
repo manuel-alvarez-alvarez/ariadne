@@ -16,6 +16,7 @@
 //! How much of that happens is one decision, taken once from the command line
 //! and the environment ([`init`]) and read back by every renderer ([`view`]).
 
+pub(crate) mod listing;
 pub(crate) mod pager;
 pub(crate) mod style;
 pub(crate) mod table;
@@ -95,9 +96,40 @@ fn fitted_width(
         .or_else(|| ioctl().and_then(readable))
 }
 
+tokio::task_local! {
+    /// The stdout of a read that `--host all` runs for one host, held until
+    /// every host has answered (spec 014, rule 46b).
+    static HELD: std::cell::RefCell<String>;
+}
+
+/// Run `read` with its stdout held, and give back what it printed.
+pub(crate) async fn held<F: std::future::Future>(read: F) -> (F::Output, String) {
+    HELD.scope(std::cell::RefCell::new(String::new()), async {
+        let output = read.await;
+        (output, HELD.with(|held| held.take()))
+    })
+    .await
+}
+
+/// Whether stdout is held for a read of every host.
+pub(crate) fn holding() -> bool {
+    HELD.try_with(|_| ()).is_ok()
+}
+
+/// Write `text` to stdout, or to the held stdout of a read of every host.
+/// The `out!` and `outln!` macros of `main.rs` write through it.
+pub(crate) fn stdout(text: &str) {
+    if HELD
+        .try_with(|held| held.borrow_mut().push_str(text))
+        .is_err()
+    {
+        print!("{text}");
+    }
+}
+
 /// Print any serializable value as pretty JSON.
 pub(crate) fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
-    println!("{}", serde_json::to_string_pretty(value)?);
+    outln!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
 
@@ -139,7 +171,7 @@ pub(crate) fn print_list<T: Serialize>(
     let rows: Vec<Vec<String>> = items.iter().map(row).collect();
     let (text, notes) = list_text(columns, &rows, view(), empty)?;
     if !text.is_empty() {
-        println!("{text}");
+        outln!("{text}");
     }
     for message in notes {
         note(&message);
@@ -170,7 +202,7 @@ pub(crate) fn list_text(
 /// Print rows as an aligned table with an uppercase header, laid out for this
 /// terminal.
 pub(crate) fn print_table(columns: &[Column], rows: &[Vec<String>]) -> anyhow::Result<()> {
-    println!("{}", render_table(columns, rows, view())?);
+    outln!("{}", render_table(columns, rows, view())?);
     Ok(())
 }
 
@@ -283,7 +315,9 @@ impl From<&str> for Kv {
 
 /// Print a key/value inspect block.
 pub(crate) fn print_kv<V: Into<Kv> + Clone>(pairs: &[(&str, V)]) {
-    let _ = write_kv(&mut std::io::stdout().lock(), pairs, view());
+    let mut out = Vec::new();
+    let _ = write_kv(&mut out, pairs, view());
+    stdout(&String::from_utf8_lossy(&out));
 }
 
 /// The block and the newline that ends it — and nothing at all, newline

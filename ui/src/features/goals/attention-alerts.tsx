@@ -29,9 +29,11 @@ import { useEffect, useRef } from "react"
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
+import type { Host } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { SESSION_ATTENTION_META } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
+import { useHasNamedHosts, useReachableHosts } from "@/hooks/use-host-filter"
 import { plural } from "@/lib/format"
 import { paths } from "@/routes/paths"
 
@@ -41,6 +43,7 @@ import {
   attentionTarget,
   recoveryHeadline,
   useAttention,
+  useFollowAttention,
 } from "./attention"
 
 /**
@@ -81,11 +84,12 @@ export function AttentionAlerts() {
   }, [count, unavailable])
 
   useAttentionToasts(attention.items, {
-    // A list still loading has no news in it, and a list with a failed query
+    // A host still loading has no news in it, and a host with a failed query
     // in it cannot tell news from a hole: an item missing because
     // `GET /v1/sessions` failed would be announced all over again on the
-    // retry. Both wait, and the strip's error row is what says so.
-    ready: !attention.isPending && !attention.error,
+    // retry. Each waits on its own, and the strip's error row is what says so;
+    // the other hosts' toasts continue.
+    readyHosts: attention.readyHosts,
     quiet: onBoard,
   })
 
@@ -126,47 +130,65 @@ export function AttentionBadge() {
  */
 function useAttentionToasts(
   items: AttentionItem[],
-  { ready, quiet }: { ready: boolean; quiet: boolean },
+  { readyHosts, quiet }: { readyHosts: readonly Host[]; quiet: boolean },
 ) {
   const navigate = useNavigate()
   const [search] = useSearchParams()
   // These fire on whichever screen the user is on, and where a row opens
   // depends on that screen: see {@link attentionTarget}.
   const { pathname } = useLocation()
-  /** What has been on the list already; `null` until the first full answer. */
-  const announced = useRef<Set<string> | null>(null)
+  const follow = useFollowAttention()
+  const showHost = useHasNamedHosts()
+  /**
+   * What has been on each host's list already; a host has no entry until its
+   * first full answer, and loses it when it leaves the reachable hosts, so one
+   * that answers late, comes back or becomes listed starts again silent.
+   */
+  const announced = useRef<Map<Host, Set<string>>>(new Map())
+  const reachable = useReachableHosts()
 
   useEffect(() => {
     const current = new Map(items.map((item) => [alertKey(item), item]))
-    const seen = announced.current
+    const baselines = announced.current
+    for (const host of [...baselines.keys()]) {
+      if (!reachable.includes(host)) baselines.delete(host)
+    }
     // Even a partial response can remove an action. Keep notification history
     // until a full read, but never retain a toast absent from the shared list.
-    for (const key of seen ?? []) {
-      if (!current.has(key)) toast.dismiss(`attention-${key}`)
+    for (const keys of baselines.values()) {
+      for (const key of keys) if (!current.has(key)) toast.dismiss(`attention-${key}`)
     }
-    if (!ready) return
-    announced.current = new Set(current.keys())
-    // The first answer is the state of the world, not news about it.
-    if (!seen) return
+    for (const host of readyHosts) {
+      const seen = baselines.get(host)
+      const hostItems = [...current].filter(([, item]) => item.host === host)
+      baselines.set(host, new Set(hostItems.map(([key]) => key)))
+      // The first answer of a host is the state of the world, not news about it.
+      if (!seen) continue
 
-    for (const [key, item] of current) {
-      if (seen.has(key) || quiet) continue
-      const target = attentionTarget(item, search, pathname)
-      toast.warning(headline(item), {
-        // One toast per item: a reason raised twice in a row — a stream that
-        // dropped and re-delivered, a re-render — replaces its own toast
-        // rather than stacking a second one under it.
-        id: `attention-${key}`,
-        description: attentionSubject(item),
-        // `target.replace` when it is a task panel swapping in for an open
-        // goal's, same reasoning as the strip's own row.
-        action: {
-          label: "Open",
-          onClick: () => void navigate(target, { replace: target.replace }),
-        },
-      })
+      for (const [key, item] of hostItems) {
+        if (seen.has(key) || quiet) continue
+        const target = attentionTarget(item, search, pathname)
+        toast.warning(headline(item), {
+          // One toast per item: a reason raised twice in a row — a stream that
+          // dropped and re-delivered, a re-render — replaces its own toast
+          // rather than stacking a second one under it.
+          id: `attention-${key}`,
+          // While a named host is listed every toast names its host, `local`
+          // included (rule 74); with `local` alone none does.
+          description: showHost ? `${attentionSubject(item)} · ${host}` : attentionSubject(item),
+          // `target.replace` when it is a task panel swapping in for an open
+          // goal's, same reasoning as the strip's own row.
+          action: {
+            label: "Open",
+            onClick: () => {
+              follow(target)
+              void navigate(target, { replace: target.replace })
+            },
+          },
+        })
+      }
     }
-  }, [items, ready, quiet, navigate, search, pathname])
+  }, [items, readyHosts, reachable, quiet, navigate, search, pathname, follow, showHost])
 }
 
 /** What has changed about this row, as far as the list is concerned. */

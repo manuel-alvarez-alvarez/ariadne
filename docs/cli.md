@@ -844,8 +844,18 @@ Use `--host NAME` to run a command on a ready host from the local daemon's regis
 `--host local` selects that same daemon.
 
 Use `--host all` for reads only.
-A list across hosts has a leading `HOST` column and a JSON `host` field.
-Rows follow registry order. A failed host produces a warning.
+A list across hosts is one list, read from every ready host at the same time.
+It looks like the same list without `--host`, with a leading `HOST` column.
+The columns line up across hosts, and `--columns`, `--no-trunc` and `-q` work as usual.
+Rows follow registry order. A summary line, such as `3 of 12 sessions`, counts every host.
+`attention --host all` keeps its bullets and names the host of each item.
+With `--format json`, the JSON keeps its form, and each item has a `host` field.
+In `session ls` JSON, `total` counts every host and `next_cursor` holds one cursor for each host.
+A hint, such as `Next:`, starts with its host and adds `--host NAME`.
+To continue with `--cursor`, select one host with `--host NAME`. `--limit` applies to each host.
+A host that lacks the ID of a filter, such as `task ls --goal G`, adds no rows.
+When no host has that ID, the command fails as not found.
+A host that is down, has no endpoint or fails produces a warning.
 One successful host gives exit code 0.
 With `--watch --host all`, goal, task, session and PR lists redraw one merged table after host changes.
 `attention --watch --host all` redraws its merged view too.
@@ -855,9 +865,16 @@ JSON event lines have a `host` field.
 Task and session logs find the host with the ID before following it.
 An unavailable host produces one warning. Other hosts continue after a host drops, without reconnecting to it.
 Ctrl-C stops all followers. These forms also work when the registry contains only `local`.
-`permissions ai show --host all` prints one block per host, headed by the host's name.
-Commands for one ID, including attach, find the host that has it.
-Other reads, such as `version`, `doctor`, `events`, `forge tunnel`, `workflow check` and `permissions ai test`, take `--host NAME` and `--host all`.
+A command for one ID, such as `task inspect`, finds the host that has the ID.
+Its first line is `host: NAME`, and in JSON the answer has a `host` field.
+When the ID or its prefix matches on two hosts, the command is refused, and the message names both hosts.
+`no host has that ID` prints only when each ready host answered not found. A host that fails prints its own error as a warning.
+`attach`, `goal attach` and `task attach` find the host in the same way.
+A read that every host answers prints one block for each host, headed by the host name.
+These reads are `version`, `daemon status`, `doctor`, `models show`, `skill get`, `skill inspect`, `workflow show`, `permissions ai show`, `permissions ai test`, `forge tunnel`, `workflow check` and `completions`.
+With `--format json`, such a read prints an array, and each item has a `host` field.
+`daemon logs --host all` prints the recent lines of each host, each led by the host name.
+A host that is down or fails prints one warning on stderr, and the other hosts still print.
 
 Writes run on one host. With `--host all`, a write is refused, and the message names the hosts that take it.
 Skills, workflows, permissions and repository settings are written on `local`.

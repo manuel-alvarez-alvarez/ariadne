@@ -7,7 +7,8 @@ use ariadne_api::issues::IssueDto;
 use ariadne_client::Client;
 
 use super::resolve::{self, Kind};
-use crate::output::{Column, Format, UNCAPPED, col, print_list};
+use crate::output::listing::Listing;
+use crate::output::{Column, Format, UNCAPPED, col};
 
 const COLUMNS: &[Column] = &[
     col("number", UNCAPPED).id(),
@@ -32,13 +33,17 @@ pub(crate) enum IssueCommand {
 
 pub(crate) async fn run(client: &Client, command: IssueCommand, format: Format) -> Result<()> {
     let IssueCommand::Ls { repo, all } = command;
-    let id = resolve::id(client, Kind::Repo, &repo).await?;
+    ls(client, &repo, all).await?.print(format)
+}
+
+/// `issue ls`, as one host answers it.
+pub(crate) async fn ls(client: &Client, repo: &str, all: bool) -> Result<Listing> {
+    let id = resolve::id(client, Kind::Repo, repo).await?;
     let assigned = if all { "all" } else { "me" };
     let issues: Vec<IssueDto> = client
         .get_json(&format!("/v1/repositories/{id}/issues?assigned={assigned}"))
         .await?;
-    print_list(
-        format,
+    Listing::of(
         &issues,
         COLUMNS,
         |issue| {

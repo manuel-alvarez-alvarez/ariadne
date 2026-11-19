@@ -18,9 +18,10 @@ use super::query_path;
 use super::resolve::{self, Kind};
 use super::{Subject, confirm, parse_effort, parse_model, ranks_label};
 use crate::cli::values::Spelling;
+use crate::output::listing::Listing;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, moment, ok_id_line, print, print_kv,
-    print_list, status_line, usage_block, usage_cell, view,
+    status_line, usage_block, usage_cell, view,
 };
 
 /// Columns of `goal ls`. `tokens` is what every agent of the goal spent
@@ -240,7 +241,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                 )
                 .await?;
             print(format, &goal, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &goal.id)
                 )
@@ -312,7 +313,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
             // Nothing is left to print: what the caller asked about, and that
             // it happened.
             print(format, &json!({"goal": id, "deleted": true}), || {
-                println!("{}", ok_id_line(view().color, view().quiet, "deleted", &id))
+                outln!("{}", ok_id_line(view().color, view().quiet, "deleted", &id))
             })?;
         }
         GoalCommand::Attach { id } => {
@@ -432,12 +433,16 @@ async fn ls(
 
 /// The table as it stands, read afresh.
 async fn render(client: &Client, statuses: &[GoalStatus], all: bool, format: Format) -> Result<()> {
+    list(client, statuses, all).await?.print(format)
+}
+
+/// `goal ls`, as one host answers it.
+pub(crate) async fn list(client: &Client, statuses: &[GoalStatus], all: bool) -> Result<Listing> {
     let goals: Vec<GoalDto> = client.get_json(&goals_path(statuses)?).await?;
     let goals = visible(goals, all, statuses);
     let tasks: Vec<TaskDto> = client.get_json("/v1/tasks?all=true").await?;
     let now = chrono::Utc::now();
-    print_list(
-        format,
+    Listing::of(
         &goals,
         LS,
         |g| {
@@ -471,7 +476,7 @@ async fn render(client: &Client, statuses: &[GoalStatus], all: bool, format: For
 /// to.
 fn print_status(g: &GoalDto, format: Format) -> Result<()> {
     print(format, g, || {
-        println!(
+        outln!(
             "{}",
             status_line(view().color, view().quiet, "goal", &g.id, g.status.as_str())
         )

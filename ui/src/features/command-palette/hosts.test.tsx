@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 /**
- * The palette across hosts: it searches the goals, tasks and sessions of the
- * selected hosts, each row opens on its host, and the attach command names a
+ * The palette across hosts: it searches the goals, tasks and sessions of every
+ * reachable host, whatever the pick, each row opens on its host, and the attach command names a
  * host that is not `local`.
  */
 
@@ -80,7 +80,7 @@ it("names local on a local row under All", async () => {
   expect(within(remote).getByTitle("Host").textContent).toBe("box")
 })
 
-it("names no host on a row under one picked host", async () => {
+it("names the host of every row under one picked host", async () => {
   useSettingsStore.setState({ hostFilter: "box" })
   const user = userEvent.setup()
   renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
@@ -88,7 +88,7 @@ it("names no host on a row under one picked host", async () => {
   await user.type(screen.getByRole("combobox"), "zebra")
 
   const remote = await screen.findByRole("option", { name: /^Zebra on box/ })
-  expect(within(remote).queryByText("box")).toBeNull()
+  expect(within(remote).getByTitle("Host").textContent).toBe("box")
 })
 
 it("offers New task for the open goal on its own host under another pick", async () => {
@@ -103,7 +103,7 @@ it("offers New task for the open goal on its own host under another pick", async
   expect(item.textContent).toContain(GOAL.title)
 })
 
-it("searches only the picked host", async () => {
+it("searches the hosts outside the pick too", async () => {
   useSettingsStore.setState({ hostFilter: "box" })
   const user = userEvent.setup()
   renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
@@ -111,7 +111,44 @@ it("searches only the picked host", async () => {
   await user.type(screen.getByRole("combobox"), "zebra")
 
   await screen.findByRole("option", { name: /^Zebra on box/ })
-  expect(screen.queryByRole("option", { name: /^Zebra on local/ })).toBeNull()
+  const mine = await screen.findByRole("option", { name: /^Zebra on local/ })
+  expect(within(mine).getByTitle("Host").textContent).toBe("local")
+})
+
+it("opens the agents of a named host from Needs attention with the pick set to All hosts", async () => {
+  useSettingsStore.setState({ hostFilter: "local" })
+  stubHosts({
+    local: { ...EMPTY, "/v1/goals": [], "/v1/tasks": [], "/v1/sessions": aSessionPage([]) },
+    box: {
+      "/v1/goals": [],
+      "/v1/tasks": [],
+      "/v1/sessions": aSessionPage([]),
+      "/v1/repositories": [],
+      "/v1/attention": {
+        items: [
+          {
+            id: "box-agents",
+            occurrence: "",
+            producer: "recovery",
+            reason: "resource",
+            summary: "Summary of box-agents",
+            required_action: "Sign in.",
+            since: "2026-11-17T10:00:00Z",
+            affected: [],
+            target: { kind: "settings", section: "agents" },
+          },
+        ],
+        complete: true,
+      },
+    },
+  })
+  const user = userEvent.setup()
+  const { location } = renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
+
+  await user.click(await screen.findByRole("option", { name: /Summary of box-agents/ }))
+
+  expect(location.url).toBe("/agents?host=box")
+  expect(useSettingsStore.getState().hostFilter).toBe("")
 })
 
 it("copies the attach command with the host of the open session", async () => {

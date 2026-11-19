@@ -23,7 +23,7 @@ import { useSearchParams } from "react-router-dom"
 import { ApiError, type GoalDto, type Host } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState, RefreshWarning } from "@/components/error-state"
+import { ErrorState, hostTitle, RefreshWarning } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
 import { HostLabel } from "@/components/host-label"
 import { Markdown } from "@/components/markdown"
@@ -120,7 +120,11 @@ export function GoalPanel({
             {error ? (
               <ErrorState
                 showIcon
-                title={error.status === 404 ? "No such goal" : "Could not load goal"}
+                title={hostTitle(
+                  error.status === 404 ? "No such goal" : "Could not load goal",
+                  host,
+                  1,
+                )}
                 error={error}
                 // A goal that does not exist will not start existing on a retry.
                 onRetry={error.status === 404 ? undefined : () => void goal.refetch()}

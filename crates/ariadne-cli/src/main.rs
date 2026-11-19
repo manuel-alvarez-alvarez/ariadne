@@ -1,5 +1,23 @@
 //! ariadne — CLI for the Ariadne daemon.
 
+/// `print!` to stdout, or to the stdout that a read of every host holds
+/// ([`output::held`]).
+macro_rules! out {
+    ($($arg:tt)*) => {
+        $crate::output::stdout(&format!($($arg)*))
+    };
+}
+
+/// `println!` to stdout, or to the stdout that a read of every host holds.
+macro_rules! outln {
+    () => {
+        $crate::output::stdout("\n")
+    };
+    ($($arg:tt)*) => {
+        $crate::output::stdout(&format!("{}\n", format_args!($($arg)*)))
+    };
+}
+
 mod cli;
 mod commands;
 mod complete;

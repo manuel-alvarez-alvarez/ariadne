@@ -11,9 +11,10 @@ use ariadne_api::permissions::{
 use ariadne_client::Client;
 
 use super::resolve::{self, Kind};
+use crate::output::listing::Listing;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, dash, moment, ok_id_line, print, print_kv, print_list,
-    print_table, style, view, yes_no,
+    Column, Format, Kv, UNCAPPED, age, col, dash, moment, ok_id_line, print, print_kv, print_table,
+    style, view, yes_no,
 };
 
 #[derive(Subcommand)]
@@ -165,6 +166,22 @@ const LEARNED_LIST: &[Column] = &[
 
 const LEARNED_EMPTY: &str = "No learned choices yet.";
 
+/// `permissions learned list`, as one host answers it.
+pub(crate) async fn learned_list(client: &Client, repo: Option<&str>) -> Result<Listing> {
+    let repo = match repo {
+        Some(repo) => Some(resolve::id(client, Kind::Repo, repo).await?),
+        None => None,
+    };
+    let response = client.list_learned_permissions(repo.as_deref()).await?;
+    let now = chrono::Utc::now();
+    Listing::of(
+        &response.items,
+        LEARNED_LIST,
+        |row| learned_row(row, now),
+        LEARNED_EMPTY,
+    )
+}
+
 async fn run_learned(
     client: &Client,
     cmd: LearnedPermissionsCommand,
@@ -172,19 +189,7 @@ async fn run_learned(
 ) -> Result<()> {
     match cmd {
         LearnedPermissionsCommand::List { repo } => {
-            let repo = match repo {
-                Some(repo) => Some(resolve::id(client, Kind::Repo, &repo).await?),
-                None => None,
-            };
-            let response = client.list_learned_permissions(repo.as_deref()).await?;
-            let now = chrono::Utc::now();
-            print_list(
-                format,
-                &response.items,
-                LEARNED_LIST,
-                |row| learned_row(row, now),
-                LEARNED_EMPTY,
-            )
+            learned_list(client, repo.as_deref()).await?.print(format)
         }
         LearnedPermissionsCommand::Show { id } => {
             let row = client.get_learned_permission(&id).await?;
@@ -195,7 +200,7 @@ async fn run_learned(
             if format == Format::Json {
                 crate::output::print_json(&serde_json::json!({"id": id}))
             } else {
-                println!("{}", ok_id_line(view().color, view().quiet, "deleted", &id));
+                outln!("{}", ok_id_line(view().color, view().quiet, "deleted", &id));
                 Ok(())
             }
         }
@@ -317,9 +322,7 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
                     workspace,
                 })
                 .await?;
-            print(format, &response, || {
-                println!("{}", test_one_line(&response))
-            })
+            print(format, &response, || outln!("{}", test_one_line(&response)))
         }
     }
 }
@@ -364,7 +367,7 @@ async fn show(client: &Client, format: Format) -> Result<()> {
         Format::Json => crate::output::print_json(&status),
         Format::Table => {
             print_kv(&fields(&status));
-            println!();
+            outln!();
             print_table(FLAVOURS_TABLE, &flavour_rows(&status))
         }
     }
@@ -462,7 +465,7 @@ async fn wait_for_settled(
 }
 
 fn print_result(format: Format, status: &AiPermissionsStatusDto) -> Result<()> {
-    print(format, status, || println!("{}", one_line(status)))
+    print(format, status, || outln!("{}", one_line(status)))
 }
 
 /// The one line a mutation ends on: `the AI permission model is now <state>`, coloured and

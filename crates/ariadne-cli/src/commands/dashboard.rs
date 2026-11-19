@@ -1,6 +1,7 @@
 //! `ariadne dashboard ...`
 use super::path_segment;
-use crate::output::{Format, UNCAPPED, col, print_json, print_table};
+use crate::output::listing::Listing;
+use crate::output::{Column, Format, UNCAPPED, col, print_json, print_table};
 use anyhow::Result;
 use ariadne_api::dashboards::{DashboardDto, UpdateDashboardRequest};
 use ariadne_client::Client;
@@ -30,28 +31,14 @@ pub(crate) enum DashboardCommand {
 pub(crate) async fn run(client: &Client, cmd: DashboardCommand, format: Format) -> Result<()> {
     match cmd {
         DashboardCommand::Ls => {
-            let d: Vec<DashboardDto> = client.get_json("/v1/dashboards").await?;
+            // Without `--host`, `-q` still prints the whole table, as it did.
+            let listing = ls(client).await?;
             if format == Format::Json {
-                return print_json(&d);
+                outln!("{}", listing.json_text());
+                return Ok(());
             }
-            let rows = d
-                .iter()
-                .map(|x| {
-                    vec![
-                        x.name.clone(),
-                        x.builtin.to_string(),
-                        x.document_is_default.to_string(),
-                    ]
-                })
-                .collect::<Vec<_>>();
-            print_table(
-                &[
-                    col("name", 24).title(),
-                    col("builtin", UNCAPPED),
-                    col("default", UNCAPPED),
-                ],
-                &rows,
-            )?
+            let (columns, rows) = listing.table();
+            print_table(columns, rows)?
         }
         DashboardCommand::Get { name } => {
             let d: DashboardDto = client.get_json(&path(&name)).await?;
@@ -82,6 +69,29 @@ pub(crate) async fn run(client: &Client, cmd: DashboardCommand, format: Format) 
     let _ = format;
     Ok(())
 }
+const LS: &[Column] = &[
+    col("name", 24).title(),
+    col("builtin", UNCAPPED),
+    col("default", UNCAPPED),
+];
+
+/// `dashboard ls`, as one host answers it.
+pub(crate) async fn ls(client: &Client) -> Result<Listing> {
+    let dashboards: Vec<DashboardDto> = client.get_json("/v1/dashboards").await?;
+    Listing::of(
+        &dashboards,
+        LS,
+        |x| {
+            vec![
+                x.name.clone(),
+                x.builtin.to_string(),
+                x.document_is_default.to_string(),
+            ]
+        },
+        "",
+    )
+}
+
 fn path(name: &str) -> String {
     format!("/v1/dashboards/{}", path_segment(name))
 }

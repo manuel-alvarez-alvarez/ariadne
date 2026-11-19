@@ -6,12 +6,13 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { act, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
 import { qk } from "@/api"
 import { EventStreamProvider } from "@/events/provider"
 import { useConnection } from "@/hooks/use-connection"
+import { useHostStreamStore } from "@/stores/stream"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
 import { aGoal } from "@/test/fixtures"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
@@ -23,6 +24,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  useHostStreamStore.setState({ streams: {} })
   forgetHosts()
 })
 
@@ -85,4 +87,28 @@ it("keeps the connection state about local while a named host's stream drops", a
   })
 
   expect(screen.getByTestId("conn").textContent).toBe("connected")
+})
+
+it("keeps each named host's stream state and last heartbeat, and drops them with the stream", async () => {
+  stubHosts({}, [LOCAL, BOX])
+  mount()
+  await waitFor(() => expect(sourceOn("http://box.test:7676")).toBeDefined())
+  expect(useHostStreamStore.getState().streams.box?.status).toBe("connecting")
+
+  act(() => {
+    const box = sourceOn("http://box.test:7676")
+    box?.succeed()
+    box?.beat({ version: "0.8.1", started_at: "2026-01-02T00:00:00Z" })
+  })
+  const open = useHostStreamStore.getState().streams.box
+  expect(open?.status).toBe("open")
+  expect(open?.daemon).toEqual({ version: "0.8.1", startedAt: "2026-01-02T00:00:00Z" })
+  expect(open?.lastHeartbeatAt).not.toBeNull()
+  expect(useHostStreamStore.getState().streams.local).toBeUndefined()
+
+  act(() => sourceOn("http://box.test:7676")?.fail())
+  expect(useHostStreamStore.getState().streams.box?.status).toBe("reconnecting")
+
+  cleanup()
+  expect(useHostStreamStore.getState().streams.box).toBeUndefined()
 })
