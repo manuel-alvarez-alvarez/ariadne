@@ -1313,6 +1313,21 @@ Out: the daemon endpoints themselves (012).
     warning and error state names its host and gives its reason, and has Retry.
     A host that failed a refresh while its last read is on screen, an empty one
     too, is a warning marked "which may be outdated", never an error state.
+77. A goal, task and session of a named host keeps its host in what the panel
+    shows and links:
+    - The task panel and the session panel name their host, as the goal panel
+      does (rule 74).
+    - For a named host, the error titles of the goal panel, the task panel,
+      the session panel, a panel's sessions list and the session activity tab
+      end in `on NAME`, and the toast of a goal action (complete, cancel,
+      delete) does the same.
+    - A dependency row in a task's Execution summary opens the task on the
+      host of the panel.
+    - "Copy attach command" of a goal on a named host copies `--host NAME`
+      (rule 74).
+    - The request link of a session reads the host of the session. The
+      sessions table and the session panel show the request's title and its
+      forge link.
 78. The app keeps the stream state and the last heartbeat of the stream of
     each named host, from the start of the stream to its stop, in
     `useHostStreamStore`. `local`'s stay in `useStreamStore`, and the
@@ -1361,6 +1376,19 @@ Out: the daemon endpoints themselves (012).
 - The task panel and the session panel name their host
   (`ui/src/features/tasks/hosts.test.tsx::names the host of the task panel under any pick while a named host is listed`,
   `ui/src/features/sessions/hosts.test.tsx::names the host of the session panel while a named host is listed`).
+- A goal, task and session of a named host keep their host (rule 77)
+  (`ui/src/features/goals/hosts.test.tsx::names the host in the title of a goal that failed to load there`,
+  `::names the host in the toast of a goal action on a named host`,
+  `::copies the attach command of a goal of a named host with its host`,
+  `ui/src/features/tasks/hosts.test.tsx::names the host of the task panel under any pick while a named host is listed`,
+  `::names the host in the title of a task that failed to load there`,
+  `::opens a dependency of a task of a named host on that host`,
+  `ui/src/features/sessions/hosts.test.tsx::names the host of the session panel while a named host is listed`,
+  `::names the host in the titles of a session that failed to load there`,
+  `::names the host in the title of a sessions list that failed on a named host`,
+  `::names the host in the title of an activity tab that failed on a named host`,
+  `::reads the request link of a pull request session on the session's host`,
+  `::reads the request link of a pull request row of the sessions table on its host`).
 - The session rows follow rule 74 under a saved pick no longer listed
   (`ui/src/features/sessions/hosts.test.tsx::names each row's host under a saved pick the daemon no longer lists`).
 - The issue rows follow rule 74

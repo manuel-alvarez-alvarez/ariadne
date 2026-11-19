@@ -19,7 +19,7 @@ import { useRef, useState } from "react"
 
 import { type AgentEventDto, api, type Host, qk, unwrap } from "@/api"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, hostTitle } from "@/components/error-state"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
 import { cn } from "@/lib/format"
@@ -300,7 +300,7 @@ export function SessionActivity({ host, sessionId }: { host: Host; sessionId: st
   if (isError) {
     return (
       <ErrorState
-        title="Could not load agent events"
+        title={hostTitle("Could not load agent events", host, 1)}
         error={error}
         onRetry={() => void refetch()}
       />

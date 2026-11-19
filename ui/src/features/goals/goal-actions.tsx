@@ -26,6 +26,7 @@ import { toast } from "sonner"
 import type { GoalDto, Host } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { DeleteDialog } from "@/components/delete-dialog"
+import { hostTitle } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import { useCancelGoal, useCompleteGoal, useDeleteGoal } from "./queries"
 import { isTerminalGoalStatus } from "./status"
@@ -83,12 +84,14 @@ export function GoalActions({
       ) : null}
 
       <CompleteGoalDialog
+        host={host}
         goal={goal}
         open={completeOpen}
         onOpenChange={setCompleteOpen}
         complete={complete}
       />
       <CancelGoalDialog
+        host={host}
         goal={goal}
         open={cancelOpen}
         onOpenChange={setCancelOpen}
@@ -111,11 +114,13 @@ export function GoalActions({
  * refusal names those tasks, and it is shown here rather than swallowed.
  */
 function CompleteGoalDialog({
+  host,
   goal,
   open,
   onOpenChange,
   complete,
 }: {
+  host: Host
   goal: GoalDto
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -128,7 +133,7 @@ function CompleteGoalDialog({
   async function confirm() {
     try {
       await complete.mutateAsync()
-      toast.success("Goal completed", { description: goal.title })
+      toast.success(hostTitle("Goal completed", host, 1), { description: goal.title })
       onOpenChange(false)
     } catch {
       // Shown in the dialog.
@@ -158,11 +163,13 @@ function CompleteGoalDialog({
 }
 
 function CancelGoalDialog({
+  host,
   goal,
   open,
   onOpenChange,
   cancel,
 }: {
+  host: Host
   goal: GoalDto
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -176,7 +183,7 @@ function CancelGoalDialog({
   async function confirm() {
     try {
       await cancel.mutateAsync()
-      toast.success("Goal cancelled", { description: goal.title })
+      toast.success(hostTitle("Goal cancelled", host, 1), { description: goal.title })
       onOpenChange(false)
     } catch {
       // Shown in the dialog.
@@ -253,7 +260,7 @@ function DeleteGoalDialog({
       inUseDescription="Only a goal that has stopped can be deleted — cancel it first, which is what tears its sessions and worktrees down."
       onDelete={async () => {
         await deleteGoal.mutateAsync()
-        toast.success("Goal deleted", { description: goal.title })
+        toast.success(hostTitle("Goal deleted", host, 1), { description: goal.title })
       }}
       onDeleted={onDeleted}
     />
