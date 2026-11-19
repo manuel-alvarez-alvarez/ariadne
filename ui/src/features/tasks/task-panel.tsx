@@ -21,7 +21,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import type { Host, TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState, RefreshWarning } from "@/components/error-state"
+import { ErrorState, hostTitle, RefreshWarning } from "@/components/error-state"
 import { HostLabel } from "@/components/host-label"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
@@ -128,7 +128,7 @@ export function TaskPanel({
           </PaneHeader>
           <PaneBody>
             <ErrorState
-              title={`Could not load task ${taskId}`}
+              title={hostTitle(`Could not load task ${taskId}`, host, 1)}
               error={task.error}
               onRetry={() => void task.refetch()}
             />

@@ -132,7 +132,7 @@ function Row({ tone, children }: { tone?: string; children: ReactNode }) {
 }
 
 function DependencyRow({ id, task, label }: Dependency & { label: string }) {
-  const to = useTaskPanelTo(id)
+  const to = useTaskPanelTo(id, usePanelHost())
   const status = task ? TASK_STATUS_META[task.status] : undefined
   return (
     <Row>
