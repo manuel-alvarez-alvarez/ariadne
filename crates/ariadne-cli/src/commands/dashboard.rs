@@ -34,7 +34,7 @@ pub(crate) async fn run(client: &Client, cmd: DashboardCommand, format: Format) 
             // Without `--host`, `-q` still prints the whole table, as it did.
             let listing = ls(client).await?;
             if format == Format::Json {
-                println!("{}", listing.json_text());
+                outln!("{}", listing.json_text());
                 return Ok(());
             }
             let (columns, rows) = listing.table();

@@ -421,7 +421,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 .send_no_content::<()>(http::Method::POST, &path, None)
                 .await?;
             print(format, &json!({"requested": true}), || {
-                println!("Refresh requested")
+                outln!("Refresh requested")
             })
         }
         PrCommand::Review {
@@ -444,7 +444,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                     )
                     .await?;
                 return print(format, &json!({"requested": true}), || {
-                    println!("Review round asked on {repo_id} #{number}.");
+                    outln!("Review round asked on {repo_id} #{number}.");
                 });
             }
             let request = review_request(stop, model, effort, skills)?;
@@ -463,7 +463,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
             let id = pull.id.clone().unwrap_or_else(|| pull.number.to_string());
             let verb = if stop { "stopped" } else { "asked" };
             print(format, &pull, || {
-                println!("{}", ok_id_line(view().color, view().quiet, verb, &id))
+                outln!("{}", ok_id_line(view().color, view().quiet, verb, &id))
             })
         }
         PrCommand::Babysit {
@@ -486,7 +486,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                     )
                     .await?;
                 return print(format, &json!({"requested": true}), || {
-                    println!("Keeper turn asked on {repo_id} #{number}.")
+                    outln!("Keeper turn asked on {repo_id} #{number}.")
                 });
             }
             let request = babysit_request(stop, model, effort, skills)?;
@@ -503,7 +503,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
             let id = pull.id.clone().unwrap_or_else(|| pull.number.to_string());
             let verb = if stop { "stopped" } else { "asked" };
             print(format, &pull, || {
-                println!("{}", ok_id_line(view().color, view().quiet, verb, &id))
+                outln!("{}", ok_id_line(view().color, view().quiet, verb, &id))
             })
         }
     }

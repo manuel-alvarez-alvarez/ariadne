@@ -303,7 +303,7 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                 )
                 .await?;
             print(format, &t, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &t.id)
                 )
@@ -328,7 +328,7 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             })?;
             let t: TaskDto = client.patch_json(&task_path(&id), &body).await?;
             print(format, &t, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "updated", &t.id)
                 )
@@ -750,7 +750,7 @@ fn cancel_question(t: &TaskDto, subject: &Subject) -> String {
 /// What a mutation prints: the task it produced, or where it got to.
 fn print_status(t: &TaskDto, format: Format) -> Result<()> {
     print(format, t, || {
-        println!(
+        outln!(
             "{}",
             status_line(view().color, view().quiet, "task", &t.id, t.status.as_str())
         )

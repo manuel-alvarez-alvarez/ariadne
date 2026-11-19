@@ -115,7 +115,7 @@ async fn set_enabled(client: &Client, model: &str, enabled: bool, format: Format
     };
     let updated: ModelDto = client.put_json("/v1/models/enabled", &body).await?;
     print(format, &updated, || {
-        println!(
+        outln!(
             "{}",
             status_line(
                 view().color,
@@ -143,7 +143,7 @@ async fn set_rank(
 ) -> Result<()> {
     let updated: ModelDto = client.set_model_rank(model, rank).await?;
     print(format, &updated, || {
-        println!(
+        outln!(
             "{}",
             status_line(
                 view().color,

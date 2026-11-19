@@ -73,6 +73,11 @@ impl Failure {
         Self::new(Exit::Conflict, message)
     }
 
+    /// A failure that exits as another failure did.
+    pub(crate) fn with_exit(exit: Exit, message: impl Into<String>) -> Self {
+        Self::new(exit, message)
+    }
+
     fn new(exit: Exit, message: impl Into<String>) -> Self {
         Self {
             exit,

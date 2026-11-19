@@ -190,7 +190,7 @@ impl Listing {
     /// Print the list as the command prints it without `--host`.
     pub(crate) fn print(&self, format: Format) -> Result<()> {
         if format == Format::Json {
-            println!("{}", self.json_text);
+            outln!("{}", self.json_text);
             return Ok(());
         }
         emit(render(&[(None, self)], view())?)
@@ -216,7 +216,7 @@ pub(crate) fn print_merged(parts: &[(String, Listing)], format: Format) -> Resul
 fn emit(rendered: Rendered) -> Result<()> {
     for line in rendered.lines {
         match line {
-            Out::Stdout(text) => println!("{text}"),
+            Out::Stdout(text) => outln!("{text}"),
             Out::Stderr(text) => note(&text),
         }
     }

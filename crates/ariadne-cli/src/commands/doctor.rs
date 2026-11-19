@@ -176,7 +176,7 @@ pub(crate) async fn run(client: &Client, format: Format) -> Result<ExitCode> {
     };
     print(format, &report, || {
         for line in lines.as_ref().expect("table lines") {
-            println!("{line}");
+            outln!("{line}");
         }
         let verdict_style = style::check(report.status.label()).0;
         note(&style::paint(view.color, verdict_style, &summary(&report)));

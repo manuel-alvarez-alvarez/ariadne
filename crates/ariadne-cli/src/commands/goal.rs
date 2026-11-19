@@ -241,7 +241,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                 )
                 .await?;
             print(format, &goal, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &goal.id)
                 )
@@ -313,7 +313,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
             // Nothing is left to print: what the caller asked about, and that
             // it happened.
             print(format, &json!({"goal": id, "deleted": true}), || {
-                println!("{}", ok_id_line(view().color, view().quiet, "deleted", &id))
+                outln!("{}", ok_id_line(view().color, view().quiet, "deleted", &id))
             })?;
         }
         GoalCommand::Attach { id } => {
@@ -476,7 +476,7 @@ pub(crate) async fn list(client: &Client, statuses: &[GoalStatus], all: bool) ->
 /// to.
 fn print_status(g: &GoalDto, format: Format) -> Result<()> {
     print(format, g, || {
-        println!(
+        outln!(
             "{}",
             status_line(view().color, view().quiet, "goal", &g.id, g.status.as_str())
         )

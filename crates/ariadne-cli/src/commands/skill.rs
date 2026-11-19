@@ -132,7 +132,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
             // Raw and unadorned, trailing newline included or not exactly as
             // it is stored: `skill get > file` then `skill set --file` has to
             // round-trip.
-            print(format, &skill, || print!("{}", skill.document))?;
+            print(format, &skill, || out!("{}", skill.document))?;
         }
         SkillCommand::Create { name, file } => {
             // Read before anything is sent: a line naming an unreadable file
@@ -148,7 +148,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
                 )
                 .await?;
             print(format, &skill, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &skill.name)
                 )
@@ -165,7 +165,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
                 )
                 .await?;
             print(format, &skill, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "updated", &skill.name)
                 )
@@ -177,7 +177,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
             confirm("reset", &subject, &reset_question(&skill), yes)?;
             let skill = client.reset_skill(&path_segment(&name)).await?;
             print(format, &skill, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "reset", &skill.name)
                 )
@@ -193,7 +193,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
             // The skill is gone, so there is no DTO left to print: what the
             // caller asked about, and that it happened.
             print(format, &json!({ "skill": name, "deleted": true }), || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "deleted", &name)
                 )

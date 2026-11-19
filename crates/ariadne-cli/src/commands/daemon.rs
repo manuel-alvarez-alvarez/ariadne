@@ -64,7 +64,7 @@ pub(crate) async fn start(home: Option<PathBuf>, format: Format) -> Result<()> {
     if client.health().await.is_ok() {
         let payload = json!({"started": false, "endpoint": client.endpoint()});
         return print(format, &payload, || {
-            println!(
+            outln!(
                 "{} {}",
                 style::paint(view().color, style::META, "daemon already running at"),
                 client.endpoint()
@@ -81,7 +81,7 @@ pub(crate) async fn start(home: Option<PathBuf>, format: Format) -> Result<()> {
         "service": done.service,
         "endpoint": client.endpoint(),
     });
-    print(format, &payload, || println!("{}", started_line(&done)))
+    print(format, &payload, || outln!("{}", started_line(&done)))
 }
 
 /// `ariadne daemon stop` — stop the daemon of `home` and wait for its socket
@@ -98,8 +98,8 @@ pub(crate) async fn stop(home: Option<PathBuf>, timeout: u64, format: Format) ->
         "waited_secs": waited.as_secs_f64(),
     });
     print(format, &payload, || {
-        println!("{}", stopped_line(&done));
-        println!("{}", gone_line(&socket, waited));
+        outln!("{}", stopped_line(&done));
+        outln!("{}", gone_line(&socket, waited));
     })
 }
 
@@ -142,10 +142,10 @@ pub(crate) async fn restart(home: Option<PathBuf>, timeout: u64, format: Format)
     });
     print(format, &payload, || {
         if let Some((done, waited)) = &stopped {
-            println!("{}", stopped_line(done));
-            println!("{}", gone_line(&socket, *waited));
+            outln!("{}", stopped_line(done));
+            outln!("{}", gone_line(&socket, *waited));
         }
-        println!("{}", started_line(&done));
+        outln!("{}", started_line(&done));
     })
 }
 
@@ -266,7 +266,8 @@ pub(crate) async fn logs(
     match served {
         // A named host has no file here: its log is its daemon's, so a host
         // that does not answer is the failure, never this machine's file.
-        Err(e) if !remote && follow::unreachable(&e) => {
+        // A read of every host holds its output, and `tail` cannot be held.
+        Err(e) if !remote && !crate::output::holding() && follow::unreachable(&e) => {
             note(&format!(
                 "cannot reach the ariadne daemon at {} — reading the log file instead",
                 client.endpoint()
@@ -329,13 +330,13 @@ async fn follow_log(client: &Client, service: Option<&str>, level: Option<&str>)
                     false => shown.boundary(&snapshot.lines),
                 };
                 for line in &snapshot.lines[from..] {
-                    println!("{}", log_line(line, color));
+                    outln!("{}", log_line(line, color));
                     shown.note(line);
                 }
             }
             "delta" => {
                 let line: LogLineDto = serde_json::from_str(&frame.data)?;
-                println!("{}", log_line(&line, color));
+                outln!("{}", log_line(&line, color));
                 shown.note(&line);
             }
             _ => {}

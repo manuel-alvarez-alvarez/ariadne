@@ -112,7 +112,7 @@ pub(crate) async fn run(client: &Client, cmd: AgentCommand, format: Format) -> R
             };
             let config = client.update_agent_config(&agent, extra_flags).await?;
             print(format, &config, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "updated", &config.agent_id)
                 );

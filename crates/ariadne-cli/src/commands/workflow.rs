@@ -152,7 +152,7 @@ pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -
                 )
                 .await?;
             print(format, &w, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &w.name)
                 )
@@ -169,7 +169,7 @@ pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -
                 )
                 .await?;
             print(format, &w, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "updated", &w.name)
                 )
@@ -183,7 +183,7 @@ pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -
                 .post_empty(&format!("{}/reset", workflow_path(&name)))
                 .await?;
             print(format, &w, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "reset", &w.name)
                 )
@@ -200,7 +200,7 @@ pub(crate) async fn run(client: &Client, cmd: WorkflowCommand, format: Format) -
                 format,
                 &json!({ "workflow": name, "deleted": true }),
                 || {
-                    println!(
+                    outln!(
                         "{}",
                         ok_id_line(view().color, view().quiet, "deleted", &name)
                     )

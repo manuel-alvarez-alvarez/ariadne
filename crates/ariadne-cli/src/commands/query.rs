@@ -53,7 +53,7 @@ pub(crate) async fn run(
     let (columns, rows) = table(&answer["data"], host == Some("all"));
     let (text, notes) = output::list_text(&columns, &rows, output::view(), "no series")?;
     if !text.is_empty() {
-        println!("{text}");
+        outln!("{text}");
     }
     for message in notes {
         output::note(&message);
