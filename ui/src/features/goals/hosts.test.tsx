@@ -412,3 +412,12 @@ it("keeps the lanes and says tasks are not loaded when every host's task read fa
   expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
   expect(within(lane).queryByText(/No tasks/)).toBeNull()
 })
+
+it("shows the lanes as not loaded while every task read is pending", async () => {
+  stubHosts({ local: { "/v1/goals": [MINE], "/v1/sessions": aSessionPage([]) } }, [LOCAL])
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+
+  const lane = await screen.findByRole("group", { name: `${MINE.title}: Tasks` })
+  expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
+  expect(within(lane).queryByText(/No tasks/)).toBeNull()
+})

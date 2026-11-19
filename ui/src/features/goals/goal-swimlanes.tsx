@@ -123,12 +123,9 @@ export function GoalSwimlanes({
     0,
   )
 
-  // A host whose tasks failed keeps its lanes and says they are not loaded,
-  // with a warning of its own, also when every host failed.
-  if (tasks.isPending) {
-    return <BoardSkeleton />
-  }
-
+  // A host whose tasks failed or are still loading keeps its lanes and says
+  // they are not loaded; a failure has a warning of its own, also when every
+  // host failed.
   return (
     <>
       {/* Outside the frame: the board fills the frame's whole height, so a
