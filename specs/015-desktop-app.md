@@ -2609,3 +2609,16 @@ for conversation beside selected activity details. Ariadne retains its own compo
 
 The user’s later Develop instruction places permission requests in the details pane or drawer, like tools.
 This overrides the original requirement to keep permission responses inline. Questions remain in the conversation.
+
+### Loaded transcript find
+
+The console offers Find in transcript and a scoped Ctrl/Cmd+F shortcut.
+Text fields, editors, the composer, and nested dialogs retain keyboard ownership.
+Search uses the current view's loaded block text, including folded activity and tool details.
+Each occurrence has a count and an active mark in a separate result pane.
+Previous and Next controls select occurrences. Enter and Shift+Enter in the search field also select occurrences.
+The pane leaves transcript folds, reading position, pending requests, and drafts intact.
+Escape closes find and restores focus. Stream updates retain the selected block and occurrence offset while available.
+The coverage message identifies unloaded history. Load earlier history uses the existing page action.
+
+Acceptance: `ui/src/features/sessions/console/transcript-find.test.tsx` proves result navigation, history selection stability, focus return, and shortcut ownership.

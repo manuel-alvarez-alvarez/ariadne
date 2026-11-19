@@ -152,3 +152,17 @@ Only the hint printed next to the header's search button picks a side
 
 See [`AGENTS.md`](AGENTS.md#keyboard) for how chords are bound and guarded, and
 for the command palette.
+
+## Find text in a console
+
+Select **Find in transcript** to search the current view's loaded text.
+Ctrl+F or Cmd+F opens find when a console control has focus.
+Text fields, the composer, editors, and nested dialogs keep their shortcuts.
+Use Previous and Next, or Enter and Shift+Enter in the search field, to select a match.
+The result pane marks the occurrence and shows its block, including folded tool input, output, and diffs.
+The console keeps its reading position and draft. Escape or Close find returns focus to the original control.
+Search does not change sessions or child views.
+
+The coverage message states when older history remains unloaded.
+Select **Load earlier history** to fetch one existing history page and update the count.
+New stream text updates counts without moving focus or changing an available selected occurrence.
