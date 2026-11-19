@@ -228,6 +228,12 @@ function twoCopies(
   })
 }
 
+/** The host label beside a piece of Ariadne's work in the panel, by rule 74. */
+const hostOfWork = (text: string) =>
+  within(screen.getByText(text).closest('[data-slot="ariadne-work"]') as HTMLElement).getByTitle(
+    "Host",
+  ).textContent
+
 const posted = (seen: SeenRequest[], origin: string, path: string, method: string) =>
   seen.some(
     (request) =>
@@ -245,9 +251,13 @@ it("names the host that reviews and the task that keeps a request read on anothe
   renderScreen(<PullRequestPanel id="repo-local:42" onClose={() => {}} />, {
     route: "/forge/pull-requests?pr=repo-local%3A42",
   })
-  expect(await screen.findByText("Ariadne reviewing on box")).toBeTruthy()
-  expect(screen.getByText("Keeps it for a task on local; Reviews it on box")).toBeTruthy()
-  const kept = screen.getByRole("link", { name: /the author of task/ }).getAttribute("href")
+  await screen.findByText("Ariadne reviewing")
+  expect(hostOfWork("Ariadne reviewing")).toBe("box")
+  expect(hostOfWork("Keeps it for a task")).toBe("local")
+  expect(hostOfWork("Reviews it")).toBe("box")
+  const keptBy = screen.getByRole("link", { name: /the author of task/ })
+  expect(within(keptBy.parentElement as HTMLElement).getByTitle("Host").textContent).toBe("local")
+  const kept = keptBy.getAttribute("href")
   expect(kept).toContain("task=task-7")
   expect(kept).not.toContain("host=")
   const goal = screen.getByRole("link", { name: "Review goal" }).getAttribute("href")
@@ -401,6 +411,6 @@ it("warns of a host it cannot read, by name and reason, and keeps the other host
   })
   expect(await screen.findByText("Could not load the pull request on box")).toBeTruthy()
   expect(screen.getByText(/The forge did not answer/)).toBeTruthy()
-  expect(screen.getByText("Ariadne reviewing on local")).toBeTruthy()
+  expect(hostOfWork("Ariadne reviewing")).toBe("local")
   expect(screen.getByRole("button", { name: "Stop review" })).toBeTruthy()
 })

@@ -28,7 +28,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { BotIcon, BotOffIcon } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import {
@@ -338,7 +338,6 @@ function PullRequestHeader({
   // like any other (029, 032), each on the host that runs it.
   const reviewGoal = operationOf(copies, "review")
   const babysitGoal = operationOf(copies, "babysit")
-  const on = (label: string, at: Host) => (showHost ? `${label} on ${at}` : label)
   const target = (copy: HostRow<PullRequestDto>) => ({
     host: copy.host,
     repository_id: copy.repository_id,
@@ -422,10 +421,10 @@ function PullRequestHeader({
             ) : null}
             {review ? <StatusBadge label={review.label} tone={review.tone} /> : null}
             {reviewer ? (
-              <StatusBadge
-                label={on(ARIADNE_REVIEWING.label, reviewer.host)}
-                tone={ARIADNE_REVIEWING.tone}
-              />
+              <span className="inline-flex items-center gap-1" data-slot="ariadne-work">
+                <StatusBadge label={ARIADNE_REVIEWING.label} tone={ARIADNE_REVIEWING.tone} />
+                {showHost ? <HostLabel host={reviewer.host} /> : null}
+              </span>
             ) : null}
             {reviewGoal ? (
               <Link
@@ -436,10 +435,10 @@ function PullRequestHeader({
               </Link>
             ) : null}
             {babysitter ? (
-              <StatusBadge
-                label={on(ARIADNE_BABYSITTING.label, babysitter.host)}
-                tone={ARIADNE_BABYSITTING.tone}
-              />
+              <span className="inline-flex items-center gap-1" data-slot="ariadne-work">
+                <StatusBadge label={ARIADNE_BABYSITTING.label} tone={ARIADNE_BABYSITTING.tone} />
+                {showHost ? <HostLabel host={babysitter.host} /> : null}
+              </span>
             ) : null}
             {babysitGoal ? (
               <Link
@@ -552,7 +551,7 @@ function PullRequestFacts({
       {taskKeeper?.origin_task_id ? (
         <Fact label="Kept by">
           <TaskLink taskId={taskKeeper.origin_task_id} host={taskKeeper.host} />
-          {showHost ? ` on ${taskKeeper.host}` : null}
+          {showHost ? <HostLabel host={taskKeeper.host} className="ml-1.5" /> : null}
         </Fact>
       ) : null}
       {failed.length > 0 ? (
@@ -582,14 +581,26 @@ function PullRequestFacts({
   )
 }
 
-/** What Ariadne does with the request, on each host that works on it. */
-function ariadneWork(copies: HostRow<PullRequestDto>[], showHost: boolean): string {
+/**
+ * What Ariadne does with the request, on each host that works on it, each
+ * host named by rule 74.
+ */
+function ariadneWork(copies: HostRow<PullRequestDto>[], showHost: boolean): ReactNode {
   const work = copies.flatMap((copy) => {
     const what = copy.origin_task_id ? "Keeps it for a task" : copy.id ? "Reviews it" : null
-    if (!what) return []
-    return [showHost ? `${what} on ${copy.host}` : what]
+    return what ? [{ what, host: copy.host }] : []
   })
-  return work.length > 0 ? work.join("; ") : "Works on nothing here"
+  if (work.length === 0) return "Works on nothing here"
+  return (
+    <span className="flex flex-col gap-1">
+      {work.map(({ what, host }) => (
+        <span key={host} className="flex items-center gap-1.5" data-slot="ariadne-work">
+          <span>{what}</span>
+          {showHost ? <HostLabel host={host} /> : null}
+        </span>
+      ))}
+    </span>
+  )
 }
 
 /** The task that opened the request, whose author keeps it, as its panel. */
@@ -614,6 +625,7 @@ function PullRequestSessions({
   copies: HostRow<PullRequestDto>[]
   onSelect: (on: HostRow<PullRequestDto>, sessionId: string) => void
 }) {
+  const showHost = usePanelShowsHost()
   const worked = copies.filter((copy) => copy.id)
   const kept = copies.filter((copy) => copy.origin_task_id)
   const select = (session: SessionDto, at: Host) => {
@@ -630,7 +642,7 @@ function PullRequestSessions({
               host: copy.host,
               filters: { pull_request: copy.id as string },
             }))}
-            showHost={copies.length > 1}
+            showHost={showHost}
             onSelect={select}
           />
         ) : (
@@ -645,7 +657,7 @@ function PullRequestSessions({
               host: copy.host,
               filters: { task: copy.origin_task_id as string, seat: "agent" as const },
             }))}
-            showHost={copies.length > 1}
+            showHost={showHost}
             onSelect={select}
           />
         </section>

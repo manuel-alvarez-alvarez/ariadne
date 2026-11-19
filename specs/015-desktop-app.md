@@ -1311,13 +1311,13 @@ Out: the daemon endpoints themselves (012).
     - The header and the Ariadne fact name the host that reviews and the host
       that keeps, and "Kept by" links the task panel on the host of the task.
       The Review goal and Babysit goal links open on the host of that goal.
-      The host names show where rule 74 names the panel's host.
+      `HostLabel` draws each host name, where rule 74 names the panel's host.
     - Review again and Stop review go to the host that reviews. Keeper turn and
       Stop babysit go to the host that keeps. Each uses that host's repository
       id.
     - The Sessions tab lists the Ariadne sessions and the task workflow
-      sessions of every host. Each row names its host while the panel reads
-      the request on more than one host. A session opens on its own host:
+      sessions of every host. Each row names its host by rule 74, as the
+      panel does. A session opens on its own host:
       `?host=` and `?pr=` move to the request on that host, so its console,
       input, cancel, answers, resume and switch go there.
     - A host that the panel cannot read shows a warning with its name and its
