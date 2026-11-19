@@ -62,7 +62,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useAttention } from "@/features/goals/attention"
+import { useAttention, useFollowAttention } from "@/features/goals/attention"
 import { goalQueryOptions, goalsQueryOptions } from "@/features/goals/queries"
 import { isTerminalGoalStatus } from "@/features/goals/status"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
@@ -136,6 +136,7 @@ export function CommandPalette({
   const { status, retry } = useConnection()
 
   const entries = usePaletteEntries(open)
+  const follow = useFollowAttention()
   const panelHost = hostOf(search)
   // What the screen underneath is showing, which is what the actions below act
   // on: the goal a task would be created in, and the task or session an attach
@@ -161,6 +162,9 @@ export function CommandPalette({
     // A task target may ask to replace rather than push — see `entries.ts` —
     // which a plain string target never does.
     const replace = typeof target === "string" ? undefined : target.replace
+    // The same rule the strip and the toast follow: an agents link to a host
+    // outside the pick sets the pick to All hosts.
+    if (typeof target !== "string") follow(target)
     run(() => void navigate(target, { replace }))
   }
 

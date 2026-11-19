@@ -115,6 +115,42 @@ it("searches the hosts outside the pick too", async () => {
   expect(within(mine).getByTitle("Host").textContent).toBe("local")
 })
 
+it("opens the agents of a named host from Needs attention with the pick set to All hosts", async () => {
+  useSettingsStore.setState({ hostFilter: "local" })
+  stubHosts({
+    local: { ...EMPTY, "/v1/goals": [], "/v1/tasks": [], "/v1/sessions": aSessionPage([]) },
+    box: {
+      "/v1/goals": [],
+      "/v1/tasks": [],
+      "/v1/sessions": aSessionPage([]),
+      "/v1/repositories": [],
+      "/v1/attention": {
+        items: [
+          {
+            id: "box-agents",
+            occurrence: "",
+            producer: "recovery",
+            reason: "resource",
+            summary: "Summary of box-agents",
+            required_action: "Sign in.",
+            since: "2026-11-17T10:00:00Z",
+            affected: [],
+            target: { kind: "settings", section: "agents" },
+          },
+        ],
+        complete: true,
+      },
+    },
+  })
+  const user = userEvent.setup()
+  const { location } = renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
+
+  await user.click(await screen.findByRole("option", { name: /Summary of box-agents/ }))
+
+  expect(location.url).toBe("/agents?host=box")
+  expect(useSettingsStore.getState().hostFilter).toBe("")
+})
+
 it("copies the attach command with the host of the open session", async () => {
   const user = userEvent.setup()
   renderScreen(<CommandPalette open {...handlers} />, {

@@ -1357,7 +1357,8 @@ Out: the daemon endpoints themselves (012).
   `::names the failed host with Retry, keeps the other items and keeps announcing`,
   `::raises no toast for the first answer of a host that becomes listed`,
   `::raises no toast for what a returning host raised while it was away, once its fresh answer lands`,
-  `::opens the agents of a named host with the pick set to All hosts`).
+  `::opens the agents of a named host with the pick set to All hosts`,
+  `ui/src/features/command-palette/hosts.test.tsx::opens the agents of a named host from Needs attention with the pick set to All hosts`).
 - The goal panel names its host and copies `--host`
   (`ui/src/features/goals/hosts.test.tsx::names the goal panel's host, local included, while a named host is listed`,
   `::names no host in the goal panel with only local listed`,
