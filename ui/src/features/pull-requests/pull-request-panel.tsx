@@ -25,11 +25,12 @@ import { BotIcon, BotOffIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
-import { type Host, LOCAL_HOST, type PullRequestDto, type Seat } from "@/api"
+import type { Host, PullRequestDto, Seat } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
+import { HostLabel } from "@/components/host-label"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
@@ -48,6 +49,7 @@ import { SessionDetailView, SessionPanelHeader } from "@/features/sessions/sessi
 import { isLiveStatus } from "@/features/sessions/session-display"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { useFocusReturn } from "@/hooks/use-focus-return"
+import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { shortId, shortSha } from "@/lib/format"
 import { hostOf, paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 
@@ -76,8 +78,7 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
   // Ariadne's id of the request, while it works on it: what its sessions
   // name.
   const workedId = query.data?.id ?? null
-  // The session panel reads `local` only, so a named host's sessions stay unopened.
-  const session = host === LOCAL_HOST ? (search.get("session") ?? undefined) : undefined
+  const session = search.get("session") ?? undefined
   const selectSession = usePanelSessionNavigation()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const panel = useRef<HTMLDivElement>(null)
@@ -101,6 +102,7 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
     <PanelSheet onClose={onClose} panelRef={panel}>
       {session ? (
         <PullRequestSessionView
+          host={host}
           pull={query.data}
           pullRequestId={workedId}
           sessionId={session}
@@ -251,6 +253,7 @@ function PullRequestHeader({
   /** A review or a babysit was asked for in its dialog, which closed itself. */
   onSessionStarted: (seat: Seat, startedOn: Host) => void
 }) {
+  const showHost = usePanelShowsHost()
   const ask = useAskReview()
   const round = useReviewRound()
   const keeperTurn = useKeeperTurn()
@@ -352,6 +355,7 @@ function PullRequestHeader({
         }
         status={
           <>
+            {showHost ? <HostLabel host={host} /> : null}
             <StatusBadge
               label={
                 pull.state === "open" ? (pull.draft ? "Draft" : "Open") : capitalize(pull.state)
@@ -458,12 +462,7 @@ function PullRequestFacts({ pull, host }: { pull: PullRequestDto; host: Host }) 
       <Fact label="Ariadne">{ariadneWork(pull)}</Fact>
       {pull.origin_task_id ? (
         <Fact label="Kept by">
-          {/* The task panel reads `local` only. */}
-          {host === LOCAL_HOST ? (
-            <TaskLink taskId={pull.origin_task_id} />
-          ) : (
-            <span>the author of task {shortId(pull.origin_task_id)}</span>
-          )}
+          <TaskLink taskId={pull.origin_task_id} host={host} />
         </Fact>
       ) : null}
       {failed.length > 0 ? (
@@ -501,8 +500,8 @@ function ariadneWork(pull: PullRequestDto): string {
 }
 
 /** The task that opened the request, whose author keeps it, as its panel. */
-function TaskLink({ taskId }: { taskId: string }) {
-  const to = useTaskPanelTo(taskId)
+function TaskLink({ taskId, host }: { taskId: string; host: Host }) {
+  const to = useTaskPanelTo(taskId, host)
   return (
     <Link to={to} replace={to.replace} className="underline-offset-3 hover:underline">
       the author of task {shortId(taskId)}
@@ -532,7 +531,7 @@ function PullRequestSessions({
           <SessionsList
             host={host}
             filters={{ pull_request: pull.id }}
-            onSelect={(session) => host === LOCAL_HOST && onSelect(session.id)}
+            onSelect={(session) => onSelect(session.id)}
           />
         ) : (
           <EmptyState emphasis="quiet" title="No Ariadne session on this request yet" />
@@ -544,7 +543,7 @@ function PullRequestSessions({
           <SessionsList
             host={host}
             filters={{ task: pull.origin_task_id, seat: "agent" }}
-            onSelect={(session) => host === LOCAL_HOST && onSelect(session.id)}
+            onSelect={(session) => onSelect(session.id)}
           />
         </section>
       ) : null}
@@ -558,17 +557,19 @@ function PullRequestSessions({
  * request. One of anything else is not shown as if it were.
  */
 function PullRequestSessionView({
+  host,
   pull,
   pullRequestId,
   sessionId,
   onSelect,
 }: {
+  host: Host
   pull: PullRequestDto | undefined
   pullRequestId: string | null
   sessionId: string
   onSelect: (sessionId: string | null) => void
 }) {
-  const session = useQuery(sessionQueryOptions("local", sessionId))
+  const session = useQuery(sessionQueryOptions(host, sessionId))
   const ours =
     session.data !== undefined &&
     ((pullRequestId !== null && session.data.pull_request_id === pullRequestId) ||
@@ -581,7 +582,7 @@ function PullRequestSessionView({
     <>
       {session.data && ours ? (
         <SessionPanelHeader
-          host={LOCAL_HOST}
+          host={host}
           session={session.data}
           breadcrumb={breadcrumb}
           onResumed={(revived) => onSelect(revived.id)}
@@ -611,7 +612,7 @@ function PullRequestSessionView({
             </AlertDescription>
           </Alert>
         ) : (
-          <SessionDetailView host={LOCAL_HOST} session={session.data} context="task" />
+          <SessionDetailView host={host} session={session.data} context="task" />
         )}
       </PaneBody>
     </>

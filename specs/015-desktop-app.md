@@ -1229,16 +1229,30 @@ Out: the daemon endpoints themselves (012).
     the host of the chip picked, and Refresh reprobes every selected host. Each host
     whose agents or models failed to load follows rule 75.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
-    most recently updated first. A pull request row has a host badge while
-    more than one host is selected. An issue row names its host by rule 74. A repository filter names one forge repository, and each host
-    reads it by its own id for that forge repository; a host without it is
-    skipped. A pull request panel opens on its row's host (`?host=`). On a named
-    host it opens no session or task panel.
+    most recently updated first. Their rows name their host by rule 74.
+    A repository filter names one forge repository. Each host reads it by its
+    own id for that forge repository; a host without it is skipped.
+    A pull request panel opens on its row's host (`?host=`).
+    Its sessions and task links open on that host.
+    Tests in `ui/src/features/pull-requests/hosts.test.tsx`:
+    “links the task on the request host” proves task navigation;
+    “reads the selected session on the request host” proves session reads;
+    “opens a session from the sessions tab on box” proves session selection;
+    “shows both host labels and the box session link for the same request”
+    proves row labels, session links, and distinct rows across hosts;
+    “shows the panel host label when a named host is listed” proves panel labels.
+    Local cases remain in `pull-request-panel.test.tsx` and
+    `pull-requests-page.test.tsx`.
 70. Start review and Start babysit have a host select, shown when more than one
     host has the request's repository registered. It is limited to those hosts,
     defaults to the row's host, and its models, pin and ask go to the chosen host
-    with that host's repository id. A goal dialog filled from an issue is on the
-    issue's host.
+    with that host's repository id. The new session opens on the request host
+    when that host is chosen. Tests: “opens the new review console on box”
+    and “opens the new babysit console on box” in
+    `ui/src/features/pull-requests/hosts.test.tsx`.
+    `ui/src/features/forge/forge-hosts.test.tsx` proves the host select.
+    `pull-request-panel.test.tsx` proves local starts.
+    A goal dialog filled from an issue is on the issue's host.
 71. The daemon logs drawer has a host select, shown only with a named host. It
     lists the hosts of the picker, and a host the app cannot reach is a disabled
     option with its reason. It defaults to the picked host when the app can
