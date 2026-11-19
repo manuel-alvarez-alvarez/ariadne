@@ -165,7 +165,10 @@ picker, the Hosts section of its settings and one stream per host — is spec
     the answer is `502`.
 20. `ariadne query --host NAME|all` sends its route under
     `/v1/hosts/{host}` to the local daemon, and prints each warning on
-    stderr. With `all` the table has a `HOST` column from the label. Without
+    stderr as `warning: <host>: <reason>`. With `all` the table has `HOST`
+    as its first column, from the label. A host name that is unknown or not
+    `ready` ends the command with the usage exit code, before the query; the
+    message names the configured hosts, or gives the status. Without
     `--host` the route is unchanged.
 21. The OpenAPI document carries the routes of rule 16.
 
@@ -308,7 +311,9 @@ picker, the Hosts section of its settings and one stream per host — is spec
   `::all_keeps_the_flat_shape_of_the_index_stats`,
   `::all_keeps_the_warnings_on_a_parsed_query`).
 - Rule 20 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
-  `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
+  `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`,
+  `::host_all_puts_the_host_column_first`,
+  `tests/hosts.rs::query_on_an_unknown_or_unready_host_is_a_usage_error`).
 - Rule 21 (`host_queries.rs::openapi_carries_the_host_query_routes`).
 - Rule 35
   (`host_reconnect.rs::local_is_400_and_an_unknown_name_is_404_in_the_error_envelope`,

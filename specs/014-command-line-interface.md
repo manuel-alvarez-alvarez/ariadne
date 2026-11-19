@@ -415,6 +415,10 @@ same binary also serves (013).
     without `--host`, both use the daemon of `--home` or `--endpoint`.
 49. `query` accepts `--host NAME|all`. The local daemon serves it under
     `/v1/hosts/{host}` (spec 037, rule 20), so the CLI does not fan it out.
+    A named host that is unknown or not ready ends with the usage exit code,
+    as for every command; the message names the configured hosts, or gives
+    the status. With `all`, `HOST` is the first column of the table, and each
+    warning of a host prints on stderr as `warning: <host>: <reason>`.
 50. `host ls` prints name, kind, status, endpoint, remote, sync (`in_sync`,
     `pending` or `failed`), missing (repositories the host lacks), skipped
     (learned permissions not pushed), error and sync_error. `--columns` selects
@@ -766,6 +770,8 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   and of `local` with `--home`
   (`tests/hosts.rs::daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home`).
 - Rule 49 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
+  `tests/hosts.rs::query_on_an_unknown_or_unready_host_is_a_usage_error`,
+  `commands/query.rs::tests::host_all_puts_the_host_column_first`,
   `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
 
 ## Sources
