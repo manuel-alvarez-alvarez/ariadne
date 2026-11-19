@@ -1164,6 +1164,23 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   `::titles a readiness item as ready to merge`,
   `::raises no notification or badge for a session with no recovery item behind it`,
   `::raises one toast per readiness transition, none for a repeat, and none for a withdrawal`).
+
+## Attention workspace
+
+The `/attention` hash route keeps goal, reason, host, and selection in URL parameters.
+The queue reads all reachable hosts and retains row order during new arrivals.
+Users select rows without a mutation and move with Previous and Next buttons.
+Wide windows show the queue beside the selected context and existing response controls.
+Narrow windows provide Return to queue. Task, session, goal, and pull request details
+open over `/attention` and keep workspace parameters. Closing the detail returns to the queue.
+A status message explains a withdrawn or unavailable selection without automatic advancement.
+The popover and drawer remain available, including inline answers and host errors.
+
+Acceptance: `ui/src/features/goals/attention-page.test.tsx` proves persistent filters,
+stable selection order, explicit navigation, and withdrawal announcements.
+`ui/src/features/goals/attention-navigation.test.tsx` proves preserved parameters and return
+from task, session, goal, and pull request details.
+
 ## Sources
 
 `crates/ariadne-api/src/attention.rs`, `crates/ariadne-store/src/agent_requests.rs`,

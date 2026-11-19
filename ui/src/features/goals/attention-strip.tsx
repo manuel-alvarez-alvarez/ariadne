@@ -68,6 +68,9 @@ export function AttentionPopover() {
         <PopoverContent align="end" className="w-[min(24rem,calc(100vw-1rem))] p-0">
           <header className="flex items-center justify-between border-b px-3 py-2 font-semibold">
             <span>Needs attention · {attention.items.length}</span>
+            <Link to="/attention" onClick={() => setOpen(false)}>
+              Workspace
+            </Link>
             <button
               type="button"
               onClick={() => {
@@ -125,7 +128,7 @@ export function AttentionPopover() {
 const NO_GOAL = "__no_goal__"
 
 /** The reasons a row is on the list, as filter keys with their labels. */
-function reasonsOf(item: AttentionItem): { key: string; label: string }[] {
+export function reasonsOf(item: AttentionItem): { key: string; label: string }[] {
   const out: { key: string; label: string }[] = []
   if (item.taskReason === "stalled") out.push({ key: "task:stalled", label: STALLED_META.label })
   else if (item.taskReason && item.task)
@@ -261,7 +264,7 @@ function AttentionDrawer({
  * One line per host whose attention read failed, naming it and giving its
  * reason, each with its own Retry. The other hosts' items stay on the list.
  */
-function HostErrors({
+export function HostErrors({
   attention,
   className,
   partial = false,
@@ -299,7 +302,7 @@ function Retry({ onClick }: { onClick: () => void }) {
  * question opens the thread it was asked in and a prompt opens the console it
  * is waiting in.
  */
-function Row({
+export function Row({
   item,
   onSelect,
   expanded = false,
@@ -490,7 +493,7 @@ function GoalRef({ goalId, goal }: { goalId: string; goal: GoalDto | undefined }
 }
 
 /** A row's React key: ids are only unique on the host that raised them. */
-function rowKey(item: AttentionItem): string {
+export function rowKey(item: AttentionItem): string {
   return `${item.host}\n${item.id}`
 }
 

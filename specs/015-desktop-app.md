@@ -2597,6 +2597,10 @@ account of the sessions screen in particular rests on reading
 `sessions-page.tsx` rather than on a test asserting it, apart from the host
 behaviour of rule 61.
 
+## Attention workspace
+
+The [attention specification](031-needs-attention.md#attention-workspace) defines the workspace and its return navigation.
+
 ## Sources
 
 `ui/AGENTS.md` (the layout and the conventions), `ui/src/`, `ui/src-tauri/`,

@@ -64,10 +64,10 @@ export function DetailPanels() {
     return <TaskPanel host={host} taskId={taskId} onClose={() => close("task")} />
   }
 
-  // The goal panel belongs to the board, so a `?goal=` link followed from
-  // anywhere else goes there rather than doing nothing where it was clicked.
+  // The board and attention workspace support goal panels. Other screens
+  // redirect to the board rather than silently ignoring a goal link.
   // Replaced, so Back returns to the screen the link was on.
-  if (goalId && !onGoalsBoard) {
+  if (goalId && !onGoalsBoard && location.pathname !== paths.attention()) {
     return <Navigate to={{ pathname: paths.goals(), search: location.search }} replace />
   }
 

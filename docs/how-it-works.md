@@ -130,3 +130,15 @@ For example, a keeper failure does not restore a dismissed reviewer recovery rem
 Dead sessions lose their questions and permission reminders.
 Recovery blockers link to the active work or settings that can address them.
 See [Needs attention](../specs/031-needs-attention.md) for the shared contract.
+
+### Process the attention queue
+
+Open Attention from navigation, the command palette, or Workspace in Needs attention.
+Filter by goal, reason, or host. The URL preserves these filters and the selected item.
+The default includes all reachable hosts. Select an item to read its context.
+Use the existing response controls to answer it. Selection alone sends no response.
+Use Previous and Next to move through the queue. New arrivals appear after existing items.
+On a narrow window, use Return to queue. Task, session, goal, and pull request details open over the workspace.
+Close the detail to return to the preserved queue.
+If an item disappears, the workspace explains that it resolved or became unavailable.
+Choose another item to continue. Host errors remain visible beside available items.

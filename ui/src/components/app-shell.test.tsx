@@ -69,6 +69,7 @@ it("ends the navigation with dashboards, and lists Forge beside the other screen
     .map((link) => link.getAttribute("aria-label"))
   expect(links).toEqual([
     "Goals",
+    "Attention",
     "Sessions",
     "Forge",
     "Repositories",
