@@ -3,7 +3,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, expect, it, vi } from "vitest"
-import { rememberHosts } from "@/api"
+import { qk, rememberHosts } from "@/api"
 import { HostPicker } from "@/components/host-picker"
 import { useSettingsStore } from "@/stores/settings"
 import { aForge, aModel, aRepository, aSession, aSessionPage } from "@/test/fixtures"
@@ -177,7 +177,10 @@ it.each([
       route: "/forge/pull-requests?pr=pull-42&host=box",
     },
   )
-  fireEvent.click(await screen.findByRole("button", { name: `Start ${action}` }))
+  const start = await screen.findByRole("button", { name: `Start ${action}` })
+  // The start waits until every host that has the repository answered.
+  await waitFor(() => expect(start.hasAttribute("disabled")).toBe(false))
+  fireEvent.click(start)
   const dialog = await screen.findByRole("dialog", { name: title })
   fireEvent.click(within(dialog).getByRole("button", { name: "Model" }))
   fireEvent.click(await screen.findByText("stub:review-model"))
@@ -414,3 +417,76 @@ it("warns of a host it cannot read, by name and reason, and keeps the other host
   expect(hostOfWork("Ariadne reviewing")).toBe("local")
   expect(screen.getByRole("button", { name: "Stop review" })).toBeTruthy()
 })
+
+it.each([
+  ["review", "Start review", { review_asked: true }],
+  ["babysit", "Start babysit", { babysit_asked: true }],
+  ["babysit by a task", "Start babysit", { origin_task_id: "task-9" }],
+] as const)(
+  "starts no %s while box has not answered, and none once box holds the work",
+  async (_work, start, work) => {
+    let answered = false
+    const seen = twoCopies(
+      {},
+      {},
+      {
+        box: {
+          // Box answers only once the test lets it, with the work it holds.
+          "/v1/repositories/repo-box/pull-requests/42": () =>
+            answered ? jsonResponse({ ...boxCopy, ...work }) : undefined,
+        },
+      },
+    )
+    const { queryClient } = renderScreen(
+      <PullRequestPanel id="repo-local:42" onClose={() => {}} />,
+      {
+        route: "/forge/pull-requests?pr=repo-local%3A42",
+      },
+    )
+    const button = await screen.findByRole("button", { name: start })
+    expect(button.hasAttribute("disabled")).toBe(true)
+    fireEvent.click(button)
+    expect(screen.queryByRole("dialog")).toBeNull()
+    answered = true
+    await queryClient.invalidateQueries({ queryKey: qk.pullRequests.detail("box", "repo-box:42") })
+    await waitFor(() => expect(screen.queryByRole("button", { name: start })).toBeNull())
+    expect(seen.some((request) => request.method === "PUT")).toBe(false)
+  },
+)
+
+it.each([
+  ["review", "Start review", "Start an Ariadne review", { review_asked: true }],
+  ["babysit", "Start babysit", "Start Ariadne babysitting", { babysit_asked: true }],
+  ["babysit by a task", "Start babysit", "Start Ariadne babysitting", { origin_task_id: "task-9" }],
+] as const)(
+  "closes an open %s dialog once box reports the work",
+  async (_work, start, title, work) => {
+    let holds = false
+    const seen = twoCopies(
+      {},
+      {},
+      {
+        local: { "/v1/models": [aModel({ id: "stub:review-model" })], "/v1/skills": [] },
+        box: {
+          "/v1/repositories/repo-box/pull-requests/42": () =>
+            jsonResponse(holds ? { ...boxCopy, ...work } : boxCopy),
+        },
+      },
+    )
+    const { queryClient } = renderScreen(
+      <PullRequestPanel id="repo-local:42" onClose={() => {}} />,
+      {
+        route: "/forge/pull-requests?pr=repo-local%3A42",
+      },
+    )
+    const button = await screen.findByRole("button", { name: start })
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false))
+    fireEvent.click(button)
+    await screen.findByRole("dialog", { name: title })
+    holds = true
+    await queryClient.invalidateQueries({ queryKey: qk.pullRequests.detail("box", "repo-box:42") })
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: title })).toBeNull())
+    expect(screen.queryByRole("button", { name: start })).toBeNull()
+    expect(seen.some((request) => request.method === "PUT")).toBe(false)
+  },
+)

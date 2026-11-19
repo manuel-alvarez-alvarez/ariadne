@@ -1256,6 +1256,12 @@ Out: the daemon endpoints themselves (012).
     new session on the chosen host: `?host=` and `?pr=` move to the request on
     that host. While a host reviews the request, the panel offers no Start
     review. While a host or a task keeps it, the panel offers no Start babysit.
+    Both starts stay disabled until every reachable host that has the
+    repository answered or failed. A start dialog closes, and sends nothing,
+    once a host reports the work it would start. Tests: “starts no … while box
+    has not answered, and none once box holds the work” and “closes an open …
+    dialog once box reports the work”, each for a review, a babysit and a
+    babysit by a task, in `hosts.test.tsx`.
     Tests: “opens the new review console on box” and “opens the new babysit
     console on box” in `ui/src/features/pull-requests/hosts.test.tsx`;
     “opens the new session on the host Start review picked, not on the panel's

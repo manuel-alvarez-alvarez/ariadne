@@ -34,11 +34,13 @@ export function useReviewTargets(pull: PullRequestDto, host: Host, enabled = tru
 }
 
 function useTargets(pull: PullRequestDto, host: Host, enabled: boolean) {
-  const { hosts } = useHosts()
+  const { hosts, isPending } = useHosts()
   const reachable = enabled
     ? hosts.filter((each) => each.url !== null).map((each) => each.name)
     : []
   const repositories = useHostRepositories(reachable)
+  // With no other host to read, there is nothing to wait for.
+  const alone = reachable.every((each) => each === host)
   const own = repositories.rows.find((row) => row.host === host && row.id === pull.repository_id)
   const key = own ? forgeKey(own) : null
   const matches = repositories.rows
@@ -56,6 +58,8 @@ function useTargets(pull: PullRequestDto, host: Host, enabled: boolean) {
     targets: ordered.length > 0 ? ordered : [{ host, repository_id: pull.repository_id }],
     // The request's own host is read already: its list only finds the others.
     errors: repositories.errors.filter((each) => each.host !== host),
+    /** The hosts are listed and every reachable host's repositories answered or failed. */
+    settled: !isPending && (alone || repositories.isSettled),
     refetch: repositories.refetch,
   }
 }
@@ -64,10 +68,11 @@ function useTargets(pull: PullRequestDto, host: Host, enabled: boolean) {
  * The request as each host that has its repository reads it: the panel's own
  * copy first, then one read per other host, by that host's repository id.
  * A host whose repositories or request could not be read is an error of its
- * own, and the copies of the other hosts stay.
+ * own, and the copies of the other hosts stay. `settled` says when no host is
+ * left to answer.
  */
 export function useRequestCopies(pull: PullRequestDto, host: Host) {
-  const { targets, errors, refetch } = useTargets(pull, host, true)
+  const { targets, errors, settled, refetch } = useTargets(pull, host, true)
   const others = targets.filter((target) => target.host !== host)
   const reads = useQueries({
     queries: others.map((target) =>
@@ -91,6 +96,11 @@ export function useRequestCopies(pull: PullRequestDto, host: Host) {
   ]
   return {
     copies,
+    /**
+     * Every host that has the repository was read, or failed: until then a
+     * host not read yet may already review or keep the request.
+     */
+    settled: settled && reads.every((read) => !read.isPending),
     // One error per host, the first it met.
     errors: failed.filter((each, index) => failed.findIndex((e) => e.host === each.host) === index),
     refetch: () => {

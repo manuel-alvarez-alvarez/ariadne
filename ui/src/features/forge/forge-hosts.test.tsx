@@ -117,6 +117,8 @@ it("offers the hosts where the repository is registered for Start review, the ro
     local: {
       "/v1/repositories": [LOCAL_REPO],
       "/v1/pull-requests/pull-box": boxPull,
+      // Local has the repository too, and does no work on the request.
+      "/v1/repositories/repo-local/pull-requests/42": { ...localPull, id: null },
       "/v1/models": [],
       "/v1/skills": [],
     },

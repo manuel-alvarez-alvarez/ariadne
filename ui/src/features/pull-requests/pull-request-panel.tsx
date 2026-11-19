@@ -191,13 +191,14 @@ function PullRequestBody({
   onSessionStarted: (seat: Seat, startedOn: Host, started: PullRequestDto) => void
   onSelect: (on: HostRow<PullRequestDto>, sessionId: string) => void
 }) {
-  const { copies, errors, refetch } = useRequestCopies(pull, host)
+  const { copies, settled, errors, refetch } = useRequestCopies(pull, host)
   return (
     <>
       <PullRequestHeader
         pull={pull}
         host={host}
         copies={copies}
+        settled={settled}
         onSessionStarted={onSessionStarted}
       />
       <PaneBody>
@@ -311,6 +312,7 @@ function PullRequestHeader({
   pull,
   host,
   copies,
+  settled,
   onSessionStarted,
 }: {
   pull: PullRequestDto
@@ -318,6 +320,8 @@ function PullRequestHeader({
   host: Host
   /** The request as each host reads it, `host`'s first. */
   copies: HostRow<PullRequestDto>[]
+  /** Every host that has the repository answered: no host left to hold the work unseen. */
+  settled: boolean
   /** A review or a babysit was asked for in its dialog, which closed itself. */
   onSessionStarted: (seat: Seat, startedOn: Host, started: PullRequestDto) => void
 }) {
@@ -334,6 +338,16 @@ function PullRequestHeader({
   const taskKeeper = copies.find((copy) => copy.origin_task_id != null)
   const babysitter = copies.find((copy) => copy.babysit_asked)
   const keeper = taskKeeper ?? babysitter
+  // A start waits for every host: one not read yet may already hold the work.
+  const canStartReview = settled && !reviewer
+  const canStartBabysit = settled && !keeper
+  // A host that reports the work closes a dialog opened before it answered.
+  useEffect(() => {
+    if (!canStartReview) setStarting(false)
+  }, [canStartReview])
+  useEffect(() => {
+    if (!canStartBabysit) setBabysitting(false)
+  }, [canStartBabysit])
   // The review and the babysit are goals of their own, on the Goals board
   // like any other (029, 032), each on the host that runs it.
   const reviewGoal = operationOf(copies, "review")
@@ -371,7 +385,7 @@ function PullRequestHeader({
                   </Button>
                 </>
               ) : (
-                <Button size="sm" onClick={() => setStarting(true)}>
+                <Button size="sm" disabled={!settled} onClick={() => setStarting(true)}>
                   <BotIcon />
                   Start review
                 </Button>
@@ -399,7 +413,7 @@ function PullRequestHeader({
                   Stop babysit
                 </Button>
               ) : (
-                <Button size="sm" onClick={() => setBabysitting(true)}>
+                <Button size="sm" disabled={!settled} onClick={() => setBabysitting(true)}>
                   <BotIcon />
                   Start babysit
                 </Button>
@@ -464,14 +478,16 @@ function PullRequestHeader({
       <StartReviewDialog
         pull={pull}
         host={host}
-        open={starting}
+        open={starting && canStartReview}
+        canStart={canStartReview}
         onOpenChange={setStarting}
         onStarted={(startedOn, started) => onSessionStarted("reviewer", startedOn, started)}
       />
       <StartBabysitDialog
         pull={pull}
         host={host}
-        open={babysitting}
+        open={babysitting && canStartBabysit}
+        canStart={canStartBabysit}
         onOpenChange={setBabysitting}
         onStarted={(startedOn, started) => onSessionStarted("keeper", startedOn, started)}
       />
