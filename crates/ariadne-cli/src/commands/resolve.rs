@@ -216,10 +216,25 @@ pub(crate) fn row(id: impl Into<String>, label: impl Into<String>) -> Row {
     }
 }
 
+tokio::task_local! {
+    /// Set while `--host all` merges a list: a whole id is then looked up on
+    /// the host like a short one, so a host that lacks it fails with not-found
+    /// instead of answering an empty list (spec 014, rule 46a).
+    pub(crate) static CHECK_WHOLE_IDS: bool;
+}
+
+/// A whole id the daemon need not be asked about.
+fn trusted_whole_id(typed: &str) -> Option<String> {
+    if CHECK_WHOLE_IDS.try_with(|check| *check).unwrap_or(false) {
+        return None;
+    }
+    whole_id(typed)
+}
+
 /// The id the daemon holds for what was typed, fetching its list only when
 /// the typed value is not already a whole id.
 pub(crate) async fn id(client: &Client, kind: Kind, typed: &str) -> Result<String> {
-    if let Some(id) = whole_id(typed) {
+    if let Some(id) = trusted_whole_id(typed) {
         return Ok(id);
     }
     Ok(catalog(client, kind).await?.pick(typed)?.id.clone())
@@ -228,8 +243,8 @@ pub(crate) async fn id(client: &Client, kind: Kind, typed: &str) -> Result<Strin
 /// The same for a repeatable id argument (`task update --depends-on`), with
 /// one list fetch behind however many were typed.
 pub(crate) async fn ids(client: &Client, kind: Kind, typed: &[String]) -> Result<Vec<String>> {
-    if typed.iter().all(|t| whole_id(t).is_some()) {
-        return Ok(typed.iter().filter_map(|t| whole_id(t)).collect());
+    if typed.iter().all(|t| trusted_whole_id(t).is_some()) {
+        return Ok(typed.iter().filter_map(|t| trusted_whole_id(t)).collect());
     }
     let catalog = catalog(client, kind).await?;
     typed

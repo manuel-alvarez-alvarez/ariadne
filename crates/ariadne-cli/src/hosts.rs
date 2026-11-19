@@ -8,10 +8,13 @@ use ariadne_client::Client;
 use serde_json::Value;
 
 use crate::cli::{Cli, Command};
+use crate::commands;
 use crate::commands::forge::ForgeCommand;
 use crate::commands::permissions::{AiPermissionsCommand, PermissionsCommand};
 use crate::commands::repo;
-use crate::error::Failure;
+use crate::commands::session::SessionCommand;
+use crate::error::{self, Exit, Failure};
+use crate::output::listing::{self, Listing};
 use crate::output::{self, Format, UNCAPPED, col};
 
 pub(crate) async fn list(client: &Client, format: Format) -> Result<()> {
@@ -387,6 +390,9 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
         if kind == Kind::Stream {
             return stream_first(&hosts, &local).await;
         }
+        if kind == Kind::List && !commands::watches(&cli.command) {
+            return merge_lists(&cli, &hosts, &local).await;
+        }
         return fan_out(&cli, &hosts, &local, kind == Kind::List).await;
     }
     let host = host.expect("a named host was checked before command guards");
@@ -607,6 +613,67 @@ async fn fan_out(
     if cli.format == Format::Json {
         output::print_json(&rows)?;
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// What one host gave a list of every host.
+enum Read {
+    Listed(Box<Listing>),
+    /// The host lacks the ID that the list is filtered by.
+    NotFound(anyhow::Error),
+    /// The host is not ready, has no endpoint, or failed: a warning.
+    Warning(String),
+}
+
+/// A list on every ready host, read at the same time and drawn as one list
+/// in registry order (spec 014, rules 46 and 46a). A host that lacks the ID of a
+/// filter adds no rows; each other host that cannot answer gets a warning.
+async fn merge_lists(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
+    if let Command::Session {
+        command: SessionCommand::Ls {
+            cursor: Some(_), ..
+        },
+    } = &cli.command
+    {
+        return Err(Failure::usage(
+            "a cursor continues the list of one host; run it with --host NAME",
+        )
+        .err());
+    }
+    let reads = hosts.iter().map(|host| async move {
+        if host.status != HostStatus::Ready {
+            return Read::Warning(status(host.status));
+        }
+        let selected = match client(host, local) {
+            Ok(selected) => selected,
+            Err(error) => return Read::Warning(error::human_line(&error)),
+        };
+        let read = commands::resolve::CHECK_WHOLE_IDS
+            .scope(true, commands::listing(&selected, &cli.command, cli.format))
+            .await;
+        match read {
+            Some(Ok(listing)) => Read::Listed(Box::new(listing)),
+            Some(Err(error)) if error::exit(&error) == Exit::NotFound => Read::NotFound(error),
+            Some(Err(error)) => Read::Warning(error::human_line(&error)),
+            None => unreachable!("a list that is not watched has a listing"),
+        }
+    });
+    let reads = futures_util::future::join_all(reads).await;
+    let mut parts = Vec::new();
+    let mut not_found = None;
+    for (host, read) in hosts.iter().zip(reads) {
+        match read {
+            Read::Listed(listing) => parts.push((host.name.clone(), *listing)),
+            Read::NotFound(error) => {
+                not_found.get_or_insert(error);
+            }
+            Read::Warning(warning) => eprintln!("warning: {}: {warning}", host.name),
+        }
+    }
+    if parts.is_empty() {
+        return Err(not_found.unwrap_or_else(|| Failure::usage("no host answered").err()));
+    }
+    listing::print_merged(&parts, cli.format)?;
     Ok(ExitCode::SUCCESS)
 }
 

@@ -1037,6 +1037,199 @@ async fn all_forwards_a_stream_before_it_ends() {
     server.abort();
 }
 
+/// A stub daemon for the lists of `--host all`: its sessions, goals, skills
+/// and attention, and a barrier that `GET /v1/skills` waits at.
+fn list_daemon(
+    sessions: serde_json::Value,
+    goals: serde_json::Value,
+    attention: serde_json::Value,
+    barrier: Arc<tokio::sync::Barrier>,
+) -> Router {
+    Router::new()
+        .route("/v1/sessions", get(move || async move { Json(sessions) }))
+        .route("/v1/goals", get(move || async move { Json(goals) }))
+        .route("/v1/attention", get(move || async move { Json(attention) }))
+        .route(
+            "/v1/skills",
+            get(move || {
+                let barrier = Arc::clone(&barrier);
+                async move {
+                    // Each host answers only once the other host is asked too.
+                    barrier.wait().await;
+                    Json(json!([]))
+                }
+            }),
+        )
+}
+
+/// The output of `ariadne --endpoint ENDPOINT --host all ARGS`.
+async fn run_all(endpoint: &str, args: &[&str]) -> (i32, String, String) {
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args(["--endpoint", endpoint, "--host", "all"])
+        .args(args)
+        .env("ARIADNE_TELEMETRY", "off")
+        .output()
+        .await
+        .unwrap();
+    (
+        output.status.code().unwrap(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// `--host all` draws one list of every ready host (spec 014, rules 46 and 46a).
+#[tokio::test]
+async fn all_draws_one_list_of_every_ready_host() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let remote_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let remote_endpoint = format!("http://{}", remote_listener.local_addr().unwrap());
+    let registry = json!([
+        host("local", "ready", Some(&endpoint)),
+        host("build", "ready", Some(&remote_endpoint)),
+        host("offline", "down", None),
+        host("bare", "ready", None),
+    ]);
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let local_app = list_daemon(
+        json!({"sessions": [{"id": "s-local", "agent_id": "codex", "title": "Local work"}],
+               "next_cursor": null, "total": 4}),
+        json!([]),
+        json!({"complete": true, "items": [{
+            "id": "blocked", "producer": "recovery", "reason": "access", "summary": "Sign in",
+            "required_action": "Sign in", "since": "2026-11-17T00:00:00Z", "affected": [],
+            "target": {"kind": "settings", "section": "agents"}
+        }]}),
+        Arc::clone(&barrier),
+    )
+    .route("/v1/hosts", get(move || async move { Json(registry) }));
+    let remote_app = list_daemon(
+        json!({"sessions": [
+                   {"id": "s-build-with-a-long-id", "agent_id": "claude", "title": "Build work"},
+                   {"id": "s-build-2", "agent_id": "claude", "title": "More"}
+               ],
+               "next_cursor": "c2", "total": 8}),
+        json!([{"id": "g-build", "title": "Only on build"}]),
+        json!({"complete": false, "items": []}),
+        barrier,
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, local_app).await.unwrap() });
+    let remote =
+        tokio::spawn(async move { axum::serve(remote_listener, remote_app).await.unwrap() });
+
+    // One table led by HOST, aligned across hosts, with one summary line.
+    let (code, stdout, stderr) = run_all(&endpoint, &["session", "ls"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 5, "{stdout}");
+    assert!(lines[0].starts_with("HOST "), "{stdout}");
+    let title = lines[0].find("TITLE").unwrap();
+    assert_eq!(lines[1].find("Local work"), Some(title), "{stdout}");
+    assert_eq!(lines[2].find("Build work"), Some(title), "{stdout}");
+    assert!(lines[1].starts_with("local "), "{stdout}");
+    assert!(lines[3].starts_with("build "), "{stdout}");
+    assert_eq!(lines[4], "3 of 12 sessions");
+    // A host that is not ready, or has no endpoint, gets one warning.
+    assert!(stderr.contains("warning: offline: down\n"), "{stderr}");
+    assert!(
+        stderr.contains("warning: bare: host bare has no endpoint\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("build: Next: ariadne session ls --cursor c2 --host build"),
+        "{stderr}"
+    );
+
+    // JSON keeps the page object, with the sums and a cursor for each host.
+    let (code, stdout, stderr) = run_all(&endpoint, &["--format", "json", "session", "ls"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let page: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(page["total"], 12);
+    assert_eq!(page["next_cursor"], json!({"local": null, "build": "c2"}));
+    assert_eq!(page["sessions"][0]["host"], "local");
+    assert_eq!(page["sessions"][2]["host"], "build");
+
+    // `-q` prints only IDs.
+    let (_, stdout, _) = run_all(&endpoint, &["-q", "session", "ls"]).await;
+    assert_eq!(stdout, "s-local\ns-build-with-a-long-id\ns-build-2\n");
+
+    // A host that lacks the ID of a filter adds no rows and no warning.
+    let (code, stdout, stderr) = run_all(&endpoint, &["session", "ls", "--goal", "g-build"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!stdout.contains("local "), "{stdout}");
+    assert!(!stderr.contains("local"), "{stderr}");
+    let (code, _, stderr) = run_all(&endpoint, &["session", "ls", "--goal", "g-none"]).await;
+    assert_eq!(code, 4, "{stderr}");
+    // A whole ID is checked on each host too, so an absent one is not found.
+    for args in [
+        ["task", "ls", "--goal", "01m15jmta93b130wka2qdn2p1x"],
+        ["session", "ls", "--goal", "01m15jmta93b130wka2qdn2p1x"],
+    ] {
+        let (code, _, stderr) = run_all(&endpoint, &args).await;
+        assert_eq!(code, 4, "{args:?}: {stderr}");
+    }
+
+    // A cursor belongs to one host.
+    let (code, _, stderr) = run_all(&endpoint, &["session", "ls", "--cursor", "c2"]).await;
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("--host NAME"), "{stderr}");
+
+    // `attention` keeps its bullets, with the host of each item.
+    let (code, stdout, stderr) = run_all(&endpoint, &["attention"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.starts_with("NEEDS ATTENTION\n"), "{stdout}");
+    assert!(stdout.contains("  host: local\n"), "{stdout}");
+    assert!(
+        stdout.contains("  dismiss: ariadne attention dismiss blocked --host local\n"),
+        "{stdout}"
+    );
+    assert!(
+        stderr.contains("build: Some of what needs attention could not be read"),
+        "{stderr}"
+    );
+
+    // An empty list on every host says so one time; both hosts are read at once.
+    let (code, stdout, stderr) = run_all(&endpoint, &["skill", "ls"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        stdout.lines().next().unwrap().split_whitespace().next(),
+        Some("HOST")
+    );
+    assert_eq!(
+        stderr.matches("No skills are available.").count(),
+        1,
+        "{stderr}"
+    );
+    server.abort();
+    remote.abort();
+}
+
+/// With `local` alone, a list of every host still has its `HOST` column and
+/// its `host` field.
+#[tokio::test]
+async fn all_with_local_alone_keeps_the_host_column_and_field() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let registry = json!([host("local", "ready", Some(&endpoint))]);
+    let app = list_daemon(
+        json!({"sessions": [{"id": "s-local", "agent_id": "codex"}], "next_cursor": null, "total": 1}),
+        json!([]),
+        json!({"complete": true, "items": []}),
+        Arc::new(tokio::sync::Barrier::new(1)),
+    )
+    .route("/v1/hosts", get(move || async move { Json(registry) }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (_, stdout, _) = run_all(&endpoint, &["session", "ls"]).await;
+    assert!(stdout.starts_with("HOST "), "{stdout}");
+    assert!(stdout.contains("\nlocal "), "{stdout}");
+    let (_, stdout, _) = run_all(&endpoint, &["--format", "json", "session", "ls"]).await;
+    let page: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(page["sessions"][0]["host"], "local");
+    assert_eq!(page["next_cursor"], json!({"local": null}));
+    server.abort();
+}
+
 #[tokio::test]
 async fn query_on_an_unknown_or_unready_host_is_a_usage_error() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

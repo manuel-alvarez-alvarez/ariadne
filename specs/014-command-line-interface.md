@@ -23,6 +23,7 @@ tests:
   - crates/ariadne-cli/src/commands/events.rs
   - crates/ariadne-cli/src/commands/console/tui.rs
   - crates/ariadne-cli/src/output/table.rs
+  - crates/ariadne-cli/src/output/listing.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/tests/attention.rs
   - crates/ariadne-cli/src/commands/agent.rs
@@ -387,14 +388,32 @@ same binary also serves (013).
     (`events`, `session logs`, `task logs`, `daemon logs`); a write; a
     host-owned write (`repo add`, `repo update`, `repo rm`,
     `permissions ai set`); and local only. `forge tunnel on|off` is a write.
-46. With `all`, a list runs on each ready host in registry order. A table has
-    a `HOST` column first, and JSON rows carry a `host` key. A host that is
-    not ready or fails gets a warning on stderr, and the list succeeds while
-    one host answers. Any other read, and a stream, prints the answer of the
+46. With `all`, the CLI reads a list from each ready host at the same time,
+    and prints one list in registry order (rule 46a). A host that is not
+    ready, has no endpoint or fails gets one warning on stderr, and the list
+    succeeds while one host answers. A watched list (`--watch`) runs the
+    command on each host. Any other read, and a stream, prints the answer of the
     first host that answers. `attach` goes to the first ready host that has
     the ID. A write with `all` is refused, and the refusal names only the
     hosts that take this write: each ready host, or `local` alone for a
     synced setting.
+46a. A list with `all` has the form of the same list without `--host`, with
+    one table fitted across every host. `HOST` is its first column, also
+    with `--columns`, and with `local` alone. Colour, terminal fit,
+    `--no-trunc` and `-q` (IDs only) are those of the list without `--host`.
+    A summary line, such as `N of M sessions`, prints one time and counts
+    every host. `attention` keeps its bullets, with a `host:` line on each
+    item and `--host NAME` on each command it names. A list that is empty on
+    every host prints its empty note one time. A host's hint and its
+    incomplete-read note start with the host name, and a `Next:` command
+    adds `--host NAME`. `--format json` keeps the JSON form: an array stays
+    an array and an object stays an object, and each item has a `host` key.
+    In an object, arrays join, counts add up, and a flag holds where it holds
+    on every host. The `session ls` `next_cursor` is an object with one cursor
+    for each host name. `--cursor` with `all` is a usage error that names
+    `--host NAME`; `--limit` applies to each host. A host where the ID of a
+    filter (`task ls --goal G`) resolves to nothing adds no rows and no
+    warning. When no host resolves it, the command fails as not found.
 47. A local-only command with `--host NAME` or `--host all` is a usage error
     that names its reason and `--host local`. These are the `skill`,
     `workflow` and `permissions` writes of synced settings (spec 037, rules
@@ -772,6 +791,24 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - Registry routing and guards hold, rules 44, 46 to 48a and 50
   (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`,
   `::each_command_takes_the_hosts_of_its_kind`).
+- A list with `--host all` is one list of every ready host, rules 46 and 46a:
+  one aligned table led by `HOST`, one summary line, `-q`, the JSON page
+  with its summed `total` and a `next_cursor` for each host, a warning for a
+  host that is down or has no endpoint, an ID filter that one host lacks or
+  every host lacks, the refused `--cursor`, the `attention` bullets with
+  their host, one empty note, and both hosts read at the same time
+  (`tests/hosts.rs::all_draws_one_list_of_every_ready_host`); `local` alone
+  keeps the column and the field
+  (`::all_with_local_alone_keeps_the_host_column_and_field`); the table, the
+  bullets, the hints and the JSON merge
+  (`output/listing.rs::tests::every_host_is_one_table_led_by_host_and_aligned_across_hosts`,
+  `::columns_keep_host_first`, `::one_summary_counts_every_host_and_is_no_row`,
+  `::an_empty_list_on_every_host_prints_the_one_empty_note`,
+  `::a_hint_names_its_host_and_a_legend_prints_one_time`,
+  `::quiet_prints_only_ids_of_every_host`,
+  `::a_section_names_the_host_of_each_item_and_on_each_command`,
+  `::one_host_without_a_name_prints_the_list_as_it_was`,
+  `::json_keeps_the_form_of_one_host`).
 - A stream with `--host all` reaches stdout while it is open, rule 46
   (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
 - Rule 50 columns (`tests/hosts.rs::host_ls_shows_remote_and_sync_state_of_each_host`).

@@ -8,10 +8,9 @@ use ariadne_client::{Client, SseEvent};
 use ariadne_core::AttentionReason;
 
 use super::follow;
-use crate::output::table::{check_columns, quiet_lines, render_table};
-use crate::output::{
-    Column, Format, UNCAPPED, View, age, col, empty_state, note, print_json, view,
-};
+use crate::output::listing::{Block, Line, Listing};
+use crate::output::table::check_columns;
+use crate::output::{Column, Format, UNCAPPED, View, age, col, empty_state, view};
 
 /// The existing column names, applied to shared attention items.
 const ROWS: &[Column] = &[
@@ -36,40 +35,38 @@ pub(crate) fn reason_label(reason: AttentionReason) -> &'static str {
 }
 
 /// Every daemon item keeps its cause, summary, action, age and affected work.
-fn recovery_items_section(
-    recovery: &AttentionListDto,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Option<String> {
-    if recovery.items.is_empty() {
-        return None;
-    }
-    let mut lines = vec!["NEEDS ATTENTION".to_string()];
-    for item in &recovery.items {
-        lines.push(format!(
-            "- [{}] {} ({} old)",
-            cause_label(item.reason),
-            item.summary,
-            age(&item.since, now)
-        ));
-        lines.push(format!("  action: {}", item.required_action));
-        lines.push(format!("  dismiss: ariadne attention dismiss {}", item.id));
-        if let ariadne_api::attention::AttentionTarget::Console { session_id } = &item.target {
-            lines.push(format!("  attach: ariadne attach {session_id}"));
-        }
-        // Name every affected subject. The item's target supplies its action.
-        for subject in &item.affected {
-            lines.push(format!("  affects: {} ({})", subject.id, subject.label));
-        }
-    }
-    Some(lines.join("\n"))
-}
-
-/// Quiet output contains the IDs supplied by the daemon, one per line.
-fn quiet_rows(attention: &AttentionListDto) -> Vec<Vec<String>> {
-    attention
+fn recovery_blocks(recovery: &AttentionListDto, now: chrono::DateTime<chrono::Utc>) -> Vec<Block> {
+    recovery
         .items
         .iter()
-        .map(|item| vec![item.id.clone()])
+        .map(|item| {
+            let mut lines = vec![
+                Line::text("action", item.required_action.clone()),
+                Line::command("dismiss", format!("ariadne attention dismiss {}", item.id)),
+            ];
+            if let ariadne_api::attention::AttentionTarget::Console { session_id } = &item.target {
+                lines.push(Line::command(
+                    "attach",
+                    format!("ariadne attach {session_id}"),
+                ));
+            }
+            // Name every affected subject. The item's target supplies its action.
+            for subject in &item.affected {
+                lines.push(Line::text(
+                    "affects",
+                    format!("{} ({})", subject.id, subject.label),
+                ));
+            }
+            Block {
+                head: format!(
+                    "[{}] {} ({} old)",
+                    cause_label(item.reason),
+                    item.summary,
+                    age(&item.since, now)
+                ),
+                lines,
+            }
+        })
         .collect()
 }
 
@@ -166,67 +163,45 @@ pub(crate) async fn run(client: &Client, watch: bool, format: Format) -> Result<
     .await
 }
 
-/// Read the shared list afresh on every redraw. Its items are authoritative
-/// even when another producer could not read all of its evidence.
+/// Read the shared list afresh on every redraw.
 async fn render(client: &Client, format: Format) -> Result<()> {
+    list(client).await?.print(format)
+}
+
+/// `attention`, as one host answers it. Its items are authoritative even when
+/// another producer could not read all of its evidence.
+pub(crate) async fn list(client: &Client) -> Result<Listing> {
     let attention: AttentionListDto = client.get_json("/v1/attention").await?;
     let now = chrono::Utc::now();
-    let section = recovery_items_section(&attention, now);
-    let incomplete = !attention.complete;
-    match format {
-        Format::Json => print_json(&serde_json::json!({
+    let listing = Listing::new(
+        &serde_json::json!({
             // Keep the JSON envelope for existing scripts. Local goal rows are retired.
             "goals": [],
             "count": attention.items.len(),
             "recovery": &attention.items,
             "complete": attention.complete,
-        }))?,
-        Format::Table if view().quiet => {
-            let rows = quiet_rows(&attention);
-            if !rows.is_empty() {
-                println!("{}", quiet_lines(&rows));
-            }
-            // Quiet output has no field for completeness, so preserve its failure.
-            if incomplete {
-                anyhow::bail!(
-                    "some of what needs attention could not be read; the ids above are not the \
-                     whole list"
-                );
-            }
-        }
-        Format::Table if section.is_none() => {
-            if incomplete {
-                note("Some of what needs attention could not be read; showing what is known.");
-            } else {
-                note(&empty_state("Nothing needs attention.", None));
-            }
-        }
-        Format::Table => {
-            if view().columns.is_empty() {
-                if let Some(section) = section {
-                    println!("{section}");
-                }
-                if incomplete {
-                    println!();
-                }
-            } else {
-                println!(
-                    "{}",
-                    render_table(ROWS, &column_rows(&attention, now), view())?
-                );
-            }
-            if incomplete {
-                note("Some of what needs attention could not be read; showing what is known.");
-            }
-        }
-    }
-    Ok(())
+        }),
+        ROWS,
+        column_rows(&attention, now),
+        empty_state("Nothing needs attention.", None),
+    )?
+    .section("NEEDS ATTENTION", recovery_blocks(&attention, now));
+    Ok(match attention.complete {
+        true => listing,
+        // Quiet output has no field for completeness, so preserve its failure.
+        false => listing.incomplete(
+            "Some of what needs attention could not be read; showing what is known.",
+            "some of what needs attention could not be read; the ids above are not the \
+             whole list",
+        ),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::fixtures::NOW;
+    use crate::output::table::quiet_lines;
     use ariadne_api::attention::AttentionSubjectKind;
 
     fn frame(event: &str) -> SseEvent {
@@ -282,21 +257,23 @@ mod tests {
             )],
             complete: true,
         };
-        let section = recovery_items_section(&recovery, now).expect("a quota item has a section");
+        let blocks = recovery_blocks(&recovery, now);
+        assert_eq!(blocks.len(), 1);
+        let section = blocks[0].lines(None).join("\n");
         assert!(section.contains("[quota]"), "{section}");
         assert!(section.contains("a blocker"), "{section}");
         assert!(section.contains("clear it"), "{section}");
         assert!(section.contains("01S"), "{section}");
 
-        assert_eq!(
-            recovery_items_section(
+        assert!(
+            recovery_blocks(
                 &AttentionListDto {
                     items: Vec::new(),
                     complete: true
                 },
                 now
-            ),
-            None
+            )
+            .is_empty()
         );
     }
 
@@ -332,7 +309,8 @@ mod tests {
             )],
             complete: true,
         };
-        assert_eq!(quiet_lines(&quiet_rows(&recovery)), "01I");
+        let now = NOW.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+        assert_eq!(quiet_lines(&column_rows(&recovery, now)), "01I");
     }
 
     #[test]
