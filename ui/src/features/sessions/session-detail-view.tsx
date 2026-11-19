@@ -277,7 +277,7 @@ export function SessionDetailView({
                 request it watches is what it is about, linked to the forge. */}
             {session.pull_request_id ? (
               <Fact label="Pull request">
-                <PullRequestLink id={session.pull_request_id} />
+                <PullRequestLink id={session.pull_request_id} host={host} />
               </Fact>
             ) : null}
             {/* One fact, not two: what the agent runs on is the tail of this line

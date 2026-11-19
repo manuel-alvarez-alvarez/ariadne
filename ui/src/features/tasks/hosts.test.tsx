@@ -15,7 +15,7 @@ import { EventStreamProvider } from "@/events/provider"
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
 import { aGoal, aSessionPage, aTask } from "@/test/fixtures"
-import { jsonResponse, renderScreen } from "@/test/harness"
+import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { forgetHosts, type SeenRequest, stubHosts } from "@/test/hosts"
 
 const BOX = "http://box.test:7676"
@@ -148,4 +148,44 @@ it("retries a failed task on the host the panel is open on", async () => {
 
   await waitFor(() => expect(onBox(seen, "POST", `/v1/tasks/${TASK.id}/retry`)).toHaveLength(1))
   expect(seen.some((request) => request.method === "POST" && request.origin !== BOX)).toBe(false)
+})
+
+it("names the host in the title of a task that failed to load there", async () => {
+  stubHosts({
+    box: { [`/v1/tasks/${TASK.id}`]: () => errorResponse(500, "internal", "box is unwell") },
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?task=${TASK.id}&host=box` },
+  )
+
+  expect(await screen.findByText(`Could not load task ${TASK.id} on box`)).toBeTruthy()
+})
+
+it("opens a dependency of a task of a named host on that host", async () => {
+  const dependency = aTask({ id: "01JBOXTASK000000000000000D", goal_id: GOAL.id, title: "Lay it" })
+  stubHosts({
+    box: {
+      [`/v1/tasks/${TASK.id}`]: { ...TASK, status: "pending", depends_on: [dependency.id] },
+      [`/v1/tasks/${dependency.id}`]: dependency,
+      [`/v1/goals/${GOAL.id}`]: GOAL,
+      "/v1/sessions": aSessionPage([]),
+      [`/v1/tasks/${TASK.id}/transitions`]: [],
+      [`/v1/tasks/${TASK.id}/messages`]: [],
+    },
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?task=${TASK.id}&host=box` },
+  )
+
+  await screen.findAllByRole("link", { name: dependency.title })
+  const hrefs = screen
+    .getAllByRole("link", { name: dependency.title })
+    .map((link) => link.getAttribute("href"))
+  expect(new Set(hrefs)).toEqual(new Set([`/goals?task=${dependency.id}&host=box`]))
 })
