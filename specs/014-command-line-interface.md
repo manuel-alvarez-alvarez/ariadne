@@ -427,6 +427,16 @@ same binary also serves (013).
     line names, and offers `local` and `all` when that daemon does not answer or
     lists only `local`. Completion of an ID reads the host that `--host NAME`
     names, and every ready host for `--host all`.
+51. `host reconnect NAME|all` posts `/v1/hosts/{name}/reconnect` to the local
+    daemon for the named host, or for each named host (every host but `local`)
+    with `all`. It polls `GET /v1/hosts` until each host is `ready` or `down`,
+    for at most `--timeout SECONDS` (default 30). It then prints one row per
+    host with the columns of `host ls`, or the hosts as JSON with
+    `--format json`. It exits 1 when a host is not `ready` at the end. `local`
+    is a usage error. An unknown name is a usage error that lists the
+    configured hosts. `all` with only `local` says that no named host is
+    configured. `--host` on it is a usage error. Completion offers the named
+    hosts and `all`.
 
 ## Known gap
 
@@ -769,6 +779,15 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)
   and of `local` with `--home`
   (`tests/hosts.rs::daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home`).
+- Rule 51 posts for one host, or for each named host, and prints its rows
+  (`tests/hosts.rs::reconnect_one_host_posts_for_it_and_prints_its_row`,
+  `::reconnect_all_posts_for_each_named_host_and_fails_while_one_is_down`);
+  JSON and the timeout
+  (`::reconnect_json_prints_the_hosts_and_a_slow_host_fails_after_the_timeout`);
+  the refusals
+  (`::reconnect_refuses_local_unknown_names_and_host_selection`,
+  `::reconnect_all_with_only_local_says_no_named_host_is_configured`);
+  completion (`complete.rs::tests::reconnect_offers_the_named_hosts_and_all_but_not_local`).
 - Rule 49 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
   `tests/hosts.rs::query_on_an_unknown_or_unready_host_is_a_usage_error`,
   `commands/query.rs::tests::host_all_puts_the_host_column_first`,

@@ -16,9 +16,13 @@ use crate::output::{self, Format, UNCAPPED, col};
 
 pub(crate) async fn list(client: &Client, format: Format) -> Result<()> {
     let hosts: Vec<HostDto> = client.get_json("/v1/hosts").await?;
+    print_hosts(&hosts, format)
+}
+
+fn print_hosts(hosts: &[HostDto], format: Format) -> Result<()> {
     output::print_list(
         format,
-        &hosts,
+        hosts,
         &[
             col("name", UNCAPPED),
             col("kind", UNCAPPED),
@@ -50,6 +54,75 @@ pub(crate) async fn list(client: &Client, format: Format) -> Result<()> {
         },
         "",
     )
+}
+
+/// `host reconnect NAME|all`: ask the local daemon to reconnect each target,
+/// wait until each is `ready` or `down`, and print their rows. Any host that
+/// is not `ready` at the end fails the command.
+pub(crate) async fn reconnect(
+    client: &Client,
+    name: &str,
+    timeout: u64,
+    format: Format,
+) -> Result<ExitCode> {
+    let hosts: Vec<HostDto> = client.get_json("/v1/hosts").await?;
+    let named: Vec<&str> = hosts
+        .iter()
+        .map(|host| host.name.as_str())
+        .filter(|host| *host != "local")
+        .collect();
+    let targets: Vec<String> = if name == "local" {
+        return Err(Failure::usage("host local is this daemon and cannot be reconnected").err());
+    } else if name == "all" {
+        if named.is_empty() {
+            return Err(Failure::usage("no named host is configured").err());
+        }
+        named.iter().map(|host| host.to_string()).collect()
+    } else if named.contains(&name) {
+        vec![name.to_owned()]
+    } else {
+        let configured = if named.is_empty() {
+            "none".to_owned()
+        } else {
+            named.join(", ")
+        };
+        return Err(Failure::usage(format!(
+            "unknown host {name}; configured hosts: {configured}"
+        ))
+        .err());
+    };
+    for target in &targets {
+        let _: HostDto = client
+            .post_empty(&format!(
+                "/v1/hosts/{}/reconnect",
+                crate::commands::path_segment(target)
+            ))
+            .await?;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+    let settled = loop {
+        let now: Vec<HostDto> = client.get_json("/v1/hosts").await?;
+        let rows: Vec<HostDto> = targets
+            .iter()
+            .filter_map(|target| now.iter().find(|host| &host.name == target).cloned())
+            .collect();
+        let done = rows.len() == targets.len()
+            && rows
+                .iter()
+                .all(|host| host.status != HostStatus::Connecting);
+        if done || std::time::Instant::now() >= deadline {
+            break rows;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    };
+    print_hosts(&settled, format)?;
+    let ready = settled.len() == targets.len()
+        && settled.iter().all(|host| host.status == HostStatus::Ready);
+    Ok(if ready {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 /// What a command does, which decides the hosts that `--host` may name for it
@@ -114,6 +187,10 @@ const KINDS: &[(&str, Kind)] = &[
     ("goal ls", Kind::List),
     ("goal rm", Kind::Write),
     ("host ls", Kind::Local(REGISTRY)),
+    (
+        "host reconnect",
+        Kind::Local("`host reconnect` reads and writes the registry of the local daemon"),
+    ),
     ("issue ls", Kind::List),
     (
         "mcp serve",
@@ -224,6 +301,12 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
     let Some(name) = cli.host.as_deref() else {
         return crate::run(cli, local).await;
     };
+    if path == "host reconnect" {
+        return Err(Failure::usage(
+            "host reconnect takes a NAME or all, not --host; the local daemon serves it",
+        )
+        .err());
+    }
     // The local daemon fans a query out itself, under `/v1/hosts/{host}` (037).
     if path == "query" {
         return crate::run(cli, local).await;

@@ -17,7 +17,7 @@ use clap::{ArgMatches, FromArgMatches};
 
 use ariadne_client::Client;
 
-use crate::cli::{Cli, Command, DaemonCommand, Layout, McpCommand, command};
+use crate::cli::{Cli, Command, DaemonCommand, HostCommand, Layout, McpCommand, command};
 use crate::output::View;
 use crate::telemetry::Telemetry;
 
@@ -117,7 +117,12 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
     }
 
     let outcome = match cli.command {
-        Command::Host { .. } => hosts::list(&client, format).await,
+        Command::Host {
+            command: HostCommand::Ls,
+        } => hosts::list(&client, format).await,
+        Command::Host {
+            command: HostCommand::Reconnect { name, timeout },
+        } => return hosts::reconnect(&client, &name, timeout, format).await,
         Command::Version => commands::version(&client, format).await,
         Command::Completions {
             shell,
