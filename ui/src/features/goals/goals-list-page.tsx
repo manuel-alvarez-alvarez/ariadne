@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { useHostSelection } from "@/hooks/use-host-filter"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 import { HOST_PARAM } from "@/routes/paths"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
@@ -87,7 +88,7 @@ export function GoalsListPage() {
     [goals.rows],
   )
   const shown = useMemo(() => searchGoals(merged, query), [merged, query])
-  const showHost = selection.showHost
+  const showHost = useRowsShowHost()
   const failedEverywhere = goals.errors.length > 0 && goals.errors.length === hosts.length
   const empty = emptyBoardCopy(statuses)
   const active = sameFilter(statuses, ACTIVE_FILTER)

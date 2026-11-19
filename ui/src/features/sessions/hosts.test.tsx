@@ -104,9 +104,16 @@ it("says which listed host is not shown and why, with host badges on the rows", 
   stubHosts(BOTH, [LOCAL_HOST_ROW, { ...BOX_HOST, status: "down", error: "connection refused" }])
   renderScreen(<SessionsPage />, { route: "/sessions" })
 
-  expect(await screen.findByText("Not shown: box (connection refused)")).toBeTruthy()
+  const line = (await screen.findByText(/^Not shown:/)) as HTMLElement
+  expect(within(line).getByTitle("Host").textContent).toBe("box")
+  expect(line.textContent).toBe("Not shown:box(connection refused)")
   await waitFor(() =>
-    expect(screen.getAllByTitle("Host").map((badge) => badge.textContent)).toEqual(["local"]),
+    expect(
+      screen
+        .getAllByTitle("Host")
+        .filter((badge) => !badge.closest("p"))
+        .map((badge) => badge.textContent),
+    ).toEqual(["local"]),
   )
 })
 
@@ -114,7 +121,8 @@ it("names the host that still loads while another has answered", async () => {
   stubHosts({ ...BOTH, box: { "/v1/goals": [], "/v1/tasks": [] } })
   renderScreen(<SessionsPage />, { route: "/sessions" })
 
-  await screen.findByText("Still loading: box")
+  const loading = (await screen.findByText(/^Still loading:/)) as HTMLElement
+  expect(within(loading).getByTitle("Host").textContent).toBe("box")
   expect(await screen.findByRole("row", { name: /local/ })).toBeTruthy()
 })
 

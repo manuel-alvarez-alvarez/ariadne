@@ -20,8 +20,6 @@ interface HostSelection {
   listed: HostView[]
   /** The listed hosts a screen does not read, each with `unreachable`, its reason. */
   absent: HostView[]
-  /** Whether the rows name their host: the selection has more than one listed host. */
-  showHost: boolean
 }
 
 /** What the picker selected, as the hosts a screen reads and the ones it cannot. */
@@ -43,7 +41,6 @@ export function useHostSelection(): HostSelection {
     read,
     listed,
     absent: listed.filter((host) => !read.includes(host.name)),
-    showHost: listed.length > 1,
   }
 }
 

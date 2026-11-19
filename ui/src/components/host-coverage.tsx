@@ -8,6 +8,7 @@
  */
 
 import type { Host, HostView } from "@/api"
+import { HostLabel } from "@/components/host-label"
 
 export function HostCoverage({
   absent,
@@ -26,12 +27,23 @@ export function HostCoverage({
   return (
     <div className="flex flex-col gap-1 text-sm text-muted-foreground">
       {absent.length > 0 ? (
-        <p>
-          Not shown:{" "}
-          {absent.map((host) => `${host.name} (${host.unreachable ?? "not reachable"})`).join(", ")}
+        <p className="flex flex-wrap items-center gap-1.5">
+          Not shown:
+          {absent.map((host) => (
+            <span key={host.name} className="inline-flex items-center gap-1">
+              <HostLabel host={host.name} />({host.unreachable ?? "not reachable"})
+            </span>
+          ))}
         </p>
       ) : null}
-      {stillLoading ? <p>Still loading: {loading.join(", ")}</p> : null}
+      {stillLoading ? (
+        <p className="flex flex-wrap items-center gap-1.5">
+          Still loading:
+          {loading.map((host) => (
+            <HostLabel key={host} host={host} />
+          ))}
+        </p>
+      ) : null}
     </div>
   )
 }

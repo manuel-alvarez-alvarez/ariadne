@@ -42,6 +42,7 @@ import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionColumn } from "@/features/tasks/steps"
 import { useHostSelection } from "@/hooks/use-host-filter"
+import { useRowsShowHost } from "@/hooks/use-host-label"
 import { cn, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 import { BROWSE_FILTER_PARAMS, type BrowseFilters, useBrowseFilters } from "./browse-filters"
@@ -156,7 +157,7 @@ export function SessionsPage() {
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host, filters))
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
-  const showHost = selection.showHost
+  const showHost = useRowsShowHost()
   const goalsById = byHostId(goals.rows)
   const tasksById = byHostId(tasks.rows)
 

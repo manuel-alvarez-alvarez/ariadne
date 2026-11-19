@@ -317,6 +317,7 @@ it("shows a question a remote host's stream delivers, and answers it on that hos
 function lanesHosts(): string[] {
   return screen
     .getAllByTitle("Host")
+    .filter((badge) => !badge.closest("p"))
     .map((badge) => badge.textContent ?? "")
     .sort()
 }
@@ -345,7 +346,9 @@ it("says which listed host is not shown and why", async () => {
   ])
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
-  expect(await screen.findByText("Not shown: box (connection refused)")).toBeTruthy()
+  const line = (await screen.findByText(/^Not shown:/)) as HTMLElement
+  expect(within(line).getByTitle("Host").textContent).toBe("box")
+  expect(line.textContent).toBe("Not shown:box(connection refused)")
 })
 
 it("names the host that still loads while another has answered", async () => {
@@ -356,7 +359,8 @@ it("names the host that still loads while another has answered", async () => {
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
   await screen.findByRole("link", { name: MINE.title })
-  expect(screen.getByText("Still loading: box")).toBeTruthy()
+  const loading = screen.getByText(/^Still loading:/) as HTMLElement
+  expect(within(loading).getByTitle("Host").textContent).toBe("box")
 })
 
 it("says the tasks of a host are not loaded in its lanes, and names the host, local too", async () => {
