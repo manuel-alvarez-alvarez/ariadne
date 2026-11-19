@@ -43,6 +43,10 @@ to the daemon** switch is on by default and controls OTLP logs and metrics.
 Both settings are persisted to
 `localStorage` under `ariadne.settings`; the theme lives under `ariadne.theme`.
 Changing the URL clears the query cache and reconnects the event stream.
+Settings shows the configured address and live stream state together.
+Saving the address starts a connection attempt; it does not confirm a connection.
+Expand Daemon setup help for startup and TCP listener instructions.
+Use Retry connection after checking the setup. The other settings apply immediately.
 
 That daemon is `local`. The app also reads every host its `GET /v1/hosts`
 lists: the `[hosts.<name>]` tables of its `config.toml`. The settings dialog's

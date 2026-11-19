@@ -1498,8 +1498,13 @@ Out: the daemon endpoints themselves (012).
     pick leaves the new goal's host out, the toast has a "Show all hosts"
     action that sets the pick to All hosts.
 
+### Connection recovery
+
+81. Settings shows the configured daemon address and the event stream connection state together. Saving the address starts a connection attempt and does not confirm success. Retry requests a stream reconnection. Settings gives daemon startup and TCP listener guidance, and identifies settings that apply immediately. Setup help expands with the keyboard. The live status announces changes without moving focus. The sidebar connection status keeps daemon logs reachable; host errors remain in Hosts.
+
 ## Acceptance criteria
 
+- Settings shows the configured address, stream state and recovery guidance: `ui/src/components/settings-dialog.test.tsx::shows the saved address and live connection state with recovery guidance`; `::announces stream changes without moving focus and gives neutral failure guidance`.
 - The inspector focus control occupies a reserved row after the overview and
   leaves connection status available
   (`ui/src/components/app-shell.test.tsx::reserves a focus-control row after the overview without covering connection status`).
