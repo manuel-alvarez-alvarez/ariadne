@@ -24,7 +24,10 @@
  * its tasks and its agents run there. It starts on the header's pick, or on
  * `local` under All. The repositories, the workflows and the models offered
  * are that host's, so a change of host reloads them and clears the
- * repositories and the workflow picked on the host before.
+ * repositories, the workflow and the model with its effort picked on the host
+ * before. A host whose sync is pending or failed is warned about, and the goal
+ * can still be created. The toast after a create on a named host names it, and
+ * offers "Show all hosts" when the pick leaves the new goal out.
  *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
@@ -59,6 +62,7 @@ import {
 } from "@/components/form-dialog"
 import { FormSelect } from "@/components/form-select"
 import { MarkdownField } from "@/components/markdown-field"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -69,8 +73,9 @@ import { modelsQueryOptions } from "@/features/models/queries"
 import { NoRepositories as SharedNoRepositories } from "@/features/repositories/no-repositories"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { pickedWorkflow, WorkflowSelect } from "@/features/workflows/workflow-select"
-import { usePickedHost } from "@/hooks/use-host-filter"
+import { useHostFilter, usePickedHost } from "@/hooks/use-host-filter"
 import { paths } from "@/routes/paths"
+import { useSettingsStore } from "@/stores/settings"
 
 import { useCreateGoal } from "./queries"
 import { RepositoryCombobox } from "./repository-combobox"
@@ -126,6 +131,8 @@ export function CreateGoalDialog({
 }) {
   const picked = usePickedHost()
   const { hosts } = useHosts()
+  const pickedHosts = useHostFilter()
+  const setHostFilter = useSettingsStore((state) => state.setHostFilter)
   // The header's pick, unless the app cannot reach that host: then `local`.
   const pickedHost =
     picked !== null && hosts.some((one) => one.name === picked && one.url === null)
@@ -141,6 +148,7 @@ export function CreateGoalDialog({
   const chosen = form.watch("host")
   const host = chosen || LOCAL_HOST
   const ready = open && chosen !== ""
+  const sync = hosts.find((one) => one.name === host)?.sync
 
   const repositories = useQuery({ ...repositoriesQueryOptions(host), enabled: ready })
   const models = useQuery({ ...modelsQueryOptions(host), enabled: ready })
@@ -204,7 +212,13 @@ export function CreateGoalDialog({
     }
     try {
       const goal = await createGoal.mutateAsync({ host: values.host || LOCAL_HOST, body })
-      toast.success("Goal created", { description: goal.title })
+      toast.success("Goal created", {
+        description: goal.host === LOCAL_HOST ? goal.title : `${goal.title} on ${goal.host}`,
+        // The board lists the picked hosts only: say how to see the new goal.
+        ...(pickedHosts.includes(goal.host)
+          ? {}
+          : { action: { label: "Show all hosts", onClick: () => setHostFilter("") } }),
+      })
       onOpenChange(false)
       onCreated?.(goal)
     } catch {
@@ -245,7 +259,9 @@ export function CreateGoalDialog({
                   disabled: one.unreachable !== null,
                 }))}
                 onValueChange={() => {
-                  // Repository ids and workflows are the old host's own.
+                  // Repository ids, workflows and models are the old host's own.
+                  form.setValue("model", "", { shouldDirty: true })
+                  form.setValue("effort", "", { shouldDirty: true })
                   form.setValue("repository_ids", [], { shouldDirty: true })
                   form.setValue("workflow", "", { shouldDirty: true })
                   workflowPicked.current = false
@@ -254,6 +270,16 @@ export function CreateGoalDialog({
               <FieldDescription>
                 Where the goal lives: its tasks and its agents run on this host.
               </FieldDescription>
+              {sync && sync.state !== "in_sync" ? (
+                <Alert>
+                  <AlertTitle>
+                    {host} has not taken your catalogs and settings: sync {sync.state}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {sync.error ? `${sync.error} ` : ""}You can still create the goal.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
             </Field>
           ) : null}
 

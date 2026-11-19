@@ -1298,6 +1298,13 @@ Out: the daemon endpoints themselves (012).
     A host that failed a refresh while its last read is on screen, an empty one
     too, is a warning marked "which may be outdated", never an error state.
 
+79. The goal dialog sends only what the chosen host has, and says where the
+    new goal is. A change of host clears the repositories, the workflow, the
+    model and the effort. A chosen host whose sync is `pending` or `failed`
+    shows a warning with the state and the error, and the goal can still be
+    created. The toast after a create on a named host names the host. When the
+    pick leaves the new goal's host out, the toast has a "Show all hosts"
+    action that sets the pick to All hosts.
 
 ## Acceptance criteria
 
@@ -2339,6 +2346,10 @@ Out: the daemon endpoints themselves (012).
   `::sends no stale host when the saved pick is no longer listed`); the iframe's datasources point at
   `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
+- The goal dialog follows rule 79
+  (`ui/src/features/goals/hosts.test.tsx::clears the model and the effort when the goal dialog's host changes`,
+  `::warns in the goal dialog of a host whose sync is pending or failed, and still creates`,
+  `::names the host in the toast of a goal created on a named host, and offers all hosts when the pick leaves it out`).
 
 ## Known gap
 

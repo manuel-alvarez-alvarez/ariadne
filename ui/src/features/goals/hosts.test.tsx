@@ -25,6 +25,15 @@ import { GoalsListPage } from "./goals-list-page"
 const MINE = aGoal({ id: "01JLOCALGOAL0000000000000A", title: "Goal on local" })
 const THEIRS = aGoal({ id: "01JBOXGOAL000000000000000B", title: "Goal on box" })
 
+const toasts = vi.hoisted(() => ({
+  success: vi.fn<(title: string, options: ToastOptions) => void>(),
+}))
+type ToastOptions = { description: string; action: { label: string; onClick: () => void } }
+vi.mock("sonner", async (original) => ({
+  ...(await original<typeof import("sonner")>()),
+  toast: Object.assign(vi.fn(), (await original<typeof import("sonner")>()).toast, toasts),
+}))
+
 const copied = vi.hoisted(() => vi.fn())
 vi.mock("@/lib/clipboard", async (original) => ({
   ...(await original<typeof import("@/lib/clipboard")>()),
@@ -235,6 +244,109 @@ it("defaults the goal dialog to the picked host, and reloads its lists when the 
   await waitFor(() =>
     expect(reads(seen, "local")).toEqual(["/v1/models", "/v1/repositories", "/v1/workflows"]),
   )
+})
+
+/** Pick `model` in the open goal dialog's pin picker. */
+async function pickModel(user: ReturnType<typeof userEvent.setup>, id: string) {
+  const dialog = await screen.findByRole("dialog", { name: "New goal" })
+  await user.click(within(dialog).getByRole("button", { name: "Orchestrator runs on" }))
+  const models = await screen.findByRole("listbox", { name: "Models" })
+  await user.click(within(models).getByText(id))
+  await user.keyboard("{Escape}")
+  return dialog
+}
+
+it("clears the model and the effort when the goal dialog's host changes", async () => {
+  const user = userEvent.setup()
+  stubHosts({
+    local: { "/v1/repositories": [], "/v1/models": [aModel()], "/v1/workflows": [] },
+    box: { "/v1/repositories": [], "/v1/models": [aModel()], "/v1/workflows": [] },
+  })
+  renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
+  const dialog = await pickModel(user, aModel().id)
+  const pin = within(dialog).getByRole("button", { name: "Orchestrator runs on" })
+  await waitFor(() => expect(pin.textContent).toContain("claude-sonnet-5"))
+
+  await user.click(within(dialog).getByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "box" }))
+
+  await waitFor(() => expect(pin.textContent).not.toContain("claude-sonnet-5"))
+  expect(within(dialog).getByRole("button", { name: "Create goal" }).hasAttribute("disabled")).toBe(
+    true,
+  )
+})
+
+it("warns in the goal dialog of a host whose sync is pending or failed, and still creates", async () => {
+  const user = userEvent.setup()
+  useSettingsStore.setState({ hostFilter: "box" })
+  const behind = {
+    ...BOX,
+    sync: { ...BOX.sync, state: "failed" as const, error: "push refused: disk full" },
+  }
+  let created = false
+  stubHosts(
+    {
+      local: { "/v1/repositories": [], "/v1/models": [], "/v1/workflows": [] },
+      box: {
+        "/v1/repositories": [aRepository({ id: "r-box", path: "/src/box-repo" })],
+        "/v1/models": [aModel()],
+        "/v1/workflows": [],
+        "/v1/goals": (_url: URL, request: Request) => {
+          if (request.method !== "POST") return undefined
+          created = true
+          return jsonResponse(aGoal({ title: "On box" }), 201)
+        },
+      },
+    },
+    [LOCAL, behind],
+  )
+  renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
+
+  const alert = await screen.findByRole("alert")
+  expect(alert.textContent).toContain("failed")
+  expect(alert.textContent).toContain("push refused: disk full")
+
+  const dialog = await pickModel(user, aModel().id)
+  await user.click(await within(dialog).findByRole("combobox", { name: "Repositories" }))
+  await user.click(await screen.findByText(/box-repo/))
+  await user.keyboard("{Escape}")
+  await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "On box")
+  await user.click(within(dialog).getByRole("button", { name: "Create goal" }))
+  await waitFor(() => expect(created).toBe(true))
+})
+
+it("names the host in the toast of a goal created on a named host, and offers all hosts when the pick leaves it out", async () => {
+  const user = userEvent.setup()
+  toasts.success.mockClear()
+  useSettingsStore.setState({ hostFilter: "local" })
+  stubHosts({
+    local: { "/v1/repositories": [], "/v1/models": [], "/v1/workflows": [] },
+    box: {
+      "/v1/repositories": [aRepository({ id: "r-box", path: "/src/box-repo" })],
+      "/v1/models": [aModel()],
+      "/v1/workflows": [],
+      "/v1/goals": (_url: URL, request: Request) =>
+        request.method === "POST" ? jsonResponse(aGoal({ title: "On box" }), 201) : undefined,
+    },
+  })
+  renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
+  const dialog = await screen.findByRole("dialog", { name: "New goal" })
+  await user.click(await within(dialog).findByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "box" }))
+  await user.click(await within(dialog).findByRole("combobox", { name: "Repositories" }))
+  await user.click(await screen.findByText(/box-repo/))
+  await user.keyboard("{Escape}")
+  await pickModel(user, aModel().id)
+  await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "On box")
+  await user.click(within(dialog).getByRole("button", { name: "Create goal" }))
+
+  await waitFor(() => expect(toasts.success).toHaveBeenCalled())
+  const [title, options] = toasts.success.mock.calls[0] ?? []
+  expect(title).toBe("Goal created")
+  expect(options?.description).toContain("box")
+  expect(options?.action.label).toBe("Show all hosts")
+  act(() => options?.action.onClick())
+  expect(useSettingsStore.getState().hostFilter).toBe("")
 })
 
 it("opens the goal dialog on local under All", async () => {
