@@ -49,7 +49,10 @@ export function AgentFlagsDialog({
   onOpenChange,
   config,
   host,
+  showHost = false,
 }: {
+  /** Name the host in the title and the toast: more than one host is selected. */
+  showHost?: boolean
   /** The host whose agent is edited: the write goes to its daemon. */
   host: Host
   open: boolean
@@ -78,12 +81,14 @@ export function AgentFlagsDialog({
   const defaults = config?.default_flags ?? []
   const atDefaults = sameFlags(cleanFlags(rows), defaults)
 
+  const at = showHost ? ` on ${host}` : ""
+
   async function submit(values: AgentFlagsFormValues) {
     if (!config) return
     const extraFlags = cleanFlags(values.flags)
     try {
       await updateConfig.mutateAsync({ agentId: config.agent_id, extraFlags })
-      toast.success("Flags saved", {
+      toast.success(`Flags saved${at}`, {
         description:
           extraFlags.length > 0
             ? `${config.agent_id} is launched with ${extraFlags.join(" ")}.`
@@ -102,7 +107,9 @@ export function AgentFlagsDialog({
       <DialogContent className="sm:max-w-lg">
         <form onSubmit={handleSubmit(submit)} className="grid gap-4">
           <DialogHeader>
-            <DialogTitle>{label} flags</DialogTitle>
+            <DialogTitle>
+              {label} flags{at}
+            </DialogTitle>
             <DialogDescription>
               Appended to {label}'s argv on every spawn and resume, after the arguments Ariadne
               needs itself. An edit lands on the next launch; sessions already running keep the

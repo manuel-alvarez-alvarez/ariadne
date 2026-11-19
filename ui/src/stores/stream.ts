@@ -92,3 +92,61 @@ export const useStreamStore = create<StreamState & StreamActions>()((set) => ({
   markResync: () => set((state) => ({ resyncCount: state.resyncCount + 1 })),
   reset: () => set(initialState),
 }))
+
+/** What the app knows of one named host's stream. */
+export interface HostStream {
+  status: StreamStatus
+  /** The host's daemon, from the last heartbeat of its stream. */
+  daemon: DaemonInfo | null
+  /** `Date.now()` of that heartbeat. */
+  lastHeartbeatAt: number | null
+  /** Reason of the last disconnect, if the browser gave one. */
+  lastError: string | null
+}
+
+interface HostStreamsState {
+  /** A host has an entry from the moment its stream starts to the moment it stops. */
+  streams: Record<string, HostStream>
+  setStatus: (host: string, status: StreamStatus, error?: string | null) => void
+  markOpen: (host: string) => void
+  markHeartbeat: (host: string, beat: HeartbeatDto) => void
+  forget: (host: string) => void
+}
+
+const NEW_STREAM: HostStream = {
+  status: "idle",
+  daemon: null,
+  lastHeartbeatAt: null,
+  lastError: null,
+}
+
+/**
+ * The stream of each named host, written by the event provider. `local`'s is
+ * {@link useStreamStore}, and stays the connection banner's alone.
+ */
+export const useHostStreamStore = create<HostStreamsState>()((set) => {
+  const patch = (host: string, change: (stream: HostStream) => Partial<HostStream>) =>
+    set((state) => {
+      const stream = state.streams[host] ?? NEW_STREAM
+      return { streams: { ...state.streams, [host]: { ...stream, ...change(stream) } } }
+    })
+  return {
+    streams: {},
+    setStatus: (host, status, error) =>
+      patch(host, (stream) => ({
+        status,
+        lastError: error === undefined ? stream.lastError : error,
+      })),
+    markOpen: (host) => patch(host, () => ({ status: "open", lastError: null })),
+    markHeartbeat: (host, { version, started_at }) =>
+      patch(host, () => ({
+        daemon: { version, startedAt: started_at },
+        lastHeartbeatAt: Date.now(),
+      })),
+    forget: (host) =>
+      set((state) => {
+        const { [host]: _gone, ...streams } = state.streams
+        return { streams }
+      }),
+  }
+})

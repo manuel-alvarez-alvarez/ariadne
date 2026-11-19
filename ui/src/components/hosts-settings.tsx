@@ -7,7 +7,8 @@
  * its `config.toml`, and the section says so rather than editing them.
  */
 
-import { useHosts } from "@/api"
+import { type HostView, useHosts } from "@/api"
+import { hostStatus } from "@/components/host-picker"
 import { ReconnectHostButton } from "@/components/reconnect-host-button"
 import { FieldDescription, FieldLabel } from "@/components/ui/field"
 import {
@@ -18,7 +19,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { describeError } from "@/lib/format"
+import { useHostDaemon } from "@/hooks/use-host-daemon"
+import { describeError, formatDuration } from "@/lib/format"
 
 export function HostsSettings() {
   const { hosts, error } = useHosts()
@@ -43,6 +45,7 @@ export function HostsSettings() {
             <TableHead>Status</TableHead>
             <TableHead>Endpoint</TableHead>
             <TableHead>Error</TableHead>
+            <TableHead>Daemon</TableHead>
             <TableHead>
               <span className="sr-only">Actions</span>
             </TableHead>
@@ -50,21 +53,36 @@ export function HostsSettings() {
         </TableHeader>
         <TableBody>
           {hosts.map((host) => (
-            <TableRow key={host.name}>
-              <TableCell className="font-mono">{host.name}</TableCell>
-              <TableCell>{host.kind}</TableCell>
-              <TableCell>{host.status}</TableCell>
-              <TableCell className="font-mono break-all whitespace-normal">
-                {host.endpoint ?? "-"}
-              </TableCell>
-              <TableCell className="break-words whitespace-normal">{host.error ?? "-"}</TableCell>
-              <TableCell>
-                <ReconnectHostButton name={host.name} />
-              </TableCell>
-            </TableRow>
+            <HostRow key={host.name} host={host} />
           ))}
         </TableBody>
       </Table>
     </section>
+  )
+}
+
+/** One host: what the app reaches of it, and the daemon its stream names. */
+function HostRow({ host }: { host: HostView }) {
+  const daemon = useHostDaemon(host.name)
+  return (
+    <TableRow>
+      <TableCell className="font-mono">{host.name}</TableCell>
+      <TableCell>{host.kind}</TableCell>
+      <TableCell>{hostStatus(host).label}</TableCell>
+      <TableCell className="font-mono break-all whitespace-normal">
+        {host.endpoint ?? "-"}
+      </TableCell>
+      <TableCell className="break-words whitespace-normal">
+        {host.unreachable ?? host.error ?? "-"}
+      </TableCell>
+      <TableCell>
+        {host.url !== null && daemon
+          ? `${daemon.version}${daemon.uptimeSecs === null ? "" : ` · up ${formatDuration(daemon.uptimeSecs)}`}`
+          : "-"}
+      </TableCell>
+      <TableCell>
+        <ReconnectHostButton name={host.name} />
+      </TableCell>
+    </TableRow>
   )
 }
