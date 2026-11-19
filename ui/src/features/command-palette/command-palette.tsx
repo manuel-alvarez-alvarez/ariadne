@@ -79,8 +79,7 @@ import {
   SIDEBAR_SHORTCUT,
   screenShortcut,
 } from "@/hooks/use-global-shortcuts"
-import { useHostFilter } from "@/hooks/use-host-filter"
-import { useRowsShowHost } from "@/hooks/use-host-label"
+import { useHasNamedHosts, useReachableHosts } from "@/hooks/use-host-filter"
 import { attachCommand } from "@/lib/clipboard"
 import { shortId } from "@/lib/format"
 import { keySequenceLabel, shortcutLabel } from "@/lib/shortcuts"
@@ -484,7 +483,9 @@ function EntryGroup({
   entries: PaletteEntry[]
   onPick: (entry: PaletteEntry) => void
 }) {
-  const showHost = useRowsShowHost()
+  // The palette searches every reachable host whatever the pick, so a row
+  // names its host whenever a named host is listed.
+  const showHost = useHasNamedHosts()
   return (
     <CommandGroup heading={heading}>
       {entries.map((entry) => (
@@ -551,11 +552,11 @@ function useOpenGoal(open: boolean, goalId: string | null, host: Host): HostRow<
  * the palette shares their cache entries rather than making four of its own.
  */
 function usePaletteEntries(open: boolean): PaletteEntries {
-  // The goals, tasks and sessions of every host the header's picker selected,
-  // read only while the palette is open. The skills, workflows and
+  // The goals, tasks and sessions of every reachable host, whatever the
+  // header's picker selected, read only while the palette is open. The skills, workflows and
   // repositories are `local`'s.
-  const picked = useHostFilter()
-  const hosts = open ? picked : NO_HOSTS
+  const reachable = useReachableHosts()
+  const hosts = open ? reachable : NO_HOSTS
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host))

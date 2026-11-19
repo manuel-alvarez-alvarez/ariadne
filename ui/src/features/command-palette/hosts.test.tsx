@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 /**
- * The palette across hosts: it searches the goals, tasks and sessions of the
- * selected hosts, each row opens on its host, and the attach command names a
+ * The palette across hosts: it searches the goals, tasks and sessions of every
+ * reachable host, whatever the pick, each row opens on its host, and the attach command names a
  * host that is not `local`.
  */
 
@@ -80,7 +80,7 @@ it("names local on a local row under All", async () => {
   expect(within(remote).getByTitle("Host").textContent).toBe("box")
 })
 
-it("names no host on a row under one picked host", async () => {
+it("names the host of every row under one picked host", async () => {
   useSettingsStore.setState({ hostFilter: "box" })
   const user = userEvent.setup()
   renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
@@ -88,7 +88,7 @@ it("names no host on a row under one picked host", async () => {
   await user.type(screen.getByRole("combobox"), "zebra")
 
   const remote = await screen.findByRole("option", { name: /^Zebra on box/ })
-  expect(within(remote).queryByText("box")).toBeNull()
+  expect(within(remote).getByTitle("Host").textContent).toBe("box")
 })
 
 it("offers New task for the open goal on its own host under another pick", async () => {
@@ -103,7 +103,7 @@ it("offers New task for the open goal on its own host under another pick", async
   expect(item.textContent).toContain(GOAL.title)
 })
 
-it("searches only the picked host", async () => {
+it("searches the hosts outside the pick too", async () => {
   useSettingsStore.setState({ hostFilter: "box" })
   const user = userEvent.setup()
   renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
@@ -111,7 +111,8 @@ it("searches only the picked host", async () => {
   await user.type(screen.getByRole("combobox"), "zebra")
 
   await screen.findByRole("option", { name: /^Zebra on box/ })
-  expect(screen.queryByRole("option", { name: /^Zebra on local/ })).toBeNull()
+  const mine = await screen.findByRole("option", { name: /^Zebra on local/ })
+  expect(within(mine).getByTitle("Host").textContent).toBe("local")
 })
 
 it("copies the attach command with the host of the open session", async () => {
