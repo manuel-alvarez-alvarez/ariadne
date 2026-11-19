@@ -1139,6 +1139,11 @@ Out: the daemon endpoints themselves (012).
     `kind`, `status`, `endpoint` and `error`, the facts `ariadne host ls`
     prints, live through `host_updated`. It says the hosts are configured in
     the `config.toml` of the settings daemon. It stays with `local` alone.
+    Each named host's row has a reconnect button, named "Reconnect" and the
+    host name, in each status. A click sends `POST /v1/hosts/{name}/reconnect`
+    to the settings daemon and the button is disabled while that request
+    runs. A request that fails shows its error in a toast. The row shows each
+    new status through `host_updated`. `local` has no button.
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.
@@ -1155,8 +1160,9 @@ Out: the daemon endpoints themselves (012).
     reads "not reachable" with its reason, whatever its own status says, so a
     host with a socket path never reads as ready. The trigger shows the status
     of a picked named host. The pick is `hostFilter` in the settings store and
-    persists. A pick the daemon no longer lists reads as All hosts in every
-    host control. All hosts reads every reachable host; `useHostFilter()`
+    persists. Each named host's row has the same reconnect button as rule 52,
+    and a click on it changes no pick. A pick the daemon no longer lists
+    reads as All hosts in every host control. All hosts reads every reachable host; `useHostFilter()`
     returns the selected names.
 56. The panel params `?goal=`, `?task=`, `?session=` and `?pr=` have a
     `?host=` beside them for a named host. A link without `?host=` resolves to
@@ -2258,6 +2264,12 @@ Out: the daemon endpoints themselves (012).
   `::shows a host with a socket path as not reachable, never as ready`,
   `::shows the status of a picked named host in the trigger`,
   `::reads a saved pick the daemon no longer lists as All hosts`);
+  each named host has a reconnect button in its picker row and its Hosts row,
+  and `local` has none
+  (`ui/src/components/hosts-settings.test.tsx::reconnects a named host from each picker row, in each status, and picks nothing`,
+  `::reconnects a host from its Hosts row, disabled while it runs, and shows the new status`,
+  `::shows the error of a reconnect that fails`,
+  `::shows no reconnect button while the daemon lists local alone`);
   one stream per reachable host under its own keys, with the connection
   state `local`'s (`ui/src/events/provider-hosts.test.tsx::opens one stream per reachable host, and none for a host that is down`,
   `::dispatches a named host's event under that host's keys`,

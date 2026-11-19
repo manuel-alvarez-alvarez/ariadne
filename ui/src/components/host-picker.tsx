@@ -11,6 +11,7 @@
 import { ServerIcon } from "lucide-react"
 
 import { type HostView, LOCAL_HOST, useHosts } from "@/api"
+import { ReconnectHostButton } from "@/components/reconnect-host-button"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -75,9 +76,12 @@ export function HostPicker() {
           <DropdownMenuRadioItem value={ALL}>All hosts</DropdownMenuRadioItem>
           <DropdownMenuSeparator />
           {hosts.map((host) => (
-            <DropdownMenuRadioItem key={host.name} value={host.name}>
-              <HostOption host={host} />
-            </DropdownMenuRadioItem>
+            <div key={host.name} className="flex items-center gap-1">
+              <DropdownMenuRadioItem value={host.name} className="min-w-0 flex-1">
+                <HostOption host={host} />
+              </DropdownMenuRadioItem>
+              <ReconnectHostButton name={host.name} />
+            </div>
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>

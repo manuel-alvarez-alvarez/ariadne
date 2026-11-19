@@ -8,6 +8,7 @@
  */
 
 import { useHosts } from "@/api"
+import { ReconnectHostButton } from "@/components/reconnect-host-button"
 import { FieldDescription, FieldLabel } from "@/components/ui/field"
 import {
   Table,
@@ -42,6 +43,9 @@ export function HostsSettings() {
             <TableHead>Status</TableHead>
             <TableHead>Endpoint</TableHead>
             <TableHead>Error</TableHead>
+            <TableHead>
+              <span className="sr-only">Actions</span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -54,6 +58,9 @@ export function HostsSettings() {
                 {host.endpoint ?? "-"}
               </TableCell>
               <TableCell className="break-words whitespace-normal">{host.error ?? "-"}</TableCell>
+              <TableCell>
+                <ReconnectHostButton name={host.name} />
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

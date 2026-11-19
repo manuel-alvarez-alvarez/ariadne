@@ -8,13 +8,13 @@
 import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
-
 import { useHosts } from "@/api"
+import { Toaster } from "@/components/ui/sonner"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { useHostFilter } from "@/hooks/use-host-filter"
 import { useSettingsStore } from "@/stores/settings"
-import { renderScreen } from "@/test/harness"
-import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
+import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
+import { BOX, forgetHosts, LOCAL, LOCAL_ORIGIN, stubHosts } from "@/test/hosts"
 import { HostPicker } from "./host-picker"
 import { SettingsDialog } from "./settings-dialog"
 
@@ -54,9 +54,9 @@ it("lists every host with its name, kind, status, endpoint and error, live throu
   const { queryClient } = renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
 
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
-  expect(hostRow("local")).toEqual(["local", "local", "ready", "http://127.0.0.1:7676", "-"])
-  expect(hostRow("box")).toEqual(["box", "direct", "ready", "http://box.test:7676", "-"])
-  expect(hostRow("far")).toEqual(["far", "ssh", "down", "-", "ssh forward not started"])
+  expect(hostRow("local")).toEqual(["local", "local", "ready", "http://127.0.0.1:7676", "-", ""])
+  expect(hostRow("box")).toEqual(["box", "direct", "ready", "http://box.test:7676", "-", ""])
+  expect(hostRow("far")).toEqual(["far", "ssh", "down", "-", "ssh forward not started", ""])
   expect(screen.getByText(/tables of the/).textContent).toContain("config.toml")
 
   // The daemon's own row moves first, as it does in production — the event
@@ -68,7 +68,7 @@ it("lists every host with its name, kind, status, endpoint and error, live throu
   })
 
   await waitFor(() =>
-    expect(hostRow("far")).toEqual(["far", "ssh", "ready", "http://127.0.0.1:7701", "-"]),
+    expect(hostRow("far")).toEqual(["far", "ssh", "ready", "http://127.0.0.1:7701", "-", ""]),
   )
 })
 
@@ -161,4 +161,106 @@ it("reads a saved pick the daemon no longer lists as All hosts", async () => {
 
   await waitFor(() => expect(screen.getByTestId("selected").textContent).toBe("local,box"))
   expect(screen.getByRole("button", { name: "Host" }).textContent).toBe("All hosts")
+})
+
+const RECONNECT = (name: string) => `/v1/hosts/${name}/reconnect`
+
+it("reconnects a named host from each picker row, in each status, and picks nothing", async () => {
+  const user = userEvent.setup()
+  const seen = stubHosts(
+    {
+      local: {
+        [RECONNECT("box")]: () => jsonResponse(BOX),
+        [RECONNECT("far")]: () => jsonResponse(FAR),
+      },
+    },
+    [LOCAL, BOX, FAR],
+  )
+  renderScreen(
+    <>
+      <HostPicker />
+      <Selected />
+    </>,
+  )
+  await waitFor(() => expect(screen.getByTestId("selected").textContent).toBe("local,box"))
+  await user.click(screen.getByRole("button", { name: "Host" }))
+  await screen.findAllByRole("menuitemradio")
+
+  expect(screen.queryByRole("button", { name: "Reconnect local" })).toBeNull()
+  await user.click(screen.getByRole("button", { name: "Reconnect far" }))
+  await user.click(screen.getByRole("button", { name: "Reconnect box" }))
+
+  await waitFor(() =>
+    expect(seen.filter((one) => one.method === "POST").map((one) => one.url.pathname)).toEqual([
+      RECONNECT("far"),
+      RECONNECT("box"),
+    ]),
+  )
+  expect(seen.find((one) => one.method === "POST")?.origin).toBe(LOCAL_ORIGIN)
+  expect(useSettingsStore.getState().hostFilter).toBe("")
+  expect(screen.getByTestId("selected").textContent).toBe("local,box")
+})
+
+it("reconnects a host from its Hosts row, disabled while it runs, and shows the new status", async () => {
+  const user = userEvent.setup()
+  const hosts = [LOCAL, BOX, FAR]
+  const seen = stubHosts(
+    {
+      local: {
+        [RECONNECT("far")]: () => undefined,
+      },
+    },
+    hosts,
+  )
+  const { queryClient } = renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
+
+  expect(screen.queryByRole("button", { name: "Reconnect local" })).toBeNull()
+  const button = screen.getByRole("button", { name: "Reconnect far" })
+  await user.click(button)
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(true))
+  expect(seen.filter((one) => one.method === "POST")).toHaveLength(1)
+
+  const up = { ...FAR, status: "ready" as const, endpoint: "http://127.0.0.1:7701", error: null }
+  hosts[2] = up
+  act(() => {
+    dispatchDomainEvent(queryClient, "local", { event: "host_updated", data: up })
+  })
+  await waitFor(() => expect(hostRow("far")[2]).toBe("ready"))
+})
+
+it("shows the error of a reconnect that fails", async () => {
+  const user = userEvent.setup()
+  stubHosts(
+    {
+      local: {
+        [RECONNECT("box")]: () => errorResponse(404, "host_not_found", "no host named box"),
+      },
+    },
+    [LOCAL, BOX],
+  )
+  renderScreen(
+    <>
+      <Toaster />
+      <SettingsDialog open onOpenChange={() => {}} />
+    </>,
+  )
+  await user.click(await screen.findByRole("button", { name: "Reconnect box" }))
+
+  expect(await screen.findByText(/no host named box/)).toBeTruthy()
+  expect(
+    (screen.getByRole("button", { name: "Reconnect box" }) as HTMLButtonElement).disabled,
+  ).toBe(false)
+})
+
+it("shows no reconnect button while the daemon lists local alone", async () => {
+  stubHosts({}, [LOCAL])
+  renderScreen(
+    <>
+      <HostPicker />
+      <SettingsDialog open onOpenChange={() => {}} />
+    </>,
+  )
+  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2))
+  expect(screen.queryByRole("button", { name: /Reconnect/ })).toBeNull()
 })
