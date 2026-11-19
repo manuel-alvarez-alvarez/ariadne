@@ -459,8 +459,8 @@ stream (008). It lives in `src/features/sessions/console/`:
   session's children from their `subagent_update` events, and `view` picks
   the blocks of `main` or of one child. A child's permission question is
   the session's, so it stays in `main`.
-- `console-view-state.ts` retains, in memory and per host, daemon address and
-  session, what a console keeps while it is off screen: the draft, the
+- `console-view-state.ts` retains, in memory and per host and session (`local` also per daemon
+  address), what a console keeps while it is off screen: the draft, the
   scroll position, whether it follows, the view shown and a fold
   preference per block id. Write to it through `updateViewState`; a pane
   mounted again reads it back.

@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-17
+updated: 2026-11-19
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1193,8 +1193,12 @@ Out: the daemon endpoints themselves (012).
     and task chips apply to every selected host.
     The Agent filter lists the agents of each selected host.
 62. The session panel and the console open their streams on the session's
-    host. `console-view-state.ts` keys its state by host, address and
-    session. Console input, cancel and answers post to the session's host. A
+    host. `console-view-state.ts` keys its state by host and session. `local`
+    adds its daemon address to the key, so each daemon keeps its own state; a
+    named host does not, so its draft, scroll position, view, folds and failed
+    sends stay when its address changes. While the host is not reachable, the
+    console opens no stream and its status line gives the reason of the host.
+    Console input, cancel and answers post to the session's host. A
     switch of a session's model lists the models of that host. A goal panel's
     Sessions tab opens sessions of a named host the same way.
 63. Every attention target opens its item on its host.
@@ -1854,6 +1858,7 @@ Out: the daemon endpoints themselves (012).
   session, and keeps one open stream while shown (rule 24i)
   (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft back after the console is unmounted`,
   `::keeps each daemon's and each session's state apart`,
+  `ui/src/features/sessions/console/composer.test.tsx::keeps a named host's state when its address changes, and gives the host's reason while it is down`,
   `::restores the reader's place, not the bottom, when the console comes back`,
   `::brings back the older page the reader had loaded, and their place in it, after the console expands`,
   `::puts the block the reader was on back in place when new events move the page boundary`,
@@ -2336,7 +2341,9 @@ Out: the daemon endpoints themselves (012).
   `::opens on the host the header picker names`,
   `::shows no host select with local alone`,
   `::lists a host it cannot reach as a disabled option with its reason, and opens on All over such a pick`,
-  `::sends no stale host when the saved pick is no longer listed`); the iframe's datasources point at
+  `::sends no stale host when the saved pick is no longer listed`,
+  `::keeps a chosen host when it drops and returns, says why, and neither switches the iframe nor reloads it`,
+  `::follows the header pick only until a host is picked on the screen`); the iframe's datasources point at
   `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
 

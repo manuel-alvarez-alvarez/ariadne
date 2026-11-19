@@ -84,17 +84,14 @@ export function DashboardsPage() {
   const named = useHasNamedHosts()
   const pick = useSettingsStore((state) => state.hostFilter)
   // The picker's host when the app can reach it, else every host, until the
-  // user picks another here. A pick the hosts no longer list is All.
+  // user picks another here. A host picked here stays picked, reachable or
+  // not, as long as the hosts list it; one it no longer lists is the fallback.
   const [hostChoice, setHostChoice] = useState<string | null>(null)
   const pickedRow = hosts.find((host) => host.name === pick)
   const fallback = pickedRow && pickedRow.url !== null ? pick : ALL_HOSTS
   const chosenRow = hosts.find((host) => host.name === hostChoice)
-  const queried =
-    chosenRow && chosenRow.url !== null
-      ? chosenRow.name
-      : hostChoice === ALL_HOSTS
-        ? ALL_HOSTS
-        : fallback
+  const queried = chosenRow ? chosenRow.name : hostChoice === ALL_HOSTS ? ALL_HOSTS : fallback
+  const unreachable = chosenRow?.url === null ? chosenRow.unreachable : null
   // A named pick waits for the hosts list, so no iframe opens on All first.
   const waitingForHosts = pick !== "" && hostsPending
   const hostItems = [
@@ -228,6 +225,11 @@ export function DashboardsPage() {
           </>
         }
       />
+      {unreachable !== null ? (
+        <p role="status" className="text-sm text-status-danger-fg">
+          Host {queried} is not reachable{unreachable ? `: ${unreachable}` : ""}
+        </p>
+      ) : null}
       {dashboards.isPending || waitingForHosts ? (
         <Skeleton className="min-h-0 flex-1" />
       ) : dashboards.isError ? (

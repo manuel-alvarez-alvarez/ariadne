@@ -10,7 +10,7 @@
  * `document_is_default` gate — not anything Perses draws.
  */
 
-import { fireEvent, screen, within } from "@testing-library/react"
+import { act, fireEvent, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -278,6 +278,58 @@ describe("DashboardsPage", () => {
     const option = await screen.findByRole("option", { name: /^box/ })
     expect(option.textContent).toBe("box (not reachable: ssh closed)")
     expect(option.getAttribute("aria-disabled")).toBe("true")
+  })
+
+  it("keeps a chosen host when it drops and returns, says why, and neither switches the iframe nor reloads it", async () => {
+    const user = userEvent.setup()
+    hostRows = [LOCAL, BOX]
+    const { queryClient } = renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    await screen.findByTitle("Default dashboard")
+    await user.click(screen.getByRole("combobox", { name: "Host" }))
+    await user.click(await screen.findByRole("option", { name: "box" }))
+    const iframe = await screen.findByTitle("Default dashboard")
+    const src = iframe.getAttribute("src")
+    const post = vi.spyOn((iframe as HTMLIFrameElement).contentWindow as Window, "postMessage")
+    const listed = requests.filter((one) => one.path === "/v1/dashboards").length
+
+    act(() =>
+      queryClient.setQueryData(qk.hosts.list(), [
+        LOCAL,
+        { ...BOX, status: "down", endpoint: null, error: "ssh closed" },
+      ]),
+    )
+    expect(await screen.findByText("Host box is not reachable: ssh closed")).toBeTruthy()
+    expect(screen.getByTitle("Default dashboard")).toBe(iframe)
+    expect(iframe.getAttribute("src")).toBe(src)
+
+    act(() =>
+      queryClient.setQueryData(qk.hosts.list(), [
+        LOCAL,
+        { ...BOX, endpoint: "http://box.test:9000" },
+      ]),
+    )
+    await vi.waitFor(() => expect(screen.queryByText(/is not reachable/)).toBeNull())
+    expect(screen.getByTitle("Default dashboard")).toBe(iframe)
+    expect(iframe.getAttribute("src")).toBe(src)
+    expect(post).not.toHaveBeenCalled()
+    expect(requests.filter((one) => one.path === "/v1/dashboards")).toHaveLength(listed)
+  })
+
+  it("follows the header pick only until a host is picked on the screen", async () => {
+    const user = userEvent.setup()
+    hostRows = [LOCAL, BOX]
+    const hostOf = (iframe: HTMLElement) =>
+      new URL(iframe.getAttribute("src") ?? "", "http://localhost").searchParams.get("host")
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    expect(hostOf(await screen.findByTitle("Default dashboard"))).toBe("all")
+    act(() => useSettingsStore.setState({ hostFilter: "box" }))
+    await vi.waitFor(() => expect(hostOf(screen.getByTitle("Default dashboard"))).toBe("box"))
+
+    await user.click(screen.getByRole("combobox", { name: "Host" }))
+    await user.click(await screen.findByRole("option", { name: "local" }))
+    expect(hostOf(await screen.findByTitle("Default dashboard"))).toBe("local")
+    act(() => useSettingsStore.setState({ hostFilter: "" }))
+    expect(hostOf(screen.getByTitle("Default dashboard"))).toBe("local")
   })
 
   it("sends no stale host when the saved pick is no longer listed", async () => {
