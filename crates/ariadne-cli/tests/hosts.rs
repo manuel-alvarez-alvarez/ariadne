@@ -1503,6 +1503,72 @@ async fn all_reads_each_host_in_one_block_per_host() {
     failing.abort();
 }
 
+/// A document piped to `workflow check --host all` reaches every ready host,
+/// not only the first one (spec 014, rule 46b).
+#[tokio::test]
+async fn all_reads_each_host_gives_a_piped_document_to_each_host() {
+    fn parser() -> Router {
+        Router::new().route(
+            "/v1/workflows/parse",
+            post(|Json(body): Json<serde_json::Value>| async move {
+                let document = body["document"].as_str().unwrap_or_default().to_owned();
+                if document.trim().is_empty() {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": {
+                            "code": "workflow_invalid", "message": "the document is empty",
+                            "details": {"line": 1}
+                        }})),
+                    );
+                }
+                (
+                    StatusCode::OK,
+                    Json(json!({"name": "x", "steps": [
+                        {"id": "a", "title": "A", "description": "", "skills": [],
+                         "ranks": [], "gate": null}
+                    ]})),
+                )
+            }),
+        )
+    }
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = parser().merge(local_daemon(Arc::clone(&registry), vec![]));
+    let (endpoint, server) = serve(local_app).await;
+    let (build, remote) = serve(parser()).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([local, host("build", "ready", Some(&build))]);
+
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args(["--endpoint", &endpoint, "--host", "all"])
+        .args(["workflow", "check", "--format", "json"])
+        .env("ARIADNE_TELEMETRY", "off")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(b"workflow x\n  a[A]\n").await.unwrap();
+    }
+    let output = child.wait_with_output().await.unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let shown: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let hosts: Vec<&str> = shown
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["host"].as_str().unwrap())
+        .collect();
+    assert_eq!(hosts, ["local", "build"], "{shown} {stderr}");
+    assert_eq!(stderr, "", "{stderr}");
+    server.abort();
+    remote.abort();
+}
+
 /// A daemon that has the one task `id` among its sessions, tasks and goals.
 fn task_daemon(id: &'static str) -> Router {
     Router::new()

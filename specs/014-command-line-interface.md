@@ -837,7 +837,9 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`tests/hosts.rs::all_reads_one_id_on_the_host_that_has_it`); a read that
   every host answers prints a block or a JSON item for each host, and
   `daemon logs` leads each line with its host
-  (`::all_reads_each_host_in_one_block_per_host`); `attach` warns for a host
+  (`::all_reads_each_host_in_one_block_per_host`); a document piped to
+  `workflow check` reaches each host
+  (`::all_reads_each_host_gives_a_piped_document_to_each_host`); `attach` warns for a host
   that is down and refuses a prefix on two hosts
   (`::all_attach_refuses_a_prefix_on_two_hosts`); `local` alone keeps the
   host (`::all_reads_with_local_alone_keep_the_host`); `permissions ai show`

@@ -299,10 +299,18 @@ fn read_document(file: Option<PathBuf>) -> Result<String> {
             if std::io::stdin().is_terminal() {
                 bail!("nothing to read: pass --file <path>, or pipe the document in");
             }
+            // `--host all` runs the command on each host in this process: the
+            // first host drains stdin and every host is given the same text.
+            static STDIN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+            let mut read = STDIN.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(text) = read.as_ref() {
+                return Ok(text.clone());
+            }
             let mut buf = String::new();
             std::io::stdin()
                 .read_to_string(&mut buf)
                 .context("reading the document from stdin")?;
+            *read = Some(buf.clone());
             Ok(buf)
         }
     }
