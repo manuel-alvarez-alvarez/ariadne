@@ -103,7 +103,7 @@ export function hostErrorDescription(host: Host, error: unknown): string | undef
 }
 
 /** `title`, naming the host unless it is `local` and the only one read. */
-function hostTitle(title: string, host: Host, hostCount: number): string {
+export function hostTitle(title: string, host: Host, hostCount: number): string {
   return host === LOCAL_HOST && hostCount <= 1 ? title : `${title} on ${host}`
 }
 

@@ -30,7 +30,7 @@ import { useSearchParams } from "react-router-dom"
 import type { Host, SessionDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, hostTitle } from "@/components/error-state"
 import { HostLabel } from "@/components/host-label"
 import { ScrollableTable } from "@/components/scroll-edge"
 import { TokenHalves } from "@/components/token-figure"
@@ -160,11 +160,11 @@ export function HostSessionsList({
           <ErrorState
             // biome-ignore lint/suspicious/noArrayIndexKey: one read per entry of `lists`, in its order
             key={index}
-            title={
-              showHost
-                ? `Could not load sessions on ${lists[index]?.host}`
-                : "Could not load sessions"
-            }
+            title={hostTitle(
+              "Could not load sessions",
+              lists[index]?.host as Host,
+              new Set(lists.map((list) => list.host)).size,
+            )}
             error={read.error}
             onRetry={() => void read.refetch()}
           />
