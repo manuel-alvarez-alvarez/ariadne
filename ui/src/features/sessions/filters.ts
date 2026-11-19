@@ -38,8 +38,8 @@ export const TASK_PARAM = "task"
  * that minted it, so a chip without one is `local`'s, as a panel link without
  * `?host=` is.
  */
-export const GOAL_HOST_PARAM = "goal_host"
-export const TASK_HOST_PARAM = "task_host"
+const GOAL_HOST_PARAM = "goal_host"
+const TASK_HOST_PARAM = "task_host"
 
 /** The params this screen remembers, and the only ones `filterBy` writes. */
 export type FilterParam =

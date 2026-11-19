@@ -13,7 +13,7 @@ import { type Host, type HostView, LOCAL_HOST, useHosts } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
 
 /** The hosts the picker selected, and which of them the app reads. */
-export interface HostSelection {
+interface HostSelection {
   /** The hosts a screen reads: the selection's hosts that have a URL, or a picked host. */
   read: Host[]
   /** Every listed host the selection means; a saved pick that is not listed means All. */
