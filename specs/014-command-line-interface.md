@@ -787,7 +787,7 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - Watched attention merges snapshots and redraws after an event, rule 46
   (`tests/hosts.rs::watched_attention_merges_ready_hosts_before_streams_end`).
 - A failed watch snapshot warns once, stops requests to that host, and
-  ignores its later disconnect, rule 46
+  ignores its later disconnect, and exits on Ctrl-C after redraws, rule 46
   (`tests/hosts.rs::watched_snapshot_failure_warns_once_and_stops_reading_that_host`).
 - Daemon log streams label both hosts, warn once for unavailable and dropped
   hosts, and stop on Ctrl-C, rule 46

@@ -719,6 +719,9 @@ async fn stream_all(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result
 /// Subscribe before the first snapshot so a change cannot fall between them.
 async fn watch_all(cli: &Cli, mut hosts: Vec<HostDto>, local: &Arc<Client>) -> Result<ExitCode> {
     use std::io::{IsTerminal, Write};
+    // Keep the signal subscription across redraws and snapshot requests.
+    let interrupted = tokio::signal::ctrl_c();
+    tokio::pin!(interrupted);
     let mut tasks = tokio::task::JoinSet::new();
     let (send, mut receive) = tokio::sync::mpsc::channel(128);
     for host in &hosts {
@@ -751,7 +754,7 @@ async fn watch_all(cli: &Cli, mut hosts: Vec<HostDto>, local: &Arc<Client>) -> R
     }
     loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => return Ok(ExitCode::SUCCESS),
+            _ = &mut interrupted => return Ok(ExitCode::SUCCESS),
             message = receive.recv() => match message {
                 Some((name, dropped)) => {
                     // A failed snapshot already warned and retired this host.
@@ -764,7 +767,7 @@ async fn watch_all(cli: &Cli, mut hosts: Vec<HostDto>, local: &Arc<Client>) -> R
                     if std::io::stdout().is_terminal() { print!("\x1b[H\x1b[2J"); }
                     let mut failed = Vec::new();
                     tokio::select! {
-                        _ = tokio::signal::ctrl_c() => return Ok(ExitCode::SUCCESS),
+                        _ = &mut interrupted => return Ok(ExitCode::SUCCESS),
                         result = fan_out(cli, &hosts, local, true, &mut failed) => { let _ = result?; }
                     }
                     hosts.retain(|host| !failed.contains(&host.name));
