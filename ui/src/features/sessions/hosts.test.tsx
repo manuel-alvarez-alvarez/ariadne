@@ -9,12 +9,13 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
+import type { PullRequestDto } from "@/api"
 import { DetailPanels } from "@/components/detail-panels"
 import { EventStreamProvider } from "@/events/provider"
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
-import { renderScreen } from "@/test/harness"
+import { errorResponse, renderScreen } from "@/test/harness"
 import {
   BOX as BOX_HOST,
   forgetHosts,
@@ -317,4 +318,112 @@ it("titles each row from its own host when two hosts share a goal and task id", 
   expect(await screen.findByRole("row", { name: "Task of box" })).toBeTruthy()
   expect(screen.getByRole("row", { name: "Task of local" })).toBeTruthy()
   expect(screen.getByText("Goal of box")).toBeTruthy()
+})
+
+it("names the host in the titles of a session that failed to load there", async () => {
+  stubHosts({
+    box: { [`/v1/sessions/${REMOTE.id}`]: () => errorResponse(500, "internal", "box is unwell") },
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/sessions?session=${REMOTE.id}&host=box` },
+  )
+
+  expect(await screen.findByText(/^Could not load session .* on box$/)).toBeTruthy()
+})
+
+it("names the host in the title of a sessions list that failed on a named host", async () => {
+  stubHosts({
+    box: {
+      [`/v1/tasks/${TASK.id}`]: TASK,
+      [`/v1/goals/${GOAL.id}`]: GOAL,
+      "/v1/sessions": () => errorResponse(500, "internal", "box is unwell"),
+    },
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?task=${TASK.id}&host=box&tab=sessions` },
+  )
+
+  expect(await screen.findByText("Could not load sessions on box")).toBeTruthy()
+})
+
+it("names the host in the title of an activity tab that failed on a named host", async () => {
+  const user = userEvent.setup()
+  stubHosts({
+    box: {
+      [`/v1/sessions/${REMOTE.id}`]: REMOTE,
+      [`/v1/goals/${GOAL.id}`]: GOAL,
+      [`/v1/tasks/${TASK.id}`]: TASK,
+      [`/v1/sessions/${REMOTE.id}/agent-requests`]: [],
+      "/v1/events": () => errorResponse(500, "internal", "box is unwell"),
+    },
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/sessions?session=${REMOTE.id}&host=box` },
+  )
+
+  await user.click(await screen.findByRole("tab", { name: "Agent activity" }))
+  expect(await screen.findByText("Could not load agent events on box")).toBeTruthy()
+})
+
+it("reads the request link of a pull request session on the session's host", async () => {
+  const session = aSession({ ...REMOTE, pull_request_id: "01JBOXPULL000000000000000P" })
+  const pull = {
+    id: session.pull_request_id,
+    title: "Fix it on box",
+    number: 7,
+    url: "https://forge.test/acme/app/pull/7",
+  } as PullRequestDto
+  stubHosts({
+    box: {
+      [`/v1/sessions/${session.id}`]: session,
+      [`/v1/pull-requests/${session.pull_request_id}`]: pull,
+      [`/v1/sessions/${session.id}/agent-requests`]: [],
+    },
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/sessions?session=${session.id}&host=box` },
+  )
+
+  const link = await screen.findByRole("link", { name: /Fix it on box|#7/ })
+  expect(link.getAttribute("href")).toBe(pull.url)
+})
+
+it("reads the request link of a pull request row of the sessions table on its host", async () => {
+  const session = aSession({
+    ...REMOTE,
+    goal_id: null,
+    task_id: null,
+    pull_request_id: "01JBOXPULL000000000000000P",
+  })
+  const pull = {
+    id: session.pull_request_id,
+    title: "Fix it on box",
+    number: 7,
+    url: "https://forge.test/acme/app/pull/7",
+  } as PullRequestDto
+  stubHosts({
+    local: { "/v1/sessions": aSessionPage([]), "/v1/goals": [], "/v1/tasks": [] },
+    box: {
+      "/v1/sessions": aSessionPage([session]),
+      "/v1/goals": [],
+      "/v1/tasks": [],
+      [`/v1/pull-requests/${session.pull_request_id}`]: pull,
+    },
+  })
+  renderScreen(<SessionsPage />, { route: "/sessions" })
+
+  const link = await screen.findByRole("link", { name: /Fix it on box|#7/ })
+  expect(link.getAttribute("href")).toBe(pull.url)
 })

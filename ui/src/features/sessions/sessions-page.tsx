@@ -448,6 +448,7 @@ function SessionRow({
       </TableCell>
       <TableCell className="max-w-64">
         <WorkCell
+          host={session.host}
           session={session}
           goalTitle={goalTitle}
           taskTitle={taskTitle}
@@ -484,12 +485,14 @@ function RowAttention({ session }: { session: SessionDto }) {
  * title, linked to the forge.
  */
 function WorkCell({
+  host,
   session,
   goalTitle,
   taskTitle,
   column,
   onScope,
 }: {
+  host: Host
   session: SessionDto
   goalTitle: string | undefined
   taskTitle: string | undefined
@@ -526,7 +529,7 @@ function WorkCell({
             className="text-muted-foreground"
           />
         ) : null}
-        {pullRequestId ? <PullRequestLink id={pullRequestId} /> : null}
+        {pullRequestId ? <PullRequestLink id={pullRequestId} host={host} /> : null}
       </div>
     </div>
   )

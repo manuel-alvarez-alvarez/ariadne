@@ -25,6 +25,9 @@ import { GoalsListPage } from "./goals-list-page"
 const MINE = aGoal({ id: "01JLOCALGOAL0000000000000A", title: "Goal on local" })
 const THEIRS = aGoal({ id: "01JBOXGOAL000000000000000B", title: "Goal on box" })
 
+const toasted = vi.hoisted(() => vi.fn())
+vi.mock("sonner", () => ({ toast: { success: toasted, error: vi.fn(), dismiss: vi.fn() } }))
+
 const copied = vi.hoisted(() => vi.fn())
 vi.mock("@/lib/clipboard", async (original) => ({
   ...(await original<typeof import("@/lib/clipboard")>()),
@@ -420,4 +423,42 @@ it("shows the lanes as not loaded while every task read is pending", async () =>
   const lane = await screen.findByRole("group", { name: `${MINE.title}: Tasks` })
   expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
   expect(within(lane).queryByText(/No tasks/)).toBeNull()
+})
+
+it("names the host in the title of a goal that failed to load there", async () => {
+  stubEventSource()
+  stubHosts({ box: { [`/v1/goals/${THEIRS.id}`]: () => errorResponse(500, "internal", "unwell") } })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?goal=${THEIRS.id}&host=box` },
+  )
+
+  expect(await screen.findByText("Could not load goal on box")).toBeTruthy()
+})
+
+it("names the host in the toast of a goal action on a named host", async () => {
+  const user = userEvent.setup()
+  stubEventSource()
+  stubHosts({
+    box: {
+      ...EMPTY,
+      [`/v1/goals/${THEIRS.id}`]: THEIRS,
+      [`/v1/goals/${THEIRS.id}/cancel`]: { ...THEIRS, status: "cancelled" },
+    },
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <DetailPanels />
+    </EventStreamProvider>,
+    { route: `/goals?goal=${THEIRS.id}&host=box` },
+  )
+
+  await user.click(await screen.findByRole("button", { name: "Cancel goal" }))
+  const dialog = await screen.findByRole("dialog")
+  await user.click(within(dialog).getByRole("button", { name: "Cancel goal" }))
+
+  await waitFor(() => expect(toasted).toHaveBeenCalled())
+  expect(toasted.mock.calls[0]?.[0]).toBe("Goal cancelled on box")
 })

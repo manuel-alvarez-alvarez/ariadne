@@ -17,7 +17,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useLocation, useSearchParams } from "react-router-dom"
 
 import type { Host } from "@/api"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, hostTitle } from "@/components/error-state"
 import { PanelSheet } from "@/components/panel-sheet"
 import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -80,7 +80,7 @@ export function SessionPanel({
           </div>
         ) : session.isError ? (
           <ErrorState
-            title={`Could not load session ${shortId(sessionId)}`}
+            title={hostTitle(`Could not load session ${shortId(sessionId)}`, host, 1)}
             error={session.error}
             onRetry={() => void session.refetch()}
           />
