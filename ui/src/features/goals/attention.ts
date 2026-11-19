@@ -191,7 +191,9 @@ export function useAttention(): Attention {
       recovery[index]?.error ??
       (lists[index]?.complete === false ? INCOMPLETE_RECOVERY_READ : null)
     if (error) errors.push({ host, error })
-    else if (lists[index]) readyHosts.push(host)
+    // A list read again is not an answer yet: a host that came back holds its
+    // cache from before it left, and only the fresh read tells what it raised since.
+    else if (lists[index] && !recovery[index]?.isFetching) readyHosts.push(host)
   })
 
   return {

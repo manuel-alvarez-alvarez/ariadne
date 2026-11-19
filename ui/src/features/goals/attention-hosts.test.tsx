@@ -154,6 +154,46 @@ it("raises no toast for the first answer of a host that becomes listed", async (
   expect(screen.queryByText(/Summary of box-item/)).toBeNull()
 })
 
+it("raises no toast for what a returning host raised while it was away, once its fresh answer lands", async () => {
+  const { queryClient } = renderAlerts()
+  // The cache outlives a host that leaves, as it does in the app.
+  queryClient.setDefaultOptions({ queries: { retry: false, gcTime: 60_000, staleTime: 0 } })
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0))
+  await queryClient.invalidateQueries()
+
+  hosts = [LOCAL]
+  await queryClient.invalidateQueries()
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0))
+
+  // The host returns holding its old, empty list; its fresh answer is late.
+  box = [THEIRS]
+  let release: () => void = () => {}
+  const late = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  stubHosts(
+    {
+      local: {
+        ...EMPTY,
+        "/v1/hosts": () => jsonResponse(hosts),
+        "/v1/attention": () => jsonResponse({ items: local, complete: true }),
+      },
+      box: {
+        ...EMPTY,
+        "/v1/attention": (() =>
+          late.then(() => jsonResponse({ items: box, complete: true }))) as never,
+      },
+    },
+    [LOCAL, BOX],
+  )
+  hosts = [LOCAL, BOX]
+  await queryClient.invalidateQueries()
+
+  release()
+  await waitFor(() => expect(document.title).toBe("(1) Ariadne"))
+  expect(screen.queryByText(/Summary of box-item/)).toBeNull()
+})
+
 it("opens the agents of a named host with the pick set to All hosts", async () => {
   useSettingsStore.setState({ hostFilter: "local" })
   box = [

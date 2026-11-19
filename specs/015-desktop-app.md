@@ -1179,13 +1179,16 @@ Out: the daemon endpoints themselves (012).
     that host, and a change of host reloads them. The pin picker takes a host.
 59. The attention strip, its count in the shell and in the window title, and its
     toasts read every reachable host for each host pick, and merge their items.
-    Each row names its host whenever a named host is listed. A toast for an item
+    Each row names its host whenever a named host is listed, under any pick;
+    rule 74's no-host row under one pick does not apply to it. A toast for an item
     of a named host names the host. A `wait_for_user` question is answered in the
     row, and the answer posts to that host's
     `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`. An attention
     error of one host follows rule 75: it names that host and has Retry; the items of the other
     hosts stay and their toasts continue. The first answer of a host raises no
-    toast, also for a host that answers late, comes back or becomes listed.
+    toast, also for a host that answers late, becomes listed, or comes back: a
+    returning host's cache is not an answer, so what it raised while away is
+    not announced.
 60. The task panel (facts, steps, diff, messages, sessions, history) reads and
     writes through `api(host)` for the `?host=` of its route. Retry, cancel and
     update post to that host. The Messages tab has a composer that sends the
@@ -1207,7 +1210,8 @@ Out: the daemon endpoints themselves (012).
     pick, following the link also sets the pick to All hosts.
 64. The command palette searches the goal, task and session lists of every
     reachable host for each host pick, and the skill list of `local`. Each row
-    carries its host, names it whenever a named host is listed, and opens on it. The `ariadne attach <id>`
+    carries its host, names it whenever a named host is listed, under any pick
+    (not rule 74's no-host row under one pick), and opens on it. The `ariadne attach <id>`
     action copies `--host NAME` when the host is not `local`. "New task" is
     offered for the open goal, read on the host of its `?host=` under any pick.
 65. The skills, workflows, learned permissions, AI permission and repositories
@@ -1287,10 +1291,7 @@ Out: the daemon endpoints themselves (012).
     `usePanelShowsHost()` (`hooks/use-host-label.ts`) hold the rule:
     - A row shows its host when the pick is All and `GET /v1/hosts` lists a
       named host. A row of `local` then shows `local`.
-    - Under one picked host, `local` included, a row shows no host. The
-      attention rows, their toasts and the palette rows are not such rows: they
-      come from every reachable host under each pick, so they name their host
-      whenever a named host is listed, under any pick, as the panels do.
+    - Under one picked host, `local` included, a row shows no host.
     - The rule reads the listed hosts, not the reachable ones. A host that
       goes down removes no label from the rows that stay.
     - A saved pick that `GET /v1/hosts` no longer lists counts as All.
@@ -1349,6 +1350,7 @@ Out: the daemon endpoints themselves (012).
   `::names the host on the toast of an item of a named host`,
   `::names the failed host with Retry, keeps the other items and keeps announcing`,
   `::raises no toast for the first answer of a host that becomes listed`,
+  `::raises no toast for what a returning host raised while it was away, once its fresh answer lands`,
   `::opens the agents of a named host with the pick set to All hosts`).
 - The goal panel names its host and copies `--host`
   (`ui/src/features/goals/hosts.test.tsx::names the goal panel's host, local included, while a named host is listed`,
