@@ -20,7 +20,7 @@
  * goals board's `filters.ts` / `use-status-filter.ts` pair.
  */
 
-import type { Seat, SessionStatus } from "@/api"
+import { type Host, LOCAL_HOST, type Seat, type SessionStatus } from "@/api"
 import { SEAT_LABELS } from "@/lib/format"
 
 import type { SessionListFilters } from "./queries"
@@ -32,6 +32,14 @@ export const SEAT_PARAM = "seat"
 /** The two the daemon answers itself, and the ones a chip stands for. */
 export const GOAL_PARAM = "goal"
 export const TASK_PARAM = "task"
+
+/**
+ * The host a chip's id belongs to, beside it. An id is only unique on the host
+ * that minted it, so a chip without one is `local`'s, as a panel link without
+ * `?host=` is.
+ */
+const GOAL_HOST_PARAM = "goal_host"
+const TASK_HOST_PARAM = "task_host"
 
 /** The params this screen remembers, and the only ones `filterBy` writes. */
 export type FilterParam =
@@ -45,6 +53,15 @@ const SCOPE_PARAMS = [GOAL_PARAM, TASK_PARAM] as const
 
 /** Which of the two a scope filter is about. */
 type ScopeParam = (typeof SCOPE_PARAMS)[number]
+
+/** The param each scope keeps its host in. */
+const HOST_PARAM_OF: Record<ScopeParam, string> = {
+  [GOAL_PARAM]: GOAL_HOST_PARAM,
+  [TASK_PARAM]: TASK_HOST_PARAM,
+}
+
+/** The params a chip travels in, host included, for the ones that clear it. */
+export const SCOPE_QUERY_PARAMS = [GOAL_PARAM, GOAL_HOST_PARAM, TASK_PARAM, TASK_HOST_PARAM]
 
 /** No filter, in both dropdowns: the value a param that is absent stands for. */
 export const ALL = "all"
@@ -112,6 +129,11 @@ export function readScopeFilter(params: URLSearchParams, param: ScopeParam): str
   return parseScopeFilter(params.get(param))
 }
 
+/** The host a `?goal=` or `?task=` belongs to: `local` when its param is absent. */
+export function readScopeHost(params: URLSearchParams, param: ScopeParam): Host {
+  return params.get(HOST_PARAM_OF[param])?.trim() || LOCAL_HOST
+}
+
 function parseScopeFilter(value: string | null): string | null {
   const trimmed = value?.trim() ?? ""
   return trimmed.length > 0 ? trimmed : null
@@ -128,10 +150,16 @@ export function withFilter(
   params: URLSearchParams,
   param: FilterParam,
   value: string,
+  host: Host = LOCAL_HOST,
 ): URLSearchParams {
   const next = new URLSearchParams(params)
   if (value === ALL || value === "") next.delete(param)
   else next.set(param, value)
+  if (param === GOAL_PARAM || param === TASK_PARAM) {
+    const hostParam = HOST_PARAM_OF[param]
+    if (value === ALL || value === "" || host === LOCAL_HOST) next.delete(hostParam)
+    else next.set(hostParam, host)
+  }
   return next
 }
 
@@ -165,6 +193,8 @@ interface RememberedFilters {
   seat: string
   goal: string
   task: string
+  goalHost: string
+  taskHost: string
 }
 
 /**
@@ -198,8 +228,10 @@ export function restoreSessionFilters(
   }
   for (const param of SCOPE_PARAMS) {
     if (params.has(param)) continue
-    const scope = parseScopeFilter(param === GOAL_PARAM ? remembered.goal : remembered.task)
-    if (scope) next = withFilter(next, param, scope)
+    const goal = param === GOAL_PARAM
+    const scope = parseScopeFilter(goal ? remembered.goal : remembered.task)
+    const host = (goal ? remembered.goalHost : remembered.taskHost) || LOCAL_HOST
+    if (scope) next = withFilter(next, param, scope, host)
   }
   return next === params ? null : next
 }

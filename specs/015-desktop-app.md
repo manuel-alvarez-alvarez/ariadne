@@ -1180,7 +1180,9 @@ Out: the daemon endpoints themselves (012).
 57. `useHostLists` runs one list query per selected host. It returns the rows
     tagged with `host`, and one error per host that failed.
 58. The goals board merges the goals of the selected hosts, newest first, and
-    each lane names its host by rule 74. A goal's panel
+    each lane names its host by rule 74. A lane of a host whose tasks did not
+    load, or have not loaded yet, says "Tasks are not loaded" and never "No
+    tasks". The board also follows rule 80. A goal's panel
     opens on its host, with its tasks and orchestrator sessions read there. A
     goal lives on one host. The goal dialog shows a host select once there is
     more than one listed host. The select defaults to the picked host when the
@@ -1207,8 +1209,14 @@ Out: the daemon endpoints themselves (012).
     and its model pin pickers read that host. A task card of a named host
     links to its panel on that host.
 61. The sessions screen merges the sessions of the selected hosts with
-    `useHostLists`. Each row names its host by rule 74. The status, seat, goal
-    and task chips apply to every selected host.
+    `useHostLists`. Each row names its host by rule 74. The status and seat
+    chips apply to every selected host. The goal chip and the task chip each
+    keep the host of their id, in `?goal_host=` and `?task_host=` and in the
+    remembered pick, and `local` when it is absent. A chip applies only while
+    its host is selected; while it does not, the screen shows no chip and does
+    not narrow the list, and the pick stays for when its host is selected
+    again. Clear filters removes the goal chip and the task chip too. The
+    screen also follows rule 80.
     The Agent filter lists the agents of each selected host.
 62. The session panel and the console open their streams on the session's
     host. `console-view-state.ts` keys its state by host and session. `local`
@@ -1403,6 +1411,8 @@ Out: the daemon endpoints themselves (012).
     warning and error state names its host and gives its reason, and has Retry.
     A host that failed a refresh while its last read is on screen, an empty one
     too, is a warning marked "which may be outdated", never an error state.
+    The board's warning for a host whose tasks failed names the host, `local`
+    too, and says "may be outdated" only while a last read is on screen.
 77. A goal, task and session of a named host keeps its host in what the panel
     shows and links:
     - The task panel and the session panel name their host, as the goal panel
@@ -1424,6 +1434,13 @@ Out: the daemon endpoints themselves (012).
     connection banner stays about `local`. The picker (rule 55) and the Hosts
     table (rule 52) read them, and a host's daemon version and uptime come
     from its heartbeat.
+80. The goals board and the sessions screen say which hosts their rows come
+    from. With more than one listed host in the selection, each screen shows
+    one line, "Not shown", that names each listed host it does not read with
+    its `HostLabel` and the reason the settings daemon gives. While one host
+    has not answered and a different host has, the screen shows a line "Still
+    loading", naming the host that loads with its `HostLabel`. A host that failed has its
+    warning by rule 75 and is in neither line.
 
 76. The pull request panel reads the request on its own host, and on each
     reachable host that has the same forge repository, by that host's
@@ -1484,6 +1501,22 @@ Out: the daemon endpoints themselves (012).
   `::names each lane's host under a saved pick the daemon no longer lists`,
   `::keeps the host of the lanes that stay when a named host goes down`,
   `::names no host on the lanes with only local listed`).
+- The goals board and the sessions screen say which hosts are absent or
+  still loading (rule 80)
+  (`ui/src/features/goals/hosts.test.tsx::says which listed host is not shown and why`,
+  `::names the host that still loads while another has answered`,
+  `ui/src/features/sessions/hosts.test.tsx::says which listed host is not shown and why, with host badges on the rows`,
+  `::names the host that still loads while another has answered`).
+- The goal and task chips keep their host, apply only while it is selected,
+  and Clear filters removes them (rule 61)
+  (`ui/src/features/sessions/hosts.test.tsx::keeps the host of a goal chip and applies it only while that host is selected`,
+  `::takes the host of a goal picked in a row, and Clear filters removes both chips`).
+- The board says the tasks of a host are not loaded, and its warning names the
+  host (rules 58 and 75)
+  (`ui/src/features/goals/hosts.test.tsx::says the tasks of a host are not loaded in its lanes, and names the host, local too`,
+  `::says the last read may be outdated only while one is on screen`,
+  `::keeps the lanes and says tasks are not loaded when every host's task read fails`,
+  `::shows the lanes as not loaded while every task read is pending`).
 - The attention rows name their host (rule 59)
   (`ui/src/features/goals/hosts.test.tsx::names local on a local attention row under All`,
   `::lists the attention rows of every host under one picked host, each naming its host`).

@@ -23,16 +23,18 @@
 import { useEffect } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import type { Seat } from "@/api"
+import type { Host, Seat } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
 
 import {
   type FilterParam,
   GOAL_PARAM,
   readScopeFilter,
+  readScopeHost,
   readSeatFilter,
   readStatusFilter,
   restoreSessionFilters,
+  SCOPE_QUERY_PARAMS,
   SEAT_PARAM,
   STATUS_PARAM,
   type StatusValue,
@@ -49,12 +51,19 @@ interface SessionFiltersState {
   goal: string | null
   /** The task the screen is narrowed to, or `null` for every task. */
   task: string | null
-  /** Apply a selection: to the URL, and to what the next visit will restore. */
-  filterBy: (param: FilterParam, value: string) => void
+  /** The host the goal chip's id belongs to. */
+  goalHost: Host
+  /** The host the task chip's id belongs to. */
+  taskHost: Host
   /**
-   * Drop the status and the seat, and the other params named with them, in
-   * one step — one navigation, so no one of them is put back by the next.
-   * The goal and the task stay: they are a scope, cleared from their chips.
+   * Apply a selection: to the URL, and to what the next visit will restore.
+   * A goal or a task is an id of `host`, `local` when none is given.
+   */
+  filterBy: (param: FilterParam, value: string, host?: Host) => void
+  /**
+   * Drop the status and the seat, the goal and the task chips, and the other
+   * params named with them, in one step — one navigation, so no one of them is
+   * put back by the next.
    */
   clearFilters: (also: readonly string[]) => void
 }
@@ -69,6 +78,10 @@ export function useSessionFilters(): SessionFiltersState {
   const rememberSeat = useSettingsStore((state) => state.setSessionSeatFilter)
   const rememberGoal = useSettingsStore((state) => state.setSessionGoalFilter)
   const rememberTask = useSettingsStore((state) => state.setSessionTaskFilter)
+  const rememberedGoalHost = useSettingsStore((state) => state.sessionGoalHost)
+  const rememberedTaskHost = useSettingsStore((state) => state.sessionTaskHost)
+  const rememberGoalHost = useSettingsStore((state) => state.setSessionGoalHost)
+  const rememberTaskHost = useSettingsStore((state) => state.setSessionTaskHost)
 
   // Read the restored params rather than waiting for the effect below to put
   // them in the URL: the list asks the daemon for the right status on its
@@ -78,12 +91,16 @@ export function useSessionFilters(): SessionFiltersState {
     seat: rememberedSeat,
     goal: rememberedGoal,
     task: rememberedTask,
+    goalHost: rememberedGoalHost,
+    taskHost: rememberedTaskHost,
   })
   const params = restored ?? search
   const status = readStatusFilter(params)
   const seat = readSeatFilter(params)
   const goal = readScopeFilter(params, GOAL_PARAM)
   const task = readScopeFilter(params, TASK_PARAM)
+  const goalHost = readScopeHost(params, GOAL_PARAM)
+  const taskHost = readScopeHost(params, TASK_PARAM)
   const restoreTo = restored?.toString() ?? null
 
   useEffect(() => {
@@ -104,14 +121,16 @@ export function useSessionFilters(): SessionFiltersState {
 
   useEffect(() => {
     rememberGoal(goal ?? "")
-  }, [goal, rememberGoal])
+    rememberGoalHost(goal ? goalHost : "")
+  }, [goal, goalHost, rememberGoal, rememberGoalHost])
 
   useEffect(() => {
     rememberTask(task ?? "")
-  }, [task, rememberTask])
+    rememberTaskHost(task ? taskHost : "")
+  }, [task, taskHost, rememberTask, rememberTaskHost])
 
-  function filterBy(param: FilterParam, value: string) {
-    const next = withFilter(search, param, value)
+  function filterBy(param: FilterParam, value: string, host?: Host) {
+    const next = withFilter(search, param, value, host)
     // Remembered first, and synchronously: the render this navigation causes
     // asks `restoreSessionFilters` what to do, and a cleared filter would be
     // put straight back if the store still held the old one.
@@ -122,16 +141,24 @@ export function useSessionFilters(): SessionFiltersState {
       [TASK_PARAM]: rememberTask,
     }[param]
     remember(next.get(param) ?? "")
+    if (param === GOAL_PARAM) rememberGoalHost(readScopeHost(next, param))
+    if (param === TASK_PARAM) rememberTaskHost(readScopeHost(next, param))
     setSearch(next, { replace: true })
   }
 
   function clearFilters(also: readonly string[]) {
     const next = new URLSearchParams(search)
-    for (const param of [STATUS_PARAM, SEAT_PARAM, ...also]) next.delete(param)
+    for (const param of [STATUS_PARAM, SEAT_PARAM, ...SCOPE_QUERY_PARAMS, ...also]) {
+      next.delete(param)
+    }
     rememberStatus("")
     rememberSeat("")
+    rememberGoal("")
+    rememberTask("")
+    rememberGoalHost("")
+    rememberTaskHost("")
     setSearch(next, { replace: true })
   }
 
-  return { status, seat, goal, task, filterBy, clearFilters }
+  return { status, seat, goal, task, goalHost, taskHost, filterBy, clearFilters }
 }

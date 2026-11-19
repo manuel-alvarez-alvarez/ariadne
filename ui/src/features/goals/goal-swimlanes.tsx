@@ -4,15 +4,8 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { useMemo } from "react"
 import { Link } from "react-router-dom"
 
-import {
-  type GoalDto,
-  type Host,
-  type HostRow,
-  LOCAL_HOST,
-  type TaskDto,
-  useHostLists,
-} from "@/api"
-import { ErrorState, RefreshWarning } from "@/components/error-state"
+import { type GoalDto, type Host, type HostRow, type TaskDto, useHostLists } from "@/api"
+import { RefreshWarning } from "@/components/error-state"
 import { HostLabel } from "@/components/host-label"
 import { ScrollEdge } from "@/components/scroll-edge"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
@@ -95,6 +88,16 @@ export function GoalSwimlanes({
   // what made the strip the only way to find one.
   const attentionByHost = useBoardAttention(hosts)
   const attention = (host: Host) => attentionByHost.get(host) ?? NO_BOARD_ATTENTION
+  // The hosts whose tasks are not on screen: failed with no last read, or not
+  // answered yet. Their lanes are not empty, only unread.
+  const unread = useMemo(
+    () =>
+      new Set<Host>([
+        ...tasks.errors.filter((one) => !one.cached).map((one) => one.host),
+        ...tasks.pending,
+      ]),
+    [tasks.errors, tasks.pending],
+  )
   const { isCollapsed, setCollapsed } = useCollapsedLanes()
   const board = useHorizontalOverflow<HTMLElement>()
   // Active work first: what is asking for a person, then what is still
@@ -120,25 +123,18 @@ export function GoalSwimlanes({
     0,
   )
 
-  // A host whose tasks failed leaves its lanes empty and says so; the board
-  // only gives up when no host answered at all.
-  const [failed] = tasks.errors
-  if (failed && tasks.errors.length === hosts.length && tasks.rows.length === 0) {
-    return <ErrorState title="Could not load tasks" error={failed.error} onRetry={tasks.refetch} />
-  }
-
-  if (tasks.isPending) {
-    return <BoardSkeleton />
-  }
-
+  // A host whose tasks failed or are still loading keeps its lanes and says
+  // they are not loaded; a failure has a warning of its own, also when every
+  // host failed.
   return (
     <>
       {/* Outside the frame: the board fills the frame's whole height, so a
           warning inside it would push the board past the frame's bottom edge. */}
-      {tasks.errors.map(({ host, error }) => (
+      {tasks.errors.map(({ host, error, cached }) => (
         <RefreshWarning
           key={host}
-          what={host === LOCAL_HOST ? "tasks" : `tasks on ${host}`}
+          what={`tasks on ${host}`}
+          cached={cached}
           error={error}
           onRetry={tasks.refetch}
           className="shrink-0"
@@ -168,6 +164,7 @@ export function GoalSwimlanes({
                   key={laneKey(goal.host, goal.id)}
                   goal={goal}
                   showHost={showHost}
+                  unread={unread.has(goal.host)}
                   tasks={byGoal.get(laneKey(goal.host, goal.id))}
                   visible={visible}
                   attention={attention(goal.host)}
@@ -196,6 +193,7 @@ function ColumnHeaders({ total }: { total: number }) {
 function Lane({
   goal,
   showHost,
+  unread,
   tasks,
   attention,
   visible,
@@ -204,6 +202,8 @@ function Lane({
 }: {
   goal: HostRow<GoalDto>
   showHost: boolean
+  /** The goal's host has not given its tasks: an empty lane is not "No tasks". */
+  unread: boolean
   tasks?: GoalTasks
   /** The whole board's index; the lane takes its own rows out of it. */
   attention: BoardAttention
@@ -292,7 +292,10 @@ function Lane({
           role="group"
           aria-label={`${goal.title}: Tasks`}
         >
-          {empty ? (
+          {empty && unread ? (
+            <p className="col-span-full text-xs text-muted-foreground">Tasks are not loaded</p>
+          ) : null}
+          {empty && !unread ? (
             <p className="col-span-full text-xs text-muted-foreground">
               {goal.status === "planning"
                 ? "No tasks yet — the orchestrator is still working"

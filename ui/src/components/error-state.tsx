@@ -63,6 +63,7 @@ export function RefreshWarning({
   error,
   onRetry,
   className,
+  cached = true,
 }: {
   /** What is on screen, lower case: "goals", "tasks". */
   what: string
@@ -70,13 +71,18 @@ export function RefreshWarning({
   /** The failed query's `refetch`. */
   onRetry: () => void
   className?: string
+  /** A last read is on screen. Without one the notice says "load" and not "outdated". */
+  cached?: boolean
 }) {
   return (
     <Alert className={className}>
       <RefreshCwIcon />
-      <AlertTitle>Could not refresh {what}</AlertTitle>
+      <AlertTitle>
+        Could not {cached ? "refresh" : "load"} {what}
+      </AlertTitle>
       <AlertDescription>
-        {OUTDATED} {describeError(error)}
+        {cached ? `${OUTDATED} ` : null}
+        {describeError(error)}
       </AlertDescription>
       <AlertAction>
         <Button variant="outline" size="sm" onClick={onRetry}>

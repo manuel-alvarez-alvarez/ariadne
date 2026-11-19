@@ -16,7 +16,13 @@ import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { errorResponse, renderScreen } from "@/test/harness"
-import { forgetHosts, LOCAL_ORIGIN, stubHosts } from "@/test/hosts"
+import {
+  BOX as BOX_HOST,
+  forgetHosts,
+  LOCAL as LOCAL_HOST_ROW,
+  LOCAL_ORIGIN,
+  stubHosts,
+} from "@/test/hosts"
 import { SessionsPage } from "./sessions-page"
 
 const BOX = "http://box.test:7676"
@@ -88,6 +94,86 @@ it("names each row's host under a saved pick the daemon no longer lists", async 
 
   const title = await screen.findByRole("row", { name: "Task on box" })
   expect(within(title).getByTitle("Host").textContent).toBe("box")
+})
+
+const BOTH = {
+  local: { "/v1/sessions": aSessionPage([LOCAL]), "/v1/goals": [], "/v1/tasks": [] },
+  box: { "/v1/sessions": aSessionPage([REMOTE]), "/v1/goals": [GOAL], "/v1/tasks": [TASK] },
+}
+
+it("says which listed host is not shown and why, with host badges on the rows", async () => {
+  stubHosts(BOTH, [LOCAL_HOST_ROW, { ...BOX_HOST, status: "down", error: "connection refused" }])
+  renderScreen(<SessionsPage />, { route: "/sessions" })
+
+  const line = (await screen.findByText(/^Not shown:/)) as HTMLElement
+  expect(within(line).getByTitle("Host").textContent).toBe("box")
+  expect(line.textContent).toBe("Not shown:box(connection refused)")
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByTitle("Host")
+        .filter((badge) => !badge.closest("p"))
+        .map((badge) => badge.textContent),
+    ).toEqual(["local"]),
+  )
+})
+
+it("names the host that still loads while another has answered", async () => {
+  stubHosts({ ...BOTH, box: { "/v1/goals": [], "/v1/tasks": [] } })
+  renderScreen(<SessionsPage />, { route: "/sessions" })
+
+  const loading = (await screen.findByText(/^Still loading:/)) as HTMLElement
+  expect(within(loading).getByTitle("Host").textContent).toBe("box")
+  expect(await screen.findByRole("row", { name: /local/ })).toBeTruthy()
+})
+
+it("keeps the host of a goal chip and applies it only while that host is selected", async () => {
+  useSettingsStore.setState({ hostFilter: "local" })
+  const seen = stubHosts(BOTH)
+  renderScreen(<SessionsPage />, { route: `/sessions?goal=${GOAL.id}&goal_host=box` })
+
+  await screen.findByRole("row", { name: /local/ })
+  expect(screen.queryByRole("button", { name: "Show sessions for every goal" })).toBeNull()
+  const asked = seen.filter((one) => one.url.pathname === "/v1/sessions")
+  expect(asked.every((one) => one.url.searchParams.get("goal") === null)).toBe(true)
+  // The chip is kept for when its host is selected again.
+  expect(useSettingsStore.getState().sessionGoalHost).toBe("box")
+
+  act(() => useSettingsStore.setState({ hostFilter: "" }))
+  expect(await screen.findByRole("button", { name: "Show sessions for every goal" })).toBeTruthy()
+  await waitFor(() =>
+    expect(
+      seen.some(
+        (one) =>
+          one.origin === BOX &&
+          one.url.pathname === "/v1/sessions" &&
+          one.url.searchParams.get("goal") === GOAL.id,
+      ),
+    ).toBe(true),
+  )
+})
+
+it("takes the host of a goal picked in a row, and Clear filters removes both chips", async () => {
+  const user = userEvent.setup()
+  stubHosts(BOTH)
+  renderScreen(<SessionsPage />, { route: "/sessions?status=failed" })
+
+  await user.click(
+    await screen.findByRole("button", { name: "Show the sessions of the goal Goal on box" }),
+  )
+  await user.click(
+    await screen.findByRole("button", { name: "Show the sessions of the task Task on box" }),
+  )
+  expect(useSettingsStore.getState().sessionGoalHost).toBe("box")
+  expect(useSettingsStore.getState().sessionTaskHost).toBe("box")
+  expect(screen.getByRole("button", { name: "Show sessions for every goal" })).toBeTruthy()
+  expect(screen.getByRole("button", { name: "Show sessions for every task" })).toBeTruthy()
+
+  await user.click(screen.getByRole("button", { name: "Clear filters" }))
+  expect(screen.queryByRole("button", { name: "Show sessions for every goal" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "Show sessions for every task" })).toBeNull()
+  expect(useSettingsStore.getState().sessionGoalFilter).toBe("")
+  expect(useSettingsStore.getState().sessionTaskFilter).toBe("")
 })
 
 it("names the host of the session panel while a named host is listed", async () => {

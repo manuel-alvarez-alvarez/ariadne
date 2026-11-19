@@ -65,7 +65,7 @@ it("draws a goal as one line: toggle, title link, status, progress and tokens", 
   const line = link.closest("header") as HTMLElement
   expect(within(line).getByRole("button", { name: `Collapse ${GOAL_TITLE}` })).toBeTruthy()
   expect(within(line).getByText("Active")).toBeTruthy()
-  expect(within(line).getByText("1/2")).toBeTruthy()
+  expect(await within(line).findByText("1/2")).toBeTruthy()
   expect(within(line).getByText(/out/)).toBeTruthy()
   expect(screen.queryByRole("progressbar")).toBeNull()
 })

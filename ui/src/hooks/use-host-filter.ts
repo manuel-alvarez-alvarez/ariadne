@@ -9,25 +9,44 @@
 
 import { useMemo } from "react"
 
-import { type Host, LOCAL_HOST, useHosts } from "@/api"
+import { type Host, type HostView, LOCAL_HOST, useHosts } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
 
-/** The names of the hosts the picker selected. */
-export function useHostFilter(): Host[] {
+/** The hosts the picker selected, and which of them the app reads. */
+interface HostSelection {
+  /** The hosts a screen reads: the selection's hosts that have a URL, or a picked host. */
+  read: Host[]
+  /** Every listed host the selection means; a saved pick that is not listed means All. */
+  listed: HostView[]
+  /** The listed hosts a screen does not read, each with `unreachable`, its reason. */
+  absent: HostView[]
+}
+
+/** What the picker selected, as the hosts a screen reads and the ones it cannot. */
+export function useHostSelection(): HostSelection {
   const pick = useSettingsStore((state) => state.hostFilter)
   const { hosts, isPending } = useHosts()
-  const names = useMemo(() => {
-    const known = hosts.some((host) => host.name === pick)
-    if (pick !== "" && known) return [pick]
-    // A pick the settings daemon has not listed yet waits for it; one it no
-    // longer lists falls back to All.
-    if (pick !== "" && isPending) return []
-    return hosts.filter((host) => host.url !== null).map((host) => host.name)
-  }, [hosts, isPending, pick])
+  const picked = pick !== "" ? hosts.find((host) => host.name === pick) : undefined
+  // A pick the settings daemon has not listed yet waits for it; one it no
+  // longer lists falls back to All.
+  const listed = picked ? [picked] : pick !== "" && isPending ? [] : hosts
+  const names = picked
+    ? [picked.name]
+    : listed.filter((host) => host.url !== null).map((host) => host.name)
   // One array per selection, so a list over it keeps its identity.
   const key = names.join("\n")
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is `names`, spelled stably
-  return useMemo(() => names, [key])
+  const read = useMemo(() => names, [key])
+  return {
+    read,
+    listed,
+    absent: listed.filter((host) => !read.includes(host.name)),
+  }
+}
+
+/** The names of the hosts the picker selected. */
+export function useHostFilter(): Host[] {
+  return useHostSelection().read
 }
 
 /**
