@@ -7,7 +7,7 @@ use ariadne_api::hosts::{HostDto, HostStatus};
 use ariadne_client::Client;
 use serde_json::Value;
 
-use crate::cli::{Cli, Command};
+use crate::cli::{Cli, Command, DaemonCommand};
 use crate::commands;
 use crate::commands::forge::ForgeCommand;
 use crate::commands::permissions::{AiPermissionsCommand, PermissionsCommand};
@@ -203,7 +203,7 @@ const KINDS: &[(&str, Kind)] = &[
     ("models enable", Kind::Write),
     ("models ls", Kind::List),
     ("models rank", Kind::Write),
-    ("models show", Kind::ReadOne),
+    ("models show", Kind::ReadEach),
     ("permissions ai disable", Kind::Local(SYNCED_PERMISSIONS)),
     ("permissions ai enable", Kind::Local(SYNCED_PERMISSIONS)),
     ("permissions ai refresh", Kind::Local(SYNCED_PERMISSIONS)),
@@ -234,8 +234,8 @@ const KINDS: &[(&str, Kind)] = &[
     ("session send", Kind::Write),
     ("session switch", Kind::Write),
     ("skill create", Kind::Local(SYNCED)),
-    ("skill get", Kind::ReadOne),
-    ("skill inspect", Kind::ReadOne),
+    ("skill get", Kind::ReadEach),
+    ("skill inspect", Kind::ReadEach),
     ("skill ls", Kind::List),
     ("skill reset", Kind::Local(SYNCED)),
     ("skill rm", Kind::Local(SYNCED)),
@@ -257,7 +257,7 @@ const KINDS: &[(&str, Kind)] = &[
     ("workflow ls", Kind::List),
     ("workflow reset", Kind::Local(SYNCED)),
     ("workflow rm", Kind::Local(SYNCED)),
-    ("workflow show", Kind::ReadOne),
+    ("workflow show", Kind::ReadEach),
     ("workflow update", Kind::Local(SYNCED)),
 ];
 
@@ -373,19 +373,16 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
                 leaf = nested;
             }
             let id = leaf.get_one::<String>("id").expect("attach has an ID");
-            for host in &hosts {
-                if host.status != HostStatus::Ready {
-                    continue;
-                }
-                let client = client(host, &local)?;
-                if has_id(&client, id).await {
-                    return crate::run(cli, client).await;
-                }
-            }
-            return Err(Failure::not_found(format!("no host has {id}")).err());
+            let host = host_with_id(&hosts, &local, id).await?;
+            let selected = client(host, &local)?;
+            return crate::run(cli, selected).await;
         }
-        if path == "permissions ai show" {
-            return show_each(&cli, &hosts, &local).await;
+        if let Command::Daemon {
+            command: DaemonCommand::Logs { follow: false, .. },
+            ..
+        } = cli.command
+        {
+            return logs_each(&hosts, &local).await;
         }
         if kind == Kind::Stream {
             return stream_first(&hosts, &local).await;
@@ -393,7 +390,11 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
         if kind == Kind::List && !commands::watches(&cli.command) {
             return merge_lists(&cli, &hosts, &local).await;
         }
-        return fan_out(&cli, &hosts, &local, kind == Kind::List).await;
+        return match kind {
+            Kind::ReadOne => read_one(cli.format, &hosts, &local).await,
+            Kind::ReadEach => read_each(cli.format, &hosts, &local).await,
+            _ => fan_out(&cli, &hosts, &local).await,
+        };
     }
     let host = host.expect("a named host was checked before command guards");
     if host.status != HostStatus::Ready {
@@ -461,71 +462,9 @@ fn forwarded_args() -> Vec<std::ffi::OsString> {
     args
 }
 
-/// `permissions ai show --host all`: one block per ready host, in registry
-/// order, each headed by the host's name. A host that fails gets a warning.
-async fn show_each(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
-    let args = forwarded_args();
-    let mut answered = false;
-    let mut rows = Vec::new();
-    for host in hosts {
-        if host.status != HostStatus::Ready {
-            eprintln!("warning: {}: {}", host.name, status(host.status));
-            continue;
-        }
-        let selected = match client(host, local) {
-            Ok(selected) => selected,
-            Err(error) => {
-                eprintln!("warning: {}: {error}", host.name);
-                continue;
-            }
-        };
-        let output = tokio::process::Command::new(std::env::current_exe()?)
-            .args(&args)
-            .arg("--endpoint")
-            .arg(selected.endpoint())
-            .output()
-            .await?;
-        if !output.status.success() {
-            eprintln!(
-                "warning: {}: {}",
-                host.name,
-                String::from_utf8_lossy(&output.stderr)
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-            continue;
-        }
-        if cli.format == Format::Json {
-            let mut value: Value = serde_json::from_slice(&output.stdout)?;
-            value["host"] = host.name.clone().into();
-            rows.push(value);
-        } else {
-            if answered {
-                println!();
-            }
-            println!("{}", host.name);
-            print!("{}", String::from_utf8_lossy(&output.stdout));
-        }
-        answered = true;
-    }
-    if !answered {
-        return Err(Failure::usage("no host answered").err());
-    }
-    if cli.format == Format::Json {
-        output::print_json(&rows)?;
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-// Reuse each command's rendering and error handling in an isolated invocation.
-// This also keeps a failed host from printing partial output into a listing.
-async fn fan_out(
-    cli: &Cli,
-    hosts: &[HostDto],
-    local: &Arc<Client>,
-    listing: bool,
-) -> Result<ExitCode> {
+// A watched list on each host: reuse each command's rendering and error
+// handling in an isolated invocation, so a failed host prints no partial list.
+async fn fan_out(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
     let args = forwarded_args();
     let mut answered = false;
     let mut rows = Vec::new();
@@ -549,23 +488,17 @@ async fn fan_out(
             .output()
             .await?;
         if !output.status.success() {
-            if listing {
-                eprintln!(
-                    "warning: {}: {}",
-                    host.name,
-                    String::from_utf8_lossy(&output.stderr)
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                );
-            }
+            eprintln!(
+                "warning: {}: {}",
+                host.name,
+                String::from_utf8_lossy(&output.stderr)
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
             continue;
         }
         answered = true;
-        if !listing {
-            print!("{}", String::from_utf8_lossy(&output.stdout));
-            return Ok(ExitCode::SUCCESS);
-        }
         if cli.format == Format::Json {
             let value: Value = serde_json::from_slice(&output.stdout)?;
             let items = value
@@ -603,12 +536,7 @@ async fn fan_out(
         }
     }
     if !answered {
-        return Err(if listing {
-            Failure::usage("no host answered")
-        } else {
-            Failure::not_found("no host has that ID")
-        }
-        .err());
+        return Err(Failure::usage("no host answered").err());
     }
     if cli.format == Format::Json {
         output::print_json(&rows)?;
@@ -736,23 +664,259 @@ async fn stream_first(hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode
     Err(Failure::not_found("no host answered").err())
 }
 
-async fn has_id(client: &Client, id: &str) -> bool {
-    let Ok(id) = crate::commands::resolve::attachable(client, id).await else {
-        return false;
-    };
+/// Whether the daemon behind `client` has the session, task or goal `id`
+/// names. A host that lacks it fails with not found.
+async fn has_id(client: &Client, id: &str) -> Result<()> {
+    let id = crate::commands::resolve::attachable(client, id).await?;
+    let mut missing = None;
     for kind in ["sessions", "tasks", "goals"] {
-        if client
+        match client
             .get_json::<Value>(&format!(
                 "/v1/{kind}/{}",
                 crate::commands::path_segment(&id)
             ))
             .await
-            .is_ok()
         {
-            return true;
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let error = anyhow::Error::from(error);
+                if error::exit(&error) != Exit::NotFound {
+                    return Err(error);
+                }
+                missing = Some(error);
+            }
         }
     }
-    false
+    Err(missing.expect("three kinds were read"))
+}
+
+/// The one ready host that has the session, task or goal `id` names, for
+/// `attach` and for a follow of one ID (spec 014, rule 46b). Each host that
+/// is not ready or fails gets a warning.
+pub(crate) async fn host_with_id<'h>(
+    hosts: &'h [HostDto],
+    local: &Arc<Client>,
+    id: &str,
+) -> Result<&'h HostDto> {
+    let replies = on_each(hosts, local, |_, client| {
+        let id = id.to_owned();
+        async move { has_id(&client, &id).await }
+    })
+    .await;
+    let (host, ()) = the_one(replies)?;
+    Ok(host)
+}
+
+/// What one host answered a read of every host.
+enum Reply<T> {
+    Answered(T),
+    /// The host lacks the ID that the read names.
+    NotFound(anyhow::Error),
+    /// The host is not ready, has no endpoint, or failed.
+    Failed(String, Exit),
+}
+
+/// `read` on each ready host at the same time, in registry order.
+async fn on_each<'h, T, F, R>(
+    hosts: &'h [HostDto],
+    local: &Arc<Client>,
+    read: F,
+) -> Vec<(&'h HostDto, Reply<T>)>
+where
+    F: Fn(&'h HostDto, Arc<Client>) -> R,
+    R: std::future::Future<Output = Result<T>>,
+{
+    let read = &read;
+    let replies = hosts.iter().map(|host| async move {
+        if host.status != HostStatus::Ready {
+            return Reply::Failed(status(host.status), Exit::Usage);
+        }
+        let selected = match client(host, local) {
+            Ok(selected) => selected,
+            Err(error) => return Reply::Failed(error::human_line(&error), error::exit(&error)),
+        };
+        match read(host, selected).await {
+            Ok(answer) => Reply::Answered(answer),
+            Err(error) if error::exit(&error) == Exit::NotFound => Reply::NotFound(error),
+            Err(error) => Reply::Failed(error::human_line(&error), error::exit(&error)),
+        }
+    });
+    hosts
+        .iter()
+        .zip(futures_util::future::join_all(replies).await)
+        .collect()
+}
+
+/// The command line, parsed again, to run on `host` alone.
+fn cli_on(host: &str) -> Cli {
+    let matches = crate::cli::command().get_matches_from(std::env::args_os());
+    let mut cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
+        .expect("the command line parsed before");
+    cli.host = Some(host.to_owned());
+    cli
+}
+
+/// The command on each ready host, run in this process with its stdout held:
+/// the exit code and the text of each host that answered.
+async fn run_on_each<'h>(
+    hosts: &'h [HostDto],
+    local: &Arc<Client>,
+) -> Vec<(&'h HostDto, Reply<(ExitCode, String)>)> {
+    on_each(hosts, local, |host, client| async move {
+        let run = Box::pin(crate::run(cli_on(&host.name), client));
+        let (code, text) = output::held(run).await;
+        code.map(|code| (code, text))
+    })
+    .await
+}
+
+/// One warning on stderr for each host that failed, and for each host that
+/// lacks the ID where `not_found` says that a host should have it.
+fn warn<T>(replies: &[(&HostDto, Reply<T>)], not_found: bool) {
+    for (host, reply) in replies {
+        match reply {
+            Reply::Failed(warning, _) => eprintln!("warning: {}: {warning}", host.name),
+            Reply::NotFound(error) if not_found => {
+                eprintln!("warning: {}: {}", host.name, error::human_line(error))
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Why no host answered: each ready host lacks the ID, or a host failed, in
+/// the exit code of the first host that failed.
+fn none_answered<T>(replies: &[(&HostDto, Reply<T>)]) -> anyhow::Error {
+    let failed = replies.iter().find_map(|(host, reply)| match reply {
+        Reply::Failed(_, exit) if host.status == HostStatus::Ready => Some(*exit),
+        _ => None,
+    });
+    let lacking = replies
+        .iter()
+        .any(|(_, reply)| matches!(reply, Reply::NotFound(_)));
+    match (failed, lacking) {
+        (None, true) => Failure::not_found("no host has that ID").err(),
+        (Some(exit), true) => Failure::with_exit(exit, "no host that answered has that ID").err(),
+        (Some(exit), false) => Failure::with_exit(exit, "no host answered").err(),
+        (None, false) => Failure::usage("no host answered").err(),
+    }
+}
+
+/// The one host that has the ID: a prefix that matches on two hosts is
+/// refused, and the refusal names each of them.
+fn the_one<T>(replies: Vec<(&HostDto, Reply<T>)>) -> Result<(&HostDto, T)> {
+    warn(&replies, false);
+    let matched: Vec<&str> = replies
+        .iter()
+        .filter(|(_, reply)| matches!(reply, Reply::Answered(_)))
+        .map(|(host, _)| host.name.as_str())
+        .collect();
+    if matched.len() > 1 {
+        return Err(Failure::usage(format!(
+            "the ID matches on hosts {}; select one with --host NAME",
+            matched.join(", ")
+        ))
+        .err());
+    }
+    let error = none_answered(&replies);
+    replies
+        .into_iter()
+        .find_map(|(host, reply)| match reply {
+            Reply::Answered(answer) => Some((host, answer)),
+            _ => None,
+        })
+        .ok_or(error)
+}
+
+/// The JSON a host printed, with its `host` field. A payload that is not an
+/// object is the `value` of one.
+fn with_host(host: &str, text: &str) -> Value {
+    let value = serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_owned()));
+    let mut tagged = match value {
+        Value::Object(object) => object,
+        value => serde_json::Map::from_iter([("value".to_owned(), value)]),
+    };
+    tagged.insert("host".into(), host.into());
+    Value::Object(tagged)
+}
+
+/// A read of one ID with `--host all`: the answer of the one host that has
+/// the ID, after a `host:` line in text, or with a `host` field in JSON
+/// (spec 014, rule 46b).
+async fn read_one(format: Format, hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
+    let (host, (code, text)) = the_one(run_on_each(hosts, local).await)?;
+    if format == Format::Json {
+        output::print_json(&with_host(&host.name, &text))?;
+    } else {
+        println!("host: {}", host.name);
+        print!("{text}");
+    }
+    Ok(code)
+}
+
+/// A read that every host answers with `--host all`: one block for each host
+/// that answered, headed by its name, or a JSON array whose items each have a
+/// `host` field (spec 014, rule 46b).
+async fn read_each(format: Format, hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
+    let replies = run_on_each(hosts, local).await;
+    warn(&replies, true);
+    let answered: Vec<(&str, &ExitCode, &str)> = replies
+        .iter()
+        .filter_map(|(host, reply)| match reply {
+            Reply::Answered((code, text)) => Some((host.name.as_str(), code, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    if answered.is_empty() {
+        return Err(none_answered(&replies));
+    }
+    if format == Format::Json {
+        let items: Vec<Value> = answered
+            .iter()
+            .map(|(host, _, text)| with_host(host, text))
+            .collect();
+        output::print_json(&items)?;
+    } else {
+        for (index, (host, _, text)) in answered.iter().enumerate() {
+            if index > 0 {
+                println!();
+            }
+            println!("{host}");
+            print!("{text}");
+        }
+    }
+    Ok(first_failure(answered.iter().map(|(_, code, _)| *code)))
+}
+
+/// The first exit code that is not success, as `doctor` gives one for a
+/// report that found something.
+fn first_failure<'c>(codes: impl IntoIterator<Item = &'c ExitCode>) -> ExitCode {
+    codes
+        .into_iter()
+        .find(|code| **code != ExitCode::SUCCESS)
+        .copied()
+        .unwrap_or(ExitCode::SUCCESS)
+}
+
+/// `daemon logs --host all`: the recent lines of each host that answered,
+/// each led by its host name, in registry order (spec 014, rule 46b).
+async fn logs_each(hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
+    let replies = run_on_each(hosts, local).await;
+    warn(&replies, true);
+    let width = hosts.iter().map(|host| host.name.len()).max().unwrap_or(0);
+    let mut answered = false;
+    for (host, reply) in &replies {
+        if let Reply::Answered((_, text)) = reply {
+            answered = true;
+            for line in text.lines() {
+                println!("{:<width$}   {line}", host.name);
+            }
+        }
+    }
+    if !answered {
+        return Err(none_answered(&replies));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]
@@ -791,6 +955,12 @@ mod tests {
         for path in [
             "events",
             "doctor",
+            "version",
+            "daemon status",
+            "models show",
+            "skill get",
+            "skill inspect",
+            "workflow show",
             "forge tunnel",
             "workflow check",
             "permissions ai test",

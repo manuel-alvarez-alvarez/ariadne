@@ -60,12 +60,9 @@ pub(crate) fn run(
     match (command, shell) {
         (Some(CompletionsCommand::Install { shell }), _) => install(shell),
         (None, Some(shell)) if static_script => {
-            clap_complete::generate(
-                shell,
-                &mut crate::cli::command(),
-                "ariadne",
-                &mut std::io::stdout(),
-            );
+            let mut out = Vec::new();
+            clap_complete::generate(shell, &mut crate::cli::command(), "ariadne", &mut out);
+            crate::output::stdout(&String::from_utf8_lossy(&out));
             Ok(())
         }
         (None, Some(shell)) => print_registration(shell),
@@ -78,7 +75,7 @@ pub(crate) fn run(
 fn print_registration(shell: Shell) -> Result<()> {
     let mut out = Vec::new();
     write_registration(shell, &completer(), &mut out)?;
-    std::io::stdout().write_all(&out)?;
+    crate::output::stdout(&String::from_utf8_lossy(&out));
     Ok(())
 }
 

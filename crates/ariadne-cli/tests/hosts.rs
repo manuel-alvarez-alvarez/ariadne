@@ -1258,3 +1258,388 @@ async fn query_on_an_unknown_or_unready_host_is_a_usage_error() {
     }
     server.abort();
 }
+
+/// A stub daemon on a port of its own: its endpoint, and the task that serves it.
+async fn serve(app: Router) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (endpoint, server)
+}
+
+/// A daemon that fails every request with its own error.
+fn broken_daemon() -> Router {
+    Router::new().fallback(|| async {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"code": "internal", "message": "the disk is full"}})),
+        )
+    })
+}
+
+fn dashboard(name: &str, title: &str) -> serde_json::Value {
+    json!({
+        "name": name, "document": {"title": title}, "builtin": false,
+        "document_is_default": false, "created_at": "2026-01-01", "updated_at": "2026-01-01"
+    })
+}
+
+/// A local daemon that serves `registry` and the dashboards in `dashboards`.
+fn local_daemon(
+    registry: Arc<Mutex<serde_json::Value>>,
+    dashboards: Vec<serde_json::Value>,
+) -> Router {
+    named_dashboards(dashboards).route(
+        "/v1/hosts",
+        get(move || {
+            let registry = Arc::clone(&registry);
+            async move { Json(registry.lock().unwrap().clone()) }
+        }),
+    )
+}
+
+fn named_dashboards(dashboards: Vec<serde_json::Value>) -> Router {
+    Router::new().route(
+        "/v1/dashboards/{name}",
+        get(move |Path(name): Path<String>| {
+            let found = dashboards
+                .iter()
+                .find(|d| d["name"] == name.as_str())
+                .cloned();
+            async move {
+                match found {
+                    Some(found) => Ok(Json(found)),
+                    None => Err((
+                        StatusCode::NOT_FOUND,
+                        Json(
+                            json!({"error": {"code": "not_found", "message": "no such dashboard"}}),
+                        ),
+                    )),
+                }
+            }
+        }),
+    )
+}
+
+/// A read of one ID with `--host all` names the one host that has it, says
+/// the true error of each host that fails, and refuses an ID on two hosts
+/// (spec 014, rule 46b).
+#[tokio::test]
+async fn all_reads_one_id_on_the_host_that_has_it() {
+    let registry = Arc::new(Mutex::new(json!([])));
+    let (endpoint, server) = serve(local_daemon(
+        Arc::clone(&registry),
+        vec![dashboard("shared", "on local")],
+    ))
+    .await;
+    let (build, remote) = serve(named_dashboards(vec![
+        dashboard("shared", "on build"),
+        dashboard("theirs", "only on build"),
+    ]))
+    .await;
+    let (broken, failing) = serve(broken_daemon()).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([
+        local.clone(),
+        host("build", "ready", Some(&build)),
+        host("broken", "ready", Some(&broken)),
+        host("offline", "down", None),
+    ]);
+
+    // The host that has the ID answers, and is named on the first line.
+    let (code, stdout, stderr) = run_all(&endpoint, &["dashboard", "get", "theirs"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.lines().next(), Some("host: build"), "{stdout}");
+    assert!(stdout.contains("only on build"), "{stdout}");
+    // The host that fails and the host that is down each get one warning.
+    assert_eq!(
+        stderr.lines().collect::<Vec<_>>(),
+        [
+            "warning: broken: the disk is full",
+            "warning: offline: down"
+        ],
+        "{stderr}"
+    );
+
+    // In JSON, the host is a field of the answer.
+    let (code, stdout, stderr) = run_all(
+        &endpoint,
+        &["dashboard", "get", "theirs", "--format", "json"],
+    )
+    .await;
+    assert_eq!(code, 0, "{stderr}");
+    let shown: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(shown["host"], "build", "{stdout}");
+    assert_eq!(shown["title"], "only on build", "{stdout}");
+
+    // An ID on two hosts is refused, and the refusal names both.
+    let (code, stdout, stderr) = run_all(&endpoint, &["dashboard", "get", "shared"]).await;
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("the ID matches on hosts local, build"),
+        "{stderr}"
+    );
+
+    // A host that fails is not a host that lacks the ID.
+    let (code, _, stderr) = run_all(&endpoint, &["dashboard", "get", "absent"]).await;
+    assert_ne!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("warning: broken: the disk is full"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("no host has that ID"), "{stderr}");
+
+    // Only when each ready host answers not found is the ID on no host.
+    *registry.lock().unwrap() = json!([
+        local,
+        host("build", "ready", Some(&build)),
+        host("offline", "down", None),
+    ]);
+    let (code, _, stderr) = run_all(&endpoint, &["dashboard", "get", "absent"]).await;
+    assert_eq!(code, 4, "{stderr}");
+    assert!(stderr.contains("no host has that ID"), "{stderr}");
+    server.abort();
+    remote.abort();
+    failing.abort();
+}
+
+/// A stub daemon that answers `version`, `skill get` and `daemon logs` as
+/// the daemon `name`.
+fn answering_daemon(name: &'static str) -> Router {
+    Router::new()
+        .route(
+            "/v1/version",
+            get(move || async move { Json(json!({"name": "ariadned", "version": name})) }),
+        )
+        .route(
+            "/v1/skills/{skill}",
+            get(move |Path(skill): Path<String>| async move {
+                Json(json!({
+                    "name": skill, "seat": "task", "summary": "s",
+                    "document": format!("the {skill} skill of {name}\n"),
+                    "document_is_default": false, "builtin": false,
+                    "created_at": "2026-11-17T00:00:00Z", "updated_at": "2026-11-17T00:00:00Z"
+                }))
+            }),
+        )
+        .route(
+            "/v1/logs",
+            get(move || async move {
+                Json(json!({"lines": [{
+                    "ts": "2026-11-17T00:00:00Z", "level": "INFO", "target": "ariadne_daemon",
+                    "message": format!("started on {name}"), "service": "ariadned"
+                }]}))
+            }),
+        )
+}
+
+/// A read that every host answers prints one block for each ready host,
+/// headed by its name, or a JSON array with a `host` on each item (spec 014,
+/// rule 46b). `daemon logs` leads each line with its host.
+#[tokio::test]
+async fn all_reads_each_host_in_one_block_per_host() {
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = answering_daemon("1.0.0").merge(local_daemon(Arc::clone(&registry), vec![]));
+    let (endpoint, server) = serve(local_app).await;
+    let (build, remote) = serve(answering_daemon("2.0.0")).await;
+    let (broken, failing) = serve(broken_daemon()).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([
+        local,
+        host("build", "ready", Some(&build)),
+        host("broken", "ready", Some(&broken)),
+        host("offline", "down", None),
+    ]);
+
+    let (code, stdout, stderr) = run_all(&endpoint, &["skill", "get", "coding"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        stdout,
+        "local\nthe coding skill of 1.0.0\n\nbuild\nthe coding skill of 2.0.0\n"
+    );
+    assert_eq!(
+        stderr.lines().collect::<Vec<_>>(),
+        [
+            "warning: broken: the disk is full",
+            "warning: offline: down"
+        ],
+        "{stderr}"
+    );
+
+    let (code, stdout, stderr) = run_all(&endpoint, &["version", "--format", "json"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let shown: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    // `version` answers for a daemon that fails, with the daemon's error.
+    let rows: Vec<(&str, &serde_json::Value)> = shown
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["host"].as_str().unwrap(), &row["daemon"]))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("local", &json!({"name": "ariadned", "version": "1.0.0"})),
+            ("build", &json!({"name": "ariadned", "version": "2.0.0"})),
+            ("broken", &json!({"error": "the disk is full"})),
+        ],
+        "{stdout}"
+    );
+
+    let (code, stdout, stderr) = run_all(&endpoint, &["daemon", "logs"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(lines[0].starts_with("local     "), "{stdout}");
+    assert!(lines[0].ends_with("started on 1.0.0"), "{stdout}");
+    assert!(lines[1].starts_with("build     "), "{stdout}");
+    assert!(lines[1].ends_with("started on 2.0.0"), "{stdout}");
+    assert!(stderr.contains("warning: broken:"), "{stderr}");
+    server.abort();
+    remote.abort();
+    failing.abort();
+}
+
+/// A document piped to `workflow check --host all` reaches every ready host,
+/// not only the first one (spec 014, rule 46b).
+#[tokio::test]
+async fn all_reads_each_host_gives_a_piped_document_to_each_host() {
+    fn parser() -> Router {
+        Router::new().route(
+            "/v1/workflows/parse",
+            post(|Json(body): Json<serde_json::Value>| async move {
+                let document = body["document"].as_str().unwrap_or_default().to_owned();
+                if document.trim().is_empty() {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": {
+                            "code": "workflow_invalid", "message": "the document is empty",
+                            "details": {"line": 1}
+                        }})),
+                    );
+                }
+                (
+                    StatusCode::OK,
+                    Json(json!({"name": "x", "steps": [
+                        {"id": "a", "title": "A", "description": "", "skills": [],
+                         "ranks": [], "gate": null}
+                    ]})),
+                )
+            }),
+        )
+    }
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = parser().merge(local_daemon(Arc::clone(&registry), vec![]));
+    let (endpoint, server) = serve(local_app).await;
+    let (build, remote) = serve(parser()).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([local, host("build", "ready", Some(&build))]);
+
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args(["--endpoint", &endpoint, "--host", "all"])
+        .args(["workflow", "check", "--format", "json"])
+        .env("ARIADNE_TELEMETRY", "off")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(b"workflow x\n  a[A]\n").await.unwrap();
+    }
+    let output = child.wait_with_output().await.unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let shown: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let hosts: Vec<&str> = shown
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["host"].as_str().unwrap())
+        .collect();
+    assert_eq!(hosts, ["local", "build"], "{shown} {stderr}");
+    assert_eq!(stderr, "", "{stderr}");
+    server.abort();
+    remote.abort();
+}
+
+/// A daemon that has the one task `id` among its sessions, tasks and goals.
+fn task_daemon(id: &'static str) -> Router {
+    Router::new()
+        .route(
+            "/v1/sessions",
+            get(|| async { Json(json!({"sessions": [], "next_cursor": null, "total": 0})) }),
+        )
+        .route(
+            "/v1/tasks",
+            get(move || async move { Json(json!([{"id": id, "title": "work"}])) }),
+        )
+        .route("/v1/goals", get(|| async { Json(json!([])) }))
+        .route(
+            "/v1/tasks/{id}",
+            get(move || async move { Json(json!({"id": id, "title": "work"})) }),
+        )
+}
+
+/// `attach --host all` warns for each host that is not ready, and refuses a
+/// prefix that matches on two hosts (spec 014, rule 46b).
+#[tokio::test]
+async fn all_attach_refuses_a_prefix_on_two_hosts() {
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = task_daemon("01aaaaaaaaaaaaaaaaaaaaaaaa")
+        .merge(local_daemon(Arc::clone(&registry), vec![]));
+    let (endpoint, server) = serve(local_app).await;
+    let (build, remote) = serve(task_daemon("01aaaaaaaaaaaaaaaaaaaaaaab")).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([
+        local,
+        host("build", "ready", Some(&build)),
+        host("offline", "down", None),
+    ]);
+    let (code, _, stderr) = run_all(&endpoint, &["attach", "01aaaa"]).await;
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("warning: offline: down"), "{stderr}");
+    assert!(
+        stderr.contains("the ID matches on hosts local, build"),
+        "{stderr}"
+    );
+    server.abort();
+    remote.abort();
+}
+
+/// With only `local` in the registry, the reads of every host keep their
+/// form: the `host:` line, the heading and the `host` field (spec 014, rule
+/// 46b).
+#[tokio::test]
+async fn all_reads_with_local_alone_keep_the_host() {
+    let registry = Arc::new(Mutex::new(json!([])));
+    let local_app = answering_daemon("1.0.0").merge(local_daemon(
+        Arc::clone(&registry),
+        vec![dashboard("mine", "on local")],
+    ));
+    let (endpoint, server) = serve(local_app).await;
+    let mut local = host("local", "ready", Some(&endpoint));
+    local["kind"] = "local".into();
+    *registry.lock().unwrap() = json!([local]);
+
+    let (code, stdout, stderr) = run_all(&endpoint, &["dashboard", "get", "mine"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.lines().next(), Some("host: local"), "{stdout}");
+    let (code, stdout, stderr) = run_all(&endpoint, &["skill", "get", "coding"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "local\nthe coding skill of 1.0.0\n");
+    let (code, stdout, stderr) =
+        run_all(&endpoint, &["skill", "get", "coding", "--format", "json"]).await;
+    assert_eq!(code, 0, "{stderr}");
+    let shown: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(shown[0]["host"], "local", "{stdout}");
+    assert_eq!(shown.as_array().unwrap().len(), 1, "{stdout}");
+    server.abort();
+}

@@ -857,9 +857,17 @@ A host that lacks the ID of a filter, such as `task ls --goal G`, adds no rows.
 When no host has that ID, the command fails as not found.
 A host that is down, has no endpoint or fails produces a warning.
 One successful host gives exit code 0.
-`permissions ai show --host all` prints one block per host, headed by the host's name.
-Commands for one ID, including attach, find the host that has it.
-Other reads, such as `version`, `doctor`, `events`, `forge tunnel`, `workflow check` and `permissions ai test`, take `--host NAME` and `--host all`.
+A command for one ID, such as `task inspect`, finds the host that has the ID.
+Its first line is `host: NAME`, and in JSON the answer has a `host` field.
+When the ID or its prefix matches on two hosts, the command is refused, and the message names both hosts.
+`no host has that ID` prints only when each ready host answered not found. A host that fails prints its own error as a warning.
+`attach`, `goal attach` and `task attach` find the host in the same way.
+A read that every host answers prints one block for each host, headed by the host name.
+These reads are `version`, `daemon status`, `doctor`, `models show`, `skill get`, `skill inspect`, `workflow show`, `permissions ai show`, `permissions ai test`, `forge tunnel`, `workflow check` and `completions`.
+With `--format json`, such a read prints an array, and each item has a `host` field.
+`daemon logs --host all` prints the recent lines of each host, each led by the host name.
+A host that is down or fails prints one warning on stderr, and the other hosts still print.
+Streams, such as `events`, print the first host that answers.
 
 Writes run on one host. With `--host all`, a write is refused, and the message names the hosts that take it.
 Skills, workflows, permissions and repository settings are written on `local`.

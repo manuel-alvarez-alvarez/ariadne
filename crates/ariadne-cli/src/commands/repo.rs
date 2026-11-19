@@ -212,7 +212,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                 )
                 .await?;
             print(format, &repo, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "created", &repo.id)
                 )
@@ -254,7 +254,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                 )
                 .await?;
             print(format, &r, || {
-                println!(
+                outln!(
                     "{}",
                     ok_id_line(view().color, view().quiet, "updated", &r.id)
                 )
@@ -271,7 +271,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             // The repository is gone, so there is no DTO left to print: what
             // the caller asked about, and that it happened.
             print(format, &json!({"repository": id, "deleted": true}), || {
-                println!("{}", ok_id_line(view().color, view().quiet, "deleted", &id))
+                outln!("{}", ok_id_line(view().color, view().quiet, "deleted", &id))
             })?;
         }
     }

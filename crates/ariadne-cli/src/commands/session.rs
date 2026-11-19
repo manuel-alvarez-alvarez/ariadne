@@ -272,9 +272,9 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                 };
                 let line = ok_id_line(view().color, view().quiet, "session", &s.id);
                 if view().quiet {
-                    println!("{line}");
+                    outln!("{line}");
                 } else {
-                    println!("{line} · {pin}");
+                    outln!("{line} · {pin}");
                 }
             })?;
         }
@@ -295,7 +295,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
             print(
                 format,
                 &serde_json::json!({"sent": true, "session": id}),
-                || println!("{}", ok_id_line(view().color, view().quiet, "sent", &id)),
+                || outln!("{}", ok_id_line(view().color, view().quiet, "sent", &id)),
             )?;
         }
         SessionCommand::Logs {
@@ -330,7 +330,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                 format,
                 &serde_json::json!({"resumed": resumed, "session": s}),
                 || {
-                    println!(
+                    outln!(
                         "{}",
                         status_line(
                             view().color,
@@ -352,7 +352,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                 .post_empty(&format!("/v1/sessions/{id}/kill"))
                 .await?;
             print(format, &s, || {
-                println!(
+                outln!(
                     "{}",
                     status_line(
                         view().color,

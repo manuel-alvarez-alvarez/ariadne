@@ -200,7 +200,7 @@ async fn run_learned(
             if format == Format::Json {
                 crate::output::print_json(&serde_json::json!({"id": id}))
             } else {
-                println!("{}", ok_id_line(view().color, view().quiet, "deleted", &id));
+                outln!("{}", ok_id_line(view().color, view().quiet, "deleted", &id));
                 Ok(())
             }
         }
@@ -322,9 +322,7 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
                     workspace,
                 })
                 .await?;
-            print(format, &response, || {
-                println!("{}", test_one_line(&response))
-            })
+            print(format, &response, || outln!("{}", test_one_line(&response)))
         }
     }
 }
@@ -369,7 +367,7 @@ async fn show(client: &Client, format: Format) -> Result<()> {
         Format::Json => crate::output::print_json(&status),
         Format::Table => {
             print_kv(&fields(&status));
-            println!();
+            outln!();
             print_table(FLAVOURS_TABLE, &flavour_rows(&status))
         }
     }
@@ -467,7 +465,7 @@ async fn wait_for_settled(
 }
 
 fn print_result(format: Format, status: &AiPermissionsStatusDto) -> Result<()> {
-    print(format, status, || println!("{}", one_line(status)))
+    print(format, status, || outln!("{}", one_line(status)))
 }
 
 /// The one line a mutation ends on: `the AI permission model is now <state>`, coloured and
