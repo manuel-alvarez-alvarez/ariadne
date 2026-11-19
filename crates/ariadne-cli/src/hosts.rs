@@ -400,7 +400,7 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
         if kind == Kind::List && forwarded_args().iter().any(|arg| arg == "--watch") {
             return watch_all(&cli, hosts, &local).await;
         }
-        return fan_out(&cli, &hosts, &local, kind == Kind::List).await;
+        return fan_out(&cli, &hosts, &local, kind == Kind::List, &mut Vec::new()).await;
     }
     let host = host.expect("a named host was checked before command guards");
     if host.status != HostStatus::Ready {
@@ -536,6 +536,7 @@ async fn fan_out(
     hosts: &[HostDto],
     local: &Arc<Client>,
     listing: bool,
+    failed: &mut Vec<String>,
 ) -> Result<ExitCode> {
     let args: Vec<_> = forwarded_args()
         .into_iter()
@@ -564,6 +565,7 @@ async fn fan_out(
             .output()
             .await?;
         if !output.status.success() {
+            failed.push(host.name.clone());
             if listing {
                 eprintln!(
                     "warning: {}: {}",
@@ -752,16 +754,21 @@ async fn watch_all(cli: &Cli, mut hosts: Vec<HostDto>, local: &Arc<Client>) -> R
             _ = tokio::signal::ctrl_c() => return Ok(ExitCode::SUCCESS),
             message = receive.recv() => match message {
                 Some((name, dropped)) => {
+                    // A failed snapshot already warned and retired this host.
+                    if !hosts.iter().any(|host| host.name == name) { continue; }
                     if dropped {
                         eprintln!("warning: {name}: stream closed");
                         hosts.retain(|host| host.name != name);
                     }
                     if hosts.is_empty() { return Ok(ExitCode::SUCCESS); }
                     if std::io::stdout().is_terminal() { print!("\x1b[H\x1b[2J"); }
+                    let mut failed = Vec::new();
                     tokio::select! {
                         _ = tokio::signal::ctrl_c() => return Ok(ExitCode::SUCCESS),
-                        result = fan_out(cli, &hosts, local, true) => { let _ = result?; }
+                        result = fan_out(cli, &hosts, local, true, &mut failed) => { let _ = result?; }
                     }
+                    hosts.retain(|host| !failed.contains(&host.name));
+                    if hosts.is_empty() { return Ok(ExitCode::SUCCESS); }
                     std::io::stdout().flush()?;
                 }
                 None => return Ok(ExitCode::SUCCESS),

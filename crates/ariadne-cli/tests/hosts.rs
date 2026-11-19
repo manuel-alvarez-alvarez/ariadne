@@ -1269,3 +1269,123 @@ async fn daemon_follow_keeps_other_hosts_after_a_drop_and_stops_on_interrupt() {
     server.abort();
     remote.abort();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn watched_snapshot_failure_warns_once_and_stops_reading_that_host() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let remote_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let remote_endpoint = format!("http://{}", remote_listener.local_addr().unwrap());
+    let mut local_host = host_row("local", "local", "ready", None);
+    local_host["endpoint"] = endpoint.clone().into();
+    let mut remote_host = host_row("build", "direct", "ready", None);
+    remote_host["endpoint"] = remote_endpoint.into();
+    let registry = json!([local_host, remote_host]);
+    let (changes, local_events) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let local_events = Arc::new(Mutex::new(Some(local_events)));
+    let dropped = Arc::new(tokio::sync::Notify::new());
+    let remote_events = dropped.clone();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let remote_requests = requests.clone();
+    let app = Router::new()
+        .route("/v1/hosts", get(move || async move { Json(registry) }))
+        .route(
+            "/v1/attention",
+            get(|| async { Json(json!({"complete":true,"items":[]})) }),
+        )
+        .route(
+            "/v1/events/stream",
+            get(move || {
+                let events = local_events.lock().unwrap().take().unwrap();
+                async move {
+                    axum::response::Sse::new(futures_util::stream::unfold(
+                        events,
+                        |mut events| async move {
+                            events.recv().await?;
+                            Some((
+                                Ok::<_, std::convert::Infallible>(
+                                    axum::response::sse::Event::default()
+                                        .event("task_updated")
+                                        .data("{}"),
+                                ),
+                                events,
+                            ))
+                        },
+                    ))
+                }
+            }),
+        );
+    let remote_app = Router::new()
+        .route(
+            "/v1/attention",
+            get(move || {
+                remote_requests.fetch_add(1, Ordering::SeqCst);
+                dropped.notify_one();
+                async { StatusCode::SERVICE_UNAVAILABLE }
+            }),
+        )
+        .route(
+            "/v1/events/stream",
+            get(move || {
+                let events = remote_events.clone();
+                async move {
+                    axum::response::Sse::new(futures_util::stream::once(async move {
+                        events.notified().await;
+                        Ok::<_, std::convert::Infallible>(
+                            axum::response::sse::Event::default()
+                                .event("task_updated")
+                                .data("{}"),
+                        )
+                    }))
+                }
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let remote =
+        tokio::spawn(async move { axum::serve(remote_listener, remote_app).await.unwrap() });
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args([
+            "--endpoint",
+            &endpoint,
+            "--host",
+            "all",
+            "attention",
+            "--watch",
+            "--format",
+            "json",
+        ])
+        .env("ARIADNE_TELEMETRY", "off")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut stderr = child.stderr.take().unwrap();
+    let follow = async {
+        for _ in 0..4 {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("[]"));
+            changes.send(()).unwrap();
+        }
+        let status = tokio::process::Command::new("kill")
+            .args(["-INT", &child.id().unwrap().to_string()])
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success());
+        assert!(child.wait().await.unwrap().success());
+        let mut errors = String::new();
+        stderr.read_to_string(&mut errors).await.unwrap();
+        errors
+    };
+    let errors = tokio::time::timeout(std::time::Duration::from_secs(30), follow)
+        .await
+        .unwrap();
+    server.abort();
+    remote.abort();
+    assert_eq!(errors.matches("warning: build:").count(), 1, "{errors}");
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+}

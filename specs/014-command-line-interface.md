@@ -397,6 +397,8 @@ same binary also serves (013).
     Each output line names its host; JSON events carry a `host` field.
     Task and session log followers select the host that has the ID.
     A host unavailable at startup or dropped during following gets one warning.
+    A failed watch snapshot retires that host before the next redraw.
+    Its later stream disconnect does not print another warning.
     Other hosts continue. Dropped hosts are not reconnected.
     Ctrl-C cancels all followers and child processes.
     These forms work with only `local` in the registry.
@@ -784,6 +786,9 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
 - Watched attention merges snapshots and redraws after an event, rule 46
   (`tests/hosts.rs::watched_attention_merges_ready_hosts_before_streams_end`).
+- A failed watch snapshot warns once, stops requests to that host, and
+  ignores its later disconnect, rule 46
+  (`tests/hosts.rs::watched_snapshot_failure_warns_once_and_stops_reading_that_host`).
 - Daemon log streams label both hosts, warn once for unavailable and dropped
   hosts, and stop on Ctrl-C, rule 46
   (`tests/hosts.rs::daemon_follow_keeps_other_hosts_after_a_drop_and_stops_on_interrupt`).
