@@ -153,6 +153,25 @@ Only the hint printed next to the header's search button picks a side
 See [`AGENTS.md`](AGENTS.md#keyboard) for how chords are bound and guarded, and
 for the command palette.
 
+### Keep the overview available
+
+Details open as an overlay by default. On windows at least 72rem wide,
+select **Pin inspector** to keep the overview available beside the details.
+The inspector reserves space and removes its scrim. Resize its left edge
+with the pointer or arrow keys. The split leaves room for the overview.
+
+Use Tab to reach **Focus overview** or **Focus inspector**.
+Find **Focus inspector** in the reserved row below the overview. Press Enter to
+move focus between these regions. Escape inside the inspector closes it.
+Escape inside a console keeps its existing console action. Confirmation
+dialogs remain modal and receive Escape first.
+
+Select **Unpin inspector** to restore the overlay. Expansion also uses the
+overlay. Narrow windows use the overlay automatically. Collapsing or widening
+restores your pin choice until you close the inspector. These mode changes
+preserve the current selection, history, console draft, and transcript position.
+See [the desktop specification](../specs/015-desktop-app.md) for the layout rules.
+
 ## Find text in a console
 
 Select **Find in transcript** to search the current view's loaded text.

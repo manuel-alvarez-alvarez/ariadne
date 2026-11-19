@@ -76,6 +76,20 @@ Out: the daemon endpoints themselves (012).
    the expanded console or diff. Open dialogs retain their own focus.
    The header does not shrink, and the body scrolls within the
    remaining height, with one full-height child for the session view.
+   In the shell, **Pin inspector** appears from a window width of 72rem.
+   Pinning reserves the inspector width beside the overview, without a scrim
+   or Tab trap. The inspector remains a named nonmodal region. Nested dialogs
+   retain their modal semantics, focus handling and Escape ownership.
+   Pinned resizing leaves at least 48rem for the sidebar and overview.
+   **Focus overview** moves focus to the main region. **Focus inspector**
+   returns focus to that control. The shell reserves a row after the overview
+   for this button. It follows the overview in Tab order and covers no sidebar
+   controls. Both controls support Tab and Enter.
+   Unpinning, expansion, or a window narrower than 72rem restores the overlay.
+   Collapsing or widening restores the explicit pin choice for this inspector.
+   Closing forgets that choice. Mode changes keep the same content mounted,
+   without URL or history writes, preserving drafts, transcript position and
+   the original focus-return target.
    On Linux (WebKitGTK) every scroll area gets a thin scrollbar in theme
    colours, light and dark, from one rule in `index.css` keyed on a
    `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
@@ -1485,6 +1499,18 @@ Out: the daemon endpoints themselves (012).
     action that sets the pick to All hosts.
 
 ## Acceptance criteria
+
+- The inspector focus control occupies a reserved row after the overview and
+  leaves connection status available
+  (`ui/src/components/app-shell.test.tsx::reserves a focus-control row after the overview without covering connection status`).
+
+- Pinning reserves space without a scrim, and mode changes preserve content
+  (`ui/src/components/pinned-inspector.test.tsx::reserves overview space only when pinned and preserves content through fallback and expansion`).
+- Visible controls move focus between regions, and pinned Tab can leave
+  (`ui/src/components/pinned-inspector.test.tsx::moves focus between regions and lets Tab leave the pinned inspector`).
+- Nested confirmations remain modal and own Escape
+  (`ui/src/components/pinned-inspector.test.tsx::keeps nested confirmations modal and gives Escape to the dialog first`).
+
 
 - A task card of a named host links to its panel on that host
   (`ui/src/features/tasks/task-card.test.tsx::links a local card to its panel and a remote card to its panel on its host`).

@@ -537,7 +537,12 @@ the panel it opens to hand the keyboard to), which `src/components/detail-panels
 reads. The old `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as
 redirects onto the board with the panel open.
 
-The pane floats over the screen at the window's right edge, so `<main>` keeps
+The pane defaults to an overlay. Explicit pinning reserves its width through
+`InspectorLayoutContext` in the shell without moving or remounting its content.
+Pinned mode removes the scrim and Tab trap; nested dialogs remain modal.
+The shell reserves a focus-navigation row after the overview. `DockedPane`
+portals its return control into that row through the context's `focusSlot`.
+The pane floats over the screen at the window's right edge by default, so `<main>` keeps
 its full width and layout behind it; the shell mounts `DetailPanels` outside
 its row, and a scrim's click closes it the same as the close button does. See
 spec 015 ("Behavior") for the exact width range, defaults and motion a change
