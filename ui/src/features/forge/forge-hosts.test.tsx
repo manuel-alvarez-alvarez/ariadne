@@ -4,7 +4,7 @@
 
 import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, expect, it } from "vitest"
+import { afterEach, expect, it, vi } from "vitest"
 import { DetailPanels } from "@/components/detail-panels"
 import { HostPicker } from "@/components/host-picker"
 import { IssuesPage } from "@/features/issues/issues-page"
@@ -41,7 +41,9 @@ const boxPull = {
   updated_at: "2026-10-08T01:00:00Z",
 }
 
-it("merges the pull requests of every host under All, badged, and opens a panel on its row's host", async () => {
+it("merges the pull requests of every host under All, and opens a panel on its row's host", async () => {
+  // Another request than local's, so each is a row of its own.
+  const other = { ...boxPull, number: 43 }
   stubHosts({
     local: {
       "/v1/repositories": [LOCAL_REPO],
@@ -50,9 +52,9 @@ it("merges the pull requests of every host under All, badged, and opens a panel 
     },
     box: {
       "/v1/repositories": [BOX_REPO],
-      "/v1/pull-requests": page([boxPull]),
-      "/v1/pull-requests/pull-box": boxPull,
-      "/v1/repositories/repo-box/pull-requests/42": boxPull,
+      "/v1/pull-requests": page([other]),
+      "/v1/pull-requests/pull-box": other,
+      "/v1/repositories/repo-box/pull-requests/43": other,
     },
   })
   const { location } = renderScreen(
@@ -63,14 +65,12 @@ it("merges the pull requests of every host under All, badged, and opens a panel 
     { route: "/forge/pull-requests" },
   )
 
-  const boxRow = await screen.findByRole("row", { name: "Open #42 Box fix" })
-  const localRow = screen.getByRole("row", { name: "Open #42 Local fix" })
-  expect(within(boxRow).getByText("box")).toBeTruthy()
-  expect(within(localRow).getByText("local")).toBeTruthy()
+  const boxRow = await screen.findByRole("row", { name: "Open #43 Box fix" })
+  await screen.findByRole("row", { name: "Open #42 Local fix" })
   // Most recently updated first, whichever host it is on.
   expect(screen.getAllByRole("row").map((row) => row.getAttribute("aria-label"))).toEqual([
     null,
-    "Open #42 Box fix",
+    "Open #43 Box fix",
     "Open #42 Local fix",
   ])
 
@@ -153,7 +153,7 @@ it("offers the hosts where the repository is registered for Start review, the ro
   await waitFor(() => expect(modelReads()).toContain("http://127.0.0.1:7676"))
 })
 
-it("merges the issues of every host, and fills the goal dialog on the issue's host", async () => {
+it("merges the issues of every host, and names the host of each", async () => {
   const issue = (title: string) => ({
     number: 7,
     title,
@@ -170,7 +170,7 @@ it("merges the issues of every host, and fills the goal dialog on the issue's ho
     },
     box: {
       "/v1/repositories": [BOX_REPO],
-      "/v1/repositories/repo-box/issues": [issue("box-issue")],
+      "/v1/repositories/repo-box/issues": [{ ...issue("box-issue"), number: 8 }],
     },
   })
   renderScreen(<IssuesPage />, { route: "/forge/issues" })
@@ -179,9 +179,6 @@ it("merges the issues of every host, and fills the goal dialog on the issue's ho
   expect(await screen.findByRole("link", { name: /local-issue/ })).toBeTruthy()
   const row = boxIssue.closest("tr") as HTMLElement
   expect(within(row).getByTitle("Host").textContent).toBe("box")
-  await userEvent.click(within(row).getByRole("button", { name: "Create goal" }))
-  const host = await screen.findByRole("combobox", { name: "Host" })
-  expect(host.textContent).toContain("box")
 })
 
 const anIssue = (title: string) => ({
@@ -318,7 +315,9 @@ it("lists the issues of every host most recently updated first", async () => {
     },
     box: {
       "/v1/repositories": [BOX_REPO],
-      "/v1/repositories/repo-box/issues": [issue("newer-box", "2026-10-09T00:00:00Z")],
+      "/v1/repositories/repo-box/issues": [
+        { ...issue("newer-box", "2026-10-09T00:00:00Z"), number: 8 },
+      ],
     },
   })
   renderScreen(<IssuesPage />, { route: "/forge/issues" })
@@ -326,7 +325,7 @@ it("lists the issues of every host most recently updated first", async () => {
   await screen.findByRole("link", { name: /older-local/ })
   expect(
     screen.getAllByRole("link", { name: /-(local|box)$/ }).map((link) => link.textContent),
-  ).toEqual(["#7 newer-box", "#7 older-local"])
+  ).toEqual(["#8 newer-box", "#7 older-local"])
 })
 
 it("does not wait for a session on the panel's host when Start review picks another host", async () => {
@@ -368,3 +367,240 @@ it("does not wait for a session on the panel's host when Start review picks anot
   expect(await screen.findByText(/The session started on host local/)).toBeTruthy()
   expect(screen.queryByText(/Starting the session/)).toBeNull()
 })
+
+/** The same request as both hosts list it: each under its own repository id and its own facts. */
+const onLocal = { ...pull, id: null, repository_id: "repo-local", title: "Old title" }
+const onBox = {
+  ...pull,
+  id: null,
+  repository_id: "repo-box",
+  title: "New title",
+  checks: "failure",
+  updated_at: "2026-10-09T00:00:00Z",
+}
+
+it("shows one row for a request two hosts list, with the newest forge facts", async () => {
+  stubHosts({
+    local: { "/v1/repositories": [LOCAL_REPO], "/v1/pull-requests": page([onLocal]) },
+    box: { "/v1/repositories": [BOX_REPO], "/v1/pull-requests": page([onBox]) },
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+
+  const row = await screen.findByRole("row", { name: "Open #42 New title" })
+  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2))
+  expect(screen.queryByRole("row", { name: "Open #42 Old title" })).toBeNull()
+  expect(within(row).getByText("Failing")).toBeTruthy()
+  // Nobody works on it, so the row names no host.
+  expect(within(row).queryByTitle("Host")).toBeNull()
+})
+
+it("names the host of each Ariadne review and each keeper on the one row", async () => {
+  stubHosts({
+    local: {
+      "/v1/repositories": [LOCAL_REPO],
+      "/v1/pull-requests": page([{ ...onLocal, review_asked: true }]),
+    },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests": page([{ ...onBox, babysit_asked: true }]),
+    },
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+
+  const row = await screen.findByRole("row", { name: "Open #42 New title" })
+  await waitFor(() => expect(within(row).getAllByTitle("Host")).toHaveLength(2))
+  const review = within(row).getByText("Ariadne reviewing").closest("[data-work]") as HTMLElement
+  const keeper = within(row).getByText("Ariadne babysitting").closest("[data-work]") as HTMLElement
+  expect(within(review).getByTitle("Host").textContent).toBe("local")
+  expect(within(keeper).getByTitle("Host").textContent).toBe("box")
+})
+
+it("links the session of each host that has one, each on its host", async () => {
+  stubHosts({
+    local: {
+      "/v1/repositories": [LOCAL_REPO],
+      "/v1/pull-requests": page([{ ...onLocal, session_id: "session-local" }]),
+    },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests": page([{ ...onBox, session_id: "session-box" }]),
+    },
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+
+  const row = await screen.findByRole("row", { name: "Open #42 New title" })
+  const box = await within(row).findByRole("link", { name: "Open the session of #42 on box" })
+  const local = within(row).getByRole("link", { name: "Open the session of #42 on local" })
+  expect(box.getAttribute("href")).toContain("session=session-box")
+  expect(box.getAttribute("href")).toContain("host=box")
+  expect(local.getAttribute("href")).toContain("session=session-local")
+  expect(local.getAttribute("href")).not.toContain("host=")
+})
+
+it("opens the panel on the host that holds Ariadne work", async () => {
+  stubHosts({
+    local: { "/v1/repositories": [LOCAL_REPO], "/v1/pull-requests": page([onLocal]) },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests": page([{ ...onBox, review_asked: true }]),
+    },
+  })
+  const view = renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+  const row = await screen.findByRole("row", { name: "Open #42 New title" })
+  await waitFor(() => expect(within(row).getByTitle("Host").textContent).toBe("box"))
+  await userEvent.click(row)
+  expect(view.location.url).toContain("pr=repo-box%3A42")
+  expect(view.location.url).toContain("host=box")
+})
+
+it("opens the panel on local when no host holds Ariadne work", async () => {
+  stubHosts({
+    local: { "/v1/repositories": [LOCAL_REPO], "/v1/pull-requests": page([onLocal]) },
+    box: { "/v1/repositories": [BOX_REPO], "/v1/pull-requests": page([onBox]) },
+  })
+  const again = renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2))
+  await userEvent.click(screen.getByRole("row", { name: "Open #42 New title" }))
+  expect(again.location.url).toContain("pr=repo-local%3A42")
+  expect(again.location.url).not.toContain("host=")
+})
+
+it("sends the filters to every host and lists a request on a later page of one host once", async () => {
+  type Callback = (entries: { isIntersecting: boolean }[]) => void
+  const observers: Callback[] = []
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(callback: Callback) {
+        observers.push(callback)
+      }
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const seven = { ...onLocal, number: 7, title: "Seven" }
+  const seen = stubHosts({
+    local: {
+      "/v1/repositories": [LOCAL_REPO],
+      "/v1/pull-requests": (url: URL) =>
+        jsonResponse(
+          url.searchParams.get("cursor") === "page-2"
+            ? page([onLocal])
+            : { pull_requests: [seven], next_cursor: "page-2" },
+        ),
+    },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests": page([onBox, { ...seven, repository_id: "repo-box" }]),
+    },
+  })
+  renderScreen(<PullRequestsPage />, {
+    route: "/forge/pull-requests?repo=repo-local&role=author&q=title",
+  })
+  await screen.findByRole("row", { name: "Open #42 New title" })
+  expect(
+    seen
+      .filter((request) => request.url.pathname === "/v1/pull-requests")
+      .map((request) => [
+        request.origin,
+        request.url.searchParams.get("repo"),
+        request.url.searchParams.get("role"),
+        request.url.searchParams.get("q"),
+      ]),
+  ).toEqual(
+    expect.arrayContaining([
+      ["http://127.0.0.1:7676", "repo-local", "author", "title"],
+      ["http://box.test:7676", "repo-box", "author", "title"],
+    ]),
+  )
+
+  act(() => observers.at(-1)?.([{ isIntersecting: true }]))
+  await waitFor(() =>
+    expect(seen.some((request) => request.url.searchParams.get("cursor") === "page-2")).toBe(true),
+  )
+  await waitFor(() =>
+    expect(screen.getAllByRole("row").map((row) => row.getAttribute("aria-label"))).toEqual([
+      null,
+      "Open #42 New title",
+      "Open #7 Seven",
+    ]),
+  )
+  vi.unstubAllGlobals()
+})
+
+it("keeps the rows of the other host and the error of the host that fails", async () => {
+  stubHosts({
+    local: { "/v1/repositories": [LOCAL_REPO], "/v1/pull-requests": page([onLocal]) },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests": () =>
+        jsonResponse({ error: { code: "boom", message: "box is broken" } }, 500),
+    },
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+
+  expect(await screen.findByRole("row", { name: "Open #42 Old title" })).toBeTruthy()
+  expect(await screen.findByText(/box is broken/)).toBeTruthy()
+})
+
+it("shows one row for an issue two hosts list, with its newest facts", async () => {
+  stubHosts({
+    local: {
+      "/v1/repositories": [LOCAL_REPO],
+      "/v1/repositories/repo-local/issues": [anIssue("old")],
+    },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/repositories/repo-box/issues": [
+        { ...anIssue("new"), updated_at: "2026-10-09T00:00:00Z" },
+      ],
+    },
+  })
+  renderScreen(<IssuesPage />, { route: "/forge/issues" })
+
+  await screen.findByRole("link", { name: /new$/ })
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: "Create goal" })).toHaveLength(1),
+  )
+  expect(screen.queryByRole("link", { name: /old$/ })).toBeNull()
+})
+
+const LOCAL_CHECKOUT = { ...LOCAL_REPO, path: "/local/widgets" }
+const BOX_CHECKOUT = { ...BOX_REPO, path: "/box/widgets" }
+
+it.each([
+  // The picked host has the repository.
+  ["box", [LOCAL_CHECKOUT], "box", "/box/widgets"],
+  // Under All, `local` comes first.
+  ["", [LOCAL_CHECKOUT], "local", "/local/widgets"],
+  // Without it on `local`, the first host that has it.
+  ["", [], "box", "/box/widgets"],
+])(
+  "opens Create goal under the pick %j on a host with the repository",
+  async (pick, onLocalHost, host, path) => {
+    useSettingsStore.setState({ hostFilter: pick })
+    const issues = [anIssue("issue")]
+    stubHosts({
+      local: {
+        "/v1/repositories": onLocalHost,
+        "/v1/repositories/repo-local/issues": issues,
+        "/v1/workflows": [],
+      },
+      box: {
+        "/v1/repositories": [BOX_CHECKOUT],
+        "/v1/repositories/repo-box/issues": issues,
+        "/v1/workflows": [],
+      },
+    })
+    renderScreen(<IssuesPage />, { route: "/forge/issues" })
+
+    await screen.findByRole("link", { name: /issue$/ })
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Create goal" })).toHaveLength(1),
+    )
+    await userEvent.click(screen.getByRole("button", { name: "Create goal" }))
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByRole("combobox", { name: "Host" }).textContent).toContain(host)
+    expect(await within(dialog).findByRole("button", { name: `Remove ${path}` })).toBeTruthy()
+  },
+)

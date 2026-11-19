@@ -373,7 +373,8 @@ app, by `EventStreamProvider`: `local`'s, and one for each named host that
 dispatches under its own host's keys, `dispatchDomainEvent(queryClient,
 host, event)`. Only `local`'s stream writes `useStreamStore` and answers the
 connection banner's Retry: the connection banner and status stay about
-`local`, and a named host's state is its row in the header's host picker.
+`local`. A named host's stream state and heartbeat go to `useHostStreamStore`,
+which its row in the header's host picker and the Hosts table in Settings read.
 
 `src/events/dispatch.ts` is the only place events meet the cache. Events are fat
 — each carries the full updated DTO — so for every kind the rule is the same:
@@ -462,8 +463,8 @@ stream (008). It lives in `src/features/sessions/console/`:
   session's children from their `subagent_update` events, and `view` picks
   the blocks of `main` or of one child. A child's permission question is
   the session's, so it stays in `main`.
-- `console-view-state.ts` retains, in memory and per host, daemon address and
-  session, what a console keeps while it is off screen: the draft, the
+- `console-view-state.ts` retains, in memory and per host and session (`local` also per daemon
+  address), what a console keeps while it is off screen: the draft, the
   scroll position, whether it follows, the view shown and a fold
   preference per block id. Write to it through `updateViewState`; a pane
   mounted again reads it back.

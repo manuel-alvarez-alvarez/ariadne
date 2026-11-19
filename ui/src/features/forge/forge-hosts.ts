@@ -74,3 +74,35 @@ export function distinctEnabled(rows: readonly HostRow<RepositoryDto>[]): HostRo
     return true
   })
 }
+
+/**
+ * What names one request or one issue on every host: its forge repository and
+ * its number. Until `host`'s repositories have answered, its own repository
+ * id stands in for the forge repository.
+ */
+export function forgeItemKey(
+  rows: readonly HostRow<RepositoryDto>[],
+  host: Host,
+  repository: string,
+  number: number,
+): string {
+  const known = rows.find((row) => row.host === host && row.id === repository)
+  const key = known ? forgeKey(known) : null
+  return `${key ?? `${host}:${repository}`}#${number}`
+}
+
+/**
+ * `rows` with the rows of one forge item in one group, by `keyOf`, each group
+ * where its first row was and its rows in their order: the newest first, for
+ * rows sorted most recently updated first.
+ */
+export function groupForgeItems<T>(rows: readonly T[], keyOf: (row: T) => string): T[][] {
+  const groups = new Map<string, T[]>()
+  for (const row of rows) {
+    const key = keyOf(row)
+    const group = groups.get(key)
+    if (group) group.push(row)
+    else groups.set(key, [row])
+  }
+  return [...groups.values()]
+}

@@ -335,6 +335,7 @@ describe("hosts", () => {
   afterEach(() => forgetHosts())
 
   it("says which hosts hold a checkout of each repository and which lack one", async () => {
+    stubDaemon([ARIADNE, { ...SANDBOX, forge: aForge({ name: "sandbox" }) }])
     hosts = [
       LOCAL,
       {
@@ -355,6 +356,26 @@ describe("hosts", () => {
     expect(sandbox?.textContent).toBe("box · no checkout")
   })
 
+  it("says a repository with no forge has none to match a checkout by, not that it has no checkout", async () => {
+    hosts = [
+      LOCAL,
+      {
+        ...BOX,
+        sync: {
+          state: "in_sync",
+          error: null,
+          missing_repositories: [{ id: SANDBOX.id, forge: null }],
+          skipped_permissions: 0,
+        },
+      },
+    ]
+    renderScreen(<RepositoriesPage />)
+
+    const [ariadne, sandbox] = await screen.findAllByRole("list", { name: "Checkouts" })
+    expect(ariadne?.textContent).toBe("box · checkout")
+    expect(sandbox?.textContent).toBe("box · no forge to match by")
+  })
+
   it("shows a host as pending, not as holding a checkout, until its first sync completes", async () => {
     hosts = [
       LOCAL,
@@ -368,5 +389,24 @@ describe("hosts", () => {
     const [ariadne, sandbox] = await screen.findAllByRole("list", { name: "Checkouts" })
     expect(ariadne?.textContent).toBe("box · pending")
     expect(sandbox?.textContent).toBe("box · pending")
+  })
+
+  it("reads a pending sync of a host the app cannot reach as waiting for host", async () => {
+    hosts = [
+      LOCAL,
+      {
+        ...BOX,
+        name: "far",
+        kind: "ssh",
+        endpoint: null,
+        status: "down",
+        error: "no forward",
+        sync: { state: "pending", error: null, missing_repositories: [], skipped_permissions: 0 },
+      },
+    ]
+    renderScreen(<RepositoriesPage />)
+
+    const [ariadne] = await screen.findAllByRole("list", { name: "Checkouts" })
+    expect(ariadne?.textContent).toBe("far · waiting for host")
   })
 })

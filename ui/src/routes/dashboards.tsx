@@ -84,17 +84,21 @@ export function DashboardsPage() {
   const named = useHasNamedHosts()
   const pick = useSettingsStore((state) => state.hostFilter)
   // The picker's host when the app can reach it, else every host, until the
-  // user picks another here. A pick the hosts no longer list is All.
+  // user picks another here. A host picked here stays picked, reachable or
+  // not, as long as the hosts list it; one it no longer lists is the fallback.
   const [hostChoice, setHostChoice] = useState<string | null>(null)
   const pickedRow = hosts.find((host) => host.name === pick)
-  const fallback = pickedRow && pickedRow.url !== null ? pick : ALL_HOSTS
+  // A picked host the screen opened on stays the default when it drops, so
+  // the iframe neither switches to All nor reloads; one that was never
+  // reachable here opens on All.
+  const held = useRef<string | null>(null)
+  if (pickedRow && pickedRow.url !== null) held.current = pick
+  else if (held.current !== pick) held.current = null
+  const fallback = pickedRow && held.current === pick ? pick : ALL_HOSTS
   const chosenRow = hosts.find((host) => host.name === hostChoice)
-  const queried =
-    chosenRow && chosenRow.url !== null
-      ? chosenRow.name
-      : hostChoice === ALL_HOSTS
-        ? ALL_HOSTS
-        : fallback
+  const queried = chosenRow ? chosenRow.name : hostChoice === ALL_HOSTS ? ALL_HOSTS : fallback
+  const queriedRow = hosts.find((host) => host.name === queried)
+  const unreachable = queriedRow?.url === null ? queriedRow.unreachable : null
   // A named pick waits for the hosts list, so no iframe opens on All first.
   const waitingForHosts = pick !== "" && hostsPending
   const hostItems = [
@@ -228,6 +232,11 @@ export function DashboardsPage() {
           </>
         }
       />
+      {unreachable !== null ? (
+        <p role="status" className="text-sm text-status-danger-fg">
+          Host {queried} is not reachable{unreachable ? `: ${unreachable}` : ""}
+        </p>
+      ) : null}
       {dashboards.isPending || waitingForHosts ? (
         <Skeleton className="min-h-0 flex-1" />
       ) : dashboards.isError ? (
