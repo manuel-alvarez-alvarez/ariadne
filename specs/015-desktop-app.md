@@ -1143,7 +1143,12 @@ Out: the daemon endpoints themselves (012).
     host name, in each status. A click sends `POST /v1/hosts/{name}/reconnect`
     to the settings daemon and the button is disabled while that request
     runs. A request that fails shows its error in a toast. The row shows each
-    new status through `host_updated`. `local` has no button.
+    new status through `host_updated`. `local` has no button. The Status
+    column shows the app's reach of the host, in the words of rule 55, and
+    the Error column its reason. A Daemon column shows the version and the
+    uptime of each reachable host, from the last heartbeat of the app's
+    stream to it, and "-" before one arrives or for a host the app cannot
+    reach (rule 78).
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.
@@ -1158,7 +1163,12 @@ Out: the daemon endpoints themselves (012).
 55. The header has a host picker, shown only with a named host: All hosts,
     `local`, and each named host with its status. A host the app cannot reach
     reads "not reachable" with its reason, whatever its own status says, so a
-    host with a socket path never reads as ready. The trigger shows the status
+    host with a socket path never reads as ready. While the app's stream to a
+    reachable host is not connected, its row also says "stream" and the
+    stream's state, and while its sync is pending or failed, "sync" and the
+    sync line of rule 65, with the error of a failed one. With All hosts
+    picked, the trigger shows a mark while a listed named host is not
+    reachable or has a failed sync. The trigger shows the status
     of a picked named host. The pick is `hostFilter` in the settings store and
     persists. Each named host's row has the same reconnect button as rule 52,
     and a click on it changes no pick. A pick the daemon no longer lists
@@ -1212,7 +1222,8 @@ Out: the daemon endpoints themselves (012).
     them. While a named host is listed, each says that it shows and writes the
     settings of `local`, and sets the lines under a heading, "Sync to other
     hosts": one per named host from `HostDto.sync`: in sync, pending, or failed
-    with the error. The Learned tab's line also says how many local learned
+    with the error. A pending sync of a host the app cannot reach reads
+    "waiting for host", since it waits for the host and not for the daemon. The Learned tab's line also says how many local learned
     permissions the host skipped, from `sync.skipped_permissions`. With only
     `local` listed, no screen shows the note, the heading or the lines
     (`ui/src/components/host-sync.test.tsx::says it shows and writes local, and heads the sync lines of the named hosts`,
@@ -1229,10 +1240,15 @@ Out: the daemon endpoints themselves (012).
     whether the host has a checkout of the repository or lacks one, from
     `sync.missing_repositories`. Until the host's first sync completes
     (`sync.state` is `pending`) it says pending, since the list is empty then
-    and says nothing about a checkout. With only `local` listed the table has no
+    and says nothing about a checkout. It says the same "waiting for host" as
+    rule 65 for a host the app cannot reach. A repository with no forge is
+    always in the host's `missing_repositories`, since a checkout is matched
+    by forge; the table says "no forge to match by" for it, not "no
+    checkout". With only `local` listed the table has no
     Hosts column. The forge tunnel switch is `local`'s
     (`ui/src/features/repositories/repositories-page.test.tsx::says which hosts hold a checkout of each repository and which lack one`,
-    `::shows a host as pending, not as holding a checkout, until its first sync completes`).
+    `::shows a host as pending, not as holding a checkout, until its first sync completes`,
+    `::reads a pending sync of a host the app cannot reach as waiting for host`).
 68. The agents screen reads the agents and models of the selected hosts. One tab
     holds one agent id. Its panel has a chip per host that has the agent where
     rule 74 shows the host on rows. A flag edit, a model switch and a rank apply to
@@ -1354,6 +1370,12 @@ Out: the daemon endpoints themselves (012).
     - The request link of a session reads the host of the session. The
       sessions table and the session panel show the request's title and its
       forge link.
+78. The app keeps the stream state and the last heartbeat of the stream of
+    each named host, from the start of the stream to its stop, in
+    `useHostStreamStore`. `local`'s stay in `useStreamStore`, and the
+    connection banner stays about `local`. The picker (rule 55) and the Hosts
+    table (rule 52) read them, and a host's daemon version and uptime come
+    from its heartbeat.
 
 
 ## Acceptance criteria
@@ -2341,6 +2363,18 @@ Out: the daemon endpoints themselves (012).
   `::reconnects a host from its Hosts row, disabled while it runs, and shows the new status`,
   `::shows the error of a reconnect that fails`,
   `::shows no reconnect button while the daemon lists local alone`);
+  the Hosts table and the picker show the true state of each host: reach with
+  its reason, daemon version and uptime, the app's stream state, the sync, and
+  the mark on All hosts
+  (`ui/src/components/hosts-settings.test.tsx::shows the reach of a socket-path host and its reason in the words of the picker`,
+  `::shows the daemon version and uptime of each reachable host, from its stream's heartbeat`,
+  `::shows the app's stream state of a named host's row while the stream is not connected`,
+  `::shows a pending or failed sync of a named host's row, and the error of a failed one`,
+  `::marks the trigger of All hosts while a listed host is not reachable or its sync failed`);
+  the stream state and heartbeat of each named host
+  (`ui/src/events/provider-hosts.test.tsx::keeps each named host's stream state and last heartbeat, and drops them with the stream`);
+  a sync line waits for a host the app cannot reach
+  (`ui/src/components/host-sync.test.tsx::reads a pending sync of a host the app cannot reach as waiting for host`);
   one stream per reachable host under its own keys, with the connection
   state `local`'s (`ui/src/events/provider-hosts.test.tsx::opens one stream per reachable host, and none for a host that is down`,
   `::dispatches a named host's event under that host's keys`,
@@ -2369,7 +2403,8 @@ Out: the daemon endpoints themselves (012).
   shows and writes each host's device
   (`::shows each host's own device and writes a device change to that host alone`);
   the repositories table names the hosts with and without a checkout
-  (`ui/src/features/repositories/repositories-page.test.tsx::says which hosts hold a checkout of each repository and which lack one`).
+  (`ui/src/features/repositories/repositories-page.test.tsx::says which hosts hold a checkout of each repository and which lack one`,
+  `::says a repository with no forge has none to match a checkout by, not that it has no checkout`).
 - The agents screen groups an agent under one tab with a chip per host and
   writes to the chip's host
   (`ui/src/features/agents/agents-hosts.test.tsx::groups an agent of two hosts under one tab, with a chip per host, and writes to the chip's host`,

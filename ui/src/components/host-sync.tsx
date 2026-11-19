@@ -16,6 +16,16 @@ const STATE_LABEL: Record<HostView["sync"]["state"], string> = {
   failed: "failed",
 }
 
+/**
+ * What a host's sync reads as. A sync that is pending on a host the app cannot
+ * reach waits for the host, not for the daemon.
+ */
+export function syncLabel(host: HostView): string {
+  if (host.sync.state === "pending" && host.url === null) return "waiting for host"
+  const label = STATE_LABEL[host.sync.state]
+  return host.sync.state === "failed" && host.sync.error ? `${label}: ${host.sync.error}` : label
+}
+
 const STATE_TONE: Record<HostView["sync"]["state"], string> = {
   in_sync: "bg-status-done",
   pending: "bg-status-warn",
@@ -41,10 +51,7 @@ export function HostSync({ skippedPermissions = false }: { skippedPermissions?: 
               className={cn("size-1.5 rounded-full", STATE_TONE[host.sync.state])}
             />
             <span className="font-mono">{host.name}</span>
-            <span>
-              {STATE_LABEL[host.sync.state]}
-              {host.sync.state === "failed" && host.sync.error ? `: ${host.sync.error}` : ""}
-            </span>
+            <span>{syncLabel(host)}</span>
             {skippedPermissions && host.sync.skipped_permissions > 0 ? (
               <span>
                 · {host.sync.skipped_permissions} learned{" "}
