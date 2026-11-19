@@ -7,7 +7,7 @@
  */
 
 import { queryOptions, useQueries } from "@tanstack/react-query"
-import { useMemo } from "react"
+import { useCallback, useMemo } from "react"
 
 import {
   type AttentionCause,
@@ -16,6 +16,7 @@ import {
   api,
   type GoalDto,
   type Host,
+  LOCAL_HOST,
   qk,
   type SessionDto,
   type TaskDto,
@@ -31,9 +32,10 @@ import {
 } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
 import { sessionColumn } from "@/features/tasks/steps"
-import { useHostFilter } from "@/hooks/use-host-filter"
+import { useReachableHosts } from "@/hooks/use-host-filter"
 import { shortId } from "@/lib/format"
 import { paths, sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
+import { useSettingsStore } from "@/stores/settings"
 
 import { goalsQueryOptions } from "./queries"
 
@@ -117,12 +119,25 @@ export interface AttentionItem {
   recovery?: AttentionItemDto
 }
 
+/** What one host's attention read could not do, and why. */
+interface AttentionHostError {
+  host: Host
+  error: unknown
+}
+
 interface Attention {
   /** One row per stuck task or task-less session, most recently moved first. */
   items: AttentionItem[]
   isPending: boolean
-  /** The first of the three queries that failed, if any. */
+  /** The first host error, if any: what says the list is not whole. */
   error: unknown
+  /** One entry per host whose read failed or was incomplete; the other hosts' items stay. */
+  errors: AttentionHostError[]
+  /**
+   * The hosts whose list is a full answer: it came, and none of its queries
+   * failed. Only they can tell news from a hole.
+   */
+  readyHosts: Host[]
   /**
    * Something failed, but the queries that answered still produced items.
    *
@@ -147,9 +162,9 @@ const INCOMPLETE_RECOVERY_READ = new Error(
   "the recovery producer could not read all of its evidence",
 )
 
-/** The attention list over every host the header's picker selected. */
+/** The attention list over every reachable host, whatever the header's pick. */
 export function useAttention(): Attention {
-  const hosts = useHostFilter()
+  const hosts = useReachableHosts()
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
   // Keep the shared queries' loading and retry state. Their raw statuses
@@ -158,15 +173,28 @@ export function useAttention(): Attention {
   const recovery = useAttentionLists(hosts)
 
   const lists = recovery.map((result) => result.data)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each list is compared by identity
-  const items = useMemo(() => collectAttention(hosts, lists), [hosts, ...lists])
+  // The hosts come and go, so the memo cannot spread one dependency per list:
+  // a read is told apart by the host it is for and when it last landed.
+  const stamp = recovery.map((result) => result.dataUpdatedAt).join()
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `stamp` stands for `lists`
+  const items = useMemo(() => collectAttention(hosts, lists), [hosts, stamp])
 
-  const error =
-    goals.errors[0]?.error ??
-    tasks.errors[0]?.error ??
-    sessions.errors[0]?.error ??
-    recovery.find((result) => result.error)?.error ??
-    (lists.some((list) => list?.complete === false) ? INCOMPLETE_RECOVERY_READ : null)
+  const errors: AttentionHostError[] = []
+  const readyHosts: Host[] = []
+  hosts.forEach((host, index) => {
+    const failed =
+      goals.errors.find((entry) => entry.host === host) ??
+      tasks.errors.find((entry) => entry.host === host) ??
+      sessions.errors.find((entry) => entry.host === host)
+    const error =
+      failed?.error ??
+      recovery[index]?.error ??
+      (lists[index]?.complete === false ? INCOMPLETE_RECOVERY_READ : null)
+    if (error) errors.push({ host, error })
+    // A list read again is not an answer yet: a host that came back holds its
+    // cache from before it left, and only the fresh read tells what it raised since.
+    else if (lists[index] && !recovery[index]?.isFetching) readyHosts.push(host)
+  })
 
   return {
     items,
@@ -176,8 +204,10 @@ export function useAttention(): Attention {
       sessions.isPending ||
       recovery.length === 0 ||
       recovery.every((result) => result.isPending),
-    error,
-    partial: error !== null && items.length > 0,
+    error: errors[0]?.error ?? null,
+    errors,
+    readyHosts,
+    partial: errors.length > 0 && items.length > 0,
     refetch: () => {
       goals.refetch()
       tasks.refetch()
@@ -268,17 +298,21 @@ export const NO_BOARD_ATTENTION: BoardAttention = {
  * their own daemon, so every host is indexed apart.
  */
 export function useBoardAttention(hosts: readonly Host[]): Map<Host, BoardAttention> {
-  const sessions = useQueries({
+  const sessionResults = useQueries({
     queries: hosts.map((host) => sessionsQueryOptions(host)),
-  }).map((result) => result.data)
-  const lists = useAttentionLists(hosts).map((result) => result.data)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each list is compared by identity
+  })
+  const listResults = useAttentionLists(hosts)
+  const sessions = sessionResults.map((result) => result.data)
+  const lists = listResults.map((result) => result.data)
+  // The hosts come and go, so the memo keys on when each read last landed.
+  const stamp = [...sessionResults, ...listResults].map((result) => result.dataUpdatedAt).join()
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `stamp` stands for the reads
   return useMemo(
     () =>
       new Map(
         hosts.map((host, index) => [host, collectBoardAttention(sessions[index], lists[index])]),
       ),
-    [hosts, ...sessions, ...lists],
+    [hosts, stamp],
   )
 }
 
@@ -364,7 +398,13 @@ function reasons(index: Map<string, Flagged>): Map<string, SessionAttention> {
  * Where an attention row navigates: an internal route, for `<Link to={…}>`
  * and `useNavigate()` alike.
  */
-export type AttentionNavTarget = { pathname?: string; search: string; replace?: boolean }
+export type AttentionNavTarget = {
+  pathname?: string
+  search: string
+  replace?: boolean
+  /** The named host whose agents the target opens; the pick must then include it. */
+  agentsOf?: Host
+}
 
 export function attentionTarget(
   item: AttentionItem,
@@ -381,6 +421,22 @@ export function attentionTarget(
   // on it; one that is only a session's opens that session.
   if (!item.taskReason && session) return sessionPanelFrom(pathname, current, session.id, host)
   return taskPanelFrom(pathname, current, taskId ?? item.id, host)
+}
+
+/**
+ * What to run when a row's target is followed: a link to the agents of a named
+ * host sets the pick to All hosts when that host is outside the pick, so the
+ * screen has the host's chip to pick.
+ */
+export function useFollowAttention(): (target: AttentionNavTarget) => void {
+  const pick = useSettingsStore((state) => state.hostFilter)
+  const setPick = useSettingsStore((state) => state.setHostFilter)
+  return useCallback(
+    (target) => {
+      if (target.agentsOf && pick !== "" && pick !== target.agentsOf) setPick("")
+    },
+    [pick, setPick],
+  )
 }
 
 /**
@@ -411,10 +467,13 @@ function recoveryTarget(
       return { pathname: path, search: `?${search}` }
     }
     case "settings":
-      return {
-        pathname: item.target.section === "agents" ? "/agents" : paths.repositories(),
-        search: "",
+      // The agents of a named host are read on that host's chip.
+      if (item.target.section === "agents") {
+        return host === LOCAL_HOST
+          ? { pathname: "/agents", search: "" }
+          : { pathname: "/agents", search: `?host=${host}`, agentsOf: host }
       }
+      return { pathname: paths.repositories(), search: "" }
   }
 }
 
