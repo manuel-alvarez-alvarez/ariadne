@@ -315,6 +315,30 @@ describe("DashboardsPage", () => {
     expect(requests.filter((one) => one.path === "/v1/dashboards")).toHaveLength(listed)
   })
 
+  it("keeps the header's host when it drops and returns before a pick here, and says why", async () => {
+    hostRows = [LOCAL, BOX]
+    useSettingsStore.setState({ hostFilter: "box" })
+    const { queryClient } = renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    const iframe = await screen.findByTitle("Default dashboard")
+    const src = iframe.getAttribute("src")
+    expect(src).toContain("host=box")
+
+    act(() =>
+      queryClient.setQueryData(qk.hosts.list(), [
+        LOCAL,
+        { ...BOX, status: "down", endpoint: null, error: "ssh closed" },
+      ]),
+    )
+    expect(await screen.findByText("Host box is not reachable: ssh closed")).toBeTruthy()
+    expect(screen.getByTitle("Default dashboard")).toBe(iframe)
+    expect(iframe.getAttribute("src")).toBe(src)
+
+    act(() => queryClient.setQueryData(qk.hosts.list(), [LOCAL, BOX]))
+    await vi.waitFor(() => expect(screen.queryByText(/is not reachable/)).toBeNull())
+    expect(screen.getByTitle("Default dashboard")).toBe(iframe)
+    expect(iframe.getAttribute("src")).toBe(src)
+  })
+
   it("follows the header pick only until a host is picked on the screen", async () => {
     const user = userEvent.setup()
     hostRows = [LOCAL, BOX]

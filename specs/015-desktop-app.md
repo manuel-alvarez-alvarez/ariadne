@@ -1273,7 +1273,12 @@ Out: the daemon endpoints themselves (012).
     has All hosts and the hosts of the picker, and a host the app cannot reach
     is a disabled option with its reason. It defaults to the picked host when
     the app can reach it, else to All hosts, and sends no host the daemon does
-    not list. The iframe takes `host=` beside
+    not list. A host the screen is on, picked here or taken from the header,
+    stays the host while the hosts list it, reachable or not. If it goes
+    unreachable, the screen says why, and the iframe keeps its `src` and does
+    not reload when the host drops or returns. A change of the header pick
+    changes the host only while the user has picked none on the screen. The
+    iframe takes `host=` beside
     `daemon=`, and its Prometheus and Loki datasources use
     `/v1/hosts/{host}/` of the settings daemon, with `all` for the combined
     view. The shipped dashboard's series names end in `{{host}}`, which the
@@ -2343,6 +2348,7 @@ Out: the daemon endpoints themselves (012).
   `::lists a host it cannot reach as a disabled option with its reason, and opens on All over such a pick`,
   `::sends no stale host when the saved pick is no longer listed`,
   `::keeps a chosen host when it drops and returns, says why, and neither switches the iframe nor reloads it`,
+  `::keeps the header's host when it drops and returns before a pick here, and says why`,
   `::follows the header pick only until a host is picked on the screen`); the iframe's datasources point at
   `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
