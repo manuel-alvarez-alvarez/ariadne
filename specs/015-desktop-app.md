@@ -1254,6 +1254,26 @@ Out: the daemon endpoints themselves (012).
     rule 74 shows the host on rows. A flag edit, a model switch and a rank apply to
     the host of the chip picked, and Refresh reprobes every selected host. Each host
     whose agents or models failed to load follows rule 75.
+    The chip belongs to the screen: it stays picked when the tab changes to an
+    agent on that host, and `/agents?host=<name>` opens it with that host's chip
+    picked. A `?host=` beside a panel param is the panel's host and never moves the
+    chip. While the picked host's models load, the model table shows a loading
+    state and says "No models" only once the host answered none. If they failed,
+    the table shows the error with the host name and Retry. A tab count and the
+    count of models turned off, in the Refresh tooltip, are the picked host's own
+    and never a sum or another host's value. With more than one host selected, the
+    flags dialog title and the toasts of a flag, model and rank change name the host.
+    Tests in `ui/src/features/agents/agents-hosts.test.tsx`:
+    “shows a loading table, not 'No models', while the picked host's models load”,
+    “says 'No models' once the picked host answered none”,
+    “shows the error of the picked host's models in the table, with its name and Retry”,
+    “counts the models of the picked chip's host, and the models turned off there”,
+    “keeps the picked chip when the agent tab changes”,
+    “names the host in the flags dialog and in the toasts of a model change”,
+    “names the host in the toast of a saved flag list”,
+    “names the host in the toast of a refused rank change” and
+    “opens with the chip of ?host= picked” and
+    “keeps the chip when a panel opens over the screen with its own ?host=”.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
     most recently updated first. A repository filter names one forge
     repository. Each host reads it by its own id for that forge repository; a
