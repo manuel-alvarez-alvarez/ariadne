@@ -14,21 +14,34 @@
  * The request is read off the forge each time the panel opens, by its
  * repository and number, and read again on every `pull_requests_changed`.
  *
+ * Every reachable host that has the request's forge repository reads it by
+ * its own repository id, and the panel shows the work of all of them: who
+ * reviews it and who keeps it, and their sessions. Each action goes to the
+ * host that holds the work.
+ *
  * The sessions are the task panel's: a review or a keeper session Ariadne
  * runs on the request, and the author of the task that keeps it (005).
  * Picking one drills into it, as `?session=` beside `?pr=`, and the panel
- * becomes that session's with a way back to the request.
+ * becomes that session's with a way back to the request. A session of
+ * another host moves `?host=` and `?pr=` to that host's copy of the request.
  */
 
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { BotIcon, BotOffIcon } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
-import type { Host, PullRequestDto, Seat } from "@/api"
+import {
+  type Host,
+  type HostRow,
+  LOCAL_HOST,
+  type PullRequestDto,
+  type Seat,
+  type SessionDto,
+} from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, HostListErrors } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
 import { HostLabel } from "@/components/host-label"
 import { Markdown } from "@/components/markdown"
@@ -47,7 +60,7 @@ import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { sessionQueryOptions, sessionsQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView, SessionPanelHeader } from "@/features/sessions/session-detail-view"
 import { isLiveStatus } from "@/features/sessions/session-display"
-import { SessionsList } from "@/features/sessions/sessions-list"
+import { HostSessionsList } from "@/features/sessions/sessions-list"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { shortId, shortSha } from "@/lib/format"
@@ -55,12 +68,14 @@ import { hostOf, paths, usePanelSessionNavigation, useTaskPanelTo } from "@/rout
 
 import {
   pullRequestByKeyQueryOptions,
+  pullRequestKey,
   pullRequestQueryOptions,
   useAskBabysit,
   useAskReview,
   useKeeperTurn,
   useReviewRound,
 } from "./queries"
+import { useRequestCopies } from "./review-hosts"
 import { StartBabysitDialog } from "./start-babysit-dialog"
 import { StartReviewDialog } from "./start-review-dialog"
 import { ARIADNE_BABYSITTING, ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
@@ -83,14 +98,18 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
-  // The host another host's review or babysit started on: its session is not on this panel's host.
-  const [elsewhere, setElsewhere] = useState<Host | null>(null)
-  const opened = useSessionOpening(host, workedId, (sessionId) => {
-    const params = new URLSearchParams(search)
+
+  // A session of another host opens on that host's copy of the request, so
+  // its console, input and actions go to the host that runs it.
+  function openSession(on: Host, key: string, sessionId: string) {
+    const to = paths.pullRequest(key, search, on)
+    const params =
+      on === host ? new URLSearchParams(search) : new URLSearchParams(to.slice(to.indexOf("?")))
     params.set("tab", "sessions")
     params.set("session", sessionId)
     setSearch(params, { replace: true })
-  })
+  }
+  const opened = useSessionOpening(openSession)
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -133,48 +152,89 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
           </PaneBody>
         </>
       ) : (
-        <>
-          <PullRequestHeader
-            pull={query.data}
-            host={host}
-            onSessionStarted={(seat, startedOn) => {
-              if (startedOn === host) opened.await(seat)
-              else setElsewhere(startedOn)
-              setTab("sessions")
-            }}
-          />
-          <PaneBody>
-            <PullRequestFacts pull={query.data} host={host} />
-            <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-              <TabsList>
-                <TabsTrigger value="description">Description</TabsTrigger>
-                <TabsTrigger value="sessions">Sessions</TabsTrigger>
-              </TabsList>
-              <TabsContent value="description" className="pt-3">
-                {query.data.body?.trim() ? (
-                  <Markdown>{query.data.body}</Markdown>
-                ) : (
-                  <EmptyState emphasis="quiet" title="No description" />
-                )}
-              </TabsContent>
-              <TabsContent value="sessions" className="flex flex-col gap-4 pt-3">
-                {opened.waiting ? (
-                  <p className="text-sm text-muted-foreground" role="status">
-                    Starting the session… its console opens here once the agent is up.
-                  </p>
-                ) : null}
-                {elsewhere ? (
-                  <p className="text-sm text-muted-foreground" role="status">
-                    The session started on host {elsewhere}. Open the request there to see it.
-                  </p>
-                ) : null}
-                <PullRequestSessions pull={query.data} host={host} onSelect={selectSession} />
-              </TabsContent>
-            </Tabs>
-          </PaneBody>
-        </>
+        <PullRequestBody
+          pull={query.data}
+          host={host}
+          tab={tab}
+          onTab={setTab}
+          waiting={opened.waiting}
+          onSessionStarted={(seat, startedOn, started) => {
+            opened.await(seat, startedOn, started)
+            setTab("sessions")
+          }}
+          onSelect={(on, sessionId) => openSession(on.host, pullRequestKey(on), sessionId)}
+        />
       )}
     </PanelSheet>
+  )
+}
+
+/**
+ * The request with the work of every host on it: each host that has its
+ * repository reads it by that host's own id (`useRequestCopies`), and the
+ * header, the facts and the sessions are of all of them.
+ */
+function PullRequestBody({
+  pull,
+  host,
+  tab,
+  onTab,
+  waiting,
+  onSessionStarted,
+  onSelect,
+}: {
+  pull: PullRequestDto
+  host: Host
+  tab: Tab
+  onTab: (tab: Tab) => void
+  waiting: boolean
+  onSessionStarted: (seat: Seat, startedOn: Host, started: PullRequestDto) => void
+  onSelect: (on: HostRow<PullRequestDto>, sessionId: string) => void
+}) {
+  const { copies, settled, errors, refetch } = useRequestCopies(pull, host)
+  return (
+    <>
+      <PullRequestHeader
+        pull={pull}
+        host={host}
+        copies={copies}
+        settled={settled}
+        onSessionStarted={onSessionStarted}
+      />
+      <PaneBody>
+        {errors.length > 0 ? (
+          <HostListErrors
+            what="the pull request"
+            errors={errors}
+            hostCount={copies.length + errors.length}
+            hasRows
+            onRetry={refetch}
+          />
+        ) : null}
+        <PullRequestFacts pull={pull} host={host} copies={copies} />
+        <Tabs value={tab} onValueChange={(value) => onTab(value as Tab)}>
+          <TabsList>
+            <TabsTrigger value="description">Description</TabsTrigger>
+            <TabsTrigger value="sessions">Sessions</TabsTrigger>
+          </TabsList>
+          <TabsContent value="description" className="pt-3">
+            {pull.body?.trim() ? (
+              <Markdown>{pull.body}</Markdown>
+            ) : (
+              <EmptyState emphasis="quiet" title="No description" />
+            )}
+          </TabsContent>
+          <TabsContent value="sessions" className="flex flex-col gap-4 pt-3">
+            {waiting ? (
+              <p className="text-sm text-muted-foreground" role="status">
+                Starting the session… its console opens here once the agent is up.
+              </p>
+            ) : null}
+            <PullRequestSessions copies={copies} onSelect={onSelect} />
+          </TabsContent>
+        </Tabs>
+      </PaneBody>
+    </>
   )
 }
 
@@ -185,52 +245,56 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
  * first one live besides them is handed to `open` — a new session, or the
  * last one resumed. The seat kept apart is what stops a review that resumes
  * mid-wait from being handed over in place of a keeper, and the reverse.
- * The list follows `session_created` on its own; the interval is what holds
- * while the stream is down.
+ * The sessions are read on the host the work started on, by the id that
+ * host gave the request. The list follows `session_created` on its own; the
+ * interval is what holds while the stream is down.
  */
-function useSessionOpening(
-  host: Host,
-  pullRequestId: string | null,
-  open: (sessionId: string) => void,
-) {
-  const [before, setBefore] = useState<string[] | null>(null)
+function useSessionOpening(open: (host: Host, key: string, sessionId: string) => void) {
+  const client = useQueryClient()
+  const [asked, setAsked] = useState<{
+    host: Host
+    pull: PullRequestDto
+    seat: Seat
+    before: string[]
+  } | null>(null)
   // Taken the moment a session is handed over, ahead of any render: a later
   // pass of the effect, on a list read again meanwhile, must not hand the
   // same session over a second time and pull the panel back into it.
   const pending = useRef(false)
-  const seat = useRef<Seat | null>(null)
   const reviews = useQuery({
-    ...sessionsQueryOptions(host, { pull_request: pullRequestId ?? "" }),
-    enabled: pullRequestId !== null,
-    refetchInterval: before ? 2000 : false,
+    ...sessionsQueryOptions(asked?.host ?? LOCAL_HOST, { pull_request: asked?.pull.id ?? "" }),
+    enabled: asked?.pull.id != null,
+    refetchInterval: asked ? 2000 : false,
   })
   // A review or a keeper comes up as a new session, or as the last one
   // resumed on the same pin: either way it is a session live now, on the
   // seat asked for, that was not at the ask.
-  const live = (reviews.data ?? [])
-    .filter((session) => isLiveStatus(session.status) && session.seat === seat.current)
-    .map((session) => session.id)
-  const ids = live.join(" ")
+  const ids = asked ? liveOn(reviews.data, asked.seat).join(" ") : ""
   useEffect(() => {
-    if (!before || !pending.current) return
-    const fresh = ids.split(" ").find((each) => each && !before.includes(each))
+    if (!asked || !pending.current) return
+    const fresh = ids.split(" ").find((each) => each && !asked.before.includes(each))
     if (!fresh) return
     pending.current = false
-    setBefore(null)
-    open(fresh)
-  }, [before, ids, open])
+    setAsked(null)
+    open(asked.host, pullRequestKey(asked.pull), fresh)
+  }, [asked, ids, open])
   return {
-    waiting: before !== null,
-    await: (expected: Seat) => {
-      seat.current = expected
+    waiting: asked !== null,
+    await: (seat: Seat, host: Host, pull: PullRequestDto) => {
       pending.current = true
-      setBefore(
-        (reviews.data ?? [])
-          .filter((session) => isLiveStatus(session.status) && session.seat === expected)
-          .map((session) => session.id),
-      )
+      const known = pull.id
+        ? client.getQueryData(sessionsQueryOptions(host, { pull_request: pull.id }).queryKey)
+        : undefined
+      setAsked({ host, pull, seat, before: liveOn(known, seat) })
     },
   }
+}
+
+/** The ids of the live sessions on `seat`. */
+function liveOn(sessions: SessionDto[] | undefined, seat: Seat): string[] {
+  return (sessions ?? [])
+    .filter((session) => isLiveStatus(session.status) && session.seat === seat)
+    .map((session) => session.id)
 }
 
 /**
@@ -239,19 +303,27 @@ function useSessionOpening(
  * while one is asked, and Ariadne babysitting while a keeper session is.
  *
  * Every review and every babysit start manually (029, 032), regardless of
- * authorship or review assignment. A task's existing keeper takes care of
- * its request, so that request offers no second keeper here.
+ * authorship or review assignment. The work may be on any host that has the
+ * repository, so each action goes to the host that holds it: a request one
+ * host reviews offers no second review, and one a host or a task keeps
+ * offers no second keeper.
  */
 function PullRequestHeader({
   pull,
   host,
+  copies,
+  settled,
   onSessionStarted,
 }: {
   pull: PullRequestDto
   /** The host the request is on. */
   host: Host
+  /** The request as each host reads it, `host`'s first. */
+  copies: HostRow<PullRequestDto>[]
+  /** Every host that has the repository answered: no host left to hold the work unseen. */
+  settled: boolean
   /** A review or a babysit was asked for in its dialog, which closed itself. */
-  onSessionStarted: (seat: Seat, startedOn: Host) => void
+  onSessionStarted: (seat: Seat, startedOn: Host, started: PullRequestDto) => void
 }) {
   const showHost = usePanelShowsHost()
   const ask = useAskReview()
@@ -262,11 +334,29 @@ function PullRequestHeader({
   const [babysitting, setBabysitting] = useState(false)
   const checks = CHECKS[pull.checks]
   const review = REVIEW[pull.review_decision]
-  const babysittable = pull.origin_task_id == null
+  const reviewer = copies.find((copy) => copy.review_asked)
+  const taskKeeper = copies.find((copy) => copy.origin_task_id != null)
+  const babysitter = copies.find((copy) => copy.babysit_asked)
+  const keeper = taskKeeper ?? babysitter
+  // A start waits for every host: one not read yet may already hold the work.
+  const canStartReview = settled && !reviewer
+  const canStartBabysit = settled && !keeper
+  // A host that reports the work closes a dialog opened before it answered.
+  useEffect(() => {
+    if (!canStartReview) setStarting(false)
+  }, [canStartReview])
+  useEffect(() => {
+    if (!canStartBabysit) setBabysitting(false)
+  }, [canStartBabysit])
   // The review and the babysit are goals of their own, on the Goals board
-  // like any other (029, 032).
-  const reviewGoal = pull.operations?.find((operation) => operation.operation === "review")
-  const babysitGoal = pull.operations?.find((operation) => operation.operation === "babysit")
+  // like any other (029, 032), each on the host that runs it.
+  const reviewGoal = operationOf(copies, "review")
+  const babysitGoal = operationOf(copies, "babysit")
+  const target = (copy: HostRow<PullRequestDto>) => ({
+    host: copy.host,
+    repository_id: copy.repository_id,
+    number: copy.number,
+  })
   return (
     <>
       <PanelHeader
@@ -274,15 +364,13 @@ function PullRequestHeader({
         actions={
           <div className="flex items-center gap-2">
             {pull.state === "open" ? (
-              pull.review_asked ? (
+              reviewer ? (
                 <>
                   <Button
                     variant="outline"
                     size="sm"
                     pending={round.isPending}
-                    onClick={() =>
-                      round.mutate({ host, repository_id: pull.repository_id, number: pull.number })
-                    }
+                    onClick={() => round.mutate(target(reviewer))}
                   >
                     Review again
                   </Button>
@@ -290,62 +378,42 @@ function PullRequestHeader({
                     variant="outline"
                     size="sm"
                     pending={ask.isPending}
-                    onClick={() =>
-                      ask.mutate({
-                        host,
-                        repository_id: pull.repository_id,
-                        number: pull.number,
-                        asked: false,
-                      })
-                    }
+                    onClick={() => ask.mutate({ ...target(reviewer), asked: false })}
                   >
                     <BotOffIcon />
                     Stop review
                   </Button>
                 </>
               ) : (
-                <Button size="sm" onClick={() => setStarting(true)}>
+                <Button size="sm" disabled={!settled} onClick={() => setStarting(true)}>
                   <BotIcon />
                   Start review
                 </Button>
               )
             ) : null}
-            {(pull.babysit_asked || pull.origin_task_id) && pull.state === "open" ? (
+            {keeper && pull.state === "open" ? (
               <Button
                 variant="outline"
                 size="sm"
                 pending={keeperTurn.isPending}
-                onClick={() =>
-                  keeperTurn.mutate({
-                    host,
-                    repository_id: pull.repository_id,
-                    number: pull.number,
-                  })
-                }
+                onClick={() => keeperTurn.mutate(target(keeper))}
               >
                 Keeper turn
               </Button>
             ) : null}
-            {babysittable && pull.state === "open" ? (
-              pull.babysit_asked ? (
+            {!taskKeeper && pull.state === "open" ? (
+              babysitter ? (
                 <Button
                   variant="outline"
                   size="sm"
                   pending={babysit.isPending}
-                  onClick={() =>
-                    babysit.mutate({
-                      host,
-                      repository_id: pull.repository_id,
-                      number: pull.number,
-                      asked: false,
-                    })
-                  }
+                  onClick={() => babysit.mutate({ ...target(babysitter), asked: false })}
                 >
                   <BotOffIcon />
                   Stop babysit
                 </Button>
               ) : (
-                <Button size="sm" onClick={() => setBabysitting(true)}>
+                <Button size="sm" disabled={!settled} onClick={() => setBabysitting(true)}>
                   <BotIcon />
                   Start babysit
                 </Button>
@@ -366,19 +434,31 @@ function PullRequestHeader({
               <StatusBadge label={checks.label} tone={checks.tone} dot={checks.dot} />
             ) : null}
             {review ? <StatusBadge label={review.label} tone={review.tone} /> : null}
-            {pull.review_asked ? (
-              <StatusBadge label={ARIADNE_REVIEWING.label} tone={ARIADNE_REVIEWING.tone} />
+            {reviewer ? (
+              <span className="inline-flex items-center gap-1" data-slot="ariadne-work">
+                <StatusBadge label={ARIADNE_REVIEWING.label} tone={ARIADNE_REVIEWING.tone} />
+                {showHost ? <HostLabel host={reviewer.host} /> : null}
+              </span>
             ) : null}
             {reviewGoal ? (
-              <Link className="text-xs underline" to={paths.goal(reviewGoal.goal_id, host)}>
+              <Link
+                className="text-xs underline"
+                to={paths.goal(reviewGoal.goal_id, reviewGoal.host)}
+              >
                 Review goal
               </Link>
             ) : null}
-            {pull.babysit_asked ? (
-              <StatusBadge label={ARIADNE_BABYSITTING.label} tone={ARIADNE_BABYSITTING.tone} />
+            {babysitter ? (
+              <span className="inline-flex items-center gap-1" data-slot="ariadne-work">
+                <StatusBadge label={ARIADNE_BABYSITTING.label} tone={ARIADNE_BABYSITTING.tone} />
+                {showHost ? <HostLabel host={babysitter.host} /> : null}
+              </span>
             ) : null}
             {babysitGoal ? (
-              <Link className="text-xs underline" to={paths.goal(babysitGoal.goal_id, host)}>
+              <Link
+                className="text-xs underline"
+                to={paths.goal(babysitGoal.goal_id, babysitGoal.host)}
+              >
                 Babysit goal
               </Link>
             ) : null}
@@ -398,16 +478,18 @@ function PullRequestHeader({
       <StartReviewDialog
         pull={pull}
         host={host}
-        open={starting}
+        open={starting && canStartReview}
+        canStart={canStartReview}
         onOpenChange={setStarting}
-        onStarted={(startedOn) => onSessionStarted("reviewer", startedOn)}
+        onStarted={(startedOn, started) => onSessionStarted("reviewer", startedOn, started)}
       />
       <StartBabysitDialog
         pull={pull}
         host={host}
-        open={babysitting}
+        open={babysitting && canStartBabysit}
+        canStart={canStartBabysit}
         onOpenChange={setBabysitting}
-        onStarted={(startedOn) => onSessionStarted("keeper", startedOn)}
+        onStarted={(startedOn, started) => onSessionStarted("keeper", startedOn, started)}
       />
       {keeperTurn.error ? (
         <ErrorState title="Could not start a keeper turn" error={keeperTurn.error} />
@@ -431,10 +513,32 @@ function PullRequestHeader({
   )
 }
 
-function PullRequestFacts({ pull, host }: { pull: PullRequestDto; host: Host }) {
+/** The goal of the first host that runs `operation` on the request, with that host. */
+function operationOf(
+  copies: HostRow<PullRequestDto>[],
+  operation: "review" | "babysit",
+): { goal_id: string; host: Host } | undefined {
+  for (const copy of copies) {
+    const found = copy.operations?.find((each) => each.operation === operation)
+    if (found) return { goal_id: found.goal_id, host: copy.host }
+  }
+  return undefined
+}
+
+function PullRequestFacts({
+  pull,
+  host,
+  copies,
+}: {
+  pull: PullRequestDto
+  host: Host
+  copies: HostRow<PullRequestDto>[]
+}) {
+  const showHost = usePanelShowsHost()
   const repositories = useQuery(repositoriesQueryOptions(host))
   const repository = repositories.data?.find((each) => each.id === pull.repository_id)
   const failed = pull.failed_checks ?? []
+  const taskKeeper = copies.find((copy) => copy.origin_task_id != null)
   return (
     <FactList>
       <Fact label="Request">
@@ -459,10 +563,11 @@ function PullRequestFacts({ pull, host }: { pull: PullRequestDto; host: Host }) 
       </Fact>
       <Fact label="Unanswered comments">{pull.unanswered_comments}</Fact>
       <Fact label="Base">{pull.behind_base ? "Ahead of the head" : "Level with the head"}</Fact>
-      <Fact label="Ariadne">{ariadneWork(pull)}</Fact>
-      {pull.origin_task_id ? (
+      <Fact label="Ariadne">{ariadneWork(copies, showHost)}</Fact>
+      {taskKeeper?.origin_task_id ? (
         <Fact label="Kept by">
-          <TaskLink taskId={pull.origin_task_id} host={host} />
+          <TaskLink taskId={taskKeeper.origin_task_id} host={taskKeeper.host} />
+          {showHost ? <HostLabel host={taskKeeper.host} className="ml-1.5" /> : null}
         </Fact>
       ) : null}
       {failed.length > 0 ? (
@@ -492,11 +597,26 @@ function PullRequestFacts({ pull, host }: { pull: PullRequestDto; host: Host }) 
   )
 }
 
-/** What Ariadne does with the request. */
-function ariadneWork(pull: PullRequestDto): string {
-  if (pull.origin_task_id) return "Keeps it for a task"
-  if (pull.id) return "Reviews it"
-  return "Works on nothing here"
+/**
+ * What Ariadne does with the request, on each host that works on it, each
+ * host named by rule 74.
+ */
+function ariadneWork(copies: HostRow<PullRequestDto>[], showHost: boolean): ReactNode {
+  const work = copies.flatMap((copy) => {
+    const what = copy.origin_task_id ? "Keeps it for a task" : copy.id ? "Reviews it" : null
+    return what ? [{ what, host: copy.host }] : []
+  })
+  if (work.length === 0) return "Works on nothing here"
+  return (
+    <span className="flex flex-col gap-1">
+      {work.map(({ what, host }) => (
+        <span key={host} className="flex items-center gap-1.5" data-slot="ariadne-work">
+          <span>{what}</span>
+          {showHost ? <HostLabel host={host} /> : null}
+        </span>
+      ))}
+    </span>
+  )
 }
 
 /** The task that opened the request, whose author keeps it, as its panel. */
@@ -510,40 +630,51 @@ function TaskLink({ taskId, host }: { taskId: string; host: Host }) {
 }
 
 /**
- * The sessions that work on the request: the review and the keeper
- * sessions Ariadne runs on it (029, 032), and the author of the task that
- * keeps it.
+ * The sessions that work on the request, on every host that has it: the
+ * review and the keeper sessions Ariadne runs on it (029, 032), and the
+ * author of the task that keeps it.
  */
 function PullRequestSessions({
-  pull,
-  host,
+  copies,
   onSelect,
 }: {
-  pull: PullRequestDto
-  host: Host
-  onSelect: (sessionId: string) => void
+  copies: HostRow<PullRequestDto>[]
+  onSelect: (on: HostRow<PullRequestDto>, sessionId: string) => void
 }) {
+  const showHost = usePanelShowsHost()
+  const worked = copies.filter((copy) => copy.id)
+  const kept = copies.filter((copy) => copy.origin_task_id)
+  const select = (session: SessionDto, at: Host) => {
+    const on = copies.find((copy) => copy.host === at)
+    if (on) onSelect(on, session.id)
+  }
   return (
     <>
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">Ariadne sessions</h3>
-        {pull.id ? (
-          <SessionsList
-            host={host}
-            filters={{ pull_request: pull.id }}
-            onSelect={(session) => onSelect(session.id)}
+        {worked.length > 0 ? (
+          <HostSessionsList
+            lists={worked.map((copy) => ({
+              host: copy.host,
+              filters: { pull_request: copy.id as string },
+            }))}
+            showHost={showHost}
+            onSelect={select}
           />
         ) : (
           <EmptyState emphasis="quiet" title="No Ariadne session on this request yet" />
         )}
       </section>
-      {pull.origin_task_id ? (
+      {kept.length > 0 ? (
         <section className="flex flex-col gap-2">
           <h3 className="text-sm font-medium">Task workflow</h3>
-          <SessionsList
-            host={host}
-            filters={{ task: pull.origin_task_id, seat: "agent" }}
-            onSelect={(session) => onSelect(session.id)}
+          <HostSessionsList
+            lists={kept.map((copy) => ({
+              host: copy.host,
+              filters: { task: copy.origin_task_id as string, seat: "agent" as const },
+            }))}
+            showHost={showHost}
+            onSelect={select}
           />
         </section>
       ) : null}
