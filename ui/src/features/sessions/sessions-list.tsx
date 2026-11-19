@@ -31,7 +31,7 @@ import { useSearchParams } from "react-router-dom"
 import type { Host, SessionDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, hostTitle } from "@/components/error-state"
 import { ScrollableTable } from "@/components/scroll-edge"
 import { TokenHalves } from "@/components/token-figure"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -115,7 +115,7 @@ export function SessionsList({
     <div className="space-y-4">
       {sessions.isError ? (
         <ErrorState
-          title="Could not load sessions"
+          title={hostTitle("Could not load sessions", host, 1)}
           error={sessions.error}
           onRetry={() => void sessions.refetch()}
         />

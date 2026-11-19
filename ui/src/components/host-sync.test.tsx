@@ -60,3 +60,30 @@ describe.each(SCREENS)("the %s screen", (name, Screen) => {
     expect(screen.queryByRole("list", { name: "Checkouts" })).toBeNull()
   })
 })
+
+it("reads a pending sync of a host the app cannot reach as waiting for host", async () => {
+  const pending = {
+    state: "pending" as const,
+    error: null,
+    missing_repositories: [],
+    skipped_permissions: 0,
+  }
+  stubHosts({ local: ANSWERS }, [
+    LOCAL,
+    { ...BOX, sync: pending },
+    {
+      ...BOX,
+      name: "far",
+      kind: "ssh",
+      endpoint: null,
+      status: "down",
+      error: "no forward",
+      sync: pending,
+    },
+  ])
+  renderOnRouter(SkillsPage)
+
+  expect((await screen.findByTestId("sync-box")).textContent).toContain("pending")
+  expect(screen.getByTestId("sync-far").textContent).toContain("waiting for host")
+  expect(screen.getByTestId("sync-far").textContent).not.toContain("pending")
+})
