@@ -43,6 +43,7 @@ export function StartReviewDialog({
   pull,
   host,
   open,
+  canStart = true,
   onOpenChange,
   onStarted,
 }: {
@@ -50,9 +51,11 @@ export function StartReviewDialog({
   /** The host the request is listed on: where the work starts unless another is picked. */
   host: Host
   open: boolean
+  /** No host holds the work yet, so a start adds no second session. */
+  canStart?: boolean
   onOpenChange: (open: boolean) => void
-  /** The review was asked for: the dialog has closed itself. */
-  onStarted?: (host: Host) => void
+  /** The review was asked for on `host`, which answered with the request: the dialog has closed itself. */
+  onStarted?: (host: Host, started: PullRequestDto) => void
 }) {
   const targets = useReviewTargets(pull, host, open)
   const [chosen, setChosen] = useState<Host | null>(null)
@@ -83,6 +86,7 @@ export function StartReviewDialog({
   }
 
   function start() {
+    if (!canStart) return
     ask.mutate(
       {
         host: target.host,
@@ -94,9 +98,9 @@ export function StartReviewDialog({
         skills: picked,
       },
       {
-        onSuccess: () => {
+        onSuccess: (started) => {
           onOpenChange(false)
-          onStarted?.(target.host)
+          onStarted?.(target.host, started)
         },
       },
     )
@@ -159,7 +163,7 @@ export function StartReviewDialog({
         </div>
         <DialogFooter>
           <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-          <Button disabled={!pin.model} pending={ask.isPending} onClick={start}>
+          <Button disabled={!pin.model || !canStart} pending={ask.isPending} onClick={start}>
             <BotIcon />
             Start review
           </Button>

@@ -53,7 +53,7 @@ export function useConnection(): Connection {
 }
 
 /** Seconds since `startedAt`, or null if the daemon sent a date we cannot read. */
-function uptimeSecs(startedAt: string, now: number): number | null {
+export function uptimeSecs(startedAt: string, now: number): number | null {
   const started = Date.parse(startedAt)
   if (Number.isNaN(started)) return null
   return Math.max(0, Math.round((now - started) / 1000))

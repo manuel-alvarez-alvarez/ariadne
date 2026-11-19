@@ -5,14 +5,15 @@
  * settings daemon's `GET /v1/hosts`.
  */
 
-import { act, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, beforeEach, expect, it } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useHosts } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { useHostFilter } from "@/hooks/use-host-filter"
 import { useSettingsStore } from "@/stores/settings"
+import { useHostStreamStore, useStreamStore } from "@/stores/stream"
 import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, LOCAL_ORIGIN, stubHosts } from "@/test/hosts"
 import { HostPicker } from "./host-picker"
@@ -54,9 +55,25 @@ it("lists every host with its name, kind, status, endpoint and error, live throu
   const { queryClient } = renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
 
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
-  expect(hostRow("local")).toEqual(["local", "local", "ready", "http://127.0.0.1:7676", "-", ""])
-  expect(hostRow("box")).toEqual(["box", "direct", "ready", "http://box.test:7676", "-", ""])
-  expect(hostRow("far")).toEqual(["far", "ssh", "down", "-", "ssh forward not started", ""])
+  expect(hostRow("local")).toEqual([
+    "local",
+    "local",
+    "ready",
+    "http://127.0.0.1:7676",
+    "-",
+    "-",
+    "",
+  ])
+  expect(hostRow("box")).toEqual(["box", "direct", "ready", "http://box.test:7676", "-", "-", ""])
+  expect(hostRow("far")).toEqual([
+    "far",
+    "ssh",
+    "not reachable",
+    "-",
+    "ssh forward not started",
+    "-",
+    "",
+  ])
   expect(screen.getByText(/tables of the/).textContent).toContain("config.toml")
 
   // The daemon's own row moves first, as it does in production — the event
@@ -68,7 +85,7 @@ it("lists every host with its name, kind, status, endpoint and error, live throu
   })
 
   await waitFor(() =>
-    expect(hostRow("far")).toEqual(["far", "ssh", "ready", "http://127.0.0.1:7701", "-", ""]),
+    expect(hostRow("far")).toEqual(["far", "ssh", "ready", "http://127.0.0.1:7701", "-", "-", ""]),
   )
 })
 
@@ -161,6 +178,121 @@ it("reads a saved pick the daemon no longer lists as All hosts", async () => {
 
   await waitFor(() => expect(screen.getByTestId("selected").textContent).toBe("local,box"))
   expect(screen.getByRole("button", { name: "Host" }).textContent).toBe("All hosts")
+})
+
+it("shows the reach of a socket-path host and its reason in the words of the picker", async () => {
+  stubHosts({}, [LOCAL, { ...FAR, status: "ready", endpoint: "/run/ariadned.sock", error: null }])
+  renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+
+  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3))
+  expect(hostRow("far").slice(2, 5)).toEqual([
+    "not reachable",
+    "/run/ariadned.sock",
+    "/run/ariadned.sock is not an http:// or https:// endpoint",
+  ])
+})
+
+it("shows the daemon version and uptime of each reachable host, from its stream's heartbeat", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] })
+  vi.setSystemTime(new Date("2026-01-01T01:10:00Z"))
+  stubHosts({}, [LOCAL, BOX, FAR])
+  try {
+    renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
+    act(() => {
+      useStreamStore
+        .getState()
+        .markHeartbeat({ version: "0.9.0", started_at: "2026-01-01T00:00:00Z" })
+      useStreamStore.getState().setStatus("open")
+      const hostStreams = useHostStreamStore.getState()
+      hostStreams.markHeartbeat("box", { version: "0.8.1", started_at: "2026-01-01T00:10:00Z" })
+      hostStreams.markOpen("box")
+      // A stale beat of a host the app cannot reach says nothing.
+      hostStreams.markHeartbeat("far", { version: "0.7.0", started_at: "2026-01-01T00:00:00Z" })
+    })
+
+    await waitFor(() => expect(hostRow("box")[5]).toBe("0.8.1 · up 1h"))
+    expect(hostRow("local")[5]).toBe("0.9.0 · up 1h")
+    expect(hostRow("far")[5]).toBe("-")
+  } finally {
+    vi.useRealTimers()
+    useHostStreamStore.setState({ streams: {} })
+    useStreamStore.getState().reset()
+  }
+})
+
+it("shows the app's stream state of a named host's row while the stream is not connected", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, BOX])
+  renderScreen(<HostPicker />)
+  await user.click(await screen.findByRole("button", { name: "Host" }))
+  const row = async () => (await screen.findAllByRole("menuitemradio"))[2]?.textContent
+  expect(await row()).toBe("boxready")
+
+  act(() => useHostStreamStore.getState().setStatus("box", "reconnecting", "stream dropped"))
+  await waitFor(async () => expect(await row()).toBe("boxreadystream reconnecting"))
+
+  act(() => useHostStreamStore.getState().markOpen("box"))
+  await waitFor(async () => expect(await row()).toBe("boxready"))
+  useHostStreamStore.setState({ streams: {} })
+})
+
+it("shows a pending or failed sync of a named host's row, and the error of a failed one", async () => {
+  const user = userEvent.setup()
+  const sync = (state: "pending" | "failed", error: string | null) => ({
+    state,
+    error,
+    missing_repositories: [],
+    skipped_permissions: 0,
+  })
+  stubHosts({}, [
+    LOCAL,
+    { ...BOX, sync: sync("pending", null) },
+    {
+      ...BOX,
+      name: "box2",
+      endpoint: "http://box2.test:7676",
+      sync: sync("failed", "connection reset"),
+    },
+    { ...FAR, sync: sync("pending", null) },
+  ])
+  renderScreen(<HostPicker />)
+  await user.click(await screen.findByRole("button", { name: "Host" }))
+  const options = await screen.findAllByRole("menuitemradio")
+
+  expect(options.map((option) => option.textContent)).toEqual([
+    "All hosts",
+    "local",
+    "boxreadysync pending",
+    "box2readysync failed: connection reset",
+    "farnot reachablessh forward not startedsync waiting for host",
+  ])
+})
+
+it("marks the trigger of All hosts while a listed host is not reachable or its sync failed", async () => {
+  const mark = () => screen.queryByRole("img", { name: /not reachable or failed to sync/ })
+  stubHosts({}, [LOCAL, BOX])
+  renderScreen(<HostPicker />)
+  await screen.findByRole("button", { name: "Host" })
+  expect(mark()).toBeNull()
+  cleanup()
+  forgetHosts()
+
+  stubHosts({}, [LOCAL, BOX, FAR])
+  renderScreen(<HostPicker />)
+  expect(await screen.findByRole("img", { name: /not reachable or failed to sync/ })).toBeTruthy()
+  cleanup()
+  forgetHosts()
+
+  stubHosts({}, [
+    LOCAL,
+    {
+      ...BOX,
+      sync: { state: "failed", error: "boom", missing_repositories: [], skipped_permissions: 0 },
+    },
+  ])
+  renderScreen(<HostPicker />)
+  expect(await screen.findByRole("img", { name: /not reachable or failed to sync/ })).toBeTruthy()
 })
 
 const RECONNECT = (name: string) => `/v1/hosts/${name}/reconnect`

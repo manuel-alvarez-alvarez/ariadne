@@ -172,7 +172,8 @@ export function CreateGoalDialog({
 
   // The header's pick is only known once the settings daemon has listed the
   // hosts, which can be after the dialog opened: follow it until the user
-  // picks a host here. A goal filled from an issue is on the issue's host.
+  // picks a host here. A goal filled from an issue is on the host
+  // the issues tab gives it.
   useEffect(() => {
     if (!open || initial || pickedHost === null || form.getFieldState("host").isDirty) return
     form.setValue("host", pickedHost, { shouldDirty: false })

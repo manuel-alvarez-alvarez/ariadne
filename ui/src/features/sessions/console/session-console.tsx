@@ -52,6 +52,7 @@ import {
   api,
   type Host,
   hostBaseUrl,
+  hostUnreachable,
   qk,
   type SessionDto,
   type SessionStatus,
@@ -230,6 +231,7 @@ function ConsolePane({
   // Subscribed only: the shell reads the hosts, and a console must not fetch them.
   useQuery({ queryKey: qk.hosts.list(), queryFn: skipToken })
   const baseUrl = hostBaseUrl(host)
+  const unreachable = hostUnreachable(host)
   const key = consoleViewKey(host, baseUrl ?? "", sessionId)
   const keyRef = useRef(key)
   keyRef.current = key
@@ -383,6 +385,7 @@ function ConsolePane({
     if (baseUrl === null) {
       // A host with no address has no stream to open; its own reason is what a send says.
       setStreamStatus("reconnecting")
+      setStreamError(unreachable)
       return
     }
     const stream = new ConsoleStream(consoleStreamUrl(baseUrl, sessionId), {
@@ -403,7 +406,7 @@ function ConsolePane({
       reads.current += 1
       stream.stop()
     }
-  }, [host, baseUrl, sessionId, resetHistory, readRequests])
+  }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus request is read once, on arrival
   useEffect(() => {

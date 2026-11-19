@@ -88,6 +88,14 @@ export function hostBaseUrl(host: Host): string | null {
   return remotes.get(host)?.url ?? null
 }
 
+/** Why a named host cannot be reached; null for one that can, and for `local`. */
+export function hostUnreachable(host: Host): string | null {
+  if (host === LOCAL_HOST) return null
+  const row = remotes.get(host)
+  if (row === undefined) return `unknown host ${host}`
+  return row.url === null ? (row.error ?? "host is not reachable") : null
+}
+
 /**
  * The typed client of one host. Re-read it per call — it is swapped when the
  * host's address changes.
