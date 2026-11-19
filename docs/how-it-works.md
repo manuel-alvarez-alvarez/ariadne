@@ -142,3 +142,17 @@ On a narrow window, use Return to queue. Task, session, goal, and pull request d
 Close the detail to return to the preserved queue.
 If an item disappears, the workspace explains that it resolved or became unavailable.
 Choose another item to continue. Host errors remain visible beside available items.
+## Reuse a desktop workload view
+
+Use Goals to search goal titles and select a repository path and status.
+The URL carries this scope. Board opens initially. Select Compact to scan
+aligned task status, workflow step, attention and host columns under each goal.
+Expand or collapse goals in either presentation. Goals without tasks remain visible.
+Host loading and connection errors retain their existing messages.
+
+Enter a local view name and select Save view to keep the scope and presentation.
+Select a saved local view to reopen it. Change its name and select Rename view,
+or select Delete view to remove it. Views stay in this browser's local storage.
+The host picker continues to select hosts independently.
+Explicit URL scope takes precedence over the remembered status filter.
+See the [desktop specification](../specs/015-desktop-app.md) for the behavior contract.

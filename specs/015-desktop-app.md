@@ -1119,10 +1119,15 @@ Out: the daemon endpoints themselves (012).
     the guide's secondary action. The goal tabs and the header's New task
     action stay as they were.
 
-49. The goals screen shows only the board: one swimlane per goal, with no
-    List view, no Board/List toggle and no repository filter. A title-only
-    search combines with the status filters to narrow the board, and an empty
-    search result says that nothing matches the search.
+49. Goal views keep title search (`q`), repository path (`repo`), and
+    presentation (`presentation=board|compact`) in the URL beside status.
+    View controls preserve detail parameters. Explicit scope parameters suppress
+    remembered status restoration. Board remains the initial presentation.
+    Compact uses the same filtered goals, visible tasks, attention, host errors,
+    and expansion state. Its fixed columns align goal, task, status, step, attention and host.
+    One focusable scroll area serves all lanes. Empty lanes have no table. Planning goals remain visible without tasks.
+    Named local views save scope and presentation in feature-local browser storage.
+    Users can save, reopen, rename and delete them. They do not change host selection. Repository paths match across hosts.
 
 50. The request panel offers **Review again** beside **Stop review** while review is asked (029 rule 8).
     The button calls the round route and shows the daemon's refusal text.
@@ -2460,10 +2465,17 @@ Out: the daemon endpoints themselves (012).
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
   `::keeps the cached task and its empty messages under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
+- URL controls preserve detail selection (`goals-list-page.test.tsx::keeps detail selection while changing URL-backed workload controls`).
+- Local views support their complete lifecycle (`goals-list-page.test.tsx::saves, reopens, renames and deletes a local compact scope`).
+- Compact retains planning goals (`goals-list-page.test.tsx::shows planning goals without tasks in compact presentation`).
+- Explicit scope overrides remembered status (`ui/src/features/goals/goals-list-page.test.tsx::honors explicit scope %s over remembered status`).
+- Expansion survives presentation changes (`ui/src/features/goals/goals-list-page.test.tsx::keeps goal expansion when switching presentations`).
+- Compact aligns shared columns in a focusable scrollport (`ui/src/features/goals/goal-swimlanes.test.tsx::aligns compact goals and tasks on fixed shared columns in one focusable scrollport`).
+- Compact distinguishes loading and unavailable tasks (`ui/src/features/goals/goal-swimlanes.test.tsx::omits compact tables while tasks load`, `::keeps unavailable task hosts distinct from empty compact lanes`).
 - The goals screen narrows the board by title, names only the search when
-  nothing matches, and has no Board/List toggle or repository filter
+  nothing matches, and offers Board, Compact and repository scope
   (`ui/src/features/goals/goals-list-page.test.tsx::narrows the board by title, and names only the search when nothing matches`,
-  `::has no Board/List toggle and no repository filter`); the search matches
+  `::starts on Board and offers Compact and repository scope`); the search matches
   the title alone, never a repository path, and combines with the status
   filters
   (`::matches the title alone, not a repository path`,
