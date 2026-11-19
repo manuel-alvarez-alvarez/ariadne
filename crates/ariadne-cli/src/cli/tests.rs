@@ -165,6 +165,7 @@ fn an_issue_can_supply_the_goal_title_and_repository() {
 /// is global, so it reaches them whether or not anyone meant it to.
 const LEAVES: &[(&str, bool)] = &[
     ("host ls", true),
+    ("host reconnect", true),
     ("agent ls", true),
     ("agent refresh", true),
     ("agent update", true),

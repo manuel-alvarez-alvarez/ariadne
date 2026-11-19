@@ -839,6 +839,22 @@ fn host_candidates(hosts: &[Value]) -> Vec<CompletionCandidate> {
     names
 }
 
+/// What `host reconnect` takes: each named host, and `all`. Never `local`.
+pub(crate) fn reconnect_hosts() -> Vec<CompletionCandidate> {
+    reconnect_candidates(&fetch("/v1/hosts"))
+}
+
+fn reconnect_candidates(hosts: &[Value]) -> Vec<CompletionCandidate> {
+    let mut names = vec![CompletionCandidate::new("all")];
+    names.extend(
+        hosts
+            .iter()
+            .filter(|host| s(host, "name") != "local")
+            .map(|host| candidate(s(host, "name"), s(host, "status").into())),
+    );
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1051,6 +1067,15 @@ mod tests {
             );
         }
         assert!(current_shape(&[]), "a daemon that serves no models");
+    }
+
+    #[test]
+    fn reconnect_offers_the_named_hosts_and_all_but_not_local() {
+        let hosts = [
+            json!({"name": "local", "status": "ready"}),
+            json!({"name": "build", "status": "down"}),
+        ];
+        assert_eq!(offered(&reconnect_candidates(&hosts)), ["all", "build"]);
     }
 
     /// Ids are ULIDs, so the daemon's oldest-first list read backwards is

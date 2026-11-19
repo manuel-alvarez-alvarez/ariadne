@@ -434,11 +434,28 @@ same binary also serves (013).
     without `--host`, both use the daemon of `--home` or `--endpoint`.
 49. `query` accepts `--host NAME|all`. The local daemon serves it under
     `/v1/hosts/{host}` (spec 037, rule 20), so the CLI does not fan it out.
-50. `host ls` prints name, kind, status, endpoint and error. Completion of
+    A named host that is unknown or not ready ends with the usage exit code,
+    as for every command; the message names the configured hosts, or gives
+    the status. With `all`, `HOST` is the first column of the table, and each
+    warning of a host prints on stderr as `warning: <host>: <reason>`.
+50. `host ls` prints name, kind, status, endpoint, remote, sync (`in_sync`,
+    `pending` or `failed`), missing (repositories the host lacks), skipped
+    (learned permissions not pushed), error and sync_error. `--columns` selects
+    them, and `--format json` prints the host objects unchanged. Completion of
     `--host` reads the registry of the daemon that `--endpoint` on the command
     line names, and offers `local` and `all` when that daemon does not answer or
     lists only `local`. Completion of an ID reads the host that `--host NAME`
     names, and every ready host for `--host all`.
+51. `host reconnect NAME|all` posts `/v1/hosts/{name}/reconnect` to the local
+    daemon for the named host, or for each named host (every host but `local`)
+    with `all`. It polls `GET /v1/hosts` until each host is `ready` or `down`,
+    for at most `--timeout SECONDS` (default 30). It then prints one row per
+    host with the columns of `host ls`, or the hosts as JSON with
+    `--format json`. It exits 1 when a host is not `ready` at the end. `local`
+    is a usage error. An unknown name is a usage error that lists the
+    configured hosts. `all` with only `local` says that no named host is
+    configured. `--host` on it is a usage error. Completion offers the named
+    hosts and `all`.
 
 ## Known gap
 
@@ -794,11 +811,23 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `::json_keeps_the_form_of_one_host`).
 - A stream with `--host all` reaches stdout while it is open, rule 46
   (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
+- Rule 50 columns (`tests/hosts.rs::host_ls_shows_remote_and_sync_state_of_each_host`).
 - Rule 48a on `status` and `logs` of a named host
   (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)
   and of `local` with `--home`
   (`tests/hosts.rs::daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home`).
+- Rule 51 posts for one host, or for each named host, and prints its rows
+  (`tests/hosts.rs::reconnect_one_host_posts_for_it_and_prints_its_row`,
+  `::reconnect_all_posts_for_each_named_host_and_fails_while_one_is_down`);
+  JSON and the timeout
+  (`::reconnect_json_prints_the_hosts_and_a_slow_host_fails_after_the_timeout`);
+  the refusals
+  (`::reconnect_refuses_local_unknown_names_and_host_selection`,
+  `::reconnect_all_with_only_local_says_no_named_host_is_configured`);
+  completion (`complete.rs::tests::reconnect_offers_the_named_hosts_and_all_but_not_local`).
 - Rule 49 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
+  `tests/hosts.rs::query_on_an_unknown_or_unready_host_is_a_usage_error`,
+  `commands/query.rs::tests::host_all_puts_the_host_column_first`,
   `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
 
 ## Sources

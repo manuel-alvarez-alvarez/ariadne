@@ -833,7 +833,12 @@ the daemon cannot find or cannot use.
 
 Without `--host`, commands use the resolved daemon endpoint.
 
-Use `ariadne host ls` to list configured hosts and their status, endpoint, kind and error.
+Use `ariadne host ls` to list configured hosts. The columns are `name`, `kind`, `status`, `endpoint`, `remote`, `sync`, `missing`, `skipped`, `error` and `sync_error`.
+The `sync` column is `in_sync`, `pending` or `failed`. `missing` counts the repositories the host lacks. `skipped` counts the learned permissions not pushed. `remote` is the far address of an `ssh` host. `sync_error` is why the last push failed. `--columns` selects them, and `--format json` prints the host objects.
+Use `ariadne host reconnect NAME` to reconnect one named host, or `ariadne host reconnect all` for each named host.
+The command waits until each host is `ready` or `down`, up to `--timeout SECONDS` (default 30).
+It then prints one row per host, with the columns of `host ls`; `--format json` prints the hosts.
+It exits 1 when a host is not `ready` at the end. `local` cannot be reconnected, and `--host` does not apply to it.
 Use `--host NAME` to run a command on a ready host from the local daemon's registry.
 `--endpoint` still selects the local daemon that supplies this registry.
 `--host local` selects that same daemon.
@@ -876,7 +881,7 @@ A host that is not ready gets a message with its status and its error.
 `daemon status --host NAME` shows only that host's health and version, with no service manager or TCP setting of this machine.
 `daemon logs --host NAME` prints that host's log. When the host does not answer, the command fails with the reason and never prints the local log file.
 `daemon --home PATH status --host local` and `daemon --home PATH logs --host local` use the daemon of that home.
-`query` accepts a host name or `all`. With `all` the table has a `host` column, and a host that did not answer prints a warning.
+`query` accepts a host name or `all`. An unknown host, or one that is not ready, ends with exit code 2, as for every command. With `all` the table has `HOST` as its first column, and a host that did not answer prints `warning: <host>: <reason>` on stderr.
 Shell completion offers configured names and `all`.
 A `--host` value that looks like an address gets a message that names `--endpoint`.
 Addresses formerly passed through `--host` must use `--endpoint`.
