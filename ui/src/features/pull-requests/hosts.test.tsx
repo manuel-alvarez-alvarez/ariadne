@@ -63,7 +63,7 @@ it("reads the selected session on the request host", async () => {
   ).toBe(true)
 })
 
-it("shows both host labels and the box session link for the same request", async () => {
+it("shows one row for the same request on two hosts, with the session link of each", async () => {
   useSettingsStore.setState({ hostFilter: "" })
   const errors = vi.spyOn(console, "error")
   const repository = aRepository({ id: pull.repository_id, forge: aForge({ enabled: true }) })
@@ -82,22 +82,13 @@ it("shows both host labels and the box session link for the same request", async
     </>,
     { route: "/forge/pull-requests" },
   )
-  await screen.findAllByRole("row", { name: "Open #42 Fix widgets" })
-  await waitFor(() =>
-    expect(screen.getAllByRole("row", { name: "Open #42 Fix widgets" })).toHaveLength(2),
-  )
-  const both = screen.getAllByRole("row", { name: "Open #42 Fix widgets" })
-  expect(both).toHaveLength(2)
-  for (const host of ["local", "box"]) {
-    const row = both.find((row) => within(row).queryByText(host))
-    if (!row) throw new Error(`Missing ${host} row`)
-    expect(within(row).getByTitle("Host").textContent).toBe(host)
-    const href = within(row)
-      .getByRole("link", { name: "Open the session of #42" })
-      .getAttribute("href")
-    expect(href).toContain("session=session-42")
-    if (host === "box") expect(href).toContain("host=box")
-  }
+  const row = await screen.findByRole("row", { name: "Open #42 Fix widgets" })
+  const box = await within(row).findByRole("link", { name: "Open the session of #42 on box" })
+  expect(box.getAttribute("href")).toContain("session=session-42")
+  expect(box.getAttribute("href")).toContain("host=box")
+  const local = within(row).getByRole("link", { name: "Open the session of #42 on local" })
+  expect(local.getAttribute("href")).not.toContain("host=")
+  expect(screen.getAllByRole("row", { name: "Open #42 Fix widgets" })).toHaveLength(1)
   expect(errors.mock.calls.flat().join(" ")).not.toMatch(/same key/)
   errors.mockRestore()
 })

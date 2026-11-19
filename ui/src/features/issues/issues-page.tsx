@@ -3,12 +3,26 @@
  * tab of the Forge screen. A row is the issue, its labels and who it is
  * assigned to, and the goal it can start: the repository is the issue's
  * second line rather than a column of its own.
+ *
+ * Under many hosts an issue every host lists is one row, matched by its forge
+ * repository and its number, with the newest facts among them. Create goal
+ * opens on the picked host if it has the repository, else on `local`, else on
+ * the first host that has it.
  */
 import { useQueries } from "@tanstack/react-query"
 import { RefreshCwIcon, TargetIcon } from "lucide-react"
 import { useState } from "react"
 
-import { api, type Host, type IssueDto, qk, type RepositoryDto, unwrap } from "@/api"
+import {
+  api,
+  type Host,
+  type HostRow,
+  type IssueDto,
+  LOCAL_HOST,
+  qk,
+  type RepositoryDto,
+  unwrap,
+} from "@/api"
 import { DataTable } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
 import { HostLabel } from "@/components/host-label"
@@ -27,14 +41,40 @@ import {
 import {
   distinctEnabled,
   filterOption,
+  forgeItemKey,
+  forgeKey,
+  groupForgeItems,
   repositoryOn,
   useHostRepositories,
 } from "@/features/forge/forge-hosts"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
-import { useHostFilter } from "@/hooks/use-host-filter"
+import { useHostFilter, usePickedHost } from "@/hooks/use-host-filter"
 import { useRowsShowHost } from "@/hooks/use-host-label"
 
 type Row = { host: Host; repository: RepositoryDto; issue: IssueDto }
+
+/**
+ * Where Create goal opens for `row`: on `picked` if it has the repository,
+ * else on `local`, else on the first host that has it, with that host's id
+ * for the repository.
+ */
+function goalHost(
+  known: readonly HostRow<RepositoryDto>[],
+  row: Row,
+  picked: Host | null,
+): { host: Host; repository: string } {
+  const key = forgeKey(row.repository)
+  const having = known.filter((each) =>
+    key === null ? each.host === row.host && each.id === row.repository.id : forgeKey(each) === key,
+  )
+  const on =
+    having.find((each) => each.host === picked) ??
+    having.find((each) => each.host === LOCAL_HOST) ??
+    having[0]
+  return on
+    ? { host: on.host, repository: on.id }
+    : { host: row.host, repository: row.repository.id }
+}
 
 const COLUMNS = [
   { header: "Issue", className: "min-w-72" },
@@ -55,7 +95,10 @@ export function IssuesPage() {
   const [assignedParam, setAssignedParam] = useSearchFilter("assigned")
   const assignedToMe = assignedParam !== "all"
   const [text, setText] = useSearchFilter("q")
-  const [selected, setSelected] = useState<Row | null>(null)
+  const picked = usePickedHost()
+  const [selected, setSelected] = useState<{ row: Row; host: Host; repository: string } | null>(
+    null,
+  )
   const [dialogOpen, setDialogOpen] = useState(false)
   // The repository filter is one forge repository, whichever host has it.
   const visible = repositories.rows.filter(
@@ -77,7 +120,7 @@ export function IssuesPage() {
         ),
     })),
   })
-  const rows: Row[] = issueQueries
+  const listed: Row[] = issueQueries
     .flatMap((query, index) => {
       const repository = visible[index]
       return repository
@@ -101,6 +144,10 @@ export function IssuesPage() {
         ...issue.assignees,
       ]),
     )
+  // One row per issue, whichever hosts list it: the newest first.
+  const rows = groupForgeItems(listed, (row) =>
+    forgeItemKey(repositories.known, row.host, row.repository.id, row.issue.number),
+  )
   const query = {
     data: rows,
     isPending: repositories.isPending || issueQueries.some((result) => result.isPending),
@@ -164,63 +211,71 @@ export function IssuesPage() {
             }
           />
         }
-        rowKey={(row) => `${row.host}-${row.repository.id}-${row.issue.number}`}
-        renderRow={(row) => (
-          <TableRow>
-            <TableCell className="max-w-md whitespace-normal">
-              <div className="flex flex-col gap-0.5">
-                <a
-                  href={row.issue.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-medium underline-offset-3 hover:underline"
+        rowKey={(group) => {
+          const row = group[0] as Row
+          return forgeItemKey(repositories.known, row.host, row.repository.id, row.issue.number)
+        }}
+        renderRow={(group) => {
+          const row = group[0] as Row
+          return (
+            <TableRow>
+              <TableCell className="max-w-md whitespace-normal">
+                <div className="flex flex-col gap-0.5">
+                  <a
+                    href={row.issue.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium underline-offset-3 hover:underline"
+                  >
+                    #{row.issue.number} {row.issue.title}
+                  </a>
+                  <span className="text-xs text-muted-foreground">
+                    {showHost
+                      ? group.map((each) => (
+                          <span key={each.host}>
+                            <HostLabel host={each.host} />{" "}
+                          </span>
+                        ))
+                      : null}
+                    <span className="font-mono">{forgeName(row.repository)}</span>
+                  </span>
+                </div>
+              </TableCell>
+              <TableCell className="max-w-64 whitespace-normal">
+                {row.issue.labels.length > 0 ? (
+                  <span className="flex flex-wrap gap-1">
+                    {row.issue.labels.map((label) => (
+                      <Badge key={label} variant="outline">
+                        {label}
+                      </Badge>
+                    ))}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">-</span>
+                )}
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {row.issue.assignees.length > 0 ? row.issue.assignees.join(", ") : "-"}
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                <When at={row.issue.updated_at} format="age" label="updated" />
+              </TableCell>
+              <TableCell className="text-right">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelected({ row, ...goalHost(repositories.known, row, picked) })
+                    setDialogOpen(true)
+                  }}
                 >
-                  #{row.issue.number} {row.issue.title}
-                </a>
-                <span className="text-xs text-muted-foreground">
-                  {showHost ? (
-                    <>
-                      <HostLabel host={row.host} />{" "}
-                    </>
-                  ) : null}
-                  <span className="font-mono">{forgeName(row.repository)}</span>
-                </span>
-              </div>
-            </TableCell>
-            <TableCell className="max-w-64 whitespace-normal">
-              {row.issue.labels.length > 0 ? (
-                <span className="flex flex-wrap gap-1">
-                  {row.issue.labels.map((label) => (
-                    <Badge key={label} variant="outline">
-                      {label}
-                    </Badge>
-                  ))}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">-</span>
-              )}
-            </TableCell>
-            <TableCell className="text-muted-foreground">
-              {row.issue.assignees.length > 0 ? row.issue.assignees.join(", ") : "-"}
-            </TableCell>
-            <TableCell className="text-muted-foreground">
-              <When at={row.issue.updated_at} format="age" label="updated" />
-            </TableCell>
-            <TableCell className="text-right">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setSelected(row)
-                  setDialogOpen(true)
-                }}
-              >
-                <TargetIcon />
-                Create goal
-              </Button>
-            </TableCell>
-          </TableRow>
-        )}
+                  <TargetIcon />
+                  Create goal
+                </Button>
+              </TableCell>
+            </TableRow>
+          )
+        }}
       />
       <CreateGoalDialog
         open={dialogOpen}
@@ -228,10 +283,10 @@ export function IssuesPage() {
         initial={
           selected
             ? {
-                title: selected.issue.title,
-                description: `${selected.issue.body}\n\nIssue: ${selected.issue.url}`,
-                repository_id: selected.repository.id,
-                issue_url: selected.issue.url,
+                title: selected.row.issue.title,
+                description: `${selected.row.issue.body}\n\nIssue: ${selected.row.issue.url}`,
+                repository_id: selected.repository,
+                issue_url: selected.row.issue.url,
                 host: selected.host,
               }
             : undefined
