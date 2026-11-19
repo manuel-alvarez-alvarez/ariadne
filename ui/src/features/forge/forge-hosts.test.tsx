@@ -10,9 +10,9 @@ import { HostPicker } from "@/components/host-picker"
 import { IssuesPage } from "@/features/issues/issues-page"
 import { PullRequestsPage } from "@/features/pull-requests/pull-requests-page"
 import { useSettingsStore } from "@/stores/settings"
-import { aForge, aModel, aRepository } from "@/test/fixtures"
+import { aForge, aModel, aRepository, aSession, aSessionPage } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
-import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
+import { BOX, forgetHosts, LOCAL, LOCAL_ORIGIN, stubHosts } from "@/test/hosts"
 import { pull } from "@/test/pull-request"
 
 afterEach(() => {
@@ -329,25 +329,39 @@ it("lists the issues of every host most recently updated first", async () => {
   ).toEqual(["#7 newer-box", "#7 older-local"])
 })
 
-it("does not wait for a session on the panel's host when Start review picks another host", async () => {
-  stubHosts({
+it("opens the new session on the host Start review picked, not on the panel's host", async () => {
+  let started = false
+  const review = aSession({
+    id: "session-local",
+    seat: "reviewer",
+    task_id: null,
+    pull_request_id: "pull-local",
+  })
+  const seen = stubHosts({
     local: {
       "/v1/repositories": [LOCAL_REPO],
+      "/v1/repositories/repo-local/pull-requests/42": { ...localPull, id: null },
       "/v1/models": [aModel({ id: "stub:review-model" })],
       "/v1/skills": [],
+      "/v1/acp-agents": [],
+      "/v1/sessions": () => jsonResponse(aSessionPage(started ? [review] : [])),
+      "/v1/sessions/session-local": review,
       "/v1/repositories/repo-local/pull-requests/42/ariadne-review": (
         _url: URL,
         request: Request,
-      ) =>
-        request.method === "PUT" ? jsonResponse({ ...localPull, review_asked: true }) : undefined,
+      ) => {
+        if (request.method !== "PUT") return undefined
+        started = true
+        return jsonResponse({ ...localPull, review_asked: true })
+      },
     },
     box: {
       "/v1/repositories": [BOX_REPO],
       "/v1/pull-requests/pull-box": boxPull,
-      "/v1/sessions": [],
+      "/v1/sessions": aSessionPage([]),
     },
   })
-  renderScreen(
+  const { location } = renderScreen(
     <>
       <HostPicker />
       <DetailPanels />
@@ -365,6 +379,16 @@ it("does not wait for a session on the panel's host when Start review picks anot
   await userEvent.keyboard("{Escape}")
   await userEvent.click(within(dialog).getByRole("button", { name: "Start review" }))
 
-  expect(await screen.findByText(/The session started on host local/)).toBeTruthy()
-  expect(screen.queryByText(/Starting the session/)).toBeNull()
+  await waitFor(() => expect(location.url).toContain("session=session-local"))
+  expect(location.url).not.toContain("host=box")
+  expect(location.url).toContain("pr=repo-local%3A42")
+  expect(screen.queryByText(/Open the request there/)).toBeNull()
+  await waitFor(() =>
+    expect(
+      seen.some(
+        (request) =>
+          request.origin === LOCAL_ORIGIN && request.url.pathname === "/v1/sessions/session-local",
+      ),
+    ).toBe(true),
+  )
 })

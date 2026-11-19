@@ -8,7 +8,9 @@
  * it goes with. The row's own host comes first and is the default.
  */
 
-import { type Host, type PullRequestDto, useHosts } from "@/api"
+import { useQueries } from "@tanstack/react-query"
+
+import { type Host, type HostRow, type PullRequestDto, useHosts } from "@/api"
 import { Field, FieldLabel } from "@/components/ui/field"
 import {
   Select,
@@ -19,6 +21,8 @@ import {
 } from "@/components/ui/select"
 import { forgeKey, useHostRepositories } from "@/features/forge/forge-hosts"
 
+import { pullRequestByKeyQueryOptions, pullRequestKey } from "./queries"
+
 /** One host a request can be worked on, and the id of its repository there. */
 export interface ReviewTarget {
   host: Host
@@ -26,6 +30,10 @@ export interface ReviewTarget {
 }
 
 export function useReviewTargets(pull: PullRequestDto, host: Host, enabled = true): ReviewTarget[] {
+  return useTargets(pull, host, enabled).targets
+}
+
+function useTargets(pull: PullRequestDto, host: Host, enabled: boolean) {
   const { hosts } = useHosts()
   const reachable = enabled
     ? hosts.filter((each) => each.url !== null).map((each) => each.name)
@@ -43,8 +51,53 @@ export function useReviewTargets(pull: PullRequestDto, host: Host, enabled = tru
     ...matches.filter((target) => target.host === host),
     ...matches.filter((target) => target.host !== host),
   ]
-  // Until the lists answer, the request's own checkout is the one there is.
-  return ordered.length > 0 ? ordered : [{ host, repository_id: pull.repository_id }]
+  return {
+    // Until the lists answer, the request's own checkout is the one there is.
+    targets: ordered.length > 0 ? ordered : [{ host, repository_id: pull.repository_id }],
+    // The request's own host is read already: its list only finds the others.
+    errors: repositories.errors.filter((each) => each.host !== host),
+    refetch: repositories.refetch,
+  }
+}
+
+/**
+ * The request as each host that has its repository reads it: the panel's own
+ * copy first, then one read per other host, by that host's repository id.
+ * A host whose repositories or request could not be read is an error of its
+ * own, and the copies of the other hosts stay.
+ */
+export function useRequestCopies(pull: PullRequestDto, host: Host) {
+  const { targets, errors, refetch } = useTargets(pull, host, true)
+  const others = targets.filter((target) => target.host !== host)
+  const reads = useQueries({
+    queries: others.map((target) =>
+      pullRequestByKeyQueryOptions(
+        target.host,
+        pullRequestKey({ repository_id: target.repository_id, number: pull.number }),
+      ),
+    ),
+  })
+  const copies: HostRow<PullRequestDto>[] = [
+    { ...pull, host },
+    ...reads.flatMap((read, index) =>
+      read.data ? [{ ...read.data, host: others[index]?.host as Host }] : [],
+    ),
+  ]
+  const failed = [
+    ...errors.map(({ host, error }) => ({ host, error })),
+    ...reads.flatMap((read, index) =>
+      read.error ? [{ host: others[index]?.host as Host, error: read.error }] : [],
+    ),
+  ]
+  return {
+    copies,
+    // One error per host, the first it met.
+    errors: failed.filter((each, index) => failed.findIndex((e) => e.host === each.host) === index),
+    refetch: () => {
+      refetch()
+      for (const read of reads) if (read.error) void read.refetch()
+    },
+  }
 }
 
 /** The host select of the Start review and Start babysit dialogs; one host is no choice. */

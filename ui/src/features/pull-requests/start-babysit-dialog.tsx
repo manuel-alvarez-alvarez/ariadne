@@ -52,8 +52,8 @@ export function StartBabysitDialog({
   host: Host
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Babysitting was asked for: the dialog has closed itself. */
-  onStarted?: (host: Host) => void
+  /** Babysitting was asked for on `host`, which answered with the request: the dialog has closed itself. */
+  onStarted?: (host: Host, started: PullRequestDto) => void
 }) {
   const targets = useReviewTargets(pull, host, open)
   const [chosen, setChosen] = useState<Host | null>(null)
@@ -95,9 +95,9 @@ export function StartBabysitDialog({
         skills: picked,
       },
       {
-        onSuccess: () => {
+        onSuccess: (started) => {
           onOpenChange(false)
-          onStarted?.(target.host)
+          onStarted?.(target.host, started)
         },
       },
     )

@@ -51,8 +51,8 @@ export function StartReviewDialog({
   host: Host
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** The review was asked for: the dialog has closed itself. */
-  onStarted?: (host: Host) => void
+  /** The review was asked for on `host`, which answered with the request: the dialog has closed itself. */
+  onStarted?: (host: Host, started: PullRequestDto) => void
 }) {
   const targets = useReviewTargets(pull, host, open)
   const [chosen, setChosen] = useState<Host | null>(null)
@@ -94,9 +94,9 @@ export function StartReviewDialog({
         skills: picked,
       },
       {
-        onSuccess: () => {
+        onSuccess: (started) => {
           onOpenChange(false)
-          onStarted?.(target.host)
+          onStarted?.(target.host, started)
         },
       },
     )

@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-17
+updated: 2026-11-19
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1238,8 +1238,8 @@ Out: the daemon endpoints themselves (012).
     most recently updated first. Their rows name their host by rule 74.
     A repository filter names one forge repository. Each host reads it by its
     own id for that forge repository; a host without it is skipped.
-    A pull request panel opens on its row's host (`?host=`).
-    Its sessions and task links open on that host.
+    A pull request panel opens from the `?pr=` and `?host=` of its row's host.
+    It shows the work of every host by rule 76.
     Tests in `ui/src/features/pull-requests/hosts.test.tsx`:
     “links the task on the request host” proves task navigation;
     “reads the selected session on the request host” proves session reads;
@@ -1251,13 +1251,20 @@ Out: the daemon endpoints themselves (012).
     `pull-requests-page.test.tsx`.
 70. Start review and Start babysit have a host select, shown when more than one
     host has the request's repository registered. It is limited to those hosts,
-    defaults to the row's host, and its models, pin and ask go to the chosen host
-    with that host's repository id. The new session opens on the request host
-    when that host is chosen. Tests: “opens the new review console on box”
-    and “opens the new babysit console on box” in
-    `ui/src/features/pull-requests/hosts.test.tsx`.
-    `ui/src/features/forge/forge-hosts.test.tsx` proves the host select.
-    `pull-request-panel.test.tsx` proves local starts.
+    defaults to the panel's host, and its models, pin and ask go to the chosen
+    host with that host's repository id. After the start, the panel opens the
+    new session on the chosen host: `?host=` and `?pr=` move to the request on
+    that host. While a host reviews the request, the panel offers no Start
+    review. While a host or a task keeps it, the panel offers no Start babysit.
+    Tests: “opens the new review console on box” and “opens the new babysit
+    console on box” in `ui/src/features/pull-requests/hosts.test.tsx`;
+    “opens the new session on the host Start review picked, not on the panel's
+    host” in `ui/src/features/forge/forge-hosts.test.tsx`, which also proves
+    the host select; “sends Review again and Stop review to the host that
+    reviews, with its repository id”, “sends Keeper turn and Stop babysit to
+    the host that keeps, with its repository id” and “links the task that
+    keeps the request on the host of the task” in `hosts.test.tsx` for the
+    hidden starts. `pull-request-panel.test.tsx` proves local starts.
     A goal dialog filled from an issue is on the issue's host.
 71. The daemon logs drawer has a host select, shown only with a named host. It
     lists the hosts of the picker, and a host the app cannot reach is a disabled
@@ -1298,6 +1305,34 @@ Out: the daemon endpoints themselves (012).
     A host that failed a refresh while its last read is on screen, an empty one
     too, is a warning marked "which may be outdated", never an error state.
 
+76. The pull request panel reads the request on its own host, and on each
+    reachable host that has the same forge repository, by that host's
+    repository id. It shows the work of every host:
+    - The header and the Ariadne fact name the host that reviews and the host
+      that keeps, and "Kept by" links the task panel on the host of the task.
+      The Review goal and Babysit goal links open on the host of that goal.
+      The host names show where rule 74 names the panel's host.
+    - Review again and Stop review go to the host that reviews. Keeper turn and
+      Stop babysit go to the host that keeps. Each uses that host's repository
+      id.
+    - The Sessions tab lists the Ariadne sessions and the task workflow
+      sessions of every host. Each row names its host while the panel reads
+      the request on more than one host. A session opens on its own host:
+      `?host=` and `?pr=` move to the request on that host, so its console,
+      input, cancel, answers, resume and switch go there.
+    - A host that the panel cannot read shows a warning with its name and its
+      reason. The work of the other hosts stays on screen.
+    - With `local` alone, the panel reads `local` only and does not change.
+    Tests in `ui/src/features/pull-requests/hosts.test.tsx`: “names the host
+    that reviews and the task that keeps a request read on another host”,
+    “links the task that keeps the request on the host of the task”, “links
+    the babysit goal on the host that babysits”, “sends Review again and Stop
+    review to the host that reviews, with its repository id”, “sends Keeper
+    turn and Stop babysit to the host that keeps, with its repository id”,
+    “lists the sessions of every host, each row named by its host, and opens
+    one on its host”, and “warns of a host it cannot read, by name and reason,
+    and keeps the other hosts' work”. `pull-request-panel.test.tsx` proves the
+    panel with `local` alone.
 
 ## Acceptance criteria
 

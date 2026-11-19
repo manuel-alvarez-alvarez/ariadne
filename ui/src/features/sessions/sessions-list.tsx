@@ -24,14 +24,14 @@
  * that just changed at the top rather than wherever the daemon listed it.
  */
 
-import { useQuery } from "@tanstack/react-query"
-import { useMemo } from "react"
+import { useQueries } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
 
 import type { Host, SessionDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { HostLabel } from "@/components/host-label"
 import { ScrollableTable } from "@/components/scroll-edge"
 import { TokenHalves } from "@/components/token-figure"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -106,20 +106,70 @@ export function SessionsList({
   /** Called with the whole session, so callers do not have to look it up again. */
   onSelect: (session: SessionDto) => void
 }) {
+  return (
+    <HostSessionsList
+      lists={[{ host, filters }]}
+      selectedId={selectedId}
+      sessionStep={sessionStep}
+      onSelect={(session) => onSelect(session)}
+    />
+  )
+}
+
+/**
+ * The same table over the sessions of several hosts, one read per host,
+ * merged by what moved last. Where `showHost` says so, each row names its
+ * host, and a host that failed shows its error above the rest.
+ */
+export function HostSessionsList({
+  lists,
+  showHost = new Set(lists.map((list) => list.host)).size > 1,
+  selectedId,
+  sessionStep,
+  onSelect,
+}: {
+  /** One read per host: the host and the filters it is read with. */
+  lists: readonly { host: Host; filters: SessionListFilters }[]
+  /** Whether each row names its host: by default, when `lists` reads more than one. */
+  showHost?: boolean
+  selectedId?: string
+  sessionStep?: (session: SessionDto) => string | undefined
+  onSelect: (session: SessionDto, host: Host) => void
+}) {
   const [search] = useSearchParams()
   const selected = selectedId ?? search.get("session") ?? undefined
-  const sessions = useQuery(sessionsQueryOptions(host, filters))
-  const rows = useMemo(() => byLastActivity(sessions.data ?? []), [sessions.data])
+  const reads = useQueries({
+    queries: lists.map(({ host, filters }) => sessionsQueryOptions(host, filters)),
+  })
+  const pending = reads.some((read) => read.isPending)
+  const hostOf = new Map(
+    reads.flatMap((read, index) =>
+      (read.data ?? []).map((session) => [session, lists[index]?.host as Host] as const),
+    ),
+  )
+  const rows = byLastActivity([...hostOf.keys()]).map((session) => ({
+    session,
+    host: hostOf.get(session) as Host,
+  }))
+  const empty = !pending && rows.length === 0 && reads.every((read) => read.data !== undefined)
 
   return (
     <div className="space-y-4">
-      {sessions.isError ? (
-        <ErrorState
-          title="Could not load sessions"
-          error={sessions.error}
-          onRetry={() => void sessions.refetch()}
-        />
-      ) : null}
+      {reads.map((read, index) =>
+        read.isError ? (
+          <ErrorState
+            // biome-ignore lint/suspicious/noArrayIndexKey: one read per entry of `lists`, in its order
+            key={index}
+            title={
+              showHost
+                ? `Could not load sessions on ${lists[index]?.host}`
+                : "Could not load sessions"
+            }
+            error={read.error}
+            onRetry={() => void read.refetch()}
+          />
+        ) : null,
+      )}
 
       <ScrollableTable className="rounded-lg border">
         <TableHeader>
@@ -131,23 +181,28 @@ export function SessionsList({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sessions.isPending ? <LoadingRows /> : null}
-          {sessions.data?.length === 0 ? (
+          {pending && rows.length === 0 ? <LoadingRows /> : null}
+          {empty ? (
             <TableRow>
               <TableCell colSpan={4} className="p-0">
                 {/* Inside the table's own frame, so the empty state drops its box. */}
-                <EmptyState emphasis="quiet" title={emptyTitle(filters)} className="border-0" />
+                <EmptyState
+                  emphasis="quiet"
+                  title={emptyTitle(lists[0]?.filters ?? {})}
+                  className="border-0"
+                />
               </TableCell>
             </TableRow>
           ) : null}
-          {rows.map((session) => (
+          {rows.map(({ session, host }) => (
             <SessionRow
-              key={session.id}
+              key={`${host} ${session.id}`}
               host={host}
+              showHost={showHost}
               session={session}
               selected={session.id === selected}
               step={sessionStep?.(session)}
-              onSelect={() => onSelect(session)}
+              onSelect={() => onSelect(session, host)}
             />
           ))}
         </TableBody>
@@ -158,12 +213,15 @@ export function SessionsList({
 
 function SessionRow({
   host,
+  showHost,
   session,
   selected,
   step,
   onSelect,
 }: {
   host: Host
+  /** Whether the row names its host: the list reads more than one. */
+  showHost: boolean
   session: SessionDto
   selected: boolean
   /** The title of the workflow step the session's agent works, if any. */
@@ -197,6 +255,7 @@ function SessionRow({
       <TableCell>
         <span className="flex items-center gap-2">
           <SessionRole session={session} onSelect={onSelect} />
+          {showHost ? <HostLabel host={host} /> : null}
           <CopyableIdMenu
             value={session.id}
             display={shortId}
