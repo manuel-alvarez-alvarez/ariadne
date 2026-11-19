@@ -29,6 +29,7 @@ import { toast } from "sonner"
 
 import type { Host, ModelDto, ModelRank } from "@/api"
 import { ScrollableTable } from "@/components/scroll-edge"
+import { Button } from "@/components/ui/button"
 import {
   Select,
   SelectContent,
@@ -40,7 +41,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { cn } from "@/lib/format"
+import { cn, describeError } from "@/lib/format"
 
 import { useSetModelEnabled, useSetModelRank } from "./queries"
 
@@ -97,15 +98,29 @@ const RANK_ITEMS = [
  */
 const PINNED = "sticky right-0 z-20 bg-inherit pe-3"
 
+/** " on box" where the toast must name its host, else nothing. */
+function onHost(host: Host, showHost: boolean): string {
+  return showHost ? ` on ${host}` : ""
+}
+
 /** One agent's catalog on one host: a switch or a rank is written to that host. */
 export function ModelTable({
   host,
   models,
   isPending,
+  error,
+  onRetry,
+  showHost = false,
 }: {
   host: Host
   models: ModelDto[]
+  /** The host's catalog has not answered yet. */
   isPending: boolean
+  /** Why the host's catalog failed to load, when it did and nothing is cached. */
+  error?: Error
+  onRetry?: () => void
+  /** Name the host in the toasts of a change: more than one host is selected. */
+  showHost?: boolean
 }) {
   return (
     <ScrollableTable className="rounded-lg border" pinnedEnd>
@@ -138,7 +153,22 @@ export function ModelTable({
             </TableRow>
           ))
         ) : models.length ? (
-          models.map((model) => <ModelRow key={model.id} host={host} model={model} />)
+          models.map((model) => (
+            <ModelRow key={model.id} host={host} model={model} showHost={showHost} />
+          ))
+        ) : error ? (
+          <TableRow className="bg-background hover:bg-transparent">
+            <TableCell colSpan={4} className="py-6 text-center text-sm">
+              <span className="text-destructive">
+                Could not load the models on {host}: {describeError(error)}
+              </span>
+              {onRetry ? (
+                <Button variant="outline" size="sm" className="ms-3" onClick={onRetry}>
+                  Retry
+                </Button>
+              ) : null}
+            </TableCell>
+          </TableRow>
         ) : (
           <TableRow className="bg-background hover:bg-transparent">
             <TableCell colSpan={4} className="py-6 text-center text-muted-foreground text-sm">
@@ -152,7 +182,7 @@ export function ModelTable({
   )
 }
 
-function ModelRow({ host, model }: { host: Host; model: ModelDto }) {
+function ModelRow({ host, model, showHost }: { host: Host; model: ModelDto; showHost: boolean }) {
   const setEnabled = useSetModelEnabled(host)
 
   function toggle(enabled: boolean) {
@@ -160,14 +190,19 @@ function ModelRow({ host, model }: { host: Host; model: ModelDto }) {
       { id: model.id, enabled },
       {
         onSuccess: () =>
-          toast.success(enabled ? "Model turned on" : "Model turned off", {
-            description: model.id,
-          }),
+          toast.success(
+            `${enabled ? "Model turned on" : "Model turned off"}${onHost(host, showHost)}`,
+            {
+              description: model.id,
+            },
+          ),
         // The daemon refuses the last model left on, and says so by name.
         // Said here rather than swallowed: the switch springs back, and
         // without a word that reads as a click that did not register.
         onError: (error: Error) =>
-          toast.error("Could not change the model", { description: error.message }),
+          toast.error(`Could not change the model${onHost(host, showHost)}`, {
+            description: error.message,
+          }),
       },
     )
   }
@@ -198,7 +233,7 @@ function ModelRow({ host, model }: { host: Host; model: ModelDto }) {
         {model.description ?? <span className="text-muted-foreground italic">nothing known</span>}
       </TableCell>
       <TableCell>
-        <RankPicker host={host} model={model} />
+        <RankPicker host={host} model={model} showHost={showHost} />
       </TableCell>
       <TableCell className={cn("text-right", PINNED)}>
         <Tooltip>
@@ -231,7 +266,7 @@ function ModelRow({ host, model }: { host: Host; model: ModelDto }) {
  * clears back to unranked. The list is where the meaning of each rank is
  * said, since there is nowhere else on this screen to put it.
  */
-function RankPicker({ host, model }: { host: Host; model: ModelDto }) {
+function RankPicker({ host, model, showHost }: { host: Host; model: ModelDto; showHost: boolean }) {
   const setRank = useSetModelRank(host)
 
   function change(value: string | null) {
@@ -243,7 +278,9 @@ function RankPicker({ host, model }: { host: Host; model: ModelDto }) {
         // back to the daemon's own answer, and without a word that reads as
         // a pick that did not register.
         onError: (error: Error) =>
-          toast.error("Could not change the rank", { description: error.message }),
+          toast.error(`Could not change the rank${onHost(host, showHost)}`, {
+            description: error.message,
+          }),
       },
     )
   }

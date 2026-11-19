@@ -78,6 +78,8 @@ interface HostLists<T> {
   errors: HostError[]
   /** No host has answered yet. */
   isPending: boolean
+  /** The hosts that have neither answered nor failed yet. */
+  loading: Host[]
   /** Ask every host whose read failed again. */
   refetch: () => void
 }
@@ -110,6 +112,9 @@ export function useHostLists<TQueryFnData, TRow, TKey extends QueryKey>(
           : [],
       ),
       isPending: results.length === 0 || results.every((result) => result.isPending),
+      loading: results.flatMap((result, index) =>
+        result.isPending && !result.error ? [hosts[index] as Host] : [],
+      ),
       refetch: () => {
         for (const result of results) if (result.error) void result.refetch()
       },

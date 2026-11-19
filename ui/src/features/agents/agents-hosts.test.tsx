@@ -4,7 +4,8 @@
 
 import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, expect, it } from "vitest"
+import { toast } from "sonner"
+import { afterEach, expect, it, vi } from "vitest"
 
 import { useSettingsStore } from "@/stores/settings"
 import { aModel, anAgentConfig } from "@/test/fixtures"
@@ -13,6 +14,7 @@ import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { AgentsPage } from "./agents-page"
 
 afterEach(() => {
+  vi.restoreAllMocks()
   forgetHosts()
   useSettingsStore.setState({ hostFilter: "" })
 })
@@ -131,4 +133,126 @@ it("names every host whose agents failed, each with a retry, when none answered"
   expect(await screen.findByText("Could not load the agents on local")).toBeTruthy()
   expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
   expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(2)
+})
+
+const OTHER = "opencode"
+
+function twoAgents(flag: string, models: unknown[]) {
+  return {
+    ...answers(flag, true),
+    "/v1/agents": [
+      anAgentConfig({ extra_flags: [flag], default_flags: [] }),
+      anAgentConfig({ agent_id: OTHER, extra_flags: [`${flag}-${OTHER}`], default_flags: [] }),
+    ],
+    "/v1/models": models,
+  }
+}
+
+const skeletons = () => document.querySelectorAll('[data-slot="skeleton"]').length
+
+it("shows a loading table, not 'No models', while the picked host's models load", async () => {
+  stubHosts({
+    local: answers("--on-local", true),
+    // The models of box never answer.
+    box: { ...answers("--on-box", true), "/v1/models": () => new Promise<Response>(() => {}) },
+  })
+  renderScreen(<AgentsPage />)
+
+  await userEvent.click(await screen.findByRole("button", { name: "box" }))
+  expect(await screen.findByText("--on-box")).toBeTruthy()
+  expect(skeletons()).toBeGreaterThan(0)
+  expect(screen.queryByText(/No models/)).toBeNull()
+})
+
+it("says 'No models' once the picked host answered none", async () => {
+  stubHosts({
+    local: answers("--on-local", true),
+    box: { ...answers("--on-box", true), "/v1/models": [] },
+  })
+  renderScreen(<AgentsPage />)
+
+  await userEvent.click(await screen.findByRole("button", { name: "box" }))
+  expect(await screen.findByText(/No models/)).toBeTruthy()
+})
+
+it("shows the error of the picked host's models in the table, with its name and Retry", async () => {
+  let failing = true
+  stubHosts({
+    local: answers("--on-local", true),
+    box: {
+      ...answers("--on-box", true),
+      "/v1/models": () => (failing ? broken() : jsonResponse([aModel({ id: MODEL })])),
+    },
+  })
+  renderScreen(<AgentsPage />)
+
+  await userEvent.click(await screen.findByRole("button", { name: "box" }))
+  expect(
+    await screen.findByText("Could not load the models on box: it is broken (boom)"),
+  ).toBeTruthy()
+
+  failing = false
+  const retries = screen.getAllByRole("button", { name: "Retry" })
+  await userEvent.click(retries[retries.length - 1] as HTMLElement)
+  expect(await screen.findByRole("switch")).toBeTruthy()
+  expect(screen.queryByText(/Could not load the models on box/)).toBeNull()
+})
+
+it("counts the models of the picked chip's host, and the models turned off there", async () => {
+  stubHosts({
+    local: answers("--on-local", true),
+    box: {
+      ...answers("--on-box", true),
+      "/v1/models": [
+        aModel({ id: "claude-agent-acp:a", enabled: false }),
+        aModel({ id: "claude-agent-acp:b" }),
+      ],
+    },
+  })
+  renderScreen(<AgentsPage />)
+
+  expect(await screen.findByLabelText("1 model")).toBeTruthy()
+  await userEvent.click(screen.getByRole("button", { name: "box" }))
+  expect(await screen.findByLabelText("2 models")).toBeTruthy()
+  expect(screen.queryByLabelText("1 model")).toBeNull()
+
+  await userEvent.hover(screen.getByRole("button", { name: "Refresh" }))
+  expect(await screen.findAllByText(/1 model turned off on box/)).not.toHaveLength(0)
+})
+
+it("keeps the picked chip when the agent tab changes", async () => {
+  stubHosts({
+    local: twoAgents("--on-local", [aModel({ id: MODEL })]),
+    box: twoAgents("--on-box", [aModel({ id: MODEL })]),
+  })
+  renderScreen(<AgentsPage />)
+
+  await userEvent.click(await screen.findByRole("button", { name: "box" }))
+  await userEvent.click(screen.getByRole("tab", { name: new RegExp(OTHER) }))
+  expect(await screen.findByText(`--on-box-${OTHER}`)).toBeTruthy()
+  expect(screen.getByRole("button", { name: "box", pressed: true })).toBeTruthy()
+})
+
+it("names the host in the flags dialog and in the toasts of a model change", async () => {
+  const success = vi.spyOn(toast, "success").mockImplementation(() => "")
+  stubHosts({ local: answers("--on-local", true), box: answers("--on-box", true) })
+  renderScreen(<AgentsPage />)
+
+  await userEvent.click(await screen.findByRole("button", { name: "box" }))
+  await userEvent.click(screen.getByRole("button", { name: /Edit claude-agent-acp flags/ }))
+  expect(await screen.findByRole("heading", { name: "claude-agent-acp flags on box" })).toBeTruthy()
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+  await userEvent.click(screen.getByRole("switch"))
+  await waitFor(() =>
+    expect(success).toHaveBeenCalledWith("Model turned off on box", expect.anything()),
+  )
+})
+
+it("opens with the chip of ?host= picked", async () => {
+  stubHosts({ local: answers("--on-local", true), box: answers("--on-box", true) })
+  renderScreen(<AgentsPage />, { route: "/agents?host=box" })
+
+  expect(await screen.findByText("--on-box")).toBeTruthy()
+  expect(screen.getByRole("button", { name: "box", pressed: true })).toBeTruthy()
 })

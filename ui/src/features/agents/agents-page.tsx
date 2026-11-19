@@ -27,7 +27,8 @@
  */
 
 import { PencilIcon, RefreshCwIcon } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { type AgentConfigDto, type Host, type HostRow, type ModelDto, useHostLists } from "@/api"
@@ -66,6 +67,14 @@ export function AgentsPage() {
   // Undefined until the reader picks one: the first agent is the tab until
   // then, and that is not known before the list arrives.
   const [picked, setPicked] = useState<string>()
+  // The host chip the reader picked, or a link asked for with `?host=`. It
+  // belongs to the page, not to a tab, so it stays when the tab changes.
+  const [search] = useSearchParams()
+  const hostParam = search.get("host")
+  const [chip, setChip] = useState<Host | undefined>(hostParam ?? undefined)
+  useEffect(() => {
+    if (hostParam) setChip(hostParam)
+  }, [hostParam])
 
   // The hosts the header picker selects: one host, or every reachable one.
   const hosts = useHostFilter()
@@ -80,8 +89,6 @@ export function AgentsPage() {
     setEditing(config)
     setEditOpen(true)
   }
-
-  const off = models.rows.filter((model) => !model.enabled).length
 
   return (
     <div className="flex flex-col gap-4">
@@ -119,9 +126,9 @@ export function AgentsPage() {
         hosts={hosts}
         configs={configs}
         icons={icons}
-        models={models.rows}
-        modelsPending={models.isPending && models.errors.length === 0}
-        off={off}
+        models={models}
+        chip={chip}
+        onChip={setChip}
         picked={picked}
         onPick={setPicked}
         onEdit={openEdit}
@@ -133,6 +140,7 @@ export function AgentsPage() {
           onOpenChange={setEditOpen}
           config={editing}
           host={editing.host}
+          showHost={hosts.length > 1}
         />
       ) : null}
     </div>
@@ -147,13 +155,22 @@ interface ConfigsQuery {
   refetch: () => void
 }
 
+/** What this page reads off the model queries of the selected hosts. */
+interface ModelsQuery {
+  rows: HostRow<ModelDto>[]
+  errors: { host: Host; error: Error }[]
+  /** The hosts whose catalog has neither answered nor failed yet. */
+  loading: Host[]
+  refetch: () => void
+}
+
 function AgentTabs({
   hosts,
   configs,
   icons,
   models,
-  modelsPending,
-  off,
+  chip,
+  onChip,
   picked,
   onPick,
   onEdit,
@@ -161,14 +178,20 @@ function AgentTabs({
   hosts: Host[]
   configs: ConfigsQuery
   icons: Map<string, string | null | undefined>
-  models: HostRow<ModelDto>[]
-  modelsPending: boolean
-  off: number
+  models: ModelsQuery
+  chip: Host | undefined
+  onChip: (host: Host) => void
   picked: string | undefined
   onPick: (kind: string) => void
   onEdit: (config: HostRow<AgentConfigDto>) => void
 }) {
   const refresh = useRefreshAcpAgents()
+  // The count of models turned off is the shown host's, never a sum of hosts.
+  const offOn = (host: Host | undefined) => ({
+    host: hosts.length > 1 ? host : undefined,
+    count: models.rows.filter((model) => model.host === host && !model.enabled).length,
+  })
+  const fallbackOff = offOn(chip && hosts.includes(chip) ? chip : hosts[0])
 
   // Every selected host failed: the errors above say why, and Refresh stays.
   if (
@@ -178,7 +201,7 @@ function AgentTabs({
   ) {
     return (
       <div className="flex justify-end">
-        <RefreshAgents refresh={refresh} hosts={hosts} off={off} />
+        <RefreshAgents refresh={refresh} hosts={hosts} off={fallbackOff} />
       </div>
     )
   }
@@ -187,7 +210,7 @@ function AgentTabs({
     return (
       <>
         <div className="flex justify-end">
-          <RefreshAgents refresh={refresh} hosts={hosts} off={off} />
+          <RefreshAgents refresh={refresh} hosts={hosts} off={fallbackOff} />
         </div>
         <Skeleton className="h-96 rounded-xl" />
       </>
@@ -197,7 +220,7 @@ function AgentTabs({
     return (
       <>
         <div className="flex justify-end">
-          <RefreshAgents refresh={refresh} hosts={hosts} off={off} />
+          <RefreshAgents refresh={refresh} hosts={hosts} off={fallbackOff} />
         </div>
         <NoAgents />
       </>
@@ -211,10 +234,21 @@ function AgentTabs({
     byAgent.set(config.agent_id, [...(byAgent.get(config.agent_id) ?? []), config])
   }
   const agents = [...byAgent.keys()]
-  const firstHost = new Map(agents.map((agent) => [agent, byAgent.get(agent)?.[0]?.host]))
+  // The host an agent's tab shows: the chip's while the agent is on it, else
+  // the first host that has the agent.
+  const shownHost = new Map(
+    agents.map((agent) => {
+      const on = byAgent.get(agent) ?? []
+      return [agent, (on.find((one) => one.host === chip) ?? on[0])?.host]
+    }),
+  )
   // The reader's choice while they have one, the first agent before
   // that — and again if the agent they were on stops being one of the answers.
   const current = picked && agents.includes(picked) ? picked : (agents[0] as string)
+  const shown = (agent: string) => shownHost.get(agent)
+  const hostLoading = (host: Host | undefined) =>
+    host !== undefined && models.loading.includes(host)
+  const hostFailed = (host: Host | undefined) => models.errors.some((e) => e.host === host)
 
   return (
     <Tabs value={current} onValueChange={(value) => onPick(value as string)}>
@@ -229,10 +263,10 @@ function AgentTabs({
                   is the switch column's answer, not a number's. */}
               <TabCount
                 count={
-                  modelsPending
+                  hostLoading(shown(agent)) || hostFailed(shown(agent))
                     ? undefined
-                    : models.filter(
-                        (model) => model.agent_id === agent && model.host === firstHost.get(agent),
+                    : models.rows.filter(
+                        (model) => model.agent_id === agent && model.host === shown(agent),
                       ).length
                 }
                 noun="model"
@@ -240,15 +274,20 @@ function AgentTabs({
             </TabsTrigger>
           ))}
         </TabsList>
-        <RefreshAgents refresh={refresh} hosts={hosts} off={off} />
+        <RefreshAgents refresh={refresh} hosts={hosts} off={offOn(shown(current))} />
       </div>
       {agents.map((agent) => (
         <TabsContent key={agent} value={agent} className="pt-3">
           <AgentPanel
             configs={byAgent.get(agent) ?? []}
             // The catalog is one list per host; each tab takes its own agent's.
-            models={models.filter((model) => model.agent_id === agent)}
-            modelsPending={modelsPending}
+            models={models.rows.filter((model) => model.agent_id === agent)}
+            modelsPending={hostLoading(shown(agent))}
+            modelsError={models.errors.find((e) => e.host === shown(agent))?.error}
+            onRetry={models.refetch}
+            chip={chip}
+            onChip={onChip}
+            showHost={hosts.length > 1}
             onEdit={onEdit}
           />
         </TabsContent>
@@ -264,7 +303,8 @@ function RefreshAgents({
 }: {
   refresh: ReturnType<typeof useRefreshAcpAgents>
   hosts: Host[]
-  off: number
+  /** The models turned off on the host shown, named only where several are selected. */
+  off: { host: Host | undefined; count: number }
 }) {
   return (
     <Tooltip>
@@ -288,7 +328,8 @@ function RefreshAgents({
         Refresh
       </TooltipTrigger>
       <TooltipContent>
-        {REFRESH_HINT} {plural(off, "model")} turned off.
+        {REFRESH_HINT} {plural(off.count, "model")} turned off
+        {off.host ? ` on ${off.host}` : ""}.
       </TooltipContent>
     </Tooltip>
   )
@@ -307,16 +348,25 @@ function AgentPanel({
   configs,
   models,
   modelsPending,
+  modelsError,
+  onRetry,
+  chip,
+  onChip,
+  showHost,
   onEdit,
 }: {
   /** The agent's config on every host that has it. */
   configs: HostRow<AgentConfigDto>[]
   models: HostRow<ModelDto>[]
   modelsPending: boolean
+  modelsError: Error | undefined
+  onRetry: () => void
+  /** The chip the reader picked: every edit below applies to its host. */
+  chip: Host | undefined
+  onChip: (host: Host) => void
+  showHost: boolean
   onEdit: (config: HostRow<AgentConfigDto>) => void
 }) {
-  // The chip the reader picked: every edit below applies to its host.
-  const [chip, setChip] = useState<Host>()
   // A chip per host where the rows show their host: each names the one it edits.
   const showHosts = useRowsShowHost()
   const config = configs.find((one) => one.host === chip) ?? (configs[0] as HostRow<AgentConfigDto>)
@@ -334,7 +384,7 @@ function AgentPanel({
               size="sm"
               aria-pressed={one.host === config.host}
               className={cn("font-mono")}
-              onClick={() => setChip(one.host)}
+              onClick={() => onChip(one.host)}
             >
               {one.host}
             </Button>
@@ -384,6 +434,9 @@ function AgentPanel({
         host={config.host}
         models={models.filter((model) => model.host === config.host)}
         isPending={modelsPending}
+        error={modelsError}
+        onRetry={onRetry}
+        showHost={showHost}
       />
     </div>
   )
