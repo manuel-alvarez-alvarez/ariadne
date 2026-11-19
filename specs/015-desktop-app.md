@@ -1297,7 +1297,7 @@ Out: the daemon endpoints themselves (012).
     warning and error state names its host and gives its reason, and has Retry.
     A host that failed a refresh while its last read is on screen, an empty one
     too, is a warning marked "which may be outdated", never an error state.
-76. A goal, task and session of a named host keeps its host in what the panel
+77. A goal, task and session of a named host keeps its host in what the panel
     shows and links:
     - The task panel and the session panel name their host, as the goal panel
       does (rule 74).
@@ -1354,7 +1354,7 @@ Out: the daemon endpoints themselves (012).
 - The task panel and the session panel name their host
   (`ui/src/features/tasks/hosts.test.tsx::names the host of the task panel under any pick while a named host is listed`,
   `ui/src/features/sessions/hosts.test.tsx::names the host of the session panel while a named host is listed`).
-- A goal, task and session of a named host keep their host (rule 76)
+- A goal, task and session of a named host keep their host (rule 77)
   (`ui/src/features/goals/hosts.test.tsx::names the host in the title of a goal that failed to load there`,
   `::names the host in the toast of a goal action on a named host`,
   `::copies the attach command of a goal of a named host with its host`,
