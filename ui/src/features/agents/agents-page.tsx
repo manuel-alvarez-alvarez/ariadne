@@ -46,6 +46,7 @@ import { modelsQueryOptions } from "@/features/models/queries"
 import { useHostFilter } from "@/hooks/use-host-filter"
 import { useRowsShowHost } from "@/hooks/use-host-label"
 import { cn, describeError, plural } from "@/lib/format"
+import { HOST_PARAM } from "@/routes/paths"
 
 import { AgentFlagsDialog } from "./agent-flags-dialog"
 import { sameFlags } from "./agent-flags-values"
@@ -59,6 +60,9 @@ import { acpAgentsQueryOptions, agentConfigsQueryOptions, useRefreshAcpAgents } 
 const REFRESH_HINT =
   "The daemon reprobes every agent, and picks up an agent installed since it started."
 
+/** The params that open a detail panel, whose `?host=` is not the chip's. */
+const PANEL_PARAMS = ["goal", "task", "session", "pr"]
+
 export function AgentsPage() {
   // The dialog keeps its subject after closing so the exit animation still has
   // something to render; only `open` flips on close.
@@ -68,9 +72,10 @@ export function AgentsPage() {
   // then, and that is not known before the list arrives.
   const [picked, setPicked] = useState<string>()
   // The host chip the reader picked, or a link asked for with `?host=`. It
-  // belongs to the page, not to a tab, so it stays when the tab changes.
+  // belongs to the page, not to a tab, so it stays when the tab changes. A
+  // `?host=` beside a panel param is that panel's host, not a pick of the chip.
   const [search] = useSearchParams()
-  const hostParam = search.get("host")
+  const hostParam = PANEL_PARAMS.some((one) => search.has(one)) ? null : search.get(HOST_PARAM)
   const [chip, setChip] = useState<Host | undefined>(hostParam ?? undefined)
   useEffect(() => {
     if (hostParam) setChip(hostParam)

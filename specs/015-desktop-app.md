@@ -1236,7 +1236,8 @@ Out: the daemon endpoints themselves (012).
     whose agents or models failed to load follows rule 75.
     The chip belongs to the screen: it stays picked when the tab changes to an
     agent on that host, and `/agents?host=<name>` opens it with that host's chip
-    picked. While the picked host's models load, the model table shows a loading
+    picked. A `?host=` beside a panel param is the panel's host and never moves the
+    chip. While the picked host's models load, the model table shows a loading
     state and says "No models" only once the host answered none. If they failed,
     the table shows the error with the host name and Retry. A tab count and the
     count of models turned off, in the Refresh tooltip, are the picked host's own
@@ -1251,7 +1252,8 @@ Out: the daemon endpoints themselves (012).
     “names the host in the flags dialog and in the toasts of a model change”,
     “names the host in the toast of a saved flag list”,
     “names the host in the toast of a refused rank change” and
-    “opens with the chip of ?host= picked”.
+    “opens with the chip of ?host= picked” and
+    “keeps the chip when a panel opens over the screen with its own ?host=”.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
     most recently updated first. Their rows name their host by rule 74.
     A repository filter names one forge repository. Each host reads it by its

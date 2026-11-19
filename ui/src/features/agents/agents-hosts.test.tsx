@@ -257,6 +257,14 @@ it("opens with the chip of ?host= picked", async () => {
   expect(screen.getByRole("button", { name: "box", pressed: true })).toBeTruthy()
 })
 
+it("keeps the chip when a panel opens over the screen with its own ?host=", async () => {
+  stubHosts({ local: answers("--on-local", true), box: answers("--on-box", true) })
+  renderScreen(<AgentsPage />, { route: "/agents?task=t1&host=box" })
+
+  expect(await screen.findByText("--on-local")).toBeTruthy()
+  expect(screen.queryByRole("button", { name: "box", pressed: true })).toBeNull()
+})
+
 it("names the host in the toast of a saved flag list", async () => {
   const success = vi.spyOn(toast, "success").mockImplementation(() => "")
   stubHosts({
