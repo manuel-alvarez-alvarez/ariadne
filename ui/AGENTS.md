@@ -360,6 +360,9 @@ Which host a screen reads follows who owns what it shows:
 A row or a panel names its host with `HostLabel` (`components/host-label.tsx`),
 and only where `useRowsShowHost()` or `usePanelShowsHost()`
 (`hooks/use-host-label.ts`) says so. Spec 015 rule 74 is the rule they hold.
+The goals board and the sessions screen read `useHostSelection()`
+(`hooks/use-host-filter.ts`) instead: its `showHost`, and the `absent` hosts
+that `HostCoverage` names (rule 78).
 
 ### The event stream
 

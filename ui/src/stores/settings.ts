@@ -59,6 +59,11 @@ interface SettingsState {
   setSessionGoalFilter: (value: string) => void
   sessionTaskFilter: string
   setSessionTaskFilter: (value: string) => void
+  /** The host each of those two ids belongs to; `""` is `local`. */
+  sessionGoalHost: string
+  setSessionGoalHost: (value: string) => void
+  sessionTaskHost: string
+  setSessionTaskHost: (value: string) => void
   /**
    * Whether the sidebar is folded down to an icon rail.
    *
@@ -105,6 +110,10 @@ export const useSettingsStore = create<SettingsState>()(
       setSessionGoalFilter: (value) => set({ sessionGoalFilter: value }),
       sessionTaskFilter: "",
       setSessionTaskFilter: (value) => set({ sessionTaskFilter: value }),
+      sessionGoalHost: "",
+      setSessionGoalHost: (value) => set({ sessionGoalHost: value }),
+      sessionTaskHost: "",
+      setSessionTaskHost: (value) => set({ sessionTaskHost: value }),
       panelWidth: 576,
       setPanelWidth: (panelWidth) => set({ panelWidth }),
       sidebarCollapsed: false,
@@ -137,6 +146,8 @@ export const useSettingsStore = create<SettingsState>()(
         sessionSeatFilter: state.sessionSeatFilter,
         sessionGoalFilter: state.sessionGoalFilter,
         sessionTaskFilter: state.sessionTaskFilter,
+        sessionGoalHost: state.sessionGoalHost,
+        sessionTaskHost: state.sessionTaskHost,
         sidebarCollapsed: state.sidebarCollapsed,
         panelWidth: state.panelWidth,
         showDisabledModels: state.showDisabledModels,

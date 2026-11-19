@@ -17,8 +17,16 @@ import { ListChecksIcon, type LucideIcon, SearchIcon, TargetIcon, XIcon } from "
 import { useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
-import { type GoalDto, type HostRow, type SessionDto, type TaskDto, useHostLists } from "@/api"
+import {
+  type GoalDto,
+  type Host,
+  type HostRow,
+  type SessionDto,
+  type TaskDto,
+  useHostLists,
+} from "@/api"
 import { HostListErrors } from "@/components/error-state"
+import { HostCoverage } from "@/components/host-coverage"
 import { HostLabel } from "@/components/host-label"
 import { PageHeader } from "@/components/page-header"
 import { ScrollableTable } from "@/components/scroll-edge"
@@ -33,8 +41,7 @@ import { parseModelRef, pinLabel } from "@/features/models/model-ref"
 import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionColumn } from "@/features/tasks/steps"
-import { useHostFilter } from "@/hooks/use-host-filter"
-import { useRowsShowHost } from "@/hooks/use-host-label"
+import { useHostSelection } from "@/hooks/use-host-filter"
 import { cn, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 import { BROWSE_FILTER_PARAMS, type BrowseFilters, useBrowseFilters } from "./browse-filters"
@@ -125,23 +132,31 @@ export function SessionsPage() {
     seat,
     goal,
     task,
+    goalHost,
+    taskHost,
     filterBy,
     clearFilters: clearSessionFilters,
   } = useSessionFilters()
   const browse = useBrowseFilters()
 
+  // Every host the header's picker selected: the chips and filters apply to each.
+  const selection = useHostSelection()
+  const hosts = selection.read
+  // A chip is one host's id: it applies only while that host is selected, and
+  // the URL and the remembered pick keep it for when it is again.
+  const selected = (host: Host) => selection.listed.some((listed) => listed.name === host)
+  const goalScope = goal !== null && selected(goalHost) ? goal : null
+  const taskScope = task !== null && selected(taskHost) ? task : null
   const filters: SessionListFilters = {
     ...statusFilters(status),
     seat: seat ?? undefined,
-    goal: goal ?? undefined,
-    task: task ?? undefined,
+    goal: goalScope ?? undefined,
+    task: taskScope ?? undefined,
   }
-  // Every host the header's picker selected: the chips and filters apply to each.
-  const hosts = useHostFilter()
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host, filters))
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
-  const showHost = useRowsShowHost()
+  const showHost = selection.showHost
   const goalsById = byHostId(goals.rows)
   const tasksById = byHostId(tasks.rows)
 
@@ -156,7 +171,11 @@ export function SessionsPage() {
   )
 
   const filtered =
-    status !== null || seat !== null || BROWSE_FILTER_PARAMS.some((param) => browse.values[param])
+    status !== null ||
+    seat !== null ||
+    goalScope !== null ||
+    taskScope !== null ||
+    BROWSE_FILTER_PARAMS.some((param) => browse.values[param])
   const clearFilters = () => clearSessionFilters(BROWSE_FILTER_PARAMS)
 
   function handleSelect(session: HostRow<SessionDto>) {
@@ -243,7 +262,21 @@ export function SessionsPage() {
         </div>
       </div>
 
-      <ScopeChips goal={goal} task={task} onClear={filterBy} />
+      <ScopeChips
+        goal={goalScope}
+        goalHost={goalHost}
+        task={taskScope}
+        taskHost={taskHost}
+        onClear={filterBy}
+      />
+
+      {selection.listed.length > 1 ? (
+        <HostCoverage
+          absent={selection.absent}
+          loading={sessions.pending}
+          hostCount={hosts.length}
+        />
+      ) : null}
 
       <HostListErrors
         what="sessions"
@@ -280,7 +313,7 @@ function SessionsTable({
   goalsById: Map<string, GoalDto>
   tasksById: Map<string, TaskDto>
   onSelect: (session: HostRow<SessionDto>) => void
-  onScope: (param: FilterParam, id: string) => void
+  onScope: (param: FilterParam, id: string, host: Host) => void
 }) {
   return (
     <ScrollableTable className="rounded-xl border">
@@ -367,8 +400,8 @@ function SessionRow({
   /** The workflow column a step agent staffs, which names it in place of its seat. */
   column: string | undefined
   onSelect: () => void
-  /** Narrow the table to a goal or a task picked in the row. */
-  onScope: (param: FilterParam, id: string) => void
+  /** Narrow the table to a goal or a task picked in the row, on the row's host. */
+  onScope: (param: FilterParam, id: string, host: Host) => void
 }) {
   const directory = session.worktree_path
   return (
@@ -418,7 +451,7 @@ function SessionRow({
           goalTitle={goalTitle}
           taskTitle={taskTitle}
           column={column}
-          onScope={onScope}
+          onScope={(param, id) => onScope(param, id, session.host)}
         />
       </TableCell>
       <TableCell className="max-w-40 truncate text-xs text-muted-foreground">
@@ -544,16 +577,19 @@ function Dash() {
  */
 function ScopeChips({
   goal,
+  goalHost,
   task,
+  taskHost,
   onClear,
 }: {
   goal: string | null
+  goalHost: Host
   task: string | null
+  taskHost: Host
   onClear: (param: FilterParam, value: string) => void
 }) {
-  const hosts = useHostFilter()
-  const goals = useHostLists(goal === null ? [] : hosts, (host) => goalsQueryOptions(host))
-  const tasks = useHostLists(task === null ? [] : hosts, (host) => taskListQueryOptions(host))
+  const goals = useHostLists(goal === null ? [] : [goalHost], (host) => goalsQueryOptions(host))
+  const tasks = useHostLists(task === null ? [] : [taskHost], (host) => taskListQueryOptions(host))
 
   if (!goal && !task) return null
   return (

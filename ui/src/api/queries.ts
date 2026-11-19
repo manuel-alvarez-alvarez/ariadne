@@ -76,6 +76,8 @@ interface HostLists<T> {
   rows: HostRow<T>[]
   /** One entry per host whose list failed; its rows, if any, are its last good read. */
   errors: HostError[]
+  /** The hosts that have neither answered nor failed yet, in the order given. */
+  pending: Host[]
   /** No host has answered yet. */
   isPending: boolean
   /** Ask every host whose read failed again. */
@@ -109,6 +111,7 @@ export function useHostLists<TQueryFnData, TRow, TKey extends QueryKey>(
             ]
           : [],
       ),
+      pending: results.flatMap((result, index) => (result.isPending ? [hosts[index] as Host] : [])),
       isPending: results.length === 0 || results.every((result) => result.isPending),
       refetch: () => {
         for (const result of results) if (result.error) void result.refetch()

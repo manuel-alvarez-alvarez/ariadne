@@ -16,7 +16,7 @@ import { EventStreamProvider } from "@/events/provider"
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
 import { aGoal, aModel, aRepository, aSessionPage } from "@/test/fixtures"
-import { jsonResponse, renderScreen } from "@/test/harness"
+import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { AttentionPopover } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
@@ -333,3 +333,66 @@ function reads(seen: ReturnType<typeof stubHosts>, host: "local" | "box"): strin
     ),
   ].sort()
 }
+
+function failing(message: string) {
+  return () => errorResponse(500, "internal", message)
+}
+
+it("says which listed host is not shown and why", async () => {
+  stubHosts({ local: { ...EMPTY, "/v1/goals": [MINE] } }, [
+    LOCAL,
+    { ...BOX, status: "down", error: "connection refused" },
+  ])
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+
+  expect(await screen.findByText("Not shown: box (connection refused)")).toBeTruthy()
+})
+
+it("names the host that still loads while another has answered", async () => {
+  stubHosts({
+    local: { ...EMPTY, "/v1/goals": [MINE] },
+    box: { "/v1/tasks": [], "/v1/sessions": aSessionPage([]) },
+  })
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+
+  await screen.findByRole("link", { name: MINE.title })
+  expect(screen.getByText("Still loading: box")).toBeTruthy()
+})
+
+it("says the tasks of a host are not loaded in its lanes, and names the host, local too", async () => {
+  stubHosts({
+    local: { ...EMPTY, "/v1/goals": [MINE], "/v1/tasks": failing("tasks broke on local") },
+    box: { ...EMPTY, "/v1/goals": [THEIRS] },
+  })
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+
+  const warning = await screen.findByText("Could not load tasks on local")
+  const alert = warning.closest("[role=alert]") as HTMLElement
+  expect(within(alert).getByText(/tasks broke on local/)).toBeTruthy()
+  expect(within(alert).queryByText(/may be outdated/)).toBeNull()
+  const lane = screen.getByRole("group", { name: `${MINE.title}: Tasks` })
+  expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
+  const other = screen.getByRole("group", { name: `${THEIRS.title}: Tasks` })
+  expect(within(other).getByText(/No tasks/)).toBeTruthy()
+})
+
+it("says the last read may be outdated only while one is on screen", async () => {
+  let broken = false
+  stubHosts(
+    {
+      local: {
+        ...EMPTY,
+        "/v1/goals": [MINE],
+        "/v1/tasks": () => (broken ? failing("gone")() : jsonResponse([])),
+      },
+    },
+    [LOCAL],
+  )
+  const { queryClient } = renderScreen(<GoalsListPage />, { route: "/goals" })
+  await screen.findByRole("link", { name: MINE.title })
+  broken = true
+  await act(() => queryClient.invalidateQueries({ queryKey: ["local", "tasks"] }))
+
+  expect(await screen.findByText("Could not refresh tasks on local")).toBeTruthy()
+  expect(screen.getByText(/may be outdated/)).toBeTruthy()
+})

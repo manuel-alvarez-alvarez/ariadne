@@ -16,6 +16,7 @@ import { useSearchParams } from "react-router-dom"
 import { LOCAL_HOST, useHostLists } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { HostListErrors } from "@/components/error-state"
+import { HostCoverage } from "@/components/host-coverage"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
@@ -27,8 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { useHostFilter } from "@/hooks/use-host-filter"
-import { useRowsShowHost } from "@/hooks/use-host-label"
+import { useHostSelection } from "@/hooks/use-host-filter"
 import { HOST_PARAM } from "@/routes/paths"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
@@ -79,14 +79,15 @@ export function GoalsListPage() {
 
   // Every host the header's picker selected, merged newest first: ids are
   // ULIDs, so their order is their creation order whichever daemon minted them.
-  const hosts = useHostFilter()
+  const selection = useHostSelection()
+  const hosts = selection.read
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host, { statuses }))
   const merged = useMemo(
     () => [...goals.rows].sort((a, b) => b.id.localeCompare(a.id) || a.host.localeCompare(b.host)),
     [goals.rows],
   )
   const shown = useMemo(() => searchGoals(merged, query), [merged, query])
-  const showHost = useRowsShowHost()
+  const showHost = selection.showHost
   const failedEverywhere = goals.errors.length > 0 && goals.errors.length === hosts.length
   const empty = emptyBoardCopy(statuses)
   const active = sameFilter(statuses, ACTIVE_FILTER)
@@ -204,6 +205,10 @@ export function GoalsListPage() {
         showIcon
       />
 
+      {selection.listed.length > 1 ? (
+        <HostCoverage absent={selection.absent} loading={goals.pending} hostCount={hosts.length} />
+      ) : null}
+
       {goals.isPending ? <BoardSkeleton /> : null}
 
       {merged.length && shown.length === 0 ? (
@@ -214,7 +219,10 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {!goals.isPending && !failedEverywhere && merged.length === 0 ? (
+      {!goals.isPending &&
+      goals.pending.length === 0 &&
+      !failedEverywhere &&
+      merged.length === 0 ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title={empty.title}
