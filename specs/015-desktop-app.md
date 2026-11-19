@@ -1148,7 +1148,7 @@ Out: the daemon endpoints themselves (012).
     the Error column its reason. A Daemon column shows the version and the
     uptime of each reachable host, from the last heartbeat of the app's
     stream to it, and "-" before one arrives or for a host the app cannot
-    reach (rule 77).
+    reach (rule 78).
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.
@@ -1312,7 +1312,7 @@ Out: the daemon endpoints themselves (012).
     warning and error state names its host and gives its reason, and has Retry.
     A host that failed a refresh while its last read is on screen, an empty one
     too, is a warning marked "which may be outdated", never an error state.
-77. The app keeps the stream state and the last heartbeat of the stream of
+78. The app keeps the stream state and the last heartbeat of the stream of
     each named host, from the start of the stream to its stop, in
     `useHostStreamStore`. `local`'s stay in `useStreamStore`, and the
     connection banner stays about `local`. The picker (rule 55) and the Hosts
