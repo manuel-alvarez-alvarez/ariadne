@@ -77,7 +77,7 @@ pub(crate) async fn listing(
         } => agent::ls(client).await,
         Command::Attention {
             command: None,
-            watch: false,
+            watch: _,
         } => attention::list(client).await,
         Command::Dashboard {
             command: dashboard::DashboardCommand::Ls,
@@ -87,7 +87,7 @@ pub(crate) async fn listing(
                 goal::GoalCommand::Ls {
                     statuses,
                     all,
-                    watch: false,
+                    watch: _,
                 },
         } => goal::list(client, statuses, *all).await,
         Command::Issue {
@@ -105,7 +105,7 @@ pub(crate) async fn listing(
                     repo,
                     mine,
                     review_requests,
-                    watch: false,
+                    watch: _,
                 },
         } => pr::ls(client, repo.clone(), *mine, *review_requests).await,
         Command::Pr {
@@ -115,7 +115,7 @@ pub(crate) async fn listing(
             command: repo::RepoCommand::Ls,
         } => repo::ls(client).await,
         Command::Session {
-            command: command @ session::SessionCommand::Ls { watch: false, .. },
+            command: command @ session::SessionCommand::Ls { .. },
         } => session::list(client, command, format).await,
         Command::Skill {
             command: skill::SkillCommand::Ls,
@@ -127,7 +127,7 @@ pub(crate) async fn listing(
                     statuses,
                     all,
                     step,
-                    watch: false,
+                    watch: _,
                 },
         } => task::list(client, goal.clone(), statuses, *all, step.as_deref()).await,
         Command::Workflow {
