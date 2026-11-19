@@ -76,9 +76,12 @@ export function HostPicker() {
           <DropdownMenuRadioItem value={ALL}>All hosts</DropdownMenuRadioItem>
           <DropdownMenuSeparator />
           {hosts.map((host) => (
-            <DropdownMenuRadioItem key={host.name} value={host.name}>
-              <HostOption host={host} />
-            </DropdownMenuRadioItem>
+            <div key={host.name} className="flex items-center gap-1">
+              <DropdownMenuRadioItem value={host.name} className="min-w-0 flex-1">
+                <HostOption host={host} />
+              </DropdownMenuRadioItem>
+              <ReconnectHostButton name={host.name} />
+            </div>
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
@@ -99,7 +102,6 @@ function HostOption({ host }: { host: HostView }) {
             {status.label}
           </span>
         )}
-        <ReconnectHostButton name={host.name} />
       </span>
       {host.unreachable && host.name !== LOCAL_HOST ? (
         <span className="truncate text-xs text-muted-foreground">{host.unreachable}</span>
