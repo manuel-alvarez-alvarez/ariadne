@@ -11,8 +11,9 @@
  * Nothing polls: the heartbeat it carries is what the connection indicator
  * reads, and its own idle budget is what notices a daemon that went away. A
  * named host's stream publishes nothing to that indicator — the connection
- * banner and status stay about `local`, and a named host's state is its row
- * in `GET /v1/hosts`, which the host picker shows.
+ * banner and status stay about `local`. A named host's stream state and
+ * heartbeat go to `useHostStreamStore`, which the host picker and the Hosts
+ * table read.
  */
 
 import { useQueryClient } from "@tanstack/react-query"
@@ -23,7 +24,7 @@ import { dispatchDomainEvent, invalidateEverything } from "@/events/dispatch"
 import { setDomainStream } from "@/events/handle"
 import { DomainEventStream } from "@/events/stream"
 import { useBaseUrl } from "@/stores/settings"
-import { useStreamStore } from "@/stores/stream"
+import { useHostStreamStore, useStreamStore } from "@/stores/stream"
 import { recordStreamReconnect } from "@/telemetry/telemetry"
 
 export function EventStreamProvider({ children }: { children: ReactNode }) {
@@ -98,7 +99,8 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
 
 /**
  * One named host's stream: the same protocol and recovery as `local`'s, under
- * that host's keys, and nothing written to the connection store.
+ * that host's keys, and its state kept in the host stream store, not the
+ * connection store.
  */
 function HostEventStream({ host }: { host: Host }) {
   const queryClient = useQueryClient()
@@ -108,9 +110,11 @@ function HostEventStream({ host }: { host: Host }) {
     if (url === null) return
     const stream = new DomainEventStream(() => url, {
       onStatus: (status, error) => {
+        useHostStreamStore.getState().setStatus(host, status, error)
         if (import.meta.env.DEV) console.debug(`[events:${host}] stream ${status}`, error ?? "")
       },
       onOpen: ({ reconnected }) => {
+        useHostStreamStore.getState().markOpen(host)
         if (reconnected) invalidateEverything(queryClient, host)
       },
       onReconnect: recordStreamReconnect,
@@ -118,14 +122,19 @@ function HostEventStream({ host }: { host: Host }) {
         if (import.meta.env.DEV) console.debug(`[events:${host}]`, event.event, event.data)
         dispatchDomainEvent(queryClient, host, event)
       },
-      onHeartbeat: () => {},
+      onHeartbeat: (beat) => {
+        useHostStreamStore.getState().markHeartbeat(host, beat)
+      },
       onResync: ({ missed }) => {
         console.warn(`[events:${host}] daemon dropped ${missed} events for this client; resyncing`)
         invalidateEverything(queryClient, host)
       },
     })
     stream.start()
-    return () => stream.stop()
+    return () => {
+      stream.stop()
+      useHostStreamStore.getState().forget(host)
+    }
   }, [queryClient, host])
 
   return null
