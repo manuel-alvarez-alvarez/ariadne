@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-11-17
+updated: 2026-11-19
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -390,9 +390,17 @@ same binary also serves (013).
 46. With `all`, a list runs on each ready host in registry order. A table has
     a `HOST` column first, and JSON rows carry a `host` key. A host that is
     not ready or fails gets a warning on stderr, and the list succeeds while
-    one host answers. Any other read, and a stream, prints the answer of the
-    first host that answers. `attach` goes to the first ready host that has
-    the ID. A write with `all` is refused, and the refusal names only the
+    one host answers. Other reads print the answer of the first host that answers.
+    Watched goal, task, session and PR lists redraw one merged table after
+    events from any ready host. Attention redraws its merged view too.
+    Event and daemon log followers run concurrently across ready hosts.
+    Each output line names its host; JSON events carry a `host` field.
+    Task and session log followers select the host that has the ID.
+    A host unavailable at startup or dropped during following gets one warning.
+    Other hosts continue. Dropped hosts are not reconnected.
+    Ctrl-C cancels all followers and child processes.
+    These forms work with only `local` in the registry.
+    `attach` goes to the first ready host that has the ID. A write with `all` is refused, and the refusal names only the
     hosts that take this write: each ready host, or `local` alone for a
     synced setting.
 47. A local-only command with `--host NAME` or `--host all` is a usage error
@@ -772,8 +780,13 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - Registry routing and guards hold, rules 44, 46 to 48a and 50
   (`tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`,
   `::each_command_takes_the_hosts_of_its_kind`).
-- A stream with `--host all` reaches stdout while it is open, rule 46
+- Concurrent streams carry both host names before either closes, rule 46
   (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
+- Watched attention merges snapshots and redraws after an event, rule 46
+  (`tests/hosts.rs::watched_attention_merges_ready_hosts_before_streams_end`).
+- Daemon log streams label both hosts, warn once for unavailable and dropped
+  hosts, and stop on Ctrl-C, rule 46
+  (`tests/hosts.rs::daemon_follow_keeps_other_hosts_after_a_drop_and_stops_on_interrupt`).
 - Rule 50 columns (`tests/hosts.rs::host_ls_shows_remote_and_sync_state_of_each_host`).
 - Rule 48a on `status` and `logs` of a named host
   (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)

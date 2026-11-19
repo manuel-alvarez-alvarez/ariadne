@@ -989,7 +989,8 @@ async fn all_forwards_a_stream_before_it_ends() {
     let sync =
         json!({"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0});
     let registry = json!([
-        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync}
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync},
+        {"name":"build","kind":"direct","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync}
     ]);
     let events = json!([{
         "id":"e1","session_id":"s1","task_id":null,"kind":"session_start",
@@ -1033,6 +1034,16 @@ async fn all_forwards_a_stream_before_it_ends() {
         line.contains("session_start") || line.contains("started"),
         "{line}"
     );
+    let first_host = serde_json::from_str::<serde_json::Value>(&line).unwrap()["host"].clone();
+    let second = tokio::time::timeout(std::time::Duration::from_secs(30), lines.next_line())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let second_host = serde_json::from_str::<serde_json::Value>(&second).unwrap()["host"].clone();
+    assert!(first_host == "local" || first_host == "build");
+    assert!(second_host == "local" || second_host == "build");
+    assert_ne!(first_host, second_host);
     child.kill().await.unwrap();
     server.abort();
 }
@@ -1064,4 +1075,197 @@ async fn query_on_an_unknown_or_unready_host_is_a_usage_error() {
         assert!(stderr.contains(expected), "{stderr}");
     }
     server.abort();
+}
+
+#[tokio::test]
+async fn watched_attention_merges_ready_hosts_before_streams_end() {
+    use tokio::io::AsyncBufReadExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let sync =
+        json!({"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0});
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync},
+        {"name":"build","kind":"direct","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync}
+    ]);
+    let attention = json!({"complete":true,"items":[{
+        "id":"blocked","producer":"recovery","reason":"access","summary":"Sign in",
+        "required_action":"Sign in","since":"2026-11-17T00:00:00Z","affected":[],
+        "target":{"kind":"settings","section":"agents"}
+    }]});
+    let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let change_read = changed.clone();
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let events = notify.clone();
+    let app = Router::new()
+        .route("/v1/hosts", get(move || async move { Json(registry) }))
+        .route(
+            "/v1/attention",
+            get(move || {
+                let mut attention = attention.clone();
+                if change_read.load(std::sync::atomic::Ordering::SeqCst) {
+                    attention["items"][0]["summary"] = "Changed".into();
+                }
+                async move { Json(attention) }
+            }),
+        )
+        .route(
+            "/v1/events/stream",
+            get(move || {
+                let events = events.clone();
+                async move {
+                    use futures_util::StreamExt;
+                    let update = futures_util::stream::once(async move {
+                        events.notified().await;
+                        Ok::<_, std::convert::Infallible>(
+                            axum::response::sse::Event::default()
+                                .event("task_updated")
+                                .data("{}"),
+                        )
+                    });
+                    axum::response::Sse::new(update.chain(futures_util::stream::pending()))
+                }
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args([
+            "--endpoint",
+            &endpoint,
+            "--host",
+            "all",
+            "attention",
+            "--watch",
+            "--format",
+            "json",
+        ])
+        .env("ARIADNE_TELEMETRY", "off")
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let read = async {
+        let mut text = String::new();
+        while let Some(line) = lines.next_line().await.unwrap() {
+            text.push_str(&line);
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                return value;
+            }
+        }
+        panic!("watch ended before the merged snapshot");
+    };
+    let value = tokio::time::timeout(std::time::Duration::from_secs(30), read)
+        .await
+        .unwrap();
+    assert_eq!(value[0]["host"], "local");
+    assert_eq!(value[1]["host"], "build");
+    changed.store(true, std::sync::atomic::Ordering::SeqCst);
+    notify.notify_one();
+    let redraw = async {
+        let mut text = String::new();
+        while let Some(line) = lines.next_line().await.unwrap() {
+            text.push_str(&line);
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                if value[0]["summary"] == "Changed" && value[1]["summary"] == "Changed" {
+                    return;
+                }
+                text.clear();
+            }
+        }
+        panic!("watch ended before the change");
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), redraw)
+        .await
+        .unwrap();
+    child.kill().await.unwrap();
+    server.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn daemon_follow_keeps_other_hosts_after_a_drop_and_stops_on_interrupt() {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncBufReadExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let remote_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let remote_endpoint = format!("http://{}", remote_listener.local_addr().unwrap());
+    let sync =
+        json!({"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0});
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":endpoint,"error":null,"remote":null,"sync":sync},
+        {"name":"build","kind":"direct","status":"ready","endpoint":remote_endpoint,"error":null,"remote":null,"sync":sync},
+        {"name":"offline","kind":"ssh","status":"down","endpoint":null,"error":"down","remote":null,"sync":sync}
+    ]);
+    let logs = |stay: bool| {
+        get(move || async move {
+            let event = axum::response::sse::Event::default().event("delta").data(json!({
+            "ts":"2026-11-17T00:00:00Z", "level":"INFO", "target":"test", "message":"live-line", "service":"ariadned"
+        }).to_string());
+            let stream = futures_util::stream::iter([Ok::<_, std::convert::Infallible>(event)])
+                .chain(futures_util::stream::poll_fn(move |_| {
+                    if stay {
+                        std::task::Poll::Pending
+                    } else {
+                        std::task::Poll::Ready(None)
+                    }
+                }));
+            axum::response::Sse::new(stream)
+        })
+    };
+    let app = Router::new()
+        .route("/v1/hosts", get(move || async move { Json(registry) }))
+        .route("/v1/logs/stream", logs(true));
+    let remote_app = Router::new().route("/v1/logs/stream", logs(false));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let remote =
+        tokio::spawn(async move { axum::serve(remote_listener, remote_app).await.unwrap() });
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+        .args([
+            "--endpoint",
+            &endpoint,
+            "--host",
+            "all",
+            "daemon",
+            "logs",
+            "-f",
+        ])
+        .env("ARIADNE_TELEMETRY", "off")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut errors = tokio::io::BufReader::new(child.stderr.take().unwrap()).lines();
+    let read = async {
+        let first = lines.next_line().await.unwrap().unwrap();
+        let second = lines.next_line().await.unwrap().unwrap();
+        assert!(first.contains("live-line") && second.contains("live-line"));
+        assert!(first.starts_with("local") || second.starts_with("local"));
+        assert!(first.starts_with("build") || second.starts_with("build"));
+        let first = errors.next_line().await.unwrap().unwrap();
+        let second = errors.next_line().await.unwrap().unwrap();
+        assert!(first.contains("offline"), "{first}");
+        assert!(second.contains("build"), "{second}");
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), read)
+        .await
+        .unwrap();
+    assert!(child.try_wait().unwrap().is_none());
+    let status = tokio::process::Command::new("kill")
+        .args(["-INT", &child.id().unwrap().to_string()])
+        .status()
+        .await
+        .unwrap();
+    assert!(status.success());
+    let status = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+    assert!(errors.next_line().await.unwrap().is_none());
+    server.abort();
+    remote.abort();
 }

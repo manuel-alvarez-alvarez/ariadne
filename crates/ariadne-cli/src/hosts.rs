@@ -361,7 +361,10 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
             ))
             .err());
         }
-        if matches!(path, "attach" | "goal attach" | "task attach") {
+        if matches!(
+            path,
+            "attach" | "goal attach" | "task attach" | "task logs" | "session logs"
+        ) {
             let args: Vec<String> = std::env::args().collect();
             // Clap owns the positional ID, including flags before or after it.
             let matches = crate::cli::command().get_matches_from(args);
@@ -370,12 +373,19 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
                 leaf = nested;
             }
             let id = leaf.get_one::<String>("id").expect("attach has an ID");
-            for host in &hosts {
-                if host.status != HostStatus::Ready {
-                    continue;
-                }
+            for host in hosts.iter().filter(|host| host.status != HostStatus::Ready) {
+                eprintln!("warning: {}: {}", host.name, status(host.status));
+            }
+            for host in hosts.iter().filter(|host| host.status == HostStatus::Ready) {
                 let client = client(host, &local)?;
                 if has_id(&client, id).await {
+                    if matches!(path, "task logs" | "session logs")
+                        && forwarded_args()
+                            .iter()
+                            .any(|arg| arg == "-f" || arg == "--follow")
+                    {
+                        return follow_owned(host, &client).await;
+                    }
                     return crate::run(cli, client).await;
                 }
             }
@@ -385,7 +395,10 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
             return show_each(&cli, &hosts, &local).await;
         }
         if kind == Kind::Stream {
-            return stream_first(&hosts, &local).await;
+            return stream_all(&cli, &hosts, &local).await;
+        }
+        if kind == Kind::List && forwarded_args().iter().any(|arg| arg == "--watch") {
+            return watch_all(&cli, hosts, &local).await;
         }
         return fan_out(&cli, &hosts, &local, kind == Kind::List).await;
     }
@@ -458,7 +471,10 @@ fn forwarded_args() -> Vec<std::ffi::OsString> {
 /// `permissions ai show --host all`: one block per ready host, in registry
 /// order, each headed by the host's name. A host that fails gets a warning.
 async fn show_each(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
-    let args = forwarded_args();
+    let args: Vec<_> = forwarded_args()
+        .into_iter()
+        .filter(|arg| arg != "--watch")
+        .collect();
     let mut answered = false;
     let mut rows = Vec::new();
     for host in hosts {
@@ -477,6 +493,7 @@ async fn show_each(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result<
             .args(&args)
             .arg("--endpoint")
             .arg(selected.endpoint())
+            .kill_on_drop(true)
             .output()
             .await?;
         if !output.status.success() {
@@ -520,7 +537,10 @@ async fn fan_out(
     local: &Arc<Client>,
     listing: bool,
 ) -> Result<ExitCode> {
-    let args = forwarded_args();
+    let args: Vec<_> = forwarded_args()
+        .into_iter()
+        .filter(|arg| arg != "--watch")
+        .collect();
     let mut answered = false;
     let mut rows = Vec::new();
     let mut header = None;
@@ -540,6 +560,7 @@ async fn fan_out(
             .args(&args)
             .arg("--endpoint")
             .arg(selected.endpoint())
+            .kill_on_drop(true)
             .output()
             .await?;
         if !output.status.success() {
@@ -610,63 +631,143 @@ async fn fan_out(
     Ok(ExitCode::SUCCESS)
 }
 
-/// Forward the stream of the first ready host that answers, as it arrives.
-/// A host that fails before it prints anything gives way to the next one.
-async fn stream_first(hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::process::Command;
+/// Keep transcript chunks intact while the selected host owns the follow.
+async fn follow_owned(host: &HostDto, selected: &Client) -> Result<ExitCode> {
+    let mut child = tokio::process::Command::new(std::env::current_exe()?)
+        .args(forwarded_args())
+        .arg("--endpoint")
+        .arg(selected.endpoint())
+        .env("ARIADNE_HOST_STREAM_ONCE", "1")
+        .kill_on_drop(true)
+        .spawn()?;
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            child.kill().await?;
+            Ok(ExitCode::SUCCESS)
+        }
+        exit = child.wait() => {
+            eprintln!("warning: {}: stream closed", host.name);
+            Ok(ExitCode::from(exit?.code().unwrap_or(1) as u8))
+        }
+    }
+}
 
-    let args = forwarded_args();
+/// Follow all ready hosts independently. Dropping the task set cancels its children.
+async fn stream_all(cli: &Cli, hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let mut tasks = tokio::task::JoinSet::new();
+    let (send, mut receive) = tokio::sync::mpsc::channel(128);
     for host in hosts {
         if host.status != HostStatus::Ready {
             eprintln!("warning: {}: {}", host.name, status(host.status));
             continue;
         }
         let selected = client(host, local)?;
-        let mut child = Command::new(std::env::current_exe()?)
-            .args(&args)
-            .arg("--endpoint")
-            .arg(selected.endpoint())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
-        let mut stdout = child.stdout.take().expect("stdout is piped");
-        let mut stderr = child.stderr.take().expect("stderr is piped");
-        let errors = tokio::spawn(async move {
-            let mut text = Vec::new();
-            let _ = stderr.read_to_end(&mut text).await;
-            text
-        });
-        let mut forwarded = false;
-        let mut out = tokio::io::stdout();
-        let mut buffer = [0u8; 8192];
-        loop {
-            let read = stdout.read(&mut buffer).await?;
-            if read == 0 {
-                break;
+        let name = host.name.clone();
+        let send = send.clone();
+        let args = forwarded_args();
+        tasks.spawn(async move {
+            let following = args.iter().any(|arg| arg == "-f" || arg == "--follow");
+            let result: Result<()> = async {
+                let mut child = tokio::process::Command::new(std::env::current_exe()?)
+                    .args(args)
+                    .arg("--endpoint")
+                    .arg(selected.endpoint())
+                    .env("ARIADNE_HOST_STREAM_ONCE", "1")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true)
+                    .spawn()?;
+                let mut lines = BufReader::new(child.stdout.take().expect("piped stdout")).lines();
+                while let Some(line) = lines.next_line().await? {
+                    if send.send((name.clone(), Some(line))).await.is_err() {
+                        return Ok(());
+                    }
+                }
+                anyhow::ensure!(child.wait().await?.success(), "host command failed");
+                Ok(())
             }
-            forwarded = true;
-            out.write_all(&buffer[..read]).await?;
-            out.flush().await?;
-        }
-        let exit = child.wait().await?;
-        let text = errors.await.unwrap_or_default();
-        if exit.success() {
-            return Ok(ExitCode::SUCCESS);
-        }
-        let text = String::from_utf8_lossy(&text);
-        if forwarded {
-            eprint!("{text}");
-            return Ok(ExitCode::from(exit.code().unwrap_or(1) as u8));
-        }
-        eprintln!(
-            "warning: {}: {}",
-            host.name,
-            text.split_whitespace().collect::<Vec<_>>().join(" ")
-        );
+            .await;
+            if following || result.is_err() {
+                let _ = send.send((name, None)).await;
+            }
+        });
     }
-    Err(Failure::not_found("no host answered").err())
+    drop(send);
+    if tasks.is_empty() {
+        return Err(Failure::usage("no host answered").err());
+    }
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => return Ok(ExitCode::SUCCESS),
+            message = receive.recv() => match message {
+                Some((name, Some(line))) => {
+                    if cli.format == Format::Json && let Ok(mut value) = serde_json::from_str::<Value>(&line) {
+                        value["host"] = name.into();
+                        println!("{}", serde_json::to_string(&value)?);
+                    } else { println!("{name}   {line}"); }
+                }
+                Some((name, None)) => eprintln!("warning: {name}: stream closed"),
+                None => return Ok(ExitCode::SUCCESS),
+            }
+        }
+    }
+}
+
+/// Subscribe before the first snapshot so a change cannot fall between them.
+async fn watch_all(cli: &Cli, mut hosts: Vec<HostDto>, local: &Arc<Client>) -> Result<ExitCode> {
+    use std::io::{IsTerminal, Write};
+    let mut tasks = tokio::task::JoinSet::new();
+    let (send, mut receive) = tokio::sync::mpsc::channel(128);
+    for host in &hosts {
+        if host.status != HostStatus::Ready {
+            eprintln!("warning: {}: {}", host.name, status(host.status));
+            continue;
+        }
+        let selected = client(host, local)?;
+        let name = host.name.clone();
+        let send = send.clone();
+        tasks.spawn(async move {
+            let result: Result<()> = async {
+                let mut stream = selected.stream("/v1/events/stream").await?;
+                send.send((name.clone(), false)).await?;
+                while let Some(frame) = stream.next().await {
+                    frame?;
+                    send.send((name.clone(), false)).await?;
+                }
+                Ok(())
+            }
+            .await;
+            let _ = result;
+            let _ = send.send((name, true)).await;
+        });
+    }
+    hosts.retain(|host| host.status == HostStatus::Ready);
+    drop(send);
+    if tasks.is_empty() {
+        return Err(Failure::usage("no host answered").err());
+    }
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => return Ok(ExitCode::SUCCESS),
+            message = receive.recv() => match message {
+                Some((name, dropped)) => {
+                    if dropped {
+                        eprintln!("warning: {name}: stream closed");
+                        hosts.retain(|host| host.name != name);
+                    }
+                    if hosts.is_empty() { return Ok(ExitCode::SUCCESS); }
+                    if std::io::stdout().is_terminal() { print!("\x1b[H\x1b[2J"); }
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => return Ok(ExitCode::SUCCESS),
+                        result = fan_out(cli, &hosts, local, true) => { let _ = result?; }
+                    }
+                    std::io::stdout().flush()?;
+                }
+                None => return Ok(ExitCode::SUCCESS),
+            }
+        }
+    }
 }
 
 async fn has_id(client: &Client, id: &str) -> bool {

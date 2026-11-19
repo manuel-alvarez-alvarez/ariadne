@@ -847,6 +847,14 @@ Use `--host all` for reads only.
 A list across hosts has a leading `HOST` column and a JSON `host` field.
 Rows follow registry order. A failed host produces a warning.
 One successful host gives exit code 0.
+With `--watch --host all`, goal, task, session and PR lists redraw one merged table after host changes.
+`attention --watch --host all` redraws its merged view too.
+`events -f --host all` follows every ready host and labels each line with its host.
+JSON event lines have a `host` field.
+`daemon logs -f --host all` labels each log line with its host.
+Task and session logs find the host with the ID before following it.
+An unavailable host produces one warning. Other hosts continue after a host drops, without reconnecting to it.
+Ctrl-C stops all followers. These forms also work when the registry contains only `local`.
 `permissions ai show --host all` prints one block per host, headed by the host's name.
 Commands for one ID, including attach, find the host that has it.
 Other reads, such as `version`, `doctor`, `events`, `forge tunnel`, `workflow check` and `permissions ai test`, take `--host NAME` and `--host all`.
