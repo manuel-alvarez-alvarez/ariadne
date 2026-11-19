@@ -256,3 +256,44 @@ it("opens with the chip of ?host= picked", async () => {
   expect(await screen.findByText("--on-box")).toBeTruthy()
   expect(screen.getByRole("button", { name: "box", pressed: true })).toBeTruthy()
 })
+
+it("names the host in the toast of a saved flag list", async () => {
+  const success = vi.spyOn(toast, "success").mockImplementation(() => "")
+  stubHosts({
+    local: answers("--on-local", true),
+    box: {
+      ...answers("--on-box", true),
+      "/v1/agents/claude-agent-acp": () =>
+        jsonResponse(anAgentConfig({ extra_flags: ["--on-box"], default_flags: [] })),
+    },
+  })
+  renderScreen(<AgentsPage />)
+
+  await userEvent.click(await screen.findByRole("button", { name: "box" }))
+  await userEvent.click(screen.getByRole("button", { name: /Edit claude-agent-acp flags/ }))
+  await userEvent.click(await screen.findByRole("button", { name: "Save flags" }))
+  await waitFor(() => expect(success).toHaveBeenCalledWith("Flags saved on box", expect.anything()))
+})
+
+it("names the host in the toast of a refused rank change", async () => {
+  const error = vi.spyOn(toast, "error").mockImplementation(() => "")
+  stubHosts({
+    local: answers("--on-local", true),
+    box: {
+      ...answers("--on-box", true),
+      "/v1/models/rank": () =>
+        new Response(JSON.stringify({ error: { code: "boom", message: "refused" } }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }),
+    },
+  })
+  renderScreen(<AgentsPage />)
+
+  await userEvent.click(await screen.findByRole("button", { name: "box" }))
+  await userEvent.click(await screen.findByRole("combobox", { name: `${MODEL} rank` }))
+  await userEvent.click(await screen.findByRole("option", { name: /^Fast/ }))
+  await waitFor(() =>
+    expect(error).toHaveBeenCalledWith("Could not change the rank on box", expect.anything()),
+  )
+})

@@ -1248,7 +1248,9 @@ Out: the daemon endpoints themselves (012).
     “shows the error of the picked host's models in the table, with its name and Retry”,
     “counts the models of the picked chip's host, and the models turned off there”,
     “keeps the picked chip when the agent tab changes”,
-    “names the host in the flags dialog and in the toasts of a model change” and
+    “names the host in the flags dialog and in the toasts of a model change”,
+    “names the host in the toast of a saved flag list”,
+    “names the host in the toast of a refused rank change” and
     “opens with the chip of ?host= picked”.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
     most recently updated first. Their rows name their host by rule 74.
