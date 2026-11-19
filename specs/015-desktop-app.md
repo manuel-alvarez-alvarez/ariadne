@@ -1243,7 +1243,8 @@ Out: the daemon endpoints themselves (012).
     checkout". With only `local` listed the table has no
     Hosts column. The forge tunnel switch is `local`'s
     (`ui/src/features/repositories/repositories-page.test.tsx::says which hosts hold a checkout of each repository and which lack one`,
-    `::shows a host as pending, not as holding a checkout, until its first sync completes`).
+    `::shows a host as pending, not as holding a checkout, until its first sync completes`,
+    `::reads a pending sync of a host the app cannot reach as waiting for host`).
 68. The agents screen reads the agents and models of the selected hosts. One tab
     holds one agent id. Its panel has a chip per host that has the agent where
     rule 74 shows the host on rows. A flag edit, a model switch and a rank apply to

@@ -390,4 +390,23 @@ describe("hosts", () => {
     expect(ariadne?.textContent).toBe("box · pending")
     expect(sandbox?.textContent).toBe("box · pending")
   })
+
+  it("reads a pending sync of a host the app cannot reach as waiting for host", async () => {
+    hosts = [
+      LOCAL,
+      {
+        ...BOX,
+        name: "far",
+        kind: "ssh",
+        endpoint: null,
+        status: "down",
+        error: "no forward",
+        sync: { state: "pending", error: null, missing_repositories: [], skipped_permissions: 0 },
+      },
+    ]
+    renderScreen(<RepositoriesPage />)
+
+    const [ariadne] = await screen.findAllByRole("list", { name: "Checkouts" })
+    expect(ariadne?.textContent).toBe("far · waiting for host")
+  })
 })
