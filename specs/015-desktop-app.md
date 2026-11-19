@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-17
+updated: 2026-11-19
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1235,17 +1235,50 @@ Out: the daemon endpoints themselves (012).
     the host of the chip picked, and Refresh reprobes every selected host. Each host
     whose agents or models failed to load follows rule 75.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
-    most recently updated first. Their rows name their host by rule 74.
-    A repository filter names one forge repository. Each host reads it by its
-    own id for that forge repository; a host without it is skipped.
+    most recently updated first. A repository filter names one forge
+    repository. Each host reads it by its own id for that forge repository; a
+    host without it is skipped. Paging, the text filter, the Whose filter and
+    the repository filter give each request one time. A host that fails keeps
+    its error apart, and the rows of the other hosts stay.
+    - A request that many hosts list is one row, matched by its forge
+      repository and its number. The row shows the newest forge facts among
+      those hosts. Under rule 74 it names the host of each Ariadne review and
+      each keeper, and no host for a request with no Ariadne work. Its Session
+      column has one link per host with a session on the request, each to the
+      session panel on that host. A click opens the panel on a host that lists
+      the request: one that holds Ariadne work first, then `local`.
+    - An issue that many hosts list is one row, with the newest facts among
+      them. Under rule 74 it names each host that lists it. Create goal opens
+      the goal dialog on the picked host if that host has the repository, else
+      on `local`, else on the first host that has it. The dialog has the
+      repository of that host selected.
+    - With one selected host, each host's rows show as they come.
+    Tests in `ui/src/features/forge/forge-hosts.test.tsx`:
+    “shows one row for a request two hosts list, with the newest forge facts”
+    proves the match and the facts;
+    “names the host of each Ariadne review and each keeper on the one row”
+    proves the work labels;
+    “links the session of each host that has one, each on its host” proves
+    the session links;
+    “opens the panel on the host that holds Ariadne work” and
+    “opens the panel on local when no host holds Ariadne work” prove the click;
+    “sends the filters to every host and lists a request on a later page of
+    one host once” proves the filters and paging;
+    “keeps the rows of the other host and the error of the host that fails”
+    proves the errors;
+    “shows one row for an issue two hosts list, with its newest facts” proves
+    the issue match;
+    “opens Create goal under the pick %j on a host with the repository” proves
+    the goal dialog host and repository.
+    `pull-requests-page.test.tsx` and `issues-page.test.tsx` prove one host.
     A pull request panel opens on its row's host (`?host=`).
     Its sessions and task links open on that host.
     Tests in `ui/src/features/pull-requests/hosts.test.tsx`:
     “links the task on the request host” proves task navigation;
     “reads the selected session on the request host” proves session reads;
     “opens a session from the sessions tab on box” proves session selection;
-    “shows both host labels and the box session link for the same request”
-    proves row labels, session links, and distinct rows across hosts;
+    “shows one row for the same request on two hosts, with the session link of
+    each” proves one row and its session links;
     “shows the panel host label when a named host is listed” proves panel labels.
     Local cases remain in `pull-request-panel.test.tsx` and
     `pull-requests-page.test.tsx`.
@@ -1258,7 +1291,7 @@ Out: the daemon endpoints themselves (012).
     `ui/src/features/pull-requests/hosts.test.tsx`.
     `ui/src/features/forge/forge-hosts.test.tsx` proves the host select.
     `pull-request-panel.test.tsx` proves local starts.
-    A goal dialog filled from an issue is on the issue's host.
+    Rule 69 gives the host of a goal dialog filled from an issue.
 71. The daemon logs drawer has a host select, shown only with a named host. It
     lists the hosts of the picker, and a host the app cannot reach is a disabled
     option with its reason. It defaults to the picked host when the app can
@@ -1342,7 +1375,7 @@ Out: the daemon endpoints themselves (012).
 - The session rows follow rule 74 under a saved pick no longer listed
   (`ui/src/features/sessions/hosts.test.tsx::names each row's host under a saved pick the daemon no longer lists`).
 - The issue rows follow rule 74
-  (`ui/src/features/forge/forge-hosts.test.tsx::merges the issues of every host, and fills the goal dialog on the issue's host`,
+  (`ui/src/features/forge/forge-hosts.test.tsx::merges the issues of every host, and names the host of each`,
   `::names local on a local issue row under All, and keeps it when a named host goes down`,
   `::names no host on an issue row under one picked host`).
 - The agents screen keeps the chip of the hosts that stay
@@ -2319,11 +2352,11 @@ Out: the daemon endpoints themselves (012).
   `::shows an error state for each host when every host fails to list sessions`);
   the Agent filter (`::lists the agents of each selected host in the sessions Agent filter`).
 - The Forge tabs merge hosts, open a panel on the row's host, offer the hosts of
-  a repository for a review, and fill the goal dialog on the issue's host
-  (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, badged, and opens a panel on its row's host`,
+  a repository for a review, and name the host of each issue
+  (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, and opens a panel on its row's host`,
   `::narrows to one repository by its forge name on every host, and skips a host without it`,
   `::offers the hosts where the repository is registered for Start review, the row's host first`,
-  `::merges the issues of every host, and fills the goal dialog on the issue's host`).
+  `::merges the issues of every host, and names the host of each`).
 - The logs drawer opens the log of the picked host and of the host its select
   names (`ui/src/features/system/daemon-logs-drawer.test.tsx::opens the log of the picked host, and of local under All, and follows the drawer's own host select`,
   `::defaults to local under All hosts`,
