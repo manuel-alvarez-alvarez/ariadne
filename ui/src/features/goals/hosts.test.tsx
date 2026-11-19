@@ -15,7 +15,7 @@ import { DetailPanels } from "@/components/detail-panels"
 import { EventStreamProvider } from "@/events/provider"
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
-import { aGoal, aModel, aRepository, aSessionPage } from "@/test/fixtures"
+import { aGoal, aModel, anEffort, aRepository, aSessionPage } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { AttentionPopover } from "./attention-strip"
@@ -256,33 +256,66 @@ async function pickModel(user: ReturnType<typeof userEvent.setup>, id: string) {
   return dialog
 }
 
+/** A model that can be run at `low` or `high`. */
+const EFFORT_MODEL = aModel({ efforts: [anEffort({ id: "low" }), anEffort({ id: "high" })] })
+
 it("clears the model and the effort when the goal dialog's host changes", async () => {
   const user = userEvent.setup()
-  stubHosts({
-    local: { "/v1/repositories": [], "/v1/models": [aModel()], "/v1/workflows": [] },
-    box: { "/v1/repositories": [], "/v1/models": [aModel()], "/v1/workflows": [] },
-  })
+  const answers = {
+    "/v1/repositories": [aRepository({ id: "r-box", path: "/src/box-repo" })],
+    "/v1/models": [EFFORT_MODEL],
+    "/v1/workflows": [],
+    "/v1/goals": (_url: URL, request: Request) =>
+      request.method === "POST" ? jsonResponse(aGoal({ title: "On box" }), 201) : undefined,
+  }
+  const seen = stubHosts({ local: answers, box: answers })
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
-  const dialog = await pickModel(user, aModel().id)
+  const dialog = await screen.findByRole("dialog", { name: "New goal" })
   const pin = within(dialog).getByRole("button", { name: "Orchestrator runs on" })
-  await waitFor(() => expect(pin.textContent).toContain("claude-sonnet-5"))
 
-  await user.click(within(dialog).getByRole("combobox", { name: "Host" }))
+  // A model and an effort of it, on local.
+  await user.click(pin)
+  await user.click(
+    within(await screen.findByRole("listbox", { name: "Models" })).getByText(EFFORT_MODEL.id),
+  )
+  await user.click(
+    within(await screen.findByRole("listbox", { name: "Efforts" })).getByText("high", {
+      selector: "[data-slot=option-label]",
+    }),
+  )
+  await waitFor(() => expect(pin.textContent).toContain("high"))
+  if (screen.queryByRole("listbox", { name: "Efforts" })) await user.keyboard("{Escape}")
+
+  await user.click(await within(dialog).findByRole("combobox", { name: "Host" }))
   await user.click(await screen.findByRole("option", { name: "box" }))
 
   await waitFor(() => expect(pin.textContent).not.toContain("claude-sonnet-5"))
+  expect(pin.textContent).not.toContain("high")
   expect(within(dialog).getByRole("button", { name: "Create goal" }).hasAttribute("disabled")).toBe(
     true,
   )
+
+  // The same model again, with no effort picked: none is sent.
+  await user.click(pin)
+  await user.click(
+    within(await screen.findByRole("listbox", { name: "Models" })).getByText(EFFORT_MODEL.id),
+  )
+  await user.keyboard("{Escape}")
+  await user.click(await within(dialog).findByRole("combobox", { name: "Repositories" }))
+  await user.click(await screen.findByText(/box-repo/))
+  await user.keyboard("{Escape}")
+  await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "On box")
+  await user.click(within(dialog).getByRole("button", { name: "Create goal" }))
+  await waitFor(() => expect(seen.some((one) => one.method === "POST")).toBe(true))
+  const body = JSON.parse(seen.find((one) => one.method === "POST")?.body ?? "{}")
+  expect(body).toMatchObject({ model: EFFORT_MODEL.id })
+  expect(body).not.toHaveProperty("effort")
 })
 
-it("warns in the goal dialog of a host whose sync is pending or failed, and still creates", async () => {
+async function warnsAndCreates(state: "failed" | "pending", error: string | null) {
   const user = userEvent.setup()
   useSettingsStore.setState({ hostFilter: "box" })
-  const behind = {
-    ...BOX,
-    sync: { ...BOX.sync, state: "failed" as const, error: "push refused: disk full" },
-  }
+  const behind = { ...BOX, sync: { ...BOX.sync, state, error } }
   let created = false
   stubHosts(
     {
@@ -303,8 +336,8 @@ it("warns in the goal dialog of a host whose sync is pending or failed, and stil
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
 
   const alert = await screen.findByRole("alert")
-  expect(alert.textContent).toContain("failed")
-  expect(alert.textContent).toContain("push refused: disk full")
+  expect(alert.textContent).toContain(state)
+  if (error) expect(alert.textContent).toContain(error)
 
   const dialog = await pickModel(user, aModel().id)
   await user.click(await within(dialog).findByRole("combobox", { name: "Repositories" }))
@@ -313,7 +346,13 @@ it("warns in the goal dialog of a host whose sync is pending or failed, and stil
   await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "On box")
   await user.click(within(dialog).getByRole("button", { name: "Create goal" }))
   await waitFor(() => expect(created).toBe(true))
-})
+}
+
+it("warns in the goal dialog of a host whose sync is failed, and still creates", () =>
+  warnsAndCreates("failed", "push refused: disk full"))
+
+it("warns in the goal dialog of a host whose sync is pending, and still creates", () =>
+  warnsAndCreates("pending", null))
 
 it("names the host in the toast of a goal created on a named host, and offers all hosts when the pick leaves it out", async () => {
   const user = userEvent.setup()

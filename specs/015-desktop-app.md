@@ -2348,7 +2348,8 @@ Out: the daemon endpoints themselves (012).
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
 - The goal dialog follows rule 79
   (`ui/src/features/goals/hosts.test.tsx::clears the model and the effort when the goal dialog's host changes`,
-  `::warns in the goal dialog of a host whose sync is pending or failed, and still creates`,
+  `::warns in the goal dialog of a host whose sync is failed, and still creates`,
+  `::warns in the goal dialog of a host whose sync is pending, and still creates`,
   `::names the host in the toast of a goal created on a named host, and offers all hosts when the pick leaves it out`).
 
 ## Known gap
