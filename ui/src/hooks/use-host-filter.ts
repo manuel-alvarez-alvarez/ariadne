@@ -50,6 +50,19 @@ export function useHostFilter(): Host[] {
 }
 
 /**
+ * Every host the app can reach, whatever the pick: what the attention list and
+ * the command palette read, so one pick never hides the items of another host.
+ */
+export function useReachableHosts(): Host[] {
+  const { hosts } = useHosts()
+  const names = hosts.filter((host) => host.url !== null).map((host) => host.name)
+  // One array per set of hosts, so a list over it keeps its identity.
+  const key = names.join("\n")
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is `names`, spelled stably
+  return useMemo(() => names, [key])
+}
+
+/**
  * The one host the picker names: `local` under All, or for a pick the
  * settings daemon no longer lists. Null while a named pick waits for the
  * hosts list, so nothing reads `local` in its place first.

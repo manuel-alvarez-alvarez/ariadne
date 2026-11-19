@@ -62,7 +62,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useAttention } from "@/features/goals/attention"
+import { useAttention, useFollowAttention } from "@/features/goals/attention"
 import { goalQueryOptions, goalsQueryOptions } from "@/features/goals/queries"
 import { isTerminalGoalStatus } from "@/features/goals/status"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
@@ -79,8 +79,7 @@ import {
   SIDEBAR_SHORTCUT,
   screenShortcut,
 } from "@/hooks/use-global-shortcuts"
-import { useHostFilter } from "@/hooks/use-host-filter"
-import { useRowsShowHost } from "@/hooks/use-host-label"
+import { useHasNamedHosts, useReachableHosts } from "@/hooks/use-host-filter"
 import { attachCommand } from "@/lib/clipboard"
 import { shortId } from "@/lib/format"
 import { keySequenceLabel, shortcutLabel } from "@/lib/shortcuts"
@@ -137,6 +136,7 @@ export function CommandPalette({
   const { status, retry } = useConnection()
 
   const entries = usePaletteEntries(open)
+  const follow = useFollowAttention()
   const panelHost = hostOf(search)
   // What the screen underneath is showing, which is what the actions below act
   // on: the goal a task would be created in, and the task or session an attach
@@ -162,6 +162,9 @@ export function CommandPalette({
     // A task target may ask to replace rather than push — see `entries.ts` —
     // which a plain string target never does.
     const replace = typeof target === "string" ? undefined : target.replace
+    // The same rule the strip and the toast follow: an agents link to a host
+    // outside the pick sets the pick to All hosts.
+    if (typeof target !== "string") follow(target)
     run(() => void navigate(target, { replace }))
   }
 
@@ -484,7 +487,9 @@ function EntryGroup({
   entries: PaletteEntry[]
   onPick: (entry: PaletteEntry) => void
 }) {
-  const showHost = useRowsShowHost()
+  // The palette searches every reachable host whatever the pick, so a row
+  // names its host whenever a named host is listed.
+  const showHost = useHasNamedHosts()
   return (
     <CommandGroup heading={heading}>
       {entries.map((entry) => (
@@ -551,11 +556,11 @@ function useOpenGoal(open: boolean, goalId: string | null, host: Host): HostRow<
  * the palette shares their cache entries rather than making four of its own.
  */
 function usePaletteEntries(open: boolean): PaletteEntries {
-  // The goals, tasks and sessions of every host the header's picker selected,
-  // read only while the palette is open. The skills, workflows and
+  // The goals, tasks and sessions of every reachable host, whatever the
+  // header's picker selected, read only while the palette is open. The skills, workflows and
   // repositories are `local`'s.
-  const picked = useHostFilter()
-  const hosts = open ? picked : NO_HOSTS
+  const reachable = useReachableHosts()
+  const hosts = open ? reachable : NO_HOSTS
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host))

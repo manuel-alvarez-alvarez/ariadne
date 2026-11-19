@@ -139,16 +139,17 @@ it("names local on a local attention row under All", async () => {
   expect(within(row).getByTitle("Host").textContent).toBe("local")
 })
 
-it("names no host on an attention row under one picked host", async () => {
+it("lists the attention rows of every host under one picked host, each naming its host", async () => {
   useSettingsStore.setState({ hostFilter: "box" })
   stubHosts({
-    box: { ...EMPTY, "/v1/goals": [], "/v1/attention": { items: [STUCK], complete: true } },
+    local: { ...EMPTY, "/v1/goals": [], "/v1/attention": { items: [STUCK], complete: true } },
+    box: { ...EMPTY, "/v1/goals": [] },
   })
   renderScreen(<AttentionPopover />, { route: "/goals" })
 
   fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
   const row = (await screen.findByText(STUCK.summary)).closest("li") as HTMLElement
-  expect(within(row).queryByTitle("Host")).toBeNull()
+  expect(within(row).getByTitle("Host").textContent).toBe("local")
 })
 
 it("names the goal panel's host, local included, while a named host is listed", async () => {
