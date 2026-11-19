@@ -14,6 +14,11 @@
  * 25 at a time, the text filter applied to every request first, and the next
  * page loads as the table scrolls near its end. Every `pull_requests_changed`
  * reads it again from its first page; nothing adds or removes a request.
+ *
+ * Under many hosts a request every host lists is one row, matched by its forge
+ * repository and its number. The row reads the newest forge facts among them,
+ * names the host of each Ariadne review and keeper, and links the session of
+ * each host that has one.
  */
 
 import { useMutation } from "@tanstack/react-query"
@@ -21,7 +26,7 @@ import { RefreshCwIcon } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
-import { api, type HostRow, type PullRequestDto, unwrap } from "@/api"
+import { api, type Host, type HostRow, LOCAL_HOST, type PullRequestDto, unwrap } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -42,6 +47,8 @@ import {
 import {
   distinctEnabled,
   filterOption,
+  forgeItemKey,
+  groupForgeItems,
   repositoryOn,
   useHostRepositories,
 } from "@/features/forge/forge-hosts"
@@ -61,6 +68,27 @@ const WHOSE = [
   { value: "author", label: "Mine", query: { role: "author" } },
   { value: "reviewer", label: "Review requests", query: { role: "reviewer", requested: true } },
 ] as const
+
+/** The rows of one request, one per host that lists it, the newest first. */
+type Listing = HostRow<PullRequestDto>[]
+
+/** Whether Ariadne works on the request on its row's host. */
+function holdsWork(row: PullRequestDto): boolean {
+  return Boolean(
+    row.review_asked ||
+      row.babysit_asked ||
+      row.session_id ||
+      row.origin_task_id ||
+      (row.operations?.length ?? 0) > 0,
+  )
+}
+
+/** The row whose host a click opens the panel on: one with Ariadne work, then `local`. */
+function panelRow(listing: Listing): HostRow<PullRequestDto> {
+  const working = listing.filter(holdsWork)
+  const among = working.length > 0 ? working : listing
+  return among.find((row) => row.host === LOCAL_HOST) ?? (among[0] as HostRow<PullRequestDto>)
+}
 
 const COLUMNS = [
   { header: "Request", className: "min-w-72" },
@@ -92,6 +120,10 @@ export function PullRequestsPage() {
   })
   const rows = usePullRequestLists(queried)
   const listed = rows.rows
+    ? groupForgeItems(rows.rows, (row) =>
+        forgeItemKey(repositories.known, row.host, row.repository_id, row.number),
+      )
+    : undefined
   const needsRefresh = useNeedsRefresh(
     repositories.rows.filter(
       (each) =>
@@ -175,20 +207,38 @@ export function PullRequestsPage() {
             description="The open requests of the repositories with their forge enabled show up here."
           />
         }
-        rowKey={(row) => `${row.host}:${pullRequestKey(row)}`}
-        renderRow={(row) => (
-          <PullRequestRow
-            row={row}
-            repository={forgeName(
-              repositories.rows.find((r) => r.host === row.host && r.id === row.repository_id),
-            )}
-            host={showHost ? row.host : null}
-            sessionTo={
-              row.session_id ? sessionPanelFrom(pathname, search, row.session_id, row.host) : null
-            }
-            onInspect={() => navigate(paths.pullRequest(pullRequestKey(row), search, row.host))}
-          />
-        )}
+        rowKey={(listing) => {
+          const row = listing[0] as HostRow<PullRequestDto>
+          return forgeItemKey(repositories.known, row.host, row.repository_id, row.number)
+        }}
+        renderRow={(listing) => {
+          const row = listing[0] as HostRow<PullRequestDto>
+          const opens = panelRow(listing)
+          return (
+            <PullRequestRow
+              row={row}
+              repository={forgeName(
+                repositories.rows.find((r) => r.host === row.host && r.id === row.repository_id),
+              )}
+              reviews={listing.filter((each) => each.review_asked).map((each) => each.host)}
+              keepers={listing.filter((each) => each.babysit_asked).map((each) => each.host)}
+              showHost={showHost}
+              sessions={listing.flatMap((each) =>
+                each.session_id
+                  ? [
+                      {
+                        host: each.host,
+                        to: sessionPanelFrom(pathname, search, each.session_id, each.host),
+                      },
+                    ]
+                  : [],
+              )}
+              onInspect={() =>
+                navigate(paths.pullRequest(pullRequestKey(opens), search, opens.host))
+              }
+            />
+          )
+        }}
       />
       <NearEnd
         armed={rows.hasNextPage && !rows.isFetchingNextPage && rows.errors.length === 0}
@@ -239,15 +289,21 @@ function NearEnd({
 function PullRequestRow({
   row,
   repository,
-  host,
-  sessionTo,
+  reviews,
+  keepers,
+  showHost,
+  sessions,
   onInspect,
 }: {
+  /** The newest of the request's rows: its forge facts. */
   row: HostRow<PullRequestDto>
   repository: string
-  /** The host the request is on, shown while the list spans hosts. */
-  host: string | null
-  sessionTo: ReturnType<typeof sessionPanelFrom> | null
+  /** The hosts where Ariadne reviews the request, and where a keeper keeps it. */
+  reviews: Host[]
+  keepers: Host[]
+  /** Whether the row names the host of each review, keeper and session. */
+  showHost: boolean
+  sessions: { host: Host; to: ReturnType<typeof sessionPanelFrom> }[]
   onInspect: () => void
 }) {
   const checks = CHECKS[row.checks]
@@ -274,23 +330,28 @@ function PullRequestRow({
             />
             <span className="font-medium">{row.title}</span>
             {row.draft ? <StatusBadge size="sm" box="outlined" label="Draft" /> : null}
-            {row.review_asked ? (
-              <StatusBadge
-                size="sm"
-                label={ARIADNE_REVIEWING.label}
-                tone={ARIADNE_REVIEWING.tone}
-              />
-            ) : null}
-            {row.babysit_asked ? (
-              <StatusBadge
-                size="sm"
-                label={ARIADNE_BABYSITTING.label}
-                tone={ARIADNE_BABYSITTING.tone}
-              />
-            ) : null}
+            {(showHost ? reviews : reviews.slice(0, 1)).map((host) => (
+              <span key={`review-${host}`} data-work className="inline-flex items-center gap-1">
+                <StatusBadge
+                  size="sm"
+                  label={ARIADNE_REVIEWING.label}
+                  tone={ARIADNE_REVIEWING.tone}
+                />
+                {showHost ? <HostLabel host={host} /> : null}
+              </span>
+            ))}
+            {(showHost ? keepers : keepers.slice(0, 1)).map((host) => (
+              <span key={`keeper-${host}`} data-work className="inline-flex items-center gap-1">
+                <StatusBadge
+                  size="sm"
+                  label={ARIADNE_BABYSITTING.label}
+                  tone={ARIADNE_BABYSITTING.tone}
+                />
+                {showHost ? <HostLabel host={host} /> : null}
+              </span>
+            ))}
           </span>
           <span className="text-xs text-muted-foreground">
-            {host ? <HostLabel host={host} /> : null}{" "}
             <span className="font-mono">{repository || row.repository_id}</span> ·{" "}
             {row.role === "author" ? "by you" : `by ${row.author_login}`} ·{" "}
             <span className="font-mono">{row.head_branch}</span> →{" "}
@@ -324,14 +385,23 @@ function PullRequestRow({
       {/* The session that works on the request: its own panel, over this
           screen. */}
       <TableCell onClick={(event) => event.stopPropagation()}>
-        {sessionTo ? (
-          <Link
-            to={sessionTo}
-            aria-label={`Open the session of #${row.number}`}
-            className="text-sm underline-offset-3 hover:underline"
-          >
-            Open
-          </Link>
+        {sessions.length > 0 ? (
+          <span className="flex flex-wrap items-center gap-2">
+            {sessions.map((session) => (
+              <Link
+                key={session.host}
+                to={session.to}
+                aria-label={
+                  showHost
+                    ? `Open the session of #${row.number} on ${session.host}`
+                    : `Open the session of #${row.number}`
+                }
+                className="text-sm underline-offset-3 hover:underline"
+              >
+                {showHost ? session.host : "Open"}
+              </Link>
+            ))}
+          </span>
         ) : (
           <span className="text-muted-foreground">-</span>
         )}

@@ -1193,8 +1193,12 @@ Out: the daemon endpoints themselves (012).
     and task chips apply to every selected host.
     The Agent filter lists the agents of each selected host.
 62. The session panel and the console open their streams on the session's
-    host. `console-view-state.ts` keys its state by host, address and
-    session. Console input, cancel and answers post to the session's host. A
+    host. `console-view-state.ts` keys its state by host and session. `local`
+    adds its daemon address to the key, so each daemon keeps its own state; a
+    named host does not, so its draft, scroll position, view, folds and failed
+    sends stay when its address changes. While the host is not reachable, the
+    console opens no stream and its status line gives the reason of the host.
+    Console input, cancel and answers post to the session's host. A
     switch of a session's model lists the models of that host. A goal panel's
     Sessions tab opens sessions of a named host the same way.
 63. Every attention target opens its item on its host.
@@ -1235,17 +1239,50 @@ Out: the daemon endpoints themselves (012).
     the host of the chip picked, and Refresh reprobes every selected host. Each host
     whose agents or models failed to load follows rule 75.
 69. The Forge tabs merge the pull requests and issues of the selected hosts,
-    most recently updated first. Their rows name their host by rule 74.
-    A repository filter names one forge repository. Each host reads it by its
-    own id for that forge repository; a host without it is skipped.
+    most recently updated first. A repository filter names one forge
+    repository. Each host reads it by its own id for that forge repository; a
+    host without it is skipped. Paging, the text filter, the Whose filter and
+    the repository filter give each request one time. A host that fails keeps
+    its error apart, and the rows of the other hosts stay.
+    - A request that many hosts list is one row, matched by its forge
+      repository and its number. The row shows the newest forge facts among
+      those hosts. Under rule 74 it names the host of each Ariadne review and
+      each keeper, and no host for a request with no Ariadne work. Its Session
+      column has one link per host with a session on the request, each to the
+      session panel on that host. A click opens the panel on a host that lists
+      the request: one that holds Ariadne work first, then `local`.
+    - An issue that many hosts list is one row, with the newest facts among
+      them. Under rule 74 it names each host that lists it. Create goal opens
+      the goal dialog on the picked host if that host has the repository, else
+      on `local`, else on the first host that has it. The dialog has the
+      repository of that host selected.
+    - With one selected host, each host's rows show as they come.
+    Tests in `ui/src/features/forge/forge-hosts.test.tsx`:
+    “shows one row for a request two hosts list, with the newest forge facts”
+    proves the match and the facts;
+    “names the host of each Ariadne review and each keeper on the one row”
+    proves the work labels;
+    “links the session of each host that has one, each on its host” proves
+    the session links;
+    “opens the panel on the host that holds Ariadne work” and
+    “opens the panel on local when no host holds Ariadne work” prove the click;
+    “sends the filters to every host and lists a request on a later page of
+    one host once” proves the filters and paging;
+    “keeps the rows of the other host and the error of the host that fails”
+    proves the errors;
+    “shows one row for an issue two hosts list, with its newest facts” proves
+    the issue match;
+    “opens Create goal under the pick %j on a host with the repository” proves
+    the goal dialog host and repository.
+    `pull-requests-page.test.tsx` and `issues-page.test.tsx` prove one host.
     A pull request panel opens from the `?pr=` and `?host=` of its row's host.
     It shows the work of every host by rule 76.
     Tests in `ui/src/features/pull-requests/hosts.test.tsx`:
     “links the task on the request host” proves task navigation;
     “reads the selected session on the request host” proves session reads;
     “opens a session from the sessions tab on box” proves session selection;
-    “shows both host labels and the box session link for the same request”
-    proves row labels, session links, and distinct rows across hosts;
+    “shows one row for the same request on two hosts, with the session link of
+    each” proves one row and its session links;
     “shows the panel host label when a named host is listed” proves panel labels.
     Local cases remain in `pull-request-panel.test.tsx` and
     `pull-requests-page.test.tsx`.
@@ -1271,7 +1308,7 @@ Out: the daemon endpoints themselves (012).
     the host that keeps, with its repository id” and “links the task that
     keeps the request on the host of the task” in `hosts.test.tsx` for the
     hidden starts. `pull-request-panel.test.tsx` proves local starts.
-    A goal dialog filled from an issue is on the issue's host.
+    Rule 69 gives the host of a goal dialog filled from an issue.
 71. The daemon logs drawer has a host select, shown only with a named host. It
     lists the hosts of the picker, and a host the app cannot reach is a disabled
     option with its reason. It defaults to the picked host when the app can
@@ -1282,7 +1319,12 @@ Out: the daemon endpoints themselves (012).
     has All hosts and the hosts of the picker, and a host the app cannot reach
     is a disabled option with its reason. It defaults to the picked host when
     the app can reach it, else to All hosts, and sends no host the daemon does
-    not list. The iframe takes `host=` beside
+    not list. A host the screen is on, picked here or taken from the header,
+    stays the host while the hosts list it, reachable or not. If it goes
+    unreachable, the screen says why, and the iframe keeps its `src` and does
+    not reload when the host drops or returns. A change of the header pick
+    changes the host only while the user has picked none on the screen. The
+    iframe takes `host=` beside
     `daemon=`, and its Prometheus and Loki datasources use
     `/v1/hosts/{host}/` of the settings daemon, with `all` for the combined
     view. The shipped dashboard's series names end in `{{host}}`, which the
@@ -1411,7 +1453,7 @@ Out: the daemon endpoints themselves (012).
 - The session rows follow rule 74 under a saved pick no longer listed
   (`ui/src/features/sessions/hosts.test.tsx::names each row's host under a saved pick the daemon no longer lists`).
 - The issue rows follow rule 74
-  (`ui/src/features/forge/forge-hosts.test.tsx::merges the issues of every host, and fills the goal dialog on the issue's host`,
+  (`ui/src/features/forge/forge-hosts.test.tsx::merges the issues of every host, and names the host of each`,
   `::names local on a local issue row under All, and keeps it when a named host goes down`,
   `::names no host on an issue row under one picked host`).
 - The agents screen keeps the chip of the hosts that stay
@@ -1923,6 +1965,7 @@ Out: the daemon endpoints themselves (012).
   session, and keeps one open stream while shown (rule 24i)
   (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft back after the console is unmounted`,
   `::keeps each daemon's and each session's state apart`,
+  `ui/src/features/sessions/console/composer.test.tsx::keeps a named host's state when its address changes, and gives the host's reason while it is down`,
   `::restores the reader's place, not the bottom, when the console comes back`,
   `::brings back the older page the reader had loaded, and their place in it, after the console expands`,
   `::puts the block the reader was on back in place when new events move the page boundary`,
@@ -2388,11 +2431,11 @@ Out: the daemon endpoints themselves (012).
   `::shows an error state for each host when every host fails to list sessions`);
   the Agent filter (`::lists the agents of each selected host in the sessions Agent filter`).
 - The Forge tabs merge hosts, open a panel on the row's host, offer the hosts of
-  a repository for a review, and fill the goal dialog on the issue's host
-  (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, badged, and opens a panel on its row's host`,
+  a repository for a review, and name the host of each issue
+  (`ui/src/features/forge/forge-hosts.test.tsx::merges the pull requests of every host under All, and opens a panel on its row's host`,
   `::narrows to one repository by its forge name on every host, and skips a host without it`,
   `::offers the hosts where the repository is registered for Start review, the row's host first`,
-  `::merges the issues of every host, and fills the goal dialog on the issue's host`).
+  `::merges the issues of every host, and names the host of each`).
 - The logs drawer opens the log of the picked host and of the host its select
   names (`ui/src/features/system/daemon-logs-drawer.test.tsx::opens the log of the picked host, and of local under All, and follows the drawer's own host select`,
   `::defaults to local under All hosts`,
@@ -2405,7 +2448,10 @@ Out: the daemon endpoints themselves (012).
   `::opens on the host the header picker names`,
   `::shows no host select with local alone`,
   `::lists a host it cannot reach as a disabled option with its reason, and opens on All over such a pick`,
-  `::sends no stale host when the saved pick is no longer listed`); the iframe's datasources point at
+  `::sends no stale host when the saved pick is no longer listed`,
+  `::keeps a chosen host when it drops and returns, says why, and neither switches the iframe nor reloads it`,
+  `::keeps the header's host when it drops and returns before a pick here, and says why`,
+  `::follows the header pick only until a host is picked on the screen`); the iframe's datasources point at
   `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
 
