@@ -1180,8 +1180,8 @@ Out: the daemon endpoints themselves (012).
 59. The attention strip, its count in the shell and in the window title, and its
     toasts read every reachable host for each host pick, and merge their items.
     Each row names its host whenever a named host is listed, under any pick;
-    rule 74's no-host row under one pick does not apply to it. A toast for an item
-    of a named host names the host. A `wait_for_user` question is answered in the
+    rule 74's no-host row under one pick does not apply to it. A toast names its item's
+    host, `local` included, whenever a named host is listed. A `wait_for_user` question is answered in the
     row, and the answer posts to that host's
     `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`. An attention
     error of one host follows rule 75: it names that host and has Retry; the items of the other
@@ -1291,7 +1291,11 @@ Out: the daemon endpoints themselves (012).
     `usePanelShowsHost()` (`hooks/use-host-label.ts`) hold the rule:
     - A row shows its host when the pick is All and `GET /v1/hosts` lists a
       named host. A row of `local` then shows `local`.
-    - Under one picked host, `local` included, a row shows no host.
+    - Under one picked host, `local` included, a row shows no host. The
+      attention rows, their toasts and the palette rows are not such rows: they
+      come from every reachable host under each pick, so they name their host,
+      `local` included, whenever a named host is listed, under any pick, as the
+      panels do. With only `local` listed, none names a host.
     - The rule reads the listed hosts, not the reachable ones. A host that
       goes down removes no label from the rows that stay.
     - A saved pick that `GET /v1/hosts` no longer lists counts as All.
@@ -1348,6 +1352,8 @@ Out: the daemon endpoints themselves (012).
   agents item opens its host's agents
   (`ui/src/features/goals/attention-hosts.test.tsx::counts the items of every reachable host under a pick of one`,
   `::names the host on the toast of an item of a named host`,
+  `::names local on the toast of a local item while a named host is listed`,
+  `::names no host on a toast with only local listed`,
   `::names the failed host with Retry, keeps the other items and keeps announcing`,
   `::raises no toast for the first answer of a host that becomes listed`,
   `::raises no toast for what a returning host raised while it was away, once its fresh answer lands`,

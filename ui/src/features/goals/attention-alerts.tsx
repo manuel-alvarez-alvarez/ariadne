@@ -29,11 +29,11 @@ import { useEffect, useRef } from "react"
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import { type Host, LOCAL_HOST } from "@/api"
+import type { Host } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { SESSION_ATTENTION_META } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
-import { useReachableHosts } from "@/hooks/use-host-filter"
+import { useHasNamedHosts, useReachableHosts } from "@/hooks/use-host-filter"
 import { plural } from "@/lib/format"
 import { paths } from "@/routes/paths"
 
@@ -138,6 +138,7 @@ function useAttentionToasts(
   // depends on that screen: see {@link attentionTarget}.
   const { pathname } = useLocation()
   const follow = useFollowAttention()
+  const showHost = useHasNamedHosts()
   /**
    * What has been on each host's list already; a host has no entry until its
    * first full answer, and loses it when it leaves the reachable hosts, so one
@@ -172,9 +173,9 @@ function useAttentionToasts(
           // dropped and re-delivered, a re-render — replaces its own toast
           // rather than stacking a second one under it.
           id: `attention-${key}`,
-          // An item of a named host names it, so it does not read as local news.
-          description:
-            host === LOCAL_HOST ? attentionSubject(item) : `${attentionSubject(item)} · ${host}`,
+          // While a named host is listed every toast names its host, `local`
+          // included (rule 74); with `local` alone none does.
+          description: showHost ? `${attentionSubject(item)} · ${host}` : attentionSubject(item),
           // `target.replace` when it is a task panel swapping in for an open
           // goal's, same reasoning as the strip's own row.
           action: {
@@ -187,7 +188,7 @@ function useAttentionToasts(
         })
       }
     }
-  }, [items, readyHosts, reachable, quiet, navigate, search, pathname, follow])
+  }, [items, readyHosts, reachable, quiet, navigate, search, pathname, follow, showHost])
 }
 
 /** What has changed about this row, as far as the list is concerned. */

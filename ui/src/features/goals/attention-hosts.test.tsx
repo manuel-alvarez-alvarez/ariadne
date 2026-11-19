@@ -123,6 +123,28 @@ it("names the host on the toast of an item of a named host", async () => {
   expect(toastText).toBeTruthy()
 })
 
+it("names local on the toast of a local item while a named host is listed", async () => {
+  const { queryClient } = renderAlerts()
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0))
+
+  local = [MINE]
+  await queryClient.invalidateQueries()
+
+  expect(await screen.findByText(/Summary of local-item · local/)).toBeTruthy()
+})
+
+it("names no host on a toast with only local listed", async () => {
+  hosts = [LOCAL]
+  const { queryClient } = renderAlerts()
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0))
+
+  local = [MINE]
+  await queryClient.invalidateQueries()
+
+  const text = await screen.findByText(/Summary of local-item/)
+  expect(text.textContent).not.toContain("·")
+})
+
 it("names the failed host with Retry, keeps the other items and keeps announcing", async () => {
   local = [MINE]
   box = "fail"
