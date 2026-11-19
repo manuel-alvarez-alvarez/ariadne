@@ -360,7 +360,7 @@ it("names the host in the toast of a goal created on a named host, and offers al
       "/v1/models": [aModel()],
       "/v1/workflows": [],
       "/v1/goals": (_url: URL, request: Request) =>
-        request.method === "POST" ? jsonResponse(aGoal({ title: "On box" }), 201) : undefined,
+        request.method === "POST" ? jsonResponse(aGoal({ title: "Fresh goal" }), 201) : undefined,
     },
   })
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
@@ -371,13 +371,13 @@ it("names the host in the toast of a goal created on a named host, and offers al
   await user.click(await screen.findByText(/box-repo/))
   await user.keyboard("{Escape}")
   await pickModel(user, aModel().id)
-  await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "On box")
+  await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "Fresh goal")
   await user.click(within(dialog).getByRole("button", { name: "Create goal" }))
 
   await waitFor(() => expect(toasted).toHaveBeenCalled())
   const [title, options] = toasted.mock.calls[0] ?? []
   expect(title).toBe("Goal created")
-  expect(options?.description).toContain("box")
+  expect(options?.description).toBe("Fresh goal on box")
   expect(options?.action.label).toBe("Show all hosts")
   act(() => options?.action.onClick())
   expect(useSettingsStore.getState().hostFilter).toBe("")
