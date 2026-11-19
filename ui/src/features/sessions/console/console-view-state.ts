@@ -6,8 +6,8 @@
  * Expanding the console into the modal, collapsing it back and switching the
  * panel's tab each unmount one pane and mount another, so the state cannot
  * live in the pane. It lives here, in memory only: a browser restart starts
- * afresh. Each entry is scoped by the daemon's address and the session, so two
- * daemons, or two sessions, never share a draft.
+ * afresh. Each entry is scoped by the host and the session, and `local`'s also by
+ * the daemon's address, so two daemons, or two sessions, never share a draft.
  *
  * Block folds and the transcript position are the interface the transcript
  * redesign builds on: `blockFolds` holds one preference per block id, and
@@ -60,9 +60,14 @@ const initial: ConsoleViewState = {
 
 const states = new Map<string, ConsoleViewState>()
 
-/** The key of one console: the host and daemon address it talks to, and the session. */
+/**
+ * The key of one console: the host and the session. Only `local` adds its
+ * daemon address, since the settings can point it at another daemon; a named
+ * host keeps its state when its address changes, as an ssh forward picks a new
+ * port on each run.
+ */
 export function consoleViewKey(host: Host, baseUrl: string, sessionId: string): string {
-  return `${host}\n${baseUrl}\n${sessionId}`
+  return `${host}\n${host === "local" ? baseUrl : ""}\n${sessionId}`
 }
 
 export function readViewState(key: string): ConsoleViewState {

@@ -10,12 +10,13 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
-import type { AgentEventDto } from "@/api"
+import { type AgentEventDto, qk, rememberHosts } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { aSession } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
+import { BOX, forgetHosts, LOCAL } from "@/test/hosts"
 
 import { consoleViewKey, readViewState, updateViewState } from "./console-view-state"
 import { SessionConsole } from "./session-console"
@@ -76,6 +77,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   useSettingsStore.getState().resetBaseUrl()
+  forgetHosts()
 })
 
 function mount(
@@ -397,6 +399,46 @@ it("keeps each daemon's and each session's state apart", () => {
   useSettingsStore.getState().setBaseUrl("http://10.0.0.2:7676")
   mount()
   expect(input().value).toBe("")
+})
+
+it("keeps a named host's state when its address changes, and gives the host's reason while it is down", async () => {
+  const at = (rows: (typeof BOX)[]) => {
+    rememberHosts([LOCAL, ...rows])
+    return [LOCAL, ...rows]
+  }
+  at([BOX])
+  const view = renderScreen(<SessionConsole host="box" sessionId={SESSION_ID} status="idle" />)
+  act(() => {
+    latestSource().succeed()
+    latestSource().emit("snapshot", [])
+  })
+  fireEvent.change(input(), { target: { value: "half a thought" } })
+  const key = consoleViewKey("box", "http://box.test:7676", SESSION_ID)
+  updateViewState(key, {
+    blockFolds: { b1: true },
+    failed: [{ id: "f", text: "t", requestId: undefined, message: "no" }],
+  })
+
+  // The host drops: the stream closes, the status line says why, the state stays.
+  const down = { ...BOX, status: "down" as const, endpoint: null, error: "ssh closed" }
+  act(() => view.queryClient.setQueryData(qk.hosts.list(), at([down])))
+  expect(await screen.findByText("(ssh closed)")).toBeTruthy()
+  expect(input().value).toBe("half a thought")
+
+  // It returns on another port: a new stream, and the same draft, folds and failed send.
+  act(() =>
+    view.queryClient.setQueryData(
+      qk.hosts.list(),
+      at([{ ...BOX, endpoint: "http://box.test:9000" }]),
+    ),
+  )
+  await waitFor(() => expect(latestSource().url).toContain("http://box.test:9000"))
+  expect(input().value).toBe("half a thought")
+  expect(readViewState(consoleViewKey("box", "http://box.test:9000", SESSION_ID))).toBe(
+    readViewState(key),
+  )
+  expect(readViewState(key).blockFolds).toEqual({ b1: true })
+  expect(readViewState(key).failed).toHaveLength(1)
 })
 
 it("restores the reader's place, not the bottom, when the console comes back", () => {
