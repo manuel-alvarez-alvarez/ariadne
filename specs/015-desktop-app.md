@@ -1183,7 +1183,7 @@ Out: the daemon endpoints themselves (012).
     of a named host names the host. A `wait_for_user` question is answered in the
     row, and the answer posts to that host's
     `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`. An attention
-    error of one host names that host and has Retry; the items of the other
+    error of one host follows rule 75: it names that host and has Retry; the items of the other
     hosts stay and their toasts continue. The first answer of a host raises no
     toast, also for a host that answers late, comes back or becomes listed.
 60. The task panel (facts, steps, diff, messages, sessions, history) reads and
@@ -1287,7 +1287,10 @@ Out: the daemon endpoints themselves (012).
     `usePanelShowsHost()` (`hooks/use-host-label.ts`) hold the rule:
     - A row shows its host when the pick is All and `GET /v1/hosts` lists a
       named host. A row of `local` then shows `local`.
-    - Under one picked host, `local` included, a row shows no host.
+    - Under one picked host, `local` included, a row shows no host. The
+      attention rows, their toasts and the palette rows are not such rows: they
+      come from every reachable host under each pick, so they name their host
+      whenever a named host is listed, under any pick, as the panels do.
     - The rule reads the listed hosts, not the reachable ones. A host that
       goes down removes no label from the rows that stay.
     - A saved pick that `GET /v1/hosts` no longer lists counts as All.
