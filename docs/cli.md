@@ -927,3 +927,21 @@ To wake an existing keeper immediately, run `ariadne pr babysit <repo> <number> 
 This works on requests a task keeps. It sends untold news or asks the keeper to read the request again.
 Do not combine `--again` with `--model`, `--effort`, `--skill`, `--attach` or `--stop`.
 The daemon decides readiness and promotes checked drafts. Sessions make no readiness report.
+
+## Run a standalone agent relay
+
+Build `ariadne-cli` to get the experimental `ariadne-relay` binary.
+Start one ACP agent with a session ID:
+
+```sh
+ariadne-relay --session example --agent codex --task task1 -- codex-acp
+```
+
+Use `--home PATH` to select another Ariadne home.
+The pane shows session status and an attach command without a daemon connection.
+The daemon does not use this relay yet.
+The displayed attach command will reach it after daemon integration lands.
+Use Ctrl-C to stop the agent group and remove the session files.
+
+Integrators can use the socket and journal contracts in
+[spec 038](../specs/038-agent-relay.md).
