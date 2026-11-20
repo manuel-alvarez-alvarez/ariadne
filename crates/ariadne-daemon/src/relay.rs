@@ -1,4 +1,4 @@
-//! Standalone transport owner. The daemon does not launch this binary yet.
+//! Transport owner for `ariadned relay`, independent of the daemon server.
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, ensure};
-use clap::Parser;
+use clap::Args as ClapArgs;
 use rustix::process::{Pid, Signal, kill_process_group};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -17,11 +17,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Notify, mpsc};
 
-#[derive(Parser)]
-#[command(about = "Hold one ACP agent and replay its output over a Unix socket")]
-struct Args {
-    #[arg(long)]
-    home: Option<PathBuf>,
+#[derive(ClapArgs)]
+pub(super) struct Args {
     #[arg(long)]
     session: String,
     #[arg(long)]
@@ -79,19 +76,7 @@ impl Drop for SocketFile {
     }
 }
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
-    let args = Args::parse();
-    match run(args).await {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("relay: {error:#}");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
-
-async fn run(args: Args) -> Result<()> {
+pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()> {
     ensure!(
         !args.session.is_empty()
             && args.session.len() <= 64
@@ -102,7 +87,7 @@ async fn run(args: Args) -> Result<()> {
         "session must contain 1–64 ASCII letters, digits, hyphens or underscores"
     );
     let home =
-        ariadne_client::endpoint::home(args.home.clone()).context("cannot resolve Ariadne home")?;
+        ariadne_client::endpoint::home(home_override).context("cannot resolve Ariadne home")?;
     let directory = home.join("relays");
     std::fs::create_dir_all(&directory)?;
     std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
@@ -235,6 +220,10 @@ async fn serve(
     input: mpsc::Sender<String>,
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
+    // The greeting is connection metadata, not an acknowledged journal record.
+    writer
+        .write_all(b"{\"type\":\"hello\",\"protocol_version\":1}\n")
+        .await?;
     let mut lines = BufReader::new(reader).lines();
     let sent = AtomicU64::new(u64::MAX);
     let started = Notify::new();

@@ -21,9 +21,13 @@ impl Drop for Relay {
 }
 impl Relay {
     fn start(script: &str) -> Self {
+        Self::start_with_binary(script, std::path::Path::new(env!("CARGO_BIN_EXE_ariadned")))
+    }
+    fn start_with_binary(script: &str, binary: &std::path::Path) -> Self {
         let home = tempfile::tempdir().unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_ariadne-relay"))
+        let mut child = Command::new(binary)
             .args([
+                "relay",
                 "--home",
                 home.path().to_str().unwrap(),
                 "--session",
@@ -69,12 +73,20 @@ impl Relay {
             .and_then(rustix::process::Pid::from_raw);
         relay
     }
-    fn connect(&self) -> BufReader<UnixStream> {
+    fn raw_connect(&self) -> BufReader<UnixStream> {
         let socket = UnixStream::connect(self.home.path().join("relays/session1.sock")).unwrap();
         socket
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .set_read_timeout(Some(crate::common::TIMEOUT))
             .unwrap();
         BufReader::new(socket)
+    }
+    fn connect(&self) -> BufReader<UnixStream> {
+        let mut peer = self.raw_connect();
+        assert_eq!(
+            receive(&mut peer),
+            json!({"type":"hello","protocol_version":1})
+        );
+        peer
     }
     fn journal(&self) -> String {
         std::fs::read_to_string(self.home.path().join("relays/session1.jsonl")).unwrap()
@@ -217,7 +229,7 @@ fn stop_kills_the_full_process_group() {
     assert_eq!(receive(&mut peer)["data"], "ready");
     let socket = UnixStream::connect(relay.home.path().join("-c.child")).unwrap();
     socket
-        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .set_read_timeout(Some(crate::common::TIMEOUT))
         .unwrap();
     stop(&mut peer);
     assert!(relay.child.wait().unwrap().success());
@@ -239,7 +251,7 @@ async fn stop_remains_available_when_daemon_does_not_read_output() {
     replay(&mut peer, 0);
     assert_eq!(receive(&mut peer)["seq"], 1);
     stop(&mut peer);
-    let status = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    let status = tokio::time::timeout(crate::common::TIMEOUT, async {
         loop {
             if let Some(status) = relay.child.try_wait().unwrap() {
                 return status;
@@ -293,6 +305,7 @@ fn session_paths_are_private_and_cannot_be_overwritten() {
         0o600
     );
     let args = [
+        "relay",
         "--home",
         relay.home.path().to_str().unwrap(),
         "--session",
@@ -306,7 +319,7 @@ fn session_paths_are_private_and_cannot_be_overwritten() {
         "-c",
         "raise Exception('must not start')",
     ];
-    let output = Command::new(env!("CARGO_BIN_EXE_ariadne-relay"))
+    let output = Command::new(env!("CARGO_BIN_EXE_ariadned"))
         .args(args)
         .output()
         .unwrap();
@@ -314,8 +327,9 @@ fn session_paths_are_private_and_cannot_be_overwritten() {
     let mut peer = relay.connect();
     stop(&mut peer);
     assert!(relay.child.wait().unwrap().success());
-    let invalid = Command::new(env!("CARGO_BIN_EXE_ariadne-relay"))
+    let invalid = Command::new(env!("CARGO_BIN_EXE_ariadned"))
         .args([
+            "relay",
             "--session",
             "../bad",
             "--agent",
@@ -328,8 +342,54 @@ fn session_paths_are_private_and_cannot_be_overwritten() {
         .output()
         .unwrap();
     assert_eq!(invalid.status.code(), Some(1));
-    let usage = Command::new(env!("CARGO_BIN_EXE_ariadne-relay"))
+    let usage = Command::new(env!("CARGO_BIN_EXE_ariadned"))
+        .arg("relay")
         .output()
         .unwrap();
     assert_eq!(usage.status.code(), Some(2));
+}
+
+#[test]
+fn first_socket_frame_identifies_protocol_before_replay() {
+    let mut relay = Relay::start("import sys\nsys.stdin.readline()");
+    let mut peer = relay.raw_connect();
+    assert_eq!(
+        receive(&mut peer),
+        json!({"type":"hello","protocol_version":1})
+    );
+    stop(&mut peer);
+    assert!(relay.child.wait().unwrap().success());
+}
+
+#[test]
+fn executable_upgrade_preserves_running_relay_and_protocol() {
+    use std::os::unix::fs::PermissionsExt;
+    let install = tempfile::tempdir().unwrap();
+    let binary = install.path().join("ariadned");
+    std::fs::copy(env!("CARGO_BIN_EXE_ariadned"), &binary).unwrap();
+    let mut relay = Relay::start_with_binary(
+        "import sys\nfor line in sys.stdin: print(line.strip())",
+        &binary,
+    );
+    let mut before = relay.connect();
+    replay(&mut before, 0);
+    send(
+        &mut before,
+        json!({"type":"message","data":"before-upgrade"}),
+    );
+    assert_eq!(receive(&mut before)["data"], "before-upgrade");
+    // Replace the installed executable. The replacement cannot serve the old socket.
+    let replacement = install.path().join("replacement");
+    std::fs::write(&replacement, "#!/bin/sh\nexit 99\n").unwrap();
+    std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(replacement, &binary).unwrap();
+    assert_eq!(Command::new(&binary).status().unwrap().code(), Some(99));
+    drop(before);
+    let mut after = relay.connect();
+    replay(&mut after, 0);
+    assert_eq!(receive(&mut after)["data"], "before-upgrade");
+    send(&mut after, json!({"type":"message","data":"after-upgrade"}));
+    assert_eq!(receive(&mut after)["data"], "after-upgrade");
+    stop(&mut after);
+    assert!(relay.child.wait().unwrap().success());
 }

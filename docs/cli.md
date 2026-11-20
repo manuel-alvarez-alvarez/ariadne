@@ -930,11 +930,11 @@ The daemon decides readiness and promotes checked drafts. Sessions make no readi
 
 ## Run a standalone agent relay
 
-Build `ariadne-cli` to get the experimental `ariadne-relay` binary.
+Use the `relay` subcommand of the installed `ariadned` binary.
 Start one ACP agent with a session ID:
 
 ```sh
-ariadne-relay --session example --agent codex --task task1 -- codex-acp
+ariadned relay --session example --agent codex --task task1 -- codex-acp
 ```
 
 Use `--home PATH` to select another Ariadne home.
@@ -942,6 +942,8 @@ The pane shows session status and an attach command without a daemon connection.
 The daemon does not use this relay yet.
 The displayed attach command will reach it after daemon integration lands.
 Use Ctrl-C to stop the agent group and remove the session files.
+An upgrade leaves each running relay on its existing code until its session stops.
+Future daemon integration must use the versioned greeting to preserve compatibility with older relays.
 
 Integrators can use the socket and journal contracts in
 [spec 038](../specs/038-agent-relay.md).
