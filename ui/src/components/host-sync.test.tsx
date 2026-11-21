@@ -87,3 +87,22 @@ it("reads a pending sync of a host the app cannot reach as waiting for host", as
   expect(screen.getByTestId("sync-far").textContent).toContain("waiting for host")
   expect(screen.getByTestId("sync-far").textContent).not.toContain("pending")
 })
+
+it("shows an external file warning after successful synchronization", async () => {
+  stubHosts({ local: ANSWERS }, [
+    LOCAL,
+    {
+      ...BOX,
+      sync: {
+        state: "in_sync",
+        error: "external Markdown file link: ../external.txt",
+        missing_repositories: [],
+        skipped_permissions: 0,
+      },
+    },
+  ])
+  renderOnRouter(SkillsPage)
+  expect(
+    await screen.findByText("in sync: external Markdown file link: ../external.txt"),
+  ).toBeTruthy()
+})

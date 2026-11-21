@@ -19,7 +19,7 @@ use ariadne_api::permissions::{
     LearnedPermissionsResponse, RecordLearnedPermissionRequest, UpdateAiPermissionsRequest,
 };
 use ariadne_api::repositories::{ForgeUpdate, RepositoryDto, UpdateRepositoryRequest};
-use ariadne_api::skills::{CreateSkillRequest, SkillDto, UpdateSkillRequest};
+use ariadne_api::skills::{CreateSkillRequest, SkillDto, SkillFile, UpdateSkillRequest};
 use ariadne_api::stream::DomainEvent;
 use ariadne_api::workflows::{CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowDto};
 use ariadne_client::{Client, ClientError};
@@ -130,11 +130,15 @@ pub(super) async fn run(
             client: super::client_for(&endpoint),
             last_ai: None,
             pairs: None,
+            bundles: HashMap::new(),
+            warnings: HashMap::new(),
         };
         let mut pushes = Pushes {
             queue: VecDeque::from([Push::All]),
             failed: Vec::new(),
         };
+        let mut scan = tokio::time::interval(inner.timeouts.host_check);
+        scan.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut backoff = base;
         // When the failed pushes are next tried; `None` while none failed.
         let mut retry_at: Option<Instant> = None;
@@ -150,7 +154,7 @@ pub(super) async fn run(
                     Err(TryRecvError::Closed) => return,
                 }
             }
-            pushes.show(&inner, index);
+            pushes.show(&inner, index, &pusher.warnings);
             if let Some(push) = pushes.queue.pop_front() {
                 tokio::select! {
                     biased;
@@ -163,11 +167,12 @@ pub(super) async fn run(
                 } else if retry_at.is_none() {
                     retry_at = Some(Instant::now() + backoff);
                 }
-                pushes.show(&inner, index);
+                pushes.show(&inner, index, &pusher.warnings);
                 continue;
             }
             let Some(at) = retry_at else {
                 tokio::select! {
+                    _ = scan.tick() => pusher.scan(&mut pushes).await,
                     changed = ready.changed() => {
                         if changed.is_err() { return }
                         if ready.borrow().as_deref() != Some(endpoint.as_str()) { break 'ready }
@@ -181,6 +186,7 @@ pub(super) async fn run(
                 continue;
             };
             tokio::select! {
+                _ = scan.tick() => pusher.scan(&mut pushes).await,
                 () = sleep_until(at) => {
                     tokio::select! {
                         biased;
@@ -308,10 +314,22 @@ impl Pushes {
 
     /// Publish where the sync stands: `failed` while any push has failed,
     /// else `pending` while one waits, else `in_sync`.
-    fn show(&self, inner: &Inner, index: usize) {
+    fn show(&self, inner: &Inner, index: usize, warnings: &HashMap<String, Vec<String>>) {
         let (state, error) = match self.failed.last() {
             Some((_, error)) => (SyncState::Failed, Some(error.clone())),
-            None if self.queue.is_empty() => (SyncState::InSync, None),
+            None if self.queue.is_empty() => {
+                let mut messages: Vec<_> = warnings
+                    .iter()
+                    .flat_map(|(name, rows)| {
+                        rows.iter().map(move |row| format!("skill {name}: {row}"))
+                    })
+                    .collect();
+                messages.sort();
+                (
+                    SyncState::InSync,
+                    (!messages.is_empty()).then(|| messages.join("; ")),
+                )
+            }
             None => (SyncState::Pending, None),
         };
         inner.set_sync(index, |sync| {
@@ -332,17 +350,55 @@ struct Pusher<'a> {
     /// The local repository ids paired with the host's, as the last push
     /// of the repositories read them.
     pairs: Option<HashMap<String, String>>,
+    bundles: HashMap<String, (String, Vec<SkillFile>)>,
+    warnings: HashMap<String, Vec<String>>,
 }
 
 impl Pusher<'_> {
+    async fn scan(&mut self, pushes: &mut Pushes) {
+        let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
+        let Ok(skills) = self.inner.store.list_skills().await else {
+            return;
+        };
+        for skill in skills {
+            // Failed items belong to the retry timer. Scanning must not
+            // requeue them or read their supporting files before it expires.
+            if pushes
+                .failed
+                .iter()
+                .any(|(failed, _)| failed.item() == Item::Skill(&skill.name))
+            {
+                continue;
+            }
+            let skill = skill_dto(skill);
+            let current =
+                crate::skill_bundle::snapshot(&self.inner.cfg.skills_dir.join(&skill.name));
+            let unchanged = current.as_ref().ok().is_some_and(|files| {
+                self.bundles.get(&skill.name) == Some(&(skill.document.clone(), files.clone()))
+            });
+            if !unchanged
+                && !pushes
+                    .queue
+                    .iter()
+                    .any(|p| p.item() == Item::Skill(&skill.name))
+            {
+                pushes.queue.push_back(Push::Skill(skill));
+            }
+        }
+    }
+
     async fn push(&mut self, push: &Push) -> Result<(), String> {
         match push {
             Push::All => unreachable!("the push of everything runs as one push per item"),
             Push::Skill(skill) => self.skill(skill).await,
-            Push::SkillDeleted(name) => self
-                .delete(&format!("/v1/skills/{name}"))
-                .await
-                .map_err(|error| format!("skill {name}: {error}")),
+            Push::SkillDeleted(name) => {
+                self.delete(&format!("/v1/skills/{name}"))
+                    .await
+                    .map_err(|error| format!("skill {name}: {error}"))?;
+                self.bundles.remove(name);
+                self.warnings.remove(name);
+                Ok(())
+            }
             Push::Workflow(workflow) => self.workflow(workflow).await,
             Push::WorkflowDeleted(name) => self
                 .delete(&format!("/v1/workflows/{name}"))
@@ -409,22 +465,64 @@ impl Pusher<'_> {
     }
 
     /// Write the skill's document over the host's, or create it there.
-    async fn skill(&self, skill: &SkillDto) -> Result<(), String> {
+    async fn skill(&mut self, skill: &SkillDto) -> Result<(), String> {
+        let current = self
+            .inner
+            .store
+            .get_skill(&skill.name)
+            .await
+            .map_err(|e| e.to_string())?;
+        let skill = &skill_dto(current);
+        let files = {
+            let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
+            crate::skill_bundle::snapshot(&self.inner.cfg.skills_dir.join(&skill.name))
+                .map_err(|e| format!("skill {}: {e}", skill.name))?
+        };
         let update = UpdateSkillRequest {
             document: Some(skill.document.clone()),
+            files: Some(files.clone()),
         };
         let create = CreateSkillRequest {
             name: skill.name.clone(),
             document: skill.document.clone(),
         };
-        self.upsert::<SkillDto, _, _>(
-            &format!("/v1/skills/{}", skill.name),
-            &update,
-            "/v1/skills",
-            &create,
-        )
-        .await
-        .map_err(|error| format!("skill {}: {error}", skill.name))
+        let path = format!("/v1/skills/{}", skill.name);
+        match self.client.put_json::<SkillDto, _>(&path, &update).await {
+            Err(error) if not_found(&error) => {
+                self.client
+                    .post_json::<SkillDto, _>("/v1/skills", &create)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                self.client
+                    .put_json::<SkillDto, _>(&path, &update)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            other => {
+                other.map_err(|e| format!("skill {}: {e}", skill.name))?;
+            }
+        }
+        let root = self.inner.cfg.skills_dir.join(&skill.name);
+        let latest = {
+            let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
+            crate::skill_bundle::snapshot(&root)?
+        };
+        let current = self
+            .inner
+            .store
+            .get_skill(&skill.name)
+            .await
+            .map_err(|e| e.to_string())?;
+        if latest != files || current.document_text() != skill.document {
+            return Err(format!("skill {} changed during transfer", skill.name));
+        }
+        self.warnings.insert(
+            skill.name.clone(),
+            crate::skill_bundle::warnings(&root, &skill.document, &files),
+        );
+        self.bundles
+            .insert(skill.name.clone(), (skill.document.clone(), files));
+        Ok(())
     }
 
     /// Write the workflow's document over the host's, or create it there.

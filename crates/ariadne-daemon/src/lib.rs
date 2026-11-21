@@ -33,3 +33,5 @@ pub mod timeouts;
 pub mod transcript;
 
 pub mod webhooks;
+
+mod skill_bundle;

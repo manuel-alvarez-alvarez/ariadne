@@ -23,7 +23,7 @@ const STATE_LABEL: Record<HostView["sync"]["state"], string> = {
 export function syncLabel(host: HostView): string {
   if (host.sync.state === "pending" && host.url === null) return "waiting for host"
   const label = STATE_LABEL[host.sync.state]
-  return host.sync.state === "failed" && host.sync.error ? `${label}: ${host.sync.error}` : label
+  return host.sync.error ? `${label}: ${host.sync.error}` : label
 }
 
 const STATE_TONE: Record<HostView["sync"]["state"], string> = {
