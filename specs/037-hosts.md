@@ -240,7 +240,8 @@ picker, the Hosts section of its settings and one stream per host — is spec
 44. A request contains `ssh`, optional absolute socket `remote`, and `source`.
     SSH uses `ssh://[user@]host[:port]`, BatchMode, and the daemon user's existing SSH authentication.
     Passwords in URLs are refused. No credential values are accepted or returned.
-    A local source contains `kind: local`, `cli`, and `daemon`, with paths on the settings daemon.
+    A local source contains `kind: local`, `cli`, and `daemon`.
+    Both paths refer to files on the source daemon machine that runs the settings daemon.
     A release source contains `kind: release`, `repository`, and an explicit `tag`.
     Tools, credentials, and repository installation remain outside this setup operation.
 45. Setup probes the remote OS, architecture, and home before transfer.
@@ -270,6 +271,7 @@ picker, the Hosts section of its settings and one stream per host — is spec
     Both use the local daemon; JSON output uses the operation DTO.
     A failed or incomplete result exits unsuccessfully.
 50. Desktop Settings includes SSH access, local binary paths, and verified release selection.
+    Both binary path labels identify the source daemon machine that runs the settings daemon.
     It shows completed steps and failures, polls active setup, and permits retry with the same request.
     Entering a worker name and loading progress restores its durable operation view.
 

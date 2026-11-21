@@ -844,7 +844,8 @@ the daemon cannot find or cannot use.
    }
    ```
 
-   Binary paths refer to the settings daemon's machine.
+   The source daemon machine runs the settings daemon.
+   Both `cli` and `daemon` paths refer to files on that machine.
    Both binaries must match the remote OS and architecture.
    For a verified release, replace `source` with:
 
@@ -858,7 +859,7 @@ the daemon cannot find or cannot use.
 
 Setup uses existing SSH keys, agent access, and SSH configuration without password prompts.
 Install git and tar on the worker before setup.
-Release verification requires GitHub CLI 2.102.0 or later on the settings daemon's machine.
+Release verification requires GitHub CLI 2.102.0 or later on the source daemon machine.
 An administrator must provide missing system packages or user service support.
 Linux workers need systemd user services and lingering for operation after logout.
 

@@ -25,8 +25,14 @@ it("starts setup and shows retained steps and a failure", async () => {
   const user = userEvent.setup()
   await user.type(screen.getByLabelText("Worker name"), "builder")
   await user.type(screen.getByLabelText("SSH address"), "ssh://user@builder")
-  await user.type(screen.getByLabelText("CLI binary path"), "/tmp/ariadne")
-  await user.type(screen.getByLabelText("Daemon binary path"), "/tmp/ariadned")
+  await user.type(
+    screen.getByLabelText("CLI binary path on the source daemon machine"),
+    "/tmp/ariadne",
+  )
+  await user.type(
+    screen.getByLabelText("Daemon binary path on the source daemon machine"),
+    "/tmp/ariadned",
+  )
   await user.click(screen.getByRole("button", { name: "Start or retry setup" }))
   await waitFor(() => expect(screen.getByText("Enable user services")).toBeTruthy())
   expect(screen.getByText("install: complete")).toBeTruthy()

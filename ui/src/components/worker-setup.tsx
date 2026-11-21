@@ -54,8 +54,8 @@ export function WorkerSetup() {
     <fieldset className="flex flex-col gap-2" aria-label="SSH worker setup">
       <h3>Install an SSH worker</h3>
       <p className="text-sm text-muted-foreground">
-        Use SSH keys, your SSH agent, or SSH configuration. Local binary paths refer to the settings
-        daemon's machine.
+        Use SSH keys, your SSH agent, or SSH configuration. The source daemon machine runs the
+        settings daemon. Local binary paths refer to files on that machine.
       </p>
       <label htmlFor={`${fieldId}-0`}>
         Worker name
@@ -123,20 +123,20 @@ export function WorkerSetup() {
       ) : (
         <>
           <label htmlFor={`${fieldId}-5`}>
-            CLI binary path
+            CLI binary path on the source daemon machine
             <Input
               id={`${fieldId}-5`}
-              aria-label="CLI binary path"
+              aria-label="CLI binary path on the source daemon machine"
               value={cli}
               onChange={(e) => setCli(e.target.value)}
               disabled={busy}
             />
           </label>
           <label htmlFor={`${fieldId}-6`}>
-            Daemon binary path
+            Daemon binary path on the source daemon machine
             <Input
               id={`${fieldId}-6`}
-              aria-label="Daemon binary path"
+              aria-label="Daemon binary path on the source daemon machine"
               value={daemon}
               onChange={(e) => setDaemon(e.target.value)}
               disabled={busy}

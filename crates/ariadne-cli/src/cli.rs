@@ -802,6 +802,8 @@ pub(crate) enum HostCommand {
     Setup {
         name: String,
         /// JSON file with SSH access and a local or release binary source
+        ///
+        /// For a local source, `cli` and `daemon` are paths on the machine that runs the settings daemon.
         #[arg(long)]
         request: std::path::PathBuf,
     },
