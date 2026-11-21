@@ -12,15 +12,39 @@ use tracing::{debug, warn};
 use ariadne_store::telemetry::TelemetryStore;
 
 /// Start the retention pass, every `every`, until the daemon ends.
-/// `samples_days`, `logs_days` and `rollups_days` are `Config`'s
-/// `telemetry_samples_days`, `telemetry_logs_days` and
-/// `telemetry_rollups_days`.
+/// Read the current retention policy before each pass.
+pub fn start_live(
+    store: TelemetryStore,
+    every: Duration,
+    config: std::sync::Arc<crate::config::Config>,
+) {
+    start_with_policy(store, every, move || {
+        let policy = config.live_settings();
+        (
+            policy.telemetry_samples_days,
+            policy.telemetry_logs_days,
+            policy.telemetry_rollups_days,
+        )
+    });
+}
+
+/// Start retention with fixed cutoffs, for callers without live configuration.
 pub fn start(
     store: TelemetryStore,
     every: Duration,
     samples_days: i64,
     logs_days: i64,
     rollups_days: i64,
+) {
+    start_with_policy(store, every, move || {
+        (samples_days, logs_days, rollups_days)
+    });
+}
+
+fn start_with_policy(
+    store: TelemetryStore,
+    every: Duration,
+    policy: impl Fn() -> (i64, i64, i64) + Send + 'static,
 ) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(every);
@@ -29,7 +53,8 @@ pub fn start(
         tick.tick().await;
         loop {
             tick.tick().await;
-            retention_tick(&store, samples_days, logs_days, rollups_days).await;
+            let (samples, logs, rollups) = policy();
+            retention_tick(&store, samples, logs, rollups).await;
         }
     });
 }

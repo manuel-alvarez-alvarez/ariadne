@@ -3,15 +3,17 @@
  * the facts `ariadne host ls` prints — name, kind, status, endpoint and
  * error — live through `host_updated`.
  *
- * Configured hosts and provisioned workers share this list. The "Set up
- * worker" action opens the settings daemon's durable SSH setup operation. The
+ * Configured hosts and provisioned workers share this list. "Add host", and
+ * each row's Edit and Remove, change a host through `POST`, `PATCH` and
+ * `DELETE /v1/hosts`; the table follows `host_updated` and `host_deleted`. The
+ * "Set up worker" action opens the settings daemon's durable SSH setup operation. The
  * screen reads `local` only, so the header's host picker does not change it.
  */
 
-import { PlusIcon } from "lucide-react"
+import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
 
-import { type HostView, useHosts } from "@/api"
+import { type HostView, LOCAL_HOST, useHosts } from "@/api"
 import { HostLabel } from "@/components/host-label"
 import { hostStatus } from "@/components/host-picker"
 import { PageHeader } from "@/components/page-header"
@@ -27,21 +29,39 @@ import {
 } from "@/components/ui/table"
 import { useHostDaemon } from "@/hooks/use-host-daemon"
 import { describeError, formatDuration } from "@/lib/format"
+import { HostFormDialog } from "./host-form-dialog"
+import { RemoveHostDialog } from "./remove-host-dialog"
 import { WorkerSetupDialog } from "./worker-setup-dialog"
 
 export function HostsPage() {
   const { hosts, error } = useHosts()
   const [setupOpen, setSetupOpen] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<HostView | null>(null)
+  const [removeOpen, setRemoveOpen] = useState(false)
+  const [removing, setRemoving] = useState<string | null>(null)
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Hosts"
-        description="The daemons this app reads. The [hosts.<name>] tables of the config.toml of the settings daemon configure them, and setup adds worker connections. local is that daemon itself."
+        description="The daemons this app reads. Add, edit or remove one here, or set up a worker over SSH. local is the settings daemon itself."
         actions={
-          <Button onClick={() => setSetupOpen(true)}>
-            <PlusIcon />
-            Set up worker
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditing(null)
+                setFormOpen(true)
+              }}
+            >
+              <PlusIcon />
+              Add host
+            </Button>
+            <Button onClick={() => setSetupOpen(true)}>
+              <PlusIcon />
+              Set up worker
+            </Button>
+          </>
         }
       />
       {error ? (
@@ -65,17 +85,38 @@ export function HostsPage() {
         </TableHeader>
         <TableBody>
           {hosts.map((host) => (
-            <HostRow key={host.name} host={host} />
+            <HostRow
+              key={host.name}
+              host={host}
+              onEdit={() => {
+                setEditing(host)
+                setFormOpen(true)
+              }}
+              onRemove={() => {
+                setRemoving(host.name)
+                setRemoveOpen(true)
+              }}
+            />
           ))}
         </TableBody>
       </Table>
       <WorkerSetupDialog open={setupOpen} onOpenChange={setSetupOpen} />
+      <HostFormDialog open={formOpen} onOpenChange={setFormOpen} host={editing} />
+      <RemoveHostDialog open={removeOpen} onOpenChange={setRemoveOpen} name={removing} />
     </div>
   )
 }
 
 /** One host: what the app reaches of it, and the daemon its stream names. */
-function HostRow({ host }: { host: HostView }) {
+function HostRow({
+  host,
+  onEdit,
+  onRemove,
+}: {
+  host: HostView
+  onEdit: () => void
+  onRemove: () => void
+}) {
   const daemon = useHostDaemon(host.name)
   return (
     <TableRow>
@@ -97,6 +138,26 @@ function HostRow({ host }: { host: HostView }) {
       </TableCell>
       <TableCell>
         <ReconnectHostButton name={host.name} />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Edit ${host.name}`}
+          onClick={onEdit}
+        >
+          <PencilIcon />
+        </Button>
+        {host.name === LOCAL_HOST ? null : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Remove ${host.name}`}
+            onClick={onRemove}
+          >
+            <Trash2Icon />
+          </Button>
+        )}
       </TableCell>
     </TableRow>
   )

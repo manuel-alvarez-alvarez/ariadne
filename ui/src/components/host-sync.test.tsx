@@ -106,3 +106,15 @@ it("shows an external file warning after successful synchronization", async () =
     await screen.findByText("in sync: external Markdown file link: ../external.txt"),
   ).toBeTruthy()
 })
+
+it.each([
+  ["pending_restart", null, "pending restart"],
+  ["failed", "agent needs a worker mapping", "failed: agent needs a worker mapping"],
+] as const)("shows configuration status %s", async (state, error, label) => {
+  stubHosts({ local: ANSWERS }, [
+    LOCAL,
+    { ...BOX, sync: { state, error, missing_repositories: [], skipped_permissions: 0 } },
+  ])
+  renderOnRouter(SkillsPage)
+  expect(await screen.findByText(label)).toBeTruthy()
+})

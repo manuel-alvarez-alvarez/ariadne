@@ -932,6 +932,8 @@ A complete status requires the daemon to answer and the connection to be registe
 Use `--format json` for operation state and per-step results.
 
 The Desktop Hosts screen provides the same controls in its **Set up worker** dialog.
+The Hosts screen also has **Add host**, and **Edit** and **Remove** on each row, for the same changes as `host add`, `host edit` and `host rm`.
+Remove does not stop the daemon on the host.
 Select local binaries or a verified release, then select **Start or retry setup**.
 Enter an existing worker name and select **Load setup progress** to inspect a previous operation.
 Use the original request values when you retry.
@@ -943,7 +945,8 @@ See [the setup contract](../specs/037-hosts.md#ssh-worker-setup).
 Without `--host`, commands use the resolved daemon endpoint.
 
 Use `ariadne host ls` to list configured hosts. The columns are `name`, `kind`, `status`, `endpoint`, `remote`, `sync`, `missing`, `skipped`, `error` and `sync_error`.
-The `sync` column is `in_sync`, `pending` or `failed`. `missing` counts the repositories the host lacks. `skipped` counts the learned permissions not pushed. `remote` is the far address of an `ssh` host. `sync_error` is why the last push failed. `--columns` selects them, and `--format json` prints the host objects.
+The `sync` column is `in_sync`, `pending`, `pending_restart` or `failed`.
+`pending_restart` means the worker waits for admitted tasks before applying registry changes. `missing` counts the repositories the host lacks. `skipped` counts the learned permissions not pushed. `remote` is the far address of an `ssh` host. `sync_error` is why the last push failed. `--columns` selects them, and `--format json` prints the host objects.
 Use `ariadne host reconnect NAME` to reconnect one named host, or `ariadne host reconnect all` for each named host.
 The command waits until each host is `ready` or `down`, up to `--timeout SECONDS` (default 30).
 It then prints one row per host, with the columns of `host ls`; `--format json` prints the hosts.

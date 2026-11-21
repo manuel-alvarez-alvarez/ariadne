@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::common::{
     Harness, QUIET, RUNS_OUT, TIMEOUT, delete, eventually, eventually_some, get, harness,
-    next_event, post_json, put_json, roomy_hardware, sh,
+    next_event, post, post_json, put_json, roomy_hardware, sh,
 };
 use ariadne_api::hosts::{HostDto, HostStatus, HostSyncDto, MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
@@ -55,12 +55,14 @@ async fn local_with_host_on(
         format!("[hosts.far]\nendpoint = \"{endpoint}\"\n"),
     )
     .unwrap();
+    std::fs::write(home.join("config.toml"), "").unwrap();
     let h = harness()
         .ai_permissions_hardware(hardware)
         .home(home)
         .timeouts(Timeouts {
             host_sync_retry: RUNS_OUT,
-            host_unanswered: RUNS_OUT,
+            // These cases test synchronization, not a health deadline.
+            host_unanswered: TIMEOUT,
             host_check: RUNS_OUT / 10,
             ..Timeouts::default()
         })
@@ -84,6 +86,7 @@ struct Gate {
     permits: Arc<Semaphore>,
     /// Each request that waited at the gate, as `METHOD path`.
     held_requests: Arc<Mutex<Vec<String>>>,
+    held_events: tokio::sync::broadcast::Sender<String>,
     /// Each request the far daemon has answered, as `METHOD path`.
     answered: Arc<Mutex<Vec<String>>>,
 }
@@ -96,6 +99,7 @@ impl Gate {
             health_off: Arc::new(AtomicBool::new(false)),
             permits: Arc::new(Semaphore::new(0)),
             held_requests: Arc::new(Mutex::new(Vec::new())),
+            held_events: tokio::sync::broadcast::channel(16).0,
             answered: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -158,6 +162,7 @@ fn serve_gated(far: &Harness, listener: tokio::net::TcpListener, gate: &Gate) {
                 };
                 if gate.held.load(Ordering::SeqCst) && selected {
                     gate.held_requests.lock().unwrap().push(what.clone());
+                    let _ = gate.held_events.send(what.clone());
                     gate.permits.acquire().await.unwrap().forget();
                 }
                 let response = next.run(request).await;
@@ -764,13 +769,8 @@ async fn a_newer_push_of_an_item_ends_its_older_failed_push() {
     assert_eq!(shared.map(|skill| skill.summary).as_deref(), Some("second"));
 }
 
-/// The sync of the next `host_updated` on the bus that moves it.
-///
-/// A `host_updated` also carries a move of the host's status, endpoint or
-/// error, which a health check can publish between two sync changes. Such
-/// an event is skipped. One that moves nothing at all fails the test: each
-/// change publishes one event.
-async fn next_sync(rx: &mut Receiver<BusEvent>, last: &mut Option<HostDto>) -> HostSyncDto {
+/// The full host in the next sync change, retained for failure diagnostics.
+async fn next_sync_host(rx: &mut Receiver<BusEvent>, last: &mut Option<HostDto>) -> HostSyncDto {
     loop {
         let event = next_event(rx, |event| {
             matches!(event.event, DomainEvent::HostUpdated(_))
@@ -783,7 +783,10 @@ async fn next_sync(rx: &mut Receiver<BusEvent>, last: &mut Option<HostDto>) -> H
         let Some(previous) = previous else {
             return host.sync;
         };
-        assert_ne!(previous, host, "a host_updated that moved nothing");
+        assert_ne!(
+            previous, host,
+            "a host_updated that moved nothing: {host:?}"
+        );
         if previous.sync != host.sync {
             return host.sync;
         }
@@ -798,10 +801,13 @@ async fn each_change_of_the_sync_publishes_one_host_updated() {
     local.state.hosts.start();
     // The first event is the host's `ready`, before any push lands.
     assert_eq!(
-        next_sync(&mut rx, &mut last).await.state,
+        next_sync_host(&mut rx, &mut last).await.state,
         SyncState::Pending
     );
-    assert_eq!(next_sync(&mut rx, &mut last).await, HostSyncDto::in_sync());
+    assert_eq!(
+        next_sync_host(&mut rx, &mut last).await,
+        HostSyncDto::in_sync()
+    );
 
     let _: SkillDto = local
         .json(
@@ -813,10 +819,13 @@ async fn each_change_of_the_sync_publishes_one_host_updated() {
         )
         .await;
     assert_eq!(
-        next_sync(&mut rx, &mut last).await.state,
+        next_sync_host(&mut rx, &mut last).await.state,
         SyncState::Pending
     );
-    assert_eq!(next_sync(&mut rx, &mut last).await, HostSyncDto::in_sync());
+    assert_eq!(
+        next_sync_host(&mut rx, &mut last).await,
+        HostSyncDto::in_sync()
+    );
 }
 
 #[tokio::test]
@@ -851,14 +860,23 @@ async fn sync_stops_blocked_and_queued_pushes_until_the_host_recovers() {
             .await;
         }
     }
+    let mut held_events = gate.held_events.subscribe();
     gate.health_off.store(true, Ordering::SeqCst);
+    let _: HostDto = local
+        .json(post("/v1/hosts/far/reconnect"), StatusCode::OK)
+        .await;
     eventually(TIMEOUT, "the host is down", || async {
         let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
         hosts[1].status == HostStatus::Down
     })
     .await;
     gate.permits.add_permits(1);
-    tokio::time::sleep(crate::common::QUIET).await;
+    assert!(
+        tokio::time::timeout(QUIET, held_events.recv())
+            .await
+            .is_err(),
+        "a queued push reached the down host"
+    );
     assert!(
         !gate
             .held_requests
@@ -880,6 +898,114 @@ async fn sync_stops_blocked_and_queued_pushes_until_the_host_recovers() {
     until_in_sync(&local).await;
     assert!(skill_on(&far, "lead").await.is_some());
     assert!(skill_on(&far, "queued").await.is_some());
+}
+
+async fn skill_deletion_after_recovery(interrupted: bool, recreate: bool) {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let gate = Gate::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    serve_gated(&far, listener, &gate);
+    let (local, _dir) = local_with_host(&format!("http://{address}")).await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "victim", "document": skill("victim", "remove me")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    assert!(skill_on(&far, "victim").await.is_some());
+
+    if interrupted {
+        gate.hold_only(&["DELETE /v1/skills/victim"]);
+    } else {
+        gate.hold_only(&["PUT /v1/skills/lead"]);
+        let _: SkillDto = local
+            .json(
+                post_json(
+                    "/v1/skills",
+                    json!({"name": "lead", "document": skill("lead", "held")}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+        eventually(TIMEOUT, "the leading push held", || async {
+            gate.held_requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|request| request == "PUT /v1/skills/lead")
+        })
+        .await;
+    }
+    assert_eq!(
+        local.send(delete("/v1/skills/victim")).await.0,
+        StatusCode::NO_CONTENT
+    );
+    if interrupted {
+        eventually(TIMEOUT, "the delete held before recovery", || async {
+            gate.held_requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|request| request == "DELETE /v1/skills/victim")
+        })
+        .await;
+    }
+    gate.health_off.store(true, Ordering::SeqCst);
+    let _: HostDto = local
+        .json(post("/v1/hosts/far/reconnect"), StatusCode::OK)
+        .await;
+    eventually(TIMEOUT, "the host down with the delete queued", || async {
+        let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
+        hosts[1].status == HostStatus::Down
+    })
+    .await;
+    if recreate {
+        let _: SkillDto = local
+            .json(
+                post_json(
+                    "/v1/skills",
+                    json!({"name": "victim", "document": skill("victim", "recreated")}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+    }
+    gate.release();
+    gate.health_off.store(false, Ordering::SeqCst);
+    until_in_sync(&local).await;
+    let victim = skill_on(&far, "victim").await;
+    if recreate {
+        assert_eq!(
+            victim.map(|skill| skill.summary).as_deref(),
+            Some("recreated")
+        );
+    } else {
+        assert!(
+            victim.is_none(),
+            "recovery must deliver the queued deletion"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_queued_skill_deletion_reaches_the_host_after_recovery() {
+    skill_deletion_after_recovery(false, false).await;
+}
+
+#[tokio::test]
+async fn an_interrupted_skill_deletion_reaches_the_host_after_recovery() {
+    skill_deletion_after_recovery(true, false).await;
+}
+
+#[tokio::test]
+async fn a_recreated_skill_supersedes_its_queued_deletion_after_recovery() {
+    skill_deletion_after_recovery(false, true).await;
 }
 
 #[tokio::test]
@@ -1099,4 +1225,111 @@ async fn a_failed_skill_waits_for_backoff_despite_bundle_scans() {
         .unwrap()
         .unwrap();
     server.abort();
+}
+
+#[tokio::test]
+async fn portable_policies_and_flags_reach_the_worker_after_source_changes() {
+    let (far, local, _dir) = far_and_local().await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    let source = local.launcher.cfg.root.join("config.toml");
+    let hosts = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(&source, format!("auto_switch = false\ndelete_merged_worktrees = false\ntelemetry_logs_days = 2\nlog_filter = \"warn\"\n{hosts}")).unwrap();
+    local
+        .store
+        .update_agent_config("stub", vec!["--shared".into()])
+        .await
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "portable policy and flags on the worker",
+        || async {
+            let status: serde_json::Value = far.get("/v1/config/sync").await;
+            status["configuration"]["auto_switch"] == false
+                && status["configuration"]["delete_merged_worktrees"] == false
+                && status["configuration"]["telemetry_logs_days"] == 2
+                && status["configuration"]["log_filter"] == "warn"
+                && status["configuration"]["agent_flags"]["stub"] == json!(["--shared"])
+        },
+    )
+    .await;
+    until_in_sync(&local).await;
+    assert_eq!(
+        far.launcher.cfg.root,
+        far.launcher.cfg.db_path.parent().unwrap()
+    );
+    local.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn unmapped_configuration_fails_without_blocking_catalogs_and_can_retry() {
+    let (far, local, _dir) = far_and_local().await;
+    let source = local.launcher.cfg.root.join("config.toml");
+    let hosts = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(
+        &source,
+        format!("{hosts}\n[[acp_agents]]\nid = \"unmapped\"\ncommand = [\"/source/bin/agent\"]\n"),
+    )
+    .unwrap();
+    local.state.hosts.start();
+    eventually(TIMEOUT, "unmapped command failure", || async {
+        let sync = sync_of(&local).await;
+        sync.state == SyncState::Failed && sync.error.is_some_and(|error| error.contains("mapping"))
+    })
+    .await;
+    let _: SkillDto = local.json(post_json("/v1/skills", json!({"name":"after-config-failure", "document":skill("after-config-failure", "still transfers")})), StatusCode::CREATED).await;
+    eventually(TIMEOUT, "skill after configuration failure", || async {
+        skill_on(&far, "after-config-failure").await.is_some()
+    })
+    .await;
+    std::fs::write(&source, hosts).unwrap();
+    until_in_sync(&local).await;
+    local.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn incompatible_skill_api_reports_upgrade_and_recovers() {
+    let far = harness().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let incompatible = Arc::new(AtomicBool::new(true));
+    let flag = incompatible.clone();
+    let router = far.router.clone().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let flag = flag.clone();
+            async move {
+                if request.method() == axum::http::Method::PUT
+                    && request.uri().path() == "/v1/skills/bundle"
+                    && flag.load(Ordering::SeqCst)
+                {
+                    return (StatusCode::UNPROCESSABLE_ENTITY, "Failed to deserialize the JSON body into the target type: unknown field `files`, expected `document` at line 1 column 10").into_response();
+                }
+                next.run(request).await
+            }
+        },
+    ));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (local, _dir) = local_with_host(&endpoint).await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name":"bundle", "document":skill("bundle", "new")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    eventually(TIMEOUT, "upgrade instruction", || async {
+        sync_of(&local).await.error.is_some_and(|e| {
+            e.contains("far")
+                && e.contains("bundle")
+                && e.contains("upgrade")
+                && e.contains("incompatible")
+        })
+    })
+    .await;
+    incompatible.store(false, Ordering::SeqCst);
+    until_in_sync(&local).await;
+    assert!(skill_on(&far, "bundle").await.is_some());
 }

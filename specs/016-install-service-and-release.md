@@ -5,6 +5,7 @@ updated: 2026-11-21
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
+  - crates/ariadne-daemon/tests/it/portable_config.rs
   - crates/ariadne-daemon/src/resource.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/it/agents.rs
@@ -246,6 +247,10 @@ Out: what the daemon does once running (009, 012).
     the last step of the job reports hits and misses. Tauri uses only the Cargo cache.
     The UI caches npm downloads against `ui/package-lock.json` and always
     runs `npm ci`. A cache hit never skips a build, test, lint or audit step.
+
+20. Portable worker configuration uses the maintenance lifecycle in spec 037, rules 64–69.
+    Installed services retain supervision across process replacement.
+    Directly launched workers use the same lifecycle without requiring service installation.
 
 ## Acceptance criteria
 

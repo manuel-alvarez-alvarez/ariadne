@@ -13,7 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ariadne_api::hosts::{MissingRepositoryDto, SyncState};
+use ariadne_api::hosts::{ConfigSyncDto, MissingRepositoryDto, PortableConfigDto, SyncState};
 use ariadne_api::permissions::{
     AiPermissionsStatusDto, Flavour, LearnedPermissionDto, LearnedPermissionLevel,
     LearnedPermissionsResponse, RecordLearnedPermissionRequest, UpdateAiPermissionsRequest,
@@ -59,6 +59,9 @@ pub(super) async fn after_registration(hosts: &super::Hosts, name: &str) -> Resu
         index,
         client: super::client_for(&endpoint),
         last_ai: None,
+        last_config: None,
+        config_attempt: None,
+        pending_restart: false,
         pairs: None,
         bundles: HashMap::new(),
         warnings: HashMap::new(),
@@ -70,6 +73,7 @@ pub(super) async fn after_registration(hosts: &super::Hosts, name: &str) -> Resu
 }
 
 /// One thing to push to a host.
+#[derive(Clone)]
 enum Push {
     /// Everything: the host has just become `ready`, or this task fell
     /// behind the bus and cannot tell what it missed. Run as a push of each
@@ -85,6 +89,7 @@ enum Push {
     Learned(LearnedPermissionDto),
     LearnedDeleted(LearnedPermissionDto),
     Ai(AiChoice),
+    Config,
 }
 
 /// The item a push is about: a later push of the same item replaces a
@@ -97,9 +102,17 @@ enum Item<'a> {
     Repositories,
     Learned(&'a str, &'a str, LearnedPermissionLevel, &'a str),
     Ai,
+    Config,
 }
 
 impl Push {
+    fn is_deletion(&self) -> bool {
+        matches!(
+            self,
+            Self::SkillDeleted(_) | Self::WorkflowDeleted(_) | Self::LearnedDeleted(_)
+        )
+    }
+
     fn item(&self) -> Item<'_> {
         match self {
             Push::All => Item::All,
@@ -112,6 +125,7 @@ impl Push {
                 Item::Learned(&row.repository_id, &row.tool_name, row.level, &row.key)
             }
             Push::Ai(_) => Item::Ai,
+            Push::Config => Item::Config,
         }
     }
 }
@@ -145,6 +159,11 @@ pub(super) async fn run(
 ) {
     let mut ready = inner.ready[index].subscribe();
     let base = inner.timeouts.host_sync_retry;
+    let mut pushes = Pushes {
+        queue: VecDeque::new(),
+        failed: Vec::new(),
+        pending_deletions: Vec::new(),
+    };
     loop {
         // Until the host is ready, a change waits for the push of
         // everything that its readiness starts.
@@ -154,7 +173,11 @@ pub(super) async fn run(
             }
             tokio::select! {
                 changed = ready.changed() => if changed.is_err() { return },
-                event = events.recv() => if let Err(RecvError::Closed) = event { return },
+                event = events.recv() => match event {
+                    Ok(event) => pushes.enqueue(&event.event),
+                    Err(RecvError::Lagged(_)) => pushes.enqueue_all(),
+                    Err(RecvError::Closed) => return,
+                },
             }
         };
         let mut pusher = Pusher {
@@ -162,14 +185,15 @@ pub(super) async fn run(
             index,
             client: super::client_for(&endpoint),
             last_ai: None,
+            last_config: None,
+            config_attempt: None,
+            pending_restart: false,
             pairs: None,
             bundles: HashMap::new(),
             warnings: HashMap::new(),
         };
-        let mut pushes = Pushes {
-            queue: VecDeque::from([Push::All]),
-            failed: Vec::new(),
-        };
+        pushes.failed.clear();
+        pushes.enqueue_all();
         let mut scan = tokio::time::interval(inner.timeouts.host_check);
         scan.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut backoff = base;
@@ -187,7 +211,7 @@ pub(super) async fn run(
                     Err(TryRecvError::Closed) => return,
                 }
             }
-            pushes.show(&inner, index, &pusher.warnings);
+            pushes.show(&inner, index, &pusher.warnings, pusher.pending_restart);
             if let Some(push) = pushes.queue.pop_front() {
                 tokio::select! {
                     biased;
@@ -200,7 +224,7 @@ pub(super) async fn run(
                 } else if retry_at.is_none() {
                     retry_at = Some(Instant::now() + backoff);
                 }
-                pushes.show(&inner, index, &pusher.warnings);
+                pushes.show(&inner, index, &pusher.warnings, pusher.pending_restart);
                 continue;
             }
             let Some(at) = retry_at else {
@@ -259,6 +283,9 @@ struct Pushes {
     /// The pushes that failed, each with why, tried again on their own
     /// after the backoff. A failed push holds back no other one.
     failed: Vec<(Push, String)>,
+    /// Deletes cannot be reconstructed from the current catalog after reconnect.
+    /// Keep them until delivered or superseded, including during a cancelled retry.
+    pending_deletions: Vec<Push>,
 }
 
 impl Pushes {
@@ -284,6 +311,11 @@ impl Pushes {
             DomainEvent::AiPermissionsUpdated(status) => Push::Ai(AiChoice::from(status)),
             _ => return,
         };
+        self.pending_deletions
+            .retain(|pending| pending.item() != push.item());
+        if push.is_deletion() {
+            self.pending_deletions.push(push.clone());
+        }
         self.supersede(&push);
         // A push that reads its state afresh covers a later one of its kind.
         let covered = matches!(push, Push::Repositories)
@@ -301,6 +333,7 @@ impl Pushes {
     fn enqueue_all(&mut self) {
         self.queue.clear();
         self.queue.push_back(Push::All);
+        self.queue.extend(self.pending_deletions.iter().cloned());
     }
 
     /// Drop the failed push of the item `push` is about.
@@ -327,8 +360,12 @@ impl Pushes {
         // The item's older failed push is spent: this one carries the newer
         // state, and a retry of the older would write it back over this.
         self.supersede(&push);
-        if let Err(error) = pusher.push(&push).await {
-            self.fail(pusher, push, error);
+        match pusher.push(&push).await {
+            Ok(()) if push.is_deletion() => self
+                .pending_deletions
+                .retain(|pending| pending.item() != push.item()),
+            Ok(()) => {}
+            Err(error) => self.fail(pusher, push, error),
         }
     }
 
@@ -347,7 +384,13 @@ impl Pushes {
 
     /// Publish where the sync stands: `failed` while any push has failed,
     /// else `pending` while one waits, else `in_sync`.
-    fn show(&self, inner: &Inner, index: usize, warnings: &HashMap<String, Vec<String>>) {
+    fn show(
+        &self,
+        inner: &Inner,
+        index: usize,
+        warnings: &HashMap<String, Vec<String>>,
+        pending_restart: bool,
+    ) {
         let (state, error) = match self.failed.last() {
             Some((_, error)) => (SyncState::Failed, Some(error.clone())),
             None if self.queue.is_empty() => {
@@ -359,7 +402,11 @@ impl Pushes {
                     .collect();
                 messages.sort();
                 (
-                    SyncState::InSync,
+                    if pending_restart {
+                        SyncState::PendingRestart
+                    } else {
+                        SyncState::InSync
+                    },
                     (!messages.is_empty()).then(|| messages.join("; ")),
                 )
             }
@@ -380,6 +427,9 @@ struct Pusher<'a> {
     /// The AI choice the host last took: the status event also moves with
     /// every step of an install, which changes no choice.
     last_ai: Option<AiChoice>,
+    last_config: Option<PortableConfigDto>,
+    config_attempt: Option<Result<PortableConfigDto, String>>,
+    pending_restart: bool,
     /// The local repository ids paired with the host's, as the last push
     /// of the repositories read them.
     pairs: Option<HashMap<String, String>>,
@@ -389,6 +439,18 @@ struct Pusher<'a> {
 
 impl Pusher<'_> {
     async fn scan(&mut self, pushes: &mut Pushes) {
+        let desired = self.source_config().await;
+        let changed = self.config_attempt.as_ref() != Some(&desired);
+        let failed = pushes
+            .failed
+            .iter()
+            .any(|(push, _)| push.item() == Item::Config);
+        if (changed || (self.pending_restart && !failed))
+            && !pushes.queue.iter().any(|push| push.item() == Item::Config)
+        {
+            pushes.supersede(&Push::Config);
+            pushes.queue.push_back(Push::Config);
+        }
         let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
         let Ok(skills) = self.inner.store.list_skills().await else {
             return;
@@ -452,6 +514,7 @@ impl Pusher<'_> {
                 self.count_skipped(&pairs).await
             }
             Push::Ai(choice) => self.ai(choice).await,
+            Push::Config => self.config().await,
         }
     }
 
@@ -484,6 +547,7 @@ impl Pusher<'_> {
                 .then_some((settings.allow_threshold, settings.deny_threshold)),
             flavour,
         }));
+        pushes.push(Push::Config);
         Ok(pushes)
     }
 
@@ -520,6 +584,17 @@ impl Pusher<'_> {
             document: skill.document.clone(),
         };
         let path = format!("/v1/skills/{}", skill.name);
+        let skill_error = |error: ClientError| {
+            if matches!(&error, ClientError::Api { status, message, .. } if *status == StatusCode::UNPROCESSABLE_ENTITY && message.contains("unknown field `files`"))
+            {
+                format!(
+                    "host {} has an incompatible skill API for skill {}; upgrade its remote daemon",
+                    self.inner.cfg.hosts[self.index].0, skill.name
+                )
+            } else {
+                format!("skill {}: {error}", skill.name)
+            }
+        };
         match self.client.put_json::<SkillDto, _>(&path, &update).await {
             Err(error) if not_found(&error) => {
                 self.client
@@ -529,10 +604,10 @@ impl Pusher<'_> {
                 self.client
                     .put_json::<SkillDto, _>(&path, &update)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(skill_error)?;
             }
             other => {
-                other.map_err(|e| format!("skill {}: {e}", skill.name))?;
+                other.map_err(skill_error)?;
             }
         }
         let root = self.inner.cfg.skills_dir.join(&skill.name);
@@ -762,6 +837,46 @@ impl Pusher<'_> {
         self.delete(&format!("/v1/permissions/learned/{}", remote.id))
             .await
             .map_err(failed)
+    }
+
+    async fn source_config(&self) -> Result<PortableConfigDto, String> {
+        let cfg = crate::config::Config::load(Some(self.inner.cfg.root.clone()))
+            .map_err(|e| format!("daemon configuration: {e}"))?;
+        let mut desired = cfg.live_settings();
+        for row in self
+            .inner
+            .store
+            .list_agent_configs()
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            desired
+                .agent_flags
+                .insert(row.agent_id.clone(), row.extra_flags());
+        }
+        Ok(desired)
+    }
+
+    async fn config(&mut self) -> Result<(), String> {
+        let desired = self.source_config().await;
+        self.config_attempt = Some(desired.clone());
+        let desired = desired?;
+        let status: ConfigSyncDto = if self.last_config.as_ref() == Some(&desired) {
+            self.client.get_json("/v1/config/sync").await
+        } else {
+            self.client.put_json("/v1/config/sync", &desired).await
+        }
+        .map_err(|e| format!("daemon configuration: {e}"))?;
+        self.pending_restart = status.state == SyncState::PendingRestart;
+        if status.state == SyncState::Failed {
+            self.last_config = None;
+            return Err(format!(
+                "daemon configuration: {}",
+                status.error.unwrap_or_else(|| "application failed".into())
+            ));
+        }
+        self.last_config = Some(desired);
+        Ok(())
     }
 
     async fn ai(&mut self, choice: &AiChoice) -> Result<(), String> {

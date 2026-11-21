@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-client/src/endpoint.rs
   - crates/ariadne-daemon/tests/it/hosts.rs
   - crates/ariadne-daemon/tests/it/ssh_forward.rs
+  - crates/ariadne-daemon/tests/it/portable_config.rs
   - crates/ariadne-daemon/tests/it/host_sync.rs
   - crates/ariadne-daemon/tests/it/host_health.rs
   - crates/ariadne-daemon/tests/it/host_reconnect.rs
@@ -83,6 +84,12 @@ picker, the Hosts screen and one stream per host — is spec
     `host_unanswered`, the daemon kills the process and the host is `down`
     with the error `the far daemon does not answer through the forward:
     <reason>`. The restart of rule 12 follows.
+    Forward cleanup waits until every process in its group is gone, including zombies,
+    before publishing `down` or starting a replacement. This includes reconnect requests.
+    Each cleanup attempt has a five-second deadline (`Timeouts::ssh_forward_end`).
+    Group disappearance is polled every ten milliseconds (`ssh_forward_poll`).
+    Failure keeps the host `connecting` with an explicit cleanup error and attempt number.
+    The daemon retains the old child and group, retries cleanup, and blocks replacement until the group disappears.
 12. When the process exits, the host is `down`, `endpoint` is null and `error`
     is the last non-empty stderr line of the process (else its exit status).
     The daemon starts it again after `ssh_retry`, doubled after each exit up
@@ -179,7 +186,7 @@ picker, the Hosts screen and one stream per host — is spec
 
 ### Sync
 
-22. `sync` is `state` (`in_sync`, `pending`, `failed`), `error` (string or
+22. `sync` is `state` (`in_sync`, `pending`, `pending_restart`, `failed`), `error` (string or
     null) and `missing_repositories` (`MissingRepositoryDto[]`: the local
     repository's `id`, and `forge`, its `owner/repo`, or null for a
     repository with no forge) and `skipped_permissions` (rule 27). `local`
@@ -206,7 +213,8 @@ picker, the Hosts screen and one stream per host — is spec
     queued and when it runs, so no retry writes an older version over a
     newer one. When the host leaves `ready`, the tries stop and the host is
     `pending` with a null `error`. Its next `ready` starts the push of rule
-    23 again.
+    23 again. Queued or interrupted deletions remain pending across recovery.
+    A later change of the same item supersedes its pending deletion.
 26. A local repository matches a host repository on the same forge
     repository (kind, host, owner, name). One on the same base branch is
     taken first, else the first one left; each host repository matches once.
@@ -242,6 +250,9 @@ picker, the Hosts screen and one stream per host — is spec
     The daemon checks supporting files at each `host_check`, including file removals.
     A transfer rechecks its source before it reports success.
     Scans skip failed skills; only the backoff of rule 25 retries them.
+    A remote rejection of the `files` field reports an incompatible skill API,
+    names the host and skill, and instructs the user to upgrade the remote daemon.
+    Complete transfers remain mandatory and retries recover when the daemon is upgraded.
 44. Escaping symbolic links fail that skill push and name the offending path.
     Other skills continue. Failed staging or replacement preserves recoverable previous worker contents.
     Explicit Markdown local-file links outside the skill directory produce warnings in `sync.error`.
@@ -342,7 +353,7 @@ picker, the Hosts screen and one stream per host — is spec
     and take `--color` from the eight `HostColor` values (014, rules 52 to 57).
 
 
-62. Repository population extends setup with an optional `repositories` map from source IDs to worker destinations.
+63. Repository population extends setup with an optional `repositories` map from source IDs to worker destinations.
     Destinations accept absolute paths or `~/` paths resolved against the probed worker home.
     Desktop proposes `~/workspace/<repository>` and permits each destination to change.
     Setup clones Git remote history without source edits or untracked files.
@@ -354,9 +365,50 @@ picker, the Hosts screen and one stream per host — is spec
     Registration invokes the normal host synchronization for settings and learned permissions.
     Automatic enrollment of later repositories and movement of existing checkouts remain outside scope.
 
+### Portable daemon configuration
+
+64. Each ready host receives portable daemon settings through `PUT /v1/config/sync`.
+    `GET` on that path returns `ConfigSyncDto`, with `state`, `error`, and `configuration`.
+    The portable fields are `delete_merged_branches`, `delete_merged_worktrees`, `auto_switch`,
+    `exhausted_patterns`, `log_filter`, the three `telemetry_*_days` values, `acp_registry_url`,
+    `acp_agents`, and explicitly stored `agent_flags`.
+    Source defaults participate. Worker-only agents and flag entries remain.
+    Paths, listeners, origins, webhook addresses, hardware choices, sleep prevention,
+    executable locations, hosts, and other settings remain the worker's.
+65. Custom agents match by identifier. An existing worker command takes precedence over the source command.
+    Without a mapping, the command must use an executable on the worker PATH.
+    Explicit filesystem paths in commands or arguments require a worker mapping and otherwise fail synchronization.
+    These are absolute paths, `~/`, `./`, `../`, and Windows paths.
+    Other slash tokens remain portable, including provider/model identifiers and scoped package names.
+    Path-bearing flags fail instead of silently installing unusable source paths.
+    Matching portable flag lists take the source list. Worker-only flag lists remain.
+66. The worker saves accepted settings in `portable-config.json` under its own home.
+    Startup overlays these settings without rewriting `config.toml` or changing worker locations.
+    Worker commands configured in `config.toml` retain precedence by identifier.
+    Cleanup policies, model switching, logging, and retention update live.
+    Existing retention jobs use the updated cutoffs on their next pass.
+    `RUST_LOG` keeps precedence over the synchronized logging filter.
+    Registry additions and index changes require an idle restart.
+67. Maintenance snapshots admitted tasks under the same lock that guards admission.
+    Admitted tasks continue through all remaining columns, including review and CI waits.
+    New tasks remain queued. New review and babysit operations receive a maintenance conflict.
+    Existing operations and their coordinating sessions can continue.
+    The worker waits for admitted tasks and active turns before replacing its process.
+    Process replacement supports directly launched macOS and Linux workers.
+    It preserves the PID, inherited environment, and service supervision for installed workers.
+    Open event streams do not delay replacement.
+    SSH forward guards close their process groups when replacement closes the daemon lifetime pipe.
+68. Host synchronization reports `pending_restart` while registry changes wait for maintenance.
+    Successful replacement restores normal scheduling and reports `in_sync`.
+    A replacement failure reports `failed` with its reason and restores admission.
+    A later configuration transfer retries maintenance. CLI and desktop expose the state and error.
+69. Host checks detect source configuration and explicit agent-flag changes.
+    Configuration failures use the existing independent retry queue from rule 25.
+    They do not block catalog, repository, learned permission, or AI permission synchronization.
+
 ## Acceptance criteria
 
-- Rule 62: `hosts.rs::setup_accepts_selected_repository_destinations` and
+- Rule 63: `hosts.rs::setup_accepts_selected_repository_destinations` and
   `hosts.rs::selected_repositories_clone_only_committed_files_and_retry_registration`;
   `hosts.rs::setup_rejects_unsafe_repository_destinations_before_starting` proves request validation.
   `hosts.rs::repository_setup_preserves_unrelated_existing_destinations` proves preservation of unrelated directories, including empty directories.
@@ -381,6 +433,18 @@ picker, the Hosts screen and one stream per host — is spec
   `::host_edit_patches_only_the_given_fields_and_null_clears`,
   `::host_rm_deletes_the_host_and_prints_its_name`.
 - Rule 61: `ui/scripts/host-events.test.mjs::closes a deleted host stream and removes its cache only from local events`.
+- An incompatible skill API reports the upgrade and recovers: `host_sync.rs::incompatible_skill_api_reports_upgrade_and_recovers`.
+
+- Hosts keep file order and an unknown key is refused by name
+  (`endpoint.rs::hosts_keep_the_order_of_the_file`,
+  `::an_unknown_key_in_a_host_is_refused_by_name`,
+  `::a_host_without_an_endpoint_is_refused`).
+- Rules 2 and 3 hold at startup and in `--check-config`
+  (`hosts.rs::a_bad_host_is_refused_by_name_at_startup_and_by_check_config`,
+  `::good_hosts_pass_check_config`).
+- Rules 4 and 5
+  (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
+  `::configured_hosts_follow_local_in_file_order`).
 - Rule 11, no answer through the forward
   (`host_health.rs::a_forward_whose_far_daemon_does_not_answer_is_down_and_starts_again`).
 - Rules 13 and 30, shutdown
@@ -419,7 +483,10 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 24
   (`host_sync.rs::each_later_change_reaches_the_host_and_a_delete_removes_it`).
 - Rule 25
-  (`host_sync.rs::a_refused_push_holds_back_no_later_change`,
+  (`host_sync.rs::a_queued_skill_deletion_reaches_the_host_after_recovery`,
+  `::an_interrupted_skill_deletion_reaches_the_host_after_recovery`,
+  `::a_recreated_skill_supersedes_its_queued_deletion_after_recovery`,
+  `::a_refused_push_holds_back_no_later_change`,
   `::a_refused_repository_holds_back_no_other_repository`,
   `::a_newer_push_of_an_item_ends_its_older_failed_push`,
   `ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`).
@@ -459,8 +526,10 @@ picker, the Hosts screen and one stream per host — is spec
   `::a_direct_host_takes_one_check_and_its_status_follows_the_answer`).
 - Rules 36 and 41
   (`host_reconnect.rs::a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after`).
-- Rule 37
-  (`host_reconnect.rs::a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once`).
+- Rules 11 and 37
+  (`host_reconnect.rs::a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once`,
+  `::each_reconnect_reaps_the_previous_forward_before_answering`,
+  `host_health.rs::cleanup_retries_keep_a_zombie_group_owned_until_it_disappears`).
 - Rule 38
   (`host_reconnect.rs::a_ready_forward_takes_one_check_and_a_good_answer_cuts_no_stream`).
 - Rules 39 and 41
@@ -510,6 +579,34 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
   `::credential_values_are_rejected_before_an_operation_is_persisted`,
   `::selected_github_credentials_enable_git_without_entering_command_arguments`.
 - Desktop selections: `ui/src/features/hosts/worker-setup.test.tsx::sends explicit tool and credential selections`.
+
+- Portable live settings preserve worker locations and survive reload
+  (`portable_config.rs::portable_settings_apply_without_changing_worker_paths`).
+- Worker commands and worker-only entries survive matching source updates
+  (`portable_config.rs::worker_commands_and_worker_only_agents_survive_source_replacement`).
+- Provider/model flags and scoped package arguments remain portable
+  (`portable_config.rs::provider_model_flags_remain_portable_with_live_policy_updates`,
+  `::scoped_npx_package_arguments_remain_portable`).
+- Unmapped paths and invalid retention fail before installation
+  (`portable_config.rs::an_unmapped_source_path_fails_without_applying_settings`,
+  `::invalid_retention_fails_before_any_setting_changes`).
+- Maintenance lets admitted tasks continue and holds new work
+  (`portable_config.rs::maintenance_keeps_admitted_tasks_running_and_holds_new_tasks`).
+- Process replacement keeps the worker PID and works with an open event stream
+  (`portable_config.rs::an_idle_worker_restarts_with_an_open_event_stream`).
+- A failed replacement retains service availability and permits retry
+  (`portable_config.rs::a_failed_process_replacement_keeps_the_worker_available_and_can_retry`).
+- Existing retention and cleanup consumers use live policies
+  (`portable_config.rs::a_running_retention_job_uses_the_new_cutoff`,
+  `::a_live_cleanup_policy_keeps_the_finished_worktree`,
+  `::the_logging_filter_changes_without_a_restart`,
+  `::an_existing_runtime_classifies_errors_with_the_new_patterns`).
+- Source file and flag changes reach workers; configuration errors leave catalog transfers working
+  (`host_sync.rs::portable_policies_and_flags_reach_the_worker_after_source_changes`,
+  `::unmapped_configuration_fails_without_blocking_catalogs_and_can_retry`).
+- CLI listings expose pending restart (`crates/ariadne-cli/tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).
+  Desktop sync lines expose pending restart and configuration errors
+  (`ui/src/components/host-sync.test.tsx`: `shows configuration status %s`).
 
 ## Sources
 

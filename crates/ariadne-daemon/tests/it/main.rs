@@ -48,6 +48,7 @@ mod metrics;
 mod models;
 mod pins;
 mod plan_finalize;
+mod portable_config;
 mod prompts;
 mod relay;
 mod repositories;

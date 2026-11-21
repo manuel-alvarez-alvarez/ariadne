@@ -502,9 +502,10 @@ impl HarnessBuilder {
             store.clone(),
             self.timeouts.failure_diagnosis_decision,
         );
+        let config = Arc::new(config);
         let launcher = Arc::new(Launcher {
             forge_poll: Default::default(),
-            cfg: Arc::new(config.clone()),
+            cfg: config.clone(),
             store: store.clone(),
             git: GitManager,
             acp: ariadne_daemon::acp::AcpRuntime::with_transcripts(
@@ -518,6 +519,7 @@ impl HarnessBuilder {
                 Some(self.session_place.unwrap_or_else(|| "none".into())),
             )
             .with_exhausted_patterns(exhausted_patterns)
+            .with_portable_config(config.clone())
             .with_ai_permissions(ai_permissions.clone())
             .with_failure_diagnosis(failure_diagnosis.clone()),
             registry: agent_registry.clone(),
@@ -1565,11 +1567,10 @@ impl Harness {
         .unwrap();
     }
 
-    /// Export every metric now, off this test's runtime thread: a flush
-    /// blocks its caller until the exporter has written, and a daemon task
-    /// on this runtime — the retention pass holding the telemetry writer —
-    /// may be what that write waits on.
-    pub(crate) async fn flush_metrics(&self) {
+    /// Export telemetry now, off this test's runtime thread: a flush
+    /// blocks its caller until the exporter has written. This leaves the
+    /// runtime thread free to run other tasks while the export completes.
+    pub(crate) async fn flush_telemetry(&self) {
         let telemetry = self.telemetry.clone();
         tokio::task::spawn_blocking(move || telemetry.flush())
             .await
@@ -1581,7 +1582,7 @@ impl Harness {
     /// the telemetry store: the newest sample of each series, 0 where none
     /// matches. A histogram is read by its `_count` or `_sum` series.
     pub(crate) async fn metric(&self, name: &str, labels: &[(&str, &str)]) -> f64 {
-        self.flush_metrics().await;
+        self.flush_telemetry().await;
         let mut total = 0.0;
         for series in self.telemetry_store.list_series(&[]).await.unwrap() {
             if series.name != name
@@ -1609,7 +1610,7 @@ impl Harness {
 
     /// Every label set metric `name` was recorded under, once flushed.
     pub(crate) async fn metric_labels(&self, name: &str) -> Vec<serde_json::Value> {
-        self.flush_metrics().await;
+        self.flush_telemetry().await;
         self.telemetry_store
             .list_series(&[])
             .await

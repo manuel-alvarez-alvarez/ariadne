@@ -18,9 +18,10 @@ use ariadne_api::hosts::{HostDto, HostKind, HostStatus, HostSyncDto, SyncState};
 use ariadne_client::Client;
 use ariadne_client::endpoint::HostConfig;
 use ariadne_store::Store;
+use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
@@ -605,9 +606,23 @@ impl Inner {
         };
         self.set(index, HostStatus::Connecting, None, None);
         let ssh = self.cfg.ssh_bin.as_deref().unwrap_or("ssh");
-        let mut child = match Command::new(ssh)
+        // Close the pipe on exec or process exit, including an idle restart.
+        // The watcher ends the forward's process group when that happens.
+        const GUARD: &str = r#"exec 3<&0
+"$@" </dev/null 3<&- &
+forward=$!
+(read -r _ <&3; kill -s KILL 0) &
+watcher=$!
+wait "$forward"
+status=$?
+kill "$watcher" 2>/dev/null
+exit "$status"
+"#;
+        let mut child = match Command::new("/bin/sh")
+            .args(["-c", GUARD, "ariadne-ssh-guard", ssh])
             .args(&args)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
+            .process_group(0)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -616,6 +631,10 @@ impl Inner {
             Ok(child) => child,
             Err(error) => return Ended::Down(format!("cannot run {ssh}: {error}")),
         };
+        let group = Pid::from_raw(child.id().expect("a spawned SSH process").cast_signed())
+            .expect("a positive process ID");
+        // Child::wait closes its stdin. Keep this end until the forward ends.
+        let _lifetime = child.stdin.take();
         acted(asked);
         // The last line the process wrote is why it ended.
         let stderr = child.stderr.take().map(|stderr| {
@@ -636,14 +655,14 @@ impl Inner {
             status = child.wait() => Err(status),
             answered = self.answer_within(&client) => Ok(answered),
             Some(reply) = requests.recv() => {
-                let _ = child.kill().await;
+                self.finish_forward(index, &mut child, group).await;
                 return Ended::Again(reply);
             }
         };
         let status = match answered {
             Err(status) => status,
             Ok(Err(why)) => {
-                let _ = child.kill().await;
+                self.finish_forward(index, &mut child, group).await;
                 return Ended::Down(format!(
                     "the far daemon does not answer through the forward: {why}"
                 ));
@@ -656,7 +675,7 @@ impl Inner {
                     tokio::select! {
                         status = child.wait() => break status,
                         error = self.until_silent(&client, &local) => {
-                            let _ = child.kill().await;
+                            self.finish_forward(index, &mut child, group).await;
                             return Ended::Down(error);
                         }
                         Some(reply) = requests.recv() => {
@@ -665,7 +684,7 @@ impl Inner {
                                     let _ = reply.send(());
                                 }
                                 Err(why) => {
-                                    let _ = child.kill().await;
+                                    self.finish_forward(index, &mut child, group).await;
                                     let error = format!("{local} does not answer: {why}");
                                     warn!(endpoint = %local, %error, "ssh forward down");
                                     self.set(index, HostStatus::Down, None, Some(error));
@@ -677,6 +696,7 @@ impl Inner {
                 }
             }
         };
+        self.finish_forward(index, &mut child, group).await;
         let last = match stderr {
             Some(task) => timeout(self.timeouts.ssh_probe, task)
                 .await
@@ -689,6 +709,24 @@ impl Inner {
             Ok(status) => format!("{ssh} exited: {status}"),
             Err(error) => format!("{ssh} could not be waited on: {error}"),
         }))
+    }
+
+    /// Keep ownership through cleanup failures. A replacement needs ESRCH,
+    /// including reaping by the OS after the guard's own wait completes.
+    async fn finish_forward(&self, index: usize, child: &mut Child, group: Pid) {
+        let mut attempt = 1u64;
+        loop {
+            match end_forward(child, group, &self.timeouts).await {
+                Ok(()) => return,
+                Err(error) => {
+                    let error = format!("SSH forward cleanup attempt {attempt}: {error}");
+                    warn!(%error, "SSH cleanup will retry");
+                    self.set(index, HostStatus::Connecting, None, Some(error));
+                }
+            }
+            attempt = attempt.saturating_add(1);
+            sleep(self.timeouts.ssh_forward_poll).await;
+        }
     }
 
     /// Check a `connecting` host every `ssh_probe_interval` until its first
@@ -740,6 +778,36 @@ impl Inner {
                 }
             }
         }
+    }
+}
+
+/// End the group before publishing Down or starting its replacement.
+/// The lifetime watcher handles exec; normal exits must not depend on it.
+async fn end_forward(child: &mut Child, group: Pid, timeouts: &Timeouts) -> Result<(), String> {
+    let cleanup = async {
+        match kill_process_group(group, Signal::KILL) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => (),
+            Err(error) => return Err(std::io::Error::from(error)),
+        }
+        child.wait().await?;
+        // Waiting for the guard alone does not reap its SSH grandchild.
+        // The group must disappear, including orphaned zombies, before Down.
+        loop {
+            match test_kill_process_group(group) {
+                Err(rustix::io::Errno::SRCH) => return Ok(()),
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(error) => return Err(std::io::Error::from(error)),
+                Ok(()) => sleep(timeouts.ssh_forward_poll).await,
+            }
+        }
+    };
+    match timeout(timeouts.ssh_forward_end, cleanup).await {
+        Ok(result) => result.map_err(|error| format!("SSH forward cleanup failed: {error}")),
+        Err(_) => Err(format!(
+            "SSH forward process group {} did not end within {:?}",
+            group.as_raw_pid(),
+            timeouts.ssh_forward_end
+        )),
     }
 }
 

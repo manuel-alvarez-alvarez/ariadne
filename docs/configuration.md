@@ -157,6 +157,11 @@ The daemon checks the status of each host again and again, so
   `host_updated` event. Stopping the daemon ends every check and every `ssh`
   it started.
 
+An SSH host reports `down` after every process in its forward's process group has ended and been reaped.
+Each cleanup attempt can take up to five seconds.
+If cleanup fails, the host stays `connecting` with a cleanup error while the daemon retries.
+The daemon retains the old group and blocks replacement until cleanup completes.
+
 To try one host again at once, send `POST /v1/hosts/<name>/reconnect`.
 The daemon does not wait for the next check or the next start of `ssh`:
 
@@ -221,11 +226,41 @@ under `sync.missing_repositories`, and the host stays `in_sync`.
 
 - `in_sync`: the host holds every local change.
 - `pending`: a change waits for the host, or a push is under way.
+- `pending_restart`: configuration is saved and waits for an idle worker restart.
 - `failed`: a push failed, and `error` says why. Your later changes still
   reach the host. The daemon tries each failed push again after 1 second,
   and doubles the wait after each failure, up to 60 seconds, while the host
   stays `ready`. A host refuses a push it would refuse from you: for example,
   it keeps a skill that one of its own workflows still names.
+
+The daemon also sends portable configuration from its `config.toml` and explicit agent flags.
+Host checks detect later changes automatically.
+Cleanup policies, model switching, logging, and telemetry retention update on the worker immediately.
+An existing retention job uses the new cutoff on its next pass.
+The worker's `RUST_LOG` environment variable still takes precedence.
+
+Custom agents match by identifier. The worker keeps its existing command for a matching agent.
+New commands must use executable names available on the worker PATH.
+Explicit source paths require a worker command mapping.
+These include absolute paths, `~/`, `./`, `../`, and Windows paths.
+Relative slash tokens remain portable, including `anthropic/claude-sonnet` and `@scope/pkg`.
+Configure that identifier under the worker's `[[acp_agents]]` table, then restart the worker and retry synchronization.
+Unmapped paths and path-bearing agent flags report synchronization failures.
+Keep path-bearing flags inside the worker command mapping instead of shared extra flags.
+Matching portable flags take the source values. Worker-only agents and flags remain.
+
+Registry changes wait for an automatic restart.
+The worker blocks new task admission while existing tasks finish all their columns.
+This includes time spent waiting for review or CI.
+New review and babysit operations receive a maintenance conflict.
+Scheduling resumes after replacement or after a reported replacement failure.
+The CLI and desktop show `pending_restart`, successful synchronization, or the failure reason.
+
+The worker saves these settings in `portable-config.json` under its own home.
+Its `config.toml` retains worker command mappings and machine-specific settings.
+Worker paths, listeners, webhook addresses, hardware choices, and executable locations stay local.
+Process replacement supports macOS and Linux, including workers started directly from a shell.
+Installed services keep their supervision. Open event streams do not delay the restart.
 
 `local` is always `in_sync`. Each change of `sync` publishes one
 `host_updated` event. See [Hosts](../specs/037-hosts.md).

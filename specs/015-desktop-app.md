@@ -1176,6 +1176,30 @@ Out: the daemon endpoints themselves (012).
     Its page header has a "Set up worker" action. The action opens a dialog
     that provisions SSH workers through spec 037, rules 43–50.
     The setup dialog shows durable steps and permits safe retry.
+    The header also has an "Add host" action beside it. It opens a dialog with
+    the fields name, endpoint, remote and colour, and its submit sends
+    `POST /v1/hosts` to `local`. Each row has an Edit action. For a named host
+    the dialog has endpoint, remote and colour, with the name read-only; for
+    `local` it has colour alone, with no name field. Its submit sends `PATCH /v1/hosts/{name}` with
+    the changed fields only, and an emptied remote is `null`. The colour field
+    offers "Default" and the eight colours of `HOST_COLORS` as swatches, and
+    "Default" sends `null`, on add as on edit. Each named host's row has a Remove action, which
+    asks for confirmation, says that the daemon on the host keeps running, and
+    sends `DELETE /v1/hosts/{name}`; `local` has none. A dialog shows a 400 or
+    409 at its field when the message names one, and otherwise in the dialog;
+    a 409 that names no field shows in the dialog.
+    A failed removal shows its error in a toast. A submit button is disabled
+    while its request runs. The table follows `host_updated` and
+    `host_deleted` with no reload.
+    (`ui/src/features/hosts/host-edit.test.tsx::adds a host with name, endpoint, remote and colour, and shows its row through host_updated`,
+    `::offers Default and the eight colours as swatches`,
+    `::sends only the changed fields of a named host, an emptied remote as null and Default as null`,
+    `::edits the colour of local alone`,
+    `::sends color null when a new host keeps the Default colour`,
+    `::shows a refusal at the field it names, and any other in the dialog`,
+    `::disables the submit button while its request runs`,
+    `::removes a named host after a confirmation that says the far daemon keeps running`,
+    `::shows the error of a failed removal in a toast`).
     (`ui/src/features/hosts/hosts-page.test.tsx::titles the screen Hosts and opens the worker setup from its Set up worker action`,
     `::shows the hosts of local whatever the header host picker selects`,
     `ui/src/components/settings-dialog.test.tsx::has no Hosts section`,

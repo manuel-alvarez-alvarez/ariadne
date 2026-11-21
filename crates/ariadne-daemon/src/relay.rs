@@ -132,6 +132,8 @@ pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()
     let finished = Arc::new(Notify::new());
     // Subscribe before spawning, so an immediate exit cannot lose its notification.
     let mut child_exits = signal(SignalKind::child())?;
+    // Keep the interrupt subscription across loop iterations and readiness.
+    let mut interrupts = signal(SignalKind::interrupt())?;
     let mut child = tokio::process::Command::new(&args.command[0])
         .args(&args.command[1..])
         .stdin(Stdio::piped())
@@ -190,7 +192,7 @@ pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()
         tokio::select! {
             _ = stop.notified() => { break true; }
             _ = finished.notified() => { break false; }
-            _ = tokio::signal::ctrl_c() => { break true; }
+            _ = interrupts.recv() => { break true; }
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
                 // A reconnect takes ownership after the previous handler stops.

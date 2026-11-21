@@ -220,6 +220,7 @@ struct Inner {
     consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
     ai_permissions: Option<AiPermissions>,
     exhausted_patterns: Vec<String>,
+    portable_config: Option<Arc<crate::config::Config>>,
     failure_diagnosis: Option<crate::failure_diagnosis::FailureDiagnosis>,
     /// Serializes a goal's attention decision (`tell_orchestrator`, in the
     /// scheduler) against the confirmation its own prior delivery's turn
@@ -677,6 +678,7 @@ impl AcpRuntime {
                 consoles: Mutex::new(HashMap::new()),
                 ai_permissions: None,
                 exhausted_patterns: crate::config::default_exhausted_patterns(),
+                portable_config: None,
                 failure_diagnosis: None,
                 goal_attention: Arc::new(tokio::sync::Mutex::new(())),
                 agent_requests: tokio::sync::Mutex::new(()),
@@ -791,6 +793,14 @@ impl AcpRuntime {
             }
         }
         Ok(attached)
+    }
+
+    /// Share live model-switching policy with the worker configuration endpoint.
+    pub fn with_portable_config(mut self, cfg: Arc<crate::config::Config>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("runtime is not shared while configured")
+            .portable_config = Some(cfg);
+        self
     }
 
     pub fn with_exhausted_patterns(mut self, patterns: Vec<String>) -> Self {
@@ -2176,7 +2186,12 @@ impl AcpRuntime {
             if let Some(reason) = exhausted_reason(
                 &message,
                 protocol.and_then(|error| error.data.as_ref()),
-                &self.inner.exhausted_patterns,
+                &self
+                    .inner
+                    .portable_config
+                    .as_ref()
+                    .map(|cfg| cfg.live_settings().exhausted_patterns)
+                    .unwrap_or_else(|| self.inner.exhausted_patterns.clone()),
             ) {
                 reported["exhausted"] = json!(true);
                 reported["exhausted_reason"] = json!(reason);
