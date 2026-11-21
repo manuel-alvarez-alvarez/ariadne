@@ -418,10 +418,14 @@ it leaves nothing to delete.
 18. With tmux selected, start `ariadned relay` in a detached pane on a private server for the daemon home.
     Pass the working directory, command arguments, and environment without shell interpretation.
     Send ACP through the relay socket, never pane keystrokes or pane text.
+    Pane discovery works in UTF-8 and non-UTF-8 daemon locales.
     A daemon stop closes its connection without stopping the relay, pane, or agent.
     A session kill stops the relay's agent process group before removing its pane.
 
-19. Persist numbered daemon inputs before sending them to the relay.
+19. A failed session reconnect logs its reason and leaves the row for the liveness sweep (009, rule 20).
+    Stale sockets and missing, unreadable, or mismatched launch metadata do not abort daemon startup.
+    Other sessions continue reconnecting after that failure.
+    Persist numbered daemon inputs before sending them to the relay.
     On connect, resend only numbers above the relay greeting's accepted input number.
     Store each output frame before acknowledging it to the relay.
     Reconstruct ACP setup from retained responses without initializing the live agent again.
@@ -446,6 +450,8 @@ it leaves nothing to delete.
   `doctor.rs::doctor_reports_a_missing_forced_place_and_its_reason`.
 - A detached pane starts, lists, and stops:
   `place.rs::a_detached_relay_pane_can_be_found_and_stopped`.
+- Pane discovery also works with a non-UTF-8 tmux client locale:
+  `place.rs::a_detached_relay_pane_is_discoverable_in_the_c_locale`.
 - Arguments, environment, and working directory reach the agent without shell interpretation:
   `place.rs::a_relay_pane_preserves_arguments_environment_and_working_directory`.
 - ACP setup, console input, and kill use the relay:
@@ -461,6 +467,14 @@ it leaves nothing to delete.
   `acp_runtime.rs::daemon_disconnection_leaves_the_pane_relay_and_agent_alive`.
 - Reconnect precedes liveness and keeps the stored place despite changed selection:
   `acp_runtime.rs::reconnect_keeps_the_live_relay_place_when_the_forced_setting_changes`.
+- A stale socket leaves its row to the sweep while another relay reconnects:
+  `acp_runtime.rs::a_stale_relay_socket_does_not_block_other_reconnects_or_the_liveness_sweep`.
+- A socket left behind without a tmux server also permits startup:
+  `acp_runtime.rs::a_stale_relay_socket_without_a_tmux_server_is_left_for_the_liveness_sweep`.
+- Invalid launch metadata also isolates the failed session:
+  `acp_runtime.rs::missing_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep`,
+  `::unreadable_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep`, and
+  `::mismatched_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep`.
 - Offline output and usage survive without repeating the prompt or an accepted permission answer:
   `acp_runtime.rs::reconnect_restores_offline_text_usage_and_an_answered_permission_without_repeating_input`.
 - Repeated normalized effects keep one event and one usage record:

@@ -158,11 +158,13 @@ impl Place {
     /// List the live relay panes in this home's private server.
     pub async fn live_panes(&self, home: &std::path::Path) -> Result<Vec<Pane>> {
         let mut command = self.command(home)?;
+        // Non-UTF-8 tmux clients replace control separators with underscores.
+        // Pane and session identifiers cannot contain this printable separator.
         command.args([
             "list-panes",
             "-a",
             "-F",
-            "#{pane_id}\t#{session_name}\t#{@ariadne_session}",
+            "#{pane_id} #{session_name} #{@ariadne_session}",
         ]);
         let output = run(command).await?;
         if !output.status.success() {
@@ -178,7 +180,7 @@ impl Place {
         Ok(String::from_utf8(output.stdout)?
             .lines()
             .filter_map(|line| {
-                let fields: Vec<_> = line.split('\t').collect();
+                let fields: Vec<_> = line.split(' ').collect();
                 (fields.len() == 3 && fields[1].starts_with("ariadne-") && !fields[2].is_empty())
                     .then(|| Pane {
                         id: fields[0].into(),

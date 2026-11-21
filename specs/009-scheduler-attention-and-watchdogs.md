@@ -121,6 +121,7 @@ the ACP runtime that takes a prompt (021).
     The liveness sweep then asks the ACP runtime whether each live session's agent runs.
     A reconnected session stays live with its existing launch and conversation.
     A session whose agent is gone is retired.
+    One failed reconnect does not stop this sequence (021, rule 19).
 21. A session still `starting` is left alone for 30 s (`START_GRACE_SECS`),
     since its row exists before its agent does. A start older than that is a
     launch that is not coming, and it is swept.
@@ -440,6 +441,10 @@ the ACP runtime that takes a prompt (021).
 
 - Startup reconnect precedes the first liveness sweep, and a changed forced setting does not replace the live agent
   (`acp_runtime.rs::reconnect_keeps_the_live_relay_place_when_the_forced_setting_changes`).
+- A stale relay socket does not block startup, other reconnects, or the liveness sweep
+  (`acp_runtime.rs::a_stale_relay_socket_does_not_block_other_reconnects_or_the_liveness_sweep`).
+- A stale socket with no tmux server also reaches the liveness sweep
+  (`acp_runtime.rs::a_stale_relay_socket_without_a_tmux_server_is_left_for_the_liveness_sweep`).
 
 ## Sources
 

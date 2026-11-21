@@ -242,3 +242,31 @@ async fn a_relay_pane_preserves_arguments_environment_and_working_directory() {
     drop(socket);
     place.stop_pane(home.0.path(), &pane).await.unwrap();
 }
+
+/// Run the real pane lifecycle with an isolated, non-UTF-8 client locale.
+#[tokio::test]
+async fn a_detached_relay_pane_is_discoverable_in_the_c_locale() {
+    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "place::a_detached_relay_pane_can_be_found_and_stopped",
+            "--nocapture",
+        ])
+        .env("LC_ALL", "C")
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(crate::common::TIMEOUT, command.output())
+        .await
+        .unwrap()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("1 passed"),
+        "the pane lifecycle test did not run: {stdout}"
+    );
+}

@@ -1849,3 +1849,162 @@ async fn reconnect_restores_commands_offered_in_a_completed_turn() {
     );
     runtime.kill_and_wait(&session.id).await;
 }
+
+#[tokio::test]
+async fn a_stale_relay_socket_does_not_block_other_reconnects_or_the_liveness_sweep() {
+    assert_failed_relay_is_swept("stale socket", true).await;
+}
+
+#[tokio::test]
+async fn missing_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep() {
+    assert_failed_relay_is_swept("missing launch", true).await;
+}
+
+#[tokio::test]
+async fn unreadable_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep() {
+    assert_failed_relay_is_swept("unreadable launch", true).await;
+}
+
+#[tokio::test]
+async fn mismatched_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep() {
+    assert_failed_relay_is_swept("mismatched launch", true).await;
+}
+
+#[tokio::test]
+async fn a_stale_relay_socket_without_a_tmux_server_is_left_for_the_liveness_sweep() {
+    assert_failed_relay_is_swept("stale socket", false).await;
+}
+
+/// Leave a failed row for the sweep and optionally reconnect a healthy row after it.
+async fn assert_failed_relay_is_swept(fault: &str, keep_healthy: bool) {
+    use ariadne_daemon::acp::{AcpLaunch, AcpRuntime};
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let dead = h.lone_session("dead-relay").await;
+    let healthy = h.lone_session("healthy-relay").await;
+    assert!(
+        dead.id < healthy.id,
+        "the failed relay must precede the healthy relay"
+    );
+    h.agent_runs(&healthy).await;
+    if !keep_healthy {
+        h.launcher.acp.kill_and_wait(&healthy.id).await;
+        h.store
+            .set_goal_status(
+                healthy.goal_id.as_deref().unwrap(),
+                ariadne_core::GoalStatus::Cancelled,
+            )
+            .await
+            .unwrap();
+        let place =
+            ariadne_daemon::place::Place::find(Some("tmux"), std::env::var_os("PATH").as_deref())
+                .unwrap();
+        assert!(
+            place
+                .live_panes(&h.launcher.cfg.root)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+    h.launcher.acp.detach_relays().await;
+    let directory = h.launcher.cfg.root.join("relays");
+    let launch_path = directory.join(format!("{}.launch.json", dead.id));
+    let mut launch: AcpLaunch = serde_json::from_slice(
+        &std::fs::read(directory.join(format!("{}.launch.json", healthy.id))).unwrap(),
+    )
+    .unwrap();
+    launch.session_id = dead.id.clone();
+    launch.launch_id = ariadne_core::id::new_id();
+    h.store
+        .set_session_launch(&dead.id, &launch.launch_id)
+        .await
+        .unwrap();
+    h.store.set_session_place(&dead.id, "tmux").await.unwrap();
+    h.store
+        .set_session_status(&dead.id, SessionStatus::Idle)
+        .await
+        .unwrap();
+    h.store
+        .set_goal_status(
+            dead.goal_id.as_deref().unwrap(),
+            ariadne_core::GoalStatus::Cancelled,
+        )
+        .await
+        .unwrap();
+    match fault {
+        "missing launch" => {}
+        "unreadable launch" => std::fs::create_dir(&launch_path).unwrap(),
+        "stale socket" | "mismatched launch" => {
+            if fault == "mismatched launch" {
+                launch.launch_id = "previous-launch".into();
+            }
+            std::fs::write(&launch_path, serde_json::to_vec(&launch).unwrap()).unwrap();
+        }
+        _ => panic!("unknown relay fault: {fault}"),
+    }
+    let socket_path = directory.join(format!("{}.sock", dead.id));
+    drop(std::os::unix::net::UnixListener::bind(&socket_path).unwrap());
+    assert!(
+        socket_path.exists(),
+        "model the socket left by an unclean relay exit"
+    );
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("herdr".into()),
+    );
+    assert_eq!(
+        runtime.reconnect_relays().await.unwrap(),
+        usize::from(keep_healthy)
+    );
+    assert!(!runtime.is_running(&dead.id));
+    assert_eq!(runtime.is_running(&healthy.id), keep_healthy);
+    let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
+        cfg: h.launcher.cfg.clone(),
+        forge_poll: Default::default(),
+        store: h.store.clone(),
+        git: ariadne_daemon::gitwt::GitManager,
+        acp: runtime.clone(),
+        registry: h.launcher.registry.clone(),
+        branches: ariadne_daemon::branch::BranchWatchers::new(h.bus.clone()),
+        live: Default::default(),
+    });
+    let scheduler = ariadne_daemon::scheduler::start(h.store.clone(), launcher, false, h.timeouts);
+    scheduler
+        .send(ariadne_daemon::scheduler::SchedEvent::FullReconcile)
+        .unwrap();
+    ariadne_daemon::scheduler::flush_for_test(&scheduler).await;
+    assert_eq!(h.session_status(&dead).await, SessionStatus::Exited);
+    assert_eq!(
+        h.store
+            .get_session(&healthy.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live(),
+        keep_healthy
+    );
+    if keep_healthy {
+        runtime
+            .send_prompt(&healthy.id, "continue past a failed relay".into())
+            .unwrap();
+        eventually(
+            TIMEOUT,
+            "healthy relay receives input after recovery",
+            || async {
+                h.agent.calls_of("session/prompt").len() == 1
+                    && h.session_status(&healthy).await == SessionStatus::Idle
+            },
+        )
+        .await;
+    }
+    h.store
+        .set_goal_status(
+            healthy.goal_id.as_deref().unwrap(),
+            ariadne_core::GoalStatus::Cancelled,
+        )
+        .await
+        .unwrap();
+    runtime.kill_and_wait(&healthy.id).await;
+}

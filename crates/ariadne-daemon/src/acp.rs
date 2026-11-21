@@ -756,29 +756,39 @@ impl AcpRuntime {
             {
                 continue;
             }
-            let launch: AcpLaunch = serde_json::from_slice(&std::fs::read(
-                settings
+            let reconnected: Result<()> = async {
+                let launch: AcpLaunch = serde_json::from_slice(&std::fs::read(
+                    settings
+                        .home
+                        .join("relays")
+                        .join(format!("{}.launch.json", session.id)),
+                )?)?;
+                if session.launch_id.as_deref() != Some(launch.launch_id.as_str()) {
+                    bail!("relay launch does not match session {}", session.id);
+                }
+                let branch_path = settings
                     .home
                     .join("relays")
-                    .join(format!("{}.launch.json", session.id)),
-            )?)?;
-            if session.launch_id.as_deref() != Some(launch.launch_id.as_str()) {
-                bail!("relay launch does not match session {}", session.id);
+                    .join(format!("{}.branch.json", session.id));
+                let branch = if let Some(task_id) = &session.task_id {
+                    Some(self.inner.store.get_task(task_id).await?.branch)
+                } else if branch_path.exists() {
+                    serde_json::from_slice::<Option<String>>(&std::fs::read(branch_path)?)?
+                } else {
+                    None
+                };
+                self.set_task_branch(&session.id, branch);
+                self.launch_inner(launch, true).await
             }
-            let branch_path = settings
-                .home
-                .join("relays")
-                .join(format!("{}.branch.json", session.id));
-            let branch = if let Some(task_id) = &session.task_id {
-                Some(self.inner.store.get_task(task_id).await?.branch)
-            } else if branch_path.exists() {
-                serde_json::from_slice::<Option<String>>(&std::fs::read(branch_path)?)?
-            } else {
-                None
-            };
-            self.set_task_branch(&session.id, branch);
-            self.launch_inner(launch, true).await?;
-            attached += 1;
+            .await;
+            match reconnected {
+                Ok(()) => attached += 1,
+                Err(error) => tracing::warn!(
+                    session = %session.id,
+                    error = %format!("{error:#}"),
+                    "agent relay reconnect failed; leaving row for liveness sweep"
+                ),
+            }
         }
         Ok(attached)
     }
