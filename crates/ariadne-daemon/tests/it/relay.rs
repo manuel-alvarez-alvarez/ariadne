@@ -7,7 +7,7 @@ use std::process::{Child, Command, Stdio};
 struct Relay {
     child: Child,
     home: tempfile::TempDir,
-    status: BufReader<std::process::ChildStdout>,
+    status: Option<BufReader<std::process::ChildStdout>>,
     agent_pid: Option<rustix::process::Pid>,
 }
 impl Drop for Relay {
@@ -24,6 +24,9 @@ impl Relay {
         Self::start_with_binary(script, std::path::Path::new(env!("CARGO_BIN_EXE_ariadned")))
     }
     fn start_with_binary(script: &str, binary: &std::path::Path) -> Self {
+        Self::start_with_output(script, binary, Stdio::piped())
+    }
+    fn start_with_output(script: &str, binary: &std::path::Path, output: Stdio) -> Self {
         let home = tempfile::tempdir().unwrap();
         let mut child = Command::new(binary)
             .args([
@@ -43,20 +46,23 @@ impl Relay {
                 script,
             ])
             .current_dir(home.path())
-            .stdout(Stdio::piped())
+            .stdout(output)
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
-        let status = BufReader::new(child.stdout.take().unwrap());
+        let status = child.stdout.take().map(BufReader::new);
         let mut relay = Self {
             child,
             home,
             status,
             agent_pid: None,
         };
+        if relay.status.is_none() {
+            return relay;
+        }
         let mut line = String::new();
         assert!(
-            relay.status.read_line(&mut line).unwrap() > 0,
+            relay.status.as_mut().unwrap().read_line(&mut line).unwrap() > 0,
             "relay prints readiness"
         );
         assert!(
@@ -82,10 +88,10 @@ impl Relay {
     }
     fn connect(&self) -> BufReader<UnixStream> {
         let mut peer = self.raw_connect();
-        assert_eq!(
-            receive(&mut peer),
-            json!({"type":"hello","protocol_version":1})
-        );
+        let hello = receive(&mut peer);
+        assert_eq!(hello["type"], "hello");
+        assert_eq!(hello["protocol_version"], 1);
+        assert!(hello["last_input_seq"].is_u64());
         peer
     }
     fn journal(&self) -> String {
@@ -120,7 +126,10 @@ fn journals_before_delivery_and_replays_only_unacknowledged_messages() {
     assert!(relay.journal().contains("first"));
     send(&mut peer, json!({"type":"ack","seq":1}));
     // A response after the ACK proves the ACK was processed before disconnect.
-    send(&mut peer, json!({"type":"message","data":"{\"id\":99}"}));
+    send(
+        &mut peer,
+        json!({"type":"message","seq":1,"data":"{\"id\":99}"}),
+    );
     assert_eq!(receive(&mut peer)["seq"], 2);
     assert_eq!(receive(&mut peer)["seq"], 3);
     drop(peer);
@@ -159,9 +168,9 @@ fn disconnected_agent_finishes_and_next_connection_receives_output_and_exit() {
     );
     send(
         &mut peer,
-        json!({"type":"message","data":"{\"result\":\"allow\"}"}),
+        json!({"type":"message","seq":1,"data":"{\"result\":\"allow\"}"}),
     );
-    // Input has no relay acknowledgment: the agent's response proves it was forwarded.
+    // The response proves that the accepted input reached the agent.
     while receive(&mut peer)["data"] != "{\"result\":\"allow\"}" {}
     drop(peer);
     let mut peer = relay.connect();
@@ -199,7 +208,7 @@ fn offline_status_and_output_do_not_need_a_daemon() {
     );
     loop {
         let mut line = String::new();
-        assert!(relay.status.read_line(&mut line).unwrap() > 0);
+        assert!(relay.status.as_mut().unwrap().read_line(&mut line).unwrap() > 0);
         if line.contains("state=exited") {
             break;
         }
@@ -244,7 +253,7 @@ async fn stop_remains_available_when_daemon_does_not_read_output() {
     let mut relay = Relay::start("import sys\nfor i in range(200): print('x'*8192)");
     loop {
         let mut line = String::new();
-        assert!(relay.status.read_line(&mut line).unwrap() > 0);
+        assert!(relay.status.as_mut().unwrap().read_line(&mut line).unwrap() > 0);
         if line.contains("state=exited") {
             break;
         }
@@ -357,7 +366,7 @@ fn first_socket_frame_identifies_protocol_before_replay() {
     let mut peer = relay.raw_connect();
     assert_eq!(
         receive(&mut peer),
-        json!({"type":"hello","protocol_version":1})
+        json!({"type":"hello","protocol_version":1,"last_input_seq":0})
     );
     stop(&mut peer);
     assert!(relay.child.wait().unwrap().success());
@@ -365,10 +374,9 @@ fn first_socket_frame_identifies_protocol_before_replay() {
 
 #[test]
 fn executable_upgrade_preserves_running_relay_and_protocol() {
-    use std::os::unix::fs::PermissionsExt;
     let install = tempfile::tempdir().unwrap();
     let binary = install.path().join("ariadned");
-    std::fs::copy(env!("CARGO_BIN_EXE_ariadned"), &binary).unwrap();
+    std::fs::hard_link(env!("CARGO_BIN_EXE_ariadned"), &binary).unwrap();
     let mut relay = Relay::start_with_binary(
         "import sys\nfor line in sys.stdin: print(line.strip())",
         &binary,
@@ -377,34 +385,194 @@ fn executable_upgrade_preserves_running_relay_and_protocol() {
     replay(&mut before, 0);
     send(
         &mut before,
-        json!({"type":"message","data":"before-upgrade"}),
+        json!({"type":"message","seq":1,"data":"before-upgrade"}),
     );
     assert_eq!(receive(&mut before)["data"], "before-upgrade");
     // Replace the installed executable. The replacement cannot serve the old socket.
     let replacement = install.path().join("replacement");
-    std::fs::write(&replacement, "#!/bin/sh\nexit 99\n").unwrap();
-    std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink("/usr/bin/false", &replacement).unwrap();
     std::fs::rename(replacement, &binary).unwrap();
-    assert_eq!(Command::new(&binary).status().unwrap().code(), Some(99));
+    assert_eq!(Command::new(&binary).status().unwrap().code(), Some(1));
     drop(before);
     let mut after = relay.connect();
     replay(&mut after, 0);
     assert_eq!(receive(&mut after)["data"], "before-upgrade");
-    send(&mut after, json!({"type":"message","data":"after-upgrade"}));
+    send(
+        &mut after,
+        json!({"type":"message","seq":2,"data":"after-upgrade"}),
+    );
     assert_eq!(receive(&mut after)["data"], "after-upgrade");
     stop(&mut after);
     assert!(relay.child.wait().unwrap().success());
 }
 
-#[test]
-fn a_closed_status_pipe_does_not_stop_the_relay() {
-    let mut relay = Relay::start("import sys\nsys.stdin.readline()");
-    // Swap the status reader for an already finished child's, which closes the relay's stdout.
-    let mut spare = Command::new("true").stdout(Stdio::piped()).spawn().unwrap();
-    let spare_out = BufReader::new(spare.stdout.take().unwrap());
-    spare.wait().unwrap();
-    drop(std::mem::replace(&mut relay.status, spare_out));
+#[tokio::test]
+async fn a_closed_status_pipe_does_not_stop_the_relay() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    status_pipe_keeps_transport_running(writer).await;
+}
+
+#[tokio::test]
+async fn a_full_status_pipe_does_not_stop_the_relay() {
+    let (_reader, mut writer) = std::io::pipe().unwrap();
+    let flags = rustix::fs::fcntl_getfl(&writer).unwrap();
+    rustix::fs::fcntl_setfl(&writer, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
+    loop {
+        match writer.write(&[b'x'; 8192]) {
+            Ok(count) => assert!(count > 0),
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+                break;
+            }
+        }
+    }
+    rustix::fs::fcntl_setfl(&writer, flags).unwrap();
+    status_pipe_keeps_transport_running(writer).await;
+}
+
+async fn status_pipe_keeps_transport_running(writer: std::io::PipeWriter) {
+    let output = Stdio::from(writer);
+    let mut relay = Relay::start_with_output(
+        "import sys\nfor line in sys.stdin: print(line.strip())",
+        std::path::Path::new(env!("CARGO_BIN_EXE_ariadned")),
+        output,
+    );
+    crate::common::eventually(crate::common::TIMEOUT, "relay socket", || async {
+        relay.home.path().join("relays/session1.sock").exists()
+    })
+    .await;
     let mut peer = relay.connect();
+    replay(&mut peer, 0);
+    send(
+        &mut peer,
+        json!({"type":"message","seq":1,"data":"status-barrier"}),
+    );
+    assert_eq!(receive(&mut peer)["data"], "status-barrier");
+    stop(&mut peer);
+    assert!(relay.child.wait().unwrap().success());
+}
+
+#[test]
+fn immediate_replacement_preserves_durable_input_and_drops_duplicates() {
+    let mut relay = Relay::start("import sys\nfor line in sys.stdin: print(line.strip())");
+    let mut peer = relay.connect();
+    for seq in 1..=40 {
+        replay(&mut peer, 0);
+        send(
+            &mut peer,
+            json!({"type":"message","seq":seq,"data":format!("input-{seq}")}),
+        );
+        // Replace immediately. No response or journal wait precedes this connection.
+        peer = relay.raw_connect();
+        assert_eq!(
+            receive(&mut peer),
+            json!({"type":"hello","protocol_version":1,"last_input_seq":seq})
+        );
+        let records: Vec<Value> = relay
+            .journal()
+            .split_inclusive('\n')
+            .filter(|line| line.ends_with('\n'))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            records
+                .iter()
+                .any(|r| r == &json!({"type":"input","seq":seq}))
+        );
+    }
+    replay(&mut peer, 0);
+    send(
+        &mut peer,
+        json!({"type":"message","seq":40,"data":"duplicate"}),
+    );
+    send(
+        &mut peer,
+        json!({"type":"message","seq":10,"data":"older-duplicate"}),
+    );
+    send(
+        &mut peer,
+        json!({"type":"message","seq":41,"data":"barrier"}),
+    );
+    for seq in 1..=40 {
+        assert_eq!(receive(&mut peer)["data"], format!("input-{seq}"));
+    }
+    assert_eq!(receive(&mut peer)["data"], "barrier");
+    stop(&mut peer);
+    assert!(relay.child.wait().unwrap().success());
+}
+
+#[test]
+fn rejected_input_is_not_reported_and_can_be_retried() {
+    let mut relay = Relay::start(
+        "import socket,sys\ns=socket.socket(socket.AF_UNIX); s.bind('gate'); s.listen()\nprint('ready')\nc,_=s.accept(); c.recv(1)\nfor line in sys.stdin: print(line.strip())",
+    );
+    let mut peer = relay.connect();
+    peer.get_mut()
+        .set_write_timeout(Some(crate::common::TIMEOUT))
+        .unwrap();
+    replay(&mut peer, 0);
+    assert_eq!(receive(&mut peer)["data"], "ready");
+    for seq in 1..=100 {
+        if writeln!(
+            peer.get_mut(),
+            "{}",
+            json!({"type":"message","seq":seq,"data":"x".repeat(8192)})
+        )
+        .is_err()
+        {
+            break;
+        }
+    }
+    let mut peer = relay.raw_connect();
+    let hello = receive(&mut peer);
+    let accepted = hello["last_input_seq"].as_u64().unwrap();
+    assert!(accepted > 0 && accepted < 100);
+    let records: Vec<Value> = relay
+        .journal()
+        .split_inclusive('\n')
+        .filter(|line| line.ends_with('\n'))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        records.iter().filter(|r| r["type"] == "input").count(),
+        accepted as usize
+    );
+    let mut gate = UnixStream::connect(relay.home.path().join("gate")).unwrap();
+    gate.write_all(b"go").unwrap();
+    replay(&mut peer, 0);
+    assert_eq!(receive(&mut peer)["data"], "ready");
+    for _ in 0..accepted {
+        assert_eq!(receive(&mut peer)["data"], "x".repeat(8192));
+    }
+    send(
+        &mut peer,
+        json!({"type":"message","seq":accepted+1,"data":"retry"}),
+    );
+    assert_eq!(receive(&mut peer)["data"], "retry");
+    stop(&mut peer);
+    assert!(relay.child.wait().unwrap().success());
+}
+
+#[test]
+fn invalid_input_does_not_advance_acceptance() {
+    let mut relay = Relay::start("import sys\nfor line in sys.stdin: print(line.strip())");
+    let mut peer = relay.connect();
+    replay(&mut peer, 0);
+    send(
+        &mut peer,
+        json!({"type":"message","seq":1,"data":"invalid\nline"}),
+    );
+    let mut line = String::new();
+    assert_eq!(peer.read_line(&mut line).unwrap(), 0);
+    let mut peer = relay.raw_connect();
+    assert_eq!(
+        receive(&mut peer),
+        json!({"type":"hello","protocol_version":1,"last_input_seq":0})
+    );
+    replay(&mut peer, 0);
+    send(&mut peer, json!({"type":"message","seq":1,"data":"retry"}));
+    assert_eq!(receive(&mut peer)["data"], "retry");
     stop(&mut peer);
     assert!(relay.child.wait().unwrap().success());
 }
