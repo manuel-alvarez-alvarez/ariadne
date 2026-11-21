@@ -1,7 +1,7 @@
 ---
 id: 037
 status: current
-updated: 2026-11-21
+updated: 2026-11-22
 areas: [api, daemon, client, cli, store, docs, ui]
 commits: []
 tests:
@@ -479,7 +479,23 @@ picker, the Hosts screen and one stream per host — is spec
     Desktop requires inspection and review before application and invalidates review when selections change.
     Desktop can load progress by worker name and resume the saved operation.
 
+### Saved setups
+
+79. `GET /v1/host-setups` lists each saved setup and update as `{ name, operation, ssh, state, steps, tools }`.
+    `operation` is `setup` or `update`; `tools` is the saved selection or null.
+    The list holds no credential reference or value. Clients poll it while an operation is `pending` or `running`.
+80. `DELETE /v1/hosts/{name}/setup` deletes the saved record of a setup in state `incomplete` or `failed`, and returns `204`.
+    It contacts no worker and leaves every worker file untouched.
+    A setup in state `pending`, `running` or `complete` returns `409` with its state.
+    An unknown name returns `404`. Update records are never discarded.
+    A new setup with the same name then starts from its first step.
+81. `ariadne host setups` prints the list, and `ariadne host discard NAME` discards one setup.
+    Both use the local daemon, and JSON output uses the route DTOs.
+
 ## Acceptance criteria
+
+- Rules 79 and 80: hosts.rs::saved_setups_are_listed_without_credentials_and_only_a_stopped_one_is_discarded proves the list, the refusals, the untouched worker and the fresh restart.
+- Rule 81: crates/ariadne-cli/tests/hosts.rs::host_setups_lists_saved_operations_and_host_discard_deletes_one proves both commands.
 
 - Rules 70 and 73: hosts.rs::unsupported_tools_can_be_removed_on_retry_without_reinstalling_binaries and
   hosts.rs::invalid_binary_sources_can_change_on_retry prove both review recovery cases.

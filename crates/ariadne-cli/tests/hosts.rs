@@ -2049,6 +2049,58 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
     server.abort();
 }
 #[tokio::test]
+async fn host_setups_lists_saved_operations_and_host_discard_deletes_one() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let discarded = Arc::new(Mutex::new(Vec::new()));
+    let seen = discarded.clone();
+    let app = Router::new()
+        .route(
+            "/v1/host-setups",
+            get(|| async {
+                Json(json!([
+                    {"name":"alpha", "operation":"setup", "ssh":"ssh://me@alpha", "state":"incomplete", "steps":[], "tools":null},
+                    {"name":"alpha", "operation":"update", "ssh":"ssh://me@alpha", "state":"running", "steps":[], "tools":{"agents":[], "github":true}}
+                ]))
+            }),
+        )
+        .route(
+            "/v1/hosts/{name}/setup",
+            axum::routing::delete(move |axum::extract::Path(name): axum::extract::Path<String>| async move {
+                seen.lock().unwrap().push(name);
+                StatusCode::NO_CONTENT
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let run = |args: Vec<&'static str>| {
+        let endpoint = endpoint.clone();
+        async move {
+            let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+                .args(["--endpoint", &endpoint])
+                .args(args)
+                .env("ARIADNE_TELEMETRY", "off")
+                .output()
+                .await
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
+    };
+    let text = run(vec!["host", "setups"]).await;
+    assert!(
+        text.contains("alpha  setup   incomplete  ssh://me@alpha"),
+        "{text}"
+    );
+    assert!(text.contains("alpha  update  running"), "{text}");
+    let listed: serde_json::Value =
+        serde_json::from_str(&run(vec!["host", "setups", "--format", "json"]).await).unwrap();
+    assert_eq!(listed[1]["tools"], json!({"agents":[], "github":true}));
+    run(vec!["host", "discard", "alpha"]).await;
+    assert_eq!(*discarded.lock().unwrap(), vec!["alpha".to_string()]);
+    server.abort();
+}
+
+#[tokio::test]
 async fn worker_update_and_status_show_each_completed_step_and_failure() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());

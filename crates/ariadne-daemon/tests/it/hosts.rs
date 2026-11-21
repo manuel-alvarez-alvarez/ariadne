@@ -2213,3 +2213,139 @@ async fn binary_only_setup_requires_git_and_resumes_after_manual_installation() 
     let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
     assert_eq!(hosts.iter().filter(|h| h.name == "builder").count(), 1);
 }
+
+/// One saved operation, as `worker-setup.json` stores it.
+fn saved_operation(name: &str, state: &str, tools: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "request": {
+            "ssh": format!("ssh://me@{name}.example:2222"),
+            "source": {"kind": "release", "repository": "acme/ariadne", "tag": "v1.0.0"},
+            "tools": tools,
+            "credentials": ["codex"],
+        },
+        "progress": {"name": name.trim_start_matches("update:"), "state": state, "steps": [
+            {"name": "probe", "complete": true, "error": null},
+            {"name": "service", "complete": false, "error": "Enable user services"},
+        ]},
+    })
+}
+
+#[tokio::test]
+async fn saved_setups_are_listed_without_credentials_and_only_a_stopped_one_is_discarded() {
+    use axum::http::StatusCode;
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let ssh = common::ssh::stub_ssh(
+        json!({"setup": {"home":remote.path(), "os":"Linux", "path":"/usr/bin"}, "exit":0}),
+    );
+    let mut h = harness().ssh(&ssh).await;
+    let tools = json!({"agents": ["codex-acp"], "github": true});
+    let records = json!({
+        "alpha": saved_operation("alpha", "incomplete", tools.clone()),
+        "beta": saved_operation("beta", "failed", Value::Null),
+        "gamma": saved_operation("gamma", "complete", Value::Null),
+        "update:gamma": saved_operation("update:gamma", "incomplete", Value::Null),
+    });
+    std::fs::write(
+        h.launcher.cfg.root.join("worker-setup.json"),
+        records.to_string(),
+    )
+    .unwrap();
+    h.state.hosts.shutdown().await;
+    h.state.hosts = ariadne_daemon::hosts::Hosts::new(
+        h.launcher.cfg.clone(),
+        h.store.clone(),
+        h.bus.clone(),
+        h.timeouts,
+    )
+    .await;
+    h.router = ariadne_daemon::http::router(h.state.clone());
+
+    let (status, body) = h.send(common::get("/v1/host-setups")).await;
+    assert_eq!(status, StatusCode::OK);
+    let text = String::from_utf8(body).unwrap();
+    assert!(
+        !text.contains("credentials") && !text.contains("codex\""),
+        "{text}"
+    );
+    let listed: Value = serde_json::from_str(&text).unwrap();
+    let row = |name: &str, operation: &str| {
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name && r["operation"] == operation)
+            .unwrap_or_else(|| panic!("no {operation} row for {name}: {text}"))
+            .clone()
+    };
+    assert_eq!(listed.as_array().unwrap().len(), 4, "{text}");
+    let alpha = row("alpha", "setup");
+    assert_eq!(alpha["ssh"], "ssh://me@alpha.example:2222");
+    assert_eq!(alpha["state"], "incomplete");
+    assert_eq!(alpha["tools"], tools);
+    assert_eq!(alpha["steps"][1]["error"], "Enable user services");
+    assert!(row("beta", "setup")["tools"].is_null());
+    assert_eq!(row("gamma", "setup")["state"], "complete");
+    assert_eq!(row("gamma", "update")["state"], "incomplete");
+
+    for name in ["alpha", "beta"] {
+        let (status, body) = h
+            .send(common::delete(&format!("/v1/hosts/{name}/setup")))
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{name}");
+        assert!(body.is_empty());
+        h.error(
+            common::get(&format!("/v1/hosts/{name}/setup")),
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    }
+    assert!(ssh.runs().is_empty(), "a discard must not reach the worker");
+    let listed: Value = h.get("/v1/host-setups").await;
+    assert_eq!(listed.as_array().unwrap().len(), 2, "{listed}");
+    let saved: Value = serde_json::from_slice(
+        &std::fs::read(h.launcher.cfg.root.join("worker-setup.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(saved.get("alpha").is_none() && saved.get("beta").is_none());
+
+    let refused = h
+        .error(
+            common::delete("/v1/hosts/gamma/setup"),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(refused.error.message.contains("complete"), "{refused:?}");
+    h.error(
+        common::delete("/v1/hosts/update:gamma/setup"),
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    h.error(
+        common::delete("/v1/hosts/nobody/setup"),
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    assert_eq!(
+        h.get::<Value>("/v1/hosts/gamma/setup").await["state"],
+        "complete"
+    );
+
+    let again: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/alpha/setup",
+                json!({"ssh": "ssh://me@alpha.example:2222", "source": {"kind": "release", "repository": "acme/ariadne", "tag": "v1.0.0"}}),
+            ),
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    assert_eq!(again["steps"][0]["name"], "probe");
+    assert!(
+        again["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["complete"] == false)
+    );
+}

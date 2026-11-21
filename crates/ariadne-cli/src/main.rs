@@ -157,6 +157,12 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             command: HostCommand::SetupStatus { name },
         } => hosts::setup(&client, &name, None, format, false).await,
         Command::Host {
+            command: HostCommand::Setups,
+        } => hosts::setups(&client, format).await,
+        Command::Host {
+            command: HostCommand::Discard { name },
+        } => hosts::discard(&client, &name, format).await,
+        Command::Host {
             command: HostCommand::Ls,
         } => hosts::list(&client, format).await,
         Command::Host {

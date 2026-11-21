@@ -857,6 +857,10 @@ pub(crate) enum HostCommand {
     UpdateStatus { name: String },
     /// Show durable SSH worker setup progress and per-step failures
     SetupStatus { name: String },
+    /// List each saved worker setup and update, with its state
+    Setups,
+    /// Delete the saved record of a setup that stopped; the worker keeps its files
+    Discard { name: String },
     /// List host names, addresses and status
     Ls,
     /// Add a host to the local daemon and show its row

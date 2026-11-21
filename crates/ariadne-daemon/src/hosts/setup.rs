@@ -1,7 +1,8 @@
 //! Durable, resumable SSH worker setup. Each remote command is noninteractive.
 use super::*;
 use ariadne_api::hosts::{
-    BinarySource, SetupDto, SetupRequest, SetupState, SetupStep, UpdateRequest,
+    BinarySource, HostSetupDto, SetupDto, SetupOperation, SetupRequest, SetupState, SetupStep,
+    UpdateRequest,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -188,6 +189,14 @@ fn validate(name: &str, request: &SetupRequest) -> Result<(), String> {
     Ok(())
 }
 
+/// Why a saved setup was not discarded.
+pub(crate) enum DiscardError {
+    Unknown,
+    /// The setup is pending, running or complete; the word names which.
+    Active(&'static str),
+    Save(String),
+}
+
 impl Hosts {
     pub(crate) fn setup_status(&self, name: &str) -> Option<SetupDto> {
         self.0
@@ -196,6 +205,49 @@ impl Hosts {
             .unwrap()
             .get(name)
             .map(|r| r.progress.clone())
+    }
+
+    /// Every saved setup and update, by saved name.
+    pub(crate) fn setups(&self) -> Vec<HostSetupDto> {
+        self.0
+            .setup
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(key, r)| HostSetupDto {
+                name: r.progress.name.clone(),
+                operation: if key.starts_with("update:") {
+                    SetupOperation::Update
+                } else {
+                    SetupOperation::Setup
+                },
+                ssh: r.request.ssh.clone(),
+                state: r.progress.state,
+                steps: r.progress.steps.clone(),
+                tools: r.request.tools.clone(),
+            })
+            .collect()
+    }
+
+    /// Delete the saved record of a stopped setup. The worker is not contacted.
+    pub(crate) fn discard_setup(&self, name: &str) -> Result<(), DiscardError> {
+        let mut records = self.0.setup.lock().unwrap();
+        let state = match records.get(name) {
+            Some(record) if !name.starts_with("update:") => record.progress.state,
+            _ => return Err(DiscardError::Unknown),
+        };
+        match state {
+            SetupState::Incomplete | SetupState::Failed => {}
+            SetupState::Pending => return Err(DiscardError::Active("pending")),
+            SetupState::Running => return Err(DiscardError::Active("running")),
+            SetupState::Complete => return Err(DiscardError::Active("complete")),
+        }
+        let record = records.remove(name).unwrap();
+        if let Err(error) = save(&self.0.cfg.root, &records) {
+            records.insert(name.to_string(), record);
+            return Err(DiscardError::Save(error));
+        }
+        Ok(())
     }
 
     pub(crate) fn resume_setup(&self, name: String) -> Result<SetupDto, String> {

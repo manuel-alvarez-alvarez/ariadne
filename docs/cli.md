@@ -991,6 +991,12 @@ Desktop provides Inspect worker, Review setup, an explicit apply button, and Rec
 A changed selection requires a new review before application.
 Load setup progress by worker name to resume without entering the selections again.
 
+Run `ariadne host setups` to list each saved setup and update with its state and SSH address.
+Run `ariadne host discard builder` to delete the saved record of a setup in state `incomplete` or `failed`.
+The commands use `GET /v1/host-setups` and `DELETE /v1/hosts/{name}/setup`.
+Discard changes no file on the worker. It refuses a setup that is `pending`, `running` or `complete`, and it never discards an update.
+A new setup with the same name then starts from the first step.
+
 Setup uses existing SSH keys, agent access, and SSH configuration without password prompts.
 Inspection reports missing Git and tar. Install prerequisites manually when no supported automatic installation is available.
 Release verification requires GitHub CLI 2.102.0 or later on the source daemon machine.
@@ -1084,7 +1090,7 @@ On a named host, these commands write the host's own settings:
 
 Some commands run on `local` only, and refuse `--host NAME` and `--host all`:
 
-- `host ls`, `host setup`, `host setup-status`, `host update`, and `host update-status`, which use the local daemon.
+- `host ls`, `host setup`, `host setup-status`, `host setups`, `host discard`, `host update`, and `host update-status`, which use the local daemon.
 - `daemon start`, `daemon stop` and `daemon restart`. `daemon status` and `daemon logs` accept a host name.
 - `completions install`, which writes the shell configuration of this machine.
 

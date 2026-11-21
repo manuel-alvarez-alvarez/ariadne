@@ -303,6 +303,14 @@ const KINDS: &[(&str, Kind)] = &[
         Kind::Local("worker setup progress belongs to the local daemon"),
     ),
     (
+        "host setups",
+        Kind::Local("worker setups are saved by the local daemon"),
+    ),
+    (
+        "host discard",
+        Kind::Local("worker setups are saved by the local daemon"),
+    ),
+    (
         "host update",
         Kind::Local("worker updates run on the local daemon"),
     ),
@@ -1253,6 +1261,46 @@ fn validate_setup_name(name: &str) -> Result<()> {
             .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c))
     {
         return Err(Failure::usage("invalid worker name").err());
+    }
+    Ok(())
+}
+
+/// `host setups`: every saved setup and update of the local daemon.
+pub(crate) async fn setups(client: &Client, format: Format) -> Result<()> {
+    let rows: Vec<ariadne_api::hosts::HostSetupDto> = client.get_json("/v1/host-setups").await?;
+    if format == Format::Json {
+        return output::print_json(&rows);
+    }
+    let width = rows.iter().map(|r| r.name.len()).max().unwrap_or(0);
+    for row in rows {
+        let operation = match row.operation {
+            ariadne_api::hosts::SetupOperation::Setup => "setup",
+            ariadne_api::hosts::SetupOperation::Update => "update",
+        };
+        let state = format!("{:?}", row.state).to_lowercase();
+        println!(
+            "{:<width$}  {operation:<6}  {state:<10}  {}",
+            row.name, row.ssh
+        );
+    }
+    Ok(())
+}
+
+/// `host discard NAME`: delete the saved record of a stopped setup.
+pub(crate) async fn discard(client: &Client, name: &str, format: Format) -> Result<()> {
+    validate_setup_name(name)?;
+    client
+        .send_no_content::<()>(
+            http::Method::DELETE,
+            &format!("/v1/hosts/{name}/setup"),
+            None,
+        )
+        .await
+        .map_err(refused)?;
+    if format == Format::Json {
+        output::print_json(&serde_json::json!({ "name": name }))?;
+    } else {
+        println!("{name}");
     }
     Ok(())
 }

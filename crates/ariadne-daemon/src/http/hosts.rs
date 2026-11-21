@@ -1,7 +1,7 @@
 //! The host list and the reconnect of one host (037).
 use super::AppState;
 use super::error::{ApiError, ApiResult, Json};
-use crate::hosts::ReconnectError;
+use crate::hosts::{DiscardError, ReconnectError};
 use ariadne_api::hosts::HostDto;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -239,6 +239,42 @@ pub(super) async fn review_setup(
         .await
         .map(Json)
         .map_err(ApiError::bad_request)
+}
+
+#[utoipa::path(get, path="/v1/host-setups", tag="hosts", responses((status=200,body=[ariadne_api::hosts::HostSetupDto])))]
+pub(super) async fn list_setups(
+    State(s): State<AppState>,
+) -> Json<Vec<ariadne_api::hosts::HostSetupDto>> {
+    Json(s.hosts.setups())
+}
+
+/// Delete the saved record of a setup that stopped. The worker keeps its files.
+#[utoipa::path(delete, path="/v1/hosts/{name}/setup", tag="hosts", params(("name"=String, Path)),
+    responses(
+        (status=204),
+        (status=404, description="no saved setup has the name"),
+        (status=409, description="the setup is pending, running or complete"),
+    ))]
+pub(super) async fn discard_setup(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<StatusCode> {
+    match s.hosts.discard_setup(&name) {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(DiscardError::Unknown) => Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("unknown worker setup {name}"),
+        )),
+        Err(DiscardError::Active(state)) => Err(ApiError::conflict(format!(
+            "worker setup {name} is {state}; only an incomplete or failed setup can be discarded"
+        ))),
+        Err(DiscardError::Save(error)) => Err(ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            error,
+        )),
+    }
 }
 
 #[utoipa::path(post, path="/v1/hosts/{name}/setup/resume", tag="hosts", params(("name"=String, Path)), responses((status=202,body=ariadne_api::hosts::SetupDto)))]

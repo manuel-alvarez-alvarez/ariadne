@@ -172,6 +172,25 @@ pub struct SetupDto {
     pub steps: Vec<SetupStep>,
 }
 
+/// Which kind of saved operation a [`HostSetupDto`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupOperation {
+    Setup,
+    Update,
+}
+
+/// One saved setup or update. Credential references and values never appear.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct HostSetupDto {
+    pub name: String,
+    pub operation: SetupOperation,
+    pub ssh: String,
+    pub state: SetupState,
+    pub steps: Vec<SetupStep>,
+    pub tools: Option<SetupTools>,
+}
+
 /// Settings shared between machines. Worker locations never enter this payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

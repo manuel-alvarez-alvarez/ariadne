@@ -476,6 +476,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host-setups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_list_setups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hosts": {
         parameters: {
             query?: never;
@@ -1585,7 +1601,8 @@ export interface paths {
         get: operations["hosts_setup_status"];
         put?: never;
         post: operations["hosts_setup"];
-        delete?: never;
+        /** Delete the saved record of a setup that stopped. The worker keeps its files. */
+        delete: operations["hosts_discard_setup"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4056,6 +4073,15 @@ export interface components {
          * @enum {string}
          */
         HostKind: "local" | "direct" | "ssh";
+        /** @description One saved setup or update. Credential references and values never appear. */
+        HostSetupDto: {
+            name: string;
+            operation: components["schemas"]["SetupOperation"];
+            ssh: string;
+            state: components["schemas"]["SetupState"];
+            steps: components["schemas"]["SetupStep"][];
+            tools?: components["schemas"]["SetupTools"] | null;
+        };
         /**
          * @description Whether a client can use a host's endpoint now.
          * @enum {string}
@@ -4825,6 +4851,11 @@ export interface components {
             state: components["schemas"]["SetupState"];
             steps: components["schemas"]["SetupStep"][];
         };
+        /**
+         * @description Which kind of saved operation a [`HostSetupDto`] is.
+         * @enum {string}
+         */
+        SetupOperation: "setup" | "update";
         /** @description An SSH worker installation request. SSH uses the daemon user's keys and config. */
         SetupRequest: {
             /** @description Source credential references only: `codex` and `github`. Never send credential values. */
@@ -6195,6 +6226,25 @@ export interface operations {
             };
         };
     };
+    hosts_list_setups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupDto"][];
+                };
+            };
+        };
+    };
     hosts_list: {
         parameters: {
             query?: never;
@@ -6402,6 +6452,39 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SetupDto"];
                 };
+            };
+        };
+    };
+    hosts_discard_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no saved setup has the name */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the setup is pending, running or complete */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

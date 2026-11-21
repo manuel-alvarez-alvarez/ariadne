@@ -1074,6 +1074,28 @@
         }
       }
     },
+    "/v1/host-setups": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "list_setups",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HostSetupDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/hosts": {
       "get": {
         "tags": [
@@ -2277,6 +2299,32 @@
                 }
               }
             }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "Delete the saved record of a setup that stopped. The worker keeps its files.",
+        "operationId": "discard_setup",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "description": "no saved setup has the name"
+          },
+          "409": {
+            "description": "the setup is pending, running or complete"
           }
         }
       }
@@ -8187,6 +8235,47 @@
           "ssh"
         ]
       },
+      "HostSetupDto": {
+        "type": "object",
+        "description": "One saved setup or update. Credential references and values never appear.",
+        "required": [
+          "name",
+          "operation",
+          "ssh",
+          "state",
+          "steps"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/SetupOperation"
+          },
+          "ssh": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupState"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupStep"
+            }
+          },
+          "tools": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SetupTools"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "HostStatus": {
         "type": "string",
         "description": "Whether a client can use a host's endpoint now.",
@@ -10083,6 +10172,14 @@
             }
           }
         }
+      },
+      "SetupOperation": {
+        "type": "string",
+        "description": "Which kind of saved operation a [`HostSetupDto`] is.",
+        "enum": [
+          "setup",
+          "update"
+        ]
       },
       "SetupRequest": {
         "type": "object",

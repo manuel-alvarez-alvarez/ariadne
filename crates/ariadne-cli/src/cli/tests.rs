@@ -174,6 +174,8 @@ const LEAVES: &[(&str, bool)] = &[
     ("host review", true),
     ("host setup", true),
     ("host setup-status", true),
+    ("host setups", true),
+    ("host discard", true),
     ("host update", true),
     ("host update-status", true),
     ("agent ls", true),

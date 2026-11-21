@@ -33,6 +33,7 @@ use crate::config::Config;
 use crate::timeouts::Timeouts;
 
 mod setup;
+pub(crate) use setup::DiscardError;
 mod sync;
 
 /// The longest wait between two starts of one forward.
