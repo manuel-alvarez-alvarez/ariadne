@@ -361,6 +361,15 @@ impl Pusher<'_> {
             return;
         };
         for skill in skills {
+            // Failed items belong to the retry timer. Scanning must not
+            // requeue them or read their supporting files before it expires.
+            if pushes
+                .failed
+                .iter()
+                .any(|(failed, _)| failed.item() == Item::Skill(&skill.name))
+            {
+                continue;
+            }
             let skill = skill_dto(skill);
             let current =
                 crate::skill_bundle::snapshot(&self.inner.cfg.skills_dir.join(&skill.name));

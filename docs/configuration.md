@@ -186,6 +186,7 @@ host's own API:
 Skills include their registered document and supporting files under their skill directory.
 The transfer preserves nested paths and executable scripts. File changes and removals
 reach workers after the next host check. Matching skills take the local contents.
+A failed skill waits for its retry; file checks do not restart it.
 Skills that exist only on the worker remain there.
 
 A symbolic link that escapes its skill directory fails that skill transfer.

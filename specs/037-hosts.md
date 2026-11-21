@@ -231,12 +231,13 @@ picker, the Hosts section of its settings and one stream per host — is spec
 29. Writes go to the local daemon. Nothing is read back from a host into
     this daemon.
 
-35. Skill pushes include the registered document and a complete supporting-file snapshot.
+43. Skill pushes include the registered document and a complete supporting-file snapshot.
     Paths stay within the destination skill directory. Nested paths and executable bits survive transfer.
     Matching names take source contents; worker-only skills remain unchanged.
     The daemon checks supporting files at each `host_check`, including file removals.
     A transfer rechecks its source before it reports success.
-36. Escaping symbolic links fail that skill push and name the offending path.
+    Scans skip failed skills; only the backoff of rule 25 retries them.
+44. Escaping symbolic links fail that skill push and name the offending path.
     Other skills continue. Failed staging or replacement preserves recoverable previous worker contents.
     Explicit Markdown local-file links outside the skill directory produce warnings in `sync.error`.
     Such warnings leave successful transfers `in_sync`; web links produce no warning.
@@ -348,6 +349,8 @@ the local one a `direct` host that points at it. The health tests serve the
 second harness daemon behind a switch that turns its `GET /v1/health` off and
 on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
 
+- Failed skill pushes wait for backoff despite supporting-file scans
+  (`host_sync.rs::a_failed_skill_waits_for_backoff_despite_bundle_scans`).
 - Skill bundles retain layout, executable bits, updates and removals
   (`host_sync.rs::supporting_files_reach_the_worker_and_later_changes_replace_them`).
 - Unsafe paths preserve the worker document (`host_sync.rs::an_invalid_bundle_preserves_the_worker_skill`).

@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::common::{
-    Harness, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json, put_json,
-    roomy_hardware, sh,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json,
+    put_json, roomy_hardware, sh,
 };
 use ariadne_api::hosts::{HostDto, HostStatus, HostSyncDto, MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
@@ -984,4 +984,73 @@ async fn failed_staging_preserves_the_previous_worker_files() {
     assert_eq!(std::fs::read(path).unwrap(), [0, 255, 17]);
     assert_eq!(skill_on(&far, "bundle").await.unwrap().summary, "old");
     assert!(!far.launcher.cfg.skills_dir.join("bundle/new.bin").exists());
+}
+
+#[tokio::test]
+async fn a_failed_skill_waits_for_backoff_despite_bundle_scans() {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (attempts, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let router = far.router.clone().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let attempts = attempts.clone();
+            async move {
+                if request.method() == axum::http::Method::PUT
+                    && request.uri().path() == "/v1/skills/bundle"
+                {
+                    attempts.send(()).unwrap();
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+                next.run(request).await
+            }
+        },
+    ));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        format!("[hosts.far]\nendpoint = \"http://{address}\"\n"),
+    )
+    .unwrap();
+    let local = harness()
+        .home(dir.path().to_path_buf())
+        .ai_permissions_hardware(roomy_hardware())
+        .timeouts(Timeouts {
+            host_check: RUNS_OUT / 100,
+            host_sync_retry: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "bundle", "document": skill("bundle", "refused")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    tokio::time::timeout(TIMEOUT, received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        tokio::time::timeout(QUIET, received.recv()).await.is_err(),
+        "a bundle scan retried before backoff"
+    );
+    tokio::time::timeout(TIMEOUT, received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        tokio::time::timeout(QUIET, received.recv()).await.is_err(),
+        "a bundle scan bypassed the doubled backoff"
+    );
+    tokio::time::timeout(TIMEOUT, received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    server.abort();
 }
