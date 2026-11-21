@@ -166,6 +166,164 @@ async fn a_detached_relay_pane_can_be_found_and_stopped() {
 }
 
 #[tokio::test]
+async fn listing_panes_without_a_tmux_server_returns_an_empty_list() {
+    let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn listing_panes_on_a_server_without_a_session_returns_an_empty_list() {
+    let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    // A server that outlives its last session answers `list-panes -a` with "no current target".
+    let output = std::process::Command::new("tmux")
+        .arg("-S")
+        .arg(home.0.path().join("tmux.sock"))
+        .args(["-f", "/dev/null", "start-server", ";"])
+        .args(["set-option", "-g", "exit-empty", "off", ";"])
+        .args(["list-sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_pane_listing_directly_after_the_start_finds_the_pane() {
+    use ariadne_daemon::place::PaneLaunch;
+    let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let args = vec!["-c".into(), "import time; time.sleep(30)".into()];
+    for round in 0..5 {
+        let session = format!("direct-{round}");
+        let pane = place
+            .start_pane(&PaneLaunch {
+                home: home.0.path(),
+                cwd: home.0.path(),
+                session_id: &session,
+                launch_id: &session,
+                agent_id: "stub",
+                task_id: "task",
+                daemon: std::path::Path::new(env!("CARGO_BIN_EXE_ariadned")),
+                program: "python3",
+                args: &args,
+                env: &[],
+            })
+            .await
+            .unwrap();
+        assert!(
+            place
+                .live_panes(home.0.path())
+                .await
+                .unwrap()
+                .contains(&pane),
+            "round {round}"
+        );
+    }
+}
+
+struct WarningCapture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for WarningCapture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_server_that_exits_during_the_pane_listing_returns_no_panes_and_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("tmux");
+    let state = dir.path().join("state");
+    // The first session lists its pane, the second finds the server gone, and the recheck
+    // sees it exit, then find it gone: one warning for the whole listing.
+    std::fs::write(
+        &binary,
+        format!(
+            "#!/bin/sh\ncase \"$3\" in\nlist-sessions)\n  if [ -e {0}.2 ]; then echo 'no server running' >&2; exit 1; fi\n  if [ -e {0} ]; then touch {0}.2; echo 'server exited unexpectedly' >&2; exit 1; fi\n  echo ariadne-a; echo ariadne-b ;;\nlist-panes)\n  if [ \"$6\" = '=ariadne-a:' ]; then echo '%0 ariadne-a first'; else touch {0}; echo 'server exited unexpectedly' >&2; exit 1; fi ;;\nesac\n",
+            state.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let place = Place::find(Some("tmux"), Some(dir.path().as_os_str())).unwrap();
+    let warnings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = warnings.clone();
+    let guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || WarningCapture(captured.clone()))
+            .finish(),
+    );
+    assert!(place.live_panes(dir.path()).await.unwrap().is_empty());
+    drop(guard);
+    let output = String::from_utf8(warnings.lock().unwrap().clone()).unwrap();
+    assert_eq!(output.matches("WARN").count(), 1, "{output}");
+    assert!(
+        output.contains("while its relay panes were listed"),
+        "{output}"
+    );
+}
+
+#[tokio::test]
+async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("tmux");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\necho 'protocol version mismatch' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let place = Place::find(Some("tmux"), Some(dir.path().as_os_str())).unwrap();
+    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    assert!(error.contains("protocol version mismatch"), "{error}");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\necho 'server exited unexpectedly' >&2\nexit 1\n",
+    )
+    .unwrap();
+    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    assert!(error.contains("server exited unexpectedly"), "{error}");
+    // A server that closes with its last session fails one call, then is gone.
+    let count = dir.path().join("count");
+    std::fs::write(
+        &binary,
+        format!(
+            "#!/bin/sh\nif [ -e {0} ]; then echo 'no server running' >&2; exit 1; fi\ntouch {0}\necho 'server exited unexpectedly' >&2\nexit 1\n",
+            count.display()
+        ),
+    )
+    .unwrap();
+    let warnings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = warnings.clone();
+    let guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || WarningCapture(captured.clone()))
+            .finish(),
+    );
+    assert!(place.live_panes(dir.path()).await.unwrap().is_empty());
+    drop(guard);
+    let output = String::from_utf8(warnings.lock().unwrap().clone()).unwrap();
+    assert_eq!(output.matches("WARN").count(), 1, "{output}");
+    assert!(output.contains("the tmux server exited while"), "{output}");
+    std::fs::remove_file(&binary).unwrap();
+    std::fs::write(&binary, [0u8; 8]).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    // macOS runs the file as a script and reports its failure; Linux cannot start it.
+    assert!(
+        error.contains("listing tmux relay sessions") || error.contains("running tmux"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
 async fn a_herdr_relay_pane_can_be_found_and_stopped_through_the_socket_api() {
     use crate::common::{TIMEOUT, eventually};
     use ariadne_daemon::place::PaneLaunch;
@@ -426,7 +584,7 @@ async fn a_tmux_server_without_a_current_target_has_no_live_panes() {
     let binary = home.path().join("tmux");
     std::fs::write(
         &binary,
-        "#!/bin/sh\nprintf 'no current target\\n' >&2\nexit 1\n",
+        "#!/bin/sh\ncase $3 in list-sessions) exit 0;; esac\nprintf 'no current target\\n' >&2\nexit 1\n",
     )
     .unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
