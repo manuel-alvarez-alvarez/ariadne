@@ -81,6 +81,7 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       SIGNING_AVAILABLE: false
+      ARIADNE_RELEASE_REPOSITORY: ${{ github.repository }}
     steps:
       # The checkout below pins the sources to the tag whatever ref the run was
       # started on, but the attestation can only record `github.ref`. Say so

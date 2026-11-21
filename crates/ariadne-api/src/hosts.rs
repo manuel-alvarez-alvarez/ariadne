@@ -110,6 +110,7 @@ pub struct MissingRepositoryDto {
 pub struct SetupRequest {
     pub ssh: String,
     pub remote: Option<String>,
+    #[serde(default)]
     pub source: BinarySource,
     /// Selected registry agent IDs and forge tooling. Omission preserves binary-only setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -140,11 +141,19 @@ pub struct MaintenanceDto {
 }
 
 /// Binaries on the daemon machine, or assets from an explicitly selected release.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BinarySource {
-    Local { cli: String, daemon: String },
-    Release { repository: String, tag: String },
+    #[default]
+    Daemon,
+    Local {
+        cli: String,
+        daemon: String,
+    },
+    Release {
+        repository: String,
+        tag: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -290,6 +299,7 @@ pub struct SetupCheck {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InspectionDto {
+    pub binaries: InspectedBinaries,
     pub target: String,
     pub checks: Vec<SetupCheck>,
     pub supported_agents: Vec<String>,
@@ -306,6 +316,23 @@ pub struct InspectionDto {
     #[serde(default)]
     #[schema(required = true)]
     pub sign_ins: Vec<SignIn>,
+}
+
+/// The method used to install this daemon's version on the inspected machine.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BinaryMethod {
+    Release,
+    SourceBuild,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InspectedBinaries {
+    pub method: BinaryMethod,
+    pub version: String,
+    pub tag: Option<String>,
+    pub commit: Option<String>,
+    pub uncommitted: bool,
 }
 
 /// One agent that setup can install or that the user installs by hand.

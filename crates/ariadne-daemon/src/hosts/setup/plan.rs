@@ -319,6 +319,18 @@ impl Record {
                 .as_ref()
                 .filter(|_| step.name != "validate" || local)
                 .and_then(|_| manual_for(cfg, &step.name, os));
+            if step.name == "validate"
+                && step.error.is_some()
+                && matches!(self.request.source, BinarySource::Daemon)
+            {
+                step.manual = crate::build::BUILD
+                    .source()
+                    .err()
+                    .map(|reason| ManualAction {
+                        reason,
+                        command: None,
+                    });
+            }
             step.group = Some(if step.manual.is_some() {
                 SetupGroup::Manual
             } else if step.complete && self.present.contains(&step.name) {

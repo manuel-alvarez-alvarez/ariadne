@@ -3420,8 +3420,16 @@ export interface components {
              */
             version?: string | null;
         };
+        /**
+         * @description The method used to install this daemon's version on the inspected machine.
+         * @enum {string}
+         */
+        BinaryMethod: "release" | "source_build";
         /** @description Binaries on the daemon machine, or assets from an explicitly selected release. */
         BinarySource: {
+            /** @enum {string} */
+            kind: "daemon";
+        } | {
             cli: string;
             daemon: string;
             /** @enum {string} */
@@ -4121,6 +4129,13 @@ export interface components {
             /** @description The `id` of the `sign_ins` entry the agent uses, or null. */
             sign_in?: string | null;
         };
+        InspectedBinaries: {
+            commit?: string | null;
+            method: components["schemas"]["BinaryMethod"];
+            tag?: string | null;
+            uncommitted: boolean;
+            version: string;
+        };
         /** @description GitHub CLI on the inspected machine. */
         InspectedGithub: {
             group: components["schemas"]["SetupGroup"];
@@ -4129,6 +4144,7 @@ export interface components {
         InspectionDto: {
             /** @description Each agent that a setup request can name. */
             agents: components["schemas"]["InspectedAgent"][];
+            binaries: components["schemas"]["InspectedBinaries"];
             checks: components["schemas"]["SetupCheck"][];
             /** @description Who installs GitHub CLI on the inspected machine. */
             github: components["schemas"]["InspectedGithub"];
@@ -4893,15 +4909,15 @@ export interface components {
             steps: components["schemas"]["SetupStep"][];
         };
         /**
-         * @description Which kind of saved operation a [`HostSetupDto`] is.
-         * @enum {string}
-         */
-        SetupOperation: "setup" | "update";
-        /**
          * @description Who installs one item of a setup on the new machine.
          * @enum {string}
          */
         SetupGroup: "ariadne_installs" | "already_present" | "manual";
+        /**
+         * @description Which kind of saved operation a [`HostSetupDto`] is.
+         * @enum {string}
+         */
+        SetupOperation: "setup" | "update";
         /** @description An SSH worker installation request. SSH uses the daemon user's keys and config. */
         SetupRequest: {
             /** @description Source credential references only: `codex` and `github`. Never send credential values. */
@@ -4911,7 +4927,7 @@ export interface components {
             repositories?: {
                 [key: string]: string;
             };
-            source: components["schemas"]["BinarySource"];
+            source?: components["schemas"]["BinarySource"];
             ssh: string;
             tools?: components["schemas"]["SetupTools"] | null;
         };

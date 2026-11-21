@@ -6540,8 +6540,30 @@
           }
         }
       },
+      "BinaryMethod": {
+        "type": "string",
+        "description": "The method used to install this daemon's version on the inspected machine.",
+        "enum": [
+          "release",
+          "source_build"
+        ]
+      },
       "BinarySource": {
         "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "daemon"
+                ]
+              }
+            }
+          },
           {
             "type": "object",
             "required": [
@@ -8376,6 +8398,37 @@
           }
         }
       },
+      "InspectedBinaries": {
+        "type": "object",
+        "required": [
+          "method",
+          "version",
+          "uncommitted"
+        ],
+        "properties": {
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "method": {
+            "$ref": "#/components/schemas/BinaryMethod"
+          },
+          "tag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uncommitted": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "InspectedGithub": {
         "type": "object",
         "description": "GitHub CLI on the inspected machine.",
@@ -8401,6 +8454,7 @@
       "InspectionDto": {
         "type": "object",
         "required": [
+          "binaries",
           "target",
           "checks",
           "supported_agents",
@@ -8416,6 +8470,9 @@
               "$ref": "#/components/schemas/InspectedAgent"
             },
             "description": "Each agent that a setup request can name."
+          },
+          "binaries": {
+            "$ref": "#/components/schemas/InspectedBinaries"
           },
           "checks": {
             "type": "array",
@@ -10317,14 +10374,6 @@
           }
         }
       },
-      "SetupOperation": {
-        "type": "string",
-        "description": "Which kind of saved operation a [`HostSetupDto`] is.",
-        "enum": [
-          "setup",
-          "update"
-        ]
-      },
       "SetupGroup": {
         "type": "string",
         "description": "Who installs one item of a setup on the new machine.",
@@ -10334,12 +10383,19 @@
           "manual"
         ]
       },
+      "SetupOperation": {
+        "type": "string",
+        "description": "Which kind of saved operation a [`HostSetupDto`] is.",
+        "enum": [
+          "setup",
+          "update"
+        ]
+      },
       "SetupRequest": {
         "type": "object",
         "description": "An SSH worker installation request. SSH uses the daemon user's keys and config.",
         "required": [
-          "ssh",
-          "source"
+          "ssh"
         ],
         "properties": {
           "credentials": {

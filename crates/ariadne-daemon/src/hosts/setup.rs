@@ -757,6 +757,12 @@ fi
             .await;
             let (cli, daemon) = match selected {
                 Ok(selected) => selected,
+                Err(error)
+                    if matches!(request.source, BinarySource::Daemon)
+                        && crate::build::BUILD.repository.is_none() =>
+                {
+                    return Err(error);
+                }
                 Err(error) if !update => {
                     self.population_result(name, "validate", Err(error))?;
                     self.populate(name, request, &service_path).await?;
@@ -892,7 +898,12 @@ fi
         request: &SetupRequest,
         target: &str,
     ) -> Result<(PathBuf, PathBuf), String> {
-        match &request.source {
+        let source = match &request.source {
+            BinarySource::Daemon => crate::build::BUILD.source()?,
+            source => source.clone(),
+        };
+        match &source {
+            BinarySource::Daemon => unreachable!("resolved daemon source"),
             BinarySource::Local { cli, daemon } => Ok((cli.into(), daemon.into())),
             BinarySource::Release { repository, tag } => {
                 let dir = self.0.cfg.root.join("worker-downloads").join(name);

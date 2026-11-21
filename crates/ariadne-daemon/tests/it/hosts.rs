@@ -846,6 +846,19 @@ async fn assert_worker_platform_setup(os: &str, arch: &str, header: &[u8]) {
 
 #[tokio::test]
 async fn release_setup_requires_workflow_and_tag_verification_before_transfer() {
+    verify_release_setup(false).await;
+}
+
+#[tokio::test]
+async fn daemon_version_uses_the_recorded_release_or_refuses_a_source_build() {
+    if option_env!("ARIADNE_RELEASE_REPOSITORY").is_some_and(|s| !s.is_empty()) {
+        verify_release_setup(true).await;
+    } else {
+        daemon_source_is_default_and_source_builds_refuse_before_transfer().await;
+    }
+}
+
+async fn verify_release_setup(daemon: bool) {
     use common::{TIMEOUT, eventually, post_json};
     use serde_json::{Value, json};
     let remote = tempfile::tempdir().unwrap();
@@ -854,7 +867,9 @@ async fn release_setup_requires_workflow_and_tag_verification_before_transfer() 
         {"args":["release", "download"], "exit":0},
         {"args":["attestation", "verify"], "exit":1, "stderr":"private token must not escape"}
     ]));
-    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()}, "exit":0}));
+    let ssh = common::ssh::stub_ssh(
+        json!({"setup":{"home":remote.path(), "maintenance_fixture":true}, "exit":0}),
+    );
     let h = harness().ssh(&ssh).forge_cli(&gh).await;
     let downloads = h.launcher.cfg.root.join("worker-downloads/released");
     std::fs::create_dir_all(&downloads).unwrap();
@@ -877,7 +892,41 @@ async fn release_setup_requires_workflow_and_tag_verification_before_transfer() 
             .unwrap()
             .success()
     );
-    let request = json!({"ssh":"ssh://box", "source":{"kind":"release", "repository":"acme/ariadne", "tag":"v1.0.0"}});
+    let repository = if daemon {
+        env!("ARIADNE_RELEASE_REPOSITORY")
+    } else {
+        "acme/ariadne"
+    };
+    let tag = if daemon {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    } else {
+        "v1.0.0".into()
+    };
+    let request = if daemon {
+        json!({"ssh":"ssh://box"})
+    } else {
+        json!({"ssh":"ssh://box", "source":{"kind":"release", "repository":repository, "tag":tag}})
+    };
+    if daemon {
+        let review: Value = h
+            .json(
+                post_json("/v1/hosts/released/setup/review", request.clone()),
+                axum::http::StatusCode::OK,
+            )
+            .await;
+        assert_eq!(review["inspection"]["binaries"]["method"], "release");
+        assert_eq!(review["inspection"]["binaries"]["tag"], tag);
+        assert_eq!(
+            review["inspection"]["binaries"]["version"],
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(
+            group_of(&review["plan"], "install")["detail"]
+                .as_str()
+                .unwrap()
+                .contains(&tag)
+        );
+    }
     let _: Value = h
         .json(
             post_json("/v1/hosts/released/setup", request.clone()),
@@ -905,13 +954,13 @@ async fn release_setup_requires_workflow_and_tag_verification_before_transfer() 
     assert!(verification.args.windows(2).any(|pair| pair
         == [
             "--signer-workflow",
-            "acme/ariadne/.github/workflows/release.yml"
+            &format!("{repository}/.github/workflows/release.yml")
         ]));
     assert!(
         verification
             .args
             .windows(2)
-            .any(|pair| pair == ["--source-ref", "refs/tags/v1.0.0"])
+            .any(|pair| pair == ["--source-ref", &format!("refs/tags/{tag}")])
     );
     let state: Value = h.get("/v1/hosts/released/setup").await;
     assert!(!state.to_string().contains("private token"));
@@ -935,6 +984,35 @@ async fn release_setup_requires_workflow_and_tag_verification_before_transfer() 
         std::fs::read(remote.path().join(".local/bin/ariadned")).unwrap(),
         binary
     );
+    if daemon {
+        std::fs::write(remote.path().join("idle"), "").unwrap();
+        let update_downloads = h.launcher.cfg.root.join("worker-downloads/update:released");
+        std::fs::create_dir_all(&update_downloads).unwrap();
+        let asset = "ariadne-x86_64-unknown-linux-gnu.tar.gz";
+        std::fs::copy(downloads.join(asset), update_downloads.join(asset)).unwrap();
+        let _: Value = h
+            .json(
+                post_json(
+                    "/v1/hosts/released/update",
+                    json!({"source":{"kind":"daemon"}}),
+                ),
+                axum::http::StatusCode::ACCEPTED,
+            )
+            .await;
+        eventually(TIMEOUT, "daemon version update", || async {
+            let status: Value = h.get("/v1/hosts/released/update").await;
+            assert!(
+                !matches!(status["state"].as_str(), Some("failed" | "incomplete")),
+                "{status}"
+            );
+            status["state"] == "complete"
+        })
+        .await;
+        assert_eq!(
+            std::fs::read(remote.path().join(".local/bin/ariadned")).unwrap(),
+            binary
+        );
+    }
     h.state.hosts.shutdown().await;
 }
 
@@ -2666,5 +2744,96 @@ async fn saved_setups_are_listed_without_credentials_and_only_a_stopped_one_is_d
             .unwrap()
             .iter()
             .all(|s| s["complete"] == false)
+    );
+}
+
+async fn daemon_source_is_default_and_source_builds_refuse_before_transfer() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let request = json!({"ssh":"ssh://worker@box"});
+    let review: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup/review", request.clone()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(review["inspection"]["binaries"]["method"], "source_build");
+    assert_eq!(
+        review["inspection"]["binaries"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert!(
+        review["inspection"]["binaries"]["commit"]
+            .as_str()
+            .is_some_and(|s| s.len() == 40)
+    );
+    assert!(review["inspection"]["binaries"]["uncommitted"].is_boolean());
+    assert_eq!(review["inspection"]["binaries"]["tag"], Value::Null);
+    let install = group_of(&review["plan"], "install");
+    assert!(
+        install["detail"]
+            .as_str()
+            .unwrap()
+            .contains(env!("CARGO_PKG_VERSION"))
+    );
+    assert!(install["detail"].as_str().unwrap().contains("source build"));
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "source build refusal", || async {
+        let status: Value = h.get("/v1/hosts/builder/setup").await;
+        status["steps"].as_array().unwrap().iter().any(|step| {
+            step["name"] == "validate"
+                && step["error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("local") && e.contains("release"))
+        })
+    })
+    .await;
+    assert!(!remote.path().join(".local/bin/ariadne").exists());
+    let credential = h.launcher.cfg.native_home.join(".codex/auth.json");
+    std::fs::create_dir_all(credential.parent().unwrap()).unwrap();
+    std::fs::write(credential, r#"{"token":"source-build-secret"}"#).unwrap();
+    let _: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/credentials/setup",
+                json!({"ssh":"ssh://worker@box", "credentials":["codex"]}),
+            ),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "credential setup stops", || async {
+        h.get::<Value>("/v1/hosts/credentials/setup").await["state"] == "incomplete"
+    })
+    .await;
+    assert!(!remote.path().join(".codex/auth.json").exists());
+    assert!(
+        ssh.runs()
+            .iter()
+            .all(|run| !run.args.last().unwrap().contains("cat >"))
+    );
+    let f = UpdateFixture::new(json!({})).await;
+    f.start(json!({"source":{"kind":"daemon"}})).await;
+    common::eventually(common::TIMEOUT, "source update refusal", || async {
+        let status: Value = f.h.get("/v1/hosts/builder/update").await;
+        status["steps"].as_array().unwrap().iter().any(|step| {
+            step["name"] == "validate"
+                && step["error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("local") && e.contains("release"))
+        })
+    })
+    .await;
+    assert!(
+        f._ssh
+            .runs()
+            .iter()
+            .all(|run| !run.args.last().unwrap().contains("cat >"))
     );
 }

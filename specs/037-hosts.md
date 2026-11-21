@@ -266,7 +266,14 @@ picker, the Hosts screen and one stream per host — is spec
 45. `POST /v1/hosts/{name}/setup` starts or retries setup and returns `202` with `SetupDto`.
     `GET` on the same path returns progress, or `404` for an unknown operation.
     Reserved or invalid names and invalid requests return `400`.
-46. A request contains `ssh`, optional absolute socket `remote`, and `source`.
+46. A request contains `ssh`, optional absolute socket `remote`, and optional `source`.
+    An omitted source defaults to `{ "kind": "daemon" }`, the version of the settings daemon.
+    A release daemon resolves this kind to its recorded repository and its own version tag.
+    A source daemon refuses this kind before transfer and names the explicit `local` and `release` sources.
+    Inspection includes `binaries: {method, version, tag, commit, uncommitted}` for the inspected machine.
+    The method is `release` or `source_build`; tag and commit can be null.
+    Review has one Ariadne programs item that names the method and version.
+    SSH-only request files work with both `ariadne host review` and `ariadne host setup`.
     SSH uses `ssh://[user@]host[:port]`, BatchMode, and the daemon user's existing SSH authentication.
     Passwords in URLs are refused. No credential values are accepted or returned.
     A local source contains `kind: local`, `cli`, and `daemon`.
@@ -414,6 +421,7 @@ picker, the Hosts screen and one stream per host — is spec
     GET returns its durable progress, or 404 for an unknown update.
     UpdateRequest accepts optional source and tools selections. At least one section is required.
     Binary-only, tools-only, and combined updates are supported.
+    An omitted source updates no programs. An explicit `daemon` source selects this daemon's version.
     The worker name selects its saved SSH address and socket. Requests accept no SSH overrides.
     Credentials and repositories are refused. Setup records and update records remain separate.
     Active repeats return the existing operation. Changed selections are refused while running or pending.
@@ -529,6 +537,12 @@ picker, the Hosts screen and one stream per host — is spec
     Each manual item prints its reason and its command. `--format json` prints the DTO.
 
 ## Acceptance criteria
+
+- Rule 46: `hosts.rs::daemon_version_uses_the_recorded_release_or_refuses_a_source_build` proves SSH-only review and setup.
+  Source builds refuse transfer. Release builds verify their own repository and version tag before installation.
+  `hosts.rs::release_setup_requires_workflow_and_tag_verification_before_transfer` preserves explicit release checks.
+  `hosts.rs::tools_only_updates_preserve_worker_binaries` proves that omitted update sources preserve programs.
+
 
 - Rules 79 and 80: hosts.rs::saved_setups_are_listed_without_credentials_and_only_a_stopped_one_is_discarded proves the list, the refusals, the untouched worker and the fresh restart.
 - Rule 81: crates/ariadne-cli/tests/hosts.rs::host_setups_lists_saved_operations_and_host_discard_deletes_one proves both commands.

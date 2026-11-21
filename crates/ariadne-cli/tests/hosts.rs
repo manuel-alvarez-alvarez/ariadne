@@ -2421,7 +2421,7 @@ async fn maintenance_cli_reads_and_changes_the_selected_worker_hold() {
 
 #[tokio::test]
 async fn worker_inspection_review_and_resume_use_the_local_setup_contract() {
-    let inspection = json!({"target":"x86_64-unknown-linux-gnu","checks":[{
+    let inspection = json!({"binaries":{"method":"source_build","version":"1.0.0","tag":null,"commit":null,"uncommitted":false},"target":"x86_64-unknown-linux-gnu","checks":[{
         "id":"service","satisfied":false,"missing":"User services are unavailable",
         "resolution":"Enable lingering on the worker","recheck":"Resume setup"
     }],"supported_agents":["codex-acp"],"supported_credentials":["codex","github"]});
@@ -2487,7 +2487,7 @@ async fn worker_inspection_review_and_resume_use_the_local_setup_contract() {
 #[tokio::test]
 async fn worker_inspection_review_and_status_print_three_groups_with_manual_commands() {
     let linger = json!({"reason":"Ask an administrator to turn on lingering","command":"sudo loginctl enable-linger \"$USER\""});
-    let inspection = json!({"target":"x86_64-unknown-linux-gnu","checks":[],"supported_agents":["codex-acp"],"supported_credentials":["codex","github"],
+    let inspection = json!({"binaries":{"method":"source_build","version":"1.0.0","tag":null,"commit":null,"uncommitted":false},"target":"x86_64-unknown-linux-gnu","checks":[],"supported_agents":["codex-acp"],"supported_credentials":["codex","github"],
         "agents":[
             {"id":"codex-acp","name":"Codex","on_this_machine":true,"group":"ariadne_installs","manual":null,"sign_in":"codex"},
             {"id":"amp-acp","name":"Amp","on_this_machine":false,"group":"manual","manual":{"reason":"Ariadne cannot install Amp","command":null},"sign_in":null}
@@ -2621,6 +2621,55 @@ async fn onboarding_commands_refuse_other_hosts_with_a_setup_reason() {
             );
             assert!(error.contains("--host local"), "{error}");
         }
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn ssh_only_request_files_default_to_daemon_for_review_and_setup() {
+    let review = json!({"inspection":{"binaries":{"method":"release","version":"1.0.0","tag":"v1.0.0","commit":null,"uncommitted":false},"target":"x86_64-unknown-linux-gnu","checks":[],"supported_agents":[],"supported_credentials":[]},"actions":[],"prerequisites":[],"preserved":[]});
+    let app = Router::new()
+        .route(
+            "/v1/hosts/worker/setup/review",
+            post(move |Json(body): Json<serde_json::Value>| async move {
+                assert_eq!(body["source"], json!({"kind":"daemon"}));
+                Json(review)
+            }),
+        )
+        .route(
+            "/v1/hosts/worker/setup",
+            post(|Json(body): Json<serde_json::Value>| async move {
+                assert_eq!(body["source"], json!({"kind":"daemon"}));
+                (
+                    axum::http::StatusCode::ACCEPTED,
+                    Json(json!({"name":"worker","state":"pending","steps":[]})),
+                )
+            }),
+        );
+    let (endpoint, server) = serve(app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("request.json");
+    std::fs::write(&file, r#"{"ssh":"ssh://worker@box"}"#).unwrap();
+    for command in ["review", "setup"] {
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+            .args([
+                "--endpoint",
+                &endpoint,
+                "host",
+                command,
+                "worker",
+                "--request",
+            ])
+            .arg(&file)
+            .env("ARIADNE_TELEMETRY", "off")
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     server.abort();
 }

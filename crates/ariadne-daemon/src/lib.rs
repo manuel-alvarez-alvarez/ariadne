@@ -13,6 +13,7 @@ pub mod agents;
 pub mod ai_permissions;
 pub mod attention;
 pub mod branch;
+mod build;
 pub mod bus;
 pub mod checkpoint;
 pub mod config;

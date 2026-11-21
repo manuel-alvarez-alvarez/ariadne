@@ -195,6 +195,7 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
             }
         };
         Ok(InspectionDto {
+            binaries: crate::build::BUILD.binaries(),
             target: target.into(),
             checks,
             supported_agents,
@@ -229,6 +230,26 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
             .cloned()
             .collect();
         match &request.source {
+            BinarySource::Daemon => {
+                let info = &inspection.binaries;
+                if let Err(reason) = crate::build::BUILD.source() {
+                    prerequisites.push(check(
+                        "binaries",
+                        false,
+                        &reason,
+                        "Select an explicit local or release source.",
+                    ));
+                }
+                actions.push(format!(
+                    "Install Ariadne {} with {}.",
+                    info.version,
+                    if info.tag.is_some() {
+                        "a verified release"
+                    } else {
+                        "a source build"
+                    }
+                ));
+            }
             BinarySource::Local { cli, daemon } => {
                 let valid = [cli, daemon]
                     .iter()
@@ -400,6 +421,15 @@ impl Hosts {
         let met = |id: &str| prerequisites.iter().any(|c| c.id == id && c.satisfied);
         let mut plan = Vec::new();
         plan.push(match &request.source {
+            BinarySource::Daemon => {
+                let info = &inspection.binaries;
+                let source = crate::build::BUILD.source();
+                item("install".into(), if source.is_ok() { SetupGroup::AriadneInstalls } else { SetupGroup::Manual },
+                    format!("Install Ariadne {} with {} ({}).", info.version,
+                        if info.tag.is_some() { "a verified release" } else { "a source build" },
+                        info.tag.as_deref().or(info.commit.as_deref()).unwrap_or("unknown")),
+                    source.err().map(|reason| ManualAction { reason, command: None }))
+            }
             BinarySource::Local { .. } if met("binaries") => item(
                 "install".into(),
                 SetupGroup::AriadneInstalls,

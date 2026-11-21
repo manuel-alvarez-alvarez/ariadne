@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-11-21
+updated: 2026-11-22
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
@@ -75,7 +75,12 @@ Out: what the daemon does once running (009, 012).
    containing a quote, dollar sign, backtick or newline; the uninstaller
    refuses malformed lines, duplicate or unknown keys, and unsafe values
    before it removes anything.
-3. Binaries come from a GitHub release by default, and from a local build with
+3. The daemon records its build method, commit, and uncommitted status at build time.
+   Release workflow builds set `ARIADNE_RELEASE_REPOSITORY` to the release repository.
+   All other builds record their source checkout path and use the source build method.
+   Worker setup defaults to this daemon's version (037, rule 46).
+   `hosts.rs::daemon_version_uses_the_recorded_release_or_refuses_a_source_build` proves both methods.
+   Binaries come from a GitHub release by default, and from a local build with
    `--build-from-source`. A local build is taken from the directory cargo
    wrote it to, `CARGO_TARGET_DIR` included: a checkout that builds elsewhere
    would otherwise install whatever stale binaries `target/release` still

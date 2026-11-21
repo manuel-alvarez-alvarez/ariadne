@@ -847,9 +847,11 @@ A tools-only request leaves worker binaries in place:
 A binary-only request leaves agent programs in place:
 
 ```json
-{"source":{"kind":"local","cli":"/build/ariadne","daemon":"/build/ariadned"}}
+{"source":{"kind":"daemon"}}
 ```
 
+This selects the settings daemon’s own version.
+Omitting `source` updates no Ariadne programs.
 Combine both sections to update binaries and tools together.
 The source also accepts an explicit verified release, as described under [worker setup](#install-an-ssh-worker).
 Local binary paths refer to the settings daemon machine.
@@ -920,6 +922,13 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
      }
    }
    ```
+
+   You can also use a request that contains only `ssh`.
+   Omission of `source` selects `{"kind":"daemon"}`.
+   A release daemon downloads and verifies its own version for the worker’s platform.
+   A source daemon refuses this selection before transfer.
+   Select an explicit `local` or `release` source when the daemon runs a source build.
+   Inspection reports the method, version, tag, commit, and uncommitted status in `binaries`.
 
    The source daemon machine runs the settings daemon.
    Both `cli` and `daemon` paths refer to files on that machine.
