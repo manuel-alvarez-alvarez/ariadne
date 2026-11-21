@@ -136,7 +136,7 @@ impl Updates {
 
     /// The next `host_updated` that moves the status. Each one it skips
     /// moves only the sync and keeps the status `before`.
-    async fn finish_cleanup(&mut self, mut host: HostDto) -> HostDto {
+    pub(crate) async fn finish_cleanup(&mut self, mut host: HostDto) -> HostDto {
         tokio::time::timeout(TIMEOUT, async {
             while host.status == HostStatus::Connecting {
                 assert!(

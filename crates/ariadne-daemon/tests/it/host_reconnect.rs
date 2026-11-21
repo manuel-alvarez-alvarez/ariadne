@@ -198,6 +198,7 @@ async fn a_ready_forward_whose_check_fails_is_down_and_starts_again_at_once() {
     let host = reconnect(&local).await;
     assert_eq!(host.status, HostStatus::Connecting);
     let down = updates.next_status(HostStatus::Ready).await;
+    let down = updates.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     let error = down.error.unwrap();
