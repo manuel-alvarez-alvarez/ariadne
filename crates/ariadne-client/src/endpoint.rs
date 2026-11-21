@@ -64,6 +64,23 @@ impl<'de> Deserialize<'de> for Hosts {
     }
 }
 
+/// Read daemon configuration and refuse the retired host table before decoding its rows.
+pub fn parse_daemon_config(home: &Path) -> Result<Option<FileConfig>, ConfigError> {
+    let path = config_file(home);
+    if path.exists() {
+        let raw = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        let value: toml::Value =
+            toml::from_str(&raw).map_err(|source| ConfigError::Parse { path, source })?;
+        if value.get("hosts").is_some() {
+            return Err(ConfigError::HostsRetired);
+        }
+    }
+    parse_config(home)
+}
+
 /// Environment variable moving the whole ariadne home directory.
 const HOME_ENV: &str = "ARIADNE_HOME";
 
@@ -166,6 +183,10 @@ pub struct FileConfig {
 /// Why `<home>/config.toml` could not be read as configuration.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    #[error(
+        "[hosts] is no longer accepted in config.toml; add each host again on the Hosts screen of the app or with ariadne host add"
+    )]
+    HostsRetired,
     #[error("reading {path}: {source}")]
     Read {
         path: PathBuf,

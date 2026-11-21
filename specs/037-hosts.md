@@ -2,9 +2,11 @@
 id: 037
 status: current
 updated: 2026-11-21
-areas: [api, daemon, client, cli, docs, ui]
+areas: [api, daemon, client, cli, store, docs, ui]
 commits: []
 tests:
+  - crates/ariadne-store/tests/store.rs
+  - ui/scripts/host-events.test.mjs
   - crates/ariadne-client/src/endpoint.rs
   - crates/ariadne-daemon/tests/it/hosts.rs
   - crates/ariadne-daemon/tests/it/ssh_forward.rs
@@ -14,6 +16,7 @@ tests:
   - crates/ariadne-daemon/tests/it/learned_permissions.rs
   - crates/ariadne-daemon/tests/it/host_queries.rs
   - crates/ariadne-cli/tests/hosts.rs
+  - crates/ariadne-cli/src/commands/events.rs
   - crates/ariadne-cli/src/commands/query.rs
   - crates/ariadne-daemon/src/hosts.rs
   - crates/ariadne-daemon/src/hosts/sync.rs
@@ -24,7 +27,7 @@ tests:
 
 ## Scope
 
-In: the `[hosts.<name>]` tables of `config.toml`, their validation, the
+In: database host connections, their validation, the
 `GET /v1/hosts` route, the `POST /v1/hosts/{name}/reconnect` route,
 `HostDto`, the `host_updated` event, `ssh_bin`, the
 SSH forward the daemon keeps for each `ssh://` host, the push of the local
@@ -39,31 +42,33 @@ picker, the Hosts screen and one stream per host — is spec
 
 ## Behavior
 
-1. `FileConfig.hosts` reads `[hosts.<name>]` tables, in file order. Each has
-   `endpoint` (required string) and `remote` (optional string). An unknown key
-   in a table is refused by name.
-2. `endpoint` is `ssh://[user@]host[:port]`, `http://host:port`, or an absolute
-   socket path. `remote` is accepted only with `ssh://`, and is an absolute
-   socket path or a loopback `host:port`. Any other value is refused by name
-   (`hosts.<name>.endpoint`, `hosts.<name>.remote`) at startup and by
-   `ariadned --check-config`, in the same words. The scheme is lowercase:
-   `SSH://box` is refused, so every later check of the text agrees.
-3. The names `local` and `all` are refused by name: `local` is this daemon,
-   and `all` selects every host (spec 014, rule 46). A name has only letters,
-   digits, `-` and `_`.
+1. The settings daemon database stores each named host's `name`, `endpoint`,
+   optional `remote`, and optional `color`. It also stores an optional colour for `local`.
+   An additive migration preserves existing data. Stored hosts start when the daemon starts.
+   Startup and `ariadned --check-config` refuse any `[hosts]` table with the same error.
+   The error tells users to add each host again on the Hosts screen or with `ariadne host add`.
+   The daemon never imports configuration hosts. `ssh_bin` remains in `config.toml`.
+2. `endpoint` accepts `ssh://[user@]host[:port]`, `http://host:port`, or an absolute socket path.
+   `remote` accepts an absolute socket path or loopback `host:port`, only with an SSH endpoint.
+   Schemes must be lowercase. API validation errors name the invalid field.
+3. Host names contain only letters, digits, `-`, and `_`, and cannot be empty.
+   The names `local` and `all` are reserved. Hosts cannot be renamed.
 4. `GET /v1/hosts` returns `HostDto[]`. The first row is `local`; the others
-   follow in file order. `HostDto` has `name`; `kind` (`local`, `direct`,
+   follow in database insertion order.
+   Reconnecting a host preserves its position before and after restart.
+   `HostDto` has `name`; `kind` (`local`, `direct`,
    `ssh`); `endpoint` (the address a client on this machine uses: for `local`
    the `tcp_listen` URL when set, else the socket path; for `direct` the
    configured value; for `ssh` null until a forward is up); `status` (`ready`,
-   `connecting`, `down`); `error`; `remote`; `sync` (rule 22).
+   `connecting`, `down`); `error`; `remote`; `sync` (rule 22); and nullable `color` (rule 56).
 5. An `ssh` host is `down`, with a null `endpoint` and the error
    `ssh forward not started`, until its forward starts. A `direct` host is
    `connecting` until its first health check (rule 30).
-6. `host_updated` carries one `HostDto`. The daemon publishes one event for
-   each change of a host's `status`, `endpoint`, `error` or `sync`.
-7. The OpenAPI document carries the route, the DTO and the event.
-8. `ariadned --help` lists the `hosts` table and `ssh_bin`.
+6. `host_updated` carries the full `HostDto` after each add or change.
+   Runtime changes of status, endpoint, error, or sync also publish `host_updated`.
+   Removal publishes `host_deleted` with the full removed `HostDto`.
+7. OpenAPI carries the routes, DTOs, colour enum, and both host events.
+8. `ariadned --help` lists `ssh_bin` and does not list the retired hosts table.
 9. `ssh_bin` names the `ssh` program (default: `ssh` on the daemon's PATH).
    `ariadned --check-config` prints `ssh_bin = <value>`.
 10. At startup, for each `ssh` host, the daemon picks a free loopback port and
@@ -282,7 +287,8 @@ picker, the Hosts screen and one stream per host — is spec
     No successful step means `failed`; otherwise failure means `incomplete`.
     Completion requires a successful daemon status check and local connection registration.
 50. The settings daemon stores operations atomically in `worker-setup.json` under its home.
-    Restart converts interrupted operations to `incomplete` and restores registered connections.
+    Restart converts interrupted operations to `incomplete`. The register step writes the host into the database.
+    Setup records hold operations only. Restart never restores connections from `worker-setup.json`.
     The same request resumes setup without transferring installed binaries again.
     Retry rechecks access and binaries, restarts the service, and checks health.
     Concurrent repeats return the existing operation. Changed requests are refused.
@@ -316,18 +322,37 @@ picker, the Hosts screen and one stream per host — is spec
     Other agent authentication checks remain unsupported and leave setup incomplete with worker login guidance.
     Retries check required tools and authentication again. Daemon health alone does not complete selected tool setup.
 
+56. `HostColor` has snake_case values `red`, `orange`, `amber`, `green`, `teal`, `blue`, `violet`, and `pink`.
+    `HostDto.color` is the selected value or null. Null means no override; the daemon computes no default.
+57. `POST /v1/hosts` accepts `{name, endpoint, remote?, color?}` and returns 201 with the full `HostDto`.
+    The daemon persists and starts the host immediately. Invalid names or addresses return 400 with the field named.
+    An existing name returns 409.
+58. `PATCH /v1/hosts/{name}` accepts `{endpoint?, remote?, color?}` and returns 200 with the full `HostDto`.
+    Present fields replace stored values. Null clears `remote` or `color`; omitted fields retain their values.
+    Endpoint or remote changes stop the old connection and start its replacement.
+    Colour changes retain the connection. For `local`, only `color` is accepted; other fields return 400.
+59. `DELETE /v1/hosts/{name}` removes the database row and stops forwarding, health checks, and sync.
+    It returns 204 with no body and leaves the remote daemon untouched. Deleting `local` returns 400.
+60. PATCH and DELETE return 404 with code `unknown_host` for an unknown name.
+61. The UI accepts host changes and deletions only from the `local` event stream.
+    Deletion removes the cached host row, closes its stream through the host provider, and drops `qk.host(name)`.
+    Host configuration and colours never enter catalog sync.
+
 ## Acceptance criteria
 
-- Hosts keep file order and an unknown key is refused by name
-  (`endpoint.rs::hosts_keep_the_order_of_the_file`,
-  `::an_unknown_key_in_a_host_is_refused_by_name`,
-  `::a_host_without_an_endpoint_is_refused`).
-- Rules 2 and 3 hold at startup and in `--check-config`
-  (`hosts.rs::a_bad_host_is_refused_by_name_at_startup_and_by_check_config`,
-  `::good_hosts_pass_check_config`).
-- Rules 4 and 5
-  (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
-  `::configured_hosts_follow_local_in_file_order`).
+- Rules 1 and 56, persistence: `crates/ariadne-store/tests/store.rs::host_rows_survive_reopening_and_keep_local_color`.
+- Rules 1–3, 6, and 56–60: `hosts.rs::host_routes_persist_nullable_overrides_and_publish_full_rows`,
+  `::host_routes_refuse_invalid_fields_duplicates_and_unknown_names`,
+  `::local_rejects_an_endpoint_even_when_null`.
+- Rule 1, configuration: `hosts.rs::a_bad_host_is_refused_by_name_at_startup_and_by_check_config`,
+  `::even_an_empty_hosts_table_is_refused`.
+- Rules 4 and 5: `hosts.rs::a_daemon_without_hosts_lists_only_local`,
+  `::stored_hosts_follow_local_in_insertion_order`,
+  `::reconnecting_the_first_host_preserves_database_insertion_order`.
+- Rules 58 and 59: `host_health.rs::editing_and_deleting_a_host_stop_its_old_health_checks`,
+  `ssh_forward.rs::changing_a_remote_replaces_the_forward_and_keeps_its_colour`,
+  `::deleting_a_host_ends_its_forward`.
+- Rule 61: `ui/scripts/host-events.test.mjs::closes a deleted host stream and removes its cache only from local events`.
 - Rule 11, no answer through the forward
   (`host_health.rs::a_forward_whose_far_daemon_does_not_answer_is_down_and_starts_again`).
 - Rules 13 and 30, shutdown
@@ -345,6 +370,7 @@ picker, the Hosts screen and one stream per host — is spec
   (`host_health.rs::a_direct_host_is_ready_while_it_answers_and_down_while_it_does_not`,
   `host_sync.rs::each_change_of_the_sync_publishes_one_host_updated`,
   `host_sync.rs::sync_stops_blocked_and_queued_pushes_until_the_host_recovers`).
+- Rule 6, CLI event display: `commands/events.rs::a_deleted_host_frame_names_the_removed_host`.
 - Rule 7 (`hosts.rs::openapi_carries_the_route_the_dto_and_the_event`).
 - Rules 8 and 9 (`ssh_forward.rs::help_and_check_config_list_ssh_bin`).
 - Rule 10 (`ssh_forward.rs::a_forward_runs_ssh_to_the_local_socket_path_by_default`,
@@ -358,7 +384,7 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 13 (`ssh_forward.rs::shutdown_ends_every_ssh_child`).
 - Rule 14 (`ssh_forward.rs::an_event_stream_and_a_post_both_cross_a_ready_forward`).
 - Rules 4, 7 and 22 (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
-  `::configured_hosts_follow_local_in_file_order`,
+  `::stored_hosts_follow_local_in_insertion_order`,
   `::openapi_carries_the_route_the_dto_and_the_event`).
 - Rules 23, 27 and 28
   (`host_sync.rs::a_ready_host_takes_every_item_and_keeps_its_own`).
@@ -427,6 +453,7 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 46, control characters: `hosts.rs::setup_rejects_control_characters_in_remote_path_before_transfer`.
 - Rule 46, shell fallback: `hosts.rs::setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path`.
 - Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
+- Rule 50: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
 - Rule 50: `ui/src/features/hosts/worker-setup.test.tsx::starts setup and shows retained steps and a failure`.
 - Rule 52: `ui/src/features/hosts/hosts-page.test.tsx::titles the screen Hosts and opens the worker setup from its Set up worker action`.
 

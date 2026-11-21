@@ -391,6 +391,7 @@ mod tests {
     fn a_host_that_is_unknown_or_not_ready_is_a_usage_error() {
         let host = |name: &str, status| {
             HostDto {
+            color: None,
             name: name.into(),
             status,
             ..serde_json::from_value(json!({"name":"x","kind":"direct","status":"ready","endpoint":null,"error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}})).unwrap()

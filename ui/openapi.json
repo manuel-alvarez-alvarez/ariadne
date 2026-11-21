@@ -1047,6 +1047,35 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHost"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "409": {}
+        }
       }
     },
     "/v1/hosts/{host}/-/healthy": {
@@ -2036,6 +2065,68 @@
           "503": {
             "description": "The host is not ready"
           }
+        }
+      }
+    },
+    "/v1/hosts/{name}": {
+      "delete": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {},
+          "404": {}
+        }
+      },
+      "patch": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "patch",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchHost"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "404": {}
         }
       }
     },
@@ -6323,6 +6414,37 @@
         },
         "additionalProperties": false
       },
+      "CreateHost": {
+        "type": "object",
+        "required": [
+          "name",
+          "endpoint"
+        ],
+        "properties": {
+          "color": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HostColor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "remote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "CreateRepositoryRequest": {
         "type": "object",
         "required": [
@@ -7185,6 +7307,26 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A host was removed from the settings database (037).",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/HostDto",
+                "description": "A host was removed from the settings database (037)."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "host_deleted"
+                ]
+              }
+            }
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
@@ -7666,9 +7808,23 @@
           }
         }
       },
+      "HostColor": {
+        "type": "string",
+        "description": "A host's optional colour override.",
+        "enum": [
+          "red",
+          "orange",
+          "amber",
+          "green",
+          "teal",
+          "blue",
+          "violet",
+          "pink"
+        ]
+      },
       "HostDto": {
         "type": "object",
-        "description": "One host a client can address: this daemon, or one `config.toml` lists.",
+        "description": "One host a client can address: this daemon, or one the database stores.",
         "required": [
           "name",
           "kind",
@@ -7676,6 +7832,16 @@
           "sync"
         ],
         "properties": {
+          "color": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HostColor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "endpoint": {
             "type": [
               "string",
@@ -8195,6 +8361,31 @@
             }
           }
         }
+      },
+      "PatchHost": {
+        "type": "object",
+        "properties": {
+          "color": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HostColor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "remote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "PathStateDto": {
         "type": "object",

@@ -42,21 +42,23 @@ async fn a_daemon_without_hosts_lists_only_local() {
 }
 
 #[tokio::test]
-async fn configured_hosts_follow_local_in_file_order() {
+async fn stored_hosts_follow_local_in_insertion_order() {
     let (_dir, home) = home_with(
         "tcp_listen = \"127.0.0.1:7676\"\n\
          [hosts.zeta]\nendpoint = \"http://10.0.0.2:7676\"\n\
          [hosts.alpha]\nendpoint = \"ssh://me@box:2222\"\nremote = \"/run/ariadne.sock\"\n\
          [hosts.sock]\nendpoint = \"/tmp/other.sock\"\n",
     );
+    std::fs::rename(home.join("config.toml"), home.join("host-fixture.toml")).unwrap();
     let h = harness().home(home).await;
     let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
     let names: Vec<_> = hosts.iter().map(|h| h.name.as_str()).collect();
     assert_eq!(names, ["local", "zeta", "alpha", "sock"]);
-    assert_eq!(hosts[0].endpoint.as_deref(), Some("http://127.0.0.1:7676"));
+
     assert_eq!(
         hosts[1],
         HostDto {
+            color: None,
             name: "zeta".into(),
             kind: HostKind::Direct,
             endpoint: Some("http://10.0.0.2:7676".into()),
@@ -69,6 +71,7 @@ async fn configured_hosts_follow_local_in_file_order() {
     assert_eq!(
         hosts[2],
         HostDto {
+            color: None,
             name: "alpha".into(),
             kind: HostKind::Ssh,
             endpoint: None,
@@ -130,7 +133,8 @@ fn a_bad_host_is_refused_by_name_at_startup_and_by_check_config() {
             "hosts.box.remote",
         ),
     ];
-    for (toml, named) in cases {
+    for (toml, _) in cases {
+        let named = "add each host again on the Hosts screen of the app or with ariadne host add";
         let (_dir, home) = home_with(toml);
         let started = Config::load(Some(home.clone()))
             .expect_err(toml)
@@ -142,20 +146,18 @@ fn a_bad_host_is_refused_by_name_at_startup_and_by_check_config() {
 }
 
 #[test]
-fn good_hosts_pass_check_config() {
-    let (_dir, home) = home_with(
-        "[hosts.a]\nendpoint = \"ssh://box\"\nremote = \"127.0.0.1:7676\"\n\
-         [hosts.b-1]\nendpoint = \"ssh://me@box:22\"\nremote = \"/run/a.sock\"\n\
-         [hosts.c_2]\nendpoint = \"http://box:7676\"\n",
-    );
-    assert!(Config::check(Some(home)).unwrap().contains(": ok"));
+fn even_an_empty_hosts_table_is_refused() {
+    let (_dir, home) = home_with("[hosts]\n");
+    let started = Config::load(Some(home.clone())).unwrap_err().to_string();
+    assert_eq!(started, Config::check(Some(home)).unwrap_err().to_string());
+    assert!(started.contains("add each host again"));
 }
 
 /// `http://host:80` names its port even though 80 is the scheme's default.
 #[tokio::test]
 async fn an_http_host_on_the_default_port_is_accepted_and_listed() {
     let (_dir, home) = home_with("[hosts.web]\nendpoint = \"http://example.com:80\"\n");
-    assert!(Config::check(Some(home.clone())).unwrap().contains(": ok"));
+    std::fs::rename(home.join("config.toml"), home.join("host-fixture.toml")).unwrap();
     let h = harness().home(home).await;
     let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
     assert_eq!(hosts[1].endpoint.as_deref(), Some("http://example.com:80"));
@@ -165,6 +167,19 @@ async fn an_http_host_on_the_default_port_is_accepted_and_listed() {
 async fn openapi_carries_the_route_the_dto_and_the_event() {
     let h = harness().await;
     let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
+    if let Ok(path) = std::env::var("ARIADNE_TEST_OPENAPI") {
+        std::fs::write(path, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+    }
+    assert!(doc["paths"]["/v1/hosts"]["post"].is_object());
+    assert!(doc["paths"]["/v1/hosts/{name}"]["patch"].is_object());
+    assert!(doc["paths"]["/v1/hosts/{name}"]["delete"].is_object());
+    assert_eq!(
+        doc["components"]["schemas"]["HostColor"]["enum"],
+        serde_json::json!([
+            "red", "orange", "amber", "green", "teal", "blue", "violet", "pink"
+        ])
+    );
+    assert!(doc["components"]["schemas"]["HostDto"]["properties"]["color"].is_object());
     assert!(doc["paths"]["/v1/hosts/{name}/setup"]["post"].is_object());
     assert!(doc["paths"]["/v1/hosts/{name}/setup"]["get"].is_object());
     assert!(doc["paths"]["/v1/hosts"]["get"].is_object());
@@ -183,6 +198,7 @@ async fn openapi_carries_the_route_the_dto_and_the_event() {
     assert!(doc["paths"]["/v1/permissions/learned"]["post"].is_object());
     let event = doc["components"]["schemas"]["DomainEvent"].to_string();
     assert!(event.contains("host_updated"), "{event}");
+    assert!(event.contains("host_deleted"), "{event}");
 }
 
 #[tokio::test]
@@ -273,7 +289,8 @@ async fn setup_preserves_installation_after_service_failure_and_retries_safely()
             h.store.clone(),
             h.bus.clone(),
             h.timeouts,
-        );
+        )
+        .await;
         h.router = ariadne_daemon::http::router(h.state.clone());
         let restored: Value = h.get("/v1/hosts/builder/setup").await;
         assert_eq!(restored["state"], "incomplete");
@@ -309,8 +326,27 @@ async fn setup_preserves_installation_after_service_failure_and_retries_safely()
             h.store.clone(),
             h.bus.clone(),
             h.timeouts,
-        );
+        )
+        .await;
         assert!(restored.list().iter().any(|h| h.name == "builder"));
+        h.store.delete_host("builder").await.unwrap();
+        let without_connection = ariadne_daemon::hosts::Hosts::new(
+            h.launcher.cfg.clone(),
+            h.store.clone(),
+            h.bus.clone(),
+            h.timeouts,
+        )
+        .await;
+        assert!(
+            !without_connection
+                .list()
+                .iter()
+                .any(|h| h.name == "builder")
+        );
+        let setup_records =
+            std::fs::read_to_string(h.launcher.cfg.root.join("worker-setup.json")).unwrap();
+        let records: Value = serde_json::from_str(&setup_records).unwrap();
+        assert!(records["builder"].get("remote").is_none());
         assert_eq!(
             std::fs::read_to_string(&unit).unwrap(),
             "# machine-specific service settings\n"
@@ -1014,7 +1050,8 @@ esac
         h.store.clone(),
         h.bus.clone(),
         h.timeouts,
-    );
+    )
+    .await;
     h.router = ariadne_daemon::http::router(h.state.clone());
     let _: Value = h
         .json(
@@ -1050,4 +1087,199 @@ esac
             .contains("github-selected-test-secret")
     );
     assert!(!format!("{:?}", ssh.runs()).contains("github-selected-test-secret"));
+}
+
+#[tokio::test]
+async fn local_rejects_an_endpoint_even_when_null() {
+    let h = harness().await;
+    h.error(
+        common::patch_json("/v1/hosts/local", serde_json::json!({"endpoint":null})),
+        axum::http::StatusCode::BAD_REQUEST,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn host_routes_persist_nullable_overrides_and_publish_full_rows() {
+    use ariadne_api::stream::DomainEvent;
+    use axum::http::StatusCode;
+    use serde_json::{Value, json};
+    let ssh = common::ssh::stub_ssh(json!({"exit":1}));
+    let mut h = harness().ssh(&ssh).await;
+    let mut events = h.bus.subscribe();
+    let added: Value = h.json(common::post_json("/v1/hosts", json!({"name":"builder","endpoint":"ssh://box","remote":"/tmp/worker.sock","color":"teal"})), StatusCode::CREATED).await;
+    assert_eq!(added["name"], "builder");
+    assert_eq!(added["color"], "teal");
+    let updated = common::next_event(&mut events, |e| matches!(&e.event, DomainEvent::HostUpdated(h) if h.name == "builder" && h.color == Some(ariadne_api::hosts::HostColor::Teal))).await;
+    let DomainEvent::HostUpdated(row) = updated.event else {
+        unreachable!()
+    };
+    assert_eq!(serde_json::to_value(row).unwrap(), added);
+    let changed: Value = h
+        .json(
+            common::patch_json(
+                "/v1/hosts/builder",
+                json!({"endpoint":"http://127.0.0.1:1","remote":null,"color":null}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(changed["endpoint"], "http://127.0.0.1:1");
+    assert!(changed["remote"].is_null());
+    assert!(changed["color"].is_null());
+    let local: Value = h
+        .json(
+            common::patch_json("/v1/hosts/local", json!({"color":"pink"})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(local["color"], "pink");
+    h.state.hosts.shutdown().await;
+    h.state.hosts = ariadne_daemon::hosts::Hosts::new(
+        h.launcher.cfg.clone(),
+        h.store.clone(),
+        h.bus.clone(),
+        h.timeouts,
+    )
+    .await;
+    h.router = ariadne_daemon::http::router(h.state.clone());
+    let rows: Value = h.get("/v1/hosts").await;
+    assert_eq!(rows[0]["color"], "pink");
+    assert_eq!(rows[1]["endpoint"], "http://127.0.0.1:1");
+    assert!(rows[1]["color"].is_null());
+    let (status, body) = h.send(common::delete("/v1/hosts/builder")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(body.is_empty());
+    let deleted = common::next_event(
+        &mut events,
+        |e| matches!(&e.event, DomainEvent::HostDeleted(h) if h.name == "builder"),
+    )
+    .await;
+    let DomainEvent::HostDeleted(row) = deleted.event else {
+        unreachable!()
+    };
+    assert_eq!(serde_json::to_value(row).unwrap(), rows[1]);
+    assert_eq!(h.store.list_hosts().await.unwrap().len(), 1);
+    let cleared: Value = h
+        .json(
+            common::patch_json("/v1/hosts/local", json!({"color":null})),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(cleared["color"].is_null());
+}
+
+#[tokio::test]
+async fn host_routes_refuse_invalid_fields_duplicates_and_unknown_names() {
+    use axum::http::StatusCode;
+    use serde_json::{Value, json};
+    let h = harness().await;
+    for (body, field) in [
+        (json!({"name":"local","endpoint":"/tmp/a.sock"}), "local"),
+        (json!({"name":"all","endpoint":"/tmp/a.sock"}), "all"),
+        (json!({"name":"a b","endpoint":"/tmp/a.sock"}), "a b"),
+        (json!({"name":"","endpoint":"/tmp/a.sock"}), "host"),
+        (json!({"name":"box","endpoint":"relative"}), "endpoint"),
+        (json!({"name":"box","endpoint":"http://box"}), "endpoint"),
+        (json!({"name":"box","endpoint":"https://box:1"}), "endpoint"),
+        (json!({"name":"box","endpoint":"SSH://box"}), "endpoint"),
+        (
+            json!({"name":"box","endpoint":"/tmp/a.sock","remote":"/tmp/b.sock"}),
+            "remote",
+        ),
+        (
+            json!({"name":"box","endpoint":"ssh://box","remote":"10.0.0.1:1"}),
+            "remote",
+        ),
+    ] {
+        let error = h
+            .error(
+                common::post_json("/v1/hosts", body),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(format!("{error:?}").contains(field));
+    }
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts", json!({"name":"box","endpoint":"/tmp/a.sock"})),
+            StatusCode::CREATED,
+        )
+        .await;
+    h.error(
+        common::post_json("/v1/hosts", json!({"name":"box","endpoint":"/tmp/b.sock"})),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    h.error(
+        common::patch_json("/v1/hosts/box", json!({"endpoint":"relative"})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    h.error(
+        common::patch_json("/v1/hosts/local", json!({"remote":null})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    h.error(common::delete("/v1/hosts/local"), StatusCode::BAD_REQUEST)
+        .await;
+    for request in [
+        common::patch_json("/v1/hosts/missing", json!({"color":"red"})),
+        common::delete("/v1/hosts/missing"),
+    ] {
+        let error = h.error(request, StatusCode::NOT_FOUND).await;
+        assert!(format!("{error:?}").contains("unknown_host"));
+    }
+    h.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn reconnecting_the_first_host_preserves_database_insertion_order() {
+    use axum::http::StatusCode;
+    use serde_json::json;
+    let mut h = harness().await;
+    let replacement = h
+        .launcher
+        .cfg
+        .root
+        .join("replacement.sock")
+        .display()
+        .to_string();
+    for name in ["a", "b"] {
+        let _: HostDto = h
+            .json(
+                common::post_json(
+                    "/v1/hosts",
+                    json!({"name":name,"endpoint":h.launcher.cfg.root.join(format!("{name}.sock")).display().to_string()}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+    }
+    let _: HostDto = h
+        .json(
+            common::patch_json("/v1/hosts/a", json!({"endpoint":replacement})),
+            StatusCode::OK,
+        )
+        .await;
+    let rows: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert_eq!(
+        rows.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(),
+        ["local", "a", "b"]
+    );
+    h.state.hosts.shutdown().await;
+    h.state.hosts = ariadne_daemon::hosts::Hosts::new(
+        h.launcher.cfg.clone(),
+        h.store.clone(),
+        h.bus.clone(),
+        h.timeouts,
+    )
+    .await;
+    h.router = ariadne_daemon::http::router(h.state.clone());
+    let restored: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert_eq!(
+        restored.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(),
+        ["local", "a", "b"]
+    );
+    assert_eq!(restored[1].endpoint.as_deref(), Some(replacement.as_str()));
 }

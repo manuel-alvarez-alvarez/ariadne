@@ -51,7 +51,7 @@ async fn local_with_host_on(
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
-        home.join("config.toml"),
+        home.join("host-fixture.toml"),
         format!("[hosts.far]\nendpoint = \"{endpoint}\"\n"),
     )
     .unwrap();
@@ -79,6 +79,7 @@ fn serve(far: &Harness, listener: tokio::net::TcpListener) {
 #[derive(Clone)]
 struct Gate {
     held: Arc<AtomicBool>,
+    selected: Arc<Mutex<Vec<String>>>,
     health_off: Arc<AtomicBool>,
     permits: Arc<Semaphore>,
     /// Each request that waited at the gate, as `METHOD path`.
@@ -91,11 +92,17 @@ impl Gate {
     fn new() -> Self {
         Self {
             held: Arc::new(AtomicBool::new(false)),
+            selected: Arc::new(Mutex::new(Vec::new())),
             health_off: Arc::new(AtomicBool::new(false)),
             permits: Arc::new(Semaphore::new(0)),
             held_requests: Arc::new(Mutex::new(Vec::new())),
             answered: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    fn hold_only(&self, requests: &[&str]) {
+        *self.selected.lock().unwrap() = requests.iter().map(|r| (*r).to_string()).collect();
+        self.hold();
     }
 
     fn hold(&self) {
@@ -139,7 +146,11 @@ fn serve_gated(far: &Harness, listener: tokio::net::TcpListener, gate: &Gate) {
                     }
                     return next.run(request).await;
                 }
-                if gate.held.load(Ordering::SeqCst) {
+                let selected = {
+                    let requests = gate.selected.lock().unwrap();
+                    requests.is_empty() || requests.contains(&what)
+                };
+                if gate.held.load(Ordering::SeqCst) && selected {
                     gate.held_requests.lock().unwrap().push(what.clone());
                     gate.permits.acquire().await.unwrap().forget();
                 }
@@ -783,7 +794,7 @@ async fn sync_stops_blocked_and_queued_pushes_until_the_host_recovers() {
     let (local, _dir) = local_with_host(&format!("http://{address}")).await;
     local.state.hosts.start();
     until_in_sync(&local).await;
-    gate.hold();
+    gate.hold_only(&["PUT /v1/skills/lead", "PUT /v1/skills/queued"]);
     for name in ["lead", "queued"] {
         let _: SkillDto = local
             .json(
@@ -1009,7 +1020,7 @@ async fn a_failed_skill_waits_for_backoff_despite_bundle_scans() {
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
-        dir.path().join("config.toml"),
+        dir.path().join("host-fixture.toml"),
         format!("[hosts.far]\nendpoint = \"http://{address}\"\n"),
     )
     .unwrap();

@@ -23,10 +23,25 @@ pub enum HostStatus {
     Down,
 }
 
-/// One host a client can address: this daemon, or one `config.toml` lists.
+/// A host's optional colour override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HostColor {
+    Red,
+    Orange,
+    Amber,
+    Green,
+    Teal,
+    Blue,
+    Violet,
+    Pink,
+}
+
+/// One host a client can address: this daemon, or one the database stores.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct HostDto {
     pub name: String,
+    pub color: Option<HostColor>,
     pub kind: HostKind,
     /// The address a client on this machine uses. For an `ssh` host it is
     /// null until a forward is up.
