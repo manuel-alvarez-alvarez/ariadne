@@ -175,6 +175,17 @@ async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
     .unwrap();
     let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
     assert!(error.contains("server exited unexpectedly"), "{error}");
+    // A server that closes with its last session fails one call, then is gone.
+    let count = dir.path().join("count");
+    std::fs::write(
+        &binary,
+        format!(
+            "#!/bin/sh\nif [ -e {0} ]; then echo 'no server running' >&2; exit 1; fi\ntouch {0}\necho 'server exited unexpectedly' >&2\nexit 1\n",
+            count.display()
+        ),
+    )
+    .unwrap();
+    assert!(place.live_panes(dir.path()).await.unwrap().is_empty());
     std::fs::remove_file(&binary).unwrap();
     std::fs::write(&binary, [0u8; 8]).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();

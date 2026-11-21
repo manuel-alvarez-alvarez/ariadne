@@ -200,24 +200,35 @@ impl Place {
     }
 
     /// The relay session names, or `None` when no tmux server runs.
+    ///
+    /// A server that closes with its last session can answer a client that is
+    /// already connected with "server exited unexpectedly". Ask again: once it
+    /// has closed, no server runs. A server that keeps failing is an error.
     async fn relay_sessions(&self, home: &std::path::Path) -> Result<Option<Vec<String>>> {
-        let mut command = self.command(home)?;
-        command.args(["list-sessions", "-F", "#{session_name}"]);
-        let output = run(command).await?;
-        if !output.status.success() {
+        let mut attempts = 0;
+        loop {
+            let mut command = self.command(home)?;
+            command.args(["list-sessions", "-F", "#{session_name}"]);
+            let output = run(command).await?;
+            if output.status.success() {
+                return Ok(Some(
+                    String::from_utf8(output.stdout)?
+                        .lines()
+                        .filter(|name| name.starts_with("ariadne-"))
+                        .map(String::from)
+                        .collect(),
+                ));
+            }
             let error = String::from_utf8_lossy(&output.stderr);
             if error.contains("no server running") || error.contains("No such file") {
                 return Ok(None);
             }
-            bail!("listing tmux relay sessions: {}", error.trim());
+            attempts += 1;
+            if !error.contains("server exited unexpectedly") || attempts == 5 {
+                bail!("listing tmux relay sessions: {}", error.trim());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-        Ok(Some(
-            String::from_utf8(output.stdout)?
-                .lines()
-                .filter(|name| name.starts_with("ariadne-"))
-                .map(String::from)
-                .collect(),
-        ))
     }
 
     /// Stop the relay first so its agent process group cannot outlive the pane.
