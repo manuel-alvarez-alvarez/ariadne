@@ -1986,3 +1986,35 @@ async fn revised_binary_sources_invalidate_the_install_checkpoint() {
         replacement
     );
 }
+
+#[tokio::test]
+async fn explicit_updates_upgrade_already_installed_uv_tools() {
+    let f = UpdateFixture::new(serde_json::json!({})).await;
+    let uv = common::shared_script(
+        r#"#!/bin/sh
+case "$*" in
+"python install") exit 0;;
+"tool install --upgrade -- "*) printf 'current' > "$HOME/uv-version";;
+"tool install -- "*) exit 0;;
+*) exit 1;;
+esac
+"#,
+    );
+    std::os::unix::fs::symlink(uv, f.remote.path().join(".local/bin/uv")).unwrap();
+    std::fs::write(f.remote.path().join("uv-version"), "older").unwrap();
+    f.start(serde_json::json!({"tools":{"agents":["fast-agent"]}}))
+        .await;
+    let result = f.terminal().await;
+    assert!(
+        result["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| { s["name"] == "tool:fast-agent" && s["complete"] == true }),
+        "{result}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.remote.path().join("uv-version")).unwrap(),
+        "current"
+    );
+}

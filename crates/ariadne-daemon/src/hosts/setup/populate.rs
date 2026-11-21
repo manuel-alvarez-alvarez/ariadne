@@ -154,8 +154,9 @@ impl Hosts {
                     )
                 } else if let Some(package) = distribution["uvx"]["package"].as_str() {
                     let runtime_command = if update { "upgrade uv" } else { "ensure uv uv" };
+                    let upgrade = if update { " --upgrade" } else { "" };
                     format!(
-                        "{PREREQUISITE}\n{runtime_command}\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1\nuv tool install -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
+                        "{PREREQUISITE}\n{runtime_command}\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1\nuv tool install{upgrade} -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
                         package = quote(package)
                     )
                 } else {

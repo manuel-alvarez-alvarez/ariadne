@@ -433,7 +433,7 @@ picker, the Hosts screen and one stream per host — is spec
 72. Selected tools upgrade only during an explicit update.
     User-owned Homebrew upgrades selected Git, GitHub CLI, and required Node or uv runtimes.
     npm reinstalls selected registry packages and provider CLIs in the user prefix.
-    uv updates selected tools and provides Python.
+    uv explicitly upgrades installed selected tools within their registry version constraints and provides Python.
     Unsupported tools and unavailable user-owned prerequisites report per-step failures without administrator commands.
     Successful tool steps survive retries without another upgrade.
 73. After successful service restart and health checks, the update releases maintenance and restores scheduling.
@@ -457,6 +457,7 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 70 and 73: hosts.rs::unsupported_tools_can_be_removed_on_retry_without_reinstalling_binaries and
   hosts.rs::invalid_binary_sources_can_change_on_retry prove both review recovery cases.
 - Rule 70: hosts.rs::revised_binary_sources_invalidate_the_install_checkpoint proves source-dependent checkpoint invalidation.
+- Rule 72: hosts.rs::explicit_updates_upgrade_already_installed_uv_tools proves installed uv tools receive an explicit upgrade.
 - Rule 70: hosts.rs::tools_only_updates_preserve_worker_binaries proves independent tool selection.
 - Rules 70 and 74: hosts.rs::updates_use_saved_ssh_and_allow_binary_only_selection proves saved SSH and binary-only updates.
 - Rule 73: hosts.rs::failed_updates_keep_maintenance_when_worker_health_fails proves failed health recovery.
