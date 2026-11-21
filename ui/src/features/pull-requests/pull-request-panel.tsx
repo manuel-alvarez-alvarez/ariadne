@@ -51,6 +51,7 @@ import { PrLink } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -364,60 +365,64 @@ function PullRequestHeader({
         actions={
           <div className="flex items-center gap-2">
             {pull.state === "open" ? (
-              reviewer ? (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    pending={round.isPending}
-                    onClick={() => round.mutate(target(reviewer))}
-                  >
-                    Review again
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    pending={ask.isPending}
-                    onClick={() => ask.mutate({ ...target(reviewer), asked: false })}
-                  >
-                    <BotOffIcon />
-                    Stop review
-                  </Button>
-                </>
-              ) : (
-                <Button size="sm" disabled={!settled} onClick={() => setStarting(true)}>
-                  <BotIcon />
-                  Start review
-                </Button>
-              )
-            ) : null}
-            {keeper && pull.state === "open" ? (
-              <Button
-                variant="outline"
-                size="sm"
-                pending={keeperTurn.isPending}
-                onClick={() => keeperTurn.mutate(target(keeper))}
-              >
-                Keeper turn
-              </Button>
-            ) : null}
-            {!taskKeeper && pull.state === "open" ? (
-              babysitter ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  pending={babysit.isPending}
-                  onClick={() => babysit.mutate({ ...target(babysitter), asked: false })}
-                >
-                  <BotOffIcon />
-                  Stop babysit
-                </Button>
-              ) : (
-                <Button size="sm" disabled={!settled} onClick={() => setBabysitting(true)}>
-                  <BotIcon />
-                  Start babysit
-                </Button>
-              )
+              <>
+                <ButtonGroup aria-label="Review">
+                  {reviewer ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        pending={ask.isPending}
+                        onClick={() => ask.mutate({ ...target(reviewer), asked: false })}
+                      >
+                        <BotOffIcon />
+                        Stop review
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        pending={round.isPending}
+                        onClick={() => round.mutate(target(reviewer))}
+                      >
+                        New turn
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="sm" disabled={!settled} onClick={() => setStarting(true)}>
+                      <BotIcon />
+                      Start review
+                    </Button>
+                  )}
+                </ButtonGroup>
+                <ButtonGroup aria-label="Babysit">
+                  {!taskKeeper && babysitter ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      pending={babysit.isPending}
+                      onClick={() => babysit.mutate({ ...target(babysitter), asked: false })}
+                    >
+                      <BotOffIcon />
+                      Stop babysit
+                    </Button>
+                  ) : null}
+                  {keeper ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      pending={keeperTurn.isPending}
+                      onClick={() => keeperTurn.mutate(target(keeper))}
+                    >
+                      New turn
+                    </Button>
+                  ) : (
+                    <Button size="sm" disabled={!settled} onClick={() => setBabysitting(true)}>
+                      <BotIcon />
+                      Start babysit
+                    </Button>
+                  )}
+                </ButtonGroup>
+              </>
             ) : null}
           </div>
         }
