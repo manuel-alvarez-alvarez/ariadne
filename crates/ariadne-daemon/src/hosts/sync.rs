@@ -548,6 +548,17 @@ impl Pusher<'_> {
             document: skill.document.clone(),
         };
         let path = format!("/v1/skills/{}", skill.name);
+        let skill_error = |error: ClientError| {
+            if matches!(&error, ClientError::Api { status, message, .. } if *status == StatusCode::UNPROCESSABLE_ENTITY && message.contains("unknown field `files`"))
+            {
+                format!(
+                    "host {} has an incompatible skill API for skill {}; upgrade its remote daemon",
+                    self.inner.cfg.hosts[self.index].0, skill.name
+                )
+            } else {
+                format!("skill {}: {error}", skill.name)
+            }
+        };
         match self.client.put_json::<SkillDto, _>(&path, &update).await {
             Err(error) if not_found(&error) => {
                 self.client
@@ -557,10 +568,10 @@ impl Pusher<'_> {
                 self.client
                     .put_json::<SkillDto, _>(&path, &update)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(skill_error)?;
             }
             other => {
-                other.map_err(|e| format!("skill {}: {e}", skill.name))?;
+                other.map_err(skill_error)?;
             }
         }
         let root = self.inner.cfg.skills_dir.join(&skill.name);

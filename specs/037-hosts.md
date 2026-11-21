@@ -243,6 +243,9 @@ picker, the Hosts screen and one stream per host — is spec
     The daemon checks supporting files at each `host_check`, including file removals.
     A transfer rechecks its source before it reports success.
     Scans skip failed skills; only the backoff of rule 25 retries them.
+    A remote rejection of the `files` field reports an incompatible skill API,
+    names the host and skill, and instructs the user to upgrade the remote daemon.
+    Complete transfers remain mandatory and retries recover when the daemon is upgraded.
 44. Escaping symbolic links fail that skill push and name the offending path.
     Other skills continue. Failed staging or replacement preserves recoverable previous worker contents.
     Explicit Markdown local-file links outside the skill directory produce warnings in `sync.error`.
@@ -381,6 +384,18 @@ picker, the Hosts screen and one stream per host — is spec
   `::host_edit_patches_only_the_given_fields_and_null_clears`,
   `::host_rm_deletes_the_host_and_prints_its_name`.
 - Rule 61: `ui/scripts/host-events.test.mjs::closes a deleted host stream and removes its cache only from local events`.
+- An incompatible skill API reports the upgrade and recovers: `host_sync.rs::incompatible_skill_api_reports_upgrade_and_recovers`.
+
+- Hosts keep file order and an unknown key is refused by name
+  (`endpoint.rs::hosts_keep_the_order_of_the_file`,
+  `::an_unknown_key_in_a_host_is_refused_by_name`,
+  `::a_host_without_an_endpoint_is_refused`).
+- Rules 2 and 3 hold at startup and in `--check-config`
+  (`hosts.rs::a_bad_host_is_refused_by_name_at_startup_and_by_check_config`,
+  `::good_hosts_pass_check_config`).
+- Rules 4 and 5
+  (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
+  `::configured_hosts_follow_local_in_file_order`).
 - Rule 11, no answer through the forward
   (`host_health.rs::a_forward_whose_far_daemon_does_not_answer_is_down_and_starts_again`).
 - Rules 13 and 30, shutdown

@@ -1209,3 +1209,50 @@ async fn a_failed_skill_waits_for_backoff_despite_bundle_scans() {
         .unwrap();
     server.abort();
 }
+
+#[tokio::test]
+async fn incompatible_skill_api_reports_upgrade_and_recovers() {
+    let far = harness().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let incompatible = Arc::new(AtomicBool::new(true));
+    let flag = incompatible.clone();
+    let router = far.router.clone().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let flag = flag.clone();
+            async move {
+                if request.method() == axum::http::Method::PUT
+                    && request.uri().path() == "/v1/skills/bundle"
+                    && flag.load(Ordering::SeqCst)
+                {
+                    return (StatusCode::UNPROCESSABLE_ENTITY, "Failed to deserialize the JSON body into the target type: unknown field `files`, expected `document` at line 1 column 10").into_response();
+                }
+                next.run(request).await
+            }
+        },
+    ));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (local, _dir) = local_with_host(&endpoint).await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name":"bundle", "document":skill("bundle", "new")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    eventually(TIMEOUT, "upgrade instruction", || async {
+        sync_of(&local).await.error.is_some_and(|e| {
+            e.contains("far")
+                && e.contains("bundle")
+                && e.contains("upgrade")
+                && e.contains("incompatible")
+        })
+    })
+    .await;
+    incompatible.store(false, Ordering::SeqCst);
+    until_in_sync(&local).await;
+    assert!(skill_on(&far, "bundle").await.is_some());
+}
