@@ -279,10 +279,27 @@ impl Hosts {
 
     async fn run_setup(&self, name: &str, request: &SetupRequest) -> Result<(), String> {
         self.begin(name, "probe")?;
-        let probe = self.ssh(request, "set -eu; uname -s; uname -m; printf '%s\\n' \"$HOME\"; for tool in git tar; do command -v \"$tool\" >/dev/null || exit 12; done", None).await.map_err(|_| "SSH probe failed; check SSH access and ask the administrator to install git and tar".to_owned())?;
-        let lines: Vec<_> = probe.lines().collect();
-        if lines.len() != 3 || !lines[2].starts_with('/') || lines[2].contains(['\r', '\0']) {
+        // The first three lines identify the platform and home. The remaining bytes
+        // carry PATH without a trailing newline, so validation cannot trim controls.
+        let probe = self.ssh(request, r#"set -eu
+uname -s
+uname -m
+printf '%s\n' "$HOME"
+for tool in git tar; do command -v "$tool" >/dev/null || exit 12; done
+if remote_path=$("${SHELL:-/bin/sh}" -lc 'printf "%s" "$PATH"; printf "."' 2>/dev/null); then
+    printf '%s' "${remote_path%.}"
+else
+    printf '%s' "$PATH"
+fi
+"#, None).await.map_err(|_| "SSH probe failed; check SSH access and ask the administrator to install git and tar".to_owned())?;
+        let lines: Vec<_> = probe.splitn(4, '\n').collect();
+        if lines.len() != 4 || !lines[2].starts_with('/') || lines[2].chars().any(char::is_control)
+        {
             return Err("SSH probe failed; install git and tar through the administrator".into());
+        }
+        let captured_path = lines[3];
+        if captured_path.chars().any(char::is_control) {
+            return Err("remote PATH contains a control character; correct the remote shell configuration before retrying".into());
         }
         let target = match (lines[0], lines[1]) {
             ("Darwin", "arm64" | "aarch64") => "aarch64-apple-darwin",
@@ -297,6 +314,11 @@ impl Hosts {
         };
         self.checkpoint(name, "probe")?;
         let home = lines[2];
+        let service_path = if captured_path.is_empty() {
+            format!("{home}/.local/bin")
+        } else {
+            format!("{home}/.local/bin:{captured_path}")
+        };
         let remote = request
             .remote
             .clone()
@@ -337,7 +359,7 @@ impl Hosts {
             self.checkpoint(name, "install")?;
         }
         self.begin(name, "service")?;
-        self.ssh(request, &service_script(home, lines[0]), None).await.map_err(|_| -> String { if lines[0] == "Linux" { "user service unavailable; ask the administrator to install systemd user services and enable lingering".into() } else { "launchd user service unavailable; check the user's launchd session".into() } })?;
+        self.ssh(request, &service_script(home, lines[0], &service_path), None).await.map_err(|_| -> String { if lines[0] == "Linux" { "user service unavailable; ask the administrator to install systemd user services and enable lingering".into() } else { "launchd user service unavailable; check the user's launchd session".into() } })?;
         self.checkpoint(name, "service")?;
         self.begin(name, "health")?;
         self.ssh(
@@ -518,7 +540,24 @@ fn macho_matches(bytes: &[u8], arm: bool) -> bool {
             == if arm { 0x0100000c } else { 0x01000007 }
 }
 
-fn service_script(home: &str, os: &str) -> String {
+// Environment= performs specifier expansion, but does not expand dollar signs.
+fn systemd_value(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "%%")
+        .replace('"', "\\\"")
+}
+
+fn xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn service_script(home: &str, os: &str, path: &str) -> String {
     if os == "Linux" {
         format!(
             r#"set -eu
@@ -534,7 +573,7 @@ cat > "$unit" <<'ARIADNE_UNIT'
 Description=Ariadne worker
 [Service]
 ExecStart="{home}/.local/bin/ariadned"
-Environment="PATH={home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH={path}"
 LimitNOFILE=4096
 Restart=on-failure
 [Install]
@@ -545,13 +584,12 @@ systemctl --user daemon-reload
 systemctl --user enable ariadned.service
 systemctl --user restart ariadned.service
 "#,
-            home = home.replace('%', "%%").replace('"', "\\\"")
+            home = systemd_value(home),
+            path = systemd_value(path)
         )
     } else {
-        let xml = home
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;");
+        let xml = xml_text(home);
+        let path = xml_text(path);
         format!(
             r#"set -eu
 mkdir -p "$HOME/Library/LaunchAgents"
@@ -559,7 +597,7 @@ plist="$HOME/Library/LaunchAgents/dev.ariadne.daemon.plist"
 if [ ! -e "$plist" ]; then
 cat > "$plist" <<'ARIADNE_PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0"><dict><key>Label</key><string>dev.ariadne.daemon</string><key>ProgramArguments</key><array><string>{xml}/.local/bin/ariadned</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ProcessType</key><string>Interactive</string><key>SoftResourceLimits</key><dict><key>NumberOfFiles</key><integer>4096</integer></dict></dict></plist>
+<plist version="1.0"><dict><key>Label</key><string>dev.ariadne.daemon</string><key>ProgramArguments</key><array><string>{xml}/.local/bin/ariadned</string></array><key>EnvironmentVariables</key><dict><key>PATH</key><string>{path}</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ProcessType</key><string>Interactive</string><key>SoftResourceLimits</key><dict><key>NumberOfFiles</key><integer>4096</integer></dict></dict></plist>
 ARIADNE_PLIST
 fi
 domain="user/$(id -u)"

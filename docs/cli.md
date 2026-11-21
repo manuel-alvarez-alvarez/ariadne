@@ -865,6 +865,11 @@ Linux workers need systemd user services and lingering for operation after logou
 
 Setup preserves worker data, configuration, existing service definitions, and completed installation steps.
 It installs binaries in `~/.local/bin` and registers the platform's user service.
+For new services, setup captures the remote user's PATH through a noninteractive login shell and prepends `~/.local/bin`.
+If that shell fails, setup uses the SSH session's PATH.
+A PATH with control characters stops setup before transfer.
+Existing service files retain their PATH and other machine-specific settings through retries.
+Update an existing service file yourself if its PATH lacks required tools.
 A custom remote daemon socket needs the request's optional absolute `remote` path.
 The default socket is `~/.ariadne/ariadne.sock` on the worker.
 A failed or incomplete status returns a failure exit code.

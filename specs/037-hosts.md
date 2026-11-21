@@ -252,7 +252,13 @@ picker, the Hosts section of its settings and one stream per host — is spec
     GitHub CLI 2.102.0 or later verifies the selected repository's release workflow and exact tag before extraction.
 46. Setup installs binaries under the remote user's `~/.local/bin`.
     It registers `dev.ariadne.daemon` with launchd or `ariadned.service` with systemd user services.
-    Existing service definitions, configuration, and worker data remain intact.
+    New service definitions use the remote user's PATH from a noninteractive login shell, with `~/.local/bin` first.
+    If that shell fails, setup uses the SSH session's PATH.
+    Setup rejects PATH values with control characters before transfer, including newline and NUL.
+    Systemd values escape backslashes, quotes, and percent specifiers; dollar signs stay literal in `Environment=`.
+    Launchd stores the XML-escaped PATH in its `EnvironmentVariables` dictionary.
+    Existing service definitions, including PATH and machine-specific settings, remain unchanged through retries.
+    Configuration and worker data remain intact.
     Missing git, tar, user services, or Linux lingering produce prerequisite guidance without administrator commands.
     An existing custom socket must be supplied through `remote`.
 47. Progress states are `pending`, `running`, `incomplete`, `failed`, and `complete`.
@@ -378,6 +384,8 @@ picker, the Hosts section of its settings and one stream per host — is spec
 - Rules 45 and 46: `hosts.rs::setup_checks_each_platform_before_it_transfers_a_binary`.
 - Rule 45: `hosts.rs::release_setup_requires_workflow_and_tag_verification_before_transfer`.
 - Rules 46–48: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
+- Rule 46, control characters: `hosts.rs::setup_rejects_control_characters_in_remote_path_before_transfer`.
+- Rule 46, shell fallback: `hosts.rs::setup_uses_the_ssh_path_when_the_login_shell_fails`.
 - Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
 - Rule 50: `ui/src/components/worker-setup.test.tsx::starts setup and shows retained steps and a failure`.
 
