@@ -8,13 +8,13 @@
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-
 import { ApiError, type HostDto } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { useSettingsStore } from "@/stores/settings"
 import { anAiPermissionsStatus, aSession, aSessionPage } from "@/test/fixtures"
 import { errorResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
+import { byContent } from "@/test/text-content"
 import { CreateGoalDialog } from "./goals/create-goal-dialog"
 import { GoalsListPage } from "./goals/goals-list-page"
 import { PermissionsPage } from "./permissions/permissions-page"
@@ -63,7 +63,7 @@ it("shows the reason of an unreachable host on the AI tab, with no skeleton", as
   stubHosts({ local: { "/v1/permissions/ai": anAiPermissionsStatus() } }, [LOCAL, DOWN])
   renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
 
-  await screen.findByText("Host box is not reachable")
+  await screen.findByText(byContent("Host box is not reachable"))
   expect(screen.getByText(REASON)).toBeTruthy()
   await screen.findByRole("heading", { name: /AI/ })
   expect(document.body.querySelector('[data-slot="skeleton"]')).toBeNull()
@@ -75,7 +75,7 @@ it("shows an error state, with the host's reason and no URL hint, when a named h
   stubHosts({ local: {}, box: { "/v1/goals": failing, "/v1/tasks": [] } })
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
-  await screen.findByText("Could not load goals on box")
+  await screen.findByText(byContent("Could not load goals on box"))
   expect(screen.getByText(/box is broken/)).toBeTruthy()
   expect(screen.queryByText(/Check the URL in settings/)).toBeNull()
 })
@@ -88,7 +88,7 @@ it("warns, not errors, when only one of two hosts fails to list sessions", async
   })
   renderScreen(<SessionsPage />, { route: "/sessions" })
 
-  const title = await screen.findByText("Could not load sessions on box")
+  const title = await screen.findByText(byContent("Could not load sessions on box"))
   const alert = title.closest('[role="alert"]') as HTMLElement
   expect(within(alert).getByText(/box is broken/)).toBeTruthy()
   expect(alert.className).not.toContain("destructive")
@@ -102,8 +102,8 @@ it("shows an error state for each host when every host fails to list sessions", 
   })
   renderScreen(<SessionsPage />, { route: "/sessions" })
 
-  await screen.findByText("Could not load sessions on local")
-  expect(screen.getByText("Could not load sessions on box")).toBeTruthy()
+  await screen.findByText(byContent("Could not load sessions on local"))
+  expect(screen.getByText(byContent("Could not load sessions on box"))).toBeTruthy()
   expect(screen.getAllByRole("alert")).toHaveLength(2)
 })
 
@@ -148,7 +148,7 @@ function tableOf(host?: string, error: Error = new Error("no route to host")) {
 it("shows the daemon hint only for local, on a table of a named host", () => {
   const network = ApiError.network(new Error("fetch failed"))
   const view = render(tableOf("box", network))
-  expect(screen.getByText("Could not load things on box")).toBeTruthy()
+  expect(screen.getByText(byContent("Could not load things on box"))).toBeTruthy()
   expect(screen.getByText(/fetch failed/)).toBeTruthy()
   expect(screen.queryByText(/Check the URL in settings/)).toBeNull()
   view.unmount()

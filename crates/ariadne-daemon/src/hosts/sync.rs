@@ -73,6 +73,7 @@ pub(super) async fn after_registration(hosts: &super::Hosts, name: &str) -> Resu
 }
 
 /// One thing to push to a host.
+#[derive(Clone)]
 enum Push {
     /// Everything: the host has just become `ready`, or this task fell
     /// behind the bus and cannot tell what it missed. Run as a push of each
@@ -105,6 +106,13 @@ enum Item<'a> {
 }
 
 impl Push {
+    fn is_deletion(&self) -> bool {
+        matches!(
+            self,
+            Self::SkillDeleted(_) | Self::WorkflowDeleted(_) | Self::LearnedDeleted(_)
+        )
+    }
+
     fn item(&self) -> Item<'_> {
         match self {
             Push::All => Item::All,
@@ -151,6 +159,11 @@ pub(super) async fn run(
 ) {
     let mut ready = inner.ready[index].subscribe();
     let base = inner.timeouts.host_sync_retry;
+    let mut pushes = Pushes {
+        queue: VecDeque::new(),
+        failed: Vec::new(),
+        pending_deletions: Vec::new(),
+    };
     loop {
         // Until the host is ready, a change waits for the push of
         // everything that its readiness starts.
@@ -160,7 +173,11 @@ pub(super) async fn run(
             }
             tokio::select! {
                 changed = ready.changed() => if changed.is_err() { return },
-                event = events.recv() => if let Err(RecvError::Closed) = event { return },
+                event = events.recv() => match event {
+                    Ok(event) => pushes.enqueue(&event.event),
+                    Err(RecvError::Lagged(_)) => pushes.enqueue_all(),
+                    Err(RecvError::Closed) => return,
+                },
             }
         };
         let mut pusher = Pusher {
@@ -175,10 +192,8 @@ pub(super) async fn run(
             bundles: HashMap::new(),
             warnings: HashMap::new(),
         };
-        let mut pushes = Pushes {
-            queue: VecDeque::from([Push::All]),
-            failed: Vec::new(),
-        };
+        pushes.failed.clear();
+        pushes.enqueue_all();
         let mut scan = tokio::time::interval(inner.timeouts.host_check);
         scan.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut backoff = base;
@@ -268,6 +283,9 @@ struct Pushes {
     /// The pushes that failed, each with why, tried again on their own
     /// after the backoff. A failed push holds back no other one.
     failed: Vec<(Push, String)>,
+    /// Deletes cannot be reconstructed from the current catalog after reconnect.
+    /// Keep them until delivered or superseded, including during a cancelled retry.
+    pending_deletions: Vec<Push>,
 }
 
 impl Pushes {
@@ -293,6 +311,11 @@ impl Pushes {
             DomainEvent::AiPermissionsUpdated(status) => Push::Ai(AiChoice::from(status)),
             _ => return,
         };
+        self.pending_deletions
+            .retain(|pending| pending.item() != push.item());
+        if push.is_deletion() {
+            self.pending_deletions.push(push.clone());
+        }
         self.supersede(&push);
         // A push that reads its state afresh covers a later one of its kind.
         let covered = matches!(push, Push::Repositories)
@@ -310,6 +333,7 @@ impl Pushes {
     fn enqueue_all(&mut self) {
         self.queue.clear();
         self.queue.push_back(Push::All);
+        self.queue.extend(self.pending_deletions.iter().cloned());
     }
 
     /// Drop the failed push of the item `push` is about.
@@ -336,8 +360,12 @@ impl Pushes {
         // The item's older failed push is spent: this one carries the newer
         // state, and a retry of the older would write it back over this.
         self.supersede(&push);
-        if let Err(error) = pusher.push(&push).await {
-            self.fail(pusher, push, error);
+        match pusher.push(&push).await {
+            Ok(()) if push.is_deletion() => self
+                .pending_deletions
+                .retain(|pending| pending.item() != push.item()),
+            Ok(()) => {}
+            Err(error) => self.fail(pusher, push, error),
         }
     }
 
@@ -556,6 +584,17 @@ impl Pusher<'_> {
             document: skill.document.clone(),
         };
         let path = format!("/v1/skills/{}", skill.name);
+        let skill_error = |error: ClientError| {
+            if matches!(&error, ClientError::Api { status, message, .. } if *status == StatusCode::UNPROCESSABLE_ENTITY && message.contains("unknown field `files`"))
+            {
+                format!(
+                    "host {} has an incompatible skill API for skill {}; upgrade its remote daemon",
+                    self.inner.cfg.hosts[self.index].0, skill.name
+                )
+            } else {
+                format!("skill {}: {error}", skill.name)
+            }
+        };
         match self.client.put_json::<SkillDto, _>(&path, &update).await {
             Err(error) if not_found(&error) => {
                 self.client
@@ -565,10 +604,10 @@ impl Pusher<'_> {
                 self.client
                     .put_json::<SkillDto, _>(&path, &update)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(skill_error)?;
             }
             other => {
-                other.map_err(|e| format!("skill {}: {e}", skill.name))?;
+                other.map_err(skill_error)?;
             }
         }
         let root = self.inner.cfg.skills_dir.join(&skill.name);

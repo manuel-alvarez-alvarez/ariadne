@@ -85,7 +85,11 @@ export function FormSelect<V extends FieldValues>({
           disabled={disabled}
           // Without this the trigger would show the stored value rather than
           // the option's label.
-          items={options}
+          items={
+            renderOption
+              ? options.map((option) => ({ value: option.value, label: renderOption(option) }))
+              : options
+          }
         >
           <SelectTrigger
             id={id}

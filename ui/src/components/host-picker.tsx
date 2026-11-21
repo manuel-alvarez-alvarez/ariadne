@@ -13,6 +13,8 @@
 import { ServerIcon } from "lucide-react"
 
 import { type HostView, LOCAL_HOST, useHosts } from "@/api"
+import { HostDot } from "@/components/host-dot"
+import { HostLabel } from "@/components/host-label"
 import { syncLabel } from "@/components/host-sync"
 import { ReconnectHostButton } from "@/components/reconnect-host-button"
 import { Button } from "@/components/ui/button"
@@ -85,7 +87,7 @@ export function HostPicker() {
           <Button variant="outline" size="sm" className="gap-2 font-normal" aria-label="Host" />
         }
       >
-        <ServerIcon />
+        {shown === ALL ? <ServerIcon /> : <HostDot host={shown} />}
         {shown === ALL ? "All hosts" : shown}
         {warn ? (
           <span
@@ -131,7 +133,7 @@ function HostOption({ host }: { host: HostView }) {
   return (
     <span className="flex min-w-0 flex-1 flex-col">
       <span className="flex items-center gap-2">
-        <span className="truncate font-mono">{host.name}</span>
+        <HostLabel host={host.name} className="truncate" />
         {host.name === LOCAL_HOST ? null : (
           <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
             <span aria-hidden className={cn("size-1.5 rounded-full", status.dot)} />

@@ -25,9 +25,10 @@
  * jumps when it is toggled is a row they then have to find again.
  */
 
+import type { ReactNode } from "react"
 import { toast } from "sonner"
-
 import type { Host, ModelDto, ModelRank } from "@/api"
+import { HostLabel } from "@/components/host-label"
 import { ScrollableTable } from "@/components/scroll-edge"
 import { Button } from "@/components/ui/button"
 import {
@@ -99,8 +100,13 @@ const RANK_ITEMS = [
 const PINNED = "sticky right-0 z-20 bg-inherit pe-3"
 
 /** " on box" where the toast must name its host, else nothing. */
-function onHost(host: Host, showHost: boolean): string {
-  return showHost ? ` on ${host}` : ""
+function onHost(host: Host, showHost: boolean): ReactNode {
+  return showHost ? (
+    <>
+      {" "}
+      on <HostLabel host={host} />
+    </>
+  ) : null
 }
 
 /** One agent's catalog on one host: a switch or a rank is written to that host. */
@@ -160,7 +166,7 @@ export function ModelTable({
           <TableRow className="bg-background hover:bg-transparent">
             <TableCell colSpan={4} className="py-6 text-center text-sm">
               <span className="text-destructive">
-                Could not load the models on {host}: {describeError(error)}
+                Could not load the models on <HostLabel host={host} />: {describeError(error)}
               </span>
               {onRetry ? (
                 <Button variant="outline" size="sm" className="ms-3" onClick={onRetry}>
@@ -191,7 +197,10 @@ function ModelRow({ host, model, showHost }: { host: Host; model: ModelDto; show
       {
         onSuccess: () =>
           toast.success(
-            `${enabled ? "Model turned on" : "Model turned off"}${onHost(host, showHost)}`,
+            <>
+              {enabled ? "Model turned on" : "Model turned off"}
+              {onHost(host, showHost)}
+            </>,
             {
               description: model.id,
             },
@@ -200,7 +209,7 @@ function ModelRow({ host, model, showHost }: { host: Host; model: ModelDto; show
         // Said here rather than swallowed: the switch springs back, and
         // without a word that reads as a click that did not register.
         onError: (error: Error) =>
-          toast.error(`Could not change the model${onHost(host, showHost)}`, {
+          toast.error(<>Could not change the model{onHost(host, showHost)}</>, {
             description: error.message,
           }),
       },
@@ -278,7 +287,7 @@ function RankPicker({ host, model, showHost }: { host: Host; model: ModelDto; sh
         // back to the daemon's own answer, and without a word that reads as
         // a pick that did not register.
         onError: (error: Error) =>
-          toast.error(`Could not change the rank${onHost(host, showHost)}`, {
+          toast.error(<>Could not change the rank{onHost(host, showHost)}</>, {
             description: error.message,
           }),
       },

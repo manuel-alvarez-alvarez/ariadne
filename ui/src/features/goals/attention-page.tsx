@@ -3,6 +3,15 @@
 import { useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useHostLists } from "@/api"
+import { HostDot } from "@/components/host-dot"
+import { HostLabel } from "@/components/host-label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { SessionConsole } from "@/features/sessions/console/session-console"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { taskListQueryOptions } from "@/features/tasks"
@@ -10,6 +19,11 @@ import { useReachableHosts } from "@/hooks/use-host-filter"
 import { attentionDetail, attentionSubject, useAttention } from "./attention"
 import { HostErrors, Row, reasonsOf, rowKey } from "./attention-strip"
 import { goalsQueryOptions } from "./queries"
+
+/** The select value of "All"; no `choice` value equals it. */
+const ALL = "all"
+/** Every other option's select value: the id behind a prefix, so no id is "All". */
+const choice = (id: string) => `id:${id}`
 
 export function AttentionPage() {
   const [queueVisible, setQueueVisible] = useState(false)
@@ -74,26 +88,47 @@ export function AttentionPage() {
     items.flatMap((item) => reasonsOf(item).map((r) => [r.key, r.label] as const)),
   )
   const hosts = new Map(items.map((item) => [item.host, item.host]))
-  function filter(label: string, key: string, value: string, options: Map<string, string>) {
+  function filter(
+    label: string,
+    key: string,
+    value: string,
+    options: Map<string, string>,
+    isHost = false,
+  ) {
     const choices = new Map(options)
     if (value && !choices.has(value)) choices.set(value, value)
+    const body = (id: string | null, text: string) => (
+      <span className="flex items-center gap-2">
+        {isHost && id !== null ? <HostDot host={id} /> : null}
+        {text}
+      </span>
+    )
+    const items = [
+      { value: ALL, label: body(null, `All ${label.toLowerCase()}s`) },
+      ...[...choices].map(([id, text]) => ({ value: choice(id), label: body(id, text) })),
+    ]
     return (
-      <label className="flex gap-2 items-center">
+      <div className="flex gap-2 items-center">
         {label}
-        <select
-          aria-label={label}
-          className="rounded border bg-background p-2"
-          value={value}
-          onChange={(e) => change(key, e.target.value)}
+        <Select
+          value={value ? choice(value) : ALL}
+          items={items}
+          onValueChange={(next) =>
+            change(key, next === null || next === ALL ? "" : next.slice(choice("").length))
+          }
         >
-          <option value="">All {label.toLowerCase()}s</option>
-          {[...choices].map(([id, text]) => (
-            <option key={id} value={id}>
-              {text}
-            </option>
-          ))}
-        </select>
-      </label>
+          <SelectTrigger aria-label={label} className="min-w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {items.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
     )
   }
   return (
@@ -101,7 +136,7 @@ export function AttentionPage() {
       <div className="flex flex-wrap gap-3">
         {filter("Goal", "attentionGoal", goal, goals)}
         {filter("Reason", "attentionReason", reason, reasons)}
-        {filter("Host", "attentionHost", host, hosts)}
+        {filter("Host", "attentionHost", host, hosts, true)}
       </div>
       <HostErrors attention={attention} partial={attention.partial} />
       <p role="status" aria-live="polite">
@@ -131,7 +166,7 @@ export function AttentionPage() {
                   <span className="block font-medium">{attentionSubject(item)}</span>
                   <span className="block text-sm">{attentionDetail(item)}</span>
                   <span className="block text-xs">
-                    {item.goal?.title} · {item.host} · {item.at}
+                    {item.goal?.title} · <HostLabel host={item.host} /> · {item.at}
                   </span>
                 </button>
               </li>

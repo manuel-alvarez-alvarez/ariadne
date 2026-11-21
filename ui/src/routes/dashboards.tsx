@@ -41,6 +41,7 @@ import { useHosts } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { HostDot } from "@/components/host-dot"
 import { hostStatus } from "@/components/host-picker"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -173,7 +174,15 @@ export function DashboardsPage() {
             {named ? (
               <Select
                 value={queried}
-                items={hostItems}
+                items={hostItems.map((item) => ({
+                  value: item.value,
+                  label: (
+                    <span className="flex items-center gap-2">
+                      {item.value === ALL_HOSTS ? null : <HostDot host={item.value} />}
+                      {item.label}
+                    </span>
+                  ),
+                }))}
                 onValueChange={(value) => value && setHostChoice(value)}
               >
                 <SelectTrigger aria-label="Host" className="w-36">
@@ -182,7 +191,10 @@ export function DashboardsPage() {
                 <SelectContent>
                   {hostItems.map((item) => (
                     <SelectItem key={item.value} value={item.value} disabled={item.reason !== null}>
-                      {item.reason ? `${item.label} (${item.reason})` : item.label}
+                      <span className="flex items-center gap-2">
+                        {item.value === ALL_HOSTS ? null : <HostDot host={item.value} />}
+                        {item.reason ? `${item.label} (${item.reason})` : item.label}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>

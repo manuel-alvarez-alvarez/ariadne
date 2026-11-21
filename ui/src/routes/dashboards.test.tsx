@@ -247,6 +247,24 @@ describe("DashboardsPage", () => {
     expect(hostOf(await screen.findByTitle("Default dashboard"))).toBe("box")
   })
 
+  it("draws each host of the host select with its colour dot", async () => {
+    const user = userEvent.setup()
+    hostRows = [LOCAL, { ...BOX, color: "teal" }]
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
+    await user.click(await screen.findByRole("combobox", { name: "Host" }))
+    const hues = (await screen.findAllByRole("option")).map((option) =>
+      option.querySelector("[data-host-color]")?.getAttribute("data-host-color"),
+    )
+    expect(hues).toEqual([undefined, "grey", "teal"])
+    await user.click(screen.getByRole("option", { name: "box" }))
+    expect(
+      screen
+        .getByRole("combobox", { name: "Host" })
+        .querySelector("[data-host-color]")
+        ?.getAttribute("data-host-color"),
+    ).toBe("teal")
+  })
+
   it("opens on the host the header picker names", async () => {
     hostRows = [LOCAL, BOX]
     useSettingsStore.setState({ hostFilter: "box" })

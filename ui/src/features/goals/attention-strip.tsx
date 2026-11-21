@@ -275,8 +275,8 @@ export function HostErrors({
 }) {
   return attention.errors.map(({ host, error }) => (
     <p key={host} className={className}>
-      {partial ? "Some items could not load" : "Could not load attention"} on {host} —{" "}
-      {describeError(error)}. <Retry onClick={attention.refetch} />
+      {partial ? "Some items could not load" : "Could not load attention"} on{" "}
+      <HostLabel host={host} /> — {describeError(error)}. <Retry onClick={attention.refetch} />
     </p>
   ))
 }

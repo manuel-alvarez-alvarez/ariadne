@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
-import { fireEvent, screen } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { dispatchDomainEvent } from "@/events/dispatch"
 import { renderScreen } from "@/test/harness"
+import { BOX, LOCAL, stubHosts } from "@/test/hosts"
 
 vi.mock("@/api", async (original) => ({
   ...(await original<typeof import("@/api")>()),
@@ -20,16 +23,69 @@ vi.mock("./attention", async (original) => ({
   ...(await original<typeof import("./attention")>()),
   useAttention: () => ({ items, errors: [], error: null, partial: false, isPending: false }),
 }))
-it("keeps URL filters visible when their last item disappears", () => {
+it("keeps URL filters visible when their last item disappears", async () => {
+  const user = userEvent.setup()
   renderScreen(<AttentionPage />, {
     route: "/attention?attentionGoal=gone&attentionReason=task:failed&attentionHost=remote",
   })
-  expect((screen.getByLabelText("Goal") as HTMLSelectElement).value).toBe("gone")
-  expect((screen.getByLabelText("Reason") as HTMLSelectElement).value).toBe("task:failed")
-  expect((screen.getByLabelText("Host") as HTMLSelectElement).value).toBe("remote")
+  expect(screen.getByRole("combobox", { name: "Goal" }).textContent).toContain("gone")
+  expect(screen.getByRole("combobox", { name: "Reason" }).textContent).toContain("task:failed")
+  expect(screen.getByRole("combobox", { name: "Host" }).textContent).toContain("remote")
   expect(screen.getByText("No attention items match these filters.")).toBeTruthy()
-  fireEvent.change(screen.getByLabelText("Host"), { target: { value: "" } })
-  expect((screen.getByLabelText("Host") as HTMLSelectElement).value).toBe("")
+  await user.click(screen.getByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "All hosts" }))
+  expect(screen.getByRole("combobox", { name: "Host" }).textContent).toContain("All hosts")
+})
+
+it("keeps a host named __all__ apart from All in the host filter, in colour", async () => {
+  const user = userEvent.setup()
+  const odd = { ...BOX, name: "__all__", color: "violet" as const }
+  stubHosts({}, [LOCAL, odd])
+  items = [{ ...item("a"), host: "__all__" }]
+  const { queryClient, location } = renderScreen(<AttentionPage />, { route: "/attention" })
+  const select = screen.getByRole("combobox", { name: "Host" })
+  await user.click(select)
+  await user.click(await screen.findByRole("option", { name: "__all__" }))
+  expect(location.url).toContain("attentionHost=__all__")
+  const hue = () => select.querySelector("[data-host-color]")?.getAttribute("data-host-color")
+  await waitFor(() => expect(hue()).toBe("violet"))
+  act(() => {
+    dispatchDomainEvent(queryClient, "local", {
+      event: "host_updated",
+      data: { ...odd, color: "pink" },
+    })
+  })
+  await waitFor(() => expect(hue()).toBe("pink"))
+  await user.click(select)
+  await user.click(await screen.findByRole("option", { name: "All hosts" }))
+  expect(location.url).not.toContain("attentionHost")
+  items = []
+})
+
+it("draws the hosts of the host filter with their colour, and repaints it live", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, { ...BOX, color: "teal" }])
+  items = [{ ...item("a"), host: "box" }]
+  const { queryClient } = renderScreen(<AttentionPage />, {
+    route: "/attention?attentionHost=box",
+  })
+  const select = screen.getByRole("combobox", { name: "Host" })
+  const hue = () => select.querySelector("[data-host-color]")?.getAttribute("data-host-color")
+  await waitFor(() => expect(hue()).toBe("teal"))
+  await user.click(select)
+  const options = await screen.findAllByRole("option")
+  expect(
+    options.map((o) => o.querySelector("[data-host-color]")?.getAttribute("data-host-color")),
+  ).toEqual([undefined, "teal"])
+  await user.keyboard("{Escape}")
+  act(() => {
+    dispatchDomainEvent(queryClient, "local", {
+      event: "host_updated",
+      data: { ...BOX, color: "pink" },
+    })
+  })
+  await waitFor(() => expect(hue()).toBe("pink"))
+  items = []
 })
 
 function item(id: string): AttentionItem {

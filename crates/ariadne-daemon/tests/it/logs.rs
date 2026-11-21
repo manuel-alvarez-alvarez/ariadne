@@ -31,7 +31,7 @@ fn capture(h: &Harness) -> tracing::subscriber::DefaultGuard {
 /// guard: a flush that gives up warns, and that warning must not be stored
 /// as one of the test's own lines.
 async fn flush_until_stored(h: &Harness, count: usize) {
-    h.telemetry.flush();
+    h.flush_telemetry().await;
     eventually(
         h.timeouts.telemetry_pipeline_patience,
         "the captured lines to be stored",
@@ -212,7 +212,7 @@ flaky_test! {
             tracing::info!("skip this delta");
             tracing::warn!("keep this delta");
         }
-        h.telemetry.flush();
+        h.flush_telemetry().await;
         let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
         assert_eq!(name, "delta");
         let line: LogLineDto = serde_json::from_value(payload).unwrap();
@@ -248,7 +248,7 @@ flaky_test! {
             let _guard = capture(&h);
             tracing::info!(answer = 42, "a line while the stream is open");
         }
-        h.telemetry.flush();
+        h.flush_telemetry().await;
         let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
         assert_eq!(name, "delta");
         let line: LogLineDto = serde_json::from_value(payload).unwrap();
@@ -260,7 +260,7 @@ flaky_test! {
             let _guard = capture(&h);
             tracing::error!("another one");
         }
-        h.telemetry.flush();
+        h.flush_telemetry().await;
         let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
         assert_eq!(name, "delta");
         let line: LogLineDto = serde_json::from_value(payload).unwrap();
@@ -307,7 +307,7 @@ flaky_test! {
         // The count is recorded once the log export lands, and reaches the store
         // with the next metric export: flush again until it has.
         let log_series = common::eventually_some(TIMEOUT, "the log-signal series", || async {
-            h.telemetry.flush();
+            h.flush_telemetry().await;
             let series = h
                 .telemetry_store
                 .list_series(&[ariadne_store::telemetry::LabelMatcher::new(

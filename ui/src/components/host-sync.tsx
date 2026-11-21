@@ -8,6 +8,7 @@
  */
 
 import { type HostView, LOCAL_HOST, useHosts } from "@/api"
+import { HostLabel } from "@/components/host-label"
 import { cn } from "@/lib/format"
 
 const STATE_LABEL: Record<HostView["sync"]["state"], string> = {
@@ -52,7 +53,7 @@ export function HostSync({ skippedPermissions = false }: { skippedPermissions?: 
               aria-hidden
               className={cn("size-1.5 rounded-full", STATE_TONE[host.sync.state])}
             />
-            <span className="font-mono">{host.name}</span>
+            <HostLabel host={host.name} />
             <span>{syncLabel(host)}</span>
             {skippedPermissions && host.sync.skipped_permissions > 0 ? (
               <span>

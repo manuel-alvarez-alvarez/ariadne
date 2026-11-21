@@ -9,7 +9,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-
 import type { AttentionItemDto } from "@/api"
 import { DetailPanels } from "@/components/detail-panels"
 import { EventStreamProvider } from "@/events/provider"
@@ -18,6 +17,7 @@ import { FakeEventSource, stubEventSource } from "@/test/event-source"
 import { aGoal, aModel, anEffort, aRepository, aSessionPage } from "@/test/fixtures"
 import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
+import { byContent, contentOf } from "@/test/text-content"
 import { AttentionPopover } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import { GoalsListPage } from "./goals-list-page"
@@ -378,7 +378,7 @@ it("names the host in the toast of a goal created on a named host, and offers al
   await waitFor(() => expect(toasted).toHaveBeenCalled())
   const [title, options] = toasted.mock.calls[0] ?? []
   expect(title).toBe("Goal created")
-  expect(options?.description).toBe("Fresh goal on box")
+  expect(contentOf(options?.description)).toBe("Fresh goal on box")
   expect(options?.action.label).toBe("Show all hosts")
   act(() => options?.action.onClick())
   expect(useSettingsStore.getState().hostFilter).toBe("")
@@ -517,7 +517,7 @@ it("says the tasks of a host are not loaded in its lanes, and names the host, lo
   })
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
-  const warning = await screen.findByText("Could not load tasks on local")
+  const warning = await screen.findByText(byContent("Could not load tasks on local"))
   const alert = warning.closest("[role=alert]") as HTMLElement
   expect(within(alert).getByText(/tasks broke on local/)).toBeTruthy()
   expect(within(alert).queryByText(/may be outdated/)).toBeNull()
@@ -544,7 +544,7 @@ it("says the last read may be outdated only while one is on screen", async () =>
   broken = true
   await act(() => queryClient.invalidateQueries({ queryKey: ["local", "tasks"] }))
 
-  expect(await screen.findByText("Could not refresh tasks on local")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not refresh tasks on local"))).toBeTruthy()
   expect(screen.getByText(/may be outdated/)).toBeTruthy()
 })
 
@@ -554,7 +554,7 @@ it("keeps the lanes and says tasks are not loaded when every host's task read fa
   ])
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
-  expect(await screen.findByText("Could not load tasks on local")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load tasks on local"))).toBeTruthy()
   const lane = screen.getByRole("group", { name: `${MINE.title}: Tasks` })
   expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
   expect(within(lane).queryByText(/No tasks/)).toBeNull()
@@ -579,7 +579,7 @@ it("names the host in the title of a goal that failed to load there", async () =
     { route: `/goals?goal=${THEIRS.id}&host=box` },
   )
 
-  expect(await screen.findByText("Could not load goal on box")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load goal on box"))).toBeTruthy()
 })
 
 it("names the host in the toast of a goal action on a named host", async () => {
@@ -604,5 +604,5 @@ it("names the host in the toast of a goal action on a named host", async () => {
   await user.click(within(dialog).getByRole("button", { name: "Cancel goal" }))
 
   await waitFor(() => expect(toasted).toHaveBeenCalled())
-  expect(toasted.mock.calls[0]?.[0]).toBe("Goal cancelled on box")
+  expect(contentOf(toasted.mock.calls[0]?.[0])).toBe("Goal cancelled on box")
 })

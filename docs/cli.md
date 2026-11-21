@@ -932,6 +932,8 @@ A complete status requires the daemon to answer and the connection to be registe
 Use `--format json` for operation state and per-step results.
 
 The Desktop Hosts screen provides the same controls in its **Set up worker** dialog.
+The Hosts screen also has **Add host**, and **Edit** and **Remove** on each row, for the same changes as `host add`, `host edit` and `host rm`.
+Remove does not stop the daemon on the host.
 Select local binaries or a verified release, then select **Start or retry setup**.
 Enter an existing worker name and select **Load setup progress** to inspect a previous operation.
 Use the original request values when you retry.

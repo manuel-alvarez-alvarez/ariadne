@@ -41,7 +41,6 @@ import { Controller, useForm } from "react-hook-form"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { z } from "zod"
-
 import {
   ApiError,
   type CreateGoalRequest,
@@ -61,6 +60,8 @@ import {
   useResetOnOpen,
 } from "@/components/form-dialog"
 import { FormSelect } from "@/components/form-select"
+import { HostDot } from "@/components/host-dot"
+import { HostLabel } from "@/components/host-label"
 import { MarkdownField } from "@/components/markdown-field"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -214,7 +215,14 @@ export function CreateGoalDialog({
     try {
       const goal = await createGoal.mutateAsync({ host: values.host || LOCAL_HOST, body })
       toast.success("Goal created", {
-        description: goal.host === LOCAL_HOST ? goal.title : `${goal.title} on ${goal.host}`,
+        description:
+          goal.host === LOCAL_HOST ? (
+            goal.title
+          ) : (
+            <>
+              {goal.title} on <HostLabel host={goal.host} />
+            </>
+          ),
         // The board lists the picked hosts only: say how to see the new goal.
         ...(pickedHosts.includes(goal.host)
           ? {}
@@ -254,6 +262,12 @@ export function CreateGoalDialog({
                 name="host"
                 id="goal-host"
                 empty={LOCAL_HOST}
+                renderOption={(option) => (
+                  <span className="flex items-center gap-2">
+                    <HostDot host={option.value} />
+                    {option.label}
+                  </span>
+                )}
                 options={hosts.map((one) => ({
                   value: one.name,
                   label: one.unreachable === null ? one.name : `${one.name} — ${one.unreachable}`,
@@ -274,7 +288,8 @@ export function CreateGoalDialog({
               {sync && sync.state !== "in_sync" ? (
                 <Alert>
                   <AlertTitle>
-                    {host} has not taken your catalogs and settings: sync {sync.state}
+                    <HostLabel host={host} /> has not taken your catalogs and settings: sync{" "}
+                    {sync.state}
                   </AlertTitle>
                   <AlertDescription>
                     {sync.error ? `${sync.error} ` : ""}You can still create the goal.

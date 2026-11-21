@@ -11,6 +11,7 @@
 import { useQueries } from "@tanstack/react-query"
 
 import { type Host, type HostRow, type PullRequestDto, useHosts } from "@/api"
+import { HostDot } from "@/components/host-dot"
 import { Field, FieldLabel } from "@/components/ui/field"
 import {
   Select,
@@ -126,14 +127,29 @@ export function ReviewHostSelect({
   return (
     <Field>
       <FieldLabel htmlFor={id}>Host</FieldLabel>
-      <Select value={value} onValueChange={(next) => next && onChange(next)}>
+      <Select
+        value={value}
+        items={targets.map((target) => ({
+          value: target.host,
+          label: (
+            <span className="flex items-center gap-2">
+              <HostDot host={target.host} />
+              {target.host}
+            </span>
+          ),
+        }))}
+        onValueChange={(next) => next && onChange(next)}
+      >
         <SelectTrigger id={id} aria-label="Host" className="w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
           {targets.map((target) => (
             <SelectItem key={target.host} value={target.host}>
-              {target.host}
+              <span className="flex items-center gap-2">
+                <HostDot host={target.host} />
+                {target.host}
+              </span>
             </SelectItem>
           ))}
         </SelectContent>
