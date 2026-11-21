@@ -167,6 +167,40 @@ impl std::io::Write for WarningCapture {
 }
 
 #[tokio::test]
+async fn a_server_that_exits_during_the_pane_listing_returns_no_panes_and_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("tmux");
+    let state = dir.path().join("state");
+    // The first session lists its pane, the second finds the server gone.
+    std::fs::write(
+        &binary,
+        format!(
+            "#!/bin/sh\ncase \"$3\" in\nlist-sessions)\n  if [ -e {0} ]; then echo 'no server running' >&2; exit 1; fi\n  echo ariadne-a; echo ariadne-b ;;\nlist-panes)\n  if [ \"$5\" = '=ariadne-a:' ]; then echo '%0 ariadne-a first'; else touch {0}; echo 'server exited unexpectedly' >&2; exit 1; fi ;;\nesac\n",
+            state.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let place = Place::find(Some("tmux"), Some(dir.path().as_os_str())).unwrap();
+    let warnings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = warnings.clone();
+    let guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || WarningCapture(captured.clone()))
+            .finish(),
+    );
+    assert!(place.live_panes(dir.path()).await.unwrap().is_empty());
+    drop(guard);
+    let output = String::from_utf8(warnings.lock().unwrap().clone()).unwrap();
+    assert_eq!(output.matches("WARN").count(), 1, "{output}");
+    assert!(
+        output.contains("while its relay panes were listed"),
+        "{output}"
+    );
+}
+
+#[tokio::test]
 async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
     let dir = tempfile::tempdir().unwrap();
     let binary = dir.path().join("tmux");

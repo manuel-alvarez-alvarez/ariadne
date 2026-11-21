@@ -176,12 +176,13 @@ impl Place {
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
                 // The session ended, or the server with it, since the listing.
-                let gone = match self.relay_sessions(home).await? {
-                    Some(names) => !names.contains(&name),
-                    None => true,
-                };
-                if gone {
-                    continue;
+                match self.relay_sessions(home).await? {
+                    Some(names) if names.contains(&name) => {}
+                    Some(_) => continue,
+                    None => {
+                        tracing::warn!("the tmux server exited while its relay panes were listed");
+                        return Ok(Vec::new());
+                    }
                 }
                 bail!("listing tmux relay panes: {}", error.trim());
             }
