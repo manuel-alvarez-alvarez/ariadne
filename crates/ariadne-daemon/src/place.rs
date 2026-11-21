@@ -221,6 +221,9 @@ impl Place {
             }
             let error = String::from_utf8_lossy(&output.stderr);
             if error.contains("no server running") || error.contains("No such file") {
+                if attempts > 0 {
+                    tracing::warn!("the tmux server exited while its relay sessions were listed");
+                }
                 return Ok(None);
             }
             attempts += 1;

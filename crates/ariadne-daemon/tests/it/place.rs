@@ -155,6 +155,17 @@ async fn a_pane_listing_directly_after_the_start_finds_the_pane() {
     }
 }
 
+struct WarningCapture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for WarningCapture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
     let dir = tempfile::tempdir().unwrap();
@@ -185,7 +196,19 @@ async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
         ),
     )
     .unwrap();
+    let warnings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = warnings.clone();
+    let guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || WarningCapture(captured.clone()))
+            .finish(),
+    );
     assert!(place.live_panes(dir.path()).await.unwrap().is_empty());
+    drop(guard);
+    let output = String::from_utf8(warnings.lock().unwrap().clone()).unwrap();
+    assert_eq!(output.matches("WARN").count(), 1, "{output}");
+    assert!(output.contains("the tmux server exited while"), "{output}");
     std::fs::remove_file(&binary).unwrap();
     std::fs::write(&binary, [0u8; 8]).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
