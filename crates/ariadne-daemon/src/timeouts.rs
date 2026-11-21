@@ -11,9 +11,11 @@ use std::time::Duration;
 pub struct Timeouts {
     /// Fallback interval for repositories without a working webhook.
     pub forge_poll: Duration,
-    /// How long one tunnel connection attempt may take, and how long an up
-    /// tunnel may hold no open connection before it counts as down (027).
+    /// How long one tunnel connection attempt may take (027).
     pub tunnel_connect: Duration,
+    /// How long an up tunnel may hear nothing from the server, not even its
+    /// ping, before it counts as down (027). smee.io pings every 30 seconds.
+    pub tunnel_idle: Duration,
     /// The first wait before the tunnel reconnects. Each failed attempt
     /// doubles it, up to 60 seconds.
     pub tunnel_retry: Duration,
@@ -174,6 +176,7 @@ impl Default for Timeouts {
             full_reconcile: Duration::from_secs(5),
             forge_poll: Duration::from_secs(300),
             tunnel_connect: Duration::from_secs(15),
+            tunnel_idle: Duration::from_secs(90),
             tunnel_retry: Duration::from_secs(1),
             ssh_retry: Duration::from_secs(1),
             ssh_probe: Duration::from_secs(5),

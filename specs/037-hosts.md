@@ -256,7 +256,8 @@ picker, the Hosts section of its settings and one stream per host — is spec
     A local source contains `kind: local`, `cli`, and `daemon`.
     Both paths refer to files on the source daemon machine that runs the settings daemon.
     A release source contains `kind: release`, `repository`, and an explicit `tag`.
-    Tools, credentials, and repository installation remain outside this setup operation.
+    Optional `tools` selects shipped registry agent IDs and GitHub tooling.
+    Optional `credentials` contains source references only. Repository installation remains outside this operation.
 47. Setup probes the remote OS, architecture, and home before transfer.
     macOS and Linux support ARM64 and x86_64.
     Both local binaries must have matching executable headers before either transfers.
@@ -276,7 +277,8 @@ picker, the Hosts section of its settings and one stream per host — is spec
     Missing git, tar, user services, or Linux lingering produce prerequisite guidance without administrator commands.
     An existing custom socket must be supplied through `remote`.
 49. Progress states are `pending`, `running`, `incomplete`, `failed`, and `complete`.
-    Steps are probe, validate, transfer, install, service, health, and register.
+    Base steps are probe, validate, transfer, install, service, health, and register.
+    Selected tools, credential transfers, and authentication checks have individual results.
     Failure retains completed steps and records the failing step's error.
     No successful step means `failed`; otherwise failure means `incomplete`.
     Completion requires a successful daemon status check and local connection registration.
@@ -295,9 +297,29 @@ picker, the Hosts section of its settings and one stream per host — is spec
     It shows completed steps and failures, polls active setup, and permits retry with the same request.
     Entering a worker name and loading progress restores its durable operation view.
 
+53. Tool selections install Git and optional `gh`, plus npm or uv distributions from the shipped ACP registry.
+    User-configured commands override registry IDs and receive manual installation guidance.
+    Unsupported IDs and distributions receive manual installation guidance without generated commands.
+    npm uses the worker user's `.local` prefix. uv manages user tools and Python.
+    Setup verifies npm packages with `npm list --global` in that prefix after installation and during retries.
+    Missing Git, gh, Node/npm, or uv use existing user-owned Homebrew without administrator commands.
+    Without that installation path, progress reports administrator prerequisites and remains incomplete.
+54. Credential references accept `codex`, `github`, `claude`, `opencode`, and `ssh`.
+    Unknown references are refused before persistence. Values are never request fields.
+    Only selected `codex` and `github` transfers are supported.
+    Codex uses the source native home's `.codex/auth.json`, transferred atomically with mode 0600.
+    GitHub uses `gh auth token --hostname github.com` and remote `gh auth login --with-token` through SSH stdin.
+    Command arguments, progress, persisted descriptions, and responses contain no transferred credential values.
+    Other references report unsupported transfer and separate worker login.
+    Successful transfers survive retries without another source read or write.
+55. Selected GitHub tooling requires successful `gh auth status` and `gh auth setup-git` for github.com.
+    Codex and Claude agents install their provider CLIs and require successful provider authentication status.
+    Other agent authentication checks remain unsupported and leave setup incomplete with worker login guidance.
+    Retries check required tools and authentication again. Daemon health alone does not complete selected tool setup.
+
 ### Portable daemon configuration
 
-53. Each ready host receives portable daemon settings through `PUT /v1/config/sync`.
+56. Each ready host receives portable daemon settings through `PUT /v1/config/sync`.
     `GET` on that path returns `ConfigSyncDto`, with `state`, `error`, and `configuration`.
     The portable fields are `delete_merged_branches`, `delete_merged_worktrees`, `auto_switch`,
     `exhausted_patterns`, `log_filter`, the three `telemetry_*_days` values, `acp_registry_url`,
@@ -305,21 +327,21 @@ picker, the Hosts section of its settings and one stream per host — is spec
     Source defaults participate. Worker-only agents and flag entries remain.
     Paths, listeners, origins, webhook addresses, hardware choices, sleep prevention,
     executable locations, hosts, and other settings remain the worker's.
-54. Custom agents match by identifier. An existing worker command takes precedence over the source command.
+57. Custom agents match by identifier. An existing worker command takes precedence over the source command.
     Without a mapping, the command must use an executable on the worker PATH.
     Explicit filesystem paths in commands or arguments require a worker mapping and otherwise fail synchronization.
     These are absolute paths, `~/`, `./`, `../`, and Windows paths.
     Other slash tokens remain portable, including provider/model identifiers and scoped package names.
     Path-bearing flags fail instead of silently installing unusable source paths.
     Matching portable flag lists take the source list. Worker-only flag lists remain.
-55. The worker saves accepted settings in `portable-config.json` under its own home.
+58. The worker saves accepted settings in `portable-config.json` under its own home.
     Startup overlays these settings without rewriting `config.toml` or changing worker locations.
     Worker commands configured in `config.toml` retain precedence by identifier.
     Cleanup policies, model switching, logging, and retention update live.
     Existing retention jobs use the updated cutoffs on their next pass.
     `RUST_LOG` keeps precedence over the synchronized logging filter.
     Registry additions and index changes require an idle restart.
-56. Maintenance snapshots admitted tasks under the same lock that guards admission.
+59. Maintenance snapshots admitted tasks under the same lock that guards admission.
     Admitted tasks continue through all remaining columns, including review and CI waits.
     New tasks remain queued. New review and babysit operations receive a maintenance conflict.
     Existing operations and their coordinating sessions can continue.
@@ -328,11 +350,11 @@ picker, the Hosts section of its settings and one stream per host — is spec
     It preserves the PID, inherited environment, and service supervision for installed workers.
     Open event streams do not delay replacement.
     SSH forward guards close their process groups when replacement closes the daemon lifetime pipe.
-57. Host synchronization reports `pending_restart` while registry changes wait for maintenance.
+60. Host synchronization reports `pending_restart` while registry changes wait for maintenance.
     Successful replacement restores normal scheduling and reports `in_sync`.
     A replacement failure reports `failed` with its reason and restores admission.
     A later configuration transfer retries maintenance. CLI and desktop expose the state and error.
-58. Host checks detect source configuration and explicit agent-flag changes.
+61. Host checks detect source configuration and explicit agent-flag changes.
     Configuration failures use the existing independent retry queue from rule 25.
     They do not block catalog, repository, learned permission, or AI permission synchronization.
 
@@ -467,6 +489,12 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
   (`host_sync.rs::an_escaping_link_preserves_the_worker_and_does_not_block_other_skills`).
 - External Markdown links warn without copying dependencies
   (`host_sync.rs::external_markdown_links_warn_without_copying_external_files`).
+
+- Rules 53–55: `hosts.rs::setup_reports_custom_tools_without_executing_install_commands`,
+  `::selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy`,
+  `::credential_values_are_rejected_before_an_operation_is_persisted`,
+  `::selected_github_credentials_enable_git_without_entering_command_arguments`.
+- Desktop selections: `worker-setup.test.tsx::sends explicit tool and credential selections`.
 
 - Portable live settings preserve worker locations and survive reload
   (`portable_config.rs::portable_settings_apply_without_changing_worker_paths`).

@@ -51,9 +51,9 @@ unknown key stops the daemon rather than being ignored):
   webhook_listen           signed webhook listener (default: 127.0.0.1:0)
   webhook_public_url       public URL forwarded to the webhook listener; set, it
                            opens no tunnel
-  tunnel_host              the localtunnel server the webhook tunnel registers
-                           with (default: https://localtunnel.me)
-  tunnel_subdomain         the subdomain the tunnel asks for (default: the
+  tunnel_host              the smee.io server the webhook tunnel listens on
+                           (default: https://smee.io)
+  tunnel_channel           the channel the tunnel listens on (default: the
                            stored one, else a random one kept on first use)
   log_filter               tracing filter when RUST_LOG says nothing (default: info)
   cli_bin                  the `ariadne` every session's MCP server is launched

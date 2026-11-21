@@ -5,7 +5,7 @@ impl Store {
     /// The forge settings row. The migration seeds it, so every database has one.
     pub async fn forge_settings(&self) -> Result<ForgeSettings> {
         sqlx::query_as(
-            "SELECT tunnel_enabled, tunnel_subdomain, updated_at FROM forge_settings WHERE id = 1",
+            "SELECT tunnel_enabled, tunnel_channel, updated_at FROM forge_settings WHERE id = 1",
         )
         .fetch_optional(self.r())
         .await?
@@ -22,13 +22,13 @@ impl Store {
         self.forge_settings().await
     }
 
-    /// Keep the subdomain the first tunnel picked. A stored one stays.
-    pub async fn keep_tunnel_subdomain(&self, subdomain: &str) -> Result<ForgeSettings> {
+    /// Keep the channel the first tunnel picked. A stored one stays.
+    pub async fn keep_tunnel_channel(&self, channel: &str) -> Result<ForgeSettings> {
         sqlx::query(
-            "UPDATE forge_settings SET tunnel_subdomain = ?, updated_at = ?
-             WHERE id = 1 AND tunnel_subdomain IS NULL",
+            "UPDATE forge_settings SET tunnel_channel = ?, updated_at = ?
+             WHERE id = 1 AND tunnel_channel IS NULL",
         )
-        .bind(subdomain)
+        .bind(channel)
         .bind(now())
         .execute(self.w())
         .await?;

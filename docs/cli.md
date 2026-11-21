@@ -853,12 +853,43 @@ the daemon cannot find or cannot use.
    {"kind": "release", "repository": "owner/ariadne", "tag": "v1.0.0"}
    ```
 
+   Add optional tool and credential selections to the request:
+
+   ```json
+   "tools": {"agents": ["codex-acp", "claude-acp"], "github": true},
+   "credentials": ["codex", "github"]
+   ```
+
+   Use shipped ACP registry IDs for agents. Setup installs their npm or uv packages in user-owned locations.
+   It also installs Git, selected GitHub tooling, and required Node/npm or uv runtimes.
+   Missing prerequisites use an existing user-owned Homebrew installation.
+   Otherwise, setup reports administrator prerequisites without running administrator commands.
+   uv can install its required Python runtime.
+   Custom commands and unsupported distributions require manual installation.
+
+   Credential selections reference credentials on the source daemon machine.
+   `codex` copies its default `.codex/auth.json` through SSH with private file permissions.
+   `github` obtains the source GitHub CLI token for `github.com` and sends it through SSH input.
+   GitHub CLI stores the worker login and configures Git authentication.
+   No selection copies any other credential.
+   Keychains, SSH keys, Claude credentials, and OpenCode credentials require separate worker login.
+   Credential values never belong in the request file.
+   The daemon rejects unknown credential references before it stores an operation.
+
+   Setup checks Codex, Claude, and selected GitHub authentication before completion.
+   Other agents lack supported authentication checks and leave setup incomplete.
+   Complete their login separately; setup does not automate provider login flows.
+   Progress names each tool, credential transfer, and authentication check.
+   Retries preserve successful credential transfers and recheck programs and authentication.
+   npm checks the selected package in the worker user's global installation prefix and preserves installed packages.
+   Retry with exactly the original request, including its selections.
+
 2. Start setup with `ariadne host setup builder --request worker.json`.
 3. Read progress with `ariadne host setup-status builder`.
 4. Correct any reported prerequisite and repeat the original setup command.
 
 Setup uses existing SSH keys, agent access, and SSH configuration without password prompts.
-Install git and tar on the worker before setup.
+Install tar on the worker before setup. Binary-only requests also require Git before setup.
 Release verification requires GitHub CLI 2.102.0 or later on the source daemon machine.
 An administrator must provide missing system packages or user service support.
 Linux workers need systemd user services and lingering for operation after logout.

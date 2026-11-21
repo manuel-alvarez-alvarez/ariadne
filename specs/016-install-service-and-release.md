@@ -247,7 +247,7 @@ Out: what the daemon does once running (009, 012).
     The UI caches npm downloads against `ui/package-lock.json` and always
     runs `npm ci`. A cache hit never skips a build, test, lint or audit step.
 
-20. Portable worker configuration uses the maintenance lifecycle in spec 037, rules 53–58.
+20. Portable worker configuration uses the maintenance lifecycle in spec 037, rules 56–61.
     Installed services retain supervision across process replacement.
     Directly launched workers use the same lifecycle without requiring service installation.
 
@@ -408,3 +408,12 @@ The --no-ui option and WebKitGTK requirement still apply.
 
 Acceptance: `scripts/tests/install-linux.sh headless` and `source-headless`
 prove that the CLI installs without GUI downloads, extraction, or npm operations.
+
+
+### Worker program installation
+
+SSH worker setup follows spec 037, rules 53–55 for selected agent packages and credentials.
+It uses user-owned installations and reports administrator prerequisites without privileged commands.
+Repository cloning remains outside worker setup.
+Acceptance: `hosts.rs::setup_reports_custom_tools_without_executing_install_commands` and
+`hosts.rs::selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy`.

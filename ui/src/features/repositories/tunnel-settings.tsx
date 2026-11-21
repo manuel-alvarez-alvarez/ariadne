@@ -61,9 +61,10 @@ export function TunnelSettings({ open }: { open: boolean }) {
         />
       </div>
       <FieldDescription>
-        Opens a public URL that forwards to the daemon, so GitHub can push pull request and issue
-        changes the moment they happen. Off, each repository with its forge enabled checks for
-        changes every 5 minutes instead. Applies at once.
+        Opens a smee.io channel that forwards to the daemon, so GitHub can push pull request and
+        issue changes the moment they happen. Anyone who knows the channel URL can read what GitHub
+        sends through it. Off, each repository with its forge enabled checks for changes every 5
+        minutes instead. Applies at once.
       </FieldDescription>
       {current ? <TunnelState tunnel={current} /> : null}
       {tunnel.isError ? (

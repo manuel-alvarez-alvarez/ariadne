@@ -4676,9 +4676,12 @@ export interface components {
         };
         /** @description An SSH worker installation request. SSH uses the daemon user's keys and config. */
         SetupRequest: {
+            /** @description Source credential references only: `codex` and `github`. Never send credential values. */
+            credentials?: string[];
             remote?: string | null;
             source: components["schemas"]["BinarySource"];
             ssh: string;
+            tools?: components["schemas"]["SetupTools"] | null;
         };
         /** @enum {string} */
         SetupState: "pending" | "running" | "incomplete" | "failed" | "complete";
@@ -4686,6 +4689,11 @@ export interface components {
             complete: boolean;
             error?: string | null;
             name: string;
+        };
+        /** @description Programs required on the worker. Git is always required when this section is present. */
+        SetupTools: {
+            agents?: string[];
+            github?: boolean;
         };
         SkillDto: {
             /**
