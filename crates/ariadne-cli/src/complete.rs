@@ -839,6 +839,31 @@ fn host_candidates(hosts: &[Value]) -> Vec<CompletionCandidate> {
     names
 }
 
+/// What `host edit` takes: each host, `local` too, since its colour is editable.
+pub(crate) fn editable_hosts() -> Vec<CompletionCandidate> {
+    editable_candidates(&fetch("/v1/hosts"))
+}
+
+fn editable_candidates(hosts: &[Value]) -> Vec<CompletionCandidate> {
+    hosts
+        .iter()
+        .map(|host| candidate(s(host, "name"), s(host, "status").into()))
+        .collect()
+}
+
+/// What `host rm` takes: each named host. Never `local`.
+pub(crate) fn removable_hosts() -> Vec<CompletionCandidate> {
+    removable_candidates(&fetch("/v1/hosts"))
+}
+
+fn removable_candidates(hosts: &[Value]) -> Vec<CompletionCandidate> {
+    hosts
+        .iter()
+        .filter(|host| s(host, "name") != "local")
+        .map(|host| candidate(s(host, "name"), s(host, "status").into()))
+        .collect()
+}
+
 /// What `host reconnect` takes: each named host, and `all`. Never `local`.
 pub(crate) fn reconnect_hosts() -> Vec<CompletionCandidate> {
     reconnect_candidates(&fetch("/v1/hosts"))
@@ -1076,6 +1101,16 @@ mod tests {
             json!({"name": "build", "status": "down"}),
         ];
         assert_eq!(offered(&reconnect_candidates(&hosts)), ["all", "build"]);
+    }
+
+    #[test]
+    fn edit_offers_every_host_and_rm_all_but_local() {
+        let hosts = [
+            json!({"name": "local", "status": "ready"}),
+            json!({"name": "build", "status": "down"}),
+        ];
+        assert_eq!(offered(&editable_candidates(&hosts)), ["local", "build"]);
+        assert_eq!(offered(&removable_candidates(&hosts)), ["build"]);
     }
 
     /// Ids are ULIDs, so the daemon's oldest-first list read backwards is

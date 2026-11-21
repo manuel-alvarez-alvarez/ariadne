@@ -925,6 +925,11 @@ Use `ariadne host reconnect NAME` to reconnect one named host, or `ariadne host 
 The command waits until each host is `ready` or `down`, up to `--timeout SECONDS` (default 30).
 It then prints one row per host, with the columns of `host ls`; `--format json` prints the hosts.
 It exits 1 when a host is not `ready` at the end. `local` cannot be reconnected, and `--host` does not apply to it.
+Use `ariadne host add NAME --endpoint ENDPOINT [--remote REMOTE] [--color COLOR]` to add a host, and print its row.
+Use `ariadne host edit NAME` with `--endpoint`, `--remote`, `--no-remote`, `--color` or `--no-color` to change it. Only the flags you give change, and you must give one.
+Use `ariadne host rm NAME` to remove a host and print its name.
+`--color` takes `red`, `orange`, `amber`, `green`, `teal`, `blue`, `violet` or `pink`. On these commands, `--endpoint` and `--color` belong to the host. Put the global `--endpoint` before `host`.
+They run on the local daemon, and `--format json` prints the host.
 Use `--host NAME` to run a command on a ready host from the local daemon's registry.
 `--endpoint` still selects the local daemon that supplies this registry.
 `--host local` selects that same daemon.

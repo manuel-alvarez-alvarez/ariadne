@@ -147,6 +147,41 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
         Command::Host {
             command: HostCommand::Reconnect { name, timeout },
         } => return hosts::reconnect(&client, &name, timeout, format).await,
+        Command::Host {
+            command:
+                HostCommand::Add {
+                    name,
+                    endpoint,
+                    remote,
+                    color,
+                },
+        } => hosts::add(&client, name, endpoint, remote, color, format).await,
+        Command::Host {
+            command:
+                HostCommand::Edit {
+                    name,
+                    endpoint,
+                    remote,
+                    no_remote,
+                    color,
+                    no_color,
+                },
+        } => {
+            let remote = if no_remote {
+                Some(None)
+            } else {
+                remote.map(Some)
+            };
+            let color = if no_color {
+                Some(None)
+            } else {
+                color.map(Some)
+            };
+            hosts::edit(&client, &name, endpoint, remote, color, format).await
+        }
+        Command::Host {
+            command: HostCommand::Rm { name },
+        } => hosts::remove(&client, &name, format).await,
         Command::Version => commands::version(&client, format).await,
         Command::Completions {
             shell,

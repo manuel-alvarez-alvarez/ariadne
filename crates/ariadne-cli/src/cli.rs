@@ -687,6 +687,17 @@ pub(crate) fn command() -> clap::Command {
     let cmd = NO_FORMAT.iter().fold(cmd, |cmd, path| {
         hide(hide(cmd, path, format_arg()), path, color_arg())
     });
+    // `--color` and `--endpoint` are a host's own here, not the global
+    // settings: keep the global ones off these two commands without a flag.
+    let cmd = [["host", "add"], ["host", "edit"]]
+        .iter()
+        .fold(cmd, |cmd, path| {
+            hide(
+                hide(cmd, path, no_flag_color_arg()),
+                path,
+                clap::Arg::new("endpoint").hide(true),
+            )
+        });
     let cmd = listing_args()
         .into_iter()
         .fold(cmd, |cmd, arg| hide_unless(cmd, "", LISTINGS, arg));
@@ -758,6 +769,15 @@ fn color_arg() -> clap::Arg {
         .default_value("auto")
 }
 
+/// The global colour setting with no flag to set it, on a command whose own
+/// `--color` means something else.
+fn no_flag_color_arg() -> clap::Arg {
+    clap::Arg::new("color")
+        .hide(true)
+        .value_parser(clap::value_parser!(ColorChoice))
+        .default_value("auto")
+}
+
 fn pager_arg() -> clap::Arg {
     clap::Arg::new("no_pager")
         .long("no-pager")
@@ -811,6 +831,50 @@ pub(crate) enum HostCommand {
     SetupStatus { name: String },
     /// List host names, addresses and status
     Ls,
+    /// Add a host to the local daemon and show its row
+    Add {
+        /// The host name: letters, digits, `-` and `_`
+        #[arg(value_parser = host_name)]
+        name: String,
+        /// The address of the daemon: a socket path, an `http://` URL, or an SSH target
+        #[arg(long = "endpoint", id = "host_endpoint")]
+        endpoint: String,
+        /// The far daemon's address, for an SSH host
+        #[arg(long)]
+        remote: Option<String>,
+        /// The colour of the host
+        #[arg(long = "color", id = "host_color", value_parser = host_color())]
+        color: Option<String>,
+    },
+    /// Change a host and show its row
+    ///
+    /// Only the flags you give change. Give at least one.
+    Edit {
+        /// The host to change
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::editable_hosts))]
+        name: String,
+        /// The new address of the daemon
+        #[arg(long = "endpoint", id = "host_endpoint")]
+        endpoint: Option<String>,
+        /// The new far daemon address
+        #[arg(long, conflicts_with = "no_remote")]
+        remote: Option<String>,
+        /// Clear the far daemon address
+        #[arg(long)]
+        no_remote: bool,
+        /// The new colour of the host
+        #[arg(long = "color", id = "host_color", value_parser = host_color(), conflicts_with = "no_color")]
+        color: Option<String>,
+        /// Clear the colour of the host
+        #[arg(long)]
+        no_color: bool,
+    },
+    /// Remove a host from the local daemon
+    Rm {
+        /// The host to remove
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::removable_hosts))]
+        name: String,
+    },
     /// Reconnect one named host, or each named host, and show the result
     ///
     /// Waits until each host is `ready` or `down`, then prints its row.
@@ -823,6 +887,15 @@ pub(crate) enum HostCommand {
         #[arg(long, default_value_t = 30)]
         timeout: u64,
     },
+}
+
+/// The values of `HostColor`, as the API spells them.
+const HOST_COLORS: [&str; 8] = [
+    "red", "orange", "amber", "green", "teal", "blue", "violet", "pink",
+];
+
+fn host_color() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(HOST_COLORS)
 }
 
 /// A host name has only letters, digits, `-` and `_` (spec 037, rule 3), so

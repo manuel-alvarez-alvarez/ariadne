@@ -337,6 +337,8 @@ picker, the Hosts screen and one stream per host — is spec
 61. The UI accepts host changes and deletions only from the `local` event stream.
     Deletion removes the cached host row, closes its stream through the host provider, and drops `qk.host(name)`.
     Host configuration and colours never enter catalog sync.
+62. `ariadne host add`, `edit` and `rm` call rules 57 to 59 on the local daemon
+    and take `--color` from the eight `HostColor` values (014, rules 52 to 57).
 
 ## Acceptance criteria
 
@@ -352,6 +354,9 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 58 and 59: `host_health.rs::editing_and_deleting_a_host_stop_its_old_health_checks`,
   `ssh_forward.rs::changing_a_remote_replaces_the_forward_and_keeps_its_colour`,
   `::deleting_a_host_ends_its_forward`.
+- Rule 62: `crates/ariadne-cli/tests/hosts.rs::host_add_posts_the_host_and_prints_its_row`,
+  `::host_edit_patches_only_the_given_fields_and_null_clears`,
+  `::host_rm_deletes_the_host_and_prints_its_name`.
 - Rule 61: `ui/scripts/host-events.test.mjs::closes a deleted host stream and removes its cache only from local events`.
 - Rule 11, no answer through the forward
   (`host_health.rs::a_forward_whose_far_daemon_does_not_answer_is_down_and_starts_again`).

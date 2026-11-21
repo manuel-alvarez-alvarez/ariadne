@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-11-19
+updated: 2026-11-21
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -488,6 +488,28 @@ same binary also serves (013).
     configured hosts. `all` with only `local` says that no named host is
     configured. `--host` on it is a usage error. Completion offers the named
     hosts and `all`.
+52. `host add NAME --endpoint ENDPOINT [--remote REMOTE] [--color COLOR]`
+    posts `/v1/hosts` with `{name, endpoint, remote?, color?}` to the local
+    daemon and prints the new host's row, with the columns of `host ls`.
+53. `host edit NAME [--endpoint ENDPOINT] [--remote REMOTE | --no-remote]
+    [--color COLOR | --no-color]` patches `/v1/hosts/{name}` with only the
+    given fields. `--no-remote` and `--no-color` send `null`. It prints the
+    row. An edit with no flag is a usage error before any request.
+54. `--color` of `host add` and `host edit` takes only the eight `HostColor`
+    values, and completion offers them. It is the colour of the host, not the
+    global output setting. `--endpoint` of these two commands is the address
+    of the host, not of the daemon; the global `--endpoint` before the
+    subcommand still selects the daemon. `--remote` and `--no-remote`, and
+    `--color` and `--no-color`, exclude each other.
+55. `host rm NAME` sends `DELETE /v1/hosts/{name}` and prints the removed
+    name. Completion of `host edit` offers each host, and of `host rm` each
+    host but `local`.
+56. A daemon error of these commands prints its message and exits 1, whatever
+    its status, a 404 or 409 included; `--format json` prints the daemon's
+    error envelope. `--format json` prints the
+    `HostDto` of `add` and `edit`, and `{"name": NAME}` for `rm`.
+57. The three commands run on the local daemon of `--endpoint`.
+    `--host all` is a usage error for them.
 
 ## Known gap
 
@@ -879,6 +901,15 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`::reconnect_refuses_local_unknown_names_and_host_selection`,
   `::reconnect_all_with_only_local_says_no_named_host_is_configured`);
   completion (`complete.rs::tests::reconnect_offers_the_named_hosts_and_all_but_not_local`).
+- Rule 52 (`tests/hosts.rs::host_add_posts_the_host_and_prints_its_row`).
+- Rule 53 (`tests/hosts.rs::host_edit_patches_only_the_given_fields_and_null_clears`,
+  `::host_edit_with_no_flag_is_refused_before_any_request`).
+- Rule 54 (`tests/hosts.rs::host_flags_refuse_a_colour_outside_the_eight_and_a_clashing_pair`,
+  `cli/tests.rs::the_host_colour_flag_offers_exactly_the_eight_host_colours`).
+- Rule 55 (`tests/hosts.rs::host_rm_deletes_the_host_and_prints_its_name`,
+  `complete.rs::tests::edit_offers_every_host_and_rm_all_but_local`).
+- Rule 56 (`tests/hosts.rs::host_writes_print_the_daemon_error_and_json_prints_the_dto`).
+- Rule 57 (`tests/hosts.rs::host_writes_refuse_host_all_and_run_on_local_for_host_local`).
 - Rule 49 (`tests/hosts.rs::query_host_all_reads_the_merged_answer_and_prints_a_host_column`,
   `tests/hosts.rs::query_on_an_unknown_or_unready_host_is_a_usage_error`,
   `commands/query.rs::tests::host_all_puts_the_host_column_first`,
