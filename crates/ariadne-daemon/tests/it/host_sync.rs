@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::common::{
-    Harness, QUIET, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json,
-    put_json, roomy_hardware, sh,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post,
+    post_json, put_json, roomy_hardware, sh,
 };
 use ariadne_api::hosts::{HostDto, HostStatus, HostSyncDto, MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
@@ -60,7 +60,8 @@ async fn local_with_host_on(
         .home(home)
         .timeouts(Timeouts {
             host_sync_retry: RUNS_OUT,
-            host_unanswered: RUNS_OUT,
+            // These cases test synchronization, not a health deadline.
+            host_unanswered: TIMEOUT,
             host_check: RUNS_OUT / 10,
             ..Timeouts::default()
         })
@@ -83,6 +84,7 @@ struct Gate {
     permits: Arc<Semaphore>,
     /// Each request that waited at the gate, as `METHOD path`.
     held_requests: Arc<Mutex<Vec<String>>>,
+    held_events: tokio::sync::broadcast::Sender<String>,
     /// Each request the far daemon has answered, as `METHOD path`.
     answered: Arc<Mutex<Vec<String>>>,
 }
@@ -94,6 +96,7 @@ impl Gate {
             health_off: Arc::new(AtomicBool::new(false)),
             permits: Arc::new(Semaphore::new(0)),
             held_requests: Arc::new(Mutex::new(Vec::new())),
+            held_events: tokio::sync::broadcast::channel(16).0,
             answered: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -141,6 +144,7 @@ fn serve_gated(far: &Harness, listener: tokio::net::TcpListener, gate: &Gate) {
                 }
                 if gate.held.load(Ordering::SeqCst) {
                     gate.held_requests.lock().unwrap().push(what.clone());
+                    let _ = gate.held_events.send(what.clone());
                     gate.permits.acquire().await.unwrap().forget();
                 }
                 let response = next.run(request).await;
@@ -805,14 +809,23 @@ async fn sync_stops_blocked_and_queued_pushes_until_the_host_recovers() {
             .await;
         }
     }
+    let mut held_events = gate.held_events.subscribe();
     gate.health_off.store(true, Ordering::SeqCst);
+    let _: HostDto = local
+        .json(post("/v1/hosts/far/reconnect"), StatusCode::OK)
+        .await;
     eventually(TIMEOUT, "the host is down", || async {
         let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
         hosts[1].status == HostStatus::Down
     })
     .await;
     gate.permits.add_permits(1);
-    tokio::time::sleep(crate::common::QUIET).await;
+    assert!(
+        tokio::time::timeout(QUIET, held_events.recv())
+            .await
+            .is_err(),
+        "a queued push reached the down host"
+    );
     assert!(
         !gate
             .held_requests
