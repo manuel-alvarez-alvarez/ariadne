@@ -136,11 +136,17 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
 
     let outcome = match cli.command {
         Command::Host {
+            command: HostCommand::Update { name, request },
+        } => hosts::setup(&client, &name, Some(&request), format, true).await,
+        Command::Host {
+            command: HostCommand::UpdateStatus { name },
+        } => hosts::setup(&client, &name, None, format, true).await,
+        Command::Host {
             command: HostCommand::Setup { name, request },
-        } => hosts::setup(&client, &name, Some(&request), format).await,
+        } => hosts::setup(&client, &name, Some(&request), format, false).await,
         Command::Host {
             command: HostCommand::SetupStatus { name },
-        } => hosts::setup(&client, &name, None, format).await,
+        } => hosts::setup(&client, &name, None, format, false).await,
         Command::Host {
             command: HostCommand::Ls,
         } => hosts::list(&client, format).await,

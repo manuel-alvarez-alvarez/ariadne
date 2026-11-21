@@ -406,7 +406,41 @@ picker, the Hosts screen and one stream per host — is spec
     Configuration failures use the existing independent retry queue from rule 25.
     They do not block catalog, repository, learned permission, or AI permission synchronization.
 
+### Explicit worker updates
+
+70. POST /v1/hosts/{name}/update starts or retries an explicit update and returns 202 with SetupDto.
+    GET returns its durable progress, or 404 for an unknown update.
+    Requests use SetupRequest with the configured SSH address, socket, and selected binary source.
+    Credentials and repositories are refused. Setup records and update records remain separate.
+    Active repeats return the existing operation. Incomplete updates require the original request.
+    A new request after completion starts another update.
+71. Updates reuse binary compatibility checks, release verification, installation, service restart, and health checks from setup.
+    Before installation, the worker closes admission and waits for admitted tasks and active sessions.
+    New tasks stay queued. Existing tasks can finish every column.
+    POST /v1/maintenance with active true acquires this hold and reports ready after draining.
+    The hold survives worker restart in worker-maintenance.json.
+    Automatic configuration synchronization cannot release the hold or upgrade programs.
+72. Selected tools upgrade only during an explicit update.
+    User-owned Homebrew upgrades selected Git, GitHub CLI, and required Node or uv runtimes.
+    npm reinstalls selected registry packages and provider CLIs in the user prefix.
+    uv updates selected tools and provides Python.
+    Unsupported tools and unavailable user-owned prerequisites report per-step failures without administrator commands.
+    Successful tool steps survive retries without another upgrade.
+73. After successful service restart and health checks, the update releases maintenance and restores scheduling.
+    Failures preserve installed binaries, completed steps, and the maintenance hold.
+    Retrying the original request performs unfinished steps.
+    The worker requires curl and maintenance API support before its first explicit update.
+74. CLI commands host update NAME --request FILE and host update-status NAME use the local daemon.
+    The Desktop Hosts screen offers Update worker with source and tool selections.
+    Both interfaces show individual steps and retained failures.
+
 ## Acceptance criteria
+
+- Rules 70–73: hosts.rs::updates_wait_for_idle_and_retry_without_replacing_installed_binaries proves idle waiting, selected upgrades, checkpoints, failure, and retry.
+- Rules 71–73: portable_config.rs::explicit_updates_hold_new_tasks_until_maintenance_ends proves admission and continuing tasks.
+- Rule 71: portable_config.rs::explicit_maintenance_survives_restart_and_restores_admission proves the durable hold.
+- Rule 74: crates/ariadne-cli/tests/hosts.rs::worker_update_and_status_show_each_completed_step_and_failure proves command routing and progress.
+- Rule 74: worker-setup.test.tsx::starts an explicit update with selected tools and shows maintenance progress proves desktop selection.
 
 - Rule 63: `hosts.rs::setup_accepts_selected_repository_destinations` and
   `hosts.rs::selected_repositories_clone_only_committed_files_and_retry_registration`;

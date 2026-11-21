@@ -182,6 +182,8 @@ async fn openapi_carries_the_route_the_dto_and_the_event() {
     assert!(doc["components"]["schemas"]["HostDto"]["properties"]["color"].is_object());
     assert!(doc["paths"]["/v1/hosts/{name}/setup"]["post"].is_object());
     assert!(doc["paths"]["/v1/hosts/{name}/setup"]["get"].is_object());
+    assert!(doc["paths"]["/v1/hosts/{name}/update"]["get"].is_object());
+    assert!(doc["paths"]["/v1/hosts/{name}/update"]["post"].is_object());
     assert!(doc["paths"]["/v1/hosts"]["get"].is_object());
     assert!(doc["components"]["schemas"]["HostDto"].is_object());
     let host = doc["components"]["schemas"]["HostDto"].to_string();
@@ -1627,4 +1629,143 @@ async fn reconnecting_the_first_host_preserves_database_insertion_order() {
         ["local", "a", "b"]
     );
     assert_eq!(restored[1].endpoint.as_deref(), Some(replacement.as_str()));
+}
+
+#[tokio::test]
+async fn updates_wait_for_idle_and_retry_without_replacing_installed_binaries() {
+    use axum::http::StatusCode;
+    use common::{TIMEOUT, eventually, post_json};
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = remote.path().join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let programs = common::shared_script(
+        r#"#!/bin/sh
+case ${0##*/} in
+brew)
+    printf '%s\n' "$*" >> "$HOME/brew-runs"
+    case $1 in --prefix) printf '%s\n' "$HOME";; esac;;
+npm) printf '%s\n' "$*" >> "$HOME/npm-runs";;
+node|codex) exit 0;;
+esac
+"#,
+    );
+    for tool in ["brew", "npm", "node", "codex"] {
+        std::os::unix::fs::symlink(&programs, bin.join(tool)).unwrap();
+    }
+    let binaries = tempfile::tempdir().unwrap();
+    let cli = binaries.path().join("ariadne");
+    let daemon = binaries.path().join("ariadned");
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    let fail = remote.path().join("fail-service");
+    std::fs::write(&fail, "").unwrap();
+    let ssh = common::ssh::stub_ssh(
+        json!({"setup":{"home":remote.path(), "maintenance_fixture":true, "fail_service":fail}, "exit":0}),
+    );
+    let h = harness().ssh(&ssh).await;
+    let _: Value = h
+        .json(
+            post_json(
+                "/v1/hosts",
+                json!({"name":"builder","endpoint":"ssh://box"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let request = json!({"ssh":"ssh://box","source":{"kind":"local","cli":cli,"daemon":daemon},"tools":{"agents":["codex-acp"]}});
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/update", request.clone()),
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "maintenance observation", || async {
+        remote.path().join("maintenance-held").exists()
+    })
+    .await;
+    assert!(!remote.path().join(".local/bin/ariadne").exists());
+    assert!(!remote.path().join("npm-runs").exists());
+    std::fs::write(remote.path().join("idle"), "").unwrap();
+    eventually(TIMEOUT, "update service failure", || async {
+        h.get::<Value>("/v1/hosts/builder/update").await["state"] == "incomplete"
+    })
+    .await;
+    assert_eq!(
+        std::fs::read(remote.path().join(".local/bin/ariadne")).unwrap(),
+        header
+    );
+    assert!(remote.path().join("maintenance-held").exists());
+    assert!(!remote.path().join("maintenance-resumed").exists());
+    let mut changed = request.clone();
+    changed["source"]["cli"] = json!("/another-cli");
+    h.error(
+        post_json("/v1/hosts/builder/update", changed),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    std::fs::remove_file(fail).unwrap();
+    std::fs::write(
+        remote.path().join(".local/bin/ariadne"),
+        "installed checkpoint",
+    )
+    .unwrap();
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/update", request.clone()),
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "update completion", || async {
+        h.get::<Value>("/v1/hosts/builder/update").await["state"] == "complete"
+    })
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(remote.path().join(".local/bin/ariadne")).unwrap(),
+        "installed checkpoint"
+    );
+    assert!(remote.path().join("maintenance-resumed").exists());
+    let npm = std::fs::read_to_string(remote.path().join("npm-runs")).unwrap();
+    assert_eq!(
+        npm.lines()
+            .filter(|line| line.starts_with("install "))
+            .count(),
+        2,
+        "{npm}"
+    );
+    assert!(npm.contains("@openai/codex"));
+    let brew = std::fs::read_to_string(remote.path().join("brew-runs")).unwrap();
+    assert!(brew.contains("upgrade git"), "{brew}");
+    assert!(brew.contains("upgrade node"), "{brew}");
+    let hosts: Value = h.get("/v1/hosts").await;
+    assert!(
+        hosts
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|host| host["name"] == "builder" && host["remote"].is_null())
+    );
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/update", request),
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "subsequent explicit update", || async {
+        h.get::<Value>("/v1/hosts/builder/update").await["state"] == "complete"
+    })
+    .await;
+    assert_eq!(
+        std::fs::read(remote.path().join(".local/bin/ariadne")).unwrap(),
+        header
+    );
+    h.error(
+        common::get("/v1/hosts/builder/setup"),
+        StatusCode::NOT_FOUND,
+    )
+    .await;
 }

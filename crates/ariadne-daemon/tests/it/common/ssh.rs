@@ -137,6 +137,17 @@ if "-T" in args and script.get("setup"):
     import subprocess
     setup = script["setup"]
     command = args[-1]
+    if "maintenance_fixture" in setup and "http://localhost/v1/maintenance" in command:
+        import shlex
+        parts = shlex.split(shlex.split(command)[2])
+        body = json.loads(parts[parts.index("--data") + 1])
+        if body["active"]:
+            open(os.path.join(setup["home"], "maintenance-held"), "w").close()
+            print(json.dumps({"ready": os.path.exists(os.path.join(setup["home"], "idle"))}))
+        else:
+            open(os.path.join(setup["home"], "maintenance-resumed"), "w").close()
+            print('{"ready":true}')
+        sys.exit(0)
     if "repository_fixture" in setup:
         import shlex
         parts = shlex.split(shlex.split(command)[2])

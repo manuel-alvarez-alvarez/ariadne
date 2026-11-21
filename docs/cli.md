@@ -829,6 +829,38 @@ ariadne doctor
 registry. It distinguishes an agent command your shell cannot find from one
 the daemon cannot find or cannot use.
 
+## Update an SSH worker
+
+Use explicit updates to change worker binaries and selected agent programs.
+
+1. Create a setup request with the worker's configured SSH address and socket.
+2. Select compatible local binaries or an explicit verified release.
+3. Add tools to select agent IDs and optional GitHub CLI updates.
+4. Remove credential and repository selections.
+5. Run `ariadne host update builder --request worker-update.json`.
+6. Read progress with `ariadne host update-status builder`.
+
+The Desktop Hosts screen provides the same controls under **Update worker**.
+Binary paths refer to the settings daemon machine.
+The worker must already support maintenance and have curl installed.
+
+Maintenance prevents new task starts and lets running tasks finish.
+The operation then installs binaries, updates selected programs, restarts the service, and checks health.
+Successful maintenance restores scheduling.
+Automatic configuration synchronization never updates worker programs.
+
+Selected tool updates require user-owned Homebrew for Git, optional GitHub CLI, and required Node or uv runtimes.
+npm packages use the worker user's prefix.
+Unsupported programs require manual installation.
+No update runs administrator commands.
+
+A failure retains completed steps and keeps the worker in maintenance.
+Correct the reported cause.
+Retry with the original request to finish the remaining steps.
+A completed update permits another explicit update with new selections.
+
+See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for the update contract.
+
 ## Install an SSH worker
 
 1. Create a request file on the machine where you run the CLI:
@@ -1004,7 +1036,7 @@ On a named host, these commands write the host's own settings:
 
 Some commands run on `local` only, and refuse `--host NAME` and `--host all`:
 
-- `host ls`, `host setup`, and `host setup-status`, which use the local daemon.
+- `host ls`, `host setup`, `host setup-status`, `host update`, and `host update-status`, which use the local daemon.
 - `daemon start`, `daemon stop` and `daemon restart`. `daemon status` and `daemon logs` accept a host name.
 - `completions install`, which writes the shell configuration of this machine.
 

@@ -62,6 +62,30 @@ pub(super) async fn setup_status(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "unknown worker setup"))
 }
 
+#[utoipa::path(post, path="/v1/hosts/{name}/update", tag="hosts", params(("name"=String, Path)), request_body=ariadne_api::hosts::SetupRequest, responses((status=202,body=ariadne_api::hosts::SetupDto)))]
+pub(super) async fn update(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Json(request): Json<ariadne_api::hosts::SetupRequest>,
+) -> ApiResult<(StatusCode, Json<ariadne_api::hosts::SetupDto>)> {
+    let progress = s
+        .hosts
+        .update(name, request)
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::ACCEPTED, Json(progress)))
+}
+
+#[utoipa::path(get, path="/v1/hosts/{name}/update", tag="hosts", params(("name"=String, Path)), responses((status=200,body=ariadne_api::hosts::SetupDto), (status=404)))]
+pub(super) async fn update_status(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<ariadne_api::hosts::SetupDto>> {
+    s.hosts
+        .update_status(&name)
+        .map(Json)
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "unknown worker update"))
+}
+
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub(super) struct CreateHost {
     name: String,

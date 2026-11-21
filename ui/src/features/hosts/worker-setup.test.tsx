@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen, waitFor } from "@testing-library/react"
+import { fireEvent, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -107,4 +107,34 @@ it("sends explicit tool and credential selections", async () => {
     tools: { agents: ["codex-acp"], github: true },
     credentials: ["codex"],
   })
+})
+
+it("starts an explicit update with selected tools and shows maintenance progress", async () => {
+  const requests: Request[] = []
+  daemonFetch.mockImplementation(async (request: Request) => {
+    if (new URL(request.url).pathname === "/v1/repositories") return jsonResponse([])
+    requests.push(request)
+    return jsonResponse({
+      name: "builder",
+      state: "incomplete",
+      steps: [{ name: "maintenance", complete: true, error: null }],
+    })
+  })
+  renderScreen(<WorkerSetup update />)
+  for (const [label, value] of [
+    ["Worker name", "builder"],
+    ["SSH address", "ssh://box"],
+    ["CLI binary path on the source daemon machine", "/cli"],
+    ["Daemon binary path on the source daemon machine", "/daemon"],
+    ["Required agent IDs", "codex-acp"],
+  ] as const)
+    fireEvent.change(screen.getByLabelText(label), { target: { value } })
+  await userEvent.setup().click(screen.getByRole("button", { name: "Start or retry update" }))
+  await waitFor(() => expect(screen.getByText("maintenance: complete")).toBeTruthy())
+  const posted = requests.find((request) => request.method === "POST")
+  expect(posted?.url).toContain("/v1/hosts/builder/update")
+  expect(await posted?.clone().json()).toMatchObject({
+    tools: { agents: ["codex-acp"], github: false },
+  })
+  expect(screen.queryByText("Worker repositories")).toBeNull()
 })

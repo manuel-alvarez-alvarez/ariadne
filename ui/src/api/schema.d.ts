@@ -1591,6 +1591,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/{name}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_update_status"];
+        put?: never;
+        post: operations["hosts_update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/logs": {
         parameters: {
             query?: never;
@@ -1629,6 +1645,22 @@ export interface paths {
         get: operations["logs_stream"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/maintenance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_maintenance"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4104,6 +4136,12 @@ export interface components {
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
         };
+        MaintenanceDto: {
+            ready: boolean;
+        };
+        MaintenanceRequest: {
+            active: boolean;
+        };
         MessageDto: {
             body: string;
             created_at: string;
@@ -6287,6 +6325,58 @@ export interface operations {
             };
         };
     };
+    hosts_update_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    hosts_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupDto"];
+                };
+            };
+        };
+    };
     logs_snapshot: {
         parameters: {
             query?: {
@@ -6358,6 +6448,29 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": components["schemas"]["LogSnapshotResponse"];
+                };
+            };
+        };
+    };
+    hosts_maintenance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MaintenanceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaintenanceDto"];
                 };
             };
         };

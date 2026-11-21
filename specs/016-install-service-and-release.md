@@ -414,6 +414,13 @@ Acceptance: `scripts/tests/install-linux.sh headless` and `source-headless`
 prove that the CLI installs without GUI downloads, extraction, or npm operations.
 
 
+### Explicit worker updates
+
+Explicit program updates use spec 037, rules 70–74.
+They drain admitted work, preserve user service definitions, and retain maintenance through service restart.
+Updates share setup verification and durable installation checkpoints.
+Acceptance: hosts.rs::updates_wait_for_idle_and_retry_without_replacing_installed_binaries.
+
 ### Worker program installation
 
 SSH worker setup follows spec 037, rules 53–55 for selected agent packages and credentials.

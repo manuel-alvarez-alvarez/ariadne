@@ -587,3 +587,98 @@ async fn scoped_npx_package_arguments_remain_portable() {
     );
     assert_eq!(result["configuration"]["telemetry_logs_days"], 4);
 }
+
+#[tokio::test]
+async fn explicit_maintenance_survives_restart_and_restores_admission() {
+    use super::common::post_json;
+    let h = harness().await;
+    let result: Value = h
+        .json(
+            post_json("/v1/maintenance", json!({"active":true})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(result["ready"], true);
+    let restored = ariadne_daemon::config::Config::load(Some(h.launcher.cfg.root.clone())).unwrap();
+    assert!(restored.root.join("worker-maintenance.json").exists());
+    assert!(restored.portable.restart_ready(&h.store).await.unwrap());
+    let _: Value = h
+        .json(
+            post_json("/v1/maintenance", json!({"active":false})),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(!h.launcher.cfg.root.join("worker-maintenance.json").exists());
+}
+
+#[tokio::test]
+async fn explicit_updates_hold_new_tasks_until_maintenance_ends() {
+    use super::common::{TIMEOUT, eventually, test_pin};
+    use ariadne_core::TaskStatus;
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.cast().await;
+    h.activate(&cast.goal).await;
+    eventually(TIMEOUT, "first task admission", || async {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+    })
+    .await;
+    let _: Value = h
+        .json(
+            super::common::post_json("/v1/maintenance", json!({"active":true})),
+            StatusCode::OK,
+        )
+        .await;
+    let queued = h
+        .task_on(
+            &cast.goal,
+            &cast.repo,
+            "queued during maintenance",
+            test_pin(),
+        )
+        .await;
+    h.notify(&queued.id);
+    h.flush_scheduler().await;
+    assert_ne!(h.status(&queued.id).await, TaskStatus::InProgress);
+    assert!(h.sessions_of(&queued.id).await.is_empty());
+    assert!(
+        !h.launcher
+            .cfg
+            .portable
+            .restart_ready(&h.store)
+            .await
+            .unwrap()
+    );
+    let steps = h.store.goal_steps(&cast.goal.id).await.unwrap();
+    h.advance_to(&cast.task, &steps[1].id).await;
+    h.notify(&cast.task.id);
+    h.flush_scheduler().await;
+    assert!(
+        h.sessions_of(&cast.task.id)
+            .await
+            .iter()
+            .any(|s| s.task_agent_id.as_deref() == Some(&cast.agents[1].id)),
+        "task: {:?}; sessions: {:?}; agents: {:?}; steps: {:?}",
+        h.store.get_task(&cast.task.id).await.unwrap(),
+        h.sessions_of(&cast.task.id).await,
+        cast.agents,
+        steps
+    );
+    assert!(
+        !h.launcher
+            .cfg
+            .portable
+            .restart_ready(&h.store)
+            .await
+            .unwrap()
+    );
+    let _: Value = h
+        .json(
+            super::common::post_json("/v1/maintenance", json!({"active":false})),
+            StatusCode::OK,
+        )
+        .await;
+    h.notify(&queued.id);
+    h.flush_scheduler().await;
+    assert_eq!(h.status(&queued.id).await, TaskStatus::InProgress);
+}

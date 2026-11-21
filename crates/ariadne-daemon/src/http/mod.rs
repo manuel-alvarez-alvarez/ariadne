@@ -151,7 +151,7 @@ impl AppState {
         skills::reset_document,
         workflows::create, workflows::list, workflows::get, workflows::update,
         workflows::delete, workflows::reset, workflows::parse,
-        hosts::list, hosts::create, hosts::patch, hosts::delete, hosts::reconnect, hosts::setup, hosts::setup_status,
+        hosts::list, hosts::create, hosts::patch, hosts::delete, hosts::reconnect, hosts::setup, hosts::setup_status, hosts::update, hosts::update_status, config::maintenance,
         dashboards::create, dashboards::list, dashboards::get, dashboards::update, dashboards::delete, dashboards::reset,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
@@ -287,6 +287,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit",
             put(pull_requests::ask_babysit),
+        )
+        .route("/v1/maintenance", post(config::maintenance))
+        .route(
+            "/v1/hosts/{name}/update",
+            get(hosts::update_status).post(hosts::update),
         )
         .route("/v1/config/sync", get(config::status).put(config::apply))
         .route("/v1/health", get(health))

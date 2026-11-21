@@ -158,8 +158,57 @@ impl Hosts {
     }
 
     pub(crate) fn setup(&self, name: String, request: SetupRequest) -> Result<SetupDto, String> {
-        validate(&name, &request)?;
+        self.start_operation(name, request, false)
+    }
+
+    pub(crate) fn update_status(&self, name: &str) -> Option<SetupDto> {
+        self.setup_status(&format!("update:{name}"))
+    }
+
+    pub(crate) fn update(&self, name: String, request: SetupRequest) -> Result<SetupDto, String> {
+        let connection = self.connection(&name).ok_or("unknown worker")?;
+        if connection.endpoint != request.ssh || connection.remote != request.remote {
+            return Err("use the configured worker SSH address and socket".into());
+        }
+        if !request.credentials.is_empty() || !request.repositories.is_empty() {
+            return Err("updates accept binary and tool selections only".into());
+        }
+        self.start_operation(name, request, true)
+    }
+
+    fn start_operation(
+        &self,
+        worker: String,
+        request: SetupRequest,
+        update: bool,
+    ) -> Result<SetupDto, String> {
+        validate(&worker, &request)?;
+        let name = if update {
+            format!("update:{worker}")
+        } else {
+            worker.clone()
+        };
         let mut records = self.0.setup.lock().unwrap();
+        let other = if update {
+            worker.clone()
+        } else {
+            format!("update:{worker}")
+        };
+        if records.get(&other).is_some_and(|r| {
+            matches!(
+                r.progress.state,
+                SetupState::Pending | SetupState::Running | SetupState::Incomplete
+            )
+        }) {
+            return Err("finish the existing worker operation first".into());
+        }
+        if update
+            && records
+                .get(&name)
+                .is_some_and(|r| r.progress.state == SetupState::Complete)
+        {
+            records.remove(&name);
+        }
         let path = self.0.cfg.root.join("worker-setup.json");
         if path.exists() {
             let bytes = std::fs::read(path).map_err(|_| "cannot read stored worker setup")?;
@@ -208,11 +257,17 @@ impl Hosts {
                     request: request.clone(),
                     active_step: None,
                     progress: SetupDto {
-                        name: name.clone(),
+                        name: worker.clone(),
                         state: SetupState::Pending,
-                        steps: ["probe", "validate", "transfer", "install"]
+                        steps: ["probe", "validate"]
                             .into_iter()
                             .map(String::from)
+                            .chain(if update {
+                                vec!["maintenance".into()]
+                            } else {
+                                vec![]
+                            })
+                            .chain(["transfer", "install"].into_iter().map(String::from))
                             .chain(selection_steps(&request))
                             .chain(
                                 request.repositories.keys().flat_map(|id| {
@@ -224,6 +279,11 @@ impl Hosts {
                                     .into_iter()
                                     .map(String::from),
                             )
+                            .chain(if update {
+                                vec!["resume".into()]
+                            } else {
+                                vec![]
+                            })
                             .map(|name| SetupStep {
                                 name,
                                 complete: false,
@@ -364,6 +424,8 @@ impl Hosts {
     }
 
     async fn run_setup(&self, name: &str, request: &SetupRequest) -> Result<(), String> {
+        let worker = self.0.setup.lock().unwrap()[name].progress.name.clone();
+        let update = name.starts_with("update:");
         self.begin(name, "probe")?;
         // The first three lines identify the platform and home. The remaining bytes
         // carry the selected PATH verbatim, without an added terminator.
@@ -446,6 +508,18 @@ fi
             ));
         }
         self.checkpoint(name, "validate")?;
+        if update {
+            self.begin(name, "maintenance")?;
+            // Each bounded request renews observation, without releasing admission.
+            loop {
+                let status = self.maintenance(request, &remote, true).await?;
+                if status {
+                    break;
+                }
+                tokio::time::sleep(self.0.timeouts.worker_maintenance).await;
+            }
+            self.checkpoint(name, "maintenance")?;
+        }
         let installed = self.0.setup.lock().unwrap()[name]
             .progress
             .steps
@@ -490,23 +564,45 @@ fi
         self.setup_repositories(name, request, home, &remote, &service_path)
             .await?;
         self.begin(name, "register")?;
-        {
+        if !update {
             let _mutation = self.mutation().await;
             let color = self
                 .list()
                 .iter()
-                .find(|h| h.name == name)
+                .find(|h| h.name == worker)
                 .and_then(|h| h.color);
-            self.save_connection(name, Some(&request.ssh), Some(&remote), color)
+            self.save_connection(&worker, Some(&request.ssh), Some(&remote), color)
                 .await?;
         }
         self.checkpoint(name, "register")?;
         if !request.repositories.is_empty() {
-            super::sync::after_registration(self, name).await?;
+            super::sync::after_registration(self, &worker).await?;
+        }
+        if update {
+            self.begin(name, "resume")?;
+            self.maintenance(request, &remote, false).await?;
+            self.checkpoint(name, "resume")?;
         }
         let mut records = self.0.setup.lock().unwrap();
         records.get_mut(name).unwrap().progress.state = SetupState::Complete;
         save(&self.0.cfg.root, &records)
+    }
+
+    async fn maintenance(
+        &self,
+        request: &SetupRequest,
+        remote: &str,
+        active: bool,
+    ) -> Result<bool, String> {
+        let body = serde_json::json!({"active":active}).to_string();
+        let output = self.ssh(request, &format!(
+            "curl --fail --silent --show-error --max-time 30 --unix-socket {} -H 'Content-Type: application/json' -X POST --data {} http://localhost/v1/maintenance",
+            quote(remote), quote(&body)), None).await
+            .map_err(|_| "worker maintenance unavailable; require curl and a worker with maintenance support".to_owned())?;
+        serde_json::from_str::<serde_json::Value>(&output)
+            .ok()
+            .and_then(|v| v["ready"].as_bool())
+            .ok_or("invalid worker maintenance response".into())
     }
 
     async fn binaries(

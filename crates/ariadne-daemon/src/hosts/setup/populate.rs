@@ -30,6 +30,18 @@ pub(super) fn selection_steps(request: &SetupRequest) -> Vec<String> {
 
 // Homebrew refuses root. Require a user-owned prefix before any installation.
 const PREREQUISITE: &str = r#"
+upgrade() {
+    command -v brew >/dev/null 2>&1 || exit 12
+    [ "$(id -u)" != 0 ] || exit 12
+    prefix=$(brew --prefix)
+    [ -O "$prefix" ] && [ -w "$prefix" ] || exit 12
+    HOMEBREW_NO_AUTO_UPDATE=1 brew update >/dev/null 2>&1
+    if brew list --versions "$1" >/dev/null 2>&1; then
+        HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade "$1" >/dev/null 2>&1
+    else
+        HOMEBREW_NO_AUTO_UPDATE=1 brew install "$1" >/dev/null 2>&1
+    fi
+}
 ensure() {
     if command -v "$1" >/dev/null 2>&1 && "$1" --version >/dev/null 2>&1; then return; fi
     command -v brew >/dev/null 2>&1 || exit 12
@@ -42,7 +54,28 @@ ensure() {
 }
 "#;
 
+fn npm_package(package: &str, update: bool) -> String {
+    let package = quote(package);
+    let check =
+        format!("npm list --global --prefix \"$HOME/.local\" --depth=0 {package} >/dev/null 2>&1");
+    let install =
+        format!("npm install --global --prefix \"$HOME/.local\" -- {package} >/dev/null 2>&1");
+    if update {
+        format!("{install}\n{check}")
+    } else {
+        format!("{check} || {install}\n{check}")
+    }
+}
+
 impl Hosts {
+    fn population_done(&self, name: &str, step: &str) -> bool {
+        self.0.setup.lock().unwrap()[name]
+            .progress
+            .steps
+            .iter()
+            .any(|s| s.name == step && s.complete)
+    }
+
     async fn population_command(
         &self,
         request: &SetupRequest,
@@ -65,19 +98,31 @@ impl Hosts {
         request: &SetupRequest,
         path: &str,
     ) -> Result<(), String> {
+        let update = name.starts_with("update:");
         if let Some(tools) = &request.tools {
             for (step, binary, formula) in [("tool:git", "git", "git"), ("tool:github", "gh", "gh")]
             {
                 if binary == "gh" && !tools.github {
                     continue;
                 }
+                if update && self.population_done(name, step) {
+                    continue;
+                }
                 self.begin(name, step)?;
-                self.population_command(request, path, &format!("{PREREQUISITE}\nensure {binary} {formula}"), None).await
+                let action = if update {
+                    format!("upgrade {formula}")
+                } else {
+                    format!("ensure {binary} {formula}")
+                };
+                self.population_command(request, path, &format!("{PREREQUISITE}\n{action}"), None).await
                     .map_err(|_| format!("missing {binary}; provide user-owned Homebrew or ask an administrator to install this prerequisite"))?;
                 self.checkpoint(name, step)?;
             }
             for id in &tools.agents {
                 let step = format!("tool:{id}");
+                if update && self.population_done(name, &step) {
+                    continue;
+                }
                 self.begin(name, &step)?;
                 // Configured custom commands override registry discovery. Do not infer their installer.
                 if self.0.cfg.acp_agents.iter().any(|a| &a.id == id) {
@@ -98,25 +143,29 @@ impl Hosts {
                     );
                 };
                 let script = if let Some(package) = distribution["npx"]["package"].as_str() {
-                    // npm owns only the worker user's prefix. Verify the installed package before each retry.
+                    let runtime_command = if update {
+                        "upgrade node"
+                    } else {
+                        "ensure node node"
+                    };
                     format!(
-                        "{PREREQUISITE}\nensure node node\nensure npm node\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\npackage={package}\nnpm list --global --prefix \"$HOME/.local\" --depth=0 \"$package\" >/dev/null 2>&1 || npm install --global --prefix \"$HOME/.local\" -- \"$package\" >/dev/null 2>&1\nnpm list --global --prefix \"$HOME/.local\" --depth=0 \"$package\" >/dev/null 2>&1",
-                        package = quote(package)
+                        "{PREREQUISITE}\n{runtime_command}\nensure npm node\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\n{}",
+                        npm_package(package, update)
                     )
                 } else if let Some(package) = distribution["uvx"]["package"].as_str() {
+                    let runtime_command = if update { "upgrade uv" } else { "ensure uv uv" };
                     format!(
-                        "{PREREQUISITE}\nensure uv uv\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1\nuv tool install -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
+                        "{PREREQUISITE}\n{runtime_command}\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1\nuv tool install -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
                         package = quote(package)
                     )
                 } else {
                     return Err("unsupported distribution; manual installation and worker login are required".into());
                 };
                 let script = match id.as_str() {
-                    "codex-acp" => format!(
-                        "{script}\nnpm list --global --prefix \"$HOME/.local\" --depth=0 @openai/codex >/dev/null 2>&1 || npm install --global --prefix \"$HOME/.local\" -- @openai/codex >/dev/null 2>&1"
-                    ),
+                    "codex-acp" => format!("{script}\n{}", npm_package("@openai/codex", update)),
                     "claude-acp" => format!(
-                        "{script}\nnpm list --global --prefix \"$HOME/.local\" --depth=0 @anthropic-ai/claude-code >/dev/null 2>&1 || npm install --global --prefix \"$HOME/.local\" -- @anthropic-ai/claude-code >/dev/null 2>&1"
+                        "{script}\n{}",
+                        npm_package("@anthropic-ai/claude-code", update)
                     ),
                     _ => script,
                 };

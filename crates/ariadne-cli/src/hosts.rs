@@ -289,6 +289,14 @@ const KINDS: &[(&str, Kind)] = &[
         "host setup-status",
         Kind::Local("worker setup progress belongs to the local daemon"),
     ),
+    (
+        "host update",
+        Kind::Local("worker updates run on the local daemon"),
+    ),
+    (
+        "host update-status",
+        Kind::Local("worker update progress belongs to the local daemon"),
+    ),
     ("host add", Kind::Local(REGISTRY_WRITE)),
     ("host edit", Kind::Local(REGISTRY_WRITE)),
     ("host rm", Kind::Local(REGISTRY_WRITE)),
@@ -1148,6 +1156,7 @@ pub(crate) async fn setup(
     name: &str,
     request: Option<&std::path::Path>,
     format: Format,
+    update: bool,
 ) -> Result<()> {
     if name.is_empty()
         || !name
@@ -1156,7 +1165,8 @@ pub(crate) async fn setup(
     {
         return Err(Failure::usage("invalid worker name").err());
     }
-    let path = format!("/v1/hosts/{name}/setup");
+    let operation = if update { "update" } else { "setup" };
+    let path = format!("/v1/hosts/{name}/{operation}");
     let progress: ariadne_api::hosts::SetupDto = if let Some(file) = request {
         let request: ariadne_api::hosts::SetupRequest =
             serde_json::from_slice(&std::fs::read(file)?)?;

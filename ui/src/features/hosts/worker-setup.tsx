@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { describeError } from "@/lib/format"
 
-export function WorkerSetup() {
+export function WorkerSetup({ update = false }: { update?: boolean }) {
+  const operation = update ? "update" : "setup"
+  const route = update ? "/v1/hosts/{name}/update" : "/v1/hosts/{name}/setup"
+  const progressKey = update ? qk.hosts.update : qk.hosts.setup
   const client = useQueryClient()
   const fieldId = useId()
   const [name, setName] = useState("")
@@ -28,10 +31,9 @@ export function WorkerSetup() {
     queryFn: () => unwrap(api(LOCAL_HOST).GET("/v1/repositories")),
   })
   const status = useQuery({
-    queryKey: qk.hosts.setup(active),
+    queryKey: progressKey(active),
     enabled: !!active,
-    queryFn: () =>
-      unwrap(api(LOCAL_HOST).GET("/v1/hosts/{name}/setup", { params: { path: { name: active } } })),
+    queryFn: () => unwrap(api(LOCAL_HOST).GET(route, { params: { path: { name: active } } })),
     refetchInterval: (query) =>
       ["pending", "running"].includes(query.state.data?.state ?? "") ? 1000 : false,
   })
@@ -43,7 +45,7 @@ export function WorkerSetup() {
   const start = useMutation({
     mutationFn: () =>
       unwrap(
-        api(LOCAL_HOST).POST("/v1/hosts/{name}/setup", {
+        api(LOCAL_HOST).POST(route, {
           params: { path: { name } },
           body: {
             ...(Object.keys(destinations).length ? { repositories: destinations } : {}),
@@ -65,7 +67,7 @@ export function WorkerSetup() {
         }),
       ),
     onSuccess: (progress) => {
-      client.setQueryData(qk.hosts.setup(name), progress)
+      client.setQueryData(progressKey(name), progress)
       setActive(name)
       void client.invalidateQueries({ queryKey: qk.hosts.lists() })
     },
@@ -73,7 +75,13 @@ export function WorkerSetup() {
   const busy = start.isPending || ["pending", "running"].includes(status.data?.state ?? "")
   return (
     <fieldset className="flex flex-col gap-2" aria-label="SSH worker setup">
-      <h3>Install an SSH worker</h3>
+      <h3>{update ? "Update an SSH worker when idle" : "Install an SSH worker"}</h3>
+      {update ? (
+        <p>
+          Wait for running tasks. Update selected programs, then restore scheduling. Retry failures
+          with the same request.
+        </p>
+      ) : null}
       <p className="text-sm text-muted-foreground">
         Use SSH keys, your SSH agent, or SSH configuration. The source daemon machine runs the
         settings daemon. Local binary paths refer to files on that machine.
@@ -176,9 +184,9 @@ export function WorkerSetup() {
         />
       </label>
       <p className="text-sm text-muted-foreground">
-        Select registry IDs separated by commas. Setup installs Git and supported packages in
-        user-owned locations. Custom commands require manual installation. Missing authentication
-        requires a separate worker login.
+        Select registry IDs separated by commas. The operation installs or updates Git and supported
+        packages in user-owned locations. Custom commands require manual installation. Missing
+        authentication requires a separate worker login.
       </p>
       <label>
         <input
@@ -189,70 +197,77 @@ export function WorkerSetup() {
         />{" "}
         Install GitHub CLI
       </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={codexCredentials}
-          onChange={(e) => setCodexCredentials(e.target.checked)}
-          disabled={busy}
-        />{" "}
-        Copy Codex file credentials
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={githubCredentials}
-          onChange={(e) => setGithubCredentials(e.target.checked)}
-          disabled={busy}
-        />{" "}
-        Copy GitHub credentials
-      </label>
-      <p className="text-sm text-muted-foreground">
-        Copy only selected credentials from the source daemon machine through SSH. Keychain
-        credentials require separate worker login.
-      </p>
-      <fieldset disabled={busy}>
-        <legend>Worker repositories</legend>
-        <p>Clone selected Git remotes under ~/workspace. Change each destination as needed.</p>
-        {repositories.data?.map((repo) => (
-          <div key={repo.id}>
-            <label>
-              <input
-                type="checkbox"
-                checked={repo.id in destinations}
-                onChange={(event) => {
-                  setDestinations((previous) => {
-                    const next = { ...previous }
-                    if (event.target.checked)
-                      next[repo.id] =
-                        `~/workspace/${repo.forge?.name ?? repo.path.split("/").pop()}`
-                    else delete next[repo.id]
-                    return next
-                  })
-                }}
-              />{" "}
-              {repo.path}
-            </label>
-            {repo.id in destinations ? (
-              <Input
-                aria-label={`Destination for ${repo.path}`}
-                value={destinations[repo.id]}
-                onChange={(event) =>
-                  setDestinations((previous) => ({ ...previous, [repo.id]: event.target.value }))
-                }
-              />
-            ) : null}
-          </div>
-        ))}
-        {repositories.error ? <p role="alert">{describeError(repositories.error)}</p> : null}
-      </fieldset>
+      {update ? null : (
+        <>
+          <label>
+            <input
+              type="checkbox"
+              checked={codexCredentials}
+              onChange={(e) => setCodexCredentials(e.target.checked)}
+              disabled={busy}
+            />{" "}
+            Copy Codex file credentials
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={githubCredentials}
+              onChange={(e) => setGithubCredentials(e.target.checked)}
+              disabled={busy}
+            />{" "}
+            Copy GitHub credentials
+          </label>
+          <p className="text-sm text-muted-foreground">
+            Copy only selected credentials from the source daemon machine through SSH. Keychain
+            credentials require separate worker login.
+          </p>
+          <fieldset disabled={busy}>
+            <legend>Worker repositories</legend>
+            <p>Clone selected Git remotes under ~/workspace. Change each destination as needed.</p>
+            {repositories.data?.map((repo) => (
+              <div key={repo.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={repo.id in destinations}
+                    onChange={(event) => {
+                      setDestinations((previous) => {
+                        const next = { ...previous }
+                        if (event.target.checked)
+                          next[repo.id] =
+                            `~/workspace/${repo.forge?.name ?? repo.path.split("/").pop()}`
+                        else delete next[repo.id]
+                        return next
+                      })
+                    }}
+                  />{" "}
+                  {repo.path}
+                </label>
+                {repo.id in destinations ? (
+                  <Input
+                    aria-label={`Destination for ${repo.path}`}
+                    value={destinations[repo.id]}
+                    onChange={(event) =>
+                      setDestinations((previous) => ({
+                        ...previous,
+                        [repo.id]: event.target.value,
+                      }))
+                    }
+                  />
+                ) : null}
+              </div>
+            ))}
+            {repositories.error ? <p role="alert">{describeError(repositories.error)}</p> : null}
+          </fieldset>
+        </>
+      )}
       <div className="flex gap-2">
         <Button
           type="button"
           onClick={() => start.mutate()}
           disabled={busy || !name || !ssh || (release ? !repository || !tag : !cli || !daemon)}
         >
-          Start or retry setup
+          Start or retry {operation}
         </Button>
         <Button
           type="button"
@@ -260,10 +275,10 @@ export function WorkerSetup() {
           disabled={!name || busy}
           onClick={() => {
             setActive(name)
-            void client.invalidateQueries({ queryKey: qk.hosts.setup(name) })
+            void client.invalidateQueries({ queryKey: progressKey(name) })
           }}
         >
-          Load setup progress
+          Load {operation} progress
         </Button>
       </div>
       {start.error || status.error ? (
