@@ -33,6 +33,7 @@ import {
   qk,
   type RepositoryDto,
   rememberHosts,
+  type SessionDto,
   type TaskDto,
 } from "@/api"
 import {
@@ -294,6 +295,85 @@ describe("pull request session events", () => {
       expect(stale(queryClient, qk.pullRequests.list("local"))).toBe(false)
       expect(stale(queryClient, qk.pullRequests.detail("local", "pull-42"))).toBe(false)
     }
+  })
+})
+
+describe("session events", () => {
+  const OLDER = "2026-11-21T10:00:00Z"
+  const NEWER = "2026-11-21T11:00:00Z"
+  const NEWEST = "2026-11-21T12:00:00Z"
+
+  /** The ids a cached sessions list holds, in order. */
+  function ids(queryClient: QueryClient, filters: Record<string, unknown> = {}): string[] {
+    const rows = queryClient.getQueryData<SessionDto[]>(qk.sessions.list("local", filters))
+    return (rows ?? []).map((row) => row.id)
+  }
+
+  it("patches a moved session into every cached list and refetches none of them", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const a = aSession({ id: "a", task_id: "task", last_activity_at: NEWER })
+    const b = aSession({ id: "b", task_id: "task", last_activity_at: OLDER })
+    queryClient.setQueryData(qk.sessions.list("local", {}), [a, b])
+    queryClient.setQueryData(qk.sessions.list("local", { task: "task" }), [a, b])
+
+    dispatch(queryClient, {
+      event: "session_updated",
+      data: { ...b, status: "idle", last_activity_at: NEWEST },
+    })
+
+    for (const filters of [{}, { task: "task" }]) {
+      expect(stale(queryClient, qk.sessions.list("local", filters))).toBe(false)
+      expect(ids(queryClient, filters)).toEqual(["b", "a"])
+    }
+    const rows = queryClient.getQueryData<SessionDto[]>(qk.sessions.list("local", {}))
+    expect(rows?.[0]?.status).toBe("idle")
+  })
+
+  it("moves a session between status lists and leaves another goal's list alone", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const session = aSession({ id: "a", status: "running" })
+    const other = [aSession({ id: "z", goal_id: "another-goal" })]
+    queryClient.setQueryData(qk.sessions.list("local", { status: "running" }), [session])
+    queryClient.setQueryData(qk.sessions.list("local", { status: "exited" }), [])
+    queryClient.setQueryData(qk.sessions.list("local", { goal: "another-goal" }), other)
+
+    dispatch(queryClient, { event: "session_updated", data: { ...session, status: "exited" } })
+
+    expect(ids(queryClient, { status: "running" })).toEqual([])
+    expect(ids(queryClient, { status: "exited" })).toEqual(["a"])
+    expect(queryClient.getQueryData(qk.sessions.list("local", { goal: "another-goal" }))).toBe(
+      other,
+    )
+  })
+
+  it("adds a new session to the lists it belongs in", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const old = aSession({ id: "a", last_activity_at: OLDER })
+    queryClient.setQueryData(qk.sessions.list("local", {}), [old])
+
+    dispatch(queryClient, {
+      event: "session_created",
+      data: aSession({ id: "b", last_activity_at: NEWEST }),
+    })
+
+    expect(stale(queryClient, qk.sessions.list("local", {}))).toBe(false)
+    expect(ids(queryClient)).toEqual(["b", "a"])
+  })
+
+  it("refetches a list whose read is still under way, which a patch would lose to", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    let answer: (rows: SessionDto[]) => void = () => {}
+    const pending = new Promise<SessionDto[]>((resolve) => {
+      answer = resolve
+    })
+    const queryFn = vi.fn(() => pending)
+    const reading = queryClient.fetchQuery({ queryKey: qk.sessions.list("local", {}), queryFn })
+
+    dispatch(queryClient, { event: "session_updated", data: aSession({ status: "exited" }) })
+
+    expect(stale(queryClient, qk.sessions.list("local", {}))).toBe(true)
+    answer([aSession({ status: "running" })])
+    await reading
   })
 })
 

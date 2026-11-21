@@ -386,6 +386,12 @@ which its row in the header's host picker and the Hosts screen's table read.
 - **invalidate the lists** with `qk.<entity>.lists(host)`, because list
   responses are filtered and paginated and cannot be patched blind.
 
+The sessions lists are the one exception. Each holds every session the host
+ever ran, and sessions move several times a second while agents work, so a
+refetch on each move kept the daemon re-reading the whole history. Their
+filters are fields on the row itself, so `patchSessionLists` writes the
+event's row into each cached list it belongs in, newest activity first.
+
 | event | effect |
 |---|---|
 | `goal_created` | patch `goals.detail`, invalidate `goals.lists` |
@@ -395,8 +401,8 @@ which its row in the header's host picker and the Hosts screen's table read.
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `attention.lists`; a transition on the event also invalidates `tasks.transitions` and `tasks.diff` — a transition can be the task landing, and the diff answers for the merge commit once there is one |
 | `task_branch_updated` | invalidate `tasks.diff` for the task — a commit in the author's worktree, with nothing about the task row itself changed |
 | `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
-| `session_created` | patch `sessions.detail`, invalidate `sessions.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
-| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `attention.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
+| `session_created` | patch `sessions.detail`, patch the row into every cached `sessions.lists` entry it belongs in (refetch one whose read is under way); a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
+| `session_updated` | patch `sessions.detail` and the cached `sessions.lists` the same way, invalidate `attention.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |
 | `skill_deleted` | remove `skills.detail`, invalidate `skills.lists` |
