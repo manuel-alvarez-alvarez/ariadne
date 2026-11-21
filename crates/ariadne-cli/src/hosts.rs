@@ -282,9 +282,18 @@ const KINDS: &[(&str, Kind)] = &[
     ("goal ls", Kind::List),
     ("goal rm", Kind::Write),
     ("host ls", Kind::Local(REGISTRY)),
-    ("host inspect", Kind::Local(REGISTRY)),
-    ("host resume", Kind::Local(REGISTRY)),
-    ("host review", Kind::Local(REGISTRY)),
+    (
+        "host inspect",
+        Kind::Local("worker setup runs on the local daemon"),
+    ),
+    (
+        "host resume",
+        Kind::Local("worker setup runs on the local daemon"),
+    ),
+    (
+        "host review",
+        Kind::Local("worker setup runs on the local daemon"),
+    ),
     (
         "host setup",
         Kind::Local("worker setup runs on the local daemon"),

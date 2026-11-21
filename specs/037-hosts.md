@@ -475,6 +475,7 @@ picker, the Hosts screen and one stream per host — is spec
 78. `POST /v1/hosts/{name}/setup/resume` retries the exact durable request without new selections.
     Existing setup POST and GET routes retain their request and progress formats.
     CLI provides `host inspect`, `host review`, and `host resume` through the local settings daemon.
+    These commands reject other host selections with a worker setup reason and `--host local` guidance.
     Desktop requires inspection and review before application and invalidates review when selections change.
     Desktop can load progress by worker name and resume the saved operation.
 
@@ -703,6 +704,7 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
 Inspection and review proof: `hosts.rs::inspection_needs_only_ssh_and_does_not_install_or_register`
 and `hosts.rs::review_lists_transfers_and_manual_actions_without_changing_the_worker`.
 Git prerequisite proof: `hosts.rs::binary_only_setup_requires_git_and_resumes_after_manual_installation`.
+CLI host guard proof: `onboarding_commands_refuse_other_hosts_with_a_setup_reason`.
 Partial setup proof: `hosts.rs::setup_reports_custom_tools_without_executing_install_commands`.
 Resume proof: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
 Desktop proof: `ui/src/features/hosts/worker-setup.test.tsx`.

@@ -2431,3 +2431,36 @@ async fn worker_inspection_review_and_resume_use_the_local_setup_contract() {
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn onboarding_commands_refuse_other_hosts_with_a_setup_reason() {
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":"http://127.0.0.1:1","error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},
+        {"name":"build","kind":"direct","status":"ready","endpoint":"http://127.0.0.1:1","error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}}
+    ]);
+    let (endpoint, server) =
+        serve(Router::new().route("/v1/hosts", get(move || async move { Json(registry) }))).await;
+    for host in ["all", "build"] {
+        for args in [
+            vec!["host", "inspect", "builder", "--ssh", "ssh://w@box"],
+            vec!["host", "review", "builder", "--request", "/missing"],
+            vec!["host", "resume", "builder"],
+        ] {
+            let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+                .args(["--endpoint", &endpoint, "--host", host])
+                .args(args)
+                .env("ARIADNE_TELEMETRY", "off")
+                .output()
+                .await
+                .unwrap();
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(2), "{error}");
+            assert!(
+                error.contains("worker setup runs on the local daemon"),
+                "{error}"
+            );
+            assert!(error.contains("--host local"), "{error}");
+        }
+    }
+    server.abort();
+}
