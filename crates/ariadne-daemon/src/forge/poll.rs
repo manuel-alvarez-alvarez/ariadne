@@ -996,6 +996,7 @@ mod tests {
             news_told_at: None,
             reviewed_sha: None,
             told_head_sha: None,
+            told_keeper_head_sha: None,
             review_requested: true,
             review_asked: false,
             body: String::new(),

@@ -36,6 +36,39 @@ use crate::http::convert::{learned_permission_dto, repository_dto, skill_dto, wo
 /// The longest wait between two tries of one push.
 const BACKOFF_CAP: Duration = Duration::from_secs(60);
 
+/// Reapply settings and permissions after an explicit repository population.
+/// A connection that is not ready gets the normal initial push when it connects.
+pub(super) async fn after_registration(hosts: &super::Hosts, name: &str) -> Result<(), String> {
+    let owner = hosts
+        .0
+        .extra
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|h| h.0.cfg.hosts.iter().any(|(n, _)| n == name))
+        .cloned()
+        .unwrap_or_else(|| hosts.clone());
+    let Some(index) = owner.0.cfg.hosts.iter().position(|(n, _)| n == name) else {
+        return Ok(());
+    };
+    let Some(endpoint) = owner.0.ready[index].borrow().clone() else {
+        return Ok(());
+    };
+    let mut pusher = Pusher {
+        inner: &owner.0,
+        index,
+        client: super::client_for(&endpoint),
+        last_ai: None,
+        pairs: None,
+        bundles: HashMap::new(),
+        warnings: HashMap::new(),
+    };
+    for push in pusher.everything().await? {
+        pusher.push(&push).await?;
+    }
+    Ok(())
+}
+
 /// One thing to push to a host.
 enum Push {
     /// Everything: the host has just become `ready`, or this task fell
@@ -758,16 +791,16 @@ fn not_found(error: &ClientError) -> bool {
 
 /// A local repository and the host's checkout of the same forge repository.
 #[derive(Debug)]
-struct Pair {
-    local: RepositoryDto,
-    remote: Option<RepositoryDto>,
+pub(super) struct Pair {
+    pub(super) local: RepositoryDto,
+    pub(super) remote: Option<RepositoryDto>,
 }
 
 /// Pair each local repository with a host repository on the same forge
 /// repository: one on the same base branch first, else the first one left.
 /// Each host repository pairs once. A repository with no forge pairs with
 /// none.
-fn pair(local: Vec<RepositoryDto>, mut remote: Vec<RepositoryDto>) -> Vec<Pair> {
+pub(super) fn pair(local: Vec<RepositoryDto>, mut remote: Vec<RepositoryDto>) -> Vec<Pair> {
     let forge = |repository: &RepositoryDto| {
         repository.forge.as_ref().map(|forge| {
             (

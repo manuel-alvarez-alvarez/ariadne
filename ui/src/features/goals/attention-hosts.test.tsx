@@ -10,13 +10,13 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react"
 import { toast } from "sonner"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-
 import type { AttentionItemDto, HostDto } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
 import { useSettingsStore } from "@/stores/settings"
 import { aSessionPage } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
+import { byContent } from "@/test/text-content"
 
 import { AttentionAlerts } from "./attention-alerts"
 import { AttentionPopover } from "./attention-strip"
@@ -119,7 +119,7 @@ it("names the host on the toast of an item of a named host", async () => {
   box = [THEIRS]
   await queryClient.invalidateQueries()
 
-  const toastText = await screen.findByText(/Summary of box-item · box/)
+  const toastText = await screen.findByText(byContent(/Summary of box-item · box/))
   expect(toastText).toBeTruthy()
 })
 
@@ -130,7 +130,7 @@ it("names local on the toast of a local item while a named host is listed", asyn
   local = [MINE]
   await queryClient.invalidateQueries()
 
-  expect(await screen.findByText(/Summary of local-item · local/)).toBeTruthy()
+  expect(await screen.findByText(byContent(/Summary of local-item · local/))).toBeTruthy()
 })
 
 it("names no host on a toast with only local listed", async () => {
@@ -151,7 +151,7 @@ it("names the failed host with Retry, keeps the other items and keeps announcing
   const { queryClient } = renderAlerts()
 
   fireEvent.click(await screen.findByRole("button", { name: /Needs attention/ }))
-  expect(await screen.findByText(/Some items could not load on box/)).toBeTruthy()
+  expect(await screen.findByText(byContent(/Some items could not load on box/))).toBeTruthy()
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy()
   expect(screen.getByText(MINE.summary)).toBeTruthy()
 

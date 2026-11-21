@@ -206,8 +206,6 @@ pub(crate) fn harness() -> HarnessBuilder {
             cancel_grace: RUNS_OUT,
             turn_end_grace: RUNS_OUT,
             forge_wake_debounce: Duration::from_millis(1),
-            // Keeper comments reach the session without a settling delay.
-            keeper_comment_settle: Duration::ZERO,
             ..Timeouts::default()
         },
         path: std::ffi::OsString::new(),

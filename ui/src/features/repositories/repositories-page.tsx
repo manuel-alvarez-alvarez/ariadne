@@ -19,6 +19,7 @@ import { useState } from "react"
 import { type ForgeTunnelDto, type HostView, LOCAL_HOST, type RepositoryDto, useHosts } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { DataTable, RowAction } from "@/components/data-table"
+import { HostLabel } from "@/components/host-label"
 import { HostSync, syncLabel } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -194,7 +195,7 @@ function RepositoryRow({
                   key={host.name}
                   className={missing || pending ? "text-muted-foreground" : undefined}
                 >
-                  <span className="font-mono">{host.name}</span>
+                  <HostLabel host={host.name} />
                   {pending
                     ? ` · ${syncLabel(host)}`
                     : missing

@@ -163,7 +163,7 @@ impl Store {
                                AND COALESCE(told_review_decision, 'none') = ?
                                AND COALESCE(told_state, 'open') = ?
                                AND COALESCE(told_check_state, 'none') = ?
-                               AND COALESCE(told_head_sha, '') = ?)",
+                               AND COALESCE(CASE WHEN ? THEN told_head_sha ELSE told_keeper_head_sha END, '') = ?)",
         )
         .bind(pull_request_id)
         .bind(serde_json::to_string(&before.checks).unwrap_or_else(|_| "[]".into()))
@@ -172,6 +172,7 @@ impl Store {
         .bind(&before.review_decision)
         .bind(&before.state)
         .bind(&before.check_state)
+        .bind(reviewer)
         .bind(&before.head_sha)
         .fetch_one(&mut *tx)
         .await?;
@@ -203,7 +204,7 @@ impl Store {
                 return Ok(false);
             }
         }
-        write_told(&mut tx, pull_request_id, told).await?;
+        write_told(&mut tx, pull_request_id, told, reviewer).await?;
         sqlx::query("UPDATE pull_requests SET news_told_at = ? WHERE id = ?")
             .bind(&at)
             .bind(pull_request_id)
@@ -249,7 +250,7 @@ impl Store {
                 .execute(&mut *tx)
                 .await?;
         }
-        write_told(&mut tx, pull_request_id, before).await?;
+        write_told(&mut tx, pull_request_id, before, reviewer).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -260,11 +261,13 @@ pub(crate) async fn write_told(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     pull_request_id: &str,
     told: &PullRequestTold,
+    reviewer: bool,
 ) -> Result<()> {
     sqlx::query(
         "UPDATE pull_requests SET told_checks = ?, told_behind_base = ?, told_conflicts = ?,
                 told_review_decision = ?, told_state = ?, told_check_state = ?,
-                told_head_sha = NULLIF(?, '')
+                told_head_sha = CASE WHEN ? THEN NULLIF(?, '') ELSE told_head_sha END,
+                told_keeper_head_sha = CASE WHEN ? THEN told_keeper_head_sha ELSE NULLIF(?, '') END
           WHERE id = ?",
     )
     .bind(serde_json::to_string(&told.checks).unwrap_or_else(|_| "[]".into()))
@@ -273,6 +276,9 @@ pub(crate) async fn write_told(
     .bind(&told.review_decision)
     .bind(&told.state)
     .bind(&told.check_state)
+    .bind(reviewer)
+    .bind(&told.head_sha)
+    .bind(reviewer)
     .bind(&told.head_sha)
     .bind(pull_request_id)
     .execute(&mut **tx)

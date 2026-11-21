@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-11-17
+updated: 2026-11-21
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -164,7 +164,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## The news
 
-12. For a keeper or task agent, news has five kinds of line:
+12. For a keeper or task agent, news has six kinds of line:
     a comment of the other side; failed checks at the final failure rollup as one list;
     `mergeable: conflicting` asking to resolve base conflicts;
     `mergeable: behind` asking to merge the base in; and a state that became merged or closed.
@@ -173,9 +173,13 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     Other restrictions remain blocked; unknown evidence remains unknown.
     Conflict news needs no comment or failed check and does not wait for pending checks.
     Checks turning green, the review decision and `behind_base` are not news.
-    Comments wait until the newest untold comment is `Timeouts::keeper_comment_settle` old.
-    The default is 300 seconds. A newer comment restarts the interval.
-    The test harness uses zero. Failed checks and final state changes are told at once.
+    Comments reach the agent at once, with no cool-down.
+    A new head from another person is also news, once per head.
+    A head that equals the agent's worktree head is its own push.
+    The daemon marks that head told without a prompt.
+    Keeper and reviewer head marks are independent, including claims and releases.
+    The first observed head establishes the baseline.
+    Failed checks and final state changes are told at once.
     Reviewers receive only round prompts (029).
 13. The scheduler hands the news as a `session/prompt`, queued behind a running turn (009 rule 6).
     A session still `starting` gets the news once it has its briefing.
@@ -338,8 +342,13 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 
 - Green checks, review decisions and `behind_base` are no news:
   `news.rs::tests::green_checks_reviews_and_behind_base_are_not_keeper_news`.
-- Comments settle after the newest one; failures and state changes arrive immediately:
-  `news.rs::tests::comments_wait_for_the_newest_comment_but_failures_and_state_do_not`.
+- Comments arrive immediately, and another person's head is told once:
+  `news.rs::tests::comments_arrive_without_a_cool_down`,
+  `news.rs::tests::another_persons_head_is_told_once`.
+- The agent's own push updates the mark without a prompt:
+  `news.rs::tests::an_own_push_is_marked_without_a_prompt`.
+- A keeper push still starts a reviewer round; an external push reaches both seats despite a busy turn:
+  `pull_request_babysit.rs::keeper_push_and_external_push_reach_the_reviewer_independently`.
 - A non-draft makes no mutation:
   `forge_integration.rs::marking_an_already_ready_request_sends_no_mutation`.
 - A refused draft mark is retried on the same head:
@@ -628,6 +637,7 @@ raises no row and starts no session (029).
 
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/migrations/0003_keeper_recovery.sql`,
+`crates/ariadne-store/migrations/0016_keeper_head_delivery.sql`,
 `crates/ariadne-store/src/pull_requests.rs`, `crates/ariadne-store/src/pull_request_comments.rs`,
 `crates/ariadne-store/skills/pr-babysit/SKILL.md`, `crates/ariadne-api/src/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`, `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,

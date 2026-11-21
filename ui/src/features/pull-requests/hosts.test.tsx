@@ -10,6 +10,7 @@ import { aForge, aModel, aRepository, aSession, aSessionPage } from "@/test/fixt
 import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, type SeenRequest, stubHosts } from "@/test/hosts"
 import { pull } from "@/test/pull-request"
+import { byContent } from "@/test/text-content"
 import { PullRequestPanel } from "./pull-request-panel"
 import { PullRequestsPage } from "./pull-requests-page"
 
@@ -411,7 +412,7 @@ it("warns of a host it cannot read, by name and reason, and keeps the other host
   renderScreen(<PullRequestPanel id="repo-local:42" onClose={() => {}} />, {
     route: "/forge/pull-requests?pr=repo-local%3A42",
   })
-  expect(await screen.findByText("Could not load the pull request on box")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load the pull request on box"))).toBeTruthy()
   expect(screen.getByText(/The forge did not answer/)).toBeTruthy()
   expect(hostOfWork("Ariadne reviewing")).toBe("local")
   expect(screen.getByRole("button", { name: "Stop review" })).toBeTruthy()

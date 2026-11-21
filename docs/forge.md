@@ -117,7 +117,10 @@ to the tip it fetched.
 It keeps every commit others added. It never force-pushes main.
 The daemon marks your checked draft ready for review automatically.
 It raises readiness attention from current forge evidence: successful checks, clean mergeability and no unanswered comments.
-A newer comment delays keeper news for five minutes. Failures and final states arrive immediately.
+Comments reach the keeping agent immediately. A new head from another person also reaches it once.
+A head that matches the agent's worktree is its own push and sends no prompt.
+A review on the same request still receives its new-head round.
+Failures and final states arrive immediately.
 Use `ariadne pr babysit <repo> <number> --again` or **New turn** in the **Babysit** group to wake a keeper now.
 This also works on a request a task keeps.
 Once you merge the request, the agent brings the base

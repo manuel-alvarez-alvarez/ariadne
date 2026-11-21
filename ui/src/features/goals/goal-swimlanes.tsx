@@ -136,7 +136,11 @@ export function GoalSwimlanes({
       {tasks.errors.map(({ host, error, cached }) => (
         <RefreshWarning
           key={host}
-          what={`tasks on ${host}`}
+          what={
+            <>
+              tasks on <HostLabel host={host} />
+            </>
+          }
           cached={cached}
           error={error}
           onRetry={tasks.refetch}
@@ -458,7 +462,9 @@ function CompactTask({
           (taskAttentionReason(task) ?? "—")
         )}
       </td>
-      <td className="px-2 py-2">{goal.host}</td>
+      <td className="px-2 py-2">
+        <HostLabel host={goal.host} />
+      </td>
     </tr>
   )
 }

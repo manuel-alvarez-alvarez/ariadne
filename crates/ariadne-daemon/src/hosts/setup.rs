@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
 mod populate;
+mod repositories;
 use populate::selection_steps;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -56,6 +57,15 @@ fn save(root: &Path, records: &BTreeMap<String, Record>) -> Result<(), String> {
 }
 
 fn validate(name: &str, request: &SetupRequest) -> Result<(), String> {
+    for (id, destination) in &request.repositories {
+        if id.is_empty()
+            || id.chars().any(char::is_control)
+            || !(destination.starts_with('/') || destination.starts_with("~/"))
+            || destination.chars().any(char::is_control)
+        {
+            return Err("select repository IDs and absolute or ~/ worker destinations".into());
+        }
+    }
     if name.is_empty()
         || matches!(name, "local" | "all")
         || !name
@@ -155,9 +165,26 @@ impl Hosts {
             let bytes = std::fs::read(path).map_err(|_| "cannot read stored worker setup")?;
             serde_json::from_slice::<BTreeMap<String, Record>>(&bytes).map_err(|_| "stored worker setup is invalid; preserve the file and repair it before retrying")?;
         }
-        if let Some(record) = records.get(&name) {
+        if let Some(record) = records.get_mut(&name) {
             if record.request != request {
-                return Err("retry with the original setup request, including tool and credential selections".into());
+                let mut previous = record.request.clone();
+                previous.repositories = request.repositories.clone();
+                if record.progress.state != SetupState::Complete || previous != request {
+                    return Err("retry with the original setup request; change repository selections only after setup completes".into());
+                }
+                record.request = request.clone();
+                record.progress.state = SetupState::Incomplete;
+                for id in request.repositories.keys() {
+                    for name in [format!("clone:{id}"), format!("repository:{id}")] {
+                        if !record.progress.steps.iter().any(|s| s.name == name) {
+                            record.progress.steps.push(SetupStep {
+                                name,
+                                complete: false,
+                                error: None,
+                            });
+                        }
+                    }
+                }
             }
             if matches!(
                 record.progress.state,
@@ -166,8 +193,14 @@ impl Hosts {
                 return Ok(record.progress.clone());
             }
         } else {
-            if self.list().iter().any(|h| h.name == name) {
-                return Err("this host already exists; select a new worker name".into());
+            if self.list().iter().any(|h| h.name == name)
+                && !self.0.cfg.hosts.iter().any(|(n, host)| {
+                    n == &name && host.endpoint == request.ssh && host.remote == request.remote
+                })
+            {
+                return Err(
+                    "existing worker updates must use its configured SSH address and socket".into(),
+                );
             }
             records.insert(
                 name.clone(),
@@ -181,6 +214,11 @@ impl Hosts {
                             .into_iter()
                             .map(String::from)
                             .chain(selection_steps(&request))
+                            .chain(
+                                request.repositories.keys().flat_map(|id| {
+                                    [format!("clone:{id}"), format!("repository:{id}")]
+                                }),
+                            )
                             .chain(
                                 ["service", "health", "register"]
                                     .into_iter()
@@ -449,6 +487,8 @@ fi
         )
         .await?;
         self.checkpoint(name, "health")?;
+        self.setup_repositories(name, request, home, &remote, &service_path)
+            .await?;
         self.begin(name, "register")?;
         {
             let _mutation = self.mutation().await;
@@ -461,6 +501,9 @@ fi
                 .await?;
         }
         self.checkpoint(name, "register")?;
+        if !request.repositories.is_empty() {
+            super::sync::after_registration(self, name).await?;
+        }
         let mut records = self.0.setup.lock().unwrap();
         records.get_mut(name).unwrap().progress.state = SetupState::Complete;
         save(&self.0.cfg.root, &records)

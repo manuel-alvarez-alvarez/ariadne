@@ -45,11 +45,29 @@ impl News {
 /// The news of `pull`, given the comments its session has not been told of,
 /// for a keeper or task agent signed in as `login`.
 pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> News {
+    of_head(pull, untold, login, None)
+}
+
+fn of_head(
+    pull: &PullRequest,
+    untold: &[PullRequestComment],
+    login: &str,
+    worktree_head: Option<&str>,
+) -> News {
     // The review's own summary restates findings the babysitter was already
     // told of as inline comments (031): a new or edited round of it is
     // never news of its own.
     let mut lines = comment_lines(untold.iter().filter(|c| !is_review_summary(c, login)));
-    let before = told_before(pull);
+    let before = keeper_told_before(pull);
+    if !before.head_sha.is_empty()
+        && before.head_sha != pull.head_sha
+        && worktree_head != Some(pull.head_sha.as_str())
+    {
+        lines.push(format!(
+            "- New head: {}. Read the updated request.",
+            crate::agents::prompts::fence(&pull.head_sha)
+        ));
+    }
     let told_checks = before.checks.clone();
     let failed: Vec<FailedCheck> = serde_json::from_str(&pull.failed_checks).unwrap_or_default();
     // The failed checks of a head are told as one list, once the rolled-up
@@ -117,7 +135,7 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
             review_decision: pull.review_decision.clone(),
             state: pull.state.clone(),
             check_state: pull.checks.clone(),
-            head_sha: before.head_sha.clone(),
+            head_sha: pull.head_sha.clone(),
         },
         before,
     }
@@ -207,6 +225,13 @@ fn comment_lines<'a>(untold: impl IntoIterator<Item = &'a PullRequestComment>) -
         .collect()
 }
 
+fn keeper_told_before(pull: &PullRequest) -> PullRequestTold {
+    PullRequestTold {
+        head_sha: pull.told_keeper_head_sha.clone().unwrap_or_default(),
+        ..told_before(pull)
+    }
+}
+
 /// What the row says its sessions were last told. A NULL mark is the
 /// baseline a fresh row starts from: no failed check, `none`, `open`.
 fn told_before(pull: &PullRequest) -> PullRequestTold {
@@ -238,7 +263,7 @@ pub async fn untold(
     pull: &PullRequest,
     login: &str,
     seat: Option<ariadne_core::Seat>,
-    settle: std::time::Duration,
+    worktree_head: Option<&str>,
 ) -> ariadne_store::Result<News> {
     if seat == Some(ariadne_core::Seat::Reviewer) {
         return Ok(of_review(pull, &[]));
@@ -246,29 +271,10 @@ pub async fn untold(
     let comments = super::live::comments_of(store, live, pull).await?;
     let role = super::live::comment_role(&pull.role, pull.babysit_asked);
     let untold = super::live::untold(&comments, role, login);
-    Ok(settled(pull, &untold, login, settle, chrono::Utc::now()))
-}
-
-/// Apply comment settling without delaying other actionable news.
-fn settled(
-    pull: &PullRequest,
-    untold: &[PullRequestComment],
-    login: &str,
-    interval: std::time::Duration,
-    now: chrono::DateTime<chrono::Utc>,
-) -> News {
-    let newest = untold
-        .iter()
-        .filter(|c| !is_review_summary(c, login))
-        .filter_map(|c| chrono::DateTime::parse_from_rfc3339(&c.created_at).ok())
-        .max();
-    let ready = interval.is_zero()
-        || newest.is_some_and(|at| {
-            now.signed_duration_since(at)
-                .to_std()
-                .is_ok_and(|age| age >= interval)
-        });
-    of(pull, if ready { untold } else { &[] }, login)
+    Ok(match worktree_head {
+        Some(head) => of_head(pull, &untold, login, Some(head)),
+        None => of(pull, &untold, login),
+    })
 }
 
 /// The first line of a comment, cut short: the session reads the whole of
@@ -326,6 +332,7 @@ mod tests {
             news_told_at: None,
             reviewed_sha: None,
             told_head_sha: None,
+            told_keeper_head_sha: None,
             review_requested: true,
             review_asked: false,
             body: String::new(),
@@ -356,7 +363,7 @@ mod tests {
             told_review_decision: Some(news.told.review_decision.clone()),
             told_state: Some(news.told.state.clone()),
             told_check_state: Some(news.told.check_state.clone()),
-            told_head_sha: Some(news.told.head_sha.clone()).filter(|sha| !sha.is_empty()),
+            told_keeper_head_sha: Some(news.told.head_sha.clone()).filter(|sha| !sha.is_empty()),
             ..pull.clone()
         }
     }
@@ -499,66 +506,41 @@ mod tests {
     }
 
     #[test]
-    fn comments_wait_for_the_newest_comment_but_failures_and_state_do_not() {
-        let interval = crate::timeouts::Timeouts::default().keeper_comment_settle;
-        assert_eq!(interval.as_secs(), 300);
-        let start = chrono::DateTime::parse_from_rfc3339("2026-10-02T00:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-        let first = comment("ic-1", CONVERSATION, "them", false);
-        let second = PullRequestComment {
-            id: "ic-2".into(),
-            created_at: "2026-10-02T00:04:00Z".into(),
-            ..first.clone()
-        };
-        assert!(
-            settled(
-                &pull(),
-                std::slice::from_ref(&first),
-                "me",
-                interval,
-                start + chrono::Duration::seconds(299)
-            )
-            .is_empty()
-        );
-        assert_eq!(
-            settled(
-                &pull(),
-                std::slice::from_ref(&first),
-                "me",
-                interval,
-                start + chrono::Duration::seconds(300)
-            )
-            .lines
-            .len(),
-            1
-        );
+    fn another_persons_head_is_told_once() {
         let changed = PullRequest {
-            state: "closed".into(),
-            checks: "failure".into(),
-            failed_checks: r#"[{"name":"lint","url":"ci","conclusion":"failure"}]"#.into(),
+            head_sha: "def".into(),
+            told_keeper_head_sha: Some("abc".into()),
             ..pull()
         };
-        let news = settled(
-            &changed,
-            &[first.clone(), second.clone()],
-            "me",
-            interval,
-            start + chrono::Duration::seconds(300),
-        );
-        assert_eq!(news.lines.len(), 2);
-        assert!(news.comment_ids.is_empty());
-        assert_eq!(
-            settled(
-                &pull(),
-                &[first, second],
-                "me",
-                interval,
-                start + chrono::Duration::seconds(540)
-            )
-            .comment_ids,
-            ["ic-1", "ic-2"]
-        );
+        let news = of(&changed, &[], "me");
+        assert_eq!(news.lines.len(), 1);
+        assert!(news.lines[0].contains("def"));
+        assert_eq!(news.told.head_sha, "def");
+        assert!(of(&told(&changed, &news), &[], "me").is_empty());
+    }
+
+    #[test]
+    fn an_own_push_is_marked_without_a_prompt() {
+        let changed = PullRequest {
+            head_sha: "def".into(),
+            told_keeper_head_sha: Some("abc".into()),
+            ..pull()
+        };
+        let news = of_head(&changed, &[], "me", Some("def"));
+        assert!(news.is_empty());
+        assert_eq!(news.recovered().unwrap().head_sha, "def");
+        assert_eq!(news.before.head_sha, "abc");
+    }
+
+    #[test]
+    fn comments_arrive_without_a_cool_down() {
+        let fresh = PullRequestComment {
+            created_at: "2099-01-01T00:00:00Z".into(),
+            ..comment("ic-1", CONVERSATION, "them", false)
+        };
+        let news = of(&pull(), &[fresh], "me");
+        assert_eq!(news.comment_ids, ["ic-1"]);
+        assert_eq!(news.lines.len(), 1);
     }
 
     /// A comment of the request: `thread` groups it, `from_review` marks it

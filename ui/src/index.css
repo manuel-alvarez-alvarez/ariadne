@@ -53,6 +53,39 @@
   --color-status-danger-soft: var(--status-danger-soft);
 
   /*
+   * The host colours. One triple per colour, shaped like the status ramp:
+   * the solid (dots), `-fg` (text on the tint) and `-soft` (the pill's tint).
+   * `grey` is `local`'s, and the neutral of a host with no colour.
+   */
+  --color-host-red: var(--host-red);
+  --color-host-red-fg: var(--host-red-fg);
+  --color-host-red-soft: var(--host-red-soft);
+  --color-host-orange: var(--host-orange);
+  --color-host-orange-fg: var(--host-orange-fg);
+  --color-host-orange-soft: var(--host-orange-soft);
+  --color-host-amber: var(--host-amber);
+  --color-host-amber-fg: var(--host-amber-fg);
+  --color-host-amber-soft: var(--host-amber-soft);
+  --color-host-green: var(--host-green);
+  --color-host-green-fg: var(--host-green-fg);
+  --color-host-green-soft: var(--host-green-soft);
+  --color-host-teal: var(--host-teal);
+  --color-host-teal-fg: var(--host-teal-fg);
+  --color-host-teal-soft: var(--host-teal-soft);
+  --color-host-blue: var(--host-blue);
+  --color-host-blue-fg: var(--host-blue-fg);
+  --color-host-blue-soft: var(--host-blue-soft);
+  --color-host-violet: var(--host-violet);
+  --color-host-violet-fg: var(--host-violet-fg);
+  --color-host-violet-soft: var(--host-violet-soft);
+  --color-host-pink: var(--host-pink);
+  --color-host-pink-fg: var(--host-pink-fg);
+  --color-host-pink-soft: var(--host-pink-soft);
+  --color-host-grey: var(--host-grey);
+  --color-host-grey-fg: var(--host-grey-fg);
+  --color-host-grey-soft: var(--host-grey-soft);
+
+  /*
    * The diff pair. Same shape as the status ramp — the bare token is the solid,
    * `-fg` is text, `-soft` is the tint a changed line sits on — plus `-strong`,
    * the word-level highlight inside such a line, which has to read on top of
@@ -162,6 +195,34 @@
   --diff-remove-fg: oklch(0.47 0.19 27.325);
   --diff-remove-soft: oklch(0.58 0.2 27.325 / 0.12);
   --diff-remove-strong: oklch(0.58 0.2 27.325 / 0.26);
+
+  --host-red: oklch(0.62 0.15 27);
+  --host-red-fg: oklch(0.42 0.12 27);
+  --host-red-soft: oklch(0.62 0.15 27 / 0.16);
+  --host-orange: oklch(0.62 0.15 50);
+  --host-orange-fg: oklch(0.42 0.12 50);
+  --host-orange-soft: oklch(0.62 0.15 50 / 0.16);
+  --host-amber: oklch(0.62 0.15 80);
+  --host-amber-fg: oklch(0.42 0.12 80);
+  --host-amber-soft: oklch(0.62 0.15 80 / 0.16);
+  --host-green: oklch(0.62 0.15 155);
+  --host-green-fg: oklch(0.42 0.12 155);
+  --host-green-soft: oklch(0.62 0.15 155 / 0.16);
+  --host-teal: oklch(0.62 0.15 195);
+  --host-teal-fg: oklch(0.42 0.12 195);
+  --host-teal-soft: oklch(0.62 0.15 195 / 0.16);
+  --host-blue: oklch(0.62 0.15 250);
+  --host-blue-fg: oklch(0.42 0.12 250);
+  --host-blue-soft: oklch(0.62 0.15 250 / 0.16);
+  --host-violet: oklch(0.62 0.15 295);
+  --host-violet-fg: oklch(0.42 0.12 295);
+  --host-violet-soft: oklch(0.62 0.15 295 / 0.16);
+  --host-pink: oklch(0.62 0.15 350);
+  --host-pink-fg: oklch(0.42 0.12 350);
+  --host-pink-soft: oklch(0.62 0.15 350 / 0.16);
+  --host-grey: oklch(0.62 0.02 265);
+  --host-grey-fg: oklch(0.42 0.02 265);
+  --host-grey-soft: oklch(0.62 0.02 265 / 0.16);
 }
 
 /*
@@ -230,6 +291,34 @@
   --diff-remove-fg: oklch(0.82 0.11 22.216);
   --diff-remove-soft: oklch(0.7 0.19 22.216 / 0.16);
   --diff-remove-strong: oklch(0.7 0.19 22.216 / 0.3);
+
+  --host-red: oklch(0.7 0.13 27);
+  --host-red-fg: oklch(0.84 0.09 27);
+  --host-red-soft: oklch(0.7 0.13 27 / 0.18);
+  --host-orange: oklch(0.7 0.13 50);
+  --host-orange-fg: oklch(0.84 0.09 50);
+  --host-orange-soft: oklch(0.7 0.13 50 / 0.18);
+  --host-amber: oklch(0.7 0.13 80);
+  --host-amber-fg: oklch(0.84 0.09 80);
+  --host-amber-soft: oklch(0.7 0.13 80 / 0.18);
+  --host-green: oklch(0.7 0.13 155);
+  --host-green-fg: oklch(0.84 0.09 155);
+  --host-green-soft: oklch(0.7 0.13 155 / 0.18);
+  --host-teal: oklch(0.7 0.13 195);
+  --host-teal-fg: oklch(0.84 0.09 195);
+  --host-teal-soft: oklch(0.7 0.13 195 / 0.18);
+  --host-blue: oklch(0.7 0.13 250);
+  --host-blue-fg: oklch(0.84 0.09 250);
+  --host-blue-soft: oklch(0.7 0.13 250 / 0.18);
+  --host-violet: oklch(0.7 0.13 295);
+  --host-violet-fg: oklch(0.84 0.09 295);
+  --host-violet-soft: oklch(0.7 0.13 295 / 0.18);
+  --host-pink: oklch(0.7 0.13 350);
+  --host-pink-fg: oklch(0.84 0.09 350);
+  --host-pink-soft: oklch(0.7 0.13 350 / 0.18);
+  --host-grey: oklch(0.7 0.02 265);
+  --host-grey-fg: oklch(0.84 0.02 265);
+  --host-grey-soft: oklch(0.7 0.02 265 / 0.18);
 }
 
 @layer base {

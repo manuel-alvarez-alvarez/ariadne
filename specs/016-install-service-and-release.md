@@ -413,6 +413,6 @@ prove that the CLI installs without GUI downloads, extraction, or npm operations
 
 SSH worker setup follows spec 037, rules 53–55 for selected agent packages and credentials.
 It uses user-owned installations and reports administrator prerequisites without privileged commands.
-Repository cloning remains outside worker setup.
+Selected repository population follows spec 037 and uses the resulting worker Git authentication.
 Acceptance: `hosts.rs::setup_reports_custom_tools_without_executing_install_commands` and
 `hosts.rs::selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy`.

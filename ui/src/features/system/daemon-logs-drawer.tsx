@@ -19,8 +19,9 @@
 
 import { PlugZapIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-
 import { type Host, hostBaseUrl, LOCAL_HOST, type LogLineDto, useHosts } from "@/api"
+import { HostDot } from "@/components/host-dot"
+import { HostLabel } from "@/components/host-label"
 import { hostStatus } from "@/components/host-picker"
 import {
   Select,
@@ -164,7 +165,15 @@ export function DaemonLogsDrawer({
                 <Select
                   value={host}
                   onValueChange={(value) => setChoice(value ?? LOCAL_HOST)}
-                  items={hosts.map((row) => ({ value: row.name, label: row.name }))}
+                  items={hosts.map((row) => ({
+                    value: row.name,
+                    label: (
+                      <span className="flex items-center gap-2">
+                        <HostDot host={row.name} />
+                        {row.name}
+                      </span>
+                    ),
+                  }))}
                 >
                   <SelectTrigger size="sm" className="w-32" aria-label="Host">
                     <SelectValue />
@@ -172,9 +181,12 @@ export function DaemonLogsDrawer({
                   <SelectContent align="end">
                     {hosts.map((row) => (
                       <SelectItem key={row.name} value={row.name} disabled={row.url === null}>
-                        {row.url === null
-                          ? `${row.name} (${hostStatus(row).label}: ${row.unreachable ?? ""})`
-                          : row.name}
+                        <span className="flex items-center gap-2">
+                          <HostDot host={row.name} />
+                          {row.url === null
+                            ? `${row.name} (${hostStatus(row).label}: ${row.unreachable ?? ""})`
+                            : row.name}
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -220,7 +232,7 @@ export function DaemonLogsDrawer({
               role="status"
               className="shrink-0 border-b bg-status-danger-soft px-4 py-1.5 text-xs text-status-danger-fg"
             >
-              Host {host} is not reachable{unreachable ? `: ${unreachable}` : ""}
+              Host <HostLabel host={host} /> is not reachable{unreachable ? `: ${unreachable}` : ""}
             </div>
           ) : null}
 

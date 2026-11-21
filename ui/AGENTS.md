@@ -359,7 +359,14 @@ Which host a screen reads follows who owns what it shows:
   which defaults to the picker. The dashboard iframe takes `host=` and its
   datasources use `/v1/hosts/{host}/` of the settings daemon.
 
-A row or a panel names its host with `HostLabel` (`components/host-label.tsx`),
+Every host name is drawn in the host's colour (spec 015 rule 82): `HostLabel`
+(`components/host-label.tsx`) is the pill and `HostDot` (`components/host-dot.tsx`)
+the dot beside a name where a pill does not fit, such as a select. `hostColor`
+(`lib/host-color.ts`) is the one rule for the colour, `HOST_COLORS`
+(`lib/host-colors.ts`) the eight with their labels, and `--host-<name>` in
+`index.css` the tokens. Never print a bare host name.
+
+A row or a panel names its host with `HostLabel`,
 and only where `useRowsShowHost()` or `usePanelShowsHost()`
 (`hooks/use-host-label.ts`) says so. Spec 015 rule 74 is the rule they hold.
 The goals board and the sessions screen also read `useHostSelection()`

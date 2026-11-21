@@ -8,7 +8,6 @@
 import { act, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
-
 import type { MessageDto } from "@/api"
 import { DetailPanels } from "@/components/detail-panels"
 import { EventStreamProvider } from "@/events/provider"
@@ -17,6 +16,7 @@ import { FakeEventSource, stubEventSource } from "@/test/event-source"
 import { aGoal, aSessionPage, aTask } from "@/test/fixtures"
 import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { forgetHosts, type SeenRequest, stubHosts } from "@/test/hosts"
+import { byContent } from "@/test/text-content"
 
 const BOX = "http://box.test:7676"
 const GOAL = aGoal({ id: "01JBOXGOAL000000000000000B", title: "Goal on box" })
@@ -161,7 +161,7 @@ it("names the host in the title of a task that failed to load there", async () =
     { route: `/goals?task=${TASK.id}&host=box` },
   )
 
-  expect(await screen.findByText(`Could not load task ${TASK.id} on box`)).toBeTruthy()
+  expect(await screen.findByText(byContent(`Could not load task ${TASK.id} on box`))).toBeTruthy()
 })
 
 it("opens a dependency of a task of a named host on that host", async () => {
