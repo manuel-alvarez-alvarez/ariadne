@@ -228,7 +228,9 @@ The worker's `RUST_LOG` environment variable still takes precedence.
 
 Custom agents match by identifier. The worker keeps its existing command for a matching agent.
 New commands must use executable names available on the worker PATH.
-Source-machine paths require a worker command mapping.
+Explicit source paths require a worker command mapping.
+These include absolute paths, `~/`, `./`, `../`, and Windows paths.
+Relative slash tokens remain portable, including `anthropic/claude-sonnet` and `@scope/pkg`.
 Configure that identifier under the worker's `[[acp_agents]]` table, then restart the worker and retry synchronization.
 Unmapped paths and path-bearing agent flags report synchronization failures.
 Keep path-bearing flags inside the worker command mapping instead of shared extra flags.

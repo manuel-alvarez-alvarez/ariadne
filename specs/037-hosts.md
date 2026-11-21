@@ -307,7 +307,9 @@ picker, the Hosts section of its settings and one stream per host — is spec
     executable locations, hosts, and other settings remain the worker's.
 54. Custom agents match by identifier. An existing worker command takes precedence over the source command.
     Without a mapping, the command must use an executable on the worker PATH.
-    Source paths in commands or arguments require a worker mapping and otherwise fail synchronization.
+    Explicit filesystem paths in commands or arguments require a worker mapping and otherwise fail synchronization.
+    These are absolute paths, `~/`, `./`, `../`, and Windows paths.
+    Other slash tokens remain portable, including provider/model identifiers and scoped package names.
     Path-bearing flags fail instead of silently installing unusable source paths.
     Matching portable flag lists take the source list. Worker-only flag lists remain.
 55. The worker saves accepted settings in `portable-config.json` under its own home.
@@ -470,6 +472,9 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
   (`portable_config.rs::portable_settings_apply_without_changing_worker_paths`).
 - Worker commands and worker-only entries survive matching source updates
   (`portable_config.rs::worker_commands_and_worker_only_agents_survive_source_replacement`).
+- Provider/model flags and scoped package arguments remain portable
+  (`portable_config.rs::provider_model_flags_remain_portable_with_live_policy_updates`,
+  `::scoped_npx_package_arguments_remain_portable`).
 - Unmapped paths and invalid retention fail before installation
   (`portable_config.rs::an_unmapped_source_path_fails_without_applying_settings`,
   `::invalid_retention_fails_before_any_setting_changes`).

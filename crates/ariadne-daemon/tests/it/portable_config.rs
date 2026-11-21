@@ -38,17 +38,32 @@ async fn portable_settings_apply_without_changing_worker_paths() {
 #[tokio::test]
 async fn an_unmapped_source_path_fails_without_applying_settings() {
     let h = harness().await;
-    let mut request = settings();
-    request["acp_agents"] = json!([{"id":"source-only", "command":["/source/bin/agent"]}]);
-    let result: Value = h
-        .json(
-            put_json("/v1/config/sync", request),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-    assert!(result.to_string().contains("source-only"));
-    assert!(result.to_string().contains("mapping"));
-    assert!(!h.launcher.cfg.root.join("portable-config.json").exists());
+    for path in [
+        "/source/bin/agent",
+        "~/bin/agent",
+        "./bin/agent",
+        "../bin/agent",
+        "C:/source/bin/agent",
+        r"C:\source\bin\agent",
+    ] {
+        let mut request = settings();
+        request["acp_agents"] = json!([{"id":"source-only", "command":[path]}]);
+        let result: Value = h
+            .json(
+                put_json("/v1/config/sync", request),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            result.to_string().contains("source-only"),
+            "{path}: {result}"
+        );
+        assert!(result.to_string().contains("mapping"), "{path}: {result}");
+        assert!(
+            !h.launcher.cfg.root.join("portable-config.json").exists(),
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -493,4 +508,68 @@ async fn an_existing_runtime_classifies_errors_with_the_new_patterns() {
         h.attention(&session).await == Some(AttentionReason::Exhausted)
     })
     .await;
+}
+
+#[tokio::test]
+async fn provider_model_flags_remain_portable_with_live_policy_updates() {
+    let h = harness().await;
+    let mut request = settings();
+    request["acp_registry_url"] = json!(h.launcher.cfg.acp_registry_url);
+    request["agent_flags"] = json!({"stub":["--model", "anthropic/claude-sonnet"]});
+    let result: Value = h
+        .json(put_json("/v1/config/sync", request), StatusCode::OK)
+        .await;
+    assert_eq!(result["state"], "in_sync");
+    assert_eq!(result["configuration"]["log_filter"], "warn");
+    assert_eq!(result["configuration"]["delete_merged_worktrees"], false);
+    assert_eq!(result["configuration"]["telemetry_logs_days"], 4);
+    assert_eq!(
+        h.store.agent_flags("stub").await.unwrap(),
+        ["--model", "anthropic/claude-sonnet"]
+    );
+}
+
+#[tokio::test]
+async fn scoped_npx_package_arguments_remain_portable() {
+    use super::common::{TIMEOUT, acp, eventually, store_copy};
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    store_copy(&home.join("ariadne.db")).await;
+    std::fs::write(home.join("config.toml"), "prevent_sleep = false\n").unwrap();
+    let stub_dir = dir.path().join("stub");
+    std::fs::create_dir_all(&stub_dir).unwrap();
+    let stub = acp::stub_acp_agent(&stub_dir, acp::script());
+    let paths = std::env::join_paths([
+        std::path::PathBuf::from(stub.path_with(&["npx"])),
+        "/usr/bin".into(),
+        "/bin".into(),
+    ])
+    .unwrap();
+    let _daemon = Daemon(
+        std::process::Command::new(env!("CARGO_BIN_EXE_ariadned"))
+            .arg("--home")
+            .arg(&home)
+            .env("PATH", paths)
+            .env("HOME", dir.path())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let client = ariadne_client::Client::for_home(Some(home));
+    eventually(TIMEOUT, "worker health", || async {
+        client.health().await.is_ok()
+    })
+    .await;
+    let mut request = settings();
+    request["acp_agents"] =
+        json!([{"id":"portable-package", "command":["npx", "-y", "@scope/pkg"]}]);
+    let result: Value = client.put_json("/v1/config/sync", &request).await.unwrap();
+    assert_eq!(result["state"], "pending_restart");
+    assert_eq!(
+        result["configuration"]["acp_agents"],
+        json!([{"id":"portable-package", "command":["npx", "-y", "@scope/pkg"]}])
+    );
+    assert_eq!(result["configuration"]["telemetry_logs_days"], 4);
 }

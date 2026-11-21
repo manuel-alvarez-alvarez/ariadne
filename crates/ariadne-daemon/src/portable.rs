@@ -316,7 +316,11 @@ fn machine_path(arg: &str) -> bool {
         || value.starts_with("./")
         || value.starts_with("../")
         || value.contains('\\')
-        || (value.contains('/') && !value.contains("://"))
+        || (value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphabetic)
+            && value.as_bytes().get(1) == Some(&b':'))
 }
 
 fn validate(config: &PortableConfigDto) -> Result<()> {
