@@ -420,6 +420,13 @@ it leaves nothing to delete.
     Pass the working directory, command arguments, and environment without shell interpretation.
     Send ACP through the relay socket, never pane keystrokes or pane text.
     Pane discovery works in UTF-8 and non-UTF-8 daemon locales.
+    Pane discovery names its tmux targets and needs no current client or session.
+    It returns no panes when no server runs, or when the server has no relay session.
+    It finds a pane directly after that pane starts.
+    A tmux error other than a missing server or session fails with tmux's reason.
+    A server that closes with its last session is asked again, and the listing logs one warning when the server exited during it, in the session listing or the pane listing, never two for one listing.
+    A server that exits during the pane listing yields no panes, including none collected before.
+    A server that keeps failing is an error.
     A daemon stop closes its connection without stopping the relay, pane, or agent.
     A session kill stops the relay's agent process group before removing its pane.
 
@@ -477,6 +484,13 @@ it leaves nothing to delete.
   `doctor.rs::doctor_reports_a_missing_forced_place_and_its_reason`.
 - A detached pane starts, lists, and stops:
   `place.rs::a_detached_relay_pane_can_be_found_and_stopped`.
+- Pane discovery returns an empty list with no tmux server, and with a server that has no session:
+  `place.rs::listing_panes_without_a_tmux_server_returns_an_empty_list` and
+  `::listing_panes_on_a_server_without_a_session_returns_an_empty_list`.
+- A pane listing directly after a pane starts finds it, and a tmux that cannot run fails the listing:
+  `place.rs::a_pane_listing_directly_after_the_start_finds_the_pane` and
+  `::a_tmux_that_cannot_run_fails_the_pane_listing`, which also covers the one warning when the server exits during the session listing, and
+  `::a_server_that_exits_during_the_pane_listing_returns_no_panes_and_warns`.
 - Pane discovery also works with a non-UTF-8 tmux client locale:
   `place.rs::a_detached_relay_pane_is_discoverable_in_the_c_locale`.
 - Arguments, environment, and working directory reach the agent without shell interpretation:
