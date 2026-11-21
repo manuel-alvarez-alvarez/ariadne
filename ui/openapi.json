@@ -9758,6 +9758,9 @@
             "description": "Selected source repository IDs and absolute destination paths on the worker.",
             "additionalProperties": {
               "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
             }
           },
           "source": {
