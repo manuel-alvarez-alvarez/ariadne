@@ -1,6 +1,6 @@
 //! Axum application: routes, shared state, OpenAPI document.
 
-pub use events::ingest_event;
+pub use events::{ingest_event, ingest_relay_event};
 
 pub(crate) mod agent_requests;
 mod attention;

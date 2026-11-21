@@ -88,6 +88,15 @@ jobs:
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
+      - name: Install tmux for relay tests
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y tmux
+          else
+            brew list tmux >/dev/null 2>&1 || brew install tmux
+          fi
+
       # nextest's JUnit output is what the report step at the end of this job
       # turns into named annotations; plain `cargo test` has no such report.
       - name: Install cargo-nextest

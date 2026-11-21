@@ -133,3 +133,21 @@ async fn endpoint_is_in_the_openapi_document() {
     assert!(doc["paths"]["/v1/doctor"]["get"].is_object());
     assert!(doc["components"]["schemas"]["DaemonReportDto"].is_object());
 }
+
+#[tokio::test]
+async fn doctor_reports_a_missing_forced_place_and_its_reason() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        "session_place = \"herdr\"\n",
+    )
+    .unwrap();
+    let h = harness().home(home.path().to_path_buf()).await;
+    let report: serde_json::Value = h.get("/v1/doctor").await;
+    assert_eq!(report["place"]["name"], "herdr");
+    assert_eq!(report["place"]["available"], false);
+    assert_eq!(
+        report["place"]["reason"],
+        "forced session place herdr was not found"
+    );
+}

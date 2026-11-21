@@ -411,7 +411,7 @@ async fn one_acp_index_survives_reopen_and_each_download_replaces_it() {
 
 /// The schema names an agent only by the registry id at the head of a pin:
 /// no table keeps an agent kind beside it, and a session is its row, its
-/// agent and its conversation — nothing names a terminal it runs in.
+/// agent, conversation and optional session location.
 #[tokio::test]
 async fn the_schema_names_agents_by_registry_id_alone() {
     let dir = tempfile::tempdir().unwrap();
@@ -457,6 +457,7 @@ async fn the_schema_names_agents_by_registry_id_alone() {
             "launch_id",
             "switched_from",
             "pull_request_id",
+            "place",
         ]
     );
     let config: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")

@@ -6610,6 +6610,17 @@
             ],
             "description": "The daemon's `PATH`, the one every agent and git lookup uses."
           },
+          "place": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PlaceDto",
+                "description": "Selected location and discovery result for the next session."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "python": {
             "$ref": "#/components/schemas/PythonDto",
             "description": "The Python interpreter the model's install runs on (022). It is reported\napart from `tools` because it answers a question of its own: not\nwhether it is there, but whether it is new enough."
@@ -8521,6 +8532,26 @@
             }
           },
           "session_id": {}
+        }
+      },
+      "PlaceDto": {
+        "type": "object",
+        "description": "The daemon's selected session location and the reason for its selection.",
+        "required": [
+          "name",
+          "reason",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
         }
       },
       "PrOperation": {

@@ -44,6 +44,21 @@ pub(crate) async fn list(
     Ok(Json(events.into_iter().map(event_dto).collect()))
 }
 
+/// Apply one relay effect. Replaying the same source must retain its event identity.
+pub async fn ingest_relay_event(
+    store: &Store,
+    req: &IngestEventRequest,
+    source: &str,
+    ordinal: u64,
+) -> Result<Option<AgentEvent>, StoreError> {
+    let launch = req
+        .launch
+        .as_deref()
+        .ok_or_else(|| StoreError::Invalid("relay effects require a launch id".into()))?;
+    let key = format!("{}:{launch}:{source}:{ordinal}", req.session_id);
+    ingest_event_inner(store, req, Some(&key)).await
+}
+
 /// One agent event, applied to the store: recorded, and read for the status,
 /// attention, internal id and usage it moves. The one path every report the
 /// daemon's ACP runtime (`crate::acp`) makes takes — the caller wakes the
@@ -58,6 +73,14 @@ pub(crate) async fn list(
 pub async fn ingest_event(
     store: &Store,
     req: &IngestEventRequest,
+) -> Result<Option<AgentEvent>, StoreError> {
+    ingest_event_inner(store, req, None).await
+}
+
+async fn ingest_event_inner(
+    store: &Store,
+    req: &IngestEventRequest,
+    relay_key: Option<&str>,
 ) -> Result<Option<AgentEvent>, StoreError> {
     // The session must exist; its task link is copied onto the event.
     let session = store.get_session(&req.session_id).await?;
@@ -93,14 +116,16 @@ pub async fn ingest_event(
         return Ok(None);
     }
 
-    let event = store
-        .create_event(NewAgentEvent {
-            session_id: Some(session.id.clone()),
-            task_id: session.task_id.clone(),
-            kind: req.kind.clone(),
-            payload: req.payload.clone(),
-        })
-        .await?;
+    let new = NewAgentEvent {
+        session_id: Some(session.id.clone()),
+        task_id: session.task_id.clone(),
+        kind: req.kind.clone(),
+        payload: req.payload.clone(),
+    };
+    let event = match relay_key {
+        Some(key) => store.create_event_once(new, key).await?,
+        None => store.create_event(new).await?,
+    };
 
     // What the agent has spent, where the event says so. Cumulative totals
     // per source, so this is a replace and not an addition — see

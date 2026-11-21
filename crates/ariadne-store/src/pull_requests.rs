@@ -19,7 +19,7 @@ pub struct NewPullRequest {
 /// What a request's session has been told, written after a news prompt went
 /// out (026): the failed checks by name, whether the head is behind its
 /// base, and the review decision and state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PullRequestTold {
     pub checks: Vec<String>,
     pub behind_base: bool,

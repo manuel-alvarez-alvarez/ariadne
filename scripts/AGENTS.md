@@ -65,7 +65,8 @@ in the root [`AGENTS.md`](../AGENTS.md).
   that returned before launchd actually dropped the job.
 - `tests/install-linux.sh` — a Linux installer scenario, run as `bash
   scripts/tests/install-linux.sh CASE [host|present|missing]` for one of its
-  cases: `missing`, `source-missing`, `release`, `source`, `rejected`,
+  cases: `service` (relay persistence), `missing`, `source-missing`, `release`,
+  `source`, `rejected`,
   `workflow-rejected`, `tag-rejected`, `gh-missing-attestation-flags`,
   `gh-outdated-attestation-verifier`, `manifest-shell`,
   `manifest-unexpected`, `manifest-paths`, `app-path`, `purge-home`, `purge-root`,

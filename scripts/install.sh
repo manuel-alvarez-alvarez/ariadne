@@ -696,8 +696,8 @@ if [ "$WITH_SERVICE" = 1 ]; then
     <array><string>$PREFIX/ariadned</string></array>
     <key>EnvironmentVariables</key>
     <dict>
-        <!-- launchd services get a bare PATH; the daemon needs tmux, git and
-             the agent CLIs, so bake in the installing user's PATH. -->
+        <!-- launchd services get a bare PATH; preserve access to git, agent
+             CLIs and optional multiplexers through the installing user's PATH. -->
         <key>PATH</key><string>$PATH</string>
     </dict>
     <key>RunAtLoad</key><true/>
@@ -741,6 +741,8 @@ ExecStart=$PREFIX/ariadned
 # systemd user services also get a minimal PATH.
 Environment="PATH=$PATH"
 LimitNOFILE=4096
+# Relays in tmux must survive a daemon stop or restart.
+KillMode=process
 Restart=on-failure
 RestartSec=10
 

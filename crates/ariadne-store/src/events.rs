@@ -119,12 +119,30 @@ pub struct EventFilter {
 /// What `create_event` runs, whole: one statement, which is what keeps the
 /// lock over it short.
 const CREATE_EVENT: &str =
-    "INSERT INTO agent_events (id, session_id, task_id, kind, payload, payload_codec, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    "INSERT INTO agent_events (id, session_id, task_id, kind, payload, payload_codec, created_at, relay_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(relay_key) DO NOTHING
      RETURNING *";
 
 impl Store {
     pub async fn create_event(&self, new: NewAgentEvent) -> Result<AgentEvent> {
+        self.insert_event(new, None).await
+    }
+
+    /// Replaying one relay effect returns its original event without publishing it twice.
+    pub async fn create_event_once(
+        &self,
+        new: NewAgentEvent,
+        relay_key: &str,
+    ) -> Result<AgentEvent> {
+        self.insert_event(new, Some(relay_key)).await
+    }
+
+    async fn insert_event(
+        &self,
+        new: NewAgentEvent,
+        relay_key: Option<&str>,
+    ) -> Result<AgentEvent> {
         // Packed before the lock: `event_order` also holds up every live
         // console chunk of every session, so it covers the one statement and
         // nothing else.
@@ -146,10 +164,19 @@ impl Store {
             .bind(payload)
             .bind(codec)
             .bind(created_at)
-            .fetch_one(self.w())
+            .bind(relay_key)
+            .fetch_optional(self.w())
             .await?;
-        self.publish(Change::AgentEventCreated(event.clone()));
-        Ok(event)
+        if let Some(event) = event {
+            self.publish(Change::AgentEventCreated(event.clone()));
+            return Ok(event);
+        }
+        Ok(
+            sqlx::query_as("SELECT * FROM agent_events WHERE relay_key = ?")
+                .bind(relay_key)
+                .fetch_one(self.r())
+                .await?,
+        )
     }
 
     /// Every event a session has produced, in order: the whole transcript an

@@ -197,7 +197,9 @@ Nothing is `#[ignore]`d: the suite drives real `git` worktrees, which Ariadne
 requires anyway, and a stub ACP agent that `tests/it/common/acp.rs` writes in
 `python3` and registers as the agent `stub`. Every seat a test starts runs on
 that stub, so the suite needs no coding-agent CLI installed. A machine missing
-`git` or `python3` gets failures rather than a quiet pass.
+`git`, `python3`, or `tmux` gets failures rather than a quiet pass.
+The relay integration tests use a private tmux server per test home.
+Install tmux with `brew install tmux` on macOS or `sudo apt-get install tmux` on Ubuntu.
 
 A harness's store starts from a template rather than a fresh migration: the
 first harness to build one migrates and seeds a database into the machine's

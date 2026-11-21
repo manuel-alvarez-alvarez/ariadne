@@ -1,10 +1,13 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-17
+updated: 2026-11-21
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
+  - crates/ariadne-daemon/tests/it/acp_recovery.rs
+  - crates/ariadne-daemon/tests/it/place.rs
+  - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/subagents.rs
   - crates/ariadne-daemon/src/acp_subagents.rs
@@ -22,25 +25,14 @@ tests:
 
 # ACP runtime
 
-How the daemon runs an agent: as its own child process, driven over the Agent
-Client Protocol.
+The daemon drives each agent over ACP version 1.
+The daemon owns a direct child or connects to a relay in a detached multiplexer pane.
+The relay command and socket protocol follow [038](038-agent-relay.md).
+Every seat uses the same event ingestion, console, permission handling, and usage accounting.
 
-`ariadned` spawns the agent executable with piped standard input and output,
-speaks ACP version 1 over those pipes, and reports what the agent does through
-the daemon's one event ingestion path. Every seat of every session runs this
-way — the orchestrator, the agent of a column and the reviewer of a pull
-request. The runtime is
-`crates/ariadne-daemon/src/acp.rs`; the launch it consumes — the command and
-the launch file — is described in 007.
-
-The wire is the `agent-client-protocol` crate's, the protocol's own Rust SDK.
-With SDK v5, runtime and discovery select `Client.v1()`, use
-`v1::ConnectionTo`, and build typed messages from `v1::schema`.
-The daemon owns the process — it spawns it, signals its process group and
-reaps it — and hands the SDK the two pipes and nothing else
-(`acp_transport`). Every request it sends is built from the SDK's typed v1
-schema (`acp_calls`, `acp_schema`), so a field the protocol renames is a
-compile error rather than a payload an agent ignores.
+The wire uses the `agent-client-protocol` SDK and its typed v1 schema.
+`acp_transport` adapts direct pipes and relay streams for the SDK.
+The daemon owns direct process groups; the relay owns multiplexer process groups.
 
 The daemon advertises no compaction. An agent compacts its own conversation
 near the context limit and carries on, and the daemon asks for none — the
@@ -82,7 +74,7 @@ it leaves nothing to delete.
 
 ## Behavior
 
-1. The agent is a direct child of the daemon. It runs the registry command
+1. The agent runs at the place selected under rule 17. A direct child runs the registry command
    the launch names (007), with the launch's environment, in the seat's
    working directory, on piped stdio, as the leader of a process group of
    its own. A launch for a session that already has an agent here kills that
@@ -413,7 +405,85 @@ it leaves nothing to delete.
     announcement's capabilities or state apply at once. The parent's own
     turn, running or not, is untouched either way.
 
+17. At every first launch and resume, select herdr, then tmux, then a direct child.
+    Herdr discovery always reports unavailable in this implementation.
+    `session_place` can force `none`, `tmux`, or `herdr`.
+    A missing forced multiplexer fails the launch or resume with its name and reason.
+    Record the selected place on the session row before starting its process.
+    A resume selects again; it does not preserve the previous place.
+    Before starting that process, stop any old relay or pane for the session.
+    An automatic resume can fall back when the previous multiplexer is unavailable.
+    Reconnect preserves an existing relay's stored place and never runs selection again.
+    `ariadne doctor` reports selection and its reason, including an unavailable forced place.
+18. With tmux selected, start `ariadned relay` in a detached pane on a private server for the daemon home.
+    Pass the working directory, command arguments, and environment without shell interpretation.
+    Send ACP through the relay socket, never pane keystrokes or pane text.
+    A daemon stop closes its connection without stopping the relay, pane, or agent.
+    A session kill stops the relay's agent process group before removing its pane.
+
+19. Persist numbered daemon inputs before sending them to the relay.
+    On connect, resend only numbers above the relay greeting's accepted input number.
+    Store each output frame before acknowledging it to the relay.
+    Reconstruct ACP setup from retained responses without initializing the live agent again.
+    Restore the pending prompt, buffered text, permission state, and completed usage.
+    Restore subagent registrations and available commands from earlier turns.
+    Keep the active turn's identity and delivery metadata across reconnect.
+    Preserve the launch's original transcript baseline when reading usage after reconnect.
+    Retain processed frames to reconstruct buffered text during replay.
+    Identify normalized effects by session, launch, source, and ordinal.
+    Replaying an effect keeps its existing event identity and usage source.
+    Mark a permission request processed only after its answer reaches the durable input ledger.
+
 ## Acceptance criteria
+
+- Selection order, direct fallback, and forced failures:
+  `place.rs::automatic_selection_uses_tmux_before_a_direct_child`,
+  `::automatic_selection_uses_a_direct_child_without_multiplexers`, and
+  `::a_missing_forced_multiplexer_refuses_launch`.
+- Forced settings parse through daemon configuration:
+  `config.rs::tests::the_daemon_accepts_each_forced_session_place`.
+- Doctor explains a missing forced location:
+  `doctor.rs::doctor_reports_a_missing_forced_place_and_its_reason`.
+- A detached pane starts, lists, and stops:
+  `place.rs::a_detached_relay_pane_can_be_found_and_stopped`.
+- Arguments, environment, and working directory reach the agent without shell interpretation:
+  `place.rs::a_relay_pane_preserves_arguments_environment_and_working_directory`.
+- ACP setup, console input, and kill use the relay:
+  `acp_runtime.rs::a_tmux_session_runs_acp_through_its_relay`.
+- Resume selects again when the old multiplexer is unavailable, stops its old relay,
+  and stores the new place:
+  `acp_runtime.rs::an_automatic_resume_reselects_after_the_old_multiplexer_disappears`.
+- A forced setting still applies to resume and reports an unavailable location:
+  `acp_runtime.rs::a_missing_forced_place_refuses_a_resume_with_its_reason`.
+- Permission handling through tmux preserves the selected option and event kinds:
+  `acp_runtime.rs::a_tmux_permission_answer_reaches_the_agent_once`.
+- Daemon disconnection preserves the session row and permits more ACP traffic to the same agent:
+  `acp_runtime.rs::daemon_disconnection_leaves_the_pane_relay_and_agent_alive`.
+- Reconnect precedes liveness and keeps the stored place despite changed selection:
+  `acp_runtime.rs::reconnect_keeps_the_live_relay_place_when_the_forced_setting_changes`.
+- Offline output and usage survive without repeating the prompt or an accepted permission answer:
+  `acp_runtime.rs::reconnect_restores_offline_text_usage_and_an_answered_permission_without_repeating_input`.
+- Repeated normalized effects keep one event and one usage record:
+  `acp_recovery.rs::replaying_one_relay_effect_keeps_one_event_and_one_usage_record`.
+- An unanswered permission returns to the console:
+  `acp_runtime.rs::an_unanswered_permission_returns_to_the_console_after_reconnect`.
+- Resume starts a new pane and retains the stored conversation:
+  `acp_runtime.rs::a_tmux_resume_replaces_the_old_pane_and_keeps_the_conversation`.
+- A missing pane metadata file does not prevent live relay recovery:
+  `acp_runtime.rs::reconnect_finds_a_live_relay_without_the_pane_metadata_file`.
+- Subagents from completed turns retain their names after reconnect:
+  `acp_runtime.rs::reconnect_keeps_a_subagent_announced_in_an_earlier_turn`.
+- The console retains the command list from completed turns:
+  `acp_runtime.rs::reconnect_restores_commands_offered_in_a_completed_turn`.
+- Turn identity preserves the question raised by the current turn:
+  `acp_runtime.rs::reconnect_keeps_the_question_raised_by_the_current_turn_open`.
+- Transcript usage retains the resumed launch's initial baseline:
+  `transcript_usage.rs::reconnect_keeps_the_resumed_launchs_original_transcript_baseline`.
+- Recovery distinguishes unanswered prompts, stored permission answers, and unprocessed prompt responses:
+  `acp_recovery.rs::recovery_preserves_an_unanswered_turn_and_a_sent_permission_answer` and
+  `::a_received_prompt_response_stays_pending_until_its_effects_are_stored`.
+- The socket client restores unprocessed output and resends only unaccepted input numbers:
+  `place.rs::reconnect_resends_only_unaccepted_inputs_and_restores_pending_output`.
 
 - A model-read probe for `opencode`, the shipped id, closes and deletes the
   session id returned by `session/new`, once

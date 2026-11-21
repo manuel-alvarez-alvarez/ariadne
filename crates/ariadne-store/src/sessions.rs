@@ -51,7 +51,90 @@ pub struct SessionFilter {
     pub attention_only: bool,
 }
 
+/// A relay output and the daemon's processing checkpoint.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RelayOutput {
+    pub seq: i64,
+    pub frame: String,
+    pub processed: bool,
+}
+
+/// A daemon input retained until the relay accepts its sequence number.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RelayInput {
+    pub seq: i64,
+    pub data: String,
+}
+
 impl Store {
+    /// Read retained relay output in wire order for runtime reconstruction.
+    pub async fn relay_outputs(&self, session: &str, launch: &str) -> Result<Vec<RelayOutput>> {
+        Ok(sqlx::query_as("SELECT seq, frame, processed FROM relay_outputs WHERE session_id = ? AND launch_id = ? ORDER BY seq")
+            .bind(session).bind(launch).fetch_all(self.r()).await?)
+    }
+
+    /// Keep a relay frame before acknowledging it on the socket.
+    pub async fn save_relay_output(
+        &self,
+        session: &str,
+        launch: &str,
+        seq: i64,
+        frame: &str,
+    ) -> Result<bool> {
+        sqlx::query("INSERT INTO relay_outputs (session_id, launch_id, seq, frame) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING")
+            .bind(session).bind(launch).bind(seq).bind(frame).execute(self.w()).await?;
+        Ok(!sqlx::query_scalar::<_, bool>("SELECT processed FROM relay_outputs WHERE session_id = ? AND launch_id = ? AND seq = ?")
+            .bind(session).bind(launch).bind(seq).fetch_one(self.r()).await?)
+    }
+    /// Restore output that the previous daemon stored but did not process.
+    pub async fn pending_relay_outputs(&self, session: &str, launch: &str) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar("SELECT frame FROM relay_outputs WHERE session_id = ? AND launch_id = ? AND processed = 0 ORDER BY seq")
+            .bind(session).bind(launch).fetch_all(self.r()).await?)
+    }
+    /// Mark a frame processed only after its runtime effects are stored.
+    pub async fn mark_relay_output_processed(
+        &self,
+        session: &str,
+        launch: &str,
+        seq: i64,
+    ) -> Result<()> {
+        sqlx::query("UPDATE relay_outputs SET processed = 1 WHERE session_id = ? AND launch_id = ? AND seq = ?")
+            .bind(session).bind(launch).bind(seq).execute(self.w()).await?;
+        Ok(())
+    }
+
+    /// Persist input before attempting socket delivery.
+    pub async fn enqueue_relay_input(
+        &self,
+        session: &str,
+        launch: &str,
+        data: &str,
+    ) -> Result<i64> {
+        Ok(sqlx::query_scalar("INSERT INTO relay_inputs (session_id, launch_id, seq, data) SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ? FROM relay_inputs WHERE session_id = ? AND launch_id = ? RETURNING seq")
+            .bind(session).bind(launch).bind(data).bind(session).bind(launch).fetch_one(self.w()).await?)
+    }
+    /// Read inputs above the relay's durable acceptance number.
+    pub async fn relay_inputs_after(
+        &self,
+        session: &str,
+        launch: &str,
+        seq: i64,
+    ) -> Result<Vec<RelayInput>> {
+        Ok(sqlx::query_as("SELECT seq, data FROM relay_inputs WHERE session_id = ? AND launch_id = ? AND seq > ? ORDER BY seq")
+            .bind(session).bind(launch).bind(seq).fetch_all(self.r()).await?)
+    }
+
+    /// Record the location before a session process starts.
+    pub async fn set_session_place(&self, id: &str, place: &str) -> Result<()> {
+        self.write_session(
+            id,
+            sqlx::query("UPDATE agent_sessions SET place = ? WHERE id = ?")
+                .bind(place)
+                .bind(id),
+        )
+        .await
+    }
+
     /// Move an existing conversation onto a new pin.
     pub async fn set_session_pin(&self, id: &str, pin: &AgentPin) -> Result<AgentSession> {
         self.write_session(

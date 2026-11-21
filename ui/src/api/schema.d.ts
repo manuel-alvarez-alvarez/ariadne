@@ -3476,6 +3476,7 @@ export interface components {
             home: string;
             /** @description The daemon's `PATH`, the one every agent and git lookup uses. */
             path?: string | null;
+            place?: components["schemas"]["PlaceDto"] | null;
             /**
              * @description The Python interpreter the model's install runs on (022). It is reported
              *     apart from `tools` because it answers a question of its own: not
@@ -4235,6 +4236,12 @@ export interface components {
             probabilities?: unknown;
             risk_tags?: string[] | null;
             session_id: unknown;
+        };
+        /** @description The daemon's selected session location and the reason for its selection. */
+        PlaceDto: {
+            available: boolean;
+            name: string;
+            reason: string;
         };
         /**
          * @description The work Ariadne does on one pull request as a goal of its own: one active

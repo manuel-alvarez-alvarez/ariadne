@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-11-17
+updated: 2026-11-21
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -46,8 +46,8 @@ the ACP runtime that takes a prompt (021).
    replay of what it missed.
 3. A goal wants one live orchestrator for its whole life, `planning` and
    `active` alike. Finalizing the plan is a hand-off, not an ending. An
-   orchestrator whose agent went away — a daemon restart takes every agent
-   down — is resumed in its own row, on the conversation it left behind. A
+   orchestrator whose agent went away is resumed in its own row, on the conversation it left behind.
+   A live relay reconnects under rule 20 instead of starting another process. A
    fresh one is spawned only where there is no conversation to resume, or
    where the last launch died on arrival (rule 27). For every seat, a
    conversation is the internal id of a session whose agent is still up or
@@ -116,9 +116,11 @@ the ACP runtime that takes a prompt (021).
     one. A wedged agent carrying it keeps the flag and is still relaunched.
 19. An agent that reported an error is left alone rather than nudged over
     it.
-20. The liveness sweep asks the ACP runtime whether each live session's
-    agent runs, and the runtime answers for certain. A session whose agent
-    is gone is retired.
+20. Before starting the scheduler, the daemon reconnects each stored live relay session.
+    Reconnect uses the stored place under 021 rule 17, without running selection again.
+    The liveness sweep then asks the ACP runtime whether each live session's agent runs.
+    A reconnected session stays live with its existing launch and conversation.
+    A session whose agent is gone is retired.
 21. A session still `starting` is left alone for 30 s (`START_GRACE_SECS`),
     since its row exists before its agent does. A start older than that is a
     launch that is not coming, and it is swept.
@@ -435,6 +437,9 @@ the ACP runtime that takes a prompt (021).
   classify, so it cannot trigger an automatic switch.
 - An automatic-switch notice waits in memory when no orchestrator is live. A
   daemon restart before delivery loses that notice.
+
+- Startup reconnect precedes the first liveness sweep, and a changed forced setting does not replace the live agent
+  (`acp_runtime.rs::reconnect_keeps_the_live_relay_place_when_the_forced_setting_changes`).
 
 ## Sources
 

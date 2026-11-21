@@ -1,10 +1,11 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-11-14
+updated: 2026-11-21
 areas: [daemon, cli, ui]
 commits: [e4816cf6, 39937143, a69b953f, 7880c022, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
+  - crates/ariadne-store/tests/session_place.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
@@ -33,13 +34,14 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 ## Behavior
 
 1. A staffed session belongs to a goal and seat, and a column session also belongs to its task.
-2. A session stores its worktree, model, optional effort, and agent session id.
+2. A session stores its worktree, model, optional effort, agent session id, and optional place.
 3. A session is starting, running, idle, exited, or failed.
 4. A task reuses one session for each column agent, and a goal reuses one orchestrator session.
 5. Each launch has a new launch id, which is stored before the agent starts.
 6. A stale launch report cannot update a later launch of the same session.
 7. Killing a live session kills its process and leaves the row resumable.
 8. Resume revives the same row and conversation, using the repository checkout when its worktree is absent.
+   Place selection and old-process cleanup follow 021 rule 17.
 9. A session without an agent conversation cannot resume, and a cancelled goal session cannot revive.
 10. `GET /v1/sessions/{id}/console` returns the newest ordered console snapshot.
 11. `GET /v1/sessions/{id}/console/stream` sends the snapshot and later events.
@@ -91,6 +93,8 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 17. Naming a `subagent_id` cancels that child with its own session id and leaves the session's own turn as it is, and is refused for a child that is unknown, has ended, or never advertised the capability (`crates/ariadne-daemon/tests/it/acp_console.rs::cancelling_an_announced_subagent_sends_session_cancel_with_its_own_id`, `::cancelling_an_unknown_subagent_is_refused`, `::cancelling_an_ended_subagent_is_refused`, `::cancelling_a_subagent_that_does_not_advertise_cancel_is_refused`, `ariadne-daemon::acp_subagents::tests::a_child_may_be_cancelled_only_while_running_and_advertising_it`).
 18. Esc in a child's view cancels it when it advertised the capability, and the footer names the key either way (`ariadne-console::tui::subagents::tests::esc_cancels_a_child_that_advertises_it_instead_of_switching_back`, `::esc_posts_a_subagent_cancel_through_the_sink`, `::a_childs_view_is_read_only_and_esc_returns_to_the_parent`).
 19. An open question stays above the input, a closed one goes into the scrollback once after the blocks before its close, one open at the exit is written once, and a finished session keeps event order (`ariadne-console::tui::viewport::tests::an_open_question_stays_over_the_input_while_later_blocks_go_into_the_scrollback`, `::a_closed_question_goes_into_the_scrollback_once_after_the_blocks_before_its_close`, `::a_question_open_at_the_close_is_written_once_after_every_block`, `::a_finished_session_draws_its_questions_in_event_order`); chunks under an open question make one block, and a replay keeps a close's place (`ariadne-console::tui::viewport::tests::chunks_under_an_open_question_make_one_block_that_is_written_whole`, `::a_question_closed_while_the_stream_was_down_keeps_its_close_position`).
+
+20. A session place survives a store restart (`crates/ariadne-store/tests/session_place.rs::the_session_place_survives_a_store_restart`).
 
 ## Sources
 

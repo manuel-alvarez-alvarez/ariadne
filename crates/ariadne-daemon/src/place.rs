@@ -1,0 +1,270 @@
+//! Session locations and multiplexer discovery.
+use anyhow::{Context, Result, bail, ensure};
+use ariadne_core::probe;
+use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::path::PathBuf;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// A resolved session location.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Place {
+    None,
+    Tmux(PathBuf),
+}
+impl Place {
+    /// Stable session storage name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Tmux(_) => "tmux",
+        }
+    }
+
+    fn find_herdr(_path: Option<&OsStr>) -> Option<Self> {
+        None
+    }
+
+    /// Select a location on the daemon's search path.
+    pub fn find(forced: Option<&str>, path: Option<&OsStr>) -> Result<Self> {
+        // Herdr discovery deliberately reports unavailable until its backend lands.
+        let tmux = || {
+            path.and_then(|path| probe::which(path, "tmux"))
+                .map(Self::Tmux)
+        };
+        match forced {
+            Some("none") => Ok(Self::None),
+            Some("herdr") => Self::find_herdr(path)
+                .ok_or_else(|| anyhow::anyhow!("forced session place herdr was not found")),
+            Some("tmux") => {
+                tmux().ok_or_else(|| anyhow::anyhow!("forced session place tmux was not found"))
+            }
+            None => Ok(Self::find_herdr(path).or_else(tmux).unwrap_or(Self::None)),
+            Some(value) => bail!("invalid session place {value:?}; expected none, tmux, or herdr"),
+        }
+    }
+}
+
+/// Report discovery, including unavailable forced locations.
+pub(crate) fn report(forced: Option<&str>, path: Option<&OsStr>) -> ariadne_api::doctor::PlaceDto {
+    use ariadne_api::doctor::PlaceDto;
+    match Place::find(forced, path) {
+        Ok(place) => PlaceDto {
+            name: place.name().into(),
+            reason: if forced.is_some() {
+                "forced by session_place".into()
+            } else {
+                match place {
+                    Place::Tmux(_) => "herdr was not found; tmux is available".into(),
+                    Place::None => "herdr and tmux were not found; use a direct child".into(),
+                }
+            },
+            available: true,
+        },
+        Err(error) => PlaceDto {
+            name: forced.unwrap_or("none").into(),
+            reason: error.to_string(),
+            available: false,
+        },
+    }
+}
+
+/// One relay command, passed as arguments without shell interpretation.
+pub struct PaneLaunch<'a> {
+    pub home: &'a std::path::Path,
+    pub cwd: &'a std::path::Path,
+    pub session_id: &'a str,
+    pub launch_id: &'a str,
+    pub agent_id: &'a str,
+    pub task_id: &'a str,
+    pub daemon: &'a std::path::Path,
+    pub program: &'a str,
+    pub args: &'a [String],
+    pub env: &'a [(String, String)],
+}
+
+/// A live pane in a location's private server.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Pane {
+    pub id: String,
+    pub name: String,
+    pub session_id: String,
+}
+
+impl Place {
+    /// Start a detached relay pane.
+    pub async fn start_pane(&self, launch: &PaneLaunch<'_>) -> Result<Pane> {
+        for id in [launch.session_id, launch.launch_id] {
+            ensure!(
+                !id.is_empty()
+                    && id.len() <= 64
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)),
+                "invalid pane identity"
+            );
+        }
+        let name = format!("ariadne-{}", launch.launch_id);
+        let mut command = self.command(launch.home)?;
+        command
+            .args(["new-session", "-d", "-s", &name, "-c"])
+            .arg(tmux_literal(launch.cwd));
+        for (key, value) in std::env::vars().chain(launch.env.iter().cloned()) {
+            command
+                .arg("-e")
+                .arg(tmux_literal(format!("{key}={value}")));
+        }
+        command
+            .args(["-P", "-F", "#{pane_id}"])
+            .arg(tmux_literal(launch.daemon))
+            .arg("relay")
+            .arg("--home")
+            .arg(tmux_literal(launch.home))
+            .args(
+                [
+                    "--session",
+                    launch.session_id,
+                    "--agent",
+                    launch.agent_id,
+                    "--task",
+                    launch.task_id,
+                    "--",
+                    launch.program,
+                ]
+                .map(tmux_literal),
+            )
+            .args(launch.args.iter().map(tmux_literal))
+            .args([
+                ";",
+                "set-option",
+                "-t",
+                &name,
+                "@ariadne_session",
+                launch.session_id,
+            ]);
+        let output = run(command).await?;
+        ensure!(
+            output.status.success(),
+            "starting tmux relay pane: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        Ok(Pane {
+            id: String::from_utf8(output.stdout)?.trim().into(),
+            name,
+            session_id: launch.session_id.into(),
+        })
+    }
+
+    /// List the live relay panes in this home's private server.
+    pub async fn live_panes(&self, home: &std::path::Path) -> Result<Vec<Pane>> {
+        let mut command = self.command(home)?;
+        command.args([
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}\t#{session_name}\t#{@ariadne_session}",
+        ]);
+        let output = run(command).await?;
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            if error.contains("no server running")
+                || error.contains("No such file")
+                || error.contains("server exited unexpectedly")
+            {
+                return Ok(Vec::new());
+            }
+            bail!("listing tmux relay panes: {}", error.trim());
+        }
+        Ok(String::from_utf8(output.stdout)?
+            .lines()
+            .filter_map(|line| {
+                let fields: Vec<_> = line.split('\t').collect();
+                (fields.len() == 3 && fields[1].starts_with("ariadne-") && !fields[2].is_empty())
+                    .then(|| Pane {
+                        id: fields[0].into(),
+                        name: fields[1].into(),
+                        session_id: fields[2].into(),
+                    })
+            })
+            .collect())
+    }
+
+    /// Stop the relay first so its agent process group cannot outlive the pane.
+    pub async fn stop_pane(&self, home: &std::path::Path, pane: &Pane) -> Result<()> {
+        let socket_path = home
+            .join("relays")
+            .join(format!("{}.sock", pane.session_id));
+        match tokio::net::UnixStream::connect(&socket_path).await {
+            Ok(mut socket) => {
+                tokio::time::timeout(crate::timeouts::Timeouts::default().probe, async {
+                    socket.write_all(b"{\"type\":\"stop\"}\n").await?;
+                    let mut discarded = Vec::new();
+                    socket.read_to_end(&mut discarded).await?;
+                    std::io::Result::Ok(())
+                })
+                .await
+                .context("waiting for relay stop")??;
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                ) => {}
+            Err(error) => return Err(error).context("connecting to relay for stop"),
+        }
+        if self
+            .live_panes(home)
+            .await?
+            .iter()
+            .any(|live| live.id == pane.id)
+        {
+            let mut command = self.command(home)?;
+            command.args(["kill-session", "-t", &pane.name]);
+            let output = run(command).await?;
+            if !output.status.success()
+                && self
+                    .live_panes(home)
+                    .await?
+                    .iter()
+                    .any(|live| live.id == pane.id)
+            {
+                bail!(
+                    "stopping tmux relay pane: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn command(&self, home: &std::path::Path) -> Result<tokio::process::Command> {
+        let Self::Tmux(binary) = self else {
+            bail!("a direct child has no relay pane");
+        };
+        let mut command = tokio::process::Command::new(binary);
+        command
+            .arg("-S")
+            .arg(tmux_literal(home.join("tmux.sock")))
+            .kill_on_drop(true);
+        Ok(command)
+    }
+}
+
+// tmux parses a trailing semicolon as a command separator, even in an argv element.
+fn tmux_literal(value: impl AsRef<OsStr>) -> OsString {
+    let bytes = value.as_ref().as_bytes();
+    if let Some(prefix) = bytes.strip_suffix(b";") {
+        let mut escaped = prefix.to_vec();
+        escaped.extend_from_slice(b"\\;");
+        OsString::from_vec(escaped)
+    } else {
+        value.as_ref().to_owned()
+    }
+}
+
+async fn run(mut command: tokio::process::Command) -> Result<std::process::Output> {
+    tokio::time::timeout(crate::timeouts::Timeouts::default().probe, command.output())
+        .await
+        .context("tmux command timed out")?
+        .context("running tmux")
+}
