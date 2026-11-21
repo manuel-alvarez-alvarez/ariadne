@@ -1,6 +1,6 @@
 /**
  * The reconnect button of a named host, in the header picker and in the
- * settings Hosts section: `POST /v1/hosts/{name}/reconnect` of the settings
+ * Hosts screen: `POST /v1/hosts/{name}/reconnect` of the settings
  * daemon. The answer is the host's row, and `host_updated` is what moves it
  * on screen. `local` has no button.
  */

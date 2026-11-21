@@ -84,28 +84,19 @@ tunnel_channel = "Tl13s4JZbHs6Ww60eXq7Ab"
 id = "my-agent"                    # names under another command (default: [])
 command = ["my-agent", "acp"]      # program followed by its arguments
 
-[hosts.build-box]                  # another machine's daemon, listed by
-endpoint = "ssh://me@build.example:2222"
-                                   # GET /v1/hosts: ssh://[user@]host[:port],
-remote = "/home/me/.ariadne/ariadne.sock"
-                                   # http://host:port, or an absolute socket path;
-                                   # remote (ssh:// only) is the far daemon's
-                                   # socket path or loopback host:port
-
-[hosts.lab]
-endpoint = "http://10.0.0.7:7676"
 ```
 
-Each `[hosts.<name>]` table names a daemon on another machine. A name has only
-letters, digits, `-` and `_`, and `local` is taken: it is this daemon, which
-`GET /v1/hosts` always lists first. The configured hosts follow in the order
-of the file. An unknown key in a host, a bad `endpoint`, or a `remote` on a
-host that is not `ssh://` is refused by name at startup and by `ariadned
---check-config`. See [Hosts](../specs/037-hosts.md).
+Hosts live in the settings daemon database. Add them on the app's Hosts screen or through `POST /v1/hosts`.
+Each named host has an endpoint, an optional SSH remote address, and an optional colour override.
+Use `PATCH /v1/hosts/{name}` to change these values, or `DELETE /v1/hosts/{name}` to remove the connection.
+Set `color` to null to clear an override. The `local` host accepts colour changes only.
+The daemon keeps hosts after restart and starts their connections automatically.
+Old `[hosts]` tables cause a configuration error. Remove them and add each host again.
+See [Hosts](../specs/037-hosts.md) for accepted addresses and API errors.
 
 To provision a new worker, use [SSH worker setup](cli.md#install-an-ssh-worker) from the CLI or Desktop Settings.
-The settings daemon stores setup progress and provisioned connections in `worker-setup.json` under its home.
-It restores these connections after restart without changing `config.toml`.
+The settings daemon stores setup progress in `worker-setup.json` under its home.
+The register step saves the connection in its database. Setup records never restore deleted connections.
 
 For each `ssh://` host the daemon keeps a local port forward open. At
 startup it picks a free loopback port and runs:

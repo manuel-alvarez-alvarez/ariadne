@@ -101,7 +101,9 @@ it("keeps nested confirmations modal and gives Escape to the dialog first", asyn
   const user = userEvent.setup()
   fireEvent.click(screen.getByRole("button", { name: "Pin inspector" }))
   await user.click(screen.getByRole("button", { name: "Confirm action" }))
-  expect(screen.getByRole("dialog").contains(document.activeElement)).toBe(true)
+  await waitFor(() =>
+    expect(screen.getByRole("dialog").contains(document.activeElement)).toBe(true),
+  )
   await user.tab()
   await waitFor(() =>
     expect(screen.getByRole("dialog").contains(document.activeElement)).toBe(true),

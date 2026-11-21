@@ -193,6 +193,8 @@ src/
     repositories/  the registered checkouts goals are created against, their
                    forge integration, and the webhook tunnel switch
                    the settings dialog shows
+    hosts/         the Hosts screen: the hosts table, and the "Set up worker"
+                   dialog with its SSH worker setup form
     agents/        agents screen: the flags each registry agent is launched
                    with, and the model catalog each may be staffed on (what
                    `#/models` redirects onto)
@@ -374,7 +376,7 @@ dispatches under its own host's keys, `dispatchDomainEvent(queryClient,
 host, event)`. Only `local`'s stream writes `useStreamStore` and answers the
 connection banner's Retry: the connection banner and status stay about
 `local`. A named host's stream state and heartbeat go to `useHostStreamStore`,
-which its row in the header's host picker and the Hosts table in Settings read.
+which its row in the header's host picker and the Hosts screen's table read.
 
 `src/events/dispatch.ts` is the only place events meet the cache. Events are fat
 — each carries the full updated DTO — so for every kind the rule is the same:
@@ -411,7 +413,8 @@ which its row in the header's host picker and the Hosts table in Settings read.
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 | `dashboard_created`, `dashboard_updated` | patch `dashboards.detail`, invalidate `dashboards.lists` |
 | `dashboard_deleted` | remove `dashboards.detail`, invalidate `dashboards.lists` |
-| `host_updated` | from `local`'s stream only: patch the row in `hosts.list()`, point `api(host)` at the new address, and invalidate `qk.host(name)` when the host came up or moved |
+| `host_updated` | from `local`'s stream only: add or replace the row in `hosts.list()`, point `api(host)` at the new address, and invalidate `qk.host(name)` when the host came up or moved |
+| `host_deleted` | from `local`'s stream only: remove the row from `hosts.list()`, close its stream through the host provider, and drop `qk.host(name)` |
 
 `dashboard_deleted` is the one `*_deleted` event that is fat like its own
 `*_created`/`*_updated`, carrying the whole `DashboardDto` rather than the
@@ -518,7 +521,7 @@ one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
 Screens with URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/workflows`, `#/agents`, `#/permissions`, `#/repositories`, `#/dashboards`,
+`#/workflows`, `#/agents`, `#/hosts`, `#/permissions`, `#/repositories`, `#/dashboards`,
 and the Forge screen's two tabs, `#/forge/pull-requests` and `#/forge/issues`
 (`#/forge` opens the first) — and `#/` redirects onto the board. `#/models`
 redirects onto `#/agents`, which folded the model catalog in; `#/tasks`

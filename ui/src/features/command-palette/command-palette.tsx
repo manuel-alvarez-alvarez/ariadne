@@ -38,6 +38,7 @@ import {
   RadioTowerIcon,
   RefreshCwIcon,
   ScrollTextIcon,
+  ServerIcon,
   SettingsIcon,
   SunIcon,
   TargetIcon,
@@ -407,6 +408,7 @@ const PAGES = [
   { label: "Skills", path: paths.skills(), icon: CpuIcon },
   { label: "Workflows", path: paths.workflows(), icon: WorkflowIcon },
   { label: "Agents", path: paths.agents(), icon: BotIcon },
+  { label: "Hosts", path: paths.hosts(), icon: ServerIcon },
   { label: "Repositories", path: paths.repositories(), icon: FolderGit2Icon },
 ] as const
 

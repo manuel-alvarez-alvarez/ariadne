@@ -59,7 +59,7 @@ pub struct Config {
     pub ai_failure_diagnosis: bool,
     /// User-defined ACP agent commands appended to the built-in registry.
     pub acp_agents: Vec<AcpAgentConfig>,
-    /// Other machines' daemons, in the order the file lists them (037).
+    /// Runtime connection definitions loaded from the settings database (037).
     pub hosts: Vec<(String, HostConfig)>,
     /// ACP registry index URL, fetched only on an explicit refresh.
     pub acp_registry_url: String,
@@ -125,7 +125,7 @@ impl Config {
         // The strict reading of `config.toml` lives beside the socket
         // resolution it shares a file with, so `ariadne doctor` reports on
         // exactly what would stop this daemon from starting.
-        let file = endpoint::parse_config(&root)?.unwrap_or_default();
+        let file = endpoint::parse_daemon_config(&root)?.unwrap_or_default();
         validate_telemetry_retention_days(&file)?;
         validate_hosts(&file)?;
 
@@ -207,7 +207,7 @@ impl Config {
             .context("cannot determine home directory; pass --home")?;
         crate::portable::saved(&root)?;
         let path = endpoint::config_file(&root);
-        let file = endpoint::parse_config(&root)?;
+        let file = endpoint::parse_daemon_config(&root)?;
         let has_file = file.is_some();
         let file = file.unwrap_or_default();
         validate_tcp_file_config(&file)?;
@@ -278,8 +278,8 @@ fn validate_telemetry_retention_days(config: &endpoint::FileConfig) -> Result<()
     Ok(())
 }
 
-/// The rules of `[hosts.<name>]` (037): a refusal names the host and the key.
-fn validate_hosts(config: &endpoint::FileConfig) -> Result<()> {
+/// Host address validation (037): each refusal names the host and field.
+pub(crate) fn validate_hosts(config: &endpoint::FileConfig) -> Result<()> {
     for (name, host) in &config.hosts.0 {
         if name == "local" {
             anyhow::bail!(

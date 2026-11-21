@@ -247,7 +247,7 @@ Out: what the daemon does once running (009, 012).
     The UI caches npm downloads against `ui/package-lock.json` and always
     runs `npm ci`. A cache hit never skips a build, test, lint or audit step.
 
-20. Portable worker configuration uses the maintenance lifecycle in spec 037, rules 56–61.
+20. Portable worker configuration uses the maintenance lifecycle in spec 037, rules 62–67.
     Installed services retain supervision across process replacement.
     Directly launched workers use the same lifecycle without requiring service installation.
 

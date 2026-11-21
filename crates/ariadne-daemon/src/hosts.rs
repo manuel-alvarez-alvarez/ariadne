@@ -56,12 +56,14 @@ pub struct Hosts(Arc<Inner>);
 
 struct Inner {
     cfg: Arc<Config>,
+    colors: Mutex<std::collections::HashMap<String, ariadne_api::hosts::HostColor>>,
     setup: Mutex<std::collections::BTreeMap<String, setup::Record>>,
     extra: Mutex<Vec<Hosts>>,
     store: Store,
+    mutations: tokio::sync::Mutex<()>,
     events: EventBus,
     timeouts: Timeouts,
-    /// The configured hosts, in file order, as `GET /v1/hosts` lists them.
+    /// The configured hosts, in database insertion order, as `GET /v1/hosts` lists them.
     hosts: Mutex<Vec<HostDto>>,
     /// The endpoint of each configured host while it is `ready`, else
     /// `None`: what its sync waits on.
@@ -77,23 +79,63 @@ struct Inner {
 
 impl Hosts {
     /// The configured hosts, with no forward and no sync started yet.
-    pub fn new(cfg: Arc<Config>, store: Store, events: EventBus, timeouts: Timeouts) -> Self {
+    pub async fn new(cfg: Arc<Config>, store: Store, events: EventBus, timeouts: Timeouts) -> Self {
         let mut cfg = (*cfg).clone();
         let records = setup::load(&cfg.root);
-        for (name, record) in &records {
-            if let Some(remote) = &record.remote
-                && !cfg.hosts.iter().any(|(n, _)| n == name)
-            {
-                cfg.hosts.push((
-                    name.clone(),
-                    HostConfig {
-                        endpoint: record.request.ssh.clone(),
-                        remote: Some(remote.clone()),
-                    },
-                ));
+        let stored = store.list_hosts().await.expect("read stored hosts");
+        cfg.hosts = stored
+            .iter()
+            .filter_map(|row| {
+                row.endpoint.as_ref().map(|endpoint| {
+                    (
+                        row.name.clone(),
+                        HostConfig {
+                            endpoint: endpoint.clone(),
+                            remote: row.remote.clone(),
+                        },
+                    )
+                })
+            })
+            .collect();
+        let root_cfg = Arc::new(cfg.clone());
+        let mut root = cfg;
+        root.hosts.clear();
+        let result = Self::configured(
+            Arc::new(root),
+            store.clone(),
+            events.clone(),
+            timeouts,
+            records,
+        );
+        for entry in &root_cfg.hosts {
+            let mut child = (*root_cfg).clone();
+            child.hosts = vec![entry.clone()];
+            result.0.extra.lock().unwrap().push(Self::configured(
+                Arc::new(child),
+                store.clone(),
+                events.clone(),
+                timeouts,
+                Default::default(),
+            ));
+        }
+        *result.0.colors.lock().unwrap() = stored
+            .into_iter()
+            .filter_map(|r| {
+                r.color.map(|c| {
+                    (
+                        r.name,
+                        serde_json::from_value(serde_json::Value::String(c))
+                            .expect("stored host colour"),
+                    )
+                })
+            })
+            .collect();
+        for child in result.0.extra.lock().unwrap().iter() {
+            for host in child.0.hosts.lock().unwrap().iter_mut() {
+                host.color = result.0.colors.lock().unwrap().get(&host.name).copied();
             }
         }
-        Self::configured(Arc::new(cfg), store, events, timeouts, records)
+        result
     }
 
     fn configured(
@@ -121,9 +163,11 @@ impl Hosts {
             .unzip();
         Self(Arc::new(Inner {
             cfg,
+            colors: Mutex::new(Default::default()),
             setup: Mutex::new(records),
             extra: Mutex::new(Vec::new()),
             store,
+            mutations: tokio::sync::Mutex::new(()),
             events,
             timeouts,
             hosts: Mutex::new(hosts),
@@ -141,6 +185,9 @@ impl Hosts {
     pub fn start(&self) {
         if self.0.started.swap(true, Ordering::SeqCst) {
             return;
+        }
+        for host in self.0.extra.lock().unwrap().iter() {
+            host.start();
         }
         let mut tasks = self.0.tasks.lock().unwrap();
         for index in 0..self.0.cfg.hosts.len() {
@@ -184,9 +231,10 @@ impl Hosts {
         }
     }
 
-    /// `local` first, then the configured hosts in file order.
+    /// `local` first, then the configured hosts in database insertion order.
     pub fn list(&self) -> Vec<HostDto> {
         let local = HostDto {
+            color: None,
             name: "local".into(),
             kind: HostKind::Local,
             endpoint: Some(match self.0.cfg.tcp_listen {
@@ -200,9 +248,14 @@ impl Hosts {
         };
         let configured = self.0.hosts.lock().unwrap().clone();
         let extra = self.0.extra.lock().unwrap().clone();
+        let colors = self.0.colors.lock().unwrap();
         std::iter::once(local)
             .chain(configured)
             .chain(extra.iter().flat_map(|h| h.0.hosts.lock().unwrap().clone()))
+            .map(|mut host| {
+                host.color = colors.get(&host.name).copied();
+                host
+            })
             .collect()
     }
 
@@ -259,6 +312,7 @@ fn initial(name: &str, host: &HostConfig) -> HostDto {
     };
     if host.endpoint.starts_with("ssh://") {
         HostDto {
+            color: None,
             name: name.into(),
             kind: HostKind::Ssh,
             endpoint: None,
@@ -269,6 +323,7 @@ fn initial(name: &str, host: &HostConfig) -> HostDto {
         }
     } else {
         HostDto {
+            color: None,
             name: name.into(),
             kind: HostKind::Direct,
             endpoint: Some(host.endpoint.clone()),
@@ -713,6 +768,116 @@ exit "$status"
 async fn end_forward(child: &mut Child, group: Pid) {
     let _ = kill_process_group(group, Signal::KILL);
     let _ = child.wait().await;
+}
+
+impl Hosts {
+    pub(crate) async fn mutation(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.0.mutations.lock().await
+    }
+
+    pub(crate) async fn save_connection(
+        &self,
+        name: &str,
+        endpoint: Option<&str>,
+        remote: Option<&str>,
+        color: Option<ariadne_api::hosts::HostColor>,
+    ) -> Result<HostDto, String> {
+        let encoded = color.map(|c| {
+            serde_json::to_value(c)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        });
+        self.0
+            .store
+            .save_host(name, endpoint, remote, encoded.as_deref())
+            .await
+            .map_err(|e| e.to_string())?;
+        let unchanged = self.connection(name).is_some_and(|c| {
+            Some(c.endpoint.as_str()) == endpoint && c.remote.as_deref() == remote
+        });
+        let replacement = if unchanged { None } else { self.detach(name) };
+        let slot = replacement.as_ref().map(|(index, _)| *index);
+        if let Some((_, old)) = replacement {
+            old.stop_own().await;
+        }
+        {
+            let mut colors = self.0.colors.lock().unwrap();
+            colors.remove(name);
+            if let Some(color) = color {
+                colors.insert(name.into(), color);
+            }
+        }
+        if let Some(endpoint) = endpoint.filter(|_| !unchanged) {
+            let mut cfg = (*self.0.cfg).clone();
+            cfg.hosts = vec![(
+                name.into(),
+                HostConfig {
+                    endpoint: endpoint.into(),
+                    remote: remote.map(str::to_owned),
+                },
+            )];
+            let child = Self::configured(
+                Arc::new(cfg),
+                self.0.store.clone(),
+                self.0.events.clone(),
+                self.0.timeouts,
+                Default::default(),
+            );
+            child.0.hosts.lock().unwrap()[0].color = color;
+            child.start();
+            let mut extra = self.0.extra.lock().unwrap();
+            if let Some(index) = slot {
+                extra.insert(index, child);
+            } else {
+                extra.push(child);
+            }
+        }
+        for child in self.0.extra.lock().unwrap().iter() {
+            if child.0.cfg.hosts[0].0 == name {
+                child.0.hosts.lock().unwrap()[0].color = color;
+            }
+        }
+        let dto = self.list().into_iter().find(|h| h.name == name).unwrap();
+        self.0.events.host_updated(dto.clone());
+        Ok(dto)
+    }
+
+    fn detach(&self, name: &str) -> Option<(usize, Self)> {
+        let mut extra = self.0.extra.lock().unwrap();
+        let index = extra.iter().position(|h| h.0.cfg.hosts[0].0 == name)?;
+        Some((index, extra.remove(index)))
+    }
+
+    pub(crate) fn connection(&self, name: &str) -> Option<HostConfig> {
+        self.0
+            .extra
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|h| h.0.cfg.hosts[0].0 == name)
+            .map(|h| h.0.cfg.hosts[0].1.clone())
+    }
+
+    pub(crate) async fn remove_connection(&self, name: &str) -> Result<(), String> {
+        let dto = self
+            .list()
+            .into_iter()
+            .find(|h| h.name == name)
+            .ok_or("unknown host")?;
+        self.0
+            .store
+            .delete_host(name)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some((_, old)) = self.detach(name) {
+            old.stop_own().await;
+        }
+        self.0.colors.lock().unwrap().remove(name);
+        self.0.events.host_deleted(dto);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

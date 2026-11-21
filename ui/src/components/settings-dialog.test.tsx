@@ -54,6 +54,13 @@ beforeEach(() => {
 })
 
 describe("SettingsDialog", () => {
+  it("has no Hosts section", () => {
+    renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+    expect(screen.queryByRole("table")).toBeNull()
+    expect(screen.queryByText("Hosts")).toBeNull()
+    expect(screen.queryByLabelText("Worker name")).toBeNull()
+  })
+
   it("sends app diagnostics by default and lets the user disable them", async () => {
     const user = userEvent.setup()
     renderScreen(<SettingsDialog open onOpenChange={() => {}} />)

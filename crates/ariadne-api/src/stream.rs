@@ -132,6 +132,8 @@ pub enum DomainEvent {
     PullRequestsChanged(PullRequestsChangedDto),
     /// A host's status, endpoint or error changed (037).
     HostUpdated(HostDto),
+    /// A host was removed from the settings database (037).
+    HostDeleted(HostDto),
 }
 
 /// Payload of `issues_changed`: the repository whose open issues moved.
@@ -181,6 +183,7 @@ impl DomainEvent {
             Self::PullRequestsChanged(_) => "pull_requests_changed",
             Self::AttentionChanged(_) => "attention_changed",
             Self::HostUpdated(_) => "host_updated",
+            Self::HostDeleted(_) => "host_deleted",
         }
     }
 
@@ -216,6 +219,7 @@ impl DomainEvent {
             Self::ForgeSettingsUpdated(t) => json(t),
             Self::IssuesChanged(i) => json(i),
             Self::HostUpdated(h) => json(h),
+            Self::HostDeleted(h) => json(h),
         }
     }
 }

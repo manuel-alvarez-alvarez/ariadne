@@ -571,6 +571,14 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
+        DomainEvent::HostDeleted(h) => Line {
+            at: String::new(),
+            kind,
+            subject: h.name.clone(),
+            detail: "host deleted".into(),
+            session: None,
+            status: None,
+        },
         DomainEvent::HostUpdated(h) => Line {
             at: String::new(),
             kind,
@@ -1067,6 +1075,23 @@ mod tests {
             ["<time> · goal_created · 01GOAL · Ship the board [active]"]
         );
         assert!(frame_lines(&frame("goal_reticulated", serde_json::json!({}))).is_empty());
+    }
+
+    #[test]
+    fn a_deleted_host_frame_names_the_removed_host() {
+        let deleted = frame(
+            "host_deleted",
+            serde_json::json!({
+                "name":"box", "kind":"direct", "endpoint":"http://box:7676",
+                "status":"ready", "error":null, "remote":null, "color":"teal",
+                "sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}
+            }),
+        );
+        let lines = frame_lines(&deleted);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].kind, "host_deleted");
+        assert_eq!(lines[0].subject, "box");
+        assert_eq!(lines[0].detail, "host deleted");
     }
 
     /// The control frames describe the connection, not the daemon's work: a

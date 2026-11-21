@@ -20,7 +20,15 @@ fn home_with(toml: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    std::fs::write(home.join("config.toml"), toml).unwrap();
+    std::fs::write(
+        home.join(if toml.contains("[hosts.") {
+            "host-fixture.toml"
+        } else {
+            "config.toml"
+        }),
+        toml,
+    )
+    .unwrap();
     (dir, home)
 }
 
@@ -97,6 +105,7 @@ impl Forward {
 /// `listed` is `host`, whatever its sync has moved to since.
 fn same_forward(listed: &HostDto, host: &HostDto) -> bool {
     HostDto {
+        color: None,
         sync: host.sync.clone(),
         ..listed.clone()
     } == *host
@@ -338,6 +347,7 @@ fn help_and_check_config_list_ssh_bin() {
         .unwrap();
     let help = String::from_utf8_lossy(&help.stdout);
     assert!(help.contains("ssh_bin"), "{help}");
+    assert!(!help.contains("[hosts"), "{help}");
 
     let (_dir, home) = home_with("");
     let default = ariadne_daemon::config::Config::check(Some(home)).unwrap();
@@ -401,4 +411,68 @@ async fn a_device_set_on_the_host_stays_when_the_host_becomes_ready_again() {
     .await;
     let ai: ariadne_api::permissions::AiPermissionsStatusDto = far.get("/v1/permissions/ai").await;
     assert_eq!(ai.device.as_str(), "cpu", "the full push keeps the device");
+}
+
+#[tokio::test]
+async fn deleting_a_host_ends_its_forward() {
+    let stub = stub_ssh(json!({"forward": true}));
+    let (h, _dir) = local(&stub, Some("/run/worker.sock")).await;
+    h.state.hosts.start();
+    eventually(TIMEOUT, "forward starts", || async {
+        !stub.runs().is_empty()
+    })
+    .await;
+    let pid = stub.runs()[0].pid;
+    let (status, body) = h.send(crate::common::delete("/v1/hosts/box")).await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    assert!(body.is_empty());
+    eventually(TIMEOUT, "deleted forward ends", || async {
+        !pid_is_alive(pid)
+    })
+    .await;
+    assert_eq!(h.store.list_hosts().await.unwrap().len(), 0);
+    h.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn changing_a_remote_replaces_the_forward_and_keeps_its_colour() {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let (first, _first_dir) = serve_on_socket(&far).await;
+    let (second, _second_dir) = serve_on_socket(&far).await;
+    let stub = stub_ssh(json!({"forward":true}));
+    let (h, _dir) = local(&stub, Some(&first)).await;
+    h.state.hosts.start();
+    eventually(TIMEOUT, "first forward ready", || async {
+        h.state.hosts.list()[1].status == HostStatus::Ready
+    })
+    .await;
+    let pid = stub.runs()[0].pid;
+    let coloured: HostDto = h
+        .json(
+            crate::common::patch_json("/v1/hosts/box", json!({"color":"violet"})),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(coloured.status, HostStatus::Ready);
+    assert!(pid_is_alive(pid));
+    assert_eq!(stub.runs().len(), 1);
+    let changed: HostDto = h
+        .json(
+            crate::common::patch_json("/v1/hosts/box", json!({"remote":second})),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(changed.color, Some(ariadne_api::hosts::HostColor::Violet));
+    assert_eq!(changed.remote.as_deref(), Some(second.as_str()));
+    eventually(TIMEOUT, "replacement forward ready", || async {
+        stub.runs().len() == 2
+            && !pid_is_alive(pid)
+            && h.state.hosts.list()[1].status == HostStatus::Ready
+    })
+    .await;
+    assert_eq!(
+        h.store.list_hosts().await.unwrap()[0].remote.as_deref(),
+        Some(second.as_str())
+    );
+    h.state.hosts.shutdown().await;
 }

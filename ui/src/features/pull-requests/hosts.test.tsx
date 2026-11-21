@@ -286,7 +286,7 @@ it("links the babysit goal on the host that babysits", async () => {
   expect(link.getAttribute("href")).toContain("host=box")
 })
 
-it("sends Review again and Stop review to the host that reviews, with its repository id", async () => {
+it("sends New turn and Stop review to the host that reviews, with its repository id", async () => {
   const seen = twoCopies(
     {},
     { review_asked: true },
@@ -301,7 +301,11 @@ it("sends Review again and Stop review to the host that reviews, with its reposi
   renderScreen(<PullRequestPanel id="repo-local:42" onClose={() => {}} />, {
     route: "/forge/pull-requests?pr=repo-local%3A42",
   })
-  fireEvent.click(await screen.findByRole("button", { name: "Review again" }))
+  fireEvent.click(
+    await within(await screen.findByRole("group", { name: "Review" })).findByRole("button", {
+      name: "New turn",
+    }),
+  )
   expect(screen.queryByRole("button", { name: "Start review" })).toBeNull()
   await waitFor(() =>
     expect(
@@ -319,7 +323,7 @@ it("sends Review again and Stop review to the host that reviews, with its reposi
   )
 })
 
-it("sends Keeper turn and Stop babysit to the host that keeps, with its repository id", async () => {
+it("sends New turn and Stop babysit to the host that keeps, with its repository id", async () => {
   const seen = twoCopies(
     {},
     { babysit_asked: true },
@@ -334,7 +338,11 @@ it("sends Keeper turn and Stop babysit to the host that keeps, with its reposito
   renderScreen(<PullRequestPanel id="repo-local:42" onClose={() => {}} />, {
     route: "/forge/pull-requests?pr=repo-local%3A42",
   })
-  fireEvent.click(await screen.findByRole("button", { name: "Keeper turn" }))
+  fireEvent.click(
+    await within(await screen.findByRole("group", { name: "Babysit" })).findByRole("button", {
+      name: "New turn",
+    }),
+  )
   expect(screen.queryByRole("button", { name: "Start babysit" })).toBeNull()
   await waitFor(() =>
     expect(

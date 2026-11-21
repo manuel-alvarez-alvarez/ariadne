@@ -436,7 +436,11 @@ it("asks for another review round and shows the daemon refusal", async () => {
     return answer?.(input) ?? jsonResponse(pull)
   })
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
-  await userEvent.click(await screen.findByRole("button", { name: "Review again" }))
+  await userEvent.click(
+    await within(await screen.findByRole("group", { name: "Review" })).findByRole("button", {
+      name: "New turn",
+    }),
+  )
   expect(writes.at(0)?.method).toBe("POST")
   expect(new URL(writes.at(0)?.url ?? "").pathname).toBe(
     `/v1/repositories/${pull.repository_id}/pull-requests/${pull.number}/review-round`,
@@ -460,10 +464,53 @@ it("asks for a keeper turn on a task kept request and shows the daemon refusal",
     return answer?.(input) ?? jsonResponse(pull)
   })
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
-  await userEvent.click(await screen.findByRole("button", { name: "Keeper turn" }))
+  await userEvent.click(
+    await within(await screen.findByRole("group", { name: "Babysit" })).findByRole("button", {
+      name: "New turn",
+    }),
+  )
   expect(writes.at(0)?.method).toBe("POST")
   expect(new URL(writes.at(0)?.url ?? "").pathname).toBe(
     `/v1/repositories/${pull.repository_id}/pull-requests/${pull.number}/keeper-turn`,
   )
   expect(await screen.findByText(/Nobody keeps this request/)).toBeTruthy()
+})
+
+const names = (group: HTMLElement) =>
+  within(group)
+    .getAllByRole("button")
+    .map((button) => button.textContent)
+
+it("groups the review and babysit buttons, each group by what runs", async () => {
+  daemon(() => ({ ...pull, review_asked: true, babysit_asked: true }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  expect(names(await screen.findByRole("group", { name: "Review" }))).toEqual([
+    "Stop review",
+    "New turn",
+  ])
+  expect(names(screen.getByRole("group", { name: "Babysit" }))).toEqual([
+    "Stop babysit",
+    "New turn",
+  ])
+})
+
+it("shows Start review and Start babysit in their groups when nothing runs", async () => {
+  daemon(() => pull)
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  expect(names(await screen.findByRole("group", { name: "Review" }))).toEqual(["Start review"])
+  expect(names(screen.getByRole("group", { name: "Babysit" }))).toEqual(["Start babysit"])
+})
+
+it("shows only New turn in the babysit group of a task-kept request", async () => {
+  daemon(() => ({ ...pull, role: "author", author_login: "me", origin_task_id: "task-1" }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  expect(names(await screen.findByRole("group", { name: "Babysit" }))).toEqual(["New turn"])
+})
+
+it("shows no group on a request that is not open", async () => {
+  daemon(() => ({ ...pull, state: "merged" }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await screen.findByText("#42 Fix widgets")
+  expect(screen.queryByRole("group", { name: "Review" })).toBeNull()
+  expect(screen.queryByRole("group", { name: "Babysit" })).toBeNull()
 })

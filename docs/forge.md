@@ -118,7 +118,7 @@ It keeps every commit others added. It never force-pushes main.
 The daemon marks your checked draft ready for review automatically.
 It raises readiness attention from current forge evidence: successful checks, clean mergeability and no unanswered comments.
 A newer comment delays keeper news for five minutes. Failures and final states arrive immediately.
-Use `ariadne pr babysit <repo> <number> --again` or **Keeper turn** to wake a keeper now.
+Use `ariadne pr babysit <repo> <number> --again` or **New turn** in the **Babysit** group to wake a keeper now.
 This also works on a request a task keeps.
 Once you merge the request, the agent brings the base
 branch up to date and completes the column, which finishes the task when
@@ -142,7 +142,7 @@ On your own request, a push starts another round after the head stays unchanged 
 A further push restarts that interval.
 On another author's request, a push starts no round.
 A new forge review request starts one when your assignment changes from absent to present.
-Press **Review again** beside **Stop review** to request a round now.
+Press **New turn** beside **Stop review** in the **Review** group to request a round now.
 You can also run `ariadne pr review <repo-id> <number> --again`.
 Each round waits for the session to become idle, then moves its worktree to the current head.
 Comments, thread replies, checks and review decisions start no round.

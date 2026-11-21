@@ -908,7 +908,7 @@ A failed or incomplete status returns a failure exit code.
 A complete status requires the daemon to answer and the connection to be registered.
 Use `--format json` for operation state and per-step results.
 
-Desktop Settings provides the same controls under Hosts.
+The Desktop Hosts screen provides the same controls in its **Set up worker** dialog.
 Select local binaries or a verified release, then select **Start or retry setup**.
 Enter an existing worker name and select **Load setup progress** to inspect a previous operation.
 Use the original request values when you retry.

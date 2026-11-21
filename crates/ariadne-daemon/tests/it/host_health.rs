@@ -103,7 +103,11 @@ pub(crate) async fn local_with(
     let dir = tempfile::tempdir().unwrap();
     let home: PathBuf = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    std::fs::write(home.join("config.toml"), format!("[hosts.far]\n{host}")).unwrap();
+    std::fs::write(
+        home.join("host-fixture.toml"),
+        format!("[hosts.far]\n{host}"),
+    )
+    .unwrap();
     let mut builder = harness()
         .ai_permissions_hardware(roomy_hardware())
         .home(home)
@@ -335,4 +339,59 @@ async fn shutdown_ends_the_checks_of_a_direct_host() {
     let asked = health.asked();
     tokio::time::sleep(QUIET).await;
     assert_eq!(health.asked(), asked, "no check after shutdown");
+}
+
+#[tokio::test]
+async fn editing_and_deleting_a_host_stop_its_old_health_checks() {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let old = Health::default();
+    let new = Health::default();
+    let old_address = serve_on_tcp(&far, &old).await;
+    let new_address = serve_on_tcp(&far, &new).await;
+    let local = harness().timeouts(timeouts()).await;
+    let _: HostDto = local
+        .json(
+            crate::common::post_json(
+                "/v1/hosts",
+                json!({"name":"far","endpoint":format!("http://{old_address}")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    eventually(TIMEOUT, "initial host checks", || async {
+        old.asked() >= 3
+    })
+    .await;
+    let coloured: HostDto = local
+        .json(
+            crate::common::patch_json("/v1/hosts/far", json!({"color":"blue"})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(coloured.status, HostStatus::Ready);
+    let _: HostDto = local
+        .json(
+            crate::common::patch_json(
+                "/v1/hosts/far",
+                json!({"endpoint":format!("http://{new_address}")}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "replacement host checks", || async {
+        new.asked() >= 3
+    })
+    .await;
+    let old_count = old.asked();
+    let (status, _) = local.send(crate::common::delete("/v1/hosts/far")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let new_count = new.asked();
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(old.asked(), old_count);
+    assert_eq!(new.asked(), new_count);
+    let response = reqwest::get(format!("http://{new_address}/v1/health"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    local.state.hosts.shutdown().await;
 }

@@ -237,13 +237,24 @@ export function dispatchDomainEvent(
       void queryClient.invalidateQueries({ queryKey: qk.dashboards.lists(host) })
       break
     }
+    case "host_deleted": {
+      if (host !== LOCAL_HOST) break
+      const rows = queryClient.setQueryData<HostDto[]>(qk.hosts.list(), (rows) =>
+        rows?.filter((row) => row.name !== event.data.name),
+      )
+      if (rows) rememberHosts(rows)
+      queryClient.removeQueries({ queryKey: qk.host(event.data.name) })
+      break
+    }
     case "host_updated": {
       // The hosts are the settings daemon's configuration; another host's
       // own hosts are none of this app's business.
       if (host !== LOCAL_HOST) break
       const before = hostBaseUrl(event.data.name)
       const rows = queryClient.setQueryData<HostDto[]>(qk.hosts.list(), (rows) =>
-        rows?.map((row) => (row.name === event.data.name ? event.data : row)),
+        rows?.some((row) => row.name === event.data.name)
+          ? rows.map((row) => (row.name === event.data.name ? event.data : row))
+          : [...(rows ?? []), event.data],
       )
       if (rows) rememberHosts(rows)
       // A host that came up, or moved, answers every read it failed before.

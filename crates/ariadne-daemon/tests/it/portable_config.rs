@@ -119,7 +119,14 @@ async fn an_idle_worker_restarts_with_an_open_event_stream() {
     let children = SshChildren(dir.path().join("ssh-pids"));
     std::fs::write(&ssh, format!("#!/usr/bin/env python3\nimport os, signal\nwith open({:?}, 'a') as output: output.write(str(os.getpid()) + '\\n')\nsignal.pause()\n", children.0)).unwrap();
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::fs::write(home.join("config.toml"), format!("tcp_listen = \"127.0.0.1:{port}\"\nprevent_sleep = false\nssh_bin = {:?}\n[hosts.unanswered]\nendpoint = \"ssh://unanswered\"\n", ssh)).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "tcp_listen = \"127.0.0.1:{port}\"\nprevent_sleep = false\nssh_bin = {:?}\n",
+            ssh
+        ),
+    )
+    .unwrap();
     let daemon = Daemon(
         std::process::Command::new(env!("CARGO_BIN_EXE_ariadned"))
             .arg("--home")
@@ -137,6 +144,13 @@ async fn an_idle_worker_restarts_with_an_open_event_stream() {
         client.health().await.is_ok()
     })
     .await;
+    let _: Value = client
+        .post_json(
+            "/v1/hosts",
+            &json!({"name": "unanswered", "endpoint": "ssh://unanswered"}),
+        )
+        .await
+        .unwrap();
     eventually(TIMEOUT, "first SSH child", || async {
         std::fs::read_to_string(&children.0).is_ok_and(|text| !text.is_empty())
     })
