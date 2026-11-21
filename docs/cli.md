@@ -884,6 +884,29 @@ the daemon cannot find or cannot use.
    npm checks the selected package in the worker user's global installation prefix and preserves installed packages.
    Retry with exactly the original request, including its selections.
 
+   Add selected source repository IDs and worker destinations:
+
+   ```json
+   "repositories": {"SOURCE_REPOSITORY_ID": "~/workspace/project"}
+   ```
+
+   Find source IDs with `ariadne repo ls --format json`.
+   The proposed workspace root is `~/workspace` on the worker.
+   Change each destination to an absolute path or a path that starts with `~/`.
+   Setup expands `~/` with the worker home from the SSH probe.
+   Git clones committed history from the selected repository's remote.
+   Local edits and untracked files stay on the source machine.
+   Git and forge authentication must work on the worker.
+   Setup reports missing remotes, authentication failures, and inaccessible destinations in the repository steps.
+   It never replaces an unrelated directory.
+   A matching registered forge checkout keeps its existing worker path.
+   Matching uses forge kind, host, owner, and name, with the same base branch preferred.
+   Completed clones and registrations survive retries.
+   Existing settings and learned permissions follow the normal host synchronization.
+   After setup completes, submit the same request with changed repository selections to populate more repositories.
+   This explicit update preserves existing checkout paths.
+   Desktop Settings provides repository checkboxes and editable destinations in the worker setup form.
+
 2. Start setup with `ariadne host setup builder --request worker.json`.
 3. Read progress with `ariadne host setup-status builder`.
 4. Correct any reported prerequisite and repeat the original setup command.

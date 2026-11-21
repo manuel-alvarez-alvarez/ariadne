@@ -364,20 +364,24 @@ impl Refs {
     /// warning and no watch at all — the branch goes unfollowed, which is
     /// where it was before there was a watch.
     fn arm(git_dir: &Path, tx: mpsc::Sender<()>) -> Option<Self> {
-        let handler = move |event: notify::Result<notify::Event>| match event {
-            Ok(event) if !changes_a_ref(&event.kind) => {}
-            // Unfiltered by path: every other branch of the repository is
-            // written into the same directory, and matching paths would mean
-            // second-guessing what a backend resolved through a symlink on the
-            // way back. A wake-up that was not about this branch costs one
-            // `git rev-parse`.
-            Ok(_) => {
-                let _ = tx.try_send(());
+        let handler = move |event: notify::Result<notify::Event>| {
+            #[cfg(test)]
+            eprintln!("temporary ref watcher diagnostic: {event:?}");
+            match event {
+                Ok(event) if !changes_a_ref(&event.kind) => {}
+                // Unfiltered by path: every other branch of the repository is
+                // written into the same directory, and matching paths would mean
+                // second-guessing what a backend resolved through a symlink on the
+                // way back. A wake-up that was not about this branch costs one
+                // `git rev-parse`.
+                Ok(_) => {
+                    let _ = tx.try_send(());
+                }
+                // A watch that breaks is not retried: what it costs is the commits
+                // between here and the next daemon, and the diff tab still has its
+                // Refresh button.
+                Err(e) => warn!(error = %e, "watching a task branch failed"),
             }
-            // A watch that breaks is not retried: what it costs is the commits
-            // between here and the next daemon, and the diff tab still has its
-            // Refresh button.
-            Err(e) => warn!(error = %e, "watching a task branch failed"),
         };
         let watcher = notify::recommended_watcher(handler)
             .inspect_err(|e| warn!(error = %e, "cannot watch task branches"))

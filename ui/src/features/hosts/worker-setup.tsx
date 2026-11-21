@@ -22,6 +22,11 @@ export function WorkerSetup() {
   const [codexCredentials, setCodexCredentials] = useState(false)
   const [githubCredentials, setGithubCredentials] = useState(false)
   const [active, setActive] = useState("")
+  const [destinations, setDestinations] = useState<Record<string, string>>({})
+  const repositories = useQuery({
+    queryKey: qk.repositories.list(LOCAL_HOST),
+    queryFn: () => unwrap(api(LOCAL_HOST).GET("/v1/repositories")),
+  })
   const status = useQuery({
     queryKey: qk.hosts.setup(active),
     enabled: !!active,
@@ -41,6 +46,7 @@ export function WorkerSetup() {
         api(LOCAL_HOST).POST("/v1/hosts/{name}/setup", {
           params: { path: { name } },
           body: {
+            ...(Object.keys(destinations).length ? { repositories: destinations } : {}),
             ...(agents.trim() || github
               ? { tools: { agents: agents.split(/[\s,]+/).filter(Boolean), github } }
               : {}),
@@ -205,6 +211,41 @@ export function WorkerSetup() {
         Copy only selected credentials from the source daemon machine through SSH. Keychain
         credentials require separate worker login.
       </p>
+      <fieldset disabled={busy}>
+        <legend>Worker repositories</legend>
+        <p>Clone selected Git remotes under ~/workspace. Change each destination as needed.</p>
+        {repositories.data?.map((repo) => (
+          <div key={repo.id}>
+            <label>
+              <input
+                type="checkbox"
+                checked={repo.id in destinations}
+                onChange={(event) => {
+                  setDestinations((previous) => {
+                    const next = { ...previous }
+                    if (event.target.checked)
+                      next[repo.id] =
+                        `~/workspace/${repo.forge?.name ?? repo.path.split("/").pop()}`
+                    else delete next[repo.id]
+                    return next
+                  })
+                }}
+              />{" "}
+              {repo.path}
+            </label>
+            {repo.id in destinations ? (
+              <Input
+                aria-label={`Destination for ${repo.path}`}
+                value={destinations[repo.id]}
+                onChange={(event) =>
+                  setDestinations((previous) => ({ ...previous, [repo.id]: event.target.value }))
+                }
+              />
+            ) : null}
+          </div>
+        ))}
+        {repositories.error ? <p role="alert">{describeError(repositories.error)}</p> : null}
+      </fieldset>
       <div className="flex gap-2">
         <Button
           type="button"

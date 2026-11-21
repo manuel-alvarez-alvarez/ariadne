@@ -9592,6 +9592,13 @@
               "null"
             ]
           },
+          "repositories": {
+            "type": "object",
+            "description": "Selected source repository IDs and absolute destination paths on the worker.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "source": {
             "$ref": "#/components/schemas/BinarySource"
           },

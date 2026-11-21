@@ -33,8 +33,7 @@ In: database host connections, their validation, the
 SSH forward the daemon keeps for each `ssh://` host, the push of the local
 catalogs and settings to each host, and the query routes under
 `/v1/hosts/{host}`. Out: a Rust SSH library, a reverse forward from the far
-daemon, a reconnect of every host in one request, cloning a repository on
-a host and any write from a host back to this
+daemon, a reconnect of every host in one request, and any write from a host back to this
 daemon. CLI selection follows spec 014 (rules 43 to 50). The transports and the
 event stream are spec 012's. The desktop app's reading of the hosts — the host
 picker, the Hosts screen and one stream per host — is spec
@@ -291,7 +290,8 @@ picker, the Hosts screen and one stream per host — is spec
     Setup records hold operations only. Restart never restores connections from `worker-setup.json`.
     The same request resumes setup without transferring installed binaries again.
     Retry rechecks access and binaries, restarts the service, and checks health.
-    Concurrent repeats return the existing operation. Changed requests are refused.
+    Concurrent repeats return the existing operation. Changed requests are refused while setup is incomplete.
+    After completion, repository selections can change with the same SSH access and binary source.
     A complete request stays complete on repetition.
 51. `ariadne host setup NAME --request FILE` starts or retries an operation.
     `ariadne host setup-status NAME` shows progress and per-step errors.
@@ -340,7 +340,29 @@ picker, the Hosts screen and one stream per host — is spec
 62. `ariadne host add`, `edit` and `rm` call rules 57 to 59 on the local daemon
     and take `--color` from the eight `HostColor` values (014, rules 52 to 57).
 
+
+62. Repository population extends setup with an optional `repositories` map from source IDs to worker destinations.
+    Destinations accept absolute paths or `~/` paths resolved against the probed worker home.
+    Desktop proposes `~/workspace/<repository>` and permits each destination to change.
+    Setup clones Git remote history without source edits or untracked files.
+    Registered checkout reuse follows rule 26, including base branch preference and preservation of worker paths.
+    Each selection records `clone:<id>` and `repository:<id>` progress.
+    Missing remotes, worker authentication failures, and inaccessible destinations leave setup incomplete.
+    Setup refuses unrelated existing destination directories.
+    Completed clone and registration checkpoints survive retries.
+    Registration invokes the normal host synchronization for settings and learned permissions.
+    Automatic enrollment of later repositories and movement of existing checkouts remain outside scope.
+
 ## Acceptance criteria
+
+- Rule 62: `hosts.rs::setup_accepts_selected_repository_destinations` and
+  `hosts.rs::selected_repositories_clone_only_committed_files_and_retry_registration`;
+  `hosts.rs::setup_rejects_unsafe_repository_destinations_before_starting` proves request validation.
+  `hosts.rs::repository_setup_preserves_unrelated_existing_destinations` proves preservation of unrelated directories, including empty directories.
+  `hosts.rs::repository_setup_reports_a_missing_source_remote` proves the missing-remote step failure.
+  `hosts.rs::repository_setup_reports_worker_git_authentication_failure` proves failure after a worker receives an HTTP authentication challenge.
+  `worker-setup.test.tsx` proves selection and destination editing.
+  `hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure` proves CLI selection and progress.
 
 - Rules 1 and 56, persistence: `crates/ariadne-store/tests/store.rs::host_rows_survive_reopening_and_keep_local_color`.
 - Rules 1–3, 6, and 56–60: `hosts.rs::host_routes_persist_nullable_overrides_and_publish_full_rows`,
