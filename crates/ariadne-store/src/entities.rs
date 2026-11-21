@@ -712,6 +712,7 @@ pub struct PullRequestRow {
     pub reviewed_sha: Option<String>,
     /// The head the request's session was last told of (029).
     pub told_head_sha: Option<String>,
+    pub told_keeper_head_sha: Option<String>,
     /// Whether the user asked Ariadne to review a request of their own
     /// (029): a review session runs on it while it is open.
     pub review_asked: bool,
@@ -881,6 +882,7 @@ pub struct PullRequest {
     pub news_told_at: Option<String>,
     pub reviewed_sha: Option<String>,
     pub told_head_sha: Option<String>,
+    pub told_keeper_head_sha: Option<String>,
     pub review_requested: bool,
     pub review_asked: bool,
     pub merge_sha: Option<String>,
@@ -939,6 +941,7 @@ impl PullRequest {
             news_told_at: row.news_told_at,
             reviewed_sha: row.reviewed_sha,
             told_head_sha: row.told_head_sha,
+            told_keeper_head_sha: row.told_keeper_head_sha,
             review_requested: live.review_requested,
             review_asked: row.review_asked,
             merge_sha: live.merge_sha,

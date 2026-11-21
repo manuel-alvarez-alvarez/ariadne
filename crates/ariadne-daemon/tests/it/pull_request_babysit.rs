@@ -214,7 +214,6 @@ async fn keep_until_merge(author: &str) {
     let stub = stub_forge_cli(json!([]));
     let h = harness()
         .timeouts(Timeouts {
-            keeper_comment_settle: std::time::Duration::ZERO,
             cancel_grace: RUNS_OUT / 10,
             forge_wake_debounce: RUNS_OUT / 100,
             ..Timeouts::default()
@@ -317,7 +316,7 @@ async fn keep_until_merge(author: &str) {
         checks: "FAILURE",
         comments: json!([
             {"id": 301, "user": {"login": "alice"}, "body": "Looks good but one nit.",
-             "created_at": "2026-10-02T00:00:00Z"}
+             "created_at": "2099-10-02T00:00:00Z"}
         ]),
         ..shown()
     }));
@@ -362,6 +361,52 @@ async fn keep_until_merge(author: &str) {
         told,
         "the same comment is no news the second time"
     );
+
+    // Another person's push reaches the keeper once.
+    let other_head = sh(&path, "git rev-parse main");
+    stub.reprogram(script(&Shown {
+        head: &other_head,
+        updated_at: "2026-10-02T01:00:00Z",
+        comments: json!([
+            {"id": 301, "user": {"login": "alice"}, "body": "Looks good but one nit.",
+             "created_at": "2099-10-02T00:00:00Z"}
+        ]),
+        ..shown()
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the new head to reach the keeper", async || {
+        h.prompts_to(&session)
+            .iter()
+            .any(|news| news.contains("New head:") && news.contains(&other_head))
+    })
+    .await;
+    let told = h.prompts_to(&session).len();
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(h.prompts_to(&session).len(), told);
+
+    // The worktree's own head updates the mark without a prompt.
+    stub.reprogram(script(&Shown {
+        updated_at: "2026-10-02T02:00:00Z",
+        comments: json!([
+            {"id": 301, "user": {"login": "alice"}, "body": "Looks good but one nit.",
+             "created_at": "2099-10-02T00:00:00Z"}
+        ]),
+        ..shown()
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the own head to be marked told", async || {
+        h.store
+            .get_pull_request(&id)
+            .await
+            .unwrap()
+            .told_keeper_head_sha
+            .as_deref()
+            == Some(head.as_str())
+    })
+    .await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(h.prompts_to(&session).len(), told);
 
     // A reply from the keeper follows the keeping agent's own rule (026
     // rule 16): it answers an inline review comment, the thread of a
@@ -444,6 +489,10 @@ struct BothSeats {
 /// Start both manually asked seats on a request whose author maps to the
 /// reviewer role.
 async fn both_seats() -> BothSeats {
+    both_seats_script(None).await
+}
+
+async fn both_seats_script(turn: Option<Value>) -> BothSeats {
     let stub = stub_forge_cli(json!([]));
     let h = harness()
         .timeouts(Timeouts {
@@ -457,6 +506,9 @@ async fn both_seats() -> BothSeats {
         .scheduler()
         .forge_cli(&stub)
         .await;
+    if let Some(turn) = turn {
+        h.agent.reprogram(turn);
+    }
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown {
         author: "dependabot[bot]",
@@ -1881,5 +1933,96 @@ async fn a_draft_kept_by_hand_is_marked_ready() {
                 .any(|a| a.contains("markPullRequestReadyForReview"))
         })
     })
+    .await;
+}
+
+// Head delivery to one seat must not consume the other seat's head.
+#[tokio::test]
+async fn keeper_push_and_external_push_reach_the_reviewer_independently() {
+    let release_dir = tempfile::tempdir().unwrap();
+    let release = release_dir.path().join("release");
+    let mut turn = crate::common::acp::script();
+    let mut held = turn["prompts"][0].clone();
+    held["wait_for"] = json!(release.display().to_string());
+    let first = turn["prompts"][0].clone();
+    turn["prompts"] = json!([first.clone(), held, first]);
+    let BothSeats {
+        h,
+        _stub: stub,
+        repo,
+        keeper,
+        reviewer,
+        ..
+    } = both_seats_script(Some(turn)).await;
+    let worktree = PathBuf::from(keeper.worktree_path.clone().unwrap());
+    h.launcher
+        .acp
+        .send_prompt(&reviewer.id, "Hold this review.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the review to pause", async || {
+        release.with_extension("reached").exists()
+    })
+    .await;
+    sh(
+        &worktree,
+        "git -c user.name=Test -c user.email=test@example.com commit --allow-empty -m fix",
+    );
+    let own = sh(&worktree, "git rev-parse HEAD");
+    let count = h.prompts_to(&keeper).len();
+    stub.reprogram(script(&Shown {
+        author: "dependabot[bot]",
+        ..Shown::open(&own)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(h.prompts_to(&keeper).len(), count);
+    std::fs::write(&release, "").unwrap();
+    eventually(
+        TIMEOUT,
+        "the reviewer to hear the keeper push",
+        async || {
+            h.prompts_to(&reviewer)
+                .iter()
+                .any(|p| p.contains("new head") && p.contains(&own))
+        },
+    )
+    .await;
+
+    std::fs::remove_file(&release).unwrap();
+    std::fs::remove_file(release.with_extension("reached")).unwrap();
+    h.launcher
+        .acp
+        .send_prompt(&keeper.id, "Hold this turn.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the keeper to pause", async || {
+        release.with_extension("reached").exists()
+    })
+    .await;
+    let external = sh(&worktree, "git rev-parse HEAD~1");
+    stub.reprogram(script(&Shown {
+        author: "dependabot[bot]",
+        ..Shown::open(&external)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(
+        TIMEOUT,
+        "the reviewer to hear the external push",
+        async || {
+            h.prompts_to(&reviewer)
+                .iter()
+                .any(|p| p.contains("new head") && p.contains(&external))
+        },
+    )
+    .await;
+    std::fs::write(&release, "").unwrap();
+    eventually(
+        TIMEOUT,
+        "the keeper to hear the external push",
+        async || {
+            h.prompts_to(&keeper)
+                .iter()
+                .any(|p| p.contains("New head:") && p.contains(&external))
+        },
+    )
     .await;
 }

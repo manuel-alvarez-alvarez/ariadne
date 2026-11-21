@@ -29,7 +29,7 @@ pub struct PullRequestTold {
     /// The rolled-up state of the checks: `pending`, `success`, `failure`
     /// or `none`. A change of it is what a ready report is decided on.
     pub check_state: String,
-    /// The head a reviewer session was told of (029); empty where none was.
+    /// The head the selected seat was told of; empty where none was.
     pub head_sha: String,
 }
 
@@ -216,7 +216,7 @@ impl Store {
     /// the mark is the daemon's own bookkeeping.
     pub async fn set_pull_request_told(&self, id: &str, told: &PullRequestTold) -> Result<()> {
         let mut tx = self.w().begin().await?;
-        crate::pull_request_comments::write_told(&mut tx, id, told).await?;
+        crate::pull_request_comments::write_told(&mut tx, id, told, false).await?;
         tx.commit().await?;
         Ok(())
     }
