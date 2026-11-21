@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tokio::net::{TcpListener, UnixListener, UnixStream};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -16,6 +16,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use ariadne_daemon::config::Config;
 use ariadne_daemon::http::{self, AppState};
+
+mod relay;
 
 /// Everything that configures the daemon outside its own two flags, one line
 /// each: `--help` is where an operator looks for it, and a key that is not
@@ -91,7 +93,7 @@ unknown key stops the daemon rather than being ignored):
 )]
 struct Args {
     /// Ariadne home directory (default: $ARIADNE_HOME or ~/.ariadne)
-    #[arg(long)]
+    #[arg(long, global = true)]
     home: Option<PathBuf>,
     /// Read <home>/config.toml, say what it resolves to, and exit
     ///
@@ -99,11 +101,22 @@ struct Args {
     /// would run on, checked while the daemon that is running keeps running.
     #[arg(long)]
     check_config: bool,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Hold one ACP agent and replay its output over a Unix socket
+    Relay(relay::Args),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(Command::Relay(relay)) = args.command {
+        return relay::run(relay, args.home).await;
+    }
     if args.check_config {
         println!("{}", Config::check(args.home)?);
         return Ok(());
