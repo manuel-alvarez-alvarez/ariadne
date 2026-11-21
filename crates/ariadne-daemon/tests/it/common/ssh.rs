@@ -10,6 +10,7 @@
 //! - `until`: a file whose creation ends the run. Without it a forward runs
 //!   until it is killed, and a run that does not forward ends at once.
 //! - `stderr` and `exit`: what the run writes and exits with when it ends.
+//! - `signal`: end with this signal after writing stderr, instead of an exit code.
 //! - `hold_reaping`: keep the killed forward as a zombie until this file exists.
 //!
 //! [`super::HarnessBuilder::ssh`] points the daemon's `ssh_bin` at it.
@@ -131,6 +132,8 @@ with open(os.path.join(dir, "ssh-runs.jsonl"), "a") as f:
 def end():
     sys.stderr.write(script.get("stderr", ""))
     sys.stderr.flush()
+    if script.get("signal"):
+        os.kill(os.getpid(), script["signal"])
     os._exit(script.get("exit", 255))
 
 if "-T" in args and script.get("setup"):
