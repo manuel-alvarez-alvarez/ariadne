@@ -186,6 +186,173 @@ async fn openapi_carries_the_route_the_dto_and_the_event() {
 }
 
 #[tokio::test]
+async fn repository_setup_preserves_unrelated_existing_destinations() {
+    for has_file in [true, false] {
+        let (remote, state, id) = repository_setup_result(Some("local"), Some(has_file)).await;
+        assert_eq!(state["state"], "incomplete", "{state}");
+        let step = state["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == format!("clone:{id}"))
+            .unwrap();
+        assert_eq!(step["complete"], false, "{state}");
+        assert!(
+            step["error"].as_str().unwrap().contains("destination"),
+            "{state}"
+        );
+        let destination = remote.path().join("workspace/project");
+        if has_file {
+            assert_eq!(
+                std::fs::read_to_string(destination.join("keep.txt")).unwrap(),
+                "unrelated content"
+            );
+        } else {
+            assert_eq!(std::fs::read_dir(destination).unwrap().count(), 0);
+        }
+        assert!(!remote.path().join("worker-repositories.json").exists());
+    }
+}
+
+#[tokio::test]
+async fn repository_setup_reports_a_missing_source_remote() {
+    let (remote, state, id) = repository_setup_result(None, None).await;
+    assert_eq!(state["state"], "incomplete", "{state}");
+    let step = state["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == format!("clone:{id}"))
+        .unwrap();
+    assert_eq!(step["complete"], false, "{state}");
+    assert_eq!(step["error"], "source repository has no Git remote");
+    assert!(!remote.path().join("workspace/project").exists());
+    assert!(!remote.path().join("worker-repositories.json").exists());
+}
+
+#[tokio::test]
+async fn repository_setup_reports_worker_git_authentication_failure() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let requests = Arc::new(AtomicUsize::new(0));
+    let received = requests.clone();
+    let app = axum::Router::new().fallback(move || {
+        let received = received.clone();
+        async move {
+            received.fetch_add(1, Ordering::SeqCst);
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                [(
+                    axum::http::header::WWW_AUTHENTICATE,
+                    "Basic realm=\"worker-repository\"",
+                )],
+            )
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/private.git", listener.local_addr().unwrap());
+    let mut servers = tokio::task::JoinSet::new();
+    servers.spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (remote, state, id) = repository_setup_result(Some(&url), None).await;
+    assert_eq!(state["state"], "incomplete", "{state}");
+    let step = state["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == format!("clone:{id}"))
+        .unwrap();
+    assert_eq!(step["complete"], false, "{state}");
+    assert!(
+        step["error"]
+            .as_str()
+            .unwrap()
+            .contains("worker Git authentication"),
+        "{state}"
+    );
+    assert!(
+        requests.load(Ordering::SeqCst) > 0,
+        "Git must reach the authentication challenge"
+    );
+    assert!(!remote.path().join("worker-repositories.json").exists());
+}
+
+/// Run a repository selection through the public setup routes and return its terminal result.
+async fn repository_setup_result(
+    remote_url: Option<&str>,
+    existing_destination: Option<bool>,
+) -> (tempfile::TempDir, serde_json::Value, String) {
+    use common::{TIMEOUT, eventually, post_json};
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let binaries = tempfile::tempdir().unwrap();
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    let cli = binaries.path().join("ariadne");
+    let daemon = binaries.path().join("ariadned");
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    let ssh = common::ssh::stub_ssh(
+        json!({"setup":{"home":remote.path(),"os":"Linux","repository_fixture":{}},"exit":0}),
+    );
+    let h = harness().ssh(&ssh).await;
+    let source = h.git_repo("source");
+    if let Some(url) = remote_url {
+        let url = if url == "local" {
+            source.to_str().unwrap()
+        } else {
+            url
+        };
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&source)
+                .args(["remote", "add", "origin", url])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let repository: Value = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                json!({"path":source,"base_branch":"main"}),
+            ),
+            axum::http::StatusCode::CREATED,
+        )
+        .await;
+    let id = repository["id"].as_str().unwrap().to_owned();
+    let destination = remote.path().join("workspace/project");
+    if let Some(has_file) = existing_destination {
+        std::fs::create_dir_all(&destination).unwrap();
+        if has_file {
+            std::fs::write(destination.join("keep.txt"), "unrelated content").unwrap();
+        }
+    }
+    let request = json!({"ssh":"ssh://box","source":{"kind":"local","cli":cli,"daemon":daemon},"repositories":{&id:destination}});
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "repository setup result", || async {
+        matches!(
+            h.get::<Value>("/v1/hosts/builder/setup").await["state"].as_str(),
+            Some("incomplete" | "failed" | "complete")
+        )
+    })
+    .await;
+    let state = h.get("/v1/hosts/builder/setup").await;
+    h.state.hosts.shutdown().await;
+    (remote, state, id)
+}
+
+#[tokio::test]
 async fn selected_repositories_clone_only_committed_files_and_retry_registration() {
     use common::{TIMEOUT, eventually, post_json};
     use serde_json::{Value, json};

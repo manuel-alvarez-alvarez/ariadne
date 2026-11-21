@@ -333,6 +333,9 @@ picker, the Hosts section of its settings and one stream per host — is spec
 - Rule 56: `hosts.rs::setup_accepts_selected_repository_destinations` and
   `hosts.rs::selected_repositories_clone_only_committed_files_and_retry_registration`;
   `hosts.rs::setup_rejects_unsafe_repository_destinations_before_starting` proves request validation.
+  `hosts.rs::repository_setup_preserves_unrelated_existing_destinations` proves preservation of unrelated directories, including empty directories.
+  `hosts.rs::repository_setup_reports_a_missing_source_remote` proves the missing-remote step failure.
+  `hosts.rs::repository_setup_reports_worker_git_authentication_failure` proves failure after a worker receives an HTTP authentication challenge.
   `worker-setup.test.tsx` proves selection and destination editing.
   `hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure` proves CLI selection and progress.
 
