@@ -87,6 +87,7 @@ picker, the Hosts screen and one stream per host — is spec
     Forward cleanup waits until every process in its group is gone, including zombies,
     before publishing `down` or starting a replacement. This includes reconnect requests.
     Each cleanup attempt has a five-second deadline (`Timeouts::ssh_forward_end`).
+    A zombie-only group can return `EPERM` on macOS; continue polling without an error until this deadline.
     Group disappearance is polled every ten milliseconds (`ssh_forward_poll`).
     Failure keeps the host `connecting` with an explicit cleanup error and attempt number.
     The daemon retains the old child and group, retries cleanup, and blocks replacement until the group disappears.
@@ -528,7 +529,8 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 11 and 37
   (`host_reconnect.rs::a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once`,
   `::each_reconnect_reaps_the_previous_forward_before_answering`,
-  `host_health.rs::cleanup_retries_keep_a_zombie_group_owned_until_it_disappears`).
+  `host_health.rs::cleanup_retries_keep_a_zombie_group_owned_until_it_disappears`,
+  `::a_zombie_reaped_before_the_deadline_reports_only_down`).
 - Rule 38
   (`host_reconnect.rs::a_ready_forward_takes_one_check_and_a_good_answer_cuts_no_stream`).
 - Rules 39 and 41
