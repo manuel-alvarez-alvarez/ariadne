@@ -1983,7 +1983,9 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let progress = json!({"name":"worker", "state":"incomplete", "steps":[
         {"name":"install", "complete":true, "error":null},
-        {"name":"service", "complete":false, "error":"Enable user services"}
+        {"name":"service", "complete":false, "error":"Enable user services"},
+        {"name":"tool:codex-acp", "complete":true, "error":null},
+        {"name":"authentication:github", "complete":false, "error":"Sign in separately on the worker"}
     ]});
     let answer = progress.clone();
     let received = Arc::new(Mutex::new(None));
@@ -2000,7 +2002,7 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("request.json");
-    std::fs::write(&file, json!({"ssh":"ssh://me@worker", "source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}}).to_string()).unwrap();
+    std::fs::write(&file, json!({"ssh":"ssh://me@worker", "source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}, "tools":{"agents":["codex-acp"],"github":true}, "credentials":["codex"]}).to_string()).unwrap();
     for args in [
         vec![
             "host",
@@ -2022,10 +2024,18 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
         let text = String::from_utf8_lossy(&output.stdout);
         assert!(text.contains("install: complete"), "{text}");
         assert!(text.contains("Enable user services"), "{text}");
+        assert!(text.contains("tool:codex-acp: complete"), "{text}");
+        assert!(text.contains("Sign in separately on the worker"), "{text}");
     }
     assert_eq!(
         received.lock().unwrap().as_ref().unwrap()["ssh"],
         "ssh://me@worker"
     );
+    let request = received.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        request["tools"],
+        json!({"agents":["codex-acp"], "github":true})
+    );
+    assert_eq!(request["credentials"], json!(["codex"]));
     server.abort();
 }
