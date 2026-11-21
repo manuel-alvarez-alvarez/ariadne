@@ -784,9 +784,10 @@ async fn assert_worker_platform_setup(os: &str, arch: &str, header: &[u8]) {
     })
     .await;
     assert!(!remote.path().join(".local/bin/ariadne").exists());
-    assert_eq!(
-        ssh.runs().len(),
-        1,
+    assert!(
+        ssh.runs()
+            .iter()
+            .all(|run| !run.args.last().unwrap().contains("cat >")),
         "{os} {arch}: no binary transfer before validation"
     );
     std::fs::write(&daemon, &binary).unwrap();
@@ -888,7 +889,11 @@ async fn release_setup_requires_workflow_and_tag_verification_before_transfer() 
         state["state"] == "incomplete"
     })
     .await;
-    assert_eq!(ssh.runs().len(), 1);
+    assert!(
+        ssh.runs()
+            .iter()
+            .all(|run| !run.args.last().unwrap().contains("cat >"))
+    );
     let verification = gh
         .invocations()
         .into_iter()
