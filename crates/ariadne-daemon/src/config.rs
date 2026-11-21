@@ -41,10 +41,10 @@ pub struct Config {
     /// Separate signed ingress. None binds loopback on an operating-system port.
     pub webhook_listen: Option<SocketAddr>,
     pub webhook_public_url: Option<String>,
-    /// The localtunnel server the webhook tunnel registers with (027).
+    /// The smee.io server the webhook tunnel listens on (027).
     pub tunnel_host: String,
-    /// The subdomain the tunnel asks for. It wins over the stored one.
-    pub tunnel_subdomain: Option<String>,
+    /// The channel the tunnel listens on. It wins over the stored one.
+    pub tunnel_channel: Option<String>,
     pub log_filter: String,
     /// The `ariadne` binary every session's MCP server is launched with.
     pub cli_bin: String,
@@ -148,10 +148,8 @@ impl Config {
             tcp_allowed_origins: file.tcp_allowed_origins,
             webhook_listen: file.webhook_listen,
             webhook_public_url: file.webhook_public_url,
-            tunnel_host: file
-                .tunnel_host
-                .unwrap_or_else(|| "https://localtunnel.me".into()),
-            tunnel_subdomain: file.tunnel_subdomain,
+            tunnel_host: file.tunnel_host.unwrap_or_else(|| "https://smee.io".into()),
+            tunnel_channel: file.tunnel_channel,
             log_filter: file.log_filter.unwrap_or_else(|| "info".to_string()),
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
@@ -430,11 +428,12 @@ mod tests {
         let cfg = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(cfg.webhook_listen, None);
         assert_eq!(cfg.webhook_public_url, None);
-        assert_eq!(cfg.tunnel_host, "https://localtunnel.me");
-        assert_eq!(cfg.tunnel_subdomain, None);
+        assert_eq!(cfg.tunnel_host, "https://smee.io");
+        assert_eq!(cfg.tunnel_channel, None);
         let dir = home_with(
             "webhook_listen = \"127.0.0.1:8181\"\nwebhook_public_url = \"https://hooks.example\"\n\
-             tunnel_host = \"https://tunnel.example\"\ntunnel_subdomain = \"widgets\"\n",
+             tunnel_host = \"https://tunnel.example\"\ntunnel_channel = \"widgets\"\n\
+             tunnel_subdomain = \"from-localtunnel\"\n",
         );
         let cfg = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(cfg.webhook_listen, Some("127.0.0.1:8181".parse().unwrap()));
@@ -443,7 +442,7 @@ mod tests {
             Some("https://hooks.example")
         );
         assert_eq!(cfg.tunnel_host, "https://tunnel.example");
-        assert_eq!(cfg.tunnel_subdomain.as_deref(), Some("widgets"));
+        assert_eq!(cfg.tunnel_channel.as_deref(), Some("widgets"));
     }
 
     /// The forge CLI is a key a user may set, a path or a bare name.

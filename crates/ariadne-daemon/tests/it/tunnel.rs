@@ -1,9 +1,10 @@
-//! The webhook tunnel against a stand-in localtunnel server (027).
+//! The webhook tunnel against a stand-in smee.io server (027).
 //!
-//! The stand-in is a python3 program, as the stub agent is. It answers the
-//! new-tunnel request with a local port and a URL, holds the client's
-//! connections on that port, and forwards each request its public port
-//! receives through one of them.
+//! The stand-in is a python3 program, as the stub agent is. It streams each
+//! channel as server-sent events: `ready`, a `ping` every 50 ms, and each
+//! delivery posted to the channel, re-serialized the way smee.io does it —
+//! the body parsed and written back as compact JSON, beside the lowercased
+//! headers and the query.
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -20,11 +21,13 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 const STAND_IN: &str = r#"
-import json, os, queue, socket, socketserver, sys, threading, time
+import json, os, queue, socketserver, sys, threading, time
 from http.server import BaseHTTPRequestHandler
+from urllib.parse import parse_qsl, urlsplit
 
 state, api_port = sys.argv[1], int(sys.argv[2])
 parent = os.getppid()
+streams, lock = {}, threading.Lock()
 
 def orphaned():
     # Ends with the test process, however that one ends.
@@ -32,85 +35,58 @@ def orphaned():
         time.sleep(0.2)
     os._exit(0)
 
-def bound(port=0):
-    s = socket.socket()
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(("127.0.0.1", port))
-    s.listen(64)
-    return s
-
-tunnel, public = bound(), bound()
-idle = queue.Queue()
-
-def closed(conn):
-    # Logs a tunnel connection the client closed.
-    try:
-        if conn.recv(1, socket.MSG_PEEK) == b"":
-            with open(os.path.join(state, "closed.log"), "a") as f:
-                f.write("closed\n")
-    except OSError:
-        pass
-
-def hold():
-    while True:
-        conn, _ = tunnel.accept()
-        threading.Thread(target=closed, args=(conn,), daemon=True).start()
-        idle.put(conn)
-
-def message(sock):
-    data = b""
-    while b"\r\n\r\n" not in data:
-        chunk = sock.recv(65536)
-        if not chunk:
-            return data
-        data += chunk
-    head, _, body = data.partition(b"\r\n\r\n")
-    length = 0
-    for line in head.split(b"\r\n")[1:]:
-        name, _, value = line.partition(b":")
-        if name.strip().lower() == b"content-length":
-            length = int(value.strip())
-    while len(body) < length:
-        chunk = sock.recv(65536)
-        if not chunk:
-            break
-        body += chunk
-    return head, body
-
-def forward(client):
-    head, body = message(client)
-    lines = [l for l in head.split(b"\r\n") if not l.lower().startswith(b"connection:")]
-    conn = idle.get()
-    conn.sendall(b"\r\n".join(lines + [b"Connection: close"]) + b"\r\n\r\n" + body)
-    head, body = message(conn)
-    conn.close()
-    client.sendall(head + b"\r\n\r\n" + body)
-    client.close()
-
-def serve():
-    while True:
-        client, _ = public.accept()
-        threading.Thread(target=forward, args=(client,), daemon=True).start()
+def log(name, line):
+    with open(os.path.join(state, name), "a") as f:
+        f.write(line + "\n")
 
 class Api(BaseHTTPRequestHandler):
     def do_GET(self):
-        sub = self.path.strip("/").split("?")[0]
-        with open(os.path.join(state, "requests.log"), "a") as f:
-            f.write(sub + "\n")
+        channel = urlsplit(self.path).path.strip("/")
+        log("requests.log", channel)
         # The test holds the answer while this file exists.
         while os.path.exists(os.path.join(state, "hold")):
             time.sleep(0.02)
-        body = json.dumps({
-            "id": sub,
-            "port": tunnel.getsockname()[1],
-            "max_conn_count": 10,
-            "url": "http://%s.127.0.0.1:%d" % (sub, public.getsockname()[1]),
-        }).encode()
+        events = queue.Queue()
+        with lock:
+            streams.setdefault(channel, []).append(events)
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(b"event: ready\ndata: {}\n\n")
+            self.wfile.flush()
+            while True:
+                try:
+                    frame = "data: %s\n\n" % events.get(timeout=0.05)
+                except queue.Empty:
+                    # The test mutes the pings while this file exists.
+                    if os.path.exists(os.path.join(state, "mute")):
+                        continue
+                    frame = "event: ping\ndata: {}\n\n"
+                self.wfile.write(frame.encode())
+                self.wfile.flush()
+        except OSError:
+            log("closed.log", channel)
+        finally:
+            with lock:
+                streams[channel].remove(events)
+
+    def do_POST(self):
+        url = urlsplit(self.path)
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        delivery = {name.lower(): value for name, value in self.headers.items()}
+        delivery["body"] = json.loads(raw)
+        delivery["query"] = dict(parse_qsl(url.query))
+        delivery["timestamp"] = int(time.time() * 1000)
+        # JSON.stringify's output: compact, and UTF-8 left unescaped.
+        data = json.dumps(delivery, separators=(",", ":"), ensure_ascii=False)
+        with lock:
+            for events in streams.get(url.path.strip("/"), []):
+                events.put(data)
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"OK")
 
     def log_message(self, *args):
         pass
@@ -122,11 +98,10 @@ class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
 
 api = Server(("127.0.0.1", api_port), Api)
-for target in (orphaned, hold, serve):
-    threading.Thread(target=target, daemon=True).start()
+threading.Thread(target=orphaned, daemon=True).start()
 ports = os.path.join(state, "ports.json")
 with open(ports + ".tmp", "w") as f:
-    json.dump({"api": api.server_address[1], "public": public.getsockname()[1]}, f)
+    json.dump({"api": api.server_address[1]}, f)
 os.replace(ports + ".tmp", ports)
 api.serve_forever()
 "#;
@@ -136,7 +111,6 @@ struct StandIn {
     child: tokio::process::Child,
     dir: PathBuf,
     api: u16,
-    public: u16,
 }
 
 impl StandIn {
@@ -160,7 +134,6 @@ impl StandIn {
             child,
             dir: dir.to_path_buf(),
             api: bound["api"].as_u64().unwrap() as u16,
-            public: bound["public"].as_u64().unwrap() as u16,
         }
     }
 
@@ -169,7 +142,7 @@ impl StandIn {
         self.child.kill().await.unwrap();
     }
 
-    /// The subdomain of each new-tunnel request, in order.
+    /// The channel of each stream opened, in order.
     fn requests(&self) -> Vec<String> {
         std::fs::read_to_string(self.dir.join("requests.log"))
             .unwrap_or_default()
@@ -178,7 +151,7 @@ impl StandIn {
             .collect()
     }
 
-    /// How many tunnel connections the client has closed.
+    /// How many streams the client has closed.
     fn closed(&self) -> usize {
         std::fs::read_to_string(self.dir.join("closed.log"))
             .unwrap_or_default()
@@ -186,7 +159,7 @@ impl StandIn {
             .count()
     }
 
-    /// Hold each new-tunnel answer until [`StandIn::release`].
+    /// Hold each stream's answer until [`StandIn::release`].
     fn hold(&self) {
         std::fs::write(self.dir.join("hold"), "").unwrap();
     }
@@ -195,13 +168,23 @@ impl StandIn {
         std::fs::remove_file(self.dir.join("hold")).unwrap();
     }
 
+    /// Stop the pings: an open stream that says nothing.
+    fn mute(&self) {
+        std::fs::write(self.dir.join("mute"), "").unwrap();
+    }
+
     fn host(&self) -> String {
         format!("http://127.0.0.1:{}", self.api)
     }
 
-    fn url(&self, subdomain: &str) -> String {
-        format!("http://{subdomain}.127.0.0.1:{}", self.public)
+    fn url(&self, channel: &str) -> String {
+        format!("{}/{channel}", self.host())
     }
+}
+
+/// The hook URL of repository `id` on a channel at `url`.
+fn hook(url: &str, id: &str) -> String {
+    format!("{url}?route=/webhooks/github/{id}")
 }
 
 /// The last call of each fetch: it reads the open issues.
@@ -453,7 +436,7 @@ async fn timer_fetch(stub: &StubForgeCli, gates: &Gates) {
 /// finds it running, and coalesces into exactly one fetch after it (026).
 /// Answers the fetches so far.
 async fn live_at(h: &Harness, stub: &StubForgeCli, gates: &Gates, id: &str, url: &str) -> usize {
-    let hook = format!("{url}/webhooks/github/{id}");
+    let hook = hook(url, id);
     eventually(TIMEOUT, "the hook to go live at the tunnel", async || {
         let row = h.store.forge_integration(id).await.unwrap().unwrap();
         row.webhook_state == "live" && row.webhook_url.as_deref() == Some(hook.as_str())
@@ -504,8 +487,13 @@ async fn live_at(h: &Harness, stub: &StubForgeCli, gates: &Gates, id: &str, url:
     done + 1
 }
 
-/// Post a signed delivery to `url`, as the forge would.
-async fn deliver(h: &Harness, id: &str, url: &str) -> StatusCode {
+/// A compact body with non-ASCII text, as a forge sends it: smee.io writes
+/// it back byte for byte, so its signature holds.
+const COMPACT: &str = r#"{"action":"created","comment":{"body":"café ✓"}}"#;
+
+/// Post a delivery of `body` to `url`, as the forge would, signed with the
+/// integration's secret.
+async fn deliver(h: &Harness, id: &str, url: &str, body: &str) -> StatusCode {
     let secret = h
         .store
         .forge_integration(id)
@@ -514,36 +502,36 @@ async fn deliver(h: &Harness, id: &str, url: &str) -> StatusCode {
         .unwrap()
         .webhook_secret
         .unwrap();
-    let body = br#"{"action":"created"}"#;
     // Python provides an independent signature implementation.
     let output = std::process::Command::new("python3")
         .args([
             "-c",
             "import hmac,hashlib,sys;print('sha256='+hmac.new(sys.argv[1].encode(),sys.argv[2].encode(),hashlib.sha256).hexdigest())",
             &secret,
-            std::str::from_utf8(body).unwrap(),
+            body,
         ])
         .output()
         .unwrap();
     let signature = String::from_utf8(output.stdout).unwrap().trim().to_string();
     reqwest::Client::new()
         .post(url)
+        .header("Content-Type", "application/json")
         .header("X-Hub-Signature-256", signature)
         .header("X-Github-Event", "issue_comment")
-        .body(body.to_vec())
+        .body(body.to_owned())
         .send()
         .await
         .unwrap()
         .status()
 }
 
-async fn subdomain(h: &Harness) -> String {
-    eventually(TIMEOUT, "a stored subdomain", async || {
+async fn channel(h: &Harness) -> String {
+    eventually(TIMEOUT, "a stored channel", async || {
         h.store
             .forge_settings()
             .await
             .unwrap()
-            .tunnel_subdomain
+            .tunnel_channel
             .is_some()
     })
     .await;
@@ -551,7 +539,7 @@ async fn subdomain(h: &Harness) -> String {
         .forge_settings()
         .await
         .unwrap()
-        .tunnel_subdomain
+        .tunnel_channel
         .unwrap()
 }
 
@@ -567,29 +555,33 @@ async fn a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_f
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
     server.release();
-    let sub = subdomain(&h).await;
-    let count = live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
-    assert_eq!(server.requests(), std::slice::from_ref(&sub));
+    let channel = channel(&h).await;
+    let count = live_at(&h, &stub, &gates, &id, &server.url(&channel)).await;
+    assert_eq!(server.requests(), std::slice::from_ref(&channel));
     let create = stub
         .invocations()
         .into_iter()
         .find(|c| c.args.iter().any(|a| a == "POST"))
         .unwrap();
     let body: Value = serde_json::from_str(create.input.as_deref().unwrap()).unwrap();
-    assert_eq!(
-        body["config"]["url"],
-        format!("{}/webhooks/github/{id}", server.url(&sub))
-    );
+    assert_eq!(body["config"]["url"], hook(&server.url(&channel), &id));
     let state = tunnel(&h).await;
     assert!(state.enabled);
     assert_eq!(state.state, TunnelState::Up);
-    assert_eq!(state.url, Some(server.url(&sub)));
+    assert_eq!(state.url, Some(server.url(&channel)));
     assert_eq!(state.listen, Some(listener.address().to_string()));
     assert_ne!(listener.address().port(), 0);
 
-    // The stand-in's public port is the URL's; the subdomain needs no DNS.
-    let url = format!("http://127.0.0.1:{}/webhooks/github/{id}", server.public);
-    assert_eq!(deliver(&h, &id, &url).await, StatusCode::ACCEPTED);
+    // smee.io writes a spaced body back compact: the signature over the
+    // forge's bytes no longer holds, and the listener refuses it.
+    let url = hook(&server.url(&channel), &id);
+    let spaced = r#"{"action": "created"}"#;
+    assert_eq!(deliver(&h, &id, &url, spaced).await, StatusCode::OK);
+    quiet(&stub, count).await;
+    let row = h.store.forge_integration(&id).await.unwrap().unwrap();
+    assert_eq!(row.webhook_last_delivery_at, None);
+
+    assert_eq!(deliver(&h, &id, &url, COMPACT).await, StatusCode::OK);
     eventually(TIMEOUT, "the delivery's fetch", async || {
         fetches(&stub) == count + 1
     })
@@ -626,8 +618,8 @@ async fn a_server_that_goes_away_restores_the_timer_and_one_that_returns_goes_li
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
     server.release();
-    let sub = subdomain(&h).await;
-    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
+    let channel = channel(&h).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&channel)).await;
     let other = other_repository(&h).await;
 
     let since = gates.close(&stub);
@@ -661,12 +653,56 @@ async fn a_server_that_goes_away_restores_the_timer_and_one_that_returns_goes_li
     timer_fetch(&stub, &gates).await;
 
     let server = StandIn::start(dir.path(), api).await;
-    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&channel)).await;
     let row = h.store.forge_integration(&id).await.unwrap().unwrap();
     assert_eq!(row.webhook_error, None);
     assert_eq!(row.webhook_id, Some(17));
     assert_eq!(tunnel(&h).await.state, TunnelState::Up);
-    assert!(server.requests().iter().all(|r| *r == sub));
+    assert!(server.requests().iter().all(|r| *r == channel));
+}
+
+#[tokio::test]
+async fn a_silent_server_counts_as_down() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = StandIn::start(dir.path(), 0).await;
+    let home = home(&format!("tunnel_host = \"{}\"\n", server.host()));
+    let gates = Gates::opened();
+    let stub = stub_forge_cli(script(&[], &gates));
+    let timeouts = Timeouts {
+        forge_wake_debounce: RUNS_OUT / 10,
+        tunnel_idle: RUNS_OUT / 2,
+        ..Timeouts::default()
+    };
+    let (h, _listener) = daemon(home.path(), &stub, timeouts).await;
+    let id = enable(&h).await;
+    let channel = channel(&h).await;
+    let hook = hook(&server.url(&channel), &id);
+    eventually(TIMEOUT, "the hook to go live at the tunnel", async || {
+        let row = h.store.forge_integration(&id).await.unwrap().unwrap();
+        row.webhook_state == "live" && row.webhook_url.as_deref() == Some(hook.as_str())
+    })
+    .await;
+
+    // The stream stays open, but the pings stop.
+    server.mute();
+    eventually(TIMEOUT, "the integration to poll", async || {
+        let row = h.store.forge_integration(&id).await.unwrap().unwrap();
+        row.webhook_state == "polling"
+            && row
+                .webhook_error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("tunnel down since "))
+    })
+    .await;
+    let state = tunnel(&h).await;
+    assert_eq!(state.state, TunnelState::Down);
+    assert!(
+        state
+            .error
+            .as_deref()
+            .is_some_and(|e| e.starts_with("no word from the tunnel server")),
+        "{state:?}"
+    );
 }
 
 #[tokio::test]
@@ -686,8 +722,8 @@ async fn the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_re
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
     server.release();
-    let sub = subdomain(&h).await;
-    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
+    let channel = channel(&h).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&channel)).await;
     let hooks = hook_calls(&stub);
 
     let since = gates.close(&stub);
@@ -720,7 +756,7 @@ async fn the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_re
         )
         .await;
     assert!(on.enabled);
-    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&channel)).await;
     assert_eq!(tunnel(&h).await.state, TunnelState::Up);
 
     // Off, and the daemon restarts on the same store.
@@ -763,11 +799,11 @@ async fn the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_re
 }
 
 #[tokio::test]
-async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_restart() {
+async fn the_configured_channel_is_asked_for_and_the_stored_one_again_after_a_restart() {
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(dir.path(), 0).await;
     let configured = home(&format!(
-        "tunnel_host = \"{}\"\ntunnel_subdomain = \"widgets-hooks\"\n",
+        "tunnel_host = \"{}\"\ntunnel_channel = \"widgets-hooks\"\n",
         server.host()
     ));
     let gates = Gates::shut();
@@ -779,10 +815,7 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
     server.release();
     live_at(&h, &stub, &gates, &id, &server.url("widgets-hooks")).await;
     assert_eq!(server.requests(), ["widgets-hooks"]);
-    assert_eq!(
-        h.store.forge_settings().await.unwrap().tunnel_subdomain,
-        None
-    );
+    assert_eq!(h.store.forge_settings().await.unwrap().tunnel_channel, None);
     h.state.tunnel.shutdown().await;
     drop(h);
 
@@ -796,16 +829,12 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
     server.release();
-    let sub = subdomain(&h).await;
-    let word = sub.split_once('-');
+    let channel = channel(&h).await;
     assert!(
-        word.is_some_and(|(word, digits)| !word.is_empty()
-            && word.bytes().all(|b| b.is_ascii_lowercase())
-            && digits.len() == 6
-            && digits.bytes().all(|b| b.is_ascii_digit())),
-        "{sub}"
+        channel.len() == 22 && channel.bytes().all(|b| b.is_ascii_alphanumeric()),
+        "{channel}"
     );
-    live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
+    live_at(&h, &stub, &gates, &id, &server.url(&channel)).await;
     h.state.tunnel.shutdown().await;
 
     let restarted = Tunnel::new(
@@ -824,7 +853,7 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
         server.requests().len() == 2
     })
     .await;
-    assert_eq!(server.requests(), [sub.clone(), sub]);
+    assert_eq!(server.requests(), [channel.clone(), channel]);
     restarted.shutdown().await;
 }
 
@@ -912,11 +941,11 @@ async fn a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows() {
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
     server.release();
-    let sub = subdomain(&h).await;
-    let count = live_at(&h, &stub, &gates, &id, &server.url(&sub)).await;
+    let channel = channel(&h).await;
+    let count = live_at(&h, &stub, &gates, &id, &server.url(&channel)).await;
     stub.reprogram(script(&after, &gates));
-    let url = format!("http://127.0.0.1:{}/webhooks/github/{id}", server.public);
-    assert_eq!(deliver(&h, &id, &url).await, StatusCode::ACCEPTED);
+    let url = hook(&server.url(&channel), &id);
+    assert_eq!(deliver(&h, &id, &url, COMPACT).await, StatusCode::OK);
     eventually(TIMEOUT, "the delivery's fetch", async || {
         fetches(&stub) == count + 1
     })
