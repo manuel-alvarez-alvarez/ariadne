@@ -92,6 +92,7 @@ and the integration with it (025).
     once, and only a moved branch emits an event. Reading a ref, or changing
     only its metadata such as the access time a read can update, wakes no
     one, so resolving a branch never wakes the watch again.
+    Closing a writable ref without writing also wakes no one; content writes still wake the watch.
 12. The permission mode — `auto`, `ask`, `learn` or `ai` — says how every ACP
     session that works in the repository answers its permission requests
     (021). It defaults to `auto`, is set when the repository is registered
@@ -166,7 +167,8 @@ and the integration with it (025).
   (`branch.rs::packing_refs_releases_deleted_ref_descriptors`).
 - Reading refs, or touching their access time and mode, does not wake the
   repository watch, while a commit still does
-  (`branch.rs::reading_or_touching_refs_does_not_wake_the_watch`).
+  (`branch.rs::reading_or_touching_refs_does_not_wake_the_watch`,
+  `::closing_a_writable_ref_without_writing_does_not_count_as_an_update`).
 - A repository watch that failed to arm can start on the next follow request
   (`branch.rs::a_failed_repository_watch_can_be_started_again`).
 

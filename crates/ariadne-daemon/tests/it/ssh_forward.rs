@@ -82,23 +82,6 @@ impl Forward {
         Self { rx, last: None }
     }
 
-    async fn finish_cleanup(&mut self, mut host: HostDto) -> HostDto {
-        tokio::time::timeout(TIMEOUT, async {
-            while host.status == HostStatus::Connecting {
-                assert!(
-                    host.error
-                        .as_deref()
-                        .is_some_and(|e| e.contains("cleanup attempt")),
-                    "{host:?}"
-                );
-                host = self.next().await;
-            }
-            host
-        })
-        .await
-        .expect("cleanup completes before Down")
-    }
-
     /// The next `host_updated` that moves the forward's status, endpoint or
     /// error. One that moves only the host's sync is skipped.
     async fn next(&mut self) -> HostDto {
@@ -184,7 +167,6 @@ async fn an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again() 
     assert_eq!(connecting.error, None);
 
     let down = rx.next().await;
-    let down = rx.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     assert_eq!(
@@ -200,6 +182,26 @@ async fn an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again() 
         stub.runs().len() == 2
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_signalled_forward_reports_ssh_stderr_without_guard_diagnostics() {
+    let stub = stub_ssh(json!({
+        "stderr": "Connection to box closed by remote host.\n",
+        "signal": 15,
+    }));
+    let (h, _dir) = local(&stub, Some("/run/far.sock")).await;
+    let mut rx = Forward::new(h.bus.subscribe());
+    h.state.hosts.start();
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
+    let down = rx.next().await;
+    assert_eq!(down.status, HostStatus::Down);
+    assert_eq!(
+        down.error.as_deref(),
+        Some("Connection to box closed by remote host.")
+    );
+    assert!(!pid_is_alive(stub.runs()[0].pid));
+    h.state.hosts.shutdown().await;
 }
 
 /// A forward goes `connecting`, then `ready` at its port once the far daemon
@@ -235,7 +237,6 @@ async fn a_forward_comes_up_and_goes_down(remote: &str) {
 
     std::fs::write(&gone, "").unwrap();
     let down = rx.next().await;
-    let down = rx.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     assert_eq!(

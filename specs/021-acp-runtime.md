@@ -406,7 +406,8 @@ it leaves nothing to delete.
     turn, running or not, is untouched either way.
 
 17. At every first launch and resume, select herdr, then tmux, then a direct child.
-    Herdr discovery always reports unavailable in this implementation.
+    Herdr is found when its executable is on the daemon's search path and its server answers a ping.
+    A herdr server that does not answer counts as not found, so automatic selection uses tmux or a direct child.
     `session_place` can force `none`, `tmux`, or `herdr`.
     A missing forced multiplexer fails the launch or resume with its name and reason.
     Record the selected place on the session row before starting its process.
@@ -437,6 +438,17 @@ it leaves nothing to delete.
     Identify normalized effects by session, launch, source, and ordinal.
     Replaying an effect keeps its existing event identity and usage source.
     Mark a permission request processed only after its answer reaches the durable input ledger.
+20. With herdr selected, start `ariadned relay` in a herdr pane through the herdr socket API.
+    The socket is `HERDR_SOCKET_PATH`, then the session socket for `HERDR_SESSION`, then `~/.config/herdr/herdr.sock`.
+    Each request is one line of JSON on a new connection, and each answer is one line.
+    Start a pane with `workspace.create`, then `layout.apply` on the new tab with the relay as the pane's argv command.
+    Name only the tab, never both the tab and its workspace.
+    Pass the working directory and environment as fields, without shell interpretation.
+    Label the pane with the launch, the session and a tag of the daemon home.
+    List panes with `pane.list`, and keep only the panes whose label carries this home's tag.
+    Stop a pane after its relay with `pane.close`.
+    A daemon stop, a new daemon's reconnect and a kill follow rule 18, with herdr in place of tmux.
+    The herdr agent-state detection is not used.
 
 ## Acceptance criteria
 
@@ -444,6 +456,21 @@ it leaves nothing to delete.
   `place.rs::automatic_selection_uses_tmux_before_a_direct_child`,
   `::automatic_selection_uses_a_direct_child_without_multiplexers`, and
   `::a_missing_forced_multiplexer_refuses_launch`.
+- Herdr is selected before tmux, and a server that does not answer is not found:
+  `place.rs::automatic_selection_uses_herdr_before_tmux` and
+  `::a_herdr_server_that_does_not_answer_is_not_found`.
+- Doctor reports herdr as the selected place with its reason:
+  `place.rs::doctor_reports_herdr_as_the_selected_place_with_its_reason` and
+  `doctor.rs::doctor_reports_herdr_as_the_selected_place_with_its_reason`.
+- A herdr pane starts through `workspace.create` and `layout.apply`, lists by home, and stops through `pane.close`:
+  `place.rs::a_herdr_relay_pane_can_be_found_and_stopped_through_the_socket_api`.
+- A herdr session runs ACP through its relay, and a kill stops the agent, relay and pane:
+  `acp_runtime.rs::a_herdr_session_runs_acp_through_its_relay_and_a_kill_stops_its_pane`.
+- A daemon stop leaves the herdr pane, and a new daemon reconnects with the row live:
+  `acp_runtime.rs::a_daemon_stop_leaves_the_herdr_pane_and_a_new_daemon_reconnects_to_it`.
+- A forced herdr with no herdr fails the launch and the doctor report with a reason:
+  `acp_runtime.rs::a_missing_forced_place_refuses_a_resume_with_its_reason` and
+  `doctor.rs::doctor_reports_a_missing_forced_place_and_its_reason`.
 - Forced settings parse through daemon configuration:
   `config.rs::tests::the_daemon_accepts_each_forced_session_place`.
 - Doctor explains a missing forced location:

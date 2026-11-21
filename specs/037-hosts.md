@@ -87,11 +87,13 @@ picker, the Hosts screen and one stream per host — is spec
     Forward cleanup waits until every process in its group is gone, including zombies,
     before publishing `down` or starting a replacement. This includes reconnect requests.
     Each cleanup attempt has a five-second deadline (`Timeouts::ssh_forward_end`).
+    A zombie-only group can return `EPERM` on macOS; continue polling without an error until this deadline.
     Group disappearance is polled every ten milliseconds (`ssh_forward_poll`).
     Failure keeps the host `connecting` with an explicit cleanup error and attempt number.
     The daemon retains the old child and group, retries cleanup, and blocks replacement until the group disappears.
 12. When the process exits, the host is `down`, `endpoint` is null and `error`
     is the last non-empty stderr line of the process (else its exit status).
+    Guard and lifetime-watcher diagnostics never enter the SSH stderr pipe.
     The daemon starts it again after `ssh_retry`, doubled after each exit up
     to 60 seconds and reset by a `ready`; the host goes back to `connecting`.
 13. Daemon shutdown ends every ssh child process and every health check
@@ -533,7 +535,8 @@ picker, the Hosts screen and one stream per host — is spec
   `::a_forward_to_a_tcp_port_comes_up_and_goes_down`).
 - Rules 6, 11 and 12
   (`ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`,
-  `::an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again`).
+  `::an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again`,
+  `::a_signalled_forward_reports_ssh_stderr_without_guard_diagnostics`).
 - Rule 13 (`ssh_forward.rs::shutdown_ends_every_ssh_child`).
 - Rule 14 (`ssh_forward.rs::an_event_stream_and_a_post_both_cross_a_ready_forward`).
 - Rules 4, 7 and 22 (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
@@ -590,7 +593,8 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 11 and 37
   (`host_reconnect.rs::a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once`,
   `::each_reconnect_reaps_the_previous_forward_before_answering`,
-  `host_health.rs::cleanup_retries_keep_a_zombie_group_owned_until_it_disappears`).
+  `host_health.rs::cleanup_retries_keep_a_zombie_group_owned_until_it_disappears`,
+  `::a_zombie_reaped_before_the_deadline_reports_only_down`).
 - Rule 38
   (`host_reconnect.rs::a_ready_forward_takes_one_check_and_a_good_answer_cuts_no_stream`).
 - Rules 39 and 41
