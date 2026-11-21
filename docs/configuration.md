@@ -36,7 +36,7 @@ delete_merged_branches = true      # only applies to a merged task's branch, whe
                                    # goal never deletes a branch
 # session_place = "tmux"           # force none, tmux, or herdr; omit for automatic selection
                                    # automatic order: herdr, tmux, then a direct child
-                                   # herdr is currently unavailable; a missing forced place fails launch
+                                   # a missing forced place fails launch
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
@@ -90,17 +90,21 @@ command = ["my-agent", "acp"]      # program followed by its arguments
 ```
 
 Omit `session_place` to select herdr, then tmux, then a direct child.
-Herdr is not yet available.
+Herdr is found when `herdr` is on the daemon's `PATH` and its server answers on its socket.
+The daemon looks for that socket in `HERDR_SOCKET_PATH`, then in the session named by `HERDR_SESSION`,
+then at `~/.config/herdr/herdr.sock`.
+A herdr server that does not answer counts as not found.
 Set `session_place = "none"` to use direct children.
 Set it to `"tmux"` or `"herdr"` to require that multiplexer.
 A missing forced multiplexer fails the launch with a clear reason.
 `ariadne doctor` reports the selected place and its reason.
 
-With tmux, agents continue while the daemon stops or restarts.
+With herdr or tmux, agents continue while the daemon stops or restarts.
+Herdr shows each agent as a workspace with one pane. Closing that pane stops the agent.
 The new daemon reconnects and stores output collected during the stop.
 Reconnect keeps each running session's place, even when this setting changes.
 Resume starts a new process and selects its place again.
-The installer does not install tmux.
+The installer does not install tmux or herdr.
 See [the ACP runtime spec](../specs/021-acp-runtime.md) for the lifecycle rules.
 
 Hosts live in the settings daemon database. Add them on the app's Hosts screen or through `POST /v1/hosts`.

@@ -13,6 +13,7 @@
 
 pub(crate) mod acp;
 pub(crate) mod forge;
+pub(crate) mod herdr;
 pub(crate) mod ssh;
 
 use std::future::{Future, IntoFuture};
@@ -137,6 +138,7 @@ impl Drop for RelayCleanup {
 
 pub(crate) struct HarnessBuilder {
     session_place: Option<String>,
+    herdr: Option<(PathBuf, std::ffi::OsString)>,
     home: Option<PathBuf>,
     scheduler: bool,
     spawns: bool,
@@ -190,6 +192,7 @@ pub(crate) fn roomy_hardware() -> HardwareOverride {
 pub(crate) fn harness() -> HarnessBuilder {
     HarnessBuilder {
         session_place: None,
+        herdr: None,
         home: None,
         scheduler: false,
         spawns: true,
@@ -226,6 +229,12 @@ pub(crate) fn harness() -> HarnessBuilder {
 impl HarnessBuilder {
     pub(crate) fn session_place(mut self, place: &str) -> Self {
         self.session_place = Some(place.into());
+        self
+    }
+
+    /// Look for herdr on this stand-in's socket and search path.
+    pub(crate) fn herdr(mut self, herdr: &herdr::FakeHerdr) -> Self {
+        self.herdr = Some((herdr.socket(), herdr.search_path()));
         self
     }
 
@@ -401,7 +410,7 @@ impl HarnessBuilder {
         let agent_dir = dir.path().join("agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
         let mut agent_script = default_script();
-        if self.session_place.as_deref() == Some("tmux") {
+        if matches!(self.session_place.as_deref(), Some("tmux" | "herdr")) {
             agent_script["relay_parent"] = serde_json::json!(true);
         }
         let agent = acp::stub_acp_agent(&agent_dir, agent_script);
@@ -503,25 +512,29 @@ impl HarnessBuilder {
             self.timeouts.failure_diagnosis_decision,
         );
         let config = Arc::new(config);
+        let mut acp = ariadne_daemon::acp::AcpRuntime::with_transcripts(
+            store.clone(),
+            self.timeouts,
+            transcript_homes(dir.path()),
+        )
+        .with_places(
+            config.root.clone(),
+            std::path::PathBuf::from(env!("CARGO_BIN_EXE_ariadned")),
+            Some(self.session_place.unwrap_or_else(|| "none".into())),
+        );
+        if let Some((socket, path)) = self.herdr {
+            acp = acp.with_place_path(path).with_herdr_socket(socket);
+        }
         let launcher = Arc::new(Launcher {
             forge_poll: Default::default(),
             cfg: config.clone(),
             store: store.clone(),
             git: GitManager,
-            acp: ariadne_daemon::acp::AcpRuntime::with_transcripts(
-                store.clone(),
-                self.timeouts,
-                transcript_homes(dir.path()),
-            )
-            .with_places(
-                config.root.clone(),
-                std::path::PathBuf::from(env!("CARGO_BIN_EXE_ariadned")),
-                Some(self.session_place.unwrap_or_else(|| "none".into())),
-            )
-            .with_exhausted_patterns(exhausted_patterns)
-            .with_portable_config(config.clone())
-            .with_ai_permissions(ai_permissions.clone())
-            .with_failure_diagnosis(failure_diagnosis.clone()),
+            acp: acp
+                .with_exhausted_patterns(exhausted_patterns)
+                .with_portable_config(config.clone())
+                .with_ai_permissions(ai_permissions.clone())
+                .with_failure_diagnosis(failure_diagnosis.clone()),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
             live: ariadne_daemon::forge::live::LivePulls::default(),

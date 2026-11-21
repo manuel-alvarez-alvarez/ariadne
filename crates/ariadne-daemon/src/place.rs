@@ -1,16 +1,19 @@
 //! Session locations and multiplexer discovery.
 use anyhow::{Context, Result, bail, ensure};
 use ariadne_core::probe;
+use serde_json::{Value, json};
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::path::PathBuf;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::path::{Path, PathBuf};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 /// A resolved session location.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Place {
     None,
     Tmux(PathBuf),
+    /// A herdr server, reached through its socket.
+    Herdr(PathBuf),
 }
 impl Place {
     /// Stable session storage name.
@@ -18,43 +21,65 @@ impl Place {
         match self {
             Self::None => "none",
             Self::Tmux(_) => "tmux",
+            Self::Herdr(_) => "herdr",
         }
     }
 
-    fn find_herdr(_path: Option<&OsStr>) -> Option<Self> {
-        None
+    /// Herdr is found when its executable is on the search path and its
+    /// server answers a ping on the socket. A server that stays silent is
+    /// the same as one that is not there.
+    fn find_herdr(path: Option<&OsStr>, socket: Option<&Path>) -> Option<Self> {
+        probe::which(path?, "herdr")?;
+        let socket = socket.map(Path::to_path_buf).or_else(herdr_socket)?;
+        herdr_answers(&socket).then_some(Self::Herdr(socket))
     }
 
     /// Select a location on the daemon's search path.
     pub fn find(forced: Option<&str>, path: Option<&OsStr>) -> Result<Self> {
-        // Herdr discovery deliberately reports unavailable until its backend lands.
+        Self::find_with(forced, path, None)
+    }
+
+    /// Select a location; `herdr_socket` replaces the socket herdr's own
+    /// rules would resolve from the environment.
+    pub fn find_with(
+        forced: Option<&str>,
+        path: Option<&OsStr>,
+        herdr_socket: Option<&Path>,
+    ) -> Result<Self> {
         let tmux = || {
             path.and_then(|path| probe::which(path, "tmux"))
                 .map(Self::Tmux)
         };
         match forced {
             Some("none") => Ok(Self::None),
-            Some("herdr") => Self::find_herdr(path)
+            Some("herdr") => Self::find_herdr(path, herdr_socket)
                 .ok_or_else(|| anyhow::anyhow!("forced session place herdr was not found")),
             Some("tmux") => {
                 tmux().ok_or_else(|| anyhow::anyhow!("forced session place tmux was not found"))
             }
-            None => Ok(Self::find_herdr(path).or_else(tmux).unwrap_or(Self::None)),
+            None => Ok(Self::find_herdr(path, herdr_socket)
+                .or_else(tmux)
+                .unwrap_or(Self::None)),
             Some(value) => bail!("invalid session place {value:?}; expected none, tmux, or herdr"),
         }
     }
 }
 
 /// Report discovery, including unavailable forced locations.
-pub(crate) fn report(forced: Option<&str>, path: Option<&OsStr>) -> ariadne_api::doctor::PlaceDto {
+pub fn report(
+    forced: Option<&str>,
+    path: Option<&OsStr>,
+    herdr_socket: Option<&Path>,
+) -> ariadne_api::doctor::PlaceDto {
     use ariadne_api::doctor::PlaceDto;
-    match Place::find(forced, path) {
+    match Place::find_with(forced, path, herdr_socket) {
         Ok(place) => PlaceDto {
             name: place.name().into(),
             reason: if forced.is_some() {
                 "forced by session_place".into()
             } else {
                 match place {
+                    Place::Herdr(_) => "herdr is installed and its server answers".into(),
                     Place::Tmux(_) => "herdr was not found; tmux is available".into(),
                     Place::None => "herdr and tmux were not found; use a direct child".into(),
                 }
@@ -105,6 +130,9 @@ impl Place {
             );
         }
         let name = format!("ariadne-{}", launch.launch_id);
+        if let Self::Herdr(socket) = self {
+            return herdr_start(socket, launch, name).await;
+        }
         let mut command = self.command(launch.home)?;
         command
             .args(["new-session", "-d", "-s", &name, "-c"])
@@ -157,6 +185,9 @@ impl Place {
 
     /// List the live relay panes in this home's private server.
     pub async fn live_panes(&self, home: &std::path::Path) -> Result<Vec<Pane>> {
+        if let Self::Herdr(socket) = self {
+            return herdr_panes(socket, home).await;
+        }
         let mut command = self.command(home)?;
         // Non-UTF-8 tmux clients replace control separators with underscores.
         // Pane and session identifiers cannot contain this printable separator.
@@ -214,6 +245,9 @@ impl Place {
                 ) => {}
             Err(error) => return Err(error).context("connecting to relay for stop"),
         }
+        if let Self::Herdr(socket) = self {
+            return herdr_close(socket, home, pane).await;
+        }
         if self
             .live_panes(home)
             .await?
@@ -241,7 +275,7 @@ impl Place {
 
     fn command(&self, home: &std::path::Path) -> Result<tokio::process::Command> {
         let Self::Tmux(binary) = self else {
-            bail!("a direct child has no relay pane");
+            bail!("only tmux runs a command for a relay pane");
         };
         let mut command = tokio::process::Command::new(binary);
         command
@@ -269,4 +303,215 @@ async fn run(mut command: tokio::process::Command) -> Result<std::process::Outpu
         .await
         .context("tmux command timed out")?
         .context("running tmux")
+}
+
+/// Where herdr listens, by its own rules: `HERDR_SOCKET_PATH`, then the
+/// named session in `HERDR_SESSION`, then the default session.
+fn herdr_socket() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("HERDR_SOCKET_PATH").filter(|path| !path.is_empty()) {
+        return Some(path.into());
+    }
+    let config = PathBuf::from(std::env::var_os("HOME")?).join(".config/herdr");
+    Some(match std::env::var("HERDR_SESSION") {
+        Ok(name) if !name.is_empty() => config.join("sessions").join(name).join("herdr.sock"),
+        _ => config.join("herdr.sock"),
+    })
+}
+
+/// Whether a herdr server answers a ping on `socket` within the probe time.
+fn herdr_answers(socket: &Path) -> bool {
+    use std::io::{BufRead, BufReader, Write};
+    let probe = crate::timeouts::Timeouts::default().probe;
+    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) else {
+        return false;
+    };
+    if stream.set_read_timeout(Some(probe)).is_err()
+        || stream.set_write_timeout(Some(probe)).is_err()
+        || stream
+            .write_all(b"{\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}\n")
+            .is_err()
+    {
+        return false;
+    }
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line).is_ok()
+        && serde_json::from_str::<Value>(&line).is_ok_and(|reply| reply["result"]["type"] == "pong")
+}
+
+/// Send one request on a fresh connection and return its result.
+async fn herdr_call(socket: &Path, method: &str, params: Value) -> Result<Value> {
+    tokio::time::timeout(crate::timeouts::Timeouts::default().probe, async {
+        let mut stream = tokio::io::BufReader::new(
+            tokio::net::UnixStream::connect(socket)
+                .await
+                .context("connecting to herdr")?,
+        );
+        let request = json!({"id": "ariadne", "method": method, "params": params});
+        stream
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .context("writing to herdr")?;
+        let mut line = String::new();
+        ensure!(
+            stream
+                .read_line(&mut line)
+                .await
+                .context("reading from herdr")?
+                > 0,
+            "herdr closed the connection without an answer"
+        );
+        let mut reply: Value = serde_json::from_str(&line).context("reading the herdr answer")?;
+        if let Some(error) = reply.get("error") {
+            bail!(
+                "herdr {method}: {}: {}",
+                error["code"].as_str().unwrap_or("error"),
+                error["message"].as_str().unwrap_or("no message")
+            );
+        }
+        Ok(reply["result"].take())
+    })
+    .await
+    .with_context(|| format!("herdr {method} timed out"))?
+}
+
+/// A short stable tag for a home, so one herdr server can hold the panes of
+/// several daemon homes and each lists only its own.
+fn home_tag(home: &Path) -> String {
+    let hash = home
+        .as_os_str()
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+    format!("{hash:016x}")
+}
+
+async fn herdr_start(socket: &Path, launch: &PaneLaunch<'_>, name: String) -> Result<Pane> {
+    let label = format!("{name}/{}@{}", launch.session_id, home_tag(launch.home));
+    let text = |path: &Path| {
+        path.to_str()
+            .map(str::to_owned)
+            .context("herdr needs UTF-8 paths")
+    };
+    let mut command = vec![
+        text(launch.daemon)?,
+        "relay".into(),
+        "--home".into(),
+        text(launch.home)?,
+        "--session".into(),
+        launch.session_id.into(),
+        "--agent".into(),
+        launch.agent_id.into(),
+        "--task".into(),
+        launch.task_id.into(),
+        "--".into(),
+        launch.program.into(),
+    ];
+    command.extend(launch.args.iter().cloned());
+    let env: serde_json::Map<String, Value> = std::env::vars()
+        .chain(launch.env.iter().cloned())
+        .map(|(key, value)| (key, Value::String(value)))
+        .collect();
+    let cwd = text(launch.cwd)?;
+    let created = herdr_call(
+        socket,
+        "workspace.create",
+        json!({"label": label, "cwd": cwd, "focus": false}),
+    )
+    .await
+    .context("creating herdr workspace")?;
+    let workspace = created["workspace"]["workspace_id"]
+        .as_str()
+        .context("herdr named no workspace")?
+        .to_owned();
+    // The new workspace holds a shell tab. Replace it, so the relay's pane is
+    // the only one and closing it leaves nothing behind. Herdr refuses a
+    // request that names both the tab and its workspace.
+    let applied = herdr_call(
+        socket,
+        "layout.apply",
+        json!({
+            "tab_id": created["tab"]["tab_id"],
+            "tab_label": label,
+            "focus": false,
+            "root": {"type": "pane", "label": label, "cwd": cwd, "command": command, "env": env},
+        }),
+    )
+    .await;
+    let id = match applied {
+        Ok(applied) => applied["layout"]["root"]["pane_id"]
+            .as_str()
+            .map(str::to_owned),
+        Err(error) => {
+            let _ = herdr_call(
+                socket,
+                "workspace.close",
+                json!({"workspace_id": workspace}),
+            )
+            .await;
+            return Err(error.context("starting herdr relay pane"));
+        }
+    };
+    let id = match id {
+        Some(id) => id,
+        None => herdr_panes(socket, launch.home)
+            .await?
+            .into_iter()
+            .find(|pane| pane.name == name)
+            .map(|pane| pane.id)
+            .context("herdr named no relay pane")?,
+    };
+    Ok(Pane {
+        id,
+        name,
+        session_id: launch.session_id.into(),
+    })
+}
+
+async fn herdr_panes(socket: &Path, home: &Path) -> Result<Vec<Pane>> {
+    let tag = format!("@{}", home_tag(home));
+    let listed = match herdr_call(socket, "pane.list", json!({})).await {
+        Ok(listed) => listed,
+        Err(error)
+            if error.chain().any(|cause| {
+                cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                    )
+                })
+            }) =>
+        {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.context("listing herdr relay panes")),
+    };
+    Ok(listed["panes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pane| {
+            let (name, rest) = pane["label"].as_str()?.split_once('/')?;
+            let session = rest.strip_suffix(&tag)?;
+            (name.starts_with("ariadne-") && !session.is_empty()).then(|| Pane {
+                id: pane["pane_id"].as_str().unwrap_or_default().into(),
+                name: name.into(),
+                session_id: session.into(),
+            })
+        })
+        .collect())
+}
+
+async fn herdr_close(socket: &Path, home: &Path, pane: &Pane) -> Result<()> {
+    let live = |panes: Vec<Pane>| panes.iter().any(|live| live.id == pane.id);
+    if live(herdr_panes(socket, home).await?) {
+        let closed = herdr_call(socket, "pane.close", json!({"pane_id": pane.id})).await;
+        if let Err(error) = closed
+            && live(herdr_panes(socket, home).await?)
+        {
+            return Err(error.context("stopping herdr relay pane"));
+        }
+    }
+    Ok(())
 }

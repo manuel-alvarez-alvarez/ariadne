@@ -1102,6 +1102,87 @@ async fn a_tmux_session_runs_acp_through_its_relay() {
 }
 
 #[tokio::test]
+async fn a_herdr_session_runs_acp_through_its_relay_and_a_kill_stops_its_pane() {
+    let herdr = common::herdr::FakeHerdr::start();
+    let h = harness().session_place("herdr").herdr(&herdr).await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("herdr-acp").await;
+    h.agent_runs(&session).await;
+    let stored = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(stored.place.as_deref(), Some("herdr"));
+    assert_eq!(herdr.labels().len(), 1);
+    let (status, _) = h
+        .send(common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            json!({"text":"continue through herdr"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "relay prompt completion", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(
+        h.agent.calls_of("session/prompt").last().unwrap()["prompt"][0]["text"],
+        "continue through herdr"
+    );
+    h.launcher.kill_session(&session.id).await.unwrap();
+    eventually(TIMEOUT, "relay pane stopped", || async {
+        herdr.labels().is_empty()
+            && !h
+                .launcher
+                .cfg
+                .root
+                .join(format!("relays/{}.sock", session.id))
+                .exists()
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_daemon_stop_leaves_the_herdr_pane_and_a_new_daemon_reconnects_to_it() {
+    use ariadne_daemon::acp::AcpRuntime;
+    let herdr = common::herdr::FakeHerdr::start();
+    let h = harness().session_place("herdr").herdr(&herdr).await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("herdr-reconnect").await;
+    h.agent_runs(&session).await;
+    let before = h.store.get_session(&session.id).await.unwrap();
+    let labels = herdr.labels();
+    h.launcher.acp.detach_relays().await;
+    assert!(!h.launcher.acp.is_running(&session.id));
+    assert_eq!(herdr.labels(), labels, "the pane outlives the daemon");
+    let runtime = AcpRuntime::new(h.store.clone())
+        .with_places(
+            h.launcher.cfg.root.clone(),
+            env!("CARGO_BIN_EXE_ariadned").into(),
+            Some("herdr".into()),
+        )
+        .with_place_path(herdr.search_path())
+        .with_herdr_socket(herdr.socket());
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    assert!(runtime.is_running(&session.id));
+    let attached = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(attached.place.as_deref(), Some("herdr"));
+    assert_eq!(attached.launch_id, before.launch_id);
+    assert!(attached.status().is_live());
+    runtime
+        .send_prompt(&session.id, "continue after reconnect".into())
+        .unwrap();
+    eventually(TIMEOUT, "reconnected prompt completion", || async {
+        h.agent.calls_of("session/prompt").len() == 1
+            && h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(h.agent.calls_of("initialize").len(), 1);
+    runtime.kill_and_wait(&session.id).await;
+    eventually(TIMEOUT, "pane closed by the kill", || async {
+        herdr.labels().is_empty()
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn an_automatic_resume_reselects_after_the_old_multiplexer_disappears() {
     use ariadne_daemon::acp::{AcpLaunch, AcpRuntime};
     let h = harness().session_place("tmux").await;
@@ -1170,11 +1251,13 @@ async fn a_missing_forced_place_refuses_a_resume_with_its_reason() {
         .await
         .unwrap()
         .internal_session_id;
-    let runtime = AcpRuntime::new(h.store.clone()).with_places(
-        h.launcher.cfg.root.clone(),
-        env!("CARGO_BIN_EXE_ariadned").into(),
-        Some("herdr".into()),
-    );
+    let runtime = AcpRuntime::new(h.store.clone())
+        .with_places(
+            h.launcher.cfg.root.clone(),
+            env!("CARGO_BIN_EXE_ariadned").into(),
+            Some("herdr".into()),
+        )
+        .with_herdr_socket(h.launcher.cfg.root.join("no-herdr.sock"));
     assert_eq!(
         runtime.launch(launch).await.unwrap_err().to_string(),
         "forced session place herdr was not found"

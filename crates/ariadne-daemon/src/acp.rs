@@ -168,6 +168,14 @@ struct Places {
     daemon: PathBuf,
     forced: Option<String>,
     path: Option<std::ffi::OsString>,
+    herdr_socket: Option<PathBuf>,
+}
+
+impl Places {
+    /// Find a location again, by name, as it was stored on a session row.
+    fn find(&self, forced: Option<&str>) -> Result<crate::place::Place> {
+        crate::place::Place::find_with(forced, self.path.as_deref(), self.herdr_socket.as_deref())
+    }
 }
 
 struct RelayProcess {
@@ -695,7 +703,33 @@ impl AcpRuntime {
             daemon,
             forced,
             path: std::env::var_os("PATH"),
+            herdr_socket: None,
         });
+        self
+    }
+
+    /// What selection finds now, as `ariadne doctor` reports it. It asks with
+    /// the settings a launch uses, so the report cannot disagree with one.
+    pub fn place_report(&self) -> ariadne_api::doctor::PlaceDto {
+        let (forced, path, socket) = match &self.inner.places {
+            Some(settings) => (
+                settings.forced.as_deref(),
+                settings.path.as_deref(),
+                settings.herdr_socket.as_deref(),
+            ),
+            None => (Some("none"), None, None),
+        };
+        crate::place::report(forced, path, socket)
+    }
+
+    /// Override the socket herdr is looked for on, for an embedded daemon.
+    pub fn with_herdr_socket(mut self, socket: PathBuf) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("runtime is not shared while configured")
+            .places
+            .as_mut()
+            .expect("configure places before the herdr socket")
+            .herdr_socket = Some(socket);
         self
     }
 
@@ -748,7 +782,7 @@ impl AcpRuntime {
             .await?;
         let mut attached = 0;
         for session in sessions {
-            if session.place.as_deref() != Some("tmux")
+            if !matches!(session.place.as_deref(), Some("tmux" | "herdr"))
                 || self.is_running(&session.id)
                 || !settings
                     .home
@@ -1466,18 +1500,14 @@ impl AcpRuntime {
                 .places
                 .as_ref()
                 .context("relay paths are not configured")?;
-            existing_relay_pane(settings, &launch).await?.0
+            existing_relay_pane(settings, &launch, session.place.as_deref())
+                .await?
+                .0
         } else {
-            let place = crate::place::Place::find(
-                self.inner
-                    .places
-                    .as_ref()
-                    .map_or(Some("none"), |settings| settings.forced.as_deref()),
-                self.inner
-                    .places
-                    .as_ref()
-                    .and_then(|settings| settings.path.as_deref()),
-            )?;
+            let place = match &self.inner.places {
+                Some(settings) => settings.find(settings.forced.as_deref())?,
+                None => crate::place::Place::None,
+            };
             if let Some(settings) = &self.inner.places {
                 cleanup_relay(settings, &launch.session_id, session.place.as_deref()).await?;
             }
@@ -1487,12 +1517,12 @@ impl AcpRuntime {
                 .await?;
             place
         };
-        let (child, stdin, stdout, relay) = if matches!(place, crate::place::Place::Tmux(_)) {
+        let (child, stdin, stdout, relay) = if place != crate::place::Place::None {
             let settings = self
                 .inner
                 .places
                 .as_ref()
-                .expect("tmux requires configured paths");
+                .expect("a multiplexer requires configured paths");
             let (stdin, stdout, relay) = self
                 .start_relay(&launch, &session, settings, place, reconnect)
                 .await?;
@@ -1663,7 +1693,9 @@ impl AcpRuntime {
             .collect::<Vec<_>>();
         let pane_path = directory.join(format!("{}.pane.json", launch.session_id));
         let pane = if reconnect {
-            existing_relay_pane(settings, launch).await?.1
+            existing_relay_pane(settings, launch, session.place.as_deref())
+                .await?
+                .1
         } else {
             let pane = place
                 .start_pane(&crate::place::PaneLaunch {
@@ -4528,8 +4560,8 @@ async fn cleanup_relay(settings: &Places, session: &str, old_place: Option<&str>
         .await
         .context("waiting for the old relay to stop")??;
     }
-    if old_place == Some("tmux")
-        && let Ok(place) = crate::place::Place::find(Some("tmux"), settings.path.as_deref())
+    if let Some(old @ ("tmux" | "herdr")) = old_place
+        && let Ok(place) = settings.find(Some(old))
     {
         for pane in place
             .live_panes(&settings.home)
@@ -4557,6 +4589,7 @@ async fn cleanup_relay(settings: &Places, session: &str, old_place: Option<&str>
 async fn existing_relay_pane(
     settings: &Places,
     launch: &AcpLaunch,
+    stored_place: Option<&str>,
 ) -> Result<(crate::place::Place, crate::place::Pane)> {
     let path = settings
         .home
@@ -4567,10 +4600,15 @@ async fn existing_relay_pane(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error).context("reading relay pane metadata"),
     }
-    // The daemon can stop after tmux creates the pane and before metadata publication.
+    // The daemon can stop after the multiplexer creates the pane and before metadata publication.
     // Reconnect still uses the stored place when its executable is no longer discoverable.
-    let place = crate::place::Place::find(Some("tmux"), settings.path.as_deref())
-        .unwrap_or_else(|_| crate::place::Place::Tmux(PathBuf::from("tmux")));
+    let place = if stored_place == Some("herdr") {
+        settings.find(Some("herdr"))?
+    } else {
+        settings
+            .find(Some("tmux"))
+            .unwrap_or_else(|_| crate::place::Place::Tmux(PathBuf::from("tmux")))
+    };
     let name = format!("ariadne-{}", launch.launch_id);
     let mut pane = place
         .live_panes(&settings.home)
