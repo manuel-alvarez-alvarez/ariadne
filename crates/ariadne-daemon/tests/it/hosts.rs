@@ -612,7 +612,7 @@ async fn setup_preserves_installation_after_service_failure_and_retries_safely()
         let state: Value = h.get("/v1/hosts/builder/setup").await;
         assert_eq!(state["steps"][3]["complete"], true);
         assert!(
-            state["steps"][4]["error"]
+            state["steps"].as_array().unwrap().iter().find(|step| step["name"] == "service").unwrap()["error"]
                 .as_str()
                 .unwrap()
                 .contains(if os == "Linux" {
