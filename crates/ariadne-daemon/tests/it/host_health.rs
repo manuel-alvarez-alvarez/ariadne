@@ -235,7 +235,21 @@ async fn a_direct_host_that_does_not_answer_is_down_and_ready_once_it_answers() 
     let ready = updates.next().await;
     assert_eq!(ready.status, HostStatus::Ready);
     assert_eq!(ready.error, None);
-    assert_eq!(updates.next().await.sync.state, SyncState::InSync);
+    // The sync may publish more than one `pending` before it lands.
+    let in_sync = tokio::time::timeout(crate::common::TIMEOUT, async {
+        loop {
+            let host = updates.next().await;
+            if host.sync.state != SyncState::Pending {
+                return host;
+            }
+        }
+    })
+    .await
+    .expect("the sync is still pending");
+    assert_eq!(
+        (in_sync.status, in_sync.sync.state),
+        (HostStatus::Ready, SyncState::InSync)
+    );
 }
 
 #[tokio::test]

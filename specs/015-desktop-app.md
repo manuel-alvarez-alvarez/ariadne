@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-19
+updated: 2026-11-21
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1190,7 +1190,10 @@ Out: the daemon endpoints themselves (012).
     A gap in one host's stream invalidates that host's keys alone. A host
     that came up or moved since the last hosts list is read again whole, so a
     `host_updated` missed while `local`'s stream was down leaves nothing
-    stale. The
+    stale. `session_created` and `session_updated` patch the row into every
+    cached sessions list it belongs in, newest activity first, and refetch
+    none of them. A list whose read is still under way is refetched instead.
+    The
     connection banner and status stay about `local`; a named host's state is
     its row in the host picker.
 54. Every query key starts with its host: `[host, entity, "list" | "detail",
@@ -2572,6 +2575,11 @@ Out: the daemon endpoints themselves (012).
   `::refetches only the host whose stream had a gap`,
   `::patches the host's row on host_updated, and reads a host that came up again`,
   `::ignores host_updated from a named host's own stream`);
+  a session event patches the sessions lists without refetching them
+  (`ui/src/events/dispatch.test.ts::patches a moved session into every cached list and refetches none of them`,
+  `::moves a session between status lists and leaves another goal's list alone`,
+  `::adds a new session to the lists it belongs in`,
+  `::refetches a list whose read is still under way, which a patch would lose to`);
   `?host=` (`ui/src/routes/paths.test.ts::writes ?host= beside a named host's panel param`,
   `::leaves ?host= out for local, and drops the one a named host's panel left`,
   `::resolves a link without ?host= to local`); `useHostLists`

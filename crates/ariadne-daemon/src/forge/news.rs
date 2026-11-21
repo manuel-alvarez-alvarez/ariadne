@@ -153,6 +153,30 @@ pub fn review_round(pull: &PullRequest, reason: &str) -> News {
     }
 }
 
+/// Replies from the other side in threads that contain a review finding.
+pub fn review_replies(pull: &PullRequest, comments: &[PullRequestComment]) -> News {
+    let ids: Vec<String> = comments
+        .iter()
+        .filter(|c| {
+            !c.from_review
+                && c.told_at.is_none()
+                && c.thread_id != super::pulls::CONVERSATION
+                && comments.iter().any(|finding| {
+                    finding.from_review
+                        && finding.thread_id == c.thread_id
+                        && (&finding.created_at, &finding.id) < (&c.created_at, &c.id)
+                })
+        })
+        .map(|c| c.id.clone())
+        .collect();
+    let mut news = review_round(pull, "thread reply");
+    if ids.is_empty() {
+        news.lines.clear();
+    }
+    news.comment_ids = ids;
+    news
+}
+
 /// One line per comment a session has not been told of, naming its id.
 fn comment_lines<'a>(untold: impl IntoIterator<Item = &'a PullRequestComment>) -> Vec<String> {
     untold
@@ -458,6 +482,23 @@ mod tests {
     }
 
     #[test]
+    fn only_untold_other_side_replies_in_review_threads_are_round_news() {
+        let finding = comment("1", "owned", "me", true);
+        let reply = comment("2", "owned", "me", false);
+        let unrelated = comment("3", "other", "other", false);
+        let conversation = comment("4", super::super::pulls::CONVERSATION, "other", false);
+        let own_reply = comment("5", "owned", "me", true);
+        let mut told = comment("6", "owned", "other", false);
+        told.told_at = Some("told".into());
+        let news = review_replies(
+            &pull(),
+            &[finding, reply, unrelated, conversation, own_reply, told],
+        );
+        assert_eq!(news.comment_ids, ["2"]);
+        assert!(news.lines[0].starts_with("- Review again: thread reply."));
+    }
+
+    #[test]
     fn comments_wait_for_the_newest_comment_but_failures_and_state_do_not() {
         let interval = crate::timeouts::Timeouts::default().keeper_comment_settle;
         assert_eq!(interval.as_secs(), 300);
@@ -628,7 +669,7 @@ mod tests {
                 reviewed_sha: Some("abc".into()),
                 ..pull()
             },
-            "settled push",
+            "new head",
         );
         let pushed_and_unreviewed = review_round(
             &PullRequest {
@@ -638,7 +679,7 @@ mod tests {
                 reviewed_sha: None,
                 ..pull()
             },
-            "settled push",
+            "new head",
         );
 
         let texts = [

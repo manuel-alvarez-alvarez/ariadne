@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::common::{
-    Harness, QUIET, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json,
-    put_json, roomy_hardware, sh,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, delete, eventually, eventually_some, get, harness,
+    next_event, post_json, put_json, roomy_hardware, sh,
 };
 use ariadne_api::hosts::{HostDto, HostStatus, HostSyncDto, MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
@@ -111,17 +111,23 @@ impl Gate {
 
     /// Let the held requests through one at a time, each answered before
     /// the next, until `request` is answered.
+    ///
+    /// Every answer since the last permit is checked, not only the first:
+    /// two can land between one look and the next, and the one asked for
+    /// may be the second.
     async fn pass_until(&self, request: &str) {
+        let mut seen = self.answered.lock().unwrap().len();
         loop {
-            let before = self.answered.lock().unwrap().len();
             self.permits.add_permits(1);
             eventually(TIMEOUT, "the held request answered", || async {
-                self.answered.lock().unwrap().len() > before
+                self.answered.lock().unwrap().len() > seen
             })
             .await;
-            if self.answered.lock().unwrap()[before] == request {
+            let answered = self.answered.lock().unwrap();
+            if answered[seen..].iter().any(|answer| answer == request) {
                 return;
             }
+            seen = answered.len();
         }
     }
 
@@ -666,7 +672,15 @@ async fn a_refused_push_holds_back_no_later_change() {
         skill_on(&far, "later").await.is_some()
     })
     .await;
-    assert_eq!(sync_of(&local).await.state, SyncState::Failed);
+    // A retry of the refused delete takes it off the failed list while it
+    // runs, so the sync reads `pending` for that moment. Where it settles is
+    // the claim.
+    let settled = eventually_some(TIMEOUT, "the sync settled", || async {
+        let state = sync_of(&local).await.state;
+        (state != SyncState::Pending).then_some(state)
+    })
+    .await;
+    assert_eq!(settled, SyncState::Failed);
     assert!(skill_on(&far, "shared").await.is_some());
 
     // Once the host lets it go, the delete that was refused lands.
@@ -750,15 +764,29 @@ async fn a_newer_push_of_an_item_ends_its_older_failed_push() {
     assert_eq!(shared.map(|skill| skill.summary).as_deref(), Some("second"));
 }
 
-/// The sync of the next `host_updated` on the bus.
-async fn next_sync(rx: &mut Receiver<BusEvent>) -> HostSyncDto {
-    let event = next_event(rx, |event| {
-        matches!(event.event, DomainEvent::HostUpdated(_))
-    })
-    .await;
-    match event.event {
-        DomainEvent::HostUpdated(host) => host.sync,
-        _ => unreachable!(),
+/// The sync of the next `host_updated` on the bus that moves it.
+///
+/// A `host_updated` also carries a move of the host's status, endpoint or
+/// error, which a health check can publish between two sync changes. Such
+/// an event is skipped. One that moves nothing at all fails the test: each
+/// change publishes one event.
+async fn next_sync(rx: &mut Receiver<BusEvent>, last: &mut Option<HostDto>) -> HostSyncDto {
+    loop {
+        let event = next_event(rx, |event| {
+            matches!(event.event, DomainEvent::HostUpdated(_))
+        })
+        .await;
+        let DomainEvent::HostUpdated(host) = event.event else {
+            unreachable!()
+        };
+        let previous = last.replace(host.clone());
+        let Some(previous) = previous else {
+            return host.sync;
+        };
+        assert_ne!(previous, host, "a host_updated that moved nothing");
+        if previous.sync != host.sync {
+            return host.sync;
+        }
     }
 }
 
@@ -766,10 +794,14 @@ async fn next_sync(rx: &mut Receiver<BusEvent>) -> HostSyncDto {
 async fn each_change_of_the_sync_publishes_one_host_updated() {
     let (_far, local, _dir) = far_and_local().await;
     let mut rx = local.bus.subscribe();
+    let mut last = None;
     local.state.hosts.start();
     // The first event is the host's `ready`, before any push lands.
-    assert_eq!(next_sync(&mut rx).await.state, SyncState::Pending);
-    assert_eq!(next_sync(&mut rx).await, HostSyncDto::in_sync());
+    assert_eq!(
+        next_sync(&mut rx, &mut last).await.state,
+        SyncState::Pending
+    );
+    assert_eq!(next_sync(&mut rx, &mut last).await, HostSyncDto::in_sync());
 
     let _: SkillDto = local
         .json(
@@ -780,8 +812,11 @@ async fn each_change_of_the_sync_publishes_one_host_updated() {
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(next_sync(&mut rx).await.state, SyncState::Pending);
-    assert_eq!(next_sync(&mut rx).await, HostSyncDto::in_sync());
+    assert_eq!(
+        next_sync(&mut rx, &mut last).await.state,
+        SyncState::Pending
+    );
+    assert_eq!(next_sync(&mut rx, &mut last).await, HostSyncDto::in_sync());
 }
 
 #[tokio::test]

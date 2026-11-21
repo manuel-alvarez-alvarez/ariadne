@@ -15,7 +15,6 @@
 pub(crate) mod auto_switch;
 mod coalesce;
 mod goals;
-mod head_settle;
 mod messages;
 mod pull_requests;
 mod quiet;
@@ -187,9 +186,6 @@ pub(crate) struct Scheduler {
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
     pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
-    /// How long each request's head has stood still, for the push a review
-    /// session is told of. In memory, so a restart starts the interval again.
-    head_settle: head_settle::HeadSettle,
     /// Next permitted periodic forge read of an open kept request.
     pull_request_read_retry: HashMap<String, Instant>,
     /// Successfully marked request heads in this scheduler lifetime.
@@ -229,7 +225,6 @@ pub fn start(
         goal_told: HashMap::new(),
         exhausted_notices: HashMap::new(),
         pull_request_cleanup_retry: HashMap::new(),
-        head_settle: head_settle::HeadSettle::new(timeouts.review_push_settle),
         pull_request_read_retry: HashMap::new(),
         draft_marks: HashSet::new(),
         keeper_skills_applied: HashMap::new(),

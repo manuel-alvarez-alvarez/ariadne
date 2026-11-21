@@ -5958,6 +5958,61 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
             .unwrap(),
         "a review's mark leaves the comment untold"
     );
+    assert!(
+        store
+            .claim_pull_request_news_for_seat(&row.id, &comment, &told, &told, true)
+            .await
+            .unwrap(),
+        "keeper delivery does not consume reviewer delivery"
+    );
+    assert_eq!(
+        store.reviewer_told_comments(&row.id).await.unwrap(),
+        comment
+    );
+    assert!(
+        !store
+            .claim_pull_request_news_for_seat(&row.id, &comment, &told, &told, true)
+            .await
+            .unwrap()
+    );
+    store
+        .release_pull_request_news_for_seat(&row.id, &comment, &told, true)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .reviewer_told_comments(&row.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .pull_request_comment_marks(&row.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|mark| mark.forge_id == "rc-1")
+            .unwrap()
+            .told_at
+            .is_some(),
+        "releasing reviewer delivery preserves keeper delivery"
+    );
+    assert!(
+        store
+            .claim_pull_request_news_for_seat(&row.id, &comment, &told, &told, true)
+            .await
+            .unwrap()
+    );
+    store
+        .release_pull_request_news(&row.id, &comment, &told)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.reviewer_told_comments(&row.id).await.unwrap(),
+        comment,
+        "releasing keeper delivery preserves reviewer delivery"
+    );
     store.delete_pull_request(&row.id).await.unwrap();
     assert!(
         store
