@@ -58,10 +58,32 @@ pub(crate) fn snapshot(root: &Path) -> Result<Vec<SkillFile>, String> {
         }
         Ok(())
     }
+    let metadata = std::fs::symlink_metadata(root).map_err(|e| e.to_string())?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("symbolic link at skill root: {}", root.display()));
+    }
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let mut files = Vec::new();
     walk(&root, &root, Path::new(""), &mut Vec::new(), &mut files)?;
     Ok(files)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    #[test]
+    fn snapshot_rejects_symlink_at_skill_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::write(external.path().join("secret"), b"private").unwrap();
+        let root = dir.path().join("skill");
+        std::os::unix::fs::symlink(external.path(), &root).unwrap();
+
+        assert!(
+            super::snapshot(&root)
+                .unwrap_err()
+                .contains("symbolic link")
+        );
+    }
 }
 
 pub(crate) fn validate(files: &[SkillFile]) -> Result<(), String> {
