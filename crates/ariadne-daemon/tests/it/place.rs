@@ -98,6 +98,85 @@ async fn a_detached_relay_pane_can_be_found_and_stopped() {
 }
 
 #[tokio::test]
+async fn listing_panes_without_a_tmux_server_returns_an_empty_list() {
+    let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn listing_panes_on_a_server_without_a_session_returns_an_empty_list() {
+    let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    // A server that outlives its last session answers `list-panes -a` with "no current target".
+    let output = std::process::Command::new("tmux")
+        .arg("-S")
+        .arg(home.0.path().join("tmux.sock"))
+        .args(["-f", "/dev/null", "start-server", ";"])
+        .args(["set-option", "-g", "exit-empty", "off", ";"])
+        .args(["list-sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_pane_listing_directly_after_the_start_finds_the_pane() {
+    use ariadne_daemon::place::PaneLaunch;
+    let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let args = vec!["-c".into(), "import time; time.sleep(30)".into()];
+    for round in 0..5 {
+        let session = format!("direct-{round}");
+        let pane = place
+            .start_pane(&PaneLaunch {
+                home: home.0.path(),
+                cwd: home.0.path(),
+                session_id: &session,
+                launch_id: &session,
+                agent_id: "stub",
+                task_id: "task",
+                daemon: std::path::Path::new(env!("CARGO_BIN_EXE_ariadned")),
+                program: "python3",
+                args: &args,
+                env: &[],
+            })
+            .await
+            .unwrap();
+        assert!(
+            place
+                .live_panes(home.0.path())
+                .await
+                .unwrap()
+                .contains(&pane),
+            "round {round}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("tmux");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\necho 'protocol version mismatch' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let place = Place::find(Some("tmux"), Some(dir.path().as_os_str())).unwrap();
+    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    assert!(error.contains("protocol version mismatch"), "{error}");
+    std::fs::remove_file(&binary).unwrap();
+    std::fs::write(&binary, [0u8; 8]).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    assert!(error.contains("listing tmux relay sessions"), "{error}");
+    assert!(error.contains("tmux"), "{error}");
+}
+
+#[tokio::test]
 async fn reconnect_resends_only_unaccepted_inputs_and_restores_pending_output() {
     use crate::common::{TIMEOUT, eventually};
     use ariadne_daemon::{place::PaneLaunch, relay_link::RelayLink};

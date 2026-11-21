@@ -156,16 +156,53 @@ impl Place {
     }
 
     /// List the live relay panes in this home's private server.
+    ///
+    /// Every tmux call names its target. `list-panes -a` fails with "no current
+    /// target" on a server that has no session, so the sessions are listed
+    /// first and each relay session is asked for its own panes.
     pub async fn live_panes(&self, home: &std::path::Path) -> Result<Vec<Pane>> {
+        let Some(names) = self.relay_sessions(home).await? else {
+            return Ok(Vec::new());
+        };
+        let mut panes = Vec::new();
+        for name in names {
+            let mut command = self.command(home)?;
+            // Non-UTF-8 tmux clients replace control separators with underscores.
+            // Pane and session identifiers cannot contain this printable separator.
+            command.args(["list-panes", "-s", "-t"]);
+            command.arg(format!("={name}:"));
+            command.args(["-F", "#{pane_id} #{session_name} #{@ariadne_session}"]);
+            let output = run(command).await?;
+            if !output.status.success() {
+                let error = String::from_utf8_lossy(&output.stderr);
+                // The session ended, or the server with it, since the listing.
+                let gone = match self.relay_sessions(home).await? {
+                    Some(names) => !names.contains(&name),
+                    None => true,
+                };
+                if gone {
+                    continue;
+                }
+                bail!("listing tmux relay panes: {}", error.trim());
+            }
+            for line in String::from_utf8(output.stdout)?.lines() {
+                let fields: Vec<_> = line.split(' ').collect();
+                if fields.len() == 3 && fields[1] == name && !fields[2].is_empty() {
+                    panes.push(Pane {
+                        id: fields[0].into(),
+                        name: fields[1].into(),
+                        session_id: fields[2].into(),
+                    });
+                }
+            }
+        }
+        Ok(panes)
+    }
+
+    /// The relay session names, or `None` when no tmux server runs.
+    async fn relay_sessions(&self, home: &std::path::Path) -> Result<Option<Vec<String>>> {
         let mut command = self.command(home)?;
-        // Non-UTF-8 tmux clients replace control separators with underscores.
-        // Pane and session identifiers cannot contain this printable separator.
-        command.args([
-            "list-panes",
-            "-a",
-            "-F",
-            "#{pane_id} #{session_name} #{@ariadne_session}",
-        ]);
+        command.args(["list-sessions", "-F", "#{session_name}"]);
         let output = run(command).await?;
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
@@ -173,22 +210,17 @@ impl Place {
                 || error.contains("No such file")
                 || error.contains("server exited unexpectedly")
             {
-                return Ok(Vec::new());
+                return Ok(None);
             }
-            bail!("listing tmux relay panes: {}", error.trim());
+            bail!("listing tmux relay sessions: {}", error.trim());
         }
-        Ok(String::from_utf8(output.stdout)?
-            .lines()
-            .filter_map(|line| {
-                let fields: Vec<_> = line.split(' ').collect();
-                (fields.len() == 3 && fields[1].starts_with("ariadne-") && !fields[2].is_empty())
-                    .then(|| Pane {
-                        id: fields[0].into(),
-                        name: fields[1].into(),
-                        session_id: fields[2].into(),
-                    })
-            })
-            .collect())
+        Ok(Some(
+            String::from_utf8(output.stdout)?
+                .lines()
+                .filter(|name| name.starts_with("ariadne-"))
+                .map(String::from)
+                .collect(),
+        ))
     }
 
     /// Stop the relay first so its agent process group cannot outlive the pane.
