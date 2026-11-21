@@ -721,3 +721,309 @@ async fn assert_login_banner_does_not_change_service_path(banner: &str) {
         h.state.hosts.shutdown().await;
     }
 }
+
+#[tokio::test]
+async fn setup_reports_custom_tools_without_executing_install_commands() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let binaries = tempfile::tempdir().unwrap();
+    let cli = binaries.path().join("ariadne");
+    let daemon = binaries.path().join("ariadned");
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let _: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/tools/setup",
+                json!({
+                    "ssh":"ssh://worker@box", "source":{"kind":"local","cli":cli,"daemon":daemon},
+                    "tools":{"agents":["custom-agent"],"github":false}
+                }),
+            ),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "custom installation guidance", || async {
+        let state: Value = h.get("/v1/hosts/tools/setup").await;
+        state["state"] == "incomplete"
+    })
+    .await;
+    let state: Value = h.get("/v1/hosts/tools/setup").await;
+    let step = state["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "tool:custom-agent")
+        .unwrap();
+    assert!(!step["complete"].as_bool().unwrap());
+    assert!(
+        step["error"]
+            .as_str()
+            .unwrap()
+            .contains("manual installation")
+    );
+    assert!(
+        !remote
+            .path()
+            .join(".config/systemd/user/ariadned.service")
+            .exists()
+    );
+    let _: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/unsupported/setup",
+                json!({
+                    "ssh":"ssh://worker@box", "source":{"kind":"local","cli":cli,"daemon":daemon},
+                    "credentials":["ssh"]
+                }),
+            ),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(
+        common::TIMEOUT,
+        "unsupported credential guidance",
+        || async {
+            let state: Value = h.get("/v1/hosts/unsupported/setup").await;
+            state["state"] == "incomplete"
+        },
+    )
+    .await;
+    let state: Value = h.get("/v1/hosts/unsupported/setup").await;
+    assert!(state["steps"].as_array().unwrap().iter().any(|s| {
+        s["name"] == "credential:ssh"
+            && s["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("unsupported credential transfer"))
+    }));
+    assert!(!remote.path().join(".ssh").exists());
+}
+
+#[tokio::test]
+async fn selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy() {
+    use serde_json::{Value, json};
+    use std::os::unix::fs::PermissionsExt;
+    let remote = tempfile::tempdir().unwrap();
+    let bin = remote.path().join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let stub = common::shared_script(
+        r#"#!/bin/sh
+case ${0##*/} in
+node) exit 0;;
+npm)
+    printf '%s\n' "$*" >> "$HOME/npm-runs"
+    case $1 in
+      list) [ -e "$HOME/npm-installed" ];;
+      install) touch "$HOME/npm-installed";;
+      exec) [ -e "$HOME/npm-installed" ];;
+      *) exit 0;;
+    esac;;
+codex) [ ! -e "$HOME/fail-auth" ] && [ -s "$HOME/.codex/auth.json" ];;
+esac
+"#,
+    );
+    for tool in ["node", "npm", "codex"] {
+        std::os::unix::fs::symlink(&stub, bin.join(tool)).unwrap();
+    }
+    let cli = remote.path().join("source-cli");
+    let daemon = remote.path().join("source-daemon");
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    std::fs::write(remote.path().join("fail-auth"), "").unwrap();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let source = h.launcher.cfg.native_home.join(".codex/auth.json");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    let secret = r#"{"tokens":{"access_token":"selected-test-secret"}}"#;
+    std::fs::write(&source, secret).unwrap();
+    let request = json!({"ssh":"ssh://worker@box", "source":{"kind":"local","cli":cli,"daemon":daemon}, "tools":{"agents":["codex-acp"]}, "credentials":["codex"]});
+    let mut unselected = request.clone();
+    unselected.as_object_mut().unwrap().remove("credentials");
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/unselected/setup", unselected),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "separate worker login", || async {
+        let state: Value = h.get("/v1/hosts/unselected/setup").await;
+        state["state"] == "incomplete"
+    })
+    .await;
+    assert!(!remote.path().join(".codex/auth.json").exists());
+    let npm_runs = std::fs::read_to_string(remote.path().join("npm-runs")).unwrap();
+    assert!(npm_runs.contains("install --global --prefix"));
+    assert!(npm_runs.contains("@agentclientprotocol/codex-acp@1.13.1"));
+
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/selected/setup", request.clone()),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "authentication failure", || async {
+        let state: Value = h.get("/v1/hosts/selected/setup").await;
+        state["state"] == "incomplete"
+    })
+    .await;
+    let state: Value = h.get("/v1/hosts/selected/setup").await;
+    assert!(
+        state["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "authentication:codex-acp"
+                && s["error"].as_str().is_some_and(|e| e.contains("sign in")))
+    );
+    let destination = remote.path().join(".codex/auth.json");
+    assert_eq!(std::fs::read_to_string(&destination).unwrap(), secret);
+    assert_eq!(
+        std::fs::metadata(&destination)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert!(!remote.path().join(".config/gh").exists());
+    assert!(!state.to_string().contains("selected-test-secret"));
+    let persisted = std::fs::read_to_string(h.launcher.cfg.root.join("worker-setup.json")).unwrap();
+    assert!(!persisted.contains("selected-test-secret"));
+    assert!(!format!("{:?}", ssh.runs()).contains("selected-test-secret"));
+    std::fs::remove_file(source).unwrap();
+    std::fs::remove_file(remote.path().join("fail-auth")).unwrap();
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/selected/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(
+        common::TIMEOUT,
+        "authenticated worker completion",
+        || async {
+            let state: Value = h.get("/v1/hosts/selected/setup").await;
+            state["state"] == "complete"
+        },
+    )
+    .await;
+    assert_eq!(
+        ssh.runs()
+            .iter()
+            .filter(|r| r.args.last().is_some_and(|s| s.contains("cat > \"$temp\"")))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn credential_values_are_rejected_before_an_operation_is_persisted() {
+    use serde_json::{Value, json};
+    let h = harness().await;
+    h.error(
+        common::post_json(
+            "/v1/hosts/unsafe/setup",
+            json!({
+                "ssh":"ssh://box", "source":{"kind":"local","cli":"/cli","daemon":"/daemon"},
+                "credentials":["secret-token-value"]
+            }),
+        ),
+        axum::http::StatusCode::BAD_REQUEST,
+    )
+    .await;
+    h.error(
+        common::get("/v1/hosts/unsafe/setup"),
+        axum::http::StatusCode::NOT_FOUND,
+    )
+    .await;
+    assert!(!h.launcher.cfg.root.join("worker-setup.json").exists());
+    let doc: Value = h.get("/api-docs/openapi.json").await;
+    assert!(doc["components"]["schemas"]["SetupRequest"]["properties"]["tools"].is_object());
+}
+
+#[tokio::test]
+async fn selected_github_credentials_enable_git_without_entering_command_arguments() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = remote.path().join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let gh = common::shared_script(
+        r#"#!/bin/sh
+case "$*" in
+  '--version') echo 'gh version 2.102.0';;
+  'auth token --hostname github.com') echo 'github-selected-test-secret';;
+  'auth login --hostname github.com --git-protocol https --with-token')
+    mkdir -p "$HOME/.config/gh"
+    cat > "$HOME/.config/gh/token";;
+  'auth status --hostname github.com') [ -s "$HOME/.config/gh/token" ];;
+  'auth setup-git --hostname github.com') touch "$HOME/git-auth-configured";;
+  *) exit 1;;
+esac
+"#,
+    );
+    let gh_path = bin.join("gh");
+    std::os::unix::fs::symlink(gh, &gh_path).unwrap();
+    let cli = remote.path().join("source-cli");
+    let daemon = remote.path().join("source-daemon");
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
+    let mut h = harness().ssh(&ssh).await;
+    let mut cfg = (*h.launcher.cfg).clone();
+    cfg.gh_bin = Some(gh_path.display().to_string());
+    h.state.hosts = ariadne_daemon::hosts::Hosts::new(
+        std::sync::Arc::new(cfg),
+        h.store.clone(),
+        h.bus.clone(),
+        h.timeouts,
+    );
+    h.router = ariadne_daemon::http::router(h.state.clone());
+    let _: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/forge/setup",
+                json!({
+                    "ssh":"ssh://box", "source":{"kind":"local","cli":cli,"daemon":daemon},
+                    "tools":{"agents":[], "github":true}, "credentials":["github"]
+                }),
+            ),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(
+        common::TIMEOUT,
+        "GitHub authentication and Git configuration",
+        || async {
+            let state: Value = h.get("/v1/hosts/forge/setup").await;
+            state["state"] == "complete"
+        },
+    )
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(remote.path().join(".config/gh/token")).unwrap(),
+        "github-selected-test-secret\n"
+    );
+    assert!(remote.path().join("git-auth-configured").exists());
+    let state: Value = h.get("/v1/hosts/forge/setup").await;
+    assert!(!state.to_string().contains("github-selected-test-secret"));
+    assert!(
+        !std::fs::read_to_string(h.launcher.cfg.root.join("worker-setup.json"))
+            .unwrap()
+            .contains("github-selected-test-secret")
+    );
+    assert!(!format!("{:?}", ssh.runs()).contains("github-selected-test-secret"));
+}

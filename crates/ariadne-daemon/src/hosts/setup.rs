@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
+mod populate;
+use populate::selection_steps;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Record {
     pub request: SetupRequest,
@@ -92,6 +95,46 @@ fn validate(name: &str, request: &SetupRequest) -> Result<(), String> {
     {
         return Err("select an owner/repository and an explicit release tag".into());
     }
+    if request.credentials.iter().any(|id| {
+        !matches!(
+            id.as_str(),
+            "codex" | "github" | "claude" | "opencode" | "ssh"
+        )
+    }) {
+        return Err(
+            "select a supported credential reference; credential values are not accepted".into(),
+        );
+    }
+    for ids in [
+        request
+            .tools
+            .as_ref()
+            .map(|t| t.agents.as_slice())
+            .unwrap_or_default(),
+        request.credentials.as_slice(),
+    ] {
+        let unique: std::collections::BTreeSet<_> = ids.iter().collect();
+        if unique.len() != ids.len() {
+            return Err("select each tool and credential reference only once".into());
+        }
+    }
+    for id in request
+        .tools
+        .iter()
+        .flat_map(|t| &t.agents)
+        .chain(&request.credentials)
+    {
+        if id.is_empty()
+            || id.len() > 80
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        {
+            return Err(
+                "select credential references and agent IDs, never credential values".into(),
+            );
+        }
+    }
     Ok(())
 }
 
@@ -115,7 +158,7 @@ impl Hosts {
         }
         if let Some(record) = records.get(&name) {
             if record.request != request {
-                return Err("retry with the original SSH address and binary source".into());
+                return Err("retry with the original setup request, including tool and credential selections".into());
             }
             if matches!(
                 record.progress.state,
@@ -136,17 +179,21 @@ impl Hosts {
                     progress: SetupDto {
                         name: name.clone(),
                         state: SetupState::Pending,
-                        steps: [
-                            "probe", "validate", "transfer", "install", "service", "health",
-                            "register",
-                        ]
-                        .into_iter()
-                        .map(|name| SetupStep {
-                            name: name.into(),
-                            complete: false,
-                            error: None,
-                        })
-                        .collect(),
+                        steps: ["probe", "validate", "transfer", "install"]
+                            .into_iter()
+                            .map(String::from)
+                            .chain(selection_steps(&request))
+                            .chain(
+                                ["service", "health", "register"]
+                                    .into_iter()
+                                    .map(String::from),
+                            )
+                            .map(|name| SetupStep {
+                                name,
+                                complete: false,
+                                error: None,
+                            })
+                            .collect(),
                     },
                 },
             );
@@ -190,6 +237,9 @@ impl Hosts {
         let record = records.get_mut(name).unwrap();
         record.progress.state = SetupState::Running;
         record.active_step = Some(step.into());
+        if let Some(result) = record.progress.steps.iter_mut().find(|s| s.name == step) {
+            result.complete = false;
+        }
         save(&self.0.cfg.root, &records)
     }
 
@@ -287,12 +337,17 @@ impl Hosts {
         let start = format!("__ARIADNE_PATH_{token}_START__");
         let end = format!("__ARIADNE_PATH_{token}_END__");
         let path_command = quote(&format!("printf '%s%s%s' '{start}' \"$PATH\" '{end}'"));
+        let probe_tools = if request.tools.is_some() {
+            "tar"
+        } else {
+            "git tar"
+        };
         let script = format!(
             r#"set -eu
 uname -s
 uname -m
 printf '%s\n' "$HOME"
-for tool in git tar; do command -v "$tool" >/dev/null || exit 12; done
+for tool in {probe_tools}; do command -v "$tool" >/dev/null || exit 12; done
 path_start='{start}'
 path_end='{end}'
 if remote_path=$("${{SHELL:-/bin/sh}}" -lc {path_command} 2>/dev/null); then
@@ -380,6 +435,7 @@ fi
             self.ssh(request, &format!("set -eu; mkdir -p {bin}; chmod 755 {stage}/ariadne {stage}/ariadned; mv -f {stage}/ariadne {bin}/ariadne; mv -f {stage}/ariadned {bin}/ariadned; rmdir {stage}", bin=quote(&format!("{home}/.local/bin")), stage=quote(&stage)), None).await?;
             self.checkpoint(name, "install")?;
         }
+        self.populate(name, request, &service_path).await?;
         self.begin(name, "service")?;
         self.ssh(request, &service_script(home, lines[0], &service_path), None).await.map_err(|_| -> String { if lines[0] == "Linux" { "user service unavailable; ask the administrator to install systemd user services and enable lingering".into() } else { "launchd user service unavailable; check the user's launchd session".into() } })?;
         self.checkpoint(name, "service")?;

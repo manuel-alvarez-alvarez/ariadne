@@ -94,6 +94,12 @@ pub struct SetupRequest {
     pub ssh: String,
     pub remote: Option<String>,
     pub source: BinarySource,
+    /// Selected registry agent IDs and forge tooling. Omission preserves binary-only setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<SetupTools>,
+    /// Source credential references only: `codex` and `github`. Never send credential values.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credentials: Vec<String>,
 }
 
 /// Binaries on the daemon machine, or assets from an explicitly selected release.
@@ -127,4 +133,14 @@ pub struct SetupDto {
     pub name: String,
     pub state: SetupState,
     pub steps: Vec<SetupStep>,
+}
+
+/// Programs required on the worker. Git is always required when this section is present.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetupTools {
+    #[serde(default)]
+    pub agents: Vec<String>,
+    #[serde(default)]
+    pub github: bool,
 }
