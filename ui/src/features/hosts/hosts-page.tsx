@@ -35,6 +35,7 @@ import { WorkerSetupDialog } from "./worker-setup-dialog"
 
 export function HostsPage() {
   const { hosts, error } = useHosts()
+  const [updateOpen, setUpdateOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<HostView | null>(null)
@@ -56,6 +57,9 @@ export function HostsPage() {
             >
               <PlusIcon />
               Add host
+            </Button>
+            <Button variant="outline" onClick={() => setUpdateOpen(true)}>
+              Update worker
             </Button>
             <Button onClick={() => setSetupOpen(true)}>
               <PlusIcon />
@@ -100,6 +104,7 @@ export function HostsPage() {
           ))}
         </TableBody>
       </Table>
+      <WorkerSetupDialog update open={updateOpen} onOpenChange={setUpdateOpen} />
       <WorkerSetupDialog open={setupOpen} onOpenChange={setSetupOpen} />
       <HostFormDialog open={formOpen} onOpenChange={setFormOpen} host={editing} />
       <RemoveHostDialog open={removeOpen} onOpenChange={setRemoveOpen} name={removing} />

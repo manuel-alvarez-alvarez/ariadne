@@ -537,6 +537,12 @@ pub(crate) enum McpCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum DaemonCommand {
+    /// Worker update transport: read or change the explicit maintenance hold
+    #[command(hide = true)]
+    Maintenance {
+        #[arg(long, action = clap::ArgAction::Set)]
+        active: Option<bool>,
+    },
     /// Start ariadned in the background
     Start,
     /// Stop a running ariadned and wait for it to be gone
@@ -827,6 +833,14 @@ pub(crate) enum HostCommand {
         #[arg(long)]
         request: std::path::PathBuf,
     },
+    /// Update an SSH worker after running tasks finish
+    Update {
+        name: String,
+        #[arg(long)]
+        request: std::path::PathBuf,
+    },
+    /// Show worker update progress and per-step failures
+    UpdateStatus { name: String },
     /// Show durable SSH worker setup progress and per-step failures
     SetupStatus { name: String },
     /// List host names, addresses and status

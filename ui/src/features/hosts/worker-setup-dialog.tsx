@@ -15,8 +15,10 @@ import { WorkerSetup } from "./worker-setup"
 
 export function WorkerSetupDialog({
   open,
+  update = false,
   onOpenChange,
 }: {
+  update?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
@@ -24,12 +26,14 @@ export function WorkerSetupDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Set up worker</DialogTitle>
+          <DialogTitle>{update ? "Update worker" : "Set up worker"}</DialogTitle>
           <DialogDescription>
-            Install Ariadne on a machine over SSH and add it as a host.
+            {update
+              ? "Update worker programs after running tasks finish."
+              : "Install Ariadne on a machine over SSH and add it as a host."}
           </DialogDescription>
         </DialogHeader>
-        <WorkerSetup />
+        <WorkerSetup key={String(update)} update={update} />
       </DialogContent>
     </Dialog>
   )

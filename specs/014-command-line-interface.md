@@ -69,6 +69,7 @@ same binary also serves (013).
     service that manages it; `ariadne daemon logs [-f]` reads its ring
     buffer over the API, falling back to the log file when the daemon does
     not answer.
+    Explicit worker update and maintenance commands follow spec 037, rules 70–74.
 2b. `ariadne forge tunnel [on|off]` shows the webhook tunnel or switches it;
     the tunnel itself, what it carries and what stays registered without it,
     are 027's own.

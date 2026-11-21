@@ -6,12 +6,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { describeError } from "@/lib/format"
 
-export function WorkerSetup() {
+export function WorkerSetup({ update = false }: { update?: boolean }) {
+  const operation = update ? "update" : "setup"
+  const route = update ? "/v1/hosts/{name}/update" : "/v1/hosts/{name}/setup"
+  const progressKey = update ? qk.hosts.update : qk.hosts.setup
   const client = useQueryClient()
   const fieldId = useId()
   const [name, setName] = useState("")
   const [ssh, setSsh] = useState("")
   const [remote, setRemote] = useState("")
+  const [binaries, setBinaries] = useState(true)
+  const [tools, setTools] = useState(false)
   const [release, setRelease] = useState(false)
   const [cli, setCli] = useState("")
   const [daemon, setDaemon] = useState("")
@@ -28,10 +33,9 @@ export function WorkerSetup() {
     queryFn: () => unwrap(api(LOCAL_HOST).GET("/v1/repositories")),
   })
   const status = useQuery({
-    queryKey: qk.hosts.setup(active),
+    queryKey: progressKey(active),
     enabled: !!active,
-    queryFn: () =>
-      unwrap(api(LOCAL_HOST).GET("/v1/hosts/{name}/setup", { params: { path: { name: active } } })),
+    queryFn: () => unwrap(api(LOCAL_HOST).GET(route, { params: { path: { name: active } } })),
     refetchInterval: (query) =>
       ["pending", "running"].includes(query.state.data?.state ?? "") ? 1000 : false,
   })
@@ -41,15 +45,28 @@ export function WorkerSetup() {
     }
   }, [client, status.data?.state])
   const start = useMutation({
-    mutationFn: () =>
-      unwrap(
+    mutationFn: () => {
+      const source = release
+        ? { kind: "release" as const, repository, tag }
+        : { kind: "local" as const, cli, daemon }
+      const selectedTools = { agents: agents.split(/[\s,]+/).filter(Boolean), github }
+      if (update) {
+        return unwrap(
+          api(LOCAL_HOST).POST("/v1/hosts/{name}/update", {
+            params: { path: { name } },
+            body: {
+              ...(binaries ? { source } : {}),
+              ...(tools ? { tools: selectedTools } : {}),
+            },
+          }),
+        )
+      }
+      return unwrap(
         api(LOCAL_HOST).POST("/v1/hosts/{name}/setup", {
           params: { path: { name } },
           body: {
             ...(Object.keys(destinations).length ? { repositories: destinations } : {}),
-            ...(agents.trim() || github
-              ? { tools: { agents: agents.split(/[\s,]+/).filter(Boolean), github } }
-              : {}),
+            ...(agents.trim() || github ? { tools: selectedTools } : {}),
             ...(codexCredentials || githubCredentials
               ? {
                   credentials: [
@@ -60,12 +77,13 @@ export function WorkerSetup() {
               : {}),
             ssh,
             remote: remote || null,
-            source: release ? { kind: "release", repository, tag } : { kind: "local", cli, daemon },
+            source,
           },
         }),
-      ),
+      )
+    },
     onSuccess: (progress) => {
-      client.setQueryData(qk.hosts.setup(name), progress)
+      client.setQueryData(progressKey(name), progress)
       setActive(name)
       void client.invalidateQueries({ queryKey: qk.hosts.lists() })
     },
@@ -73,7 +91,13 @@ export function WorkerSetup() {
   const busy = start.isPending || ["pending", "running"].includes(status.data?.state ?? "")
   return (
     <fieldset className="flex flex-col gap-2" aria-label="SSH worker setup">
-      <h3>Install an SSH worker</h3>
+      <h3>{update ? "Update an SSH worker when idle" : "Install an SSH worker"}</h3>
+      {update ? (
+        <p>
+          Wait for running tasks. Update selected programs, then restore scheduling. Retry failures
+          with corrected selections when needed.
+        </p>
+      ) : null}
       <p className="text-sm text-muted-foreground">
         Use SSH keys, your SSH agent, or SSH configuration. The source daemon machine runs the
         settings daemon. Local binary paths refer to files on that machine.
@@ -89,170 +113,219 @@ export function WorkerSetup() {
           disabled={busy}
         />
       </label>
-      <label htmlFor={`${fieldId}-1`}>
-        SSH address
-        <Input
-          id={`${fieldId}-1`}
-          aria-label="SSH address"
-          value={ssh}
-          onChange={(e) => setSsh(e.target.value)}
-          placeholder="ssh://user@machine:22"
-          disabled={busy}
-        />
-      </label>
-      <label htmlFor={`${fieldId}-2`}>
-        Remote socket (optional)
-        <Input
-          id={`${fieldId}-2`}
-          value={remote}
-          onChange={(e) => setRemote(e.target.value)}
-          disabled={busy}
-        />
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={release}
-          onChange={(e) => setRelease(e.target.checked)}
-          disabled={busy}
-        />
-        Use a verified release
-      </label>
-      {release ? (
-        <>
-          <label htmlFor={`${fieldId}-3`}>
-            Release repository
-            <Input
-              id={`${fieldId}-3`}
-              value={repository}
-              onChange={(e) => setRepository(e.target.value)}
-              disabled={busy}
-              placeholder="owner/repository"
-            />
-          </label>
-          <label htmlFor={`${fieldId}-4`}>
-            Release tag
-            <Input
-              id={`${fieldId}-4`}
-              value={tag}
-              onChange={(e) => setTag(e.target.value)}
-              disabled={busy}
-              placeholder="v1.0.0"
-            />
-          </label>
-        </>
+      {update ? (
+        <p>Use this worker’s saved SSH address and socket.</p>
       ) : (
         <>
-          <label htmlFor={`${fieldId}-5`}>
-            CLI binary path on the source daemon machine
+          <label htmlFor={`${fieldId}-1`}>
+            SSH address
             <Input
-              id={`${fieldId}-5`}
-              aria-label="CLI binary path on the source daemon machine"
-              value={cli}
-              onChange={(e) => setCli(e.target.value)}
+              id={`${fieldId}-1`}
+              aria-label="SSH address"
+              value={ssh}
+              onChange={(e) => setSsh(e.target.value)}
+              placeholder="ssh://user@machine:22"
               disabled={busy}
             />
           </label>
-          <label htmlFor={`${fieldId}-6`}>
-            Daemon binary path on the source daemon machine
+          <label htmlFor={`${fieldId}-2`}>
+            Remote socket (optional)
             <Input
-              id={`${fieldId}-6`}
-              aria-label="Daemon binary path on the source daemon machine"
-              value={daemon}
-              onChange={(e) => setDaemon(e.target.value)}
+              id={`${fieldId}-2`}
+              value={remote}
+              onChange={(e) => setRemote(e.target.value)}
               disabled={busy}
             />
           </label>
         </>
       )}
-      <label htmlFor={`${fieldId}-agents`}>
-        Required agent IDs
-        <Input
-          id={`${fieldId}-agents`}
-          value={agents}
-          onChange={(e) => setAgents(e.target.value)}
-          disabled={busy}
-          placeholder="codex-acp, claude-acp"
-        />
-      </label>
-      <p className="text-sm text-muted-foreground">
-        Select registry IDs separated by commas. Setup installs Git and supported packages in
-        user-owned locations. Custom commands require manual installation. Missing authentication
-        requires a separate worker login.
-      </p>
-      <label>
-        <input
-          type="checkbox"
-          checked={github}
-          onChange={(e) => setGithub(e.target.checked)}
-          disabled={busy}
-        />{" "}
-        Install GitHub CLI
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={codexCredentials}
-          onChange={(e) => setCodexCredentials(e.target.checked)}
-          disabled={busy}
-        />{" "}
-        Copy Codex file credentials
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={githubCredentials}
-          onChange={(e) => setGithubCredentials(e.target.checked)}
-          disabled={busy}
-        />{" "}
-        Copy GitHub credentials
-      </label>
-      <p className="text-sm text-muted-foreground">
-        Copy only selected credentials from the source daemon machine through SSH. Keychain
-        credentials require separate worker login.
-      </p>
-      <fieldset disabled={busy}>
-        <legend>Worker repositories</legend>
-        <p>Clone selected Git remotes under ~/workspace. Change each destination as needed.</p>
-        {repositories.data?.map((repo) => (
-          <div key={repo.id}>
-            <label>
-              <input
-                type="checkbox"
-                checked={repo.id in destinations}
-                onChange={(event) => {
-                  setDestinations((previous) => {
-                    const next = { ...previous }
-                    if (event.target.checked)
-                      next[repo.id] =
-                        `~/workspace/${repo.forge?.name ?? repo.path.split("/").pop()}`
-                    else delete next[repo.id]
-                    return next
-                  })
-                }}
-              />{" "}
-              {repo.path}
-            </label>
-            {repo.id in destinations ? (
-              <Input
-                aria-label={`Destination for ${repo.path}`}
-                value={destinations[repo.id]}
-                onChange={(event) =>
-                  setDestinations((previous) => ({ ...previous, [repo.id]: event.target.value }))
-                }
-              />
-            ) : null}
-          </div>
-        ))}
-        {repositories.error ? <p role="alert">{describeError(repositories.error)}</p> : null}
-      </fieldset>
+      {update ? (
+        <label>
+          <input
+            type="checkbox"
+            checked={binaries}
+            onChange={(e) => setBinaries(e.target.checked)}
+            disabled={busy}
+          />{" "}
+          Update Ariadne binaries
+        </label>
+      ) : null}
+      {!update || binaries ? (
+        <>
+          <label>
+            <input
+              type="checkbox"
+              checked={release}
+              onChange={(e) => setRelease(e.target.checked)}
+              disabled={busy}
+            />
+            Use a verified release
+          </label>
+          {release ? (
+            <>
+              <label htmlFor={`${fieldId}-3`}>
+                Release repository
+                <Input
+                  id={`${fieldId}-3`}
+                  value={repository}
+                  onChange={(e) => setRepository(e.target.value)}
+                  disabled={busy}
+                  placeholder="owner/repository"
+                />
+              </label>
+              <label htmlFor={`${fieldId}-4`}>
+                Release tag
+                <Input
+                  id={`${fieldId}-4`}
+                  value={tag}
+                  onChange={(e) => setTag(e.target.value)}
+                  disabled={busy}
+                  placeholder="v1.0.0"
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label htmlFor={`${fieldId}-5`}>
+                CLI binary path on the source daemon machine
+                <Input
+                  id={`${fieldId}-5`}
+                  aria-label="CLI binary path on the source daemon machine"
+                  value={cli}
+                  onChange={(e) => setCli(e.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <label htmlFor={`${fieldId}-6`}>
+                Daemon binary path on the source daemon machine
+                <Input
+                  id={`${fieldId}-6`}
+                  aria-label="Daemon binary path on the source daemon machine"
+                  value={daemon}
+                  onChange={(e) => setDaemon(e.target.value)}
+                  disabled={busy}
+                />
+              </label>
+            </>
+          )}
+        </>
+      ) : null}
+      {update ? (
+        <label>
+          <input
+            type="checkbox"
+            checked={tools}
+            onChange={(e) => setTools(e.target.checked)}
+            disabled={busy}
+          />{" "}
+          Update agent tools
+        </label>
+      ) : null}
+      {!update || tools ? (
+        <>
+          <label htmlFor={`${fieldId}-agents`}>
+            Required agent IDs
+            <Input
+              id={`${fieldId}-agents`}
+              value={agents}
+              onChange={(e) => setAgents(e.target.value)}
+              disabled={busy}
+              placeholder="codex-acp, claude-acp"
+            />
+          </label>
+          <p className="text-sm text-muted-foreground">
+            Select registry IDs separated by commas. The operation installs or updates Git and
+            supported packages in user-owned locations. Custom commands require manual installation.
+            Missing authentication requires a separate worker login.
+          </p>
+          <label>
+            <input
+              type="checkbox"
+              checked={github}
+              onChange={(e) => setGithub(e.target.checked)}
+              disabled={busy}
+            />{" "}
+            Install GitHub CLI
+          </label>
+        </>
+      ) : null}
+      {update ? null : (
+        <>
+          <label>
+            <input
+              type="checkbox"
+              checked={codexCredentials}
+              onChange={(e) => setCodexCredentials(e.target.checked)}
+              disabled={busy}
+            />{" "}
+            Copy Codex file credentials
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={githubCredentials}
+              onChange={(e) => setGithubCredentials(e.target.checked)}
+              disabled={busy}
+            />{" "}
+            Copy GitHub credentials
+          </label>
+          <p className="text-sm text-muted-foreground">
+            Copy only selected credentials from the source daemon machine through SSH. Keychain
+            credentials require separate worker login.
+          </p>
+          <fieldset disabled={busy}>
+            <legend>Worker repositories</legend>
+            <p>Clone selected Git remotes under ~/workspace. Change each destination as needed.</p>
+            {repositories.data?.map((repo) => (
+              <div key={repo.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={repo.id in destinations}
+                    onChange={(event) => {
+                      setDestinations((previous) => {
+                        const next = { ...previous }
+                        if (event.target.checked)
+                          next[repo.id] =
+                            `~/workspace/${repo.forge?.name ?? repo.path.split("/").pop()}`
+                        else delete next[repo.id]
+                        return next
+                      })
+                    }}
+                  />{" "}
+                  {repo.path}
+                </label>
+                {repo.id in destinations ? (
+                  <Input
+                    aria-label={`Destination for ${repo.path}`}
+                    value={destinations[repo.id]}
+                    onChange={(event) =>
+                      setDestinations((previous) => ({
+                        ...previous,
+                        [repo.id]: event.target.value,
+                      }))
+                    }
+                  />
+                ) : null}
+              </div>
+            ))}
+            {repositories.error ? <p role="alert">{describeError(repositories.error)}</p> : null}
+          </fieldset>
+        </>
+      )}
       <div className="flex gap-2">
         <Button
           type="button"
           onClick={() => start.mutate()}
-          disabled={busy || !name || !ssh || (release ? !repository || !tag : !cli || !daemon)}
+          disabled={
+            busy ||
+            !name ||
+            (!update && !ssh) ||
+            (update && !binaries && !tools) ||
+            ((!update || binaries) && (release ? !repository || !tag : !cli || !daemon))
+          }
         >
-          Start or retry setup
+          Start or retry {operation}
         </Button>
         <Button
           type="button"
@@ -260,10 +333,10 @@ export function WorkerSetup() {
           disabled={!name || busy}
           onClick={() => {
             setActive(name)
-            void client.invalidateQueries({ queryKey: qk.hosts.setup(name) })
+            void client.invalidateQueries({ queryKey: progressKey(name) })
           }}
         >
-          Load setup progress
+          Load {operation} progress
         </Button>
       </div>
       {start.error || status.error ? (

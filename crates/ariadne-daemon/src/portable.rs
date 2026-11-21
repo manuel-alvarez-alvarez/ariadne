@@ -18,6 +18,7 @@ pub struct PortableRuntime {
     live: RwLock<Option<PortableConfigDto>>,
     maintenance: Mutex<Option<Drain>>,
     error: Mutex<Option<String>>,
+    external: Mutex<bool>,
     reload: Mutex<Option<Reload>>,
     /// Admission and maintenance snapshots use the same lock.
     pub(crate) admission: AsyncRwLock<()>,
@@ -29,7 +30,7 @@ impl std::fmt::Debug for PortableRuntime {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 struct Drain {
     tasks: HashSet<String>,
     goals: HashSet<String>,
@@ -199,35 +200,7 @@ impl PortableRuntime {
             || desired.acp_registry_url != startup.acp_registry_url;
         let mut drain = Drain::default();
         if restart && self.maintenance.lock().unwrap().is_none() {
-            for task in store.list_tasks(TaskFilter::default()).await? {
-                if task.status() == TaskStatus::InProgress {
-                    drain.goals.insert(task.goal_id.clone());
-                    let goal = store.get_goal(&task.goal_id).await?;
-                    if let (Some(repository), Some(number)) =
-                        (goal.pr_repository_id, goal.pr_number)
-                        && let Some(pull) =
-                            store.pull_request_by_number(&repository, number).await?
-                    {
-                        drain.pulls.insert(pull.id);
-                    }
-                    drain.tasks.insert(task.id);
-                }
-            }
-            for session in store
-                .list_sessions(SessionFilter {
-                    live_only: true,
-                    ..Default::default()
-                })
-                .await?
-            {
-                if let Some(id) = session.goal_id {
-                    drain.goals.insert(id);
-                }
-                if let Some(id) = session.pull_request_id {
-                    drain.pulls.insert(id);
-                }
-                drain.sessions.insert(session.id);
-            }
+            drain = Self::snapshot(store).await?;
         }
         // Validate all input before changing either persistent or live state.
         let bytes = serde_json::to_vec_pretty(&desired)?;
@@ -251,11 +224,83 @@ impl PortableRuntime {
                 if maintenance.is_none() {
                     *maintenance = Some(drain);
                 }
-            } else {
+            } else if !*self.external.lock().unwrap() {
                 *maintenance = None;
             }
         }
         self.status(cfg, store).await
+    }
+
+    async fn snapshot(store: &Store) -> Result<Drain> {
+        let mut drain = Drain::default();
+        for task in store.list_tasks(TaskFilter::default()).await? {
+            if task.status() == TaskStatus::InProgress {
+                drain.goals.insert(task.goal_id.clone());
+                let goal = store.get_goal(&task.goal_id).await?;
+                if let (Some(repository), Some(number)) = (goal.pr_repository_id, goal.pr_number)
+                    && let Some(pull) = store.pull_request_by_number(&repository, number).await?
+                {
+                    drain.pulls.insert(pull.id);
+                }
+                drain.tasks.insert(task.id);
+            }
+        }
+        for session in store
+            .list_sessions(SessionFilter {
+                live_only: true,
+                ..Default::default()
+            })
+            .await?
+        {
+            if let Some(id) = session.goal_id {
+                drain.goals.insert(id);
+            }
+            if let Some(id) = session.pull_request_id {
+                drain.pulls.insert(id);
+            }
+            drain.sessions.insert(session.id);
+        }
+        Ok(drain)
+    }
+
+    pub(crate) fn explicit_maintenance(&self) -> bool {
+        *self.external.lock().unwrap()
+    }
+
+    pub(crate) async fn hold(&self, cfg: &Config, store: &Store, active: bool) -> Result<bool> {
+        let _admission = self.admission.write().await;
+        let path = cfg.root.join("worker-maintenance.json");
+        if active {
+            if !*self.external.lock().unwrap() {
+                let drain = Self::snapshot(store).await?;
+                let mut file = tempfile::NamedTempFile::new_in(&cfg.root)?;
+                std::io::Write::write_all(&mut file, &serde_json::to_vec(&drain)?)?;
+                file.as_file().sync_all()?;
+                file.persist(&path)?;
+                std::fs::File::open(&cfg.root)?.sync_all()?;
+                *self.error.lock().unwrap() = None;
+                *self.maintenance.lock().unwrap() = Some(drain);
+                *self.external.lock().unwrap() = true;
+            }
+            self.restart_ready(store).await
+        } else {
+            let live = cfg.live_settings();
+            let startup = cfg.startup_settings();
+            let remaining = if live.acp_agents != startup.acp_agents
+                || live.acp_registry_url != startup.acp_registry_url
+            {
+                Some(Self::snapshot(store).await?)
+            } else {
+                None
+            };
+            if path.exists() {
+                std::fs::remove_file(path)?;
+                std::fs::File::open(&cfg.root)?.sync_all()?;
+            }
+            *self.external.lock().unwrap() = false;
+            *self.maintenance.lock().unwrap() = remaining;
+            Ok(true)
+        }
     }
 
     /// True only after admitted tasks and their active turns have ended.
@@ -369,6 +414,12 @@ pub(crate) fn saved(root: &std::path::Path) -> Result<Option<PortableConfigDto>>
 }
 
 pub(crate) fn restore(cfg: &mut Config) -> Result<()> {
+    let hold = cfg.root.join("worker-maintenance.json");
+    if hold.exists() {
+        *cfg.portable.maintenance.lock().unwrap() =
+            Some(serde_json::from_slice(&std::fs::read(hold)?)?);
+        *cfg.portable.external.lock().unwrap() = true;
+    }
     let Some(saved) = saved(&cfg.root)? else {
         return Ok(());
     };
@@ -417,6 +468,9 @@ pub fn start_restart(
             tick.tick().await;
             let cfg = &launcher.cfg;
             let _admission = cfg.portable.admission.write().await;
+            if *cfg.portable.external.lock().unwrap() {
+                continue;
+            }
             match cfg.portable.restart_ready(&launcher.store).await {
                 Ok(false) => continue,
                 Err(error) => {

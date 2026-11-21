@@ -122,6 +122,23 @@ pub struct SetupRequest {
     pub repositories: std::collections::BTreeMap<String, String>,
 }
 
+/// Explicit updates use the selected worker's saved SSH connection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<BinarySource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<SetupTools>,
+}
+
+/// The worker's explicit maintenance hold and drain state.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MaintenanceDto {
+    pub active: bool,
+    pub ready: bool,
+}
+
 /// Binaries on the daemon machine, or assets from an explicitly selected release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

@@ -2281,6 +2281,73 @@
         }
       }
     },
+    "/v1/hosts/{name}/update": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "update_status",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupDto"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/logs": {
       "get": {
         "tags": [
@@ -2424,6 +2491,52 @@
               "text/event-stream": {
                 "schema": {
                   "$ref": "#/components/schemas/LogSnapshotResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/maintenance": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "maintenance_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "maintenance",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceDto"
                 }
               }
             }
@@ -8237,6 +8350,34 @@
           }
         }
       },
+      "MaintenanceDto": {
+        "type": "object",
+        "description": "The worker's explicit maintenance hold and drain state.",
+        "required": [
+          "active",
+          "ready"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "ready": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MaintenanceRequest": {
+        "type": "object",
+        "required": [
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "MessageDto": {
         "type": "object",
         "required": [
@@ -10635,6 +10776,33 @@
               {
                 "$ref": "#/components/schemas/PermissionMode",
                 "description": "Absent = unchanged."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateRequest": {
+        "type": "object",
+        "description": "Explicit updates use the selected worker's saved SSH connection.",
+        "properties": {
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BinarySource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tools": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SetupTools"
               },
               {
                 "type": "null"

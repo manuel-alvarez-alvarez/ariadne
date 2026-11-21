@@ -491,6 +491,8 @@ it leaves nothing to delete.
   `place.rs::a_pane_listing_directly_after_the_start_finds_the_pane` and
   `::a_tmux_that_cannot_run_fails_the_pane_listing`, which also covers the one warning when the server exits during the session listing, and
   `::a_server_that_exits_during_the_pane_listing_returns_no_panes_and_warns`.
+- A server with no current target needs no pane query:
+  `place.rs::a_tmux_server_without_a_current_target_has_no_live_panes`.
 - Pane discovery also works with a non-UTF-8 tmux client locale:
   `place.rs::a_detached_relay_pane_is_discoverable_in_the_c_locale`.
 - Arguments, environment, and working directory reach the agent without shell interpretation:

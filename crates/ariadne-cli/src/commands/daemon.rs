@@ -24,6 +24,23 @@ use super::follow::{self, Next};
 use super::{ariadne_home, find_ariadned, query_path};
 use crate::output::{Format, Kv, duration, local_time, note, pager, print, print_kv, style, view};
 
+pub(crate) async fn maintenance(
+    client: &Client,
+    active: Option<bool>,
+    format: Format,
+) -> Result<()> {
+    let result: ariadne_api::hosts::MaintenanceDto = if let Some(active) = active {
+        client
+            .post_json("/v1/maintenance", &json!({"active":active}))
+            .await?
+    } else {
+        client.get_json("/v1/maintenance").await?
+    };
+    print(format, &result, || {
+        outln!("maintenance: {}; ready: {}", result.active, result.ready)
+    })
+}
+
 /// How long `daemon start` waits for a daemon it just launched to answer.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 

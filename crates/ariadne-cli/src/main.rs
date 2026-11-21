@@ -136,11 +136,17 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
 
     let outcome = match cli.command {
         Command::Host {
+            command: HostCommand::Update { name, request },
+        } => hosts::setup(&client, &name, Some(&request), format, true).await,
+        Command::Host {
+            command: HostCommand::UpdateStatus { name },
+        } => hosts::setup(&client, &name, None, format, true).await,
+        Command::Host {
             command: HostCommand::Setup { name, request },
-        } => hosts::setup(&client, &name, Some(&request), format).await,
+        } => hosts::setup(&client, &name, Some(&request), format, false).await,
         Command::Host {
             command: HostCommand::SetupStatus { name },
-        } => hosts::setup(&client, &name, None, format).await,
+        } => hosts::setup(&client, &name, None, format, false).await,
         Command::Host {
             command: HostCommand::Ls,
         } => hosts::list(&client, format).await,
@@ -189,6 +195,14 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             command,
         } => commands::completions::run(shell, static_script, command),
         Command::Daemon { home, command } => match command {
+            DaemonCommand::Maintenance { active } => {
+                let client = if cli.host.as_deref().is_some_and(|h| h != "local") {
+                    Arc::clone(&client)
+                } else {
+                    Arc::new(Client::resolve(cli.endpoint.as_deref(), home))
+                };
+                commands::daemon::maintenance(&client, active, format).await
+            }
             DaemonCommand::Start => commands::daemon::start(home, format).await,
             DaemonCommand::Stop { timeout } => commands::daemon::stop(home, timeout, format).await,
             DaemonCommand::Restart { timeout } => {

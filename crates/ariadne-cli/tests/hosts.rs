@@ -2048,6 +2048,74 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
     );
     server.abort();
 }
+#[tokio::test]
+async fn worker_update_and_status_show_each_completed_step_and_failure() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let progress = json!({"name":"worker", "state":"incomplete", "steps":[
+        {"name":"install", "complete":true, "error":null},
+        {"name":"service", "complete":false, "error":"Enable user services"},
+        {"name":"tool:codex-acp", "complete":true, "error":null},
+        {"name":"authentication:github", "complete":false, "error":"Sign in separately on the worker"}
+    ]});
+    let answer = progress.clone();
+    let received = Arc::new(Mutex::new(None));
+    let body = received.clone();
+    let app = Router::new().route(
+        "/v1/hosts/worker/update",
+        get(move || async move { Json(progress) }).post(
+            move |Json(request): Json<serde_json::Value>| async move {
+                *body.lock().unwrap() = Some(request);
+                (StatusCode::ACCEPTED, Json(answer))
+            },
+        ),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("request.json");
+    std::fs::write(&file, json!({"source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}, "tools":{"agents":["codex-acp"],"github":true}}).to_string()).unwrap();
+    for args in [
+        vec![
+            "host",
+            "update",
+            "worker",
+            "--request",
+            file.to_str().unwrap(),
+        ],
+        vec!["host", "update-status", "worker"],
+    ] {
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+            .args(["--endpoint", &endpoint])
+            .args(args)
+            .env("ARIADNE_TELEMETRY", "off")
+            .output()
+            .await
+            .unwrap();
+        assert!(!output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("install: complete"), "{text}");
+        assert!(text.contains("Enable user services"), "{text}");
+        assert!(text.contains("tool:codex-acp: complete"), "{text}");
+        assert!(text.contains("Sign in separately on the worker"), "{text}");
+    }
+    assert!(
+        received
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .get("ssh")
+            .is_none()
+    );
+    let request = received.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        request["tools"],
+        json!({"agents":["codex-acp"], "github":true})
+    );
+    assert!(request.get("credentials").is_none());
+    assert!(request.get("repositories").is_none());
+    server.abort();
+}
 
 type Seen = Arc<Mutex<Vec<(String, String, serde_json::Value)>>>;
 
@@ -2262,4 +2330,39 @@ async fn host_writes_refuse_host_all_and_run_on_local_for_host_local() {
     .await;
     assert_eq!(code, 2, "{text}");
     assert!(seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn maintenance_cli_reads_and_changes_the_selected_worker_hold() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let writes = seen.clone();
+    let app = Router::new().route(
+        "/v1/maintenance",
+        get(|| async { Json(json!({"active":false,"ready":false})) }).post(
+            move |Json(body): Json<serde_json::Value>| async move {
+                writes.lock().unwrap().push(body.clone());
+                Json(json!({"active":body["active"],"ready":true}))
+            },
+        ),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for (arguments, active) in [
+        (vec!["daemon", "maintenance"], false),
+        (vec!["daemon", "maintenance", "--active", "true"], true),
+        (vec!["daemon", "maintenance", "--active", "false"], false),
+    ] {
+        let mut args = vec!["--endpoint", endpoint.as_str(), "--format", "json"];
+        args.extend(arguments);
+        let (code, text) = run_cli(&args).await;
+        assert_eq!(code, 0, "{text}");
+        let result: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(result["active"], active);
+    }
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![json!({"active":true}), json!({"active":false})]
+    );
+    server.abort();
 }
