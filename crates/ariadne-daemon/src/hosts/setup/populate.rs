@@ -124,6 +124,18 @@ impl Hosts {
         path: &str,
     ) -> Result<(), String> {
         let update = name.starts_with("update:");
+        if !update && request.tools.is_none() {
+            let step = "prerequisite:git";
+            self.begin(name, step)?;
+            let result = self.population_command(request, path,
+                "command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1", None)
+                .await
+                .map_err(|_| "Git is missing or unusable on the worker; install Git on the worker and resume setup".to_owned());
+            if result.is_ok() {
+                self.checkpoint(name, step)?;
+            }
+            self.population_result(name, step, result)?;
+        }
         if let Some(tools) = &request.tools {
             for (step, binary, formula) in [("tool:git", "git", "git"), ("tool:github", "gh", "gh")]
             {

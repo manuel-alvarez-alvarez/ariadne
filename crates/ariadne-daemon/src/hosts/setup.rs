@@ -37,6 +37,7 @@ fn steps(request: &SetupRequest, update: bool, binaries: bool) -> Vec<SetupStep>
         .chain((update && binaries).then_some("replacement-capability".into()))
         .chain(update.then_some("maintenance".into()))
         .chain(binaries.then_some("install".into()))
+        .chain((!update && request.tools.is_none()).then_some("prerequisite:git".into()))
         .chain(selection_steps(request))
         .chain(
             request
@@ -378,6 +379,24 @@ impl Hosts {
             );
         }
         let record = records.get_mut(&name).unwrap();
+        // Older incomplete operations did not have a separate Git prerequisite.
+        if !update
+            && request.tools.is_none()
+            && !record
+                .progress
+                .steps
+                .iter()
+                .any(|step| step.name == "prerequisite:git")
+        {
+            record.progress.steps.insert(
+                1,
+                SetupStep {
+                    name: "prerequisite:git".into(),
+                    complete: false,
+                    error: None,
+                },
+            );
+        }
         record.progress.state = SetupState::Pending;
         for step in &mut record.progress.steps {
             step.error = None;

@@ -468,6 +468,8 @@ picker, the Hosts screen and one stream per host — is spec
 77. Setup continues independent selected tool and credential actions after prerequisite failures.
     It also continues independent repository selections after clone or registration failures.
     A failed selection keeps its error and prevents setup completion and initial host registration.
+    Requests without tool selections check worker Git without installing it.
+    Missing or unusable Git prevents initial registration; resume rechecks it after manual installation.
     Successful installation and credential checkpoints prevent repeated work.
     Authentication checks run again on retry. Explicit worker-update policy remains unchanged.
 78. `POST /v1/hosts/{name}/setup/resume` retries the exact durable request without new selections.
@@ -700,6 +702,7 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
 
 Inspection and review proof: `hosts.rs::inspection_needs_only_ssh_and_does_not_install_or_register`
 and `hosts.rs::review_lists_transfers_and_manual_actions_without_changing_the_worker`.
+Git prerequisite proof: `hosts.rs::binary_only_setup_requires_git_and_resumes_after_manual_installation`.
 Partial setup proof: `hosts.rs::setup_reports_custom_tools_without_executing_install_commands`.
 Resume proof: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
 Desktop proof: `ui/src/features/hosts/worker-setup.test.tsx`.

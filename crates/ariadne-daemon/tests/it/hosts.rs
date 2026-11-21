@@ -2124,3 +2124,87 @@ async fn missing_binaries_do_not_block_an_independent_selected_credential_transf
     let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
     assert!(!hosts.iter().any(|h| h.name == "partial"));
 }
+
+#[tokio::test]
+async fn binary_only_setup_requires_git_and_resumes_after_manual_installation() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = remote.path().join("prerequisites");
+    std::fs::create_dir(&bin).unwrap();
+    for tool in ["sh", "mkdir", "cat", "chmod", "mv", "rmdir", "id"] {
+        let source = ["/bin", "/usr/bin"]
+            .into_iter()
+            .map(|dir| std::path::Path::new(dir).join(tool))
+            .find(|path| path.exists())
+            .unwrap();
+        std::os::unix::fs::symlink(source, bin.join(tool)).unwrap();
+    }
+    let binaries = tempfile::tempdir().unwrap();
+    let cli = binaries.path().join("ariadne");
+    let daemon = binaries.path().join("ariadned");
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{
+        "home":remote.path(), "path":bin, "inherited_path":bin
+    },"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let request = json!({"ssh":"ssh://worker@box", "source":{
+        "kind":"local", "cli":cli, "daemon":daemon
+    }});
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "setup ends", || async {
+        let state: Value = h.get("/v1/hosts/builder/setup").await;
+        !matches!(state["state"].as_str(), Some("pending" | "running"))
+    })
+    .await;
+    let state: Value = h.get("/v1/hosts/builder/setup").await;
+    assert_eq!(state["state"], "incomplete", "{state}");
+    assert!(
+        state["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "prerequisite:git"
+                && s["error"].as_str().is_some_and(|e| e.contains("Git"))),
+        "{state}"
+    );
+    assert!(remote.path().join(".local/bin/ariadne").exists());
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert!(!hosts.iter().any(|h| h.name == "builder"));
+    let transfers = || {
+        ssh.runs()
+            .iter()
+            .filter(|run| {
+                run.args
+                    .last()
+                    .is_some_and(|s| s.contains("cat >") && s.contains("worker-setup-builder/"))
+            })
+            .count()
+    };
+    let before = transfers();
+    assert_eq!(before, 2);
+    std::os::unix::fs::symlink("/usr/bin/git", bin.join("git")).unwrap();
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup/resume", json!({})),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "setup completes with Git", || async {
+        let state: Value = h.get("/v1/hosts/builder/setup").await;
+        state["state"] == "complete"
+    })
+    .await;
+    assert_eq!(transfers(), before);
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert_eq!(hosts.iter().filter(|h| h.name == "builder").count(), 1);
+}
