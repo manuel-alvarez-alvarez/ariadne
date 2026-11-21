@@ -86,3 +86,45 @@ pub struct MissingRepositoryDto {
     /// `owner/repo` on its forge; null for a repository with no forge.
     pub forge: Option<String>,
 }
+
+/// An SSH worker installation request. SSH uses the daemon user's keys and config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetupRequest {
+    pub ssh: String,
+    pub remote: Option<String>,
+    pub source: BinarySource,
+}
+
+/// Binaries on the daemon machine, or assets from an explicitly selected release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BinarySource {
+    Local { cli: String, daemon: String },
+    Release { repository: String, tag: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupState {
+    Pending,
+    Running,
+    Incomplete,
+    Failed,
+    Complete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetupStep {
+    pub name: String,
+    pub complete: bool,
+    pub error: Option<String>,
+}
+
+/// Durable setup progress. No credential values are accepted or returned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetupDto {
+    pub name: String,
+    pub state: SetupState,
+    pub steps: Vec<SetupStep>,
+}

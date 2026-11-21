@@ -36,3 +36,27 @@ pub(super) async fn reconnect(
         )),
     }
 }
+
+#[utoipa::path(post, path="/v1/hosts/{name}/setup", tag="hosts", params(("name"=String, Path)), request_body=ariadne_api::hosts::SetupRequest, responses((status=202,body=ariadne_api::hosts::SetupDto)))]
+pub(super) async fn setup(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Json(request): Json<ariadne_api::hosts::SetupRequest>,
+) -> ApiResult<(StatusCode, Json<ariadne_api::hosts::SetupDto>)> {
+    let progress = s
+        .hosts
+        .setup(name, request)
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::ACCEPTED, Json(progress)))
+}
+
+#[utoipa::path(get, path="/v1/hosts/{name}/setup", tag="hosts", params(("name"=String, Path)), responses((status=200,body=ariadne_api::hosts::SetupDto), (status=404)))]
+pub(super) async fn setup_status(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<ariadne_api::hosts::SetupDto>> {
+    s.hosts
+        .setup_status(&name)
+        .map(Json)
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "unknown worker setup"))
+}

@@ -31,6 +31,7 @@ use crate::bus::EventBus;
 use crate::config::Config;
 use crate::timeouts::Timeouts;
 
+mod setup;
 mod sync;
 
 /// The longest wait between two starts of one forward.
@@ -54,6 +55,8 @@ pub struct Hosts(Arc<Inner>);
 
 struct Inner {
     cfg: Arc<Config>,
+    setup: Mutex<std::collections::BTreeMap<String, setup::Record>>,
+    extra: Mutex<Vec<Hosts>>,
     store: Store,
     events: EventBus,
     timeouts: Timeouts,
@@ -74,6 +77,31 @@ struct Inner {
 impl Hosts {
     /// The configured hosts, with no forward and no sync started yet.
     pub fn new(cfg: Arc<Config>, store: Store, events: EventBus, timeouts: Timeouts) -> Self {
+        let mut cfg = (*cfg).clone();
+        let records = setup::load(&cfg.root);
+        for (name, record) in &records {
+            if let Some(remote) = &record.remote
+                && !cfg.hosts.iter().any(|(n, _)| n == name)
+            {
+                cfg.hosts.push((
+                    name.clone(),
+                    HostConfig {
+                        endpoint: record.request.ssh.clone(),
+                        remote: Some(remote.clone()),
+                    },
+                ));
+            }
+        }
+        Self::configured(Arc::new(cfg), store, events, timeouts, records)
+    }
+
+    fn configured(
+        cfg: Arc<Config>,
+        store: Store,
+        events: EventBus,
+        timeouts: Timeouts,
+        records: std::collections::BTreeMap<String, setup::Record>,
+    ) -> Self {
         let hosts: Vec<HostDto> = cfg
             .hosts
             .iter()
@@ -92,6 +120,8 @@ impl Hosts {
             .unzip();
         Self(Arc::new(Inner {
             cfg,
+            setup: Mutex::new(records),
+            extra: Mutex::new(Vec::new()),
             store,
             events,
             timeouts,
@@ -136,9 +166,19 @@ impl Hosts {
     /// End every forward and every health check: the daemon is stopping.
     /// Each child is killed with the task that holds it.
     pub async fn shutdown(&self) {
+        self.stop_own().await;
+        let extra = self.0.extra.lock().unwrap().clone();
+        for host in extra {
+            host.stop_own().await;
+        }
+    }
+
+    async fn stop_own(&self) {
         let tasks = std::mem::take(&mut *self.0.tasks.lock().unwrap());
-        for task in tasks {
+        for task in &tasks {
             task.abort();
+        }
+        for task in tasks {
             let _ = task.await;
         }
     }
@@ -158,7 +198,11 @@ impl Hosts {
             sync: HostSyncDto::in_sync(),
         };
         let configured = self.0.hosts.lock().unwrap().clone();
-        std::iter::once(local).chain(configured).collect()
+        let extra = self.0.extra.lock().unwrap().clone();
+        std::iter::once(local)
+            .chain(configured)
+            .chain(extra.iter().flat_map(|h| h.0.hosts.lock().unwrap().clone()))
+            .collect()
     }
 
     /// Make host `name` reconnect at once, and answer the host once it has
@@ -167,6 +211,21 @@ impl Hosts {
     /// a `direct` host take one health check; a failed check makes the host
     /// `down`, and an `ssh` host then starts a new forward.
     pub async fn reconnect(&self, name: &str) -> Result<HostDto, ReconnectError> {
+        let extra = self
+            .0
+            .extra
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|h| h.0.cfg.hosts[0].0 == name)
+            .cloned();
+        if let Some(host) = extra {
+            return host.reconnect_own(name).await;
+        }
+        self.reconnect_own(name).await
+    }
+
+    async fn reconnect_own(&self, name: &str) -> Result<HostDto, ReconnectError> {
         if name == "local" {
             return Err(ReconnectError::Local);
         }

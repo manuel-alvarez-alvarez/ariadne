@@ -1976,3 +1976,56 @@ async fn all_reads_with_local_alone_keep_the_host() {
     assert_eq!(shown.as_array().unwrap().len(), 1, "{stdout}");
     server.abort();
 }
+
+#[tokio::test]
+async fn worker_setup_and_status_show_each_completed_step_and_failure() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let progress = json!({"name":"worker", "state":"incomplete", "steps":[
+        {"name":"install", "complete":true, "error":null},
+        {"name":"service", "complete":false, "error":"Enable user services"}
+    ]});
+    let answer = progress.clone();
+    let received = Arc::new(Mutex::new(None));
+    let body = received.clone();
+    let app = Router::new().route(
+        "/v1/hosts/worker/setup",
+        get(move || async move { Json(progress) }).post(
+            move |Json(request): Json<serde_json::Value>| async move {
+                *body.lock().unwrap() = Some(request);
+                (StatusCode::ACCEPTED, Json(answer))
+            },
+        ),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("request.json");
+    std::fs::write(&file, json!({"ssh":"ssh://me@worker", "source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}}).to_string()).unwrap();
+    for args in [
+        vec![
+            "host",
+            "setup",
+            "worker",
+            "--request",
+            file.to_str().unwrap(),
+        ],
+        vec!["host", "setup-status", "worker"],
+    ] {
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+            .args(["--endpoint", &endpoint])
+            .args(args)
+            .env("ARIADNE_TELEMETRY", "off")
+            .output()
+            .await
+            .unwrap();
+        assert!(!output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("install: complete"), "{text}");
+        assert!(text.contains("Enable user services"), "{text}");
+    }
+    assert_eq!(
+        received.lock().unwrap().as_ref().unwrap()["ssh"],
+        "ssh://me@worker"
+    );
+    server.abort();
+}

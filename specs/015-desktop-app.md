@@ -1156,8 +1156,7 @@ Out: the daemon endpoints themselves (012).
     named host; a named host that is down counts as listed.
 52. The settings dialog has a Hosts section. It lists each host's `name`,
     `kind`, `status`, `endpoint` and `error`, the facts `ariadne host ls`
-    prints, live through `host_updated`. It says the hosts are configured in
-    the `config.toml` of the settings daemon. It stays with `local` alone.
+    prints, live through `host_updated`. Hosts come from setup or the settings daemon's `config.toml`. It stays with `local` alone.
     Each named host's row has a reconnect button, named "Reconnect" and the
     host name, in each status. A click sends `POST /v1/hosts/{name}/reconnect`
     to the settings daemon and the button is disabled while that request
@@ -1168,6 +1167,9 @@ Out: the daemon endpoints themselves (012).
     uptime of each reachable host, from the last heartbeat of the app's
     stream to it, and "-" before one arrives or for a host the app cannot
     reach (rule 78).
+    The same section provisions SSH workers through spec 037, rules 43–50.
+    Its setup controls show durable steps and permit safe retry.
+    (`ui/src/components/worker-setup.test.tsx::starts setup and shows retained steps and a failure`).
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.

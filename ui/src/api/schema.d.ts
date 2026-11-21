@@ -1543,6 +1543,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/{name}/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_setup_status"];
+        put?: never;
+        post: operations["hosts_setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/logs": {
         parameters: {
             query?: never;
@@ -3275,6 +3291,18 @@ export interface components {
              */
             version?: string | null;
         };
+        /** @description Binaries on the daemon machine, or assets from an explicitly selected release. */
+        BinarySource: {
+            cli: string;
+            daemon: string;
+            /** @enum {string} */
+            kind: "local";
+        } | {
+            /** @enum {string} */
+            kind: "release";
+            repository: string;
+            tag: string;
+        };
         /**
          * @description Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is
          *     done. Its call, not the user's, and it carries nothing — every task being
@@ -4592,6 +4620,25 @@ export interface components {
         /** @description `PUT /v1/forge/tunnel`: turn the tunnel on or off. */
         SetTunnelRequest: {
             enabled: boolean;
+        };
+        /** @description Durable setup progress. No credential values are accepted or returned. */
+        SetupDto: {
+            name: string;
+            state: components["schemas"]["SetupState"];
+            steps: components["schemas"]["SetupStep"][];
+        };
+        /** @description An SSH worker installation request. SSH uses the daemon user's keys and config. */
+        SetupRequest: {
+            remote?: string | null;
+            source: components["schemas"]["BinarySource"];
+            ssh: string;
+        };
+        /** @enum {string} */
+        SetupState: "pending" | "running" | "incomplete" | "failed" | "complete";
+        SetupStep: {
+            complete: boolean;
+            error?: string | null;
+            name: string;
         };
         SkillDto: {
             /**
@@ -5930,6 +5977,58 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    hosts_setup_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    hosts_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupDto"];
+                };
             };
         };
     };

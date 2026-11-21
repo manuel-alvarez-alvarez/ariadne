@@ -191,6 +191,14 @@ const KINDS: &[(&str, Kind)] = &[
     ("goal rm", Kind::Write),
     ("host ls", Kind::Local(REGISTRY)),
     (
+        "host setup",
+        Kind::Local("worker setup runs on the local daemon"),
+    ),
+    (
+        "host setup-status",
+        Kind::Local("worker setup progress belongs to the local daemon"),
+    ),
+    (
         "host reconnect",
         Kind::Local("`host reconnect` reads and writes the registry of the local daemon"),
     ),
@@ -1039,6 +1047,52 @@ async fn logs_each(hosts: &[HostDto], local: &Arc<Client>) -> Result<ExitCode> {
         return Err(none_answered(&replies));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+pub(crate) async fn setup(
+    client: &Client,
+    name: &str,
+    request: Option<&std::path::Path>,
+    format: Format,
+) -> Result<()> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c))
+    {
+        return Err(Failure::usage("invalid worker name").err());
+    }
+    let path = format!("/v1/hosts/{name}/setup");
+    let progress: ariadne_api::hosts::SetupDto = if let Some(file) = request {
+        let request: ariadne_api::hosts::SetupRequest =
+            serde_json::from_slice(&std::fs::read(file)?)?;
+        client.post_json(&path, &request).await?
+    } else {
+        client.get_json(&path).await?
+    };
+    if format == Format::Json {
+        output::print_json(&progress)?;
+    } else {
+        println!("{}: {:?}", progress.name, progress.state);
+        for step in progress.steps {
+            println!(
+                "{}: {}{}",
+                step.name,
+                if step.complete { "complete" } else { "pending" },
+                step.error.map(|e| format!(" — {e}")).unwrap_or_default()
+            );
+        }
+    }
+    if matches!(
+        progress.state,
+        ariadne_api::hosts::SetupState::Failed | ariadne_api::hosts::SetupState::Incomplete
+    ) {
+        return Err(Failure::usage(
+            "worker setup is incomplete; correct the cause and retry the original request",
+        )
+        .err());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
