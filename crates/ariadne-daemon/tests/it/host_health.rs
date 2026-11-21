@@ -136,6 +136,23 @@ impl Updates {
 
     /// The next `host_updated` that moves the status. Each one it skips
     /// moves only the sync and keeps the status `before`.
+    async fn finish_cleanup(&mut self, mut host: HostDto) -> HostDto {
+        tokio::time::timeout(TIMEOUT, async {
+            while host.status == HostStatus::Connecting {
+                assert!(
+                    host.error
+                        .as_deref()
+                        .is_some_and(|e| e.contains("cleanup attempt")),
+                    "unexpected connecting event: {host:?}"
+                );
+                host = self.next().await;
+            }
+            host
+        })
+        .await
+        .expect("cleanup completes before Down")
+    }
+
     pub(crate) async fn next_status(&mut self, before: HostStatus) -> HostDto {
         loop {
             let host = self.next().await;
@@ -271,7 +288,8 @@ async fn a_forward_whose_far_daemon_does_not_answer_is_down_and_starts_again() {
 
     assert_eq!(updates.next().await.status, HostStatus::Connecting);
     let down = updates.next().await;
-    assert_eq!(down.status, HostStatus::Down);
+    let down = updates.finish_cleanup(down).await;
+    assert_eq!(down.status, HostStatus::Down, "{down:?}");
     assert_eq!(down.endpoint, None);
     let error = down.error.unwrap();
     assert!(
@@ -306,6 +324,7 @@ async fn a_ready_forward_that_stops_answering_loses_its_forward_and_starts_again
 
     health.set_off(true);
     let down = updates.next_status(HostStatus::Ready).await;
+    let down = updates.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     let error = down.error.unwrap();
