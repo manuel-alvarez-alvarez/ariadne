@@ -1,0 +1,572 @@
+//! Durable, resumable SSH worker setup. Each remote command is noninteractive.
+use super::*;
+use ariadne_api::hosts::{BinarySource, SetupDto, SetupRequest, SetupState, SetupStep};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use tokio::io::AsyncWriteExt;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(super) struct Record {
+    pub request: SetupRequest,
+    pub progress: SetupDto,
+    pub remote: Option<String>,
+    #[serde(default)]
+    active_step: Option<String>,
+}
+
+pub(super) fn load(root: &Path) -> BTreeMap<String, Record> {
+    let mut records: BTreeMap<String, Record> = std::fs::read(root.join("worker-setup.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    for record in records.values_mut() {
+        if matches!(
+            record.progress.state,
+            SetupState::Running | SetupState::Pending
+        ) {
+            record.progress.state = SetupState::Incomplete;
+        }
+    }
+    records
+}
+
+fn save(root: &Path, records: &BTreeMap<String, Record>) -> Result<(), String> {
+    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let path = root.join("worker-setup.json");
+    let temp = root.join("worker-setup.json.tmp");
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&temp)
+        .map_err(|e| e.to_string())?;
+    file.write_all(&serde_json::to_vec_pretty(records).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    file.sync_all().map_err(|e| e.to_string())?;
+    std::fs::rename(temp, path).map_err(|e| e.to_string())?;
+    std::fs::File::open(root)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|e| e.to_string())
+}
+
+fn validate(name: &str, request: &SetupRequest) -> Result<(), String> {
+    if name.is_empty()
+        || matches!(name, "local" | "all")
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("use a worker name with letters, digits, hyphens or underscores; local and all are reserved".into());
+    }
+    let url = Url::parse(&request.ssh).map_err(|_| "invalid SSH address")?;
+    if url.scheme() != "ssh"
+        || !request.ssh.starts_with("ssh://")
+        || url.host_str().is_none()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.path(), "" | "/")
+        || url.username().starts_with('-')
+    {
+        return Err("use ssh://[user@]host[:port] without passwords or paths".into());
+    }
+    if let Some(remote) = &request.remote
+        && (!remote.starts_with('/') || remote.contains(['\n', '\r', '\0']))
+    {
+        return Err("remote must be an absolute socket path".into());
+    }
+    if let BinarySource::Release { repository, tag } = &request.source
+        && (repository.split('/').count() != 2
+            || !repository
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"/-_.".contains(&c))
+            || tag.is_empty()
+            || !tag
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+            || tag.starts_with('-'))
+    {
+        return Err("select an owner/repository and an explicit release tag".into());
+    }
+    Ok(())
+}
+
+impl Hosts {
+    pub(crate) fn setup_status(&self, name: &str) -> Option<SetupDto> {
+        self.0
+            .setup
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|r| r.progress.clone())
+    }
+
+    pub(crate) fn setup(&self, name: String, request: SetupRequest) -> Result<SetupDto, String> {
+        validate(&name, &request)?;
+        let mut records = self.0.setup.lock().unwrap();
+        let path = self.0.cfg.root.join("worker-setup.json");
+        if path.exists() {
+            let bytes = std::fs::read(path).map_err(|_| "cannot read stored worker setup")?;
+            serde_json::from_slice::<BTreeMap<String, Record>>(&bytes).map_err(|_| "stored worker setup is invalid; preserve the file and repair it before retrying")?;
+        }
+        if let Some(record) = records.get(&name) {
+            if record.request != request {
+                return Err("retry with the original SSH address and binary source".into());
+            }
+            if matches!(
+                record.progress.state,
+                SetupState::Running | SetupState::Pending | SetupState::Complete
+            ) {
+                return Ok(record.progress.clone());
+            }
+        } else {
+            if self.list().iter().any(|h| h.name == name) {
+                return Err("this host already exists; select a new worker name".into());
+            }
+            records.insert(
+                name.clone(),
+                Record {
+                    request: request.clone(),
+                    remote: None,
+                    active_step: None,
+                    progress: SetupDto {
+                        name: name.clone(),
+                        state: SetupState::Pending,
+                        steps: [
+                            "probe", "validate", "transfer", "install", "service", "health",
+                            "register",
+                        ]
+                        .into_iter()
+                        .map(|name| SetupStep {
+                            name: name.into(),
+                            complete: false,
+                            error: None,
+                        })
+                        .collect(),
+                    },
+                },
+            );
+        }
+        let record = records.get_mut(&name).unwrap();
+        record.progress.state = SetupState::Pending;
+        for step in &mut record.progress.steps {
+            step.error = None;
+        }
+        let progress = record.progress.clone();
+        save(&self.0.cfg.root, &records)?;
+        drop(records);
+        let this = self.clone();
+        self.0.tasks.lock().unwrap().push(tokio::spawn(async move {
+            if let Err(error) = this.run_setup(&name, &request).await {
+                let mut records = this.0.setup.lock().unwrap();
+                let record = records.get_mut(&name).unwrap();
+                record.progress.state = if record.progress.steps.iter().any(|s| s.complete) {
+                    SetupState::Incomplete
+                } else {
+                    SetupState::Failed
+                };
+                if let Some(step) = record
+                    .progress
+                    .steps
+                    .iter_mut()
+                    .find(|s| Some(&s.name) == record.active_step.as_ref())
+                {
+                    step.error = Some(error);
+                }
+                if let Err(error) = save(&this.0.cfg.root, &records) {
+                    warn!(%error, "cannot save worker failure");
+                }
+            }
+        }));
+        Ok(progress)
+    }
+
+    fn begin(&self, name: &str, step: &str) -> Result<(), String> {
+        let mut records = self.0.setup.lock().unwrap();
+        let record = records.get_mut(name).unwrap();
+        record.progress.state = SetupState::Running;
+        record.active_step = Some(step.into());
+        save(&self.0.cfg.root, &records)
+    }
+
+    fn checkpoint(&self, name: &str, step: &str) -> Result<(), String> {
+        let mut records = self.0.setup.lock().unwrap();
+        let record = records.get_mut(name).unwrap();
+        record.progress.state = SetupState::Running;
+        record
+            .progress
+            .steps
+            .iter_mut()
+            .find(|s| s.name == step)
+            .unwrap()
+            .complete = true;
+        save(&self.0.cfg.root, &records)
+    }
+
+    async fn command(
+        &self,
+        command: &mut Command,
+        input: Option<Vec<u8>>,
+    ) -> Result<String, String> {
+        command
+            .kill_on_drop(true)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("cannot start setup command: {e}"))?;
+        let mut stdin = child.stdin.take().unwrap();
+        let run = async move {
+            let write = async move {
+                if let Some(input) = input {
+                    stdin.write_all(&input).await.map_err(|e| e.to_string())?;
+                }
+                drop(stdin);
+                Ok::<_, String>(())
+            };
+            let (written, output) = tokio::join!(write, child.wait_with_output());
+            written?;
+            let output = output.map_err(|e| e.to_string())?;
+            // Remote stderr can contain secrets from local SSH configuration. Never return it.
+            if !output.status.success() {
+                return Err(format!(
+                    "setup command failed ({}); check SSH access, prerequisites, and the user service",
+                    output.status
+                ));
+            }
+            String::from_utf8(output.stdout).map_err(|_| "setup returned invalid text".into())
+        };
+        timeout(self.0.timeouts.worker_setup_command, run)
+            .await
+            .map_err(|_| "setup command timed out".to_owned())?
+    }
+
+    async fn ssh(
+        &self,
+        request: &SetupRequest,
+        script: &str,
+        input: Option<Vec<u8>>,
+    ) -> Result<String, String> {
+        let url = Url::parse(&request.ssh).map_err(|e| e.to_string())?;
+        let mut command = Command::new(self.0.cfg.ssh_bin.as_deref().unwrap_or("ssh"));
+        command.args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=15",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=3",
+        ]);
+        if let Some(port) = url.port() {
+            command.args(["-p", &port.to_string()]);
+        }
+        command.arg("--").arg(if url.username().is_empty() {
+            url.host_str().unwrap().to_owned()
+        } else {
+            format!("{}@{}", url.username(), url.host_str().unwrap())
+        });
+        command.arg(format!("sh -c {}", quote(script)));
+        self.command(&mut command, input).await
+    }
+
+    async fn run_setup(&self, name: &str, request: &SetupRequest) -> Result<(), String> {
+        self.begin(name, "probe")?;
+        let probe = self.ssh(request, "set -eu; uname -s; uname -m; printf '%s\\n' \"$HOME\"; for tool in git tar; do command -v \"$tool\" >/dev/null || exit 12; done", None).await.map_err(|_| "SSH probe failed; check SSH access and ask the administrator to install git and tar".to_owned())?;
+        let lines: Vec<_> = probe.lines().collect();
+        if lines.len() != 3 || !lines[2].starts_with('/') || lines[2].contains(['\r', '\0']) {
+            return Err("SSH probe failed; install git and tar through the administrator".into());
+        }
+        let target = match (lines[0], lines[1]) {
+            ("Darwin", "arm64" | "aarch64") => "aarch64-apple-darwin",
+            ("Darwin", "x86_64") => "x86_64-apple-darwin",
+            ("Linux", "aarch64" | "arm64") => "aarch64-unknown-linux-gnu",
+            ("Linux", "x86_64") => "x86_64-unknown-linux-gnu",
+            _ => {
+                return Err(
+                    "unsupported worker platform; use macOS or Linux on ARM64 or x86_64".into(),
+                );
+            }
+        };
+        self.checkpoint(name, "probe")?;
+        let home = lines[2];
+        let remote = request
+            .remote
+            .clone()
+            .unwrap_or_else(|| format!("{home}/.ariadne/ariadne.sock"));
+        self.begin(name, "validate")?;
+        let source = self.binaries(name, request, target).await?;
+        let cli = std::fs::read(&source.0).map_err(|_| "cannot read the local CLI binary")?;
+        let daemon = std::fs::read(&source.1).map_err(|_| "cannot read the local daemon binary")?;
+        if !compatible(&cli, target) || !compatible(&daemon, target) {
+            return Err(format!(
+                "both binaries must be compatible with {target}; nothing was transferred"
+            ));
+        }
+        self.checkpoint(name, "validate")?;
+        let installed = self.0.setup.lock().unwrap()[name]
+            .progress
+            .steps
+            .iter()
+            .any(|s| s.name == "install" && s.complete);
+        if !installed {
+            self.begin(name, "transfer")?;
+            let stage = format!("{home}/.ariadne/worker-setup-{name}");
+            for (binary, data) in [("ariadne", cli), ("ariadned", daemon)] {
+                self.ssh(
+                    request,
+                    &format!(
+                        "set -eu; umask 077; mkdir -p {}; cat > {}",
+                        quote(&stage),
+                        quote(&format!("{stage}/{binary}"))
+                    ),
+                    Some(data),
+                )
+                .await?;
+            }
+            self.checkpoint(name, "transfer")?;
+            self.begin(name, "install")?;
+            self.ssh(request, &format!("set -eu; mkdir -p {bin}; chmod 755 {stage}/ariadne {stage}/ariadned; mv -f {stage}/ariadne {bin}/ariadne; mv -f {stage}/ariadned {bin}/ariadned; rmdir {stage}", bin=quote(&format!("{home}/.local/bin")), stage=quote(&stage)), None).await?;
+            self.checkpoint(name, "install")?;
+        }
+        self.begin(name, "service")?;
+        self.ssh(request, &service_script(home, lines[0]), None).await.map_err(|_| -> String { if lines[0] == "Linux" { "user service unavailable; ask the administrator to install systemd user services and enable lingering".into() } else { "launchd user service unavailable; check the user's launchd session".into() } })?;
+        self.checkpoint(name, "service")?;
+        self.begin(name, "health")?;
+        self.ssh(
+            request,
+            &format!(
+                "set -eu; for attempt in 1 2 3 4 5 6 7 8 9 10; do if {} --endpoint {} daemon status >/dev/null 2>&1; then exit 0; fi; sleep 1; done; exit 1",
+                quote(&format!("{home}/.local/bin/ariadne")),
+                quote(&remote)
+            ),
+            None,
+        )
+        .await?;
+        self.checkpoint(name, "health")?;
+        self.begin(name, "register")?;
+        {
+            let mut records = self.0.setup.lock().unwrap();
+            records.get_mut(name).unwrap().remote = Some(remote.clone());
+            save(&self.0.cfg.root, &records)?;
+        }
+        if !self.list().iter().any(|h| h.name == name) {
+            let mut cfg = (*self.0.cfg).clone();
+            cfg.hosts = vec![(
+                name.into(),
+                HostConfig {
+                    endpoint: request.ssh.clone(),
+                    remote: Some(remote),
+                },
+            )];
+            let host = Hosts::configured(
+                Arc::new(cfg),
+                self.0.store.clone(),
+                self.0.events.clone(),
+                self.0.timeouts,
+                BTreeMap::new(),
+            );
+            host.start();
+            self.0.extra.lock().unwrap().push(host);
+        }
+        self.checkpoint(name, "register")?;
+        let mut records = self.0.setup.lock().unwrap();
+        records.get_mut(name).unwrap().progress.state = SetupState::Complete;
+        save(&self.0.cfg.root, &records)
+    }
+
+    async fn binaries(
+        &self,
+        name: &str,
+        request: &SetupRequest,
+        target: &str,
+    ) -> Result<(PathBuf, PathBuf), String> {
+        match &request.source {
+            BinarySource::Local { cli, daemon } => Ok((cli.into(), daemon.into())),
+            BinarySource::Release { repository, tag } => {
+                let dir = self.0.cfg.root.join("worker-downloads").join(name);
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let gh = self.0.cfg.gh_bin.as_deref().unwrap_or("gh");
+                let version = self
+                    .command(Command::new(gh).arg("--version"), None)
+                    .await?;
+                let number = version.split_whitespace().nth(2).unwrap_or("");
+                let parts: Vec<u32> = number.split('.').filter_map(|v| v.parse().ok()).collect();
+                if parts.as_slice() < [2, 102, 0].as_slice() {
+                    return Err("install GitHub CLI 2.102.0 or later to verify releases".into());
+                }
+                {
+                    let asset = format!("ariadne-{target}.tar.gz");
+                    self.command(
+                        Command::new(gh)
+                            .args([
+                                "release",
+                                "download",
+                                tag,
+                                "--repo",
+                                repository,
+                                "--pattern",
+                                &asset,
+                                "--clobber",
+                                "--dir",
+                            ])
+                            .arg(&dir),
+                        None,
+                    )
+                    .await?;
+                    self.command(
+                        Command::new(gh)
+                            .args(["attestation", "verify"])
+                            .arg(dir.join(&asset))
+                            .args([
+                                "--repo",
+                                repository,
+                                "--signer-workflow",
+                                &format!("{repository}/.github/workflows/release.yml"),
+                                "--source-ref",
+                                &format!("refs/tags/{tag}"),
+                            ]),
+                        None,
+                    )
+                    .await.map_err(|_| "release attestation verification failed for the selected workflow and tag; nothing was transferred".to_owned())?;
+                    self.command(
+                        Command::new("tar")
+                            .arg("-xzf")
+                            .arg(dir.join(&asset))
+                            .arg("-C")
+                            .arg(&dir)
+                            .args(["ariadne", "ariadned"]),
+                        None,
+                    )
+                    .await?;
+                }
+                Ok((dir.join("ariadne"), dir.join("ariadned")))
+            }
+        }
+    }
+}
+
+fn quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn compatible(bytes: &[u8], target: &str) -> bool {
+    let arm = target.starts_with("aarch64");
+    if target.ends_with("linux-gnu") {
+        bytes.len() >= 64
+            && &bytes[..4] == b"\x7fELF"
+            && bytes[4] == 2
+            && bytes[5] == 1
+            && matches!(u16::from_le_bytes([bytes[16], bytes[17]]), 2 | 3)
+            && u16::from_le_bytes([bytes[18], bytes[19]]) == if arm { 183 } else { 62 }
+    } else {
+        if macho_matches(bytes, arm) {
+            return true;
+        }
+        let wide = bytes.starts_with(&[0xca, 0xfe, 0xba, 0xbf]);
+        if !wide && !bytes.starts_with(&[0xca, 0xfe, 0xba, 0xbe]) {
+            return false;
+        }
+        let Some(count) = bytes.get(4..8) else {
+            return false;
+        };
+        let count = u32::from_be_bytes(count.try_into().unwrap());
+        if count > 64 {
+            return false;
+        }
+        let width = if wide { 32 } else { 20 };
+        (0..count as usize).any(|index| {
+            let Some(entry) = bytes.get(8 + index * width..8 + (index + 1) * width) else {
+                return false;
+            };
+            let (offset, size) = if wide {
+                (
+                    u64::from_be_bytes(entry[8..16].try_into().unwrap()),
+                    u64::from_be_bytes(entry[16..24].try_into().unwrap()),
+                )
+            } else {
+                (
+                    u32::from_be_bytes(entry[8..12].try_into().unwrap()) as u64,
+                    u32::from_be_bytes(entry[12..16].try_into().unwrap()) as u64,
+                )
+            };
+            let Some(end) = offset.checked_add(size) else {
+                return false;
+            };
+            let (Ok(offset), Ok(end)) = (usize::try_from(offset), usize::try_from(end)) else {
+                return false;
+            };
+            bytes
+                .get(offset..end)
+                .is_some_and(|slice| macho_matches(slice, arm))
+        })
+    }
+}
+
+fn macho_matches(bytes: &[u8], arm: bool) -> bool {
+    bytes.len() >= 32
+        && bytes[..4] == [0xcf, 0xfa, 0xed, 0xfe]
+        && bytes[12..16] == [2, 0, 0, 0]
+        && u32::from_le_bytes(bytes[4..8].try_into().unwrap())
+            == if arm { 0x0100000c } else { 0x01000007 }
+}
+
+fn service_script(home: &str, os: &str) -> String {
+    if os == "Linux" {
+        format!(
+            r#"set -eu
+command -v systemctl >/dev/null
+command -v loginctl >/dev/null
+[ "$(loginctl show-user "$(id -u)" -p Linger --value)" = yes ]
+export XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
+mkdir -p "$HOME/.config/systemd/user"
+unit="$HOME/.config/systemd/user/ariadned.service"
+if [ ! -e "$unit" ]; then
+cat > "$unit" <<'ARIADNE_UNIT'
+[Unit]
+Description=Ariadne worker
+[Service]
+ExecStart="{home}/.local/bin/ariadned"
+Environment="PATH={home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+LimitNOFILE=4096
+Restart=on-failure
+[Install]
+WantedBy=default.target
+ARIADNE_UNIT
+fi
+systemctl --user daemon-reload
+systemctl --user enable ariadned.service
+systemctl --user restart ariadned.service
+"#,
+            home = home.replace('%', "%%").replace('"', "\\\"")
+        )
+    } else {
+        let xml = home
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        format!(
+            r#"set -eu
+mkdir -p "$HOME/Library/LaunchAgents"
+plist="$HOME/Library/LaunchAgents/dev.ariadne.daemon.plist"
+if [ ! -e "$plist" ]; then
+cat > "$plist" <<'ARIADNE_PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Label</key><string>dev.ariadne.daemon</string><key>ProgramArguments</key><array><string>{xml}/.local/bin/ariadned</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ProcessType</key><string>Interactive</string><key>SoftResourceLimits</key><dict><key>NumberOfFiles</key><integer>4096</integer></dict></dict></plist>
+ARIADNE_PLIST
+fi
+domain="user/$(id -u)"
+if launchctl print "gui/$(id -u)/dev.ariadne.daemon" >/dev/null 2>&1; then domain="gui/$(id -u)"; fi
+if ! launchctl print "$domain/dev.ariadne.daemon" >/dev/null 2>&1; then launchctl bootstrap "$domain" "$plist"; fi
+launchctl kickstart -k "$domain/dev.ariadne.daemon"
+"#
+        )
+    }
+}

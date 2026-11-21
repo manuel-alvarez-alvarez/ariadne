@@ -103,6 +103,10 @@ of the file. An unknown key in a host, a bad `endpoint`, or a `remote` on a
 host that is not `ssh://` is refused by name at startup and by `ariadned
 --check-config`. See [Hosts](../specs/037-hosts.md).
 
+To provision a new worker, use [SSH worker setup](cli.md#install-an-ssh-worker) from the CLI or Desktop Settings.
+The settings daemon stores setup progress and provisioned connections in `worker-setup.json` under its home.
+It restores these connections after restart without changing `config.toml`.
+
 For each `ssh://` host the daemon keeps a local port forward open. At
 startup it picks a free loopback port and runs:
 

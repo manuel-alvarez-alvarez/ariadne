@@ -798,6 +798,15 @@ mod tests;
 
 #[derive(Subcommand)]
 pub(crate) enum HostCommand {
+    /// Start or safely retry SSH worker setup from a JSON request file
+    Setup {
+        name: String,
+        /// JSON file with SSH access and a local or release binary source
+        #[arg(long)]
+        request: std::path::PathBuf,
+    },
+    /// Show durable SSH worker setup progress and per-step failures
+    SetupStatus { name: String },
     /// List host names, addresses and status
     Ls,
     /// Reconnect one named host, or each named host, and show the result

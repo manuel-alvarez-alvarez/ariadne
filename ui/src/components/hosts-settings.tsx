@@ -3,8 +3,8 @@
  * `GET /v1/hosts`, with the facts `ariadne host ls` prints — name, kind,
  * status, endpoint and error — live through `host_updated`.
  *
- * Read-only: the hosts are the settings daemon's `[hosts.<name>]` tables in
- * its `config.toml`, and the section says so rather than editing them.
+ * Configured hosts and provisioned workers share this list. Setup uses the
+ * settings daemon's durable SSH setup operation.
  */
 
 import { type HostView, useHosts } from "@/api"
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table"
 import { useHostDaemon } from "@/hooks/use-host-daemon"
 import { describeError, formatDuration } from "@/lib/format"
+import { WorkerSetup } from "./worker-setup"
 
 export function HostsSettings() {
   const { hosts, error } = useHosts()
@@ -30,13 +31,15 @@ export function HostsSettings() {
       <FieldDescription>
         The daemons this app reads, as the <code className="font-mono">[hosts.&lt;name&gt;]</code>{" "}
         tables of the <code className="font-mono">config.toml</code> of the daemon above configure
-        them. <code className="font-mono">local</code> is that daemon itself.
+        them. Setup adds worker connections below. <code className="font-mono">local</code> is that
+        daemon itself.
       </FieldDescription>
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           Could not load the hosts: {describeError(error)}
         </p>
       ) : null}
+      <WorkerSetup />
       <Table>
         <TableHeader>
           <TableRow>

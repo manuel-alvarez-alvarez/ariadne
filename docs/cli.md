@@ -829,6 +829,54 @@ ariadne doctor
 registry. It distinguishes an agent command your shell cannot find from one
 the daemon cannot find or cannot use.
 
+## Install an SSH worker
+
+1. Create a request file on the machine where you run the CLI:
+
+   ```json
+   {
+     "ssh": "ssh://worker@build-machine:22",
+     "source": {
+       "kind": "local",
+       "cli": "/absolute/path/to/ariadne",
+       "daemon": "/absolute/path/to/ariadned"
+     }
+   }
+   ```
+
+   Binary paths refer to the settings daemon's machine.
+   Both binaries must match the remote OS and architecture.
+   For a verified release, replace `source` with:
+
+   ```json
+   {"kind": "release", "repository": "owner/ariadne", "tag": "v1.0.0"}
+   ```
+
+2. Start setup with `ariadne host setup builder --request worker.json`.
+3. Read progress with `ariadne host setup-status builder`.
+4. Correct any reported prerequisite and repeat the original setup command.
+
+Setup uses existing SSH keys, agent access, and SSH configuration without password prompts.
+Install git and tar on the worker before setup.
+Release verification requires GitHub CLI 2.102.0 or later on the settings daemon's machine.
+An administrator must provide missing system packages or user service support.
+Linux workers need systemd user services and lingering for operation after logout.
+
+Setup preserves worker data, configuration, existing service definitions, and completed installation steps.
+It installs binaries in `~/.local/bin` and registers the platform's user service.
+A custom remote daemon socket needs the request's optional absolute `remote` path.
+The default socket is `~/.ariadne/ariadne.sock` on the worker.
+A failed or incomplete status returns a failure exit code.
+A complete status requires the daemon to answer and the connection to be registered.
+Use `--format json` for operation state and per-step results.
+
+Desktop Settings provides the same controls under Hosts.
+Select local binaries or a verified release, then select **Start or retry setup**.
+Enter an existing worker name and select **Load setup progress** to inspect a previous operation.
+Use the original request values when you retry.
+Agent installation, credential transfer, and repository cloning are separate operations.
+See [the setup contract](../specs/037-hosts.md#ssh-worker-setup).
+
 ## Selecting a host
 
 Without `--host`, commands use the resolved daemon endpoint.
@@ -880,7 +928,7 @@ On a named host, these commands write the host's own settings:
 
 Some commands run on `local` only, and refuse `--host NAME` and `--host all`:
 
-- `host ls`, which reads the registry of the local daemon.
+- `host ls`, `host setup`, and `host setup-status`, which use the local daemon.
 - `daemon start`, `daemon stop` and `daemon restart`. `daemon status` and `daemon logs` accept a host name.
 - `completions install`, which writes the shell configuration of this machine.
 

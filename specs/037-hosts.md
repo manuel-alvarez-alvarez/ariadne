@@ -1,8 +1,8 @@
 ---
 id: 037
 status: current
-updated: 2026-11-17
-areas: [api, daemon, client, cli, docs]
+updated: 2026-11-21
+areas: [api, daemon, client, cli, docs, ui]
 commits: []
 tests:
   - crates/ariadne-client/src/endpoint.rs
@@ -17,6 +17,7 @@ tests:
   - crates/ariadne-cli/src/commands/query.rs
   - crates/ariadne-daemon/src/hosts.rs
   - crates/ariadne-daemon/src/hosts/sync.rs
+  - ui/src/components/worker-setup.test.tsx
 ---
 
 # Hosts
@@ -231,6 +232,47 @@ picker, the Hosts section of its settings and one stream per host — is spec
 29. Writes go to the local daemon. Nothing is read back from a host into
     this daemon.
 
+### SSH worker setup
+
+43. `POST /v1/hosts/{name}/setup` starts or retries setup and returns `202` with `SetupDto`.
+    `GET` on the same path returns progress, or `404` for an unknown operation.
+    Reserved or invalid names and invalid requests return `400`.
+44. A request contains `ssh`, optional absolute socket `remote`, and `source`.
+    SSH uses `ssh://[user@]host[:port]`, BatchMode, and the daemon user's existing SSH authentication.
+    Passwords in URLs are refused. No credential values are accepted or returned.
+    A local source contains `kind: local`, `cli`, and `daemon`, with paths on the settings daemon.
+    A release source contains `kind: release`, `repository`, and an explicit `tag`.
+    Tools, credentials, and repository installation remain outside this setup operation.
+45. Setup probes the remote OS, architecture, and home before transfer.
+    macOS and Linux support ARM64 and x86_64.
+    Both local binaries must have matching executable headers before either transfers.
+    macOS accepts thin binaries and universal binaries with a compatible executable slice.
+    Release assets use `ariadne-<target>.tar.gz`.
+    GitHub CLI 2.102.0 or later verifies the selected repository's release workflow and exact tag before extraction.
+46. Setup installs binaries under the remote user's `~/.local/bin`.
+    It registers `dev.ariadne.daemon` with launchd or `ariadned.service` with systemd user services.
+    Existing service definitions, configuration, and worker data remain intact.
+    Missing git, tar, user services, or Linux lingering produce prerequisite guidance without administrator commands.
+    An existing custom socket must be supplied through `remote`.
+47. Progress states are `pending`, `running`, `incomplete`, `failed`, and `complete`.
+    Steps are probe, validate, transfer, install, service, health, and register.
+    Failure retains completed steps and records the failing step's error.
+    No successful step means `failed`; otherwise failure means `incomplete`.
+    Completion requires a successful daemon status check and local connection registration.
+48. The settings daemon stores operations atomically in `worker-setup.json` under its home.
+    Restart converts interrupted operations to `incomplete` and restores registered connections.
+    The same request resumes setup without transferring installed binaries again.
+    Retry rechecks access and binaries, restarts the service, and checks health.
+    Concurrent repeats return the existing operation. Changed requests are refused.
+    A complete request stays complete on repetition.
+49. `ariadne host setup NAME --request FILE` starts or retries an operation.
+    `ariadne host setup-status NAME` shows progress and per-step errors.
+    Both use the local daemon; JSON output uses the operation DTO.
+    A failed or incomplete result exits unsuccessfully.
+50. Desktop Settings includes SSH access, local binary paths, and verified release selection.
+    It shows completed steps and failures, polls active setup, and permits retry with the same request.
+    Entering a worker name and loading progress restores its durable operation view.
+
 ## Acceptance criteria
 
 - Hosts keep file order and an unknown key is refused by name
@@ -330,6 +372,13 @@ picker, the Hosts section of its settings and one stream per host — is spec
   (`host_reconnect.rs::a_direct_host_takes_one_check_and_its_status_follows_the_answer`).
 - Rule 42 (`host_reconnect.rs::openapi_carries_the_reconnect_route`).
 
+- Rules 43 and 44: `hosts.rs::setup_rejects_reserved_names_and_keeps_unknown_operations_absent`.
+- Rules 45 and 46: `hosts.rs::setup_checks_each_platform_before_it_transfers_a_binary`.
+- Rule 45: `hosts.rs::release_setup_requires_workflow_and_tag_verification_before_transfer`.
+- Rules 46–48: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
+- Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
+- Rule 50: `ui/src/components/worker-setup.test.tsx::starts setup and shows retained steps and a failure`.
+
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync
 and query tests serve the second harness daemon on a loopback port, and give
@@ -347,3 +396,5 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
 `crates/ariadne-daemon/src/http/permissions.rs`,
 `crates/ariadne-daemon/src/http/query/fan.rs`, `docs/configuration.md`,
 `docs/telemetry.md`.
+
+SSH setup sources: `crates/ariadne-daemon/src/hosts/setup.rs`, `ui/src/components/worker-setup.tsx`.

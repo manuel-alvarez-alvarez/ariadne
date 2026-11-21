@@ -60,6 +60,14 @@ pub(crate) fn stub_ssh(script: Value) -> StubSsh {
     )
     .unwrap();
     std::fs::write(dir.path().join("ssh-stub.py"), STUB).unwrap();
+    let service = super::shared_script(
+        "#!/bin/sh\n[ ! -e \"$ARIADNE_SETUP_SERVICE_FAIL\" ] || exit 1\ncase ${0##*/} in loginctl) echo yes;; esac\n",
+    );
+    let service_bin = dir.path().join("service-bin");
+    std::fs::create_dir_all(&service_bin).unwrap();
+    for tool in ["systemctl", "launchctl", "loginctl"] {
+        std::os::unix::fs::symlink(&service, service_bin.join(tool)).unwrap();
+    }
     let launcher = super::shared_script(LAUNCHER);
     let bin = dir.path().join("ssh");
     std::os::unix::fs::symlink(&launcher, &bin).unwrap();
@@ -98,6 +106,19 @@ def end():
     sys.stderr.write(script.get("stderr", ""))
     sys.stderr.flush()
     os._exit(script.get("exit", 255))
+
+if "-T" in args and script.get("setup"):
+    import subprocess
+    setup = script["setup"]
+    command = args[-1]
+    if "uname -s" in command:
+        print(setup.get("os", "Linux"))
+        print(setup.get("arch", "x86_64"))
+        print(setup["home"])
+        sys.exit(0)
+    if "daemon status" in command:
+        sys.exit(0)
+    sys.exit(subprocess.run(command, shell=True, env={**os.environ, "HOME": setup["home"], "PATH": os.path.join(dir, "service-bin") + os.pathsep + os.environ["PATH"], "ARIADNE_SETUP_SERVICE_FAIL": setup.get("fail_service", "")}).returncode)
 
 if not script.get("forward"):
     end()
