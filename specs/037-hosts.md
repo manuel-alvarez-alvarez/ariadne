@@ -382,7 +382,10 @@ picker, the Hosts section of its settings and one stream per host — is spec
 - Rule 42 (`host_reconnect.rs::openapi_carries_the_reconnect_route`).
 
 - Rules 43 and 44: `hosts.rs::setup_rejects_reserved_names_and_keeps_unknown_operations_absent`.
-- Rules 45 and 46: `hosts.rs::setup_checks_each_platform_before_it_transfers_a_binary`.
+- Rules 45 and 46: `hosts.rs::setup_checks_linux_x86_64_before_it_transfers_a_binary`,
+  `hosts.rs::setup_checks_linux_arm64_before_it_transfers_a_binary`,
+  `hosts.rs::setup_checks_macos_x86_64_before_it_transfers_a_binary`,
+  `hosts.rs::setup_checks_macos_arm64_before_it_transfers_a_binary`.
 - Rule 45: `hosts.rs::release_setup_requires_workflow_and_tag_verification_before_transfer`.
 - Rules 46–48: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
 - Rule 46, banners: `hosts.rs::setup_ignores_login_banners_with_a_newline_in_service_paths`,

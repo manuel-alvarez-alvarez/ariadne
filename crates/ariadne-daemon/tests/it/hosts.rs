@@ -320,130 +320,145 @@ async fn setup_preserves_installation_after_service_failure_and_retries_safely()
 }
 
 #[tokio::test]
-async fn setup_checks_each_platform_before_it_transfers_a_binary() {
+async fn setup_checks_linux_x86_64_before_it_transfers_a_binary() {
+    assert_worker_platform_setup(
+        "Linux",
+        "x86_64",
+        &[
+            0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0,
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn setup_checks_linux_arm64_before_it_transfers_a_binary() {
+    assert_worker_platform_setup(
+        "Linux",
+        "aarch64",
+        &[
+            0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 183, 0,
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn setup_checks_macos_x86_64_before_it_transfers_a_binary() {
+    assert_worker_platform_setup(
+        "Darwin",
+        "x86_64",
+        &[0xcf, 0xfa, 0xed, 0xfe, 7, 0, 0, 1, 3, 0, 0, 0, 2, 0, 0, 0],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn setup_checks_macos_arm64_before_it_transfers_a_binary() {
+    assert_worker_platform_setup(
+        "Darwin",
+        "arm64",
+        &[0xcf, 0xfa, 0xed, 0xfe, 12, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0],
+    )
+    .await;
+}
+
+async fn assert_worker_platform_setup(os: &str, arch: &str, header: &[u8]) {
     use common::{TIMEOUT, eventually, post_json};
     use serde_json::{Value, json};
-    for (os, arch, header) in [
-        (
-            "Linux",
-            "x86_64",
-            vec![
-                0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 62, 0,
-            ],
-        ),
-        (
-            "Linux",
-            "aarch64",
-            vec![
-                0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 183, 0,
-            ],
-        ),
-        (
-            "Darwin",
-            "x86_64",
-            vec![0xcf, 0xfa, 0xed, 0xfe, 7, 0, 0, 1, 3, 0, 0, 0, 2, 0, 0, 0],
-        ),
-        (
-            "Darwin",
-            "arm64",
-            vec![0xcf, 0xfa, 0xed, 0xfe, 12, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0],
-        ),
-    ] {
-        let remote = tempfile::tempdir().unwrap();
-        let local = tempfile::tempdir().unwrap();
-        let cli = local.path().join("ariadne");
-        let daemon = local.path().join("ariadned");
-        let mut binary = header;
-        binary.resize(64, 0);
-        if os == "Darwin" && arch == "arm64" {
-            // A universal Mach-O with an ARM64 slice at offset 4096.
-            let mut universal = vec![0; 4096];
-            universal[..8].copy_from_slice(&[0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 1]);
-            universal[8..12].copy_from_slice(&[1, 0, 0, 12]);
-            universal[16..20].copy_from_slice(&4096u32.to_be_bytes());
-            universal[20..24].copy_from_slice(&64u32.to_be_bytes());
-            universal.extend_from_slice(&binary);
-            binary = universal;
-        }
-        std::fs::write(&cli, &binary).unwrap();
-        std::fs::write(&daemon, b"incompatible daemon").unwrap();
-        let captured_path = r#"/remote/.cargo/bin:/remote/npm space/bin:/remote/%h&<"'$HOME\tools/bin:/opt/homebrew/bin:/usr/bin:/bin"#;
-        let ssh = common::ssh::stub_ssh(
-            json!({"setup":{"home":remote.path(), "os":os, "arch":arch, "path":captured_path}, "exit":0}),
-        );
-        let h = harness().ssh(&ssh).await;
-        let request =
-            json!({"ssh":"ssh://box", "source":{"kind":"local", "cli":cli, "daemon":daemon}});
-        let _: Value = h
-            .json(
-                post_json("/v1/hosts/cross/setup", request.clone()),
-                axum::http::StatusCode::ACCEPTED,
-            )
-            .await;
-        eventually(TIMEOUT, "binary validation failure", || async {
-            let state: Value = h.get("/v1/hosts/cross/setup").await;
-            state["state"] == "incomplete"
-        })
-        .await;
-        assert!(!remote.path().join(".local/bin/ariadne").exists());
-        assert_eq!(
-            ssh.runs().len(),
-            1,
-            "{os} {arch}: no binary transfer before validation"
-        );
-        std::fs::write(&daemon, &binary).unwrap();
-        let _: Value = h
-            .json(
-                post_json("/v1/hosts/cross/setup", request),
-                axum::http::StatusCode::ACCEPTED,
-            )
-            .await;
-        eventually(TIMEOUT, "supported worker installation", || async {
-            let state: Value = h.get("/v1/hosts/cross/setup").await;
-            state["state"] == "complete"
-        })
-        .await;
-        assert_eq!(
-            std::fs::read(remote.path().join(".local/bin/ariadned")).unwrap(),
-            binary
-        );
-        let service_file = if os == "Linux" {
-            remote.path().join(".config/systemd/user/ariadned.service")
-        } else {
-            remote
-                .path()
-                .join("Library/LaunchAgents/dev.ariadne.daemon.plist")
-        };
-        assert!(
-            std::fs::read_to_string(&service_file)
-                .unwrap()
-                .contains(".local/bin/ariadned")
-        );
-        let service = std::fs::read_to_string(&service_file).unwrap();
-        if os == "Linux" {
-            assert!(service.contains(&format!(r#"Environment="PATH={}/.local/bin:/remote/.cargo/bin:/remote/npm space/bin:/remote/%%h&<\"'$HOME\\tools/bin:/opt/homebrew/bin:/usr/bin:/bin""#, remote.path().display())), "{service}");
-        } else {
-            assert!(
-                service.contains("<key>EnvironmentVariables</key>"),
-                "{service}"
-            );
-            assert!(
-                service.contains("%h&amp;&lt;&quot;&apos;$HOME"),
-                "{service}"
-            );
-            let parsed = std::process::Command::new("python3").args(["-c", "import plistlib,sys; print(plistlib.load(open(sys.argv[1], 'rb'))['EnvironmentVariables']['PATH'], end='')"]).arg(&service_file).output().unwrap();
-            assert!(
-                parsed.status.success(),
-                "{}",
-                String::from_utf8_lossy(&parsed.stderr)
-            );
-            assert_eq!(
-                String::from_utf8(parsed.stdout).unwrap(),
-                format!("{}/.local/bin:{captured_path}", remote.path().display())
-            );
-        }
-        h.state.hosts.shutdown().await;
+    let remote = tempfile::tempdir().unwrap();
+    let local = tempfile::tempdir().unwrap();
+    let cli = local.path().join("ariadne");
+    let daemon = local.path().join("ariadned");
+    let mut binary = header.to_vec();
+    binary.resize(64, 0);
+    if os == "Darwin" && arch == "arm64" {
+        // A universal Mach-O with an ARM64 slice at offset 4096.
+        let mut universal = vec![0; 4096];
+        universal[..8].copy_from_slice(&[0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 1]);
+        universal[8..12].copy_from_slice(&[1, 0, 0, 12]);
+        universal[16..20].copy_from_slice(&4096u32.to_be_bytes());
+        universal[20..24].copy_from_slice(&64u32.to_be_bytes());
+        universal.extend_from_slice(&binary);
+        binary = universal;
     }
+    std::fs::write(&cli, &binary).unwrap();
+    std::fs::write(&daemon, b"incompatible daemon").unwrap();
+    let captured_path = r#"/remote/.cargo/bin:/remote/npm space/bin:/remote/%h&<"'$HOME\tools/bin:/opt/homebrew/bin:/usr/bin:/bin"#;
+    let ssh = common::ssh::stub_ssh(
+        json!({"setup":{"home":remote.path(), "os":os, "arch":arch, "path":captured_path}, "exit":0}),
+    );
+    let h = harness().ssh(&ssh).await;
+    let request = json!({"ssh":"ssh://box", "source":{"kind":"local", "cli":cli, "daemon":daemon}});
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/cross/setup", request.clone()),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "binary validation failure", || async {
+        let state: Value = h.get("/v1/hosts/cross/setup").await;
+        state["state"] == "incomplete"
+    })
+    .await;
+    assert!(!remote.path().join(".local/bin/ariadne").exists());
+    assert_eq!(
+        ssh.runs().len(),
+        1,
+        "{os} {arch}: no binary transfer before validation"
+    );
+    std::fs::write(&daemon, &binary).unwrap();
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/cross/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "supported worker installation", || async {
+        let state: Value = h.get("/v1/hosts/cross/setup").await;
+        state["state"] == "complete"
+    })
+    .await;
+    assert_eq!(
+        std::fs::read(remote.path().join(".local/bin/ariadned")).unwrap(),
+        binary
+    );
+    let service_file = if os == "Linux" {
+        remote.path().join(".config/systemd/user/ariadned.service")
+    } else {
+        remote
+            .path()
+            .join("Library/LaunchAgents/dev.ariadne.daemon.plist")
+    };
+    assert!(
+        std::fs::read_to_string(&service_file)
+            .unwrap()
+            .contains(".local/bin/ariadned")
+    );
+    let service = std::fs::read_to_string(&service_file).unwrap();
+    if os == "Linux" {
+        assert!(service.contains(&format!(r#"Environment="PATH={}/.local/bin:/remote/.cargo/bin:/remote/npm space/bin:/remote/%%h&<\"'$HOME\\tools/bin:/opt/homebrew/bin:/usr/bin:/bin""#, remote.path().display())), "{service}");
+    } else {
+        assert!(
+            service.contains("<key>EnvironmentVariables</key>"),
+            "{service}"
+        );
+        assert!(
+            service.contains("%h&amp;&lt;&quot;&apos;$HOME"),
+            "{service}"
+        );
+        let parsed = std::process::Command::new("python3").args(["-c", "import plistlib,sys; print(plistlib.load(open(sys.argv[1], 'rb'))['EnvironmentVariables']['PATH'], end='')"]).arg(&service_file).output().unwrap();
+        assert!(
+            parsed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&parsed.stderr)
+        );
+        assert_eq!(
+            String::from_utf8(parsed.stdout).unwrap(),
+            format!("{}/.local/bin:{captured_path}", remote.path().display())
+        );
+    }
+    h.state.hosts.shutdown().await;
 }
 
 #[tokio::test]
