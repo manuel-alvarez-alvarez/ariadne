@@ -151,6 +151,7 @@ Out: what the daemon does once running (009, 012).
     daemon starts inherits and cannot leave, so its builds and tests run on
     the efficiency cores. The systemd service needs no setting: a user
     service runs at the same weight as the user's own session.
+    The systemd unit uses `KillMode=process` so a daemon stop leaves tmux relays running (021, rule 18).
 13. `scripts/make-signing-cert.sh` creates the self-signed "Ariadne Code
     Signing" identity, Darwin only: a key and a code-signing certificate made
     with `openssl`, imported into the login keychain with `security import`
@@ -252,6 +253,9 @@ Out: what the daemon does once running (009, 012).
     Directly launched workers use the same lifecycle without requiring service installation.
 
 ## Acceptance criteria
+
+- The Linux service preserves relay processes on daemon stop:
+  `scripts/tests/install-linux.sh service` checks `KillMode=process` in the installed unit.
 
 - Both Rust matrix legs configure `sccache` before any build, with
   incremental compilation disabled and cache writes restricted to `main`.

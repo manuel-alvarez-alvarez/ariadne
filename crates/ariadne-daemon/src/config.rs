@@ -52,6 +52,8 @@ pub struct Config {
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
+    /// Force a session location; omission selects herdr, tmux, then none.
+    pub session_place: Option<ariadne_client::endpoint::SessionPlace>,
     pub auto_switch: bool,
     pub exhausted_patterns: Vec<String>,
     /// Classify a failed ACP session's error with the AI permission model's
@@ -157,6 +159,7 @@ impl Config {
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
+            session_place: file.session_place,
             auto_switch: file.auto_switch.unwrap_or(true),
             exhausted_patterns: file
                 .exhausted_patterns
@@ -386,6 +389,14 @@ pub fn default_exhausted_patterns() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_daemon_accepts_each_forced_session_place() {
+        for place in ["none", "tmux", "herdr"] {
+            let dir = home_with(&format!("session_place = \"{place}\"\n"));
+            assert!(Config::load(Some(dir.path().join("home"))).is_ok());
+        }
+    }
 
     /// A home with `config.toml` in it, written from `toml`.
     fn home_with(toml: &str) -> tempfile::TempDir {

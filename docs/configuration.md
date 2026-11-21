@@ -34,6 +34,9 @@ delete_merged_branches = true      # only applies to a merged task's branch, whe
                                    # worktrees are deleted too: a kept task worktree
                                    # pins its branch, and cancelling or completing a
                                    # goal never deletes a branch
+# session_place = "tmux"           # force none, tmux, or herdr; omit for automatic selection
+                                   # automatic order: herdr, tmux, then a direct child
+                                   # herdr is currently unavailable; a missing forced place fails launch
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
@@ -85,6 +88,20 @@ id = "my-agent"                    # names under another command (default: [])
 command = ["my-agent", "acp"]      # program followed by its arguments
 
 ```
+
+Omit `session_place` to select herdr, then tmux, then a direct child.
+Herdr is not yet available.
+Set `session_place = "none"` to use direct children.
+Set it to `"tmux"` or `"herdr"` to require that multiplexer.
+A missing forced multiplexer fails the launch with a clear reason.
+`ariadne doctor` reports the selected place and its reason.
+
+With tmux, agents continue while the daemon stops or restarts.
+The new daemon reconnects and stores output collected during the stop.
+Reconnect keeps each running session's place, even when this setting changes.
+Resume starts a new process and selects its place again.
+The installer does not install tmux.
+See [the ACP runtime spec](../specs/021-acp-runtime.md) for the lifecycle rules.
 
 Hosts live in the settings daemon database. Add them on the app's Hosts screen or through `POST /v1/hosts`.
 Each named host has an endpoint, an optional SSH remote address, and an optional colour override.

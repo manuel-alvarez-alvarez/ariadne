@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
 use agent_client_protocol::ByteStreams;
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -30,11 +30,14 @@ pub(crate) fn pipes(
 /// The SDK says when a request is answered, never when it was written. A
 /// claimed agent message needs the second: a prompt the agent never got
 /// gives its claim back, and one it got keeps it (018).
-pub(crate) fn witnessed_pipes(
-    stdin: ChildStdin,
-    stdout: ChildStdout,
+pub(crate) fn witnessed_pipes<
+    W: AsyncWrite + Unpin + Send + 'static,
+    R: AsyncRead + Unpin + Send + 'static,
+>(
+    stdin: W,
+    stdout: R,
     witness: PromptWrites,
-) -> ByteStreams<Compat<Witnessed<ChildStdin>>, Compat<ChildStdout>> {
+) -> ByteStreams<Compat<Witnessed<W>>, Compat<R>> {
     let stdin = Witnessed {
         inner: stdin,
         line: Vec::new(),

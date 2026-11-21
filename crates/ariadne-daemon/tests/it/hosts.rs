@@ -560,7 +560,7 @@ async fn setup_rejects_reserved_names_and_keeps_unknown_operations_absent() {
 async fn setup_preserves_installation_after_service_failure_and_retries_safely() {
     use common::{TIMEOUT, eventually, post_json};
     use serde_json::{Value, json};
-    for os in ["Linux", "Darwin"] {
+    futures_util::future::join_all(["Linux", "Darwin"].map(|os| async move {
         let remote = tempfile::tempdir().unwrap();
         let binaries = tempfile::tempdir().unwrap();
         let cli = binaries.path().join("ariadne");
@@ -696,7 +696,7 @@ async fn setup_preserves_installation_after_service_failure_and_retries_safely()
             "# machine-specific service settings\n"
         );
         assert_eq!(std::fs::read_to_string(&plist).unwrap(), old_plist);
-    }
+    })).await;
 }
 
 #[tokio::test]
@@ -935,7 +935,7 @@ async fn release_setup_requires_workflow_and_tag_verification_before_transfer() 
 async fn setup_rejects_control_characters_in_remote_path_before_transfer() {
     use common::{TIMEOUT, eventually, post_json};
     use serde_json::{Value, json};
-    for path in [
+    futures_util::future::join_all([
         "/tools\n",
         "/tools\n/other",
         "/tools\0/bin",
@@ -943,7 +943,7 @@ async fn setup_rejects_control_characters_in_remote_path_before_transfer() {
         "/tools\x7f/bin",
         "/tools\u{85}/bin",
         "/tools\r/bin",
-    ] {
+    ].map(|path| async move {
         let remote = tempfile::tempdir().unwrap();
         let mut setup = json!({"home":remote.path(), "path":path});
         if path.contains('\0') {
@@ -970,18 +970,18 @@ async fn setup_rejects_control_characters_in_remote_path_before_transfer() {
         assert_eq!(ssh.runs().len(), 1);
         assert!(!remote.path().join(".local/bin/ariadne").exists());
         h.state.hosts.shutdown().await;
-    }
+    })).await;
 }
 
 #[tokio::test]
 async fn setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path() {
     use common::{TIMEOUT, eventually, post_json};
     use serde_json::{Value, json};
-    for mut setup in [
+    futures_util::future::join_all([
         json!({"shell_fail":true}),
         json!({"missing_markers":true, "path":"/unmarked/tools:/usr/bin:/bin", "banner":"Welcome!\n"}),
         json!({"path":"", "banner":"Welcome!"}),
-    ] {
+    ].map(|mut setup| async move {
         let remote = tempfile::tempdir().unwrap();
         let local = tempfile::tempdir().unwrap();
         let mut binary = vec![0; 64];
@@ -1017,6 +1017,7 @@ async fn setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path()
         let unit =
             std::fs::read_to_string(remote.path().join(".config/systemd/user/ariadned.service"))
                 .unwrap();
+        assert!(unit.contains("KillMode=process"), "{unit}");
         assert!(
             unit.contains(&format!(
                 "Environment=\"PATH={}/.local/bin:",
@@ -1026,7 +1027,7 @@ async fn setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path()
         );
         assert!(unit.contains(":/fallback/tools:/usr/bin:/bin\""), "{unit}");
         h.state.hosts.shutdown().await;
-    }
+    })).await;
 }
 
 #[tokio::test]

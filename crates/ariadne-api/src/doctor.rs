@@ -34,6 +34,9 @@ pub struct DaemonReportDto {
     pub python: PythonDto,
     pub db: PathStateDto,
     pub worktree_root: PathStateDto,
+    /// Selected location and discovery result for the next session.
+    #[serde(default)]
+    pub place: Option<PlaceDto>,
 }
 
 /// A binary as the daemon can — or cannot — find it.
@@ -71,4 +74,12 @@ pub struct PathStateDto {
     /// exist yet this is its directory's answer: whether it could be created.
     /// Nothing is written to find out.
     pub writable: bool,
+}
+
+/// The daemon's selected session location and the reason for its selection.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PlaceDto {
+    pub name: String,
+    pub reason: String,
+    pub available: bool,
 }

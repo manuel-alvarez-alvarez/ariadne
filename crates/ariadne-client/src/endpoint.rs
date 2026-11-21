@@ -12,6 +12,25 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+/// A forced session location. Omission enables automatic discovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionPlace {
+    None,
+    Tmux,
+    Herdr,
+}
+impl SessionPlace {
+    /// Stable configuration and storage name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Tmux => "tmux",
+            Self::Herdr => "herdr",
+        }
+    }
+}
+
 /// One additional ACP agent command configured by the user.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -145,6 +164,8 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
+    /// Force a session location instead of automatic discovery.
+    pub session_place: Option<SessionPlace>,
     /// Switch a seat to another ranked model after an exhausted prompt.
     pub auto_switch: Option<bool>,
     /// Case-insensitive message fragments that identify exhausted prompts.

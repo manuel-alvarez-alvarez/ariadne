@@ -104,7 +104,7 @@ impl FromStr for ModelRef {
 /// transcripts under them, and it saturates: a counter no arithmetic here can
 /// overflow in practice must not be the thing that panics a daemon if one
 /// ever does.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TokenUsage {
     /// Prompt tokens, cache reads and cache writes included.
     pub input_tokens: u64,

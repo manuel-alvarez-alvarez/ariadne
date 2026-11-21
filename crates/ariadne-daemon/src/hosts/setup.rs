@@ -680,6 +680,7 @@ Description=Ariadne worker
 ExecStart="{home}/.local/bin/ariadned"
 Environment="PATH={path}"
 LimitNOFILE=4096
+KillMode=process
 Restart=on-failure
 [Install]
 WantedBy=default.target

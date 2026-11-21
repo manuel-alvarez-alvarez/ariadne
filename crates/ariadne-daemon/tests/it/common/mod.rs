@@ -110,7 +110,33 @@ pub(crate) struct Harness {
     pub failure_diagnosis: ariadne_daemon::failure_diagnosis::FailureDiagnosis,
 }
 
+/// Stop this test home's relays even when an assertion fails.
+pub(crate) struct RelayCleanup(pub PathBuf);
+impl Drop for RelayCleanup {
+    fn drop(&mut self) {
+        use std::io::{Read, Write};
+        if let Ok(entries) = std::fs::read_dir(self.0.join("relays")) {
+            for entry in entries
+                .flatten()
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "sock"))
+            {
+                if let Ok(mut socket) = std::os::unix::net::UnixStream::connect(entry.path()) {
+                    let _ = socket.set_read_timeout(Some(TIMEOUT));
+                    let _ = socket.write_all(b"{\"type\":\"stop\"}\n");
+                    let _ = socket.read_to_end(&mut Vec::new());
+                }
+            }
+        }
+        let _ = std::process::Command::new("tmux")
+            .arg("-S")
+            .arg(self.0.join("tmux.sock"))
+            .arg("kill-server")
+            .output();
+    }
+}
+
 pub(crate) struct HarnessBuilder {
+    session_place: Option<String>,
     home: Option<PathBuf>,
     scheduler: bool,
     spawns: bool,
@@ -163,6 +189,7 @@ pub(crate) fn roomy_hardware() -> HardwareOverride {
 
 pub(crate) fn harness() -> HarnessBuilder {
     HarnessBuilder {
+        session_place: None,
         home: None,
         scheduler: false,
         spawns: true,
@@ -197,6 +224,11 @@ pub(crate) fn harness() -> HarnessBuilder {
 }
 
 impl HarnessBuilder {
+    pub(crate) fn session_place(mut self, place: &str) -> Self {
+        self.session_place = Some(place.into());
+        self
+    }
+
     /// Register the same stub command under a second agent id.
     pub(crate) fn second_agent(self) -> Self {
         self.second_agent_as("other")
@@ -368,7 +400,11 @@ impl HarnessBuilder {
             .unwrap();
         let agent_dir = dir.path().join("agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
-        let agent = acp::stub_acp_agent(&agent_dir, default_script());
+        let mut agent_script = default_script();
+        if self.session_place.as_deref() == Some("tmux") {
+            agent_script["relay_parent"] = serde_json::json!(true);
+        }
+        let agent = acp::stub_acp_agent(&agent_dir, agent_script);
         let own_home = self.home.is_none();
         let home = match self.home {
             Some(home) => home,
@@ -476,6 +512,11 @@ impl HarnessBuilder {
                 store.clone(),
                 self.timeouts,
                 transcript_homes(dir.path()),
+            )
+            .with_places(
+                config.root.clone(),
+                std::path::PathBuf::from(env!("CARGO_BIN_EXE_ariadned")),
+                Some(self.session_place.unwrap_or_else(|| "none".into())),
             )
             .with_exhausted_patterns(exhausted_patterns)
             .with_portable_config(config.clone())

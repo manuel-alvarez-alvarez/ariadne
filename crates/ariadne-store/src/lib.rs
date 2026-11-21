@@ -53,7 +53,7 @@ pub use pr_operations::{PrOperationEnd, PrOperationOwner, StartPrOperation};
 pub use pull_request_comments::NewPullRequestComment;
 pub use pull_requests::{NewPullRequest, PullRequestFilter, PullRequestTold};
 pub use repositories::{NewRepository, RepositoryUpdate};
-pub use sessions::{NewSession, SessionFilter};
+pub use sessions::{NewSession, RelayInput, RelayOutput, SessionFilter};
 pub use skills::{NewSkill, skill_name_rejection};
 pub use task_agents::NewTaskAgent;
 pub use tasks::{NewTask, TaskFilter, TaskUpdate, unstaffed_columns};

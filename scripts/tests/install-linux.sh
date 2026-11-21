@@ -57,6 +57,14 @@ run_uninstall() {
 prefix="$TEST_ROOT/home/.local/bin"
 entry="$TEST_ROOT/home/.local/share/applications/dev.ariadne.ui.desktop"
 case "$test_case" in
+    service)
+        env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
+            XDG_CONFIG_HOME="$TEST_ROOT/home/.config" \
+            PREFIX="$TEST_ROOT/home/.local/bin" \
+            bash "$TEST_ROOT/repo/scripts/install.sh" --build-from-source \
+                --no-ui --yes > "$TEST_ROOT/output" 2>&1
+        grep -Fxq 'KillMode=process' "$TEST_ROOT/home/.config/systemd/user/ariadned.service"
+        ;;
     headless-preserve)
         run_install --build-from-source
         cp "$TEST_ROOT/home/.ariadne/install.env" "$TEST_ROOT/old.env"
