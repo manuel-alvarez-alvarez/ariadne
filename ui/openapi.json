@@ -2281,6 +2281,113 @@
         }
       }
     },
+    "/v1/hosts/{name}/setup/inspect": {
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "inspect_setup",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/hosts/{name}/setup/resume": {
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "resume_setup",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/hosts/{name}/setup/review": {
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "review_setup",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupReviewDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/hosts/{name}/update": {
       "get": {
         "tags": [
@@ -8123,6 +8230,51 @@
           }
         }
       },
+      "InspectRequest": {
+        "type": "object",
+        "description": "Read-only inspection needs only an account with noninteractive SSH access.",
+        "required": [
+          "ssh"
+        ],
+        "properties": {
+          "ssh": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InspectionDto": {
+        "type": "object",
+        "required": [
+          "target",
+          "checks",
+          "supported_agents",
+          "supported_credentials"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupCheck"
+            }
+          },
+          "supported_agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "supported_credentials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
       "IssueDto": {
         "type": "object",
         "required": [
@@ -9881,6 +10033,34 @@
         },
         "additionalProperties": false
       },
+      "SetupCheck": {
+        "type": "object",
+        "description": "A capability or prerequisite. Reports contain guidance, never command output.",
+        "required": [
+          "id",
+          "satisfied",
+          "missing",
+          "resolution",
+          "recheck"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "missing": {
+            "type": "string"
+          },
+          "recheck": {
+            "type": "string"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "satisfied": {
+            "type": "boolean"
+          }
+        }
+      },
       "SetupDto": {
         "type": "object",
         "description": "Durable setup progress. No credential values are accepted or returned.",
@@ -9954,6 +10134,39 @@
           }
         },
         "additionalProperties": false
+      },
+      "SetupReviewDto": {
+        "type": "object",
+        "description": "Review of selected actions. Inspection and review never persist an operation.",
+        "required": [
+          "inspection",
+          "actions",
+          "prerequisites",
+          "preserved"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inspection": {
+            "$ref": "#/components/schemas/InspectionDto"
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupCheck"
+            }
+          },
+          "preserved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       },
       "SetupState": {
         "type": "string",

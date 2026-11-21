@@ -215,3 +215,37 @@ pub struct SetupTools {
     #[serde(default)]
     pub github: bool,
 }
+
+/// Read-only inspection needs only an account with noninteractive SSH access.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InspectRequest {
+    pub ssh: String,
+}
+
+/// A capability or prerequisite. Reports contain guidance, never command output.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetupCheck {
+    pub id: String,
+    pub satisfied: bool,
+    pub missing: String,
+    pub resolution: String,
+    pub recheck: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InspectionDto {
+    pub target: String,
+    pub checks: Vec<SetupCheck>,
+    pub supported_agents: Vec<String>,
+    pub supported_credentials: Vec<String>,
+}
+
+/// Review of selected actions. Inspection and review never persist an operation.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetupReviewDto {
+    pub inspection: InspectionDto,
+    pub actions: Vec<String>,
+    pub prerequisites: Vec<SetupCheck>,
+    pub preserved: Vec<String>,
+}

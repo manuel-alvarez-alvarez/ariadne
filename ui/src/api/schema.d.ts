@@ -1591,6 +1591,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/{name}/setup/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_inspect_setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{name}/setup/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_resume_setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{name}/setup/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_review_setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hosts/{name}/update": {
         parameters: {
             query?: never;
@@ -4030,6 +4078,16 @@ export interface components {
             skipped_permissions: number;
             state: components["schemas"]["SyncState"];
         };
+        /** @description Read-only inspection needs only an account with noninteractive SSH access. */
+        InspectRequest: {
+            ssh: string;
+        };
+        InspectionDto: {
+            checks: components["schemas"]["SetupCheck"][];
+            supported_agents: string[];
+            supported_credentials: string[];
+            target: string;
+        };
         IssueDto: {
             assignees: string[];
             body: string;
@@ -4753,6 +4811,14 @@ export interface components {
         SetTunnelRequest: {
             enabled: boolean;
         };
+        /** @description A capability or prerequisite. Reports contain guidance, never command output. */
+        SetupCheck: {
+            id: string;
+            missing: string;
+            recheck: string;
+            resolution: string;
+            satisfied: boolean;
+        };
         /** @description Durable setup progress. No credential values are accepted or returned. */
         SetupDto: {
             name: string;
@@ -4771,6 +4837,13 @@ export interface components {
             source: components["schemas"]["BinarySource"];
             ssh: string;
             tools?: components["schemas"]["SetupTools"] | null;
+        };
+        /** @description Review of selected actions. Inspection and review never persist an operation. */
+        SetupReviewDto: {
+            actions: string[];
+            inspection: components["schemas"]["InspectionDto"];
+            prerequisites: components["schemas"]["SetupCheck"][];
+            preserved: string[];
         };
         /** @enum {string} */
         SetupState: "pending" | "running" | "incomplete" | "failed" | "complete";
@@ -6328,6 +6401,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SetupDto"];
+                };
+            };
+        };
+    };
+    hosts_inspect_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InspectRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InspectionDto"];
+                };
+            };
+        };
+    };
+    hosts_resume_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupDto"];
+                };
+            };
+        };
+    };
+    hosts_review_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupReviewDto"];
                 };
             };
         };

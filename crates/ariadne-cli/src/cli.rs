@@ -824,6 +824,20 @@ mod tests;
 
 #[derive(Subcommand)]
 pub(crate) enum HostCommand {
+    /// Resume the saved setup and recheck worker prerequisites
+    Resume { name: String },
+    /// Inspect a worker without changing it
+    Inspect {
+        name: String,
+        #[arg(long)]
+        ssh: String,
+    },
+    /// Review setup actions and prerequisites without changing the worker
+    Review {
+        name: String,
+        #[arg(long)]
+        request: std::path::PathBuf,
+    },
     /// Start or safely retry SSH worker setup from a JSON request file
     Setup {
         name: String,

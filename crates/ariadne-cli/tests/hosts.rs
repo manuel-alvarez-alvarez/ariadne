@@ -2366,3 +2366,101 @@ async fn maintenance_cli_reads_and_changes_the_selected_worker_hold() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn worker_inspection_review_and_resume_use_the_local_setup_contract() {
+    let inspection = json!({"target":"x86_64-unknown-linux-gnu","checks":[{
+        "id":"service","satisfied":false,"missing":"User services are unavailable",
+        "resolution":"Enable lingering on the worker","recheck":"Resume setup"
+    }],"supported_agents":["codex-acp"],"supported_credentials":["codex","github"]});
+    let inspected = inspection.clone();
+    let reviewed = json!({"inspection":inspection,"actions":["Copy selected Codex credentials"],"prerequisites":[],"preserved":["Preserve machine settings"]});
+    let app = Router::new()
+        .route("/v1/hosts/worker/setup/inspect", post(move |Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body, json!({"ssh":"ssh://worker@box"}));
+            Json(inspected)
+        }))
+        .route("/v1/hosts/worker/setup/review", post(move |Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body["credentials"], json!(["codex"]));
+            Json(reviewed)
+        }))
+        .route("/v1/hosts/worker/setup/resume", post(|| async {
+            Json(json!({"name":"worker","state":"incomplete","steps":[{"name":"service","complete":false,"error":"Enable lingering on the worker"}]}))
+        }));
+    let (endpoint, server) = serve(app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("request.json");
+    std::fs::write(&file, json!({"ssh":"ssh://worker@box","source":{"kind":"local","cli":"/cli","daemon":"/daemon"},"credentials":["codex"]}).to_string()).unwrap();
+    for (args, code, expected) in [
+        (
+            vec!["host", "inspect", "worker", "--ssh", "ssh://worker@box"],
+            0,
+            "Enable lingering on the worker",
+        ),
+        (
+            vec![
+                "host",
+                "review",
+                "worker",
+                "--request",
+                file.to_str().unwrap(),
+            ],
+            0,
+            "Preserve machine settings",
+        ),
+        (
+            vec!["host", "resume", "worker"],
+            2,
+            "Enable lingering on the worker",
+        ),
+    ] {
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+            .args(["--endpoint", &endpoint])
+            .args(args)
+            .env("ARIADNE_TELEMETRY", "off")
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn onboarding_commands_refuse_other_hosts_with_a_setup_reason() {
+    let registry = json!([
+        {"name":"local","kind":"local","status":"ready","endpoint":"http://127.0.0.1:1","error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},
+        {"name":"build","kind":"direct","status":"ready","endpoint":"http://127.0.0.1:1","error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}}
+    ]);
+    let (endpoint, server) =
+        serve(Router::new().route("/v1/hosts", get(move || async move { Json(registry) }))).await;
+    for host in ["all", "build"] {
+        for args in [
+            vec!["host", "inspect", "builder", "--ssh", "ssh://w@box"],
+            vec!["host", "review", "builder", "--request", "/missing"],
+            vec!["host", "resume", "builder"],
+        ] {
+            let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+                .args(["--endpoint", &endpoint, "--host", host])
+                .args(args)
+                .env("ARIADNE_TELEMETRY", "off")
+                .output()
+                .await
+                .unwrap();
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(2), "{error}");
+            assert!(
+                error.contains("worker setup runs on the local daemon"),
+                "{error}"
+            );
+            assert!(error.contains("--host local"), "{error}");
+        }
+    }
+    server.abort();
+}
