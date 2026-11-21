@@ -137,6 +137,7 @@ A disabled integration has no worker, regardless of its retained hook status.
     So the URL survives a restart. A channel is public to anyone who knows it, so the name is its only secret.
 14. The channel streams each delivery as one event: the forge's headers, lowercased, beside `body` and `query`.
     The tunnel posts it on to the bound listener address and nowhere else, at the `query.route` the hook URL named.
+    That post never goes through a proxy: `HTTP_PROXY` and its kin carry the channel's stream, not the loopback post.
     A route that does not start with `/webhooks/` is dropped with a warning.
     It passes on `Content-Type`, `X-Github-Event`, `X-Github-Delivery` and `X-Hub-Signature-256`.
     The body is the event's `body` text as smee.io wrote it, unparsed.
@@ -256,6 +257,8 @@ A disabled integration has no worker, regardless of its retained hook status.
   `tunnel.rs::the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_restart`.
 - The configured channel is listened on, and the stored random one again after a restart:
   `tunnel.rs::the_configured_channel_is_asked_for_and_the_stored_one_again_after_a_restart`.
+- With `HTTP_PROXY` set to a dead proxy and the channel host in `NO_PROXY`, a delivery still reaches the listener:
+  `tunnel.rs::a_proxy_in_the_environment_never_carries_the_post_to_the_listener`.
 - A public URL or no enabled integration opens no tunnel:
   `tunnel.rs::a_public_url_or_no_enabled_integration_opens_no_tunnel`.
 - A delivery and a timer fetch record the same pull request rows:

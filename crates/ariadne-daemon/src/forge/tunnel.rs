@@ -61,6 +61,9 @@ struct Inner {
     changed: Notify,
     task: Mutex<Option<JoinHandle<()>>>,
     http: reqwest::Client,
+    /// Posts to the listener directly: a proxy in the environment carries
+    /// the channel's stream, never the loopback delivery (027).
+    listener: reqwest::Client,
 }
 
 #[derive(Clone, PartialEq)]
@@ -100,6 +103,10 @@ impl Tunnel {
             changed: Notify::new(),
             task: Mutex::new(None),
             http: reqwest::Client::new(),
+            listener: reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("a client with no proxy builds"),
         }))
     }
 
@@ -448,7 +455,7 @@ impl Inner {
             return;
         };
         let mut request = self
-            .http
+            .listener
             .post(format!("http://{listen}{route}"))
             .timeout(self.timeouts.tunnel_connect)
             .body(delivery.body.map_or("", RawValue::get).to_owned());

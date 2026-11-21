@@ -502,12 +502,17 @@ async fn deliver(h: &Harness, id: &str, url: &str, body: &str) -> StatusCode {
         .unwrap()
         .webhook_secret
         .unwrap();
+    deliver_signed(&secret, url, body).await
+}
+
+/// Post a delivery of `body` to `url`, signed with `secret`.
+async fn deliver_signed(secret: &str, url: &str, body: &str) -> StatusCode {
     // Python provides an independent signature implementation.
     let output = std::process::Command::new("python3")
         .args([
             "-c",
             "import hmac,hashlib,sys;print('sha256='+hmac.new(sys.argv[1].encode(),sys.argv[2].encode(),hashlib.sha256).hexdigest())",
-            &secret,
+            secret,
             body,
         ])
         .output()
@@ -1056,6 +1061,26 @@ struct Daemon {
 }
 
 impl Daemon {
+    /// Start `ariadned` on `home`, with `env` beside the narrow `PATH`.
+    fn spawn(home: &Path, env: &[(&str, &str)]) -> Self {
+        Self {
+            wrapper: std::process::Command::new("python3")
+                .args(["-c", WRAPPER, env!("CARGO_BIN_EXE_ariadned"), "--home"])
+                .arg(home)
+                // The test starts no agent. Keep the daemon from probing any
+                // coding-agent command the machine happens to have installed;
+                // it still has the system `git` and the stub `gh` by absolute
+                // path through the home configuration.
+                .env("PATH", "/usr/bin:/bin")
+                .envs(env.iter().copied())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+            pid_file: ariadne_client::endpoint::pid_file(home),
+        }
+    }
+
     fn pid(&self) -> Option<String> {
         std::fs::read_to_string(&self.pid_file)
             .ok()
@@ -1108,21 +1133,7 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
         ),
     )
     .unwrap();
-    let daemon = Daemon {
-        wrapper: std::process::Command::new("python3")
-            .args(["-c", WRAPPER, env!("CARGO_BIN_EXE_ariadned"), "--home"])
-            .arg(&home)
-            // This test starts no agent. Keep the daemon from probing any
-            // coding-agent command the machine happens to have installed;
-            // it still has the system `git` and the stub `gh` by absolute
-            // path through the home configuration above.
-            .env("PATH", "/usr/bin:/bin")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap(),
-        pid_file: ariadne_client::endpoint::pid_file(&home),
-    };
+    let daemon = Daemon::spawn(&home, &[]);
     let api = format!("http://127.0.0.1:{port}");
     let client = reqwest::Client::new();
     eventually(TIMEOUT, "the daemon to answer", async || {
@@ -1193,4 +1204,105 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
     .await;
     assert!(daemon.signal("-0"), "the drain still waits on the stream");
     drop(stream);
+}
+
+#[tokio::test]
+async fn a_proxy_in_the_environment_never_carries_the_post_to_the_listener() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = StandIn::start(&dir.path().join("stand-in"), 0).await;
+    let gates = Gates::opened();
+    let stub = stub_forge_cli(script(&[], &gates));
+    let repo = git_repo_copy(dir.path(), "repo").await;
+    sh(
+        &repo,
+        "git remote add origin https://github.com/acme/widgets.git",
+    );
+    let free = || {
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        free.local_addr().unwrap().port()
+    };
+    let (port, dead) = (free(), free());
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    store_copy(&home.join("ariadne.db")).await;
+    // The channel host is `localhost`, which `NO_PROXY` exempts; the
+    // listener is `127.0.0.1`, which it does not, as a user's would be.
+    let host = format!("http://localhost:{}", server.api);
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "tcp_listen = \"127.0.0.1:{port}\"\ntunnel_host = \"{host}\"\ngh_bin = \"{}\"\n",
+            stub.gh
+        ),
+    )
+    .unwrap();
+    let proxy = format!("http://127.0.0.1:{dead}");
+    let daemon = Daemon::spawn(
+        &home,
+        &[
+            ("HTTP_PROXY", &proxy),
+            ("http_proxy", &proxy),
+            ("ALL_PROXY", &proxy),
+            ("NO_PROXY", "localhost"),
+            ("no_proxy", "localhost"),
+        ],
+    );
+    let api = format!("http://127.0.0.1:{port}");
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    eventually(TIMEOUT, "the daemon to answer", async || {
+        client
+            .get(format!("{api}/v1/health"))
+            .send()
+            .await
+            .is_ok_and(|r| r.status().is_success())
+    })
+    .await;
+    stub.set_parent_pid(daemon.pid().unwrap().parse().unwrap());
+    let created = client
+        .post(format!("{api}/v1/repositories"))
+        .header("Content-Type", "application/json")
+        .body(json!({"path": repo, "forge": {"enabled": true}}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created: Value = serde_json::from_slice(&created.bytes().await.unwrap()).unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let switched = client
+        .put(format!("{api}/v1/forge/tunnel"))
+        .header("Content-Type", "application/json")
+        .body(json!({"enabled": true}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(switched.status(), StatusCode::OK);
+
+    let store = ariadne_store::Store::open_read_only(home.join("ariadne.db"))
+        .await
+        .unwrap();
+    let mut live = None;
+    eventually(TIMEOUT, "the hook to go live", async || {
+        live = store
+            .forge_integration(&id)
+            .await
+            .unwrap()
+            .filter(|row| row.webhook_state == "live");
+        live.is_some()
+    })
+    .await;
+    let row = live.unwrap();
+    let url = row.webhook_url.unwrap();
+    assert!(url.starts_with(&host), "{url}");
+    let secret = row.webhook_secret.unwrap();
+    assert_eq!(deliver_signed(&secret, &url, COMPACT).await, StatusCode::OK);
+    eventually(TIMEOUT, "the delivery to reach the listener", async || {
+        store
+            .forge_integration(&id)
+            .await
+            .unwrap()
+            .unwrap()
+            .webhook_last_delivery_at
+            .is_some()
+    })
+    .await;
 }
