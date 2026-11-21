@@ -1158,7 +1158,7 @@ Out: the daemon endpoints themselves (012).
     its `error`. `host_updated` patches its row. The picker, the dashboards
     host select and the logs host select show only while the daemon lists a
     named host; a named host that is down counts as listed.
-52. The settings dialog has a Hosts section. It lists each host's `name`,
+52. The Hosts screen, at `#/hosts` and titled "Hosts", lists each host's `name`,
     `kind`, `status`, `endpoint` and `error`, the facts `ariadne host ls`
     prints, live through `host_updated`. Hosts come from setup or the settings daemon's `config.toml`. It stays with `local` alone.
     Each named host's row has a reconnect button, named "Reconnect" and the
@@ -1171,9 +1171,19 @@ Out: the daemon endpoints themselves (012).
     uptime of each reachable host, from the last heartbeat of the app's
     stream to it, and "-" before one arrives or for a host the app cannot
     reach (rule 78).
-    The same section provisions SSH workers through spec 037, rules 43–50.
-    Its setup controls show durable steps and permit safe retry.
-    (`ui/src/components/worker-setup.test.tsx::starts setup and shows retained steps and a failure`).
+    The screen reads the hosts of `local` only, so the header host picker
+    does not change it. The settings dialog has no Hosts section.
+    Its page header has a "Set up worker" action. The action opens a dialog
+    that provisions SSH workers through spec 037, rules 43–50.
+    The setup dialog shows durable steps and permits safe retry.
+    (`ui/src/features/hosts/hosts-page.test.tsx::titles the screen Hosts and opens the worker setup from its Set up worker action`,
+    `::shows the hosts of local whatever the header host picker selects`,
+    `ui/src/components/settings-dialog.test.tsx::has no Hosts section`,
+    `ui/src/features/hosts/worker-setup.test.tsx::starts setup and shows retained steps and a failure`).
+    The sidebar lists Hosts after Agents, and the chord `g h` opens it
+    (`ui/src/components/app-shell.test.tsx`,
+    `ui/src/hooks/use-global-shortcuts.test.tsx::opens the Hosts screen on G then H`,
+    `ui/src/components/keyboard-shortcuts-dialog.test.tsx::lists every chord, screen by screen`).
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.
@@ -1506,7 +1516,7 @@ Out: the daemon endpoints themselves (012).
 
 ### Connection recovery
 
-81. Settings shows the configured daemon address and the event stream connection state together. Saving the address starts a connection attempt and does not confirm success. Retry requests a stream reconnection. Settings gives daemon startup and TCP listener guidance, and identifies settings that apply immediately. Setup help expands with the keyboard. The live status announces changes without moving focus. The sidebar connection status keeps daemon logs reachable; host errors remain in Hosts.
+81. Settings shows the configured daemon address and the event stream connection state together. Saving the address starts a connection attempt and does not confirm success. Retry requests a stream reconnection. Settings gives daemon startup and TCP listener guidance, and identifies settings that apply immediately. Settings keeps the daemon URL, connection recovery, app diagnostics and the webhook tunnel. (`ui/src/components/settings-dialog.test.tsx::has no Hosts section`) Setup help expands with the keyboard. The live status announces changes without moving focus. The sidebar connection status keeps daemon logs reachable; host errors remain in Hosts.
 
 ## Acceptance criteria
 
@@ -2527,8 +2537,8 @@ Out: the daemon endpoints themselves (012).
   `::builds a host's stream URL with its filters, and none for an unreachable host`,
   `::reads GET /v1/hosts from the settings daemon, and points api(host) at each host`,
   `::reads a host again at its new address once local's stream comes back`);
-  the Hosts section lists the facts live, and the picker picks and keeps a
-  host (`ui/src/components/hosts-settings.test.tsx::lists every host with its name, kind, status, endpoint and error, live through host_updated`,
+  the Hosts screen lists the facts live, and the picker picks and keeps a
+  host (`ui/src/features/hosts/hosts-page.test.tsx::lists every host with its name, kind, status, endpoint and error, live through host_updated`,
   `::picks All, local or a named host with its status, and keeps the pick`,
   `::shows no host picker while the daemon lists local alone`,
   `::shows the host picker for a named host that is down`,
@@ -2537,14 +2547,14 @@ Out: the daemon endpoints themselves (012).
   `::reads a saved pick the daemon no longer lists as All hosts`);
   each named host has a reconnect button in its picker row and its Hosts row,
   and `local` has none
-  (`ui/src/components/hosts-settings.test.tsx::reconnects a named host from each picker row, in each status, and picks nothing`,
+  (`ui/src/features/hosts/hosts-page.test.tsx::reconnects a named host from each picker row, in each status, and picks nothing`,
   `::reconnects a host from its Hosts row, disabled while it runs, and shows the new status`,
   `::shows the error of a reconnect that fails`,
   `::shows no reconnect button while the daemon lists local alone`);
   the Hosts table and the picker show the true state of each host: reach with
   its reason, daemon version and uptime, the app's stream state, the sync, and
   the mark on All hosts
-  (`ui/src/components/hosts-settings.test.tsx::shows the reach of a socket-path host and its reason in the words of the picker`,
+  (`ui/src/features/hosts/hosts-page.test.tsx::shows the reach of a socket-path host and its reason in the words of the picker`,
   `::shows the daemon version and uptime of each reachable host, from its stream's heartbeat`,
   `::shows the app's stream state of a named host's row while the stream is not connected`,
   `::shows a pending or failed sync of a named host's row, and the error of a failed one`,

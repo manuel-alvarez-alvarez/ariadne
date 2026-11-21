@@ -101,6 +101,7 @@ export const paths = {
    */
   sessions: () => "/sessions",
   agents: () => "/agents",
+  hosts: () => "/hosts",
   permissions: () => "/permissions",
   repositories: () => "/repositories",
   dashboards: () => "/dashboards",

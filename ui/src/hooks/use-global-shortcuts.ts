@@ -64,7 +64,7 @@ export const SIDEBAR_SHORTCUT: KeySequence = { key: "[" }
 
 /**
  * `G` then a letter — every screen the sidebar lists, in its order, keyed by
- * its initial (`g`oals, `s`essions, `p`rofiles, `a`gents, `r`epositories).
+ * its initial (`g`oals, `s`essions, `p`rofiles, `a`gents, `h`osts, `r`epositories).
  *
  * Keyed by path so the palette can label its "Go to …" rows from the same list
  * the shell binds, rather than spelling the chords twice.
@@ -74,6 +74,7 @@ const SCREEN_SHORTCUTS: readonly { path: string; label: string; chord: KeySequen
   { path: paths.sessions(), label: "Sessions", chord: { lead: "g", key: "s" } },
   { path: paths.skills(), label: "Skills", chord: { lead: "g", key: "k" } },
   { path: paths.agents(), label: "Agents", chord: { lead: "g", key: "a" } },
+  { path: paths.hosts(), label: "Hosts", chord: { lead: "g", key: "h" } },
   { path: paths.repositories(), label: "Repositories", chord: { lead: "g", key: "r" } },
 ]
 

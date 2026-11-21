@@ -1,23 +1,25 @@
 // @vitest-environment jsdom
 
 /**
- * The settings dialog's Hosts section and the header's host picker, over the
+ * The Hosts screen and the header's host picker, over the
  * settings daemon's `GET /v1/hosts`.
  */
 
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useHosts } from "@/api"
+import { AppShell, type PageHandle } from "@/components/app-shell"
+import { HostPicker } from "@/components/host-picker"
 import { Toaster } from "@/components/ui/sonner"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { useHostFilter } from "@/hooks/use-host-filter"
 import { useSettingsStore } from "@/stores/settings"
 import { useHostStreamStore, useStreamStore } from "@/stores/stream"
-import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
+import { errorResponse, jsonResponse, renderScreen, startAt } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, LOCAL_ORIGIN, stubHosts } from "@/test/hosts"
-import { HostPicker } from "./host-picker"
-import { SettingsDialog } from "./settings-dialog"
+import { HostsPage } from "./hosts-page"
 
 const FAR = {
   ...BOX,
@@ -52,7 +54,7 @@ function hostRow(name: string): string[] {
 it("lists every host with its name, kind, status, endpoint and error, live through host_updated", async () => {
   const hosts = [LOCAL, BOX, FAR]
   stubHosts({ local: { "/v1/forge/tunnel": { enabled: false, state: "off" } } }, hosts)
-  const { queryClient } = renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+  const { queryClient } = renderScreen(<HostsPage />)
 
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
   expect(hostRow("local")).toEqual([
@@ -74,7 +76,6 @@ it("lists every host with its name, kind, status, endpoint and error, live throu
     "-",
     "",
   ])
-  expect(screen.getByText(/tables of the/).textContent).toContain("config.toml")
 
   // The daemon's own row moves first, as it does in production — the event
   // only ever follows a change the GET would already answer the same way.
@@ -182,7 +183,7 @@ it("reads a saved pick the daemon no longer lists as All hosts", async () => {
 
 it("shows the reach of a socket-path host and its reason in the words of the picker", async () => {
   stubHosts({}, [LOCAL, { ...FAR, status: "ready", endpoint: "/run/ariadned.sock", error: null }])
-  renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+  renderScreen(<HostsPage />)
 
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3))
   expect(hostRow("far").slice(2, 5)).toEqual([
@@ -197,7 +198,7 @@ it("shows the daemon version and uptime of each reachable host, from its stream'
   vi.setSystemTime(new Date("2026-01-01T01:10:00Z"))
   stubHosts({}, [LOCAL, BOX, FAR])
   try {
-    renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+    renderScreen(<HostsPage />)
     await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
     act(() => {
       useStreamStore
@@ -344,7 +345,7 @@ it("reconnects a host from its Hosts row, disabled while it runs, and shows the 
     },
     hosts,
   )
-  const { queryClient } = renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+  const { queryClient } = renderScreen(<HostsPage />)
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
 
   expect(screen.queryByRole("button", { name: "Reconnect local" })).toBeNull()
@@ -374,7 +375,7 @@ it("shows the error of a reconnect that fails", async () => {
   renderScreen(
     <>
       <Toaster />
-      <SettingsDialog open onOpenChange={() => {}} />
+      <HostsPage />
     </>,
   )
   await user.click(await screen.findByRole("button", { name: "Reconnect box" }))
@@ -390,9 +391,45 @@ it("shows no reconnect button while the daemon lists local alone", async () => {
   renderScreen(
     <>
       <HostPicker />
-      <SettingsDialog open onOpenChange={() => {}} />
+      <HostsPage />
     </>,
   )
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2))
   expect(screen.queryByRole("button", { name: /Reconnect/ })).toBeNull()
+})
+
+it("titles the screen Hosts and opens the worker setup from its Set up worker action", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, BOX])
+  startAt("/hosts")
+  const router = createBrowserRouter([
+    {
+      path: "/",
+      element: <AppShell />,
+      children: [
+        { path: "hosts", element: <HostsPage />, handle: { title: "Hosts" } satisfies PageHandle },
+      ],
+    },
+  ])
+  renderScreen(<RouterProvider router={router} />, { route: null })
+
+  expect(screen.getByRole("heading", { level: 1, name: "Hosts" })).toBeTruthy()
+  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3))
+  expect(screen.queryByLabelText("Worker name")).toBeNull()
+
+  await user.click(screen.getByRole("button", { name: "Set up worker" }))
+
+  expect(await screen.findByLabelText("Worker name")).toBeTruthy()
+  expect(screen.getByRole("button", { name: "Start or retry setup" })).toBeTruthy()
+  expect(screen.getByRole("button", { name: "Load setup progress" })).toBeTruthy()
+})
+
+it("shows the hosts of local whatever the header host picker selects", async () => {
+  stubHosts({}, [LOCAL, BOX])
+  useSettingsStore.setState({ hostFilter: "box" })
+  renderScreen(<HostsPage />)
+
+  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3))
+  expect(hostRow("local")[0]).toBe("local")
+  expect(hostRow("box")[0]).toBe("box")
 })

@@ -56,6 +56,14 @@ it("opens the cheat sheet on a bare ?", async () => {
   expect(handlers.onOpenShortcuts).toHaveBeenCalledTimes(1)
 })
 
+it("opens the Hosts screen on G then H", async () => {
+  const user = mount()
+
+  await user.keyboard("gh")
+
+  expect(handlers.onNavigate).toHaveBeenCalledWith("/hosts")
+})
+
 it("leaves the character alone where it is being typed", async () => {
   const user = mount()
 

@@ -2,15 +2,14 @@
  * Where the daemon lives — the one thing the UI itself needs configured: the
  * address of `tcp_listen` in `~/.ariadne/config.toml` — and the daemon's own
  * webhook tunnel switch, which is written the moment it is flipped rather than
- * on Save, since it is the daemon's setting and not this window's — and the
- * hosts that daemon is configured with, read-only.
+ * on Save, since it is the daemon's setting and not this window's. The hosts
+ * that daemon is configured with live on the Hosts screen.
  */
 
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { DEFAULT_BASE_URL, normalizeBaseUrl } from "@/api"
-import { HostsSettings } from "@/components/hosts-settings"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -154,9 +153,6 @@ export function SettingsDialog({
             </Field>
             <div className="border-t pt-4">
               <TunnelSettings open={open} />
-            </div>
-            <div className="border-t pt-4">
-              <HostsSettings />
             </div>
           </div>
           <DialogFooter>
