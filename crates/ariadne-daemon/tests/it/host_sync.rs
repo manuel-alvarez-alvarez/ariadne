@@ -966,7 +966,7 @@ async fn external_markdown_links_warn_without_copying_external_files() {
 }
 
 #[tokio::test]
-async fn a_rejected_document_restores_the_previous_worker_files() {
+async fn failed_staging_preserves_the_previous_worker_files() {
     let far = harness().await;
     let _: SkillDto = far
         .json(
@@ -979,7 +979,7 @@ async fn a_rejected_document_restores_the_previous_worker_files() {
         .await;
     let path = far.launcher.cfg.skills_dir.join("bundle/data.bin");
     std::fs::write(&path, [0, 255, 17]).unwrap();
-    let (status, _) = far.send(put_json("/v1/skills/bundle", json!({"document": "invalid document", "files": [{"path": "new.bin", "bytes": [7], "executable": false}]}))).await;
+    let (status, _) = far.send(put_json("/v1/skills/bundle", json!({"document": skill("bundle", "new"), "files": [{"path": "collision", "bytes": [7], "executable": false}, {"path": "collision/child", "bytes": [8], "executable": false}]}))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(std::fs::read(path).unwrap(), [0, 255, 17]);
     assert_eq!(skill_on(&far, "bundle").await.unwrap().summary, "old");

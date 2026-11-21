@@ -351,8 +351,8 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
 - Skill bundles retain layout, executable bits, updates and removals
   (`host_sync.rs::supporting_files_reach_the_worker_and_later_changes_replace_them`).
 - Unsafe paths preserve the worker document (`host_sync.rs::an_invalid_bundle_preserves_the_worker_skill`).
-- Rejected documents restore previous binary files
-  (`host_sync.rs::a_rejected_document_restores_the_previous_worker_files`).
+- Failed staging preserves previous binary files
+  (`host_sync.rs::failed_staging_preserves_the_previous_worker_files`).
 - Escaping links preserve the worker and allow unrelated skills
   (`host_sync.rs::an_escaping_link_preserves_the_worker_and_does_not_block_other_skills`).
 - External Markdown links warn without copying dependencies
