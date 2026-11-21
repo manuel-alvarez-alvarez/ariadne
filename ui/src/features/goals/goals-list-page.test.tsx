@@ -354,13 +354,15 @@ it("narrows by the title search within the selected statuses", async () => {
   expect(screen.queryByLabelText("Collapse Write docs")).toBeNull()
 })
 
-it("has no Board/List toggle and no repository filter", async () => {
+it("starts on Board and offers Compact and repository scope", async () => {
   stubDaemon([aGoal({ id: "g1", repos: [aRepository({ id: "repo-web", path: "/dev/web" })] })])
   renderBoard("/goals")
 
   await screen.findByLabelText(/^Collapse /)
   expect(screen.queryByRole("button", { name: "List" })).toBeNull()
-  expect(screen.queryByRole("button", { name: "Board" })).toBeNull()
+  expect(screen.getByRole("button", { name: "Board" }).getAttribute("aria-pressed")).toBe("true")
+  expect(screen.getByRole("button", { name: "Compact" })).toBeDefined()
+  expect(screen.getByRole("combobox", { name: "Repository scope" })).toBeDefined()
   expect(screen.queryByRole("button", { name: "Filter by repository" })).toBeNull()
 })
 
@@ -385,4 +387,95 @@ it("shows terminal tasks when leaving the Active filter", async () => {
   expect(screen.queryByText("Completed task")).toBeNull()
   await userEvent.click(screen.getByRole("button", { name: "All" }))
   expect(await screen.findByText("Completed task")).toBeTruthy()
+})
+
+it("keeps detail selection while changing URL-backed workload controls", async () => {
+  const user = userEvent.setup()
+  const seen = renderBoard("/goals?status=active&goal=g&task=t&session=s&host=remote")
+  await user.type(screen.getByRole("textbox", { name: "Search goals by title" }), "rate")
+  expect(new URLSearchParams(seen.url.split("?")[1]).get("q")).toBe("rate")
+  await user.click(screen.getByRole("button", { name: "Compact" }))
+  const params = new URLSearchParams(seen.url.split("?")[1])
+  expect(params.get("presentation")).toBe("compact")
+  for (const [key, value] of [
+    ["goal", "g"],
+    ["task", "t"],
+    ["session", "s"],
+    ["host", "remote"],
+  ] as const) {
+    expect(params.get(key)).toBe(value)
+  }
+})
+
+it("saves, reopens, renames and deletes a local compact scope", async () => {
+  const user = userEvent.setup()
+  const seen = renderBoard("/goals?presentation=compact&q=missing&repo=/api&status=active")
+  await user.type(screen.getByRole("textbox", { name: "Local view name" }), "Backend")
+  await user.click(screen.getByRole("button", { name: "Save view" }))
+  await user.click(screen.getByRole("button", { name: "Board" }))
+  await user.selectOptions(screen.getByRole("combobox", { name: "Saved local views" }), "")
+  await user.selectOptions(screen.getByRole("combobox", { name: "Saved local views" }), "Backend")
+  expect(seen.url).toContain("presentation=compact")
+  expect(seen.url).toContain("repo=%2Fapi")
+  await user.clear(screen.getByRole("textbox", { name: "Local view name" }))
+  await user.type(screen.getByRole("textbox", { name: "Local view name" }), "API")
+  await user.click(screen.getByRole("button", { name: "Rename view" }))
+  expect(screen.getByRole("option", { name: "API" })).toBeDefined()
+  await user.click(screen.getByRole("button", { name: "Delete view" }))
+  expect(screen.queryByRole("option", { name: "API" })).toBeNull()
+})
+
+it("shows planning goals without tasks in compact presentation", async () => {
+  stubDaemon([aGoal({ status: "planning" })])
+  renderBoard("/goals?presentation=compact")
+  expect(await screen.findByRole("region", { name: "Compact goals" })).toBeDefined()
+  expect(await screen.findByText("No tasks yet — the orchestrator is still working")).toBeDefined()
+})
+
+it("combines repository scope with title search in compact task rows", async () => {
+  const goal = aGoal({ title: "Backend", repos: [aRepository({ path: "/api" })] })
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      jsonResponse(
+        url.pathname === "/v1/goals"
+          ? [goal, aGoal({ id: "other", title: "Other" })]
+          : url.pathname === "/v1/tasks"
+            ? [aTask({ goal_id: goal.id, title: "Policy", status: "failed", step: "develop" })]
+            : [],
+      ),
+    )
+  })
+  renderBoard("/goals?repo=/api&q=back&presentation=compact")
+  expect(await screen.findByRole("link", { name: "Policy" })).toBeDefined()
+  expect(screen.queryByRole("link", { name: "Other" })).toBeNull()
+  for (const label of ["Goal", "Task", "Status", "Workflow step", "Attention", "Host"]) {
+    expect(screen.getByRole("columnheader", { name: label })).toBeDefined()
+  }
+  expect(screen.getByRole("cell", { name: "local" })).toBeDefined()
+  expect(screen.getByRole("cell", { name: "failed" })).toBeDefined()
+})
+
+it.each(["q=x", "repo=/api", "presentation=compact"])(
+  "honors explicit scope %s over remembered status",
+  async (scope) => {
+    useSettingsStore.setState({ goalStatusFilter: "active" })
+    const seen = renderBoard(`/goals?${scope}`)
+    await waitFor(() => expect(goalRequests()).toContain(null))
+    expect(new URLSearchParams(seen.url.split("?")[1]).has("status")).toBe(false)
+  },
+)
+
+it("keeps goal expansion when switching presentations", async () => {
+  const user = userEvent.setup()
+  renderBoard("/goals")
+  await user.click(await screen.findByRole("button", { name: "Collapse Ship the board" }))
+  await user.click(screen.getByRole("button", { name: "Compact" }))
+  expect(
+    screen.getByRole("button", { name: "Expand Ship the board" }).getAttribute("aria-expanded"),
+  ).toBe("false")
+  await user.click(screen.getByRole("button", { name: "Board" }))
+  expect(screen.getByRole("button", { name: "Expand Ship the board" })).toBeDefined()
 })

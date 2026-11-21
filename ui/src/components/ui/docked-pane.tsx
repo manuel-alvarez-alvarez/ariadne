@@ -8,7 +8,7 @@
  * it is expanded, and the choice is forgotten the next time the pane opens.
  */
 
-import { Maximize2Icon, Minimize2Icon, XIcon } from "lucide-react"
+import { Maximize2Icon, Minimize2Icon, PinIcon, XIcon } from "lucide-react"
 import {
   type ComponentProps,
   type CSSProperties,
@@ -20,7 +20,9 @@ import {
   useRef,
   useState,
 } from "react"
+import { createPortal } from "react-dom"
 
+import { InspectorLayoutContext } from "@/components/inspector-layout-context"
 import { Button } from "@/components/ui/button"
 import { SCRIM } from "@/components/ui/dialog"
 import { cn } from "@/lib/format"
@@ -58,6 +60,9 @@ export function DockedPane({
   children,
   ...props
 }: ComponentProps<"div"> & { onClose: () => void }) {
+  const layout = useContext(InspectorLayoutContext)
+  const [pinned, setPinned] = useState(false)
+  const overviewReturn = useRef<HTMLElement | null>(null)
   const titleId = useId()
   const [expanded, setExpanded] = useState(false)
   const focused = useRef<{ pane: HTMLDivElement; control: Element } | null>(null)
@@ -93,9 +98,30 @@ export function DockedPane({
   const drag = useRef<{ pointer: number; x: number; from: number; to: number | null } | null>(null)
   const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
   const minimum = 24 * rem
-  const maximum = Math.max(minimum, viewport * 0.6)
+  // Leave 48rem for navigation and a usable overview.
+  const canPin = layout !== null && viewport >= 72 * rem
+  const split = pinned && canPin && !expanded
+  const maximum = Math.max(minimum, split ? viewport - 48 * rem : viewport * 0.6)
   const clamp = (value: number) => Math.min(maximum, Math.max(minimum, value))
   const width = clamp(dragWidth ?? savedWidth)
+
+  useEffect(() => {
+    layout?.reserve(split ? width : 0)
+    return () => layout?.reserve(0)
+  }, [layout, split, width])
+
+  useEffect(() => {
+    // A narrow window restores the overlay trap without remounting content.
+    if (!split && pinned && !expanded) {
+      const pane = document.querySelector<HTMLElement>('[data-slot="docked-pane"]')
+      if (
+        pane &&
+        !pane.contains(document.activeElement) &&
+        !document.querySelector('[role="dialog"]')
+      )
+        pane.focus()
+    }
+  }, [split, pinned, expanded])
 
   useEffect(() => {
     const resize = () => setViewport(window.innerWidth)
@@ -115,19 +141,36 @@ export function DockedPane({
     setDragWidth(null)
   }
 
+  const focusControl = (
+    <Button
+      variant="outline"
+      onClick={() => {
+        const target = overviewReturn.current
+        if (target?.isConnected) target.focus()
+        else document.querySelector<HTMLElement>('[data-slot="docked-pane"]')?.focus()
+      }}
+    >
+      Focus inspector
+    </Button>
+  )
+
   return (
     <PaneTitleId.Provider value={titleId}>
+      {split && (layout?.focusSlot ? createPortal(focusControl, layout.focusSlot) : focusControl)}
       {/* A pointer's way out; Escape and the close button are the keyboard's. */}
-      <div
-        data-slot="docked-pane-scrim"
-        aria-hidden="true"
-        className={cn("fixed inset-0 z-40 duration-150 animate-in fade-in-0", SCRIM)}
-        onClick={onClose}
-      />
+      {split ? null : (
+        <div
+          data-slot="docked-pane-scrim"
+          aria-hidden="true"
+          className={cn("fixed inset-0 z-40 duration-150 animate-in fade-in-0", SCRIM)}
+          onClick={onClose}
+        />
+      )}
       <div
         data-slot="docked-pane"
         role="region"
         aria-labelledby={titleId}
+        data-pinned={split || undefined}
         tabIndex={-1}
         className={cn(
           "fixed z-40 flex min-h-0 w-full flex-col gap-4 border-l bg-background p-4 text-sm shadow-lg outline-none duration-200 animate-in",
@@ -137,7 +180,7 @@ export function DockedPane({
         )}
         style={{ "--pane-width": `${width}px` } as CSSProperties}
         onKeyDown={(event) => {
-          trapTab(event)
+          if (!split) trapTab(event)
           onKeyDown?.(event)
         }}
         {...props}
@@ -147,6 +190,30 @@ export function DockedPane({
         }}
       >
         <div className="-mb-2 flex shrink-0 justify-end gap-1">
+          {canPin && !expanded ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={pinned}
+              onClick={() => setPinned((value) => !value)}
+            >
+              <PinIcon />
+              {pinned ? "Unpin inspector" : "Pin inspector"}
+            </Button>
+          ) : null}
+          {split ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                overviewReturn.current =
+                  document.activeElement instanceof HTMLElement ? document.activeElement : null
+                layout?.focusOverview()
+              }}
+            >
+              Focus overview
+            </Button>
+          ) : null}
           <Button
             data-slot="pane-close"
             variant="ghost"

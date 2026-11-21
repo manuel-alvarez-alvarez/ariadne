@@ -79,6 +79,7 @@ export const paths = {
   },
   /** The open issues of the enabled repositories, Forge's second tab (028). */
   issues: () => "/forge/issues",
+  attention: () => "/attention",
   goals: () => "/goals",
   /** The goals board with this goal's panel open, on the goal's host. */
   goal: (goalId: string, host: Host = LOCAL_HOST) =>

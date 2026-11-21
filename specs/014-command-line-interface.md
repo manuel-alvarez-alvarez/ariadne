@@ -393,9 +393,19 @@ same binary also serves (013).
 46. With `all`, the CLI reads a list from each ready host at the same time,
     and prints one list in registry order (rule 46a). A host that is not
     ready, has no endpoint or fails gets one warning on stderr, and the list
-    succeeds while one host answers. A watched list (`--watch`) runs the
-    command on each host. A read that is not a list follows rule 46b. A
-    stream prints the answer of the first host that answers. A write with
+    succeeds while one host answers. A read that is not a list follows rule 46b.
+    Watched goal, task, session and PR lists redraw one merged table after
+    events from any ready host. Attention redraws its merged view too.
+    Event and daemon log followers run concurrently across ready hosts.
+    Each output line names its host; JSON events carry a `host` field.
+    Task and session log followers select the host that has the ID.
+    A host unavailable at startup or dropped during following gets one warning.
+    A failed watch snapshot retires that host before the next redraw.
+    Its later stream disconnect does not print another warning.
+    Other hosts continue. Dropped hosts are not reconnected.
+    Ctrl-C cancels all followers and child processes.
+    These forms work with only `local` in the registry.
+    A write with
     `all` is refused, and the refusal names only the
     hosts that take this write: each ready host, or `local` alone for a
     synced setting.
@@ -845,8 +855,16 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   host (`::all_reads_with_local_alone_keep_the_host`); `permissions ai show`
   keeps its blocks
   (`::permissions_device_is_written_on_the_named_host_only`).
-- A stream with `--host all` reaches stdout while it is open, rule 46
+- Concurrent streams carry both host names before either closes, rule 46
   (`tests/hosts.rs::all_forwards_a_stream_before_it_ends`).
+- Watched attention merges snapshots and redraws after an event, rule 46
+  (`tests/hosts.rs::watched_attention_merges_ready_hosts_before_streams_end`).
+- A failed watch snapshot warns once, stops requests to that host, and
+  ignores its later disconnect, and exits on Ctrl-C after redraws, rule 46
+  (`tests/hosts.rs::watched_snapshot_failure_warns_once_and_stops_reading_that_host`).
+- Daemon log streams label both hosts, warn once for unavailable and dropped
+  hosts, and stop on Ctrl-C, rule 46
+  (`tests/hosts.rs::daemon_follow_keeps_other_hosts_after_a_drop_and_stops_on_interrupt`).
 - Rule 50 columns (`tests/hosts.rs::host_ls_shows_remote_and_sync_state_of_each_host`).
 - Rule 48a on `status` and `logs` of a named host
   (`tests/hosts.rs::daemon_status_and_logs_on_a_named_host_show_only_that_host`)
