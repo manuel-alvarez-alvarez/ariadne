@@ -17,9 +17,9 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
-
 import { type Host, LOCAL_HOST, useHosts } from "@/api"
 import { ErrorState, hostErrorDescription } from "@/components/error-state"
+import { HostLabel } from "@/components/host-label"
 import { HostSync } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -91,16 +91,27 @@ function AiHost({ host, unreachable }: { host: Host; unreachable?: string | null
   return (
     <div className="flex flex-col gap-4">
       {unreachable ? (
-        <ErrorState title={`Host ${host} is not reachable`} error={new Error(unreachable)} />
+        <ErrorState
+          title={
+            <>
+              Host <HostLabel host={host} /> is not reachable
+            </>
+          }
+          error={new Error(unreachable)}
+        />
       ) : null}
       {status.isPending && !unreachable ? <Skeleton className="h-80 rounded-xl" /> : null}
 
       {status.isError ? (
         <ErrorState
           title={
-            host === LOCAL_HOST
-              ? "Could not load the model's settings"
-              : `Could not load the model's settings on ${host}`
+            host === LOCAL_HOST ? (
+              "Could not load the model's settings"
+            ) : (
+              <>
+                Could not load the model's settings on <HostLabel host={host} />
+              </>
+            )
           }
           error={status.error}
           description={hostErrorDescription(host, status.error)}

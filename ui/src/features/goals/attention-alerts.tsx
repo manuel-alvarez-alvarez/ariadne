@@ -28,8 +28,8 @@
 import { useEffect, useRef } from "react"
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-
 import type { Host } from "@/api"
+import { HostLabel } from "@/components/host-label"
 import { Badge } from "@/components/ui/badge"
 import { SESSION_ATTENTION_META } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
@@ -175,7 +175,13 @@ function useAttentionToasts(
           id: `attention-${key}`,
           // While a named host is listed every toast names its host, `local`
           // included (rule 74); with `local` alone none does.
-          description: showHost ? `${attentionSubject(item)} · ${host}` : attentionSubject(item),
+          description: showHost ? (
+            <>
+              {attentionSubject(item)} · <HostLabel host={host} />
+            </>
+          ) : (
+            attentionSubject(item)
+          ),
           // `target.replace` when it is a task panel swapping in for an open
           // goal's, same reasoning as the strip's own row.
           action: {

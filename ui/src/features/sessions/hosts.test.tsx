@@ -8,7 +8,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
-
 import type { PullRequestDto } from "@/api"
 import { DetailPanels } from "@/components/detail-panels"
 import { EventStreamProvider } from "@/events/provider"
@@ -23,6 +22,7 @@ import {
   LOCAL_ORIGIN,
   stubHosts,
 } from "@/test/hosts"
+import { byContent } from "@/test/text-content"
 import { SessionsPage } from "./sessions-page"
 
 const BOX = "http://box.test:7676"
@@ -281,7 +281,7 @@ it("cancels a turn of a remote session on its host and shows the host's stream r
       created_at: "2026-11-17T10:00:01Z",
     }),
   )
-  expect(await screen.findByText("stopped on box")).toBeTruthy()
+  expect(await screen.findByText(byContent("stopped on box"))).toBeTruthy()
 })
 
 it("titles each row from its own host when two hosts share a goal and task id", async () => {
@@ -331,7 +331,7 @@ it("names the host in the titles of a session that failed to load there", async 
     { route: `/sessions?session=${REMOTE.id}&host=box` },
   )
 
-  expect(await screen.findByText(/^Could not load session .* on box$/)).toBeTruthy()
+  expect(await screen.findByText(byContent(/^Could not load session .* on box$/))).toBeTruthy()
 })
 
 it("names the host in the title of a sessions list that failed on a named host", async () => {
@@ -349,7 +349,7 @@ it("names the host in the title of a sessions list that failed on a named host",
     { route: `/goals?task=${TASK.id}&host=box&tab=sessions` },
   )
 
-  expect(await screen.findByText("Could not load sessions on box")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load sessions on box"))).toBeTruthy()
 })
 
 it("names the host in the title of an activity tab that failed on a named host", async () => {
@@ -371,7 +371,7 @@ it("names the host in the title of an activity tab that failed on a named host",
   )
 
   await user.click(await screen.findByRole("tab", { name: "Agent activity" }))
-  expect(await screen.findByText("Could not load agent events on box")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load agent events on box"))).toBeTruthy()
 })
 
 it("reads the request link of a pull request session on the session's host", async () => {

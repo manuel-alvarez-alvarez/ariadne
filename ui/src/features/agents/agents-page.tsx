@@ -30,10 +30,11 @@ import { PencilIcon, RefreshCwIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-
 import { type AgentConfigDto, type Host, type HostRow, type ModelDto, useHostLists } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { HostListErrors } from "@/components/error-state"
+import { HostDot } from "@/components/host-dot"
+import { HostLabel } from "@/components/host-label"
 import { PageHeader } from "@/components/page-header"
 import { TabCount } from "@/components/tab-count"
 import { Badge } from "@/components/ui/badge"
@@ -334,7 +335,13 @@ function RefreshAgents({
       </TooltipTrigger>
       <TooltipContent>
         {REFRESH_HINT} {plural(off.count, "model")} turned off
-        {off.host ? ` on ${off.host}` : ""}.
+        {off.host ? (
+          <>
+            {" "}
+            on <HostLabel host={off.host} />
+          </>
+        ) : null}
+        .
       </TooltipContent>
     </Tooltip>
   )
@@ -391,6 +398,7 @@ function AgentPanel({
               className={cn("font-mono")}
               onClick={() => onChip(one.host)}
             >
+              <HostDot host={one.host} />
               {one.host}
             </Button>
           ))}

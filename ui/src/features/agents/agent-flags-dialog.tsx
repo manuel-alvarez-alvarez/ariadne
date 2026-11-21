@@ -17,8 +17,8 @@ import { PlusIcon, Undo2Icon, XIcon } from "lucide-react"
 import { useEffect } from "react"
 import { useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
-
 import type { AgentConfigDto, Host } from "@/api"
+import { HostLabel } from "@/components/host-label"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -81,14 +81,19 @@ export function AgentFlagsDialog({
   const defaults = config?.default_flags ?? []
   const atDefaults = sameFlags(cleanFlags(rows), defaults)
 
-  const at = showHost ? ` on ${host}` : ""
+  const at = showHost ? (
+    <>
+      {" "}
+      on <HostLabel host={host} />
+    </>
+  ) : null
 
   async function submit(values: AgentFlagsFormValues) {
     if (!config) return
     const extraFlags = cleanFlags(values.flags)
     try {
       await updateConfig.mutateAsync({ agentId: config.agent_id, extraFlags })
-      toast.success(`Flags saved${at}`, {
+      toast.success(<>Flags saved{at}</>, {
         description:
           extraFlags.length > 0
             ? `${config.agent_id} is launched with ${extraFlags.join(" ")}.`

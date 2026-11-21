@@ -14,7 +14,6 @@
 import { FlaskConicalIcon, RefreshCwIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-
 import {
   type AiPermissionsStatusDto,
   type Host,
@@ -24,6 +23,7 @@ import {
   type UpdateAiPermissionsRequest,
 } from "@/api"
 import { Fact, FactList } from "@/components/fact-list"
+import { HostLabel } from "@/components/host-label"
 import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -183,7 +183,13 @@ export function AiCard({
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h2 className="font-heading text-base font-semibold">
-            {settings ? "AI" : `AI on ${host}`}
+            {settings ? (
+              "AI"
+            ) : (
+              <>
+                AI on <HostLabel host={host} />
+              </>
+            )}
           </h2>
           <StatusBadge label={STATE_LABELS[status.state]} tone={STATE_TONE[status.state]} />
         </div>

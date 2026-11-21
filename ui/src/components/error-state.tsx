@@ -12,6 +12,7 @@
 import { AlertCircleIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { ApiError, type Host, LOCAL_HOST } from "@/api"
+import { HostLabel } from "@/components/host-label"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { describeError } from "@/lib/format"
@@ -24,7 +25,7 @@ export function ErrorState({
   showIcon = false,
   className,
 }: {
-  title: string
+  title: ReactNode
   error: unknown
   /** Replaces the daemon's message, where a surface has something better to say. */
   description?: ReactNode
@@ -66,7 +67,7 @@ export function RefreshWarning({
   cached = true,
 }: {
   /** What is on screen, lower case: "goals", "tasks". */
-  what: string
+  what: ReactNode
   error: unknown
   /** The failed query's `refetch`. */
   onRetry: () => void
@@ -109,8 +110,13 @@ export function hostErrorDescription(host: Host, error: unknown): string | undef
 }
 
 /** `title`, naming the host unless it is `local` and the only one read. */
-export function hostTitle(title: string, host: Host, hostCount: number): string {
-  return host === LOCAL_HOST && hostCount <= 1 ? title : `${title} on ${host}`
+export function hostTitle(title: string, host: Host, hostCount: number): ReactNode {
+  if (host === LOCAL_HOST && hostCount <= 1) return title
+  return (
+    <>
+      {title} on <HostLabel host={host} />
+    </>
+  )
 }
 
 /**

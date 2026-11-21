@@ -8,7 +8,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { act, render, screen } from "@testing-library/react"
+import { act, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
@@ -16,6 +16,7 @@ import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import type { useConnection } from "@/hooks/use-connection"
+import { byContent } from "@/test/text-content"
 
 type Connection = ReturnType<typeof useConnection>
 
@@ -164,6 +165,26 @@ it("opens the log of the picked host, and of local under All, and follows the dr
   expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
 })
 
+it("draws each host of the drawer's host select with its colour dot", async () => {
+  const user = userEvent.setup()
+  stubHosts({}, [LOCAL, { ...BOX, color: "violet" }])
+  useSettingsStore.setState({ hostFilter: "box" })
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  const select = await screen.findByRole("combobox", { name: "Host" })
+  await vi.waitFor(() =>
+    expect(select.querySelector("[data-host-color]")?.getAttribute("data-host-color")).toBe(
+      "violet",
+    ),
+  )
+  await user.click(select)
+  const hues = (await screen.findAllByRole("option")).map((option) =>
+    option.querySelector("[data-host-color]")?.getAttribute("data-host-color"),
+  )
+  expect(hues).toEqual(["grey", "violet"])
+})
+
 it("defaults to local under All hosts", async () => {
   const user = userEvent.setup()
   stubHosts({})
@@ -201,15 +222,30 @@ it("lists a host it cannot reach as a disabled option with its reason, and defau
 
 it("keeps the host it opened on when that host goes down, and says why", async () => {
   const user = userEvent.setup()
-  stubHosts({}, [LOCAL, BOX])
+  // The daemon's own row moves first, as in production: a list read that lands
+  // after the event answers the same row, so the event cannot be overwritten.
+  const hosts = [LOCAL, BOX]
+  stubHosts({}, hosts)
   useSettingsStore.setState({ hostFilter: "box" })
   const footerButton = mountShell()
 
   await user.click(footerButton)
   await vi.waitFor(() => expect(latestSource().url).toBe("http://box.test:7676/v1/logs/stream"))
 
+  const hueOfName = () =>
+    within(screen.getByText(byContent("Host box is not reachable: ssh closed")))
+      .getByText("box")
+      .getAttribute("data-host-color")
+  hosts[1] = BOX_DOWN
   act(() => {
     dispatchDomainEvent(lastClient, "local", { event: "host_updated", data: BOX_DOWN })
   })
-  expect(await screen.findByText("Host box is not reachable: ssh closed")).toBeTruthy()
+  expect(await screen.findByText(byContent("Host box is not reachable: ssh closed"))).toBeTruthy()
+  expect(hueOfName()).not.toBeNull()
+  const pink = { ...BOX_DOWN, color: "pink" as const }
+  hosts[1] = pink
+  act(() => {
+    dispatchDomainEvent(lastClient, "local", { event: "host_updated", data: pink })
+  })
+  await vi.waitFor(() => expect(hueOfName()).toBe("pink"))
 })

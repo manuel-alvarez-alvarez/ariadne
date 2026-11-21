@@ -1519,6 +1519,44 @@ Out: the daemon endpoints themselves (012).
 
 ### Connection recovery
 
+82. Every host name in the app is drawn with `HostLabel` or the colour dot
+    (`HostDot`), in the colour of the host. `hostColor` (`lib/host-color.ts`)
+    gives it: the `HostDto.color` of the host when set, else grey for `local`,
+    else one of the eight `HOST_COLORS` by a stable hash of the name. The
+    tokens are `--host-<name>` in `index.css`, for the light and the dark theme.
+    - `HostLabel` draws the pill. `HostDot` draws the dot beside a name in the
+      header picker's trigger, the logs drawer's and the Dashboards screen's
+      host selects. The picker rows, the Name column of the Hosts screen and
+      the `HostSync` rows draw `HostLabel`.
+    - The same holds for every other host name on screen, in a title, a
+      warning, a message or a toast as in a row: the attention list, the goal
+      board's table and warnings, the agents screen's chips, tooltip and flags
+      dialog, the models table, a repository's checkouts, the goal dialog, the
+      AI card, the logs drawer's and the Permissions screen's unreachable host
+      messages, the attention page's host filter, and the review and babysit dialogs' host select. `hostTitle`
+      and `RefreshWarning` take the host as a `HostLabel`. Only a key, an id,
+      the palette's search value and an accessible label are plain text.
+    - A `host_updated` event repaints every one of these at once.
+    - Each pill reads at WCAG AA (4.5:1) on its tint, and each dot at 2:1 on
+      the page, in both themes.
+    - `HOST_COLORS` lists the eight colours with their labels in a fixed order,
+      and `HostColorSwatch` draws one of them.
+    (`ui/src/components/host-color.test.tsx::gives a host its override, else grey for local, else a stable colour of the eight`,
+    `ui/src/components/host-color.test.tsx::lists the eight colours in a fixed order with labels`,
+    `ui/src/lib/host-colors.test.ts::reads each host pill at WCAG AA, and each dot against the page, in the light theme`,
+    `ui/src/lib/host-colors.test.ts::reads each host pill at WCAG AA, and each dot against the page, in the dark theme`,
+    `ui/src/lib/host-colors.test.ts::declares every host token in both themes and in the Tailwind theme`,
+    `ui/src/components/host-color.test.tsx::draws the host select of the review dialogs with each host's dot`,
+    `ui/src/components/host-color.test.tsx::draws the host name of each error, warning and message in its colour, and repaints it live`,
+    `ui/src/features/goals/attention-page.test.tsx::keeps a host named __all__ apart from All in the host filter, in colour`,
+    `ui/src/features/goals/attention-page.test.tsx::draws the hosts of the host filter with their colour, and repaints it live`,
+    `ui/src/features/system/daemon-logs-drawer.test.tsx::keeps the host it opened on when that host goes down, and says why`,
+    `ui/src/features/system/daemon-logs-drawer.test.tsx::draws each host of the drawer's host select with its colour dot`,
+    `ui/src/routes/dashboards.test.tsx::draws each host of the host select with its colour dot`,
+    `ui/src/components/host-color.test.tsx::draws a swatch of a colour of the list`,
+    `ui/src/components/host-color.test.tsx::draws a HostLabel pill and a dot in the host colour, local in grey`,
+    `ui/src/components/host-color.test.tsx::repaints every place a host name is drawn when host_updated changes its colour`)
+
 81. Settings shows the configured daemon address and the event stream connection state together. Saving the address starts a connection attempt and does not confirm success. Retry requests a stream reconnection. Settings gives daemon startup and TCP listener guidance, and identifies settings that apply immediately. Settings keeps the daemon URL, connection recovery, app diagnostics and the webhook tunnel. (`ui/src/components/settings-dialog.test.tsx::has no Hosts section`) Setup help expands with the keyboard. The live status announces changes without moving focus. The sidebar connection status keeps daemon logs reachable; host errors remain in Hosts.
 
 ## Acceptance criteria

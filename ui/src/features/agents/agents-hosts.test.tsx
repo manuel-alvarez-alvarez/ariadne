@@ -6,11 +6,11 @@ import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { afterEach, expect, it, vi } from "vitest"
-
 import { useSettingsStore } from "@/stores/settings"
 import { aModel, anAgentConfig } from "@/test/fixtures"
 import { jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
+import { byContent, contentOf } from "@/test/text-content"
 import { AgentsPage } from "./agents-page"
 
 afterEach(() => {
@@ -96,13 +96,13 @@ it("says which host's agents failed to load beside the agents of the host that a
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load the agents on box"))).toBeTruthy()
   expect(await screen.findByText("--on-local")).toBeTruthy()
 
   failing = false
   await userEvent.click(screen.getByRole("button", { name: "Retry" }))
   expect(await screen.findByRole("button", { name: "box" })).toBeTruthy()
-  expect(screen.queryByText("Could not load the agents on box")).toBeNull()
+  expect(screen.queryByText(byContent("Could not load the agents on box"))).toBeNull()
 })
 
 const broken = () =>
@@ -118,7 +118,7 @@ it("names the failed host beside a host that answered with no agents", async () 
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load the agents on box"))).toBeTruthy()
   expect(await screen.findByText("No agents")).toBeTruthy()
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy()
 })
@@ -130,8 +130,8 @@ it("names every host whose agents failed, each with a retry, when none answered"
   })
   renderScreen(<AgentsPage />)
 
-  expect(await screen.findByText("Could not load the agents on local")).toBeTruthy()
-  expect(await screen.findByText("Could not load the agents on box")).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load the agents on local"))).toBeTruthy()
+  expect(await screen.findByText(byContent("Could not load the agents on box"))).toBeTruthy()
   expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(2)
 })
 
@@ -188,7 +188,7 @@ it("shows the error of the picked host's models in the table, with its name and 
 
   await userEvent.click(await screen.findByRole("button", { name: "box" }))
   expect(
-    await screen.findByText("Could not load the models on box: it is broken (boom)"),
+    await screen.findByText(byContent("Could not load the models on box: it is broken (boom)")),
   ).toBeTruthy()
 
   failing = false
@@ -217,7 +217,7 @@ it("counts the models of the picked chip's host, and the models turned off there
   expect(screen.queryByLabelText("1 model")).toBeNull()
 
   await userEvent.hover(screen.getByRole("button", { name: "Refresh" }))
-  expect(await screen.findAllByText(/1 model turned off on box/)).not.toHaveLength(0)
+  expect(await screen.findAllByText(byContent(/1 model turned off on box/))).not.toHaveLength(0)
 })
 
 it("keeps the picked chip when the agent tab changes", async () => {
@@ -244,9 +244,7 @@ it("names the host in the flags dialog and in the toasts of a model change", asy
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
 
   await userEvent.click(screen.getByRole("switch"))
-  await waitFor(() =>
-    expect(success).toHaveBeenCalledWith("Model turned off on box", expect.anything()),
-  )
+  await waitFor(() => expect(contentOf(success.mock.calls[0]?.[0])).toBe("Model turned off on box"))
 })
 
 it("opens with the chip of ?host= picked", async () => {
@@ -280,7 +278,7 @@ it("names the host in the toast of a saved flag list", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "box" }))
   await userEvent.click(screen.getByRole("button", { name: /Edit claude-agent-acp flags/ }))
   await userEvent.click(await screen.findByRole("button", { name: "Save flags" }))
-  await waitFor(() => expect(success).toHaveBeenCalledWith("Flags saved on box", expect.anything()))
+  await waitFor(() => expect(contentOf(success.mock.calls[0]?.[0])).toBe("Flags saved on box"))
 })
 
 it("names the host in the toast of a refused rank change", async () => {
@@ -302,6 +300,6 @@ it("names the host in the toast of a refused rank change", async () => {
   await userEvent.click(await screen.findByRole("combobox", { name: `${MODEL} rank` }))
   await userEvent.click(await screen.findByRole("option", { name: /^Fast/ }))
   await waitFor(() =>
-    expect(error).toHaveBeenCalledWith("Could not change the rank on box", expect.anything()),
+    expect(contentOf(error.mock.calls[0]?.[0])).toBe("Could not change the rank on box"),
   )
 })

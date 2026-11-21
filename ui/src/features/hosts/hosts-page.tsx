@@ -12,6 +12,7 @@ import { PlusIcon } from "lucide-react"
 import { useState } from "react"
 
 import { type HostView, useHosts } from "@/api"
+import { HostLabel } from "@/components/host-label"
 import { hostStatus } from "@/components/host-picker"
 import { PageHeader } from "@/components/page-header"
 import { ReconnectHostButton } from "@/components/reconnect-host-button"
@@ -78,7 +79,9 @@ function HostRow({ host }: { host: HostView }) {
   const daemon = useHostDaemon(host.name)
   return (
     <TableRow>
-      <TableCell className="font-mono">{host.name}</TableCell>
+      <TableCell>
+        <HostLabel host={host.name} />
+      </TableCell>
       <TableCell>{host.kind}</TableCell>
       <TableCell>{hostStatus(host).label}</TableCell>
       <TableCell className="font-mono break-all whitespace-normal">
