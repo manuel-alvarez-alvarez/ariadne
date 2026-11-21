@@ -26,6 +26,10 @@ pub struct Timeouts {
     /// How long one probe of a forward's port may take: a request through
     /// the forward to the far daemon (037).
     pub ssh_probe: Duration,
+    /// Bound each cleanup attempt for an SSH forward's process group.
+    pub ssh_forward_end: Duration,
+    /// Poll a terminated SSH group until every member has been reaped.
+    pub ssh_forward_poll: Duration,
     /// Bound each SSH setup command, including release verification.
     pub worker_setup_command: Duration,
     /// The wait between two probes of a forward that has not answered yet
@@ -175,6 +179,8 @@ impl Default for Timeouts {
             tunnel_retry: Duration::from_secs(1),
             ssh_retry: Duration::from_secs(1),
             ssh_probe: Duration::from_secs(5),
+            ssh_forward_end: Duration::from_secs(5),
+            ssh_forward_poll: Duration::from_millis(10),
             worker_setup_command: Duration::from_secs(120),
             ssh_probe_interval: Duration::from_millis(200),
             host_check: Duration::from_secs(5),

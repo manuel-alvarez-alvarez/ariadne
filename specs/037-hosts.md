@@ -85,8 +85,12 @@ picker, the Hosts screen and one stream per host — is spec
     `host_unanswered`, the daemon kills the process and the host is `down`
     with the error `the far daemon does not answer through the forward:
     <reason>`. The restart of rule 12 follows.
-    Every forward exit ends its process group and reaps SSH before publishing
-    `down` or starting a replacement. This includes reconnect requests.
+    Forward cleanup waits until every process in its group is gone, including zombies,
+    before publishing `down` or starting a replacement. This includes reconnect requests.
+    Each cleanup attempt has a five-second deadline (`Timeouts::ssh_forward_end`).
+    Group disappearance is polled every ten milliseconds (`ssh_forward_poll`).
+    Failure keeps the host `connecting` with an explicit cleanup error and attempt number.
+    The daemon retains the old child and group, retries cleanup, and blocks replacement until the group disappears.
 12. When the process exits, the host is `down`, `endpoint` is null and `error`
     is the last non-empty stderr line of the process (else its exit status).
     The daemon starts it again after `ssh_retry`, doubled after each exit up
@@ -475,8 +479,10 @@ picker, the Hosts screen and one stream per host — is spec
   `::a_direct_host_takes_one_check_and_its_status_follows_the_answer`).
 - Rules 36 and 41
   (`host_reconnect.rs::a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after`).
-- Rule 37
-  (`host_reconnect.rs::a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once`).
+- Rules 11 and 37
+  (`host_reconnect.rs::a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once`,
+  `::each_reconnect_reaps_the_previous_forward_before_answering`,
+  `host_health.rs::cleanup_retries_keep_a_zombie_group_owned_until_it_disappears`).
 - Rule 38
   (`host_reconnect.rs::a_ready_forward_takes_one_check_and_a_good_answer_cuts_no_stream`).
 - Rules 39 and 41

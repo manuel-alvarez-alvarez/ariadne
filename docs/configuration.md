@@ -140,8 +140,10 @@ The daemon checks the status of each host again and again, so
   `host_updated` event. Stopping the daemon ends every check and every `ssh`
   it started.
 
-An SSH host reports `down` after its forward process ends.
-The daemon also stops other processes in that forward's process group before starting a replacement.
+An SSH host reports `down` after every process in its forward's process group has ended and been reaped.
+Each cleanup attempt can take up to five seconds.
+If cleanup fails, the host stays `connecting` with a cleanup error while the daemon retries.
+The daemon retains the old group and blocks replacement until cleanup completes.
 
 To try one host again at once, send `POST /v1/hosts/<name>/reconnect`.
 The daemon does not wait for the next check or the next start of `ssh`:

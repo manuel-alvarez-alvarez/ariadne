@@ -323,6 +323,55 @@ async fn a_ready_forward_that_stops_answering_loses_its_forward_and_starts_again
 }
 
 #[tokio::test]
+async fn cleanup_retries_keep_a_zombie_group_owned_until_it_disappears() {
+    let nowhere = tempfile::tempdir().unwrap();
+    let release = nowhere.path().join("reap");
+    let remote = nowhere.path().join("nobody.sock").display().to_string();
+    let stub = stub_ssh(json!({"forward": true, "hold_reaping": release}));
+    let host = format!("endpoint = \"ssh://box\"\nremote = \"{remote}\"\n");
+    let (local, _dir) = local_with(
+        &host,
+        Some(&stub),
+        Timeouts {
+            ssh_forward_end: RUNS_OUT / 5,
+            ssh_retry: TIMEOUT,
+            ..timeouts()
+        },
+    )
+    .await;
+    let mut updates = Updates(local.bus.subscribe());
+    local.state.hosts.start();
+    assert_eq!(updates.next().await.status, HostStatus::Connecting);
+    for attempt in 1..=2 {
+        let retry = updates.next().await;
+        assert_eq!(retry.status, HostStatus::Connecting);
+        assert!(
+            retry
+                .error
+                .unwrap()
+                .contains(&format!("cleanup attempt {attempt}"))
+        );
+        assert_eq!(stub.runs().len(), 1, "cleanup must not start a replacement");
+        assert!(
+            pid_is_alive(stub.runs()[0].pid),
+            "the unreaped PID still exists"
+        );
+    }
+    let run = stub.runs()[0].clone();
+    std::fs::write(&release, "").unwrap();
+    assert_eq!(updates.next().await.status, HostStatus::Down);
+    assert!(
+        !pid_is_alive(run.pid),
+        "Down requires the old PID to be reaped"
+    );
+    eventually(TIMEOUT, "the test reaper ends", || async {
+        !pid_is_alive(run.reaper.unwrap())
+    })
+    .await;
+    local.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
 async fn shutdown_ends_the_checks_of_a_direct_host() {
     let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let health = Health::default();

@@ -10,6 +10,7 @@
 //! - `until`: a file whose creation ends the run. Without it a forward runs
 //!   until it is killed, and a run that does not forward ends at once.
 //! - `stderr` and `exit`: what the run writes and exits with when it ends.
+//! - `hold_reaping`: keep the killed forward as a zombie until this file exists.
 //!
 //! [`super::HarnessBuilder::ssh`] points the daemon's `ssh_bin` at it.
 
@@ -27,6 +28,7 @@ pub(crate) struct StubSsh {
 #[derive(Debug, Clone)]
 pub(crate) struct Run {
     pub pid: u32,
+    pub reaper: Option<u32>,
     pub args: Vec<String>,
 }
 
@@ -41,6 +43,7 @@ impl StubSsh {
                 let run: Value = serde_json::from_str(line).unwrap();
                 Run {
                     pid: run["pid"].as_u64().unwrap() as u32,
+                    reaper: run["reaper"].as_u64().map(|pid| pid as u32),
                     args: serde_json::from_value(run["args"].clone()).unwrap(),
                 }
             })
@@ -100,11 +103,30 @@ def orphaned():
         except OSError:
             os._exit(0)
         time.sleep(0.2)
+script = json.load(open(os.path.join(dir, "ssh-script.json")))
+reaper = None
+if script.get("hold_reaping"):
+    reaper = os.getpid()
+    child = os.fork()
+    if child:
+        # Model a reaper outside the forward's group, as init would be.
+        os.setpgid(0, 0)
+        while not os.path.exists(script["hold_reaping"]):
+            try:
+                os.kill(parent, 0)
+            except OSError:
+                try:
+                    os.kill(child, 9)
+                except OSError:
+                    pass
+                break
+            time.sleep(0.01)
+        os.waitpid(child, 0)
+        os._exit(0)
 threading.Thread(target=orphaned, daemon=True).start()
 
 with open(os.path.join(dir, "ssh-runs.jsonl"), "a") as f:
-    f.write(json.dumps({"pid": os.getpid(), "args": args}) + "\n")
-script = json.load(open(os.path.join(dir, "ssh-script.json")))
+    f.write(json.dumps({"pid": os.getpid(), "args": args, "reaper": reaper}) + "\n")
 
 def end():
     sys.stderr.write(script.get("stderr", ""))
