@@ -244,7 +244,7 @@ async fn a_server_that_exits_during_the_pane_listing_returns_no_panes_and_warns(
     std::fs::write(
         &binary,
         format!(
-            "#!/bin/sh\ncase \"$3\" in\nlist-sessions)\n  if [ -e {0}.2 ]; then echo 'no server running' >&2; exit 1; fi\n  if [ -e {0} ]; then touch {0}.2; echo 'server exited unexpectedly' >&2; exit 1; fi\n  echo ariadne-a; echo ariadne-b ;;\nlist-panes)\n  if [ \"$5\" = '=ariadne-a:' ]; then echo '%0 ariadne-a first'; else touch {0}; echo 'server exited unexpectedly' >&2; exit 1; fi ;;\nesac\n",
+            "#!/bin/sh\ncase \"$3\" in\nlist-sessions)\n  if [ -e {0}.2 ]; then echo 'no server running' >&2; exit 1; fi\n  if [ -e {0} ]; then touch {0}.2; echo 'server exited unexpectedly' >&2; exit 1; fi\n  echo ariadne-a; echo ariadne-b ;;\nlist-panes)\n  if [ \"$6\" = '=ariadne-a:' ]; then echo '%0 ariadne-a first'; else touch {0}; echo 'server exited unexpectedly' >&2; exit 1; fi ;;\nesac\n",
             state.display()
         ),
     )
