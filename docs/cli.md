@@ -897,6 +897,16 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
    Provider login verification runs during setup because provider commands can create files.
    Each prerequisite names the missing capability, its resolution, and the recheck procedure.
    Inspection also lists supported agent packages and credential transfers.
+   It prints each agent, and GitHub CLI, under one of three groups:
+
+   - **Ariadne installs**: setup installs the item.
+   - **Already present**: the item is on the worker, and nobody installs it.
+   - **Manual**: you install the item or sign in by hand on the worker.
+
+   A manual item gives the reason and, where one exists, the command to run on the worker.
+   An agent that this daemon can run on its own machine says `on this machine`.
+   Inspection lists each sign-in, whether Ariadne can copy it, and the command that signs in on the worker.
+   Add `--format json` for the `InspectionDto`, with its `agents`, `github` and `sign_ins` fields.
 
 3. Create a request file on the machine where you run the CLI:
 
@@ -977,10 +987,17 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
 4. Review the plan with `ariadne host review builder --request worker.json`.
 
    Review shows installations, selected credential transfers, repository destinations, preserved settings, and prerequisites.
+   It prints one plan item for each thing that the request causes, under the same three groups.
+   Each manual item gives its reason and, where one exists, the command to run on the worker.
    Review changes no worker files and starts no setup operation.
+   Add `--format json` for the `SetupReviewDto`, with its `plan` field.
 
 5. Apply the selections with `ariadne host setup builder --request worker.json`.
 6. Read progress with `ariadne host setup-status builder`.
+
+   Progress prints each step with its title, its name, its state and its error.
+   A step that waits for manual work is under **Manual**, with the same reason and command as its plan item.
+
 7. Resolve manual prerequisites on the worker.
 8. Run `ariadne host resume builder` to recheck prerequisites and continue the saved operation.
 

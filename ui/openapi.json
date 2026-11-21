@@ -8332,20 +8332,107 @@
         },
         "additionalProperties": false
       },
+      "InspectedAgent": {
+        "type": "object",
+        "description": "One agent that setup can install or that the user installs by hand.",
+        "required": [
+          "id",
+          "name",
+          "on_this_machine",
+          "group"
+        ],
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/SetupGroup",
+            "description": "Who installs the agent on the inspected machine."
+          },
+          "id": {
+            "type": "string"
+          },
+          "manual": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ManualAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The display name."
+          },
+          "on_this_machine": {
+            "type": "boolean",
+            "description": "Whether this daemon can run the agent on its own machine now."
+          },
+          "sign_in": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `id` of the `sign_ins` entry the agent uses, or null."
+          }
+        }
+      },
+      "InspectedGithub": {
+        "type": "object",
+        "description": "GitHub CLI on the inspected machine.",
+        "required": [
+          "group"
+        ],
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/SetupGroup"
+          },
+          "manual": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ManualAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "InspectionDto": {
         "type": "object",
         "required": [
           "target",
           "checks",
           "supported_agents",
-          "supported_credentials"
+          "supported_credentials",
+          "agents",
+          "github",
+          "sign_ins"
         ],
         "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InspectedAgent"
+            },
+            "description": "Each agent that a setup request can name."
+          },
           "checks": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SetupCheck"
             }
+          },
+          "github": {
+            "$ref": "#/components/schemas/InspectedGithub",
+            "description": "Who installs GitHub CLI on the inspected machine."
+          },
+          "sign_ins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SignIn"
+            },
+            "description": "Each sign-in that a setup request can name in `credentials`."
           },
           "supported_agents": {
             "type": "array",
@@ -8618,6 +8705,26 @@
           }
         },
         "additionalProperties": false
+      },
+      "ManualAction": {
+        "type": "object",
+        "description": "Work the user does by hand on the new machine. It never holds a credential value.",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact command to run on the new machine, or null where no command exists."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why Ariadne cannot do this, and what to do, in plain words."
+          }
+        }
       },
       "MessageDto": {
         "type": "object",
@@ -9001,6 +9108,43 @@
             "type": "string"
           },
           "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "PlanItem": {
+        "type": "object",
+        "description": "One thing that a setup request causes, and who does it.",
+        "required": [
+          "id",
+          "title",
+          "group",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What happens, in plain words."
+          },
+          "group": {
+            "$ref": "#/components/schemas/SetupGroup"
+          },
+          "id": {
+            "type": "string",
+            "description": "The name of the progress step that does the item."
+          },
+          "manual": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ManualAction",
+                "description": "The work by hand, for an item in the `manual` group. Null otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
             "type": "string"
           }
         }
@@ -10181,6 +10325,15 @@
           "update"
         ]
       },
+      "SetupGroup": {
+        "type": "string",
+        "description": "Who installs one item of a setup on the new machine.",
+        "enum": [
+          "ariadne_installs",
+          "already_present",
+          "manual"
+        ]
+      },
       "SetupRequest": {
         "type": "object",
         "description": "An SSH worker installation request. SSH uses the daemon user's keys and config.",
@@ -10239,7 +10392,8 @@
           "inspection",
           "actions",
           "prerequisites",
-          "preserved"
+          "preserved",
+          "plan"
         ],
         "properties": {
           "actions": {
@@ -10250,6 +10404,13 @@
           },
           "inspection": {
             "$ref": "#/components/schemas/InspectionDto"
+          },
+          "plan": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanItem"
+            },
+            "description": "One item for each thing that the request causes, each in one group."
           },
           "prerequisites": {
             "type": "array",
@@ -10279,7 +10440,9 @@
         "type": "object",
         "required": [
           "name",
-          "complete"
+          "complete",
+          "title",
+          "manual"
         ],
         "properties": {
           "complete": {
@@ -10291,8 +10454,23 @@
               "null"
             ]
           },
+          "manual": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ManualAction",
+                "description": "The work the user does by hand when the step waits for it. It is the\nsame as the `manual` of the plan item of this step."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "What the step does, in plain words."
           }
         }
       },
@@ -10311,6 +10489,35 @@
           }
         },
         "additionalProperties": false
+      },
+      "SignIn": {
+        "type": "object",
+        "description": "A sign-in service. It never carries a credential value.",
+        "required": [
+          "id",
+          "name",
+          "copy_supported"
+        ],
+        "properties": {
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The command that signs in on the new machine, or null where none exists."
+          },
+          "copy_supported": {
+            "type": "boolean",
+            "description": "Whether Ariadne can copy this sign-in from this machine."
+          },
+          "id": {
+            "type": "string",
+            "description": "The reference a setup request names in `credentials`."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "SkillDto": {
         "type": "object",

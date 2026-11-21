@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
 mod inspect;
+mod plan;
 mod populate;
 mod repositories;
 use populate::selection_steps;
@@ -22,6 +23,9 @@ pub(super) struct Record {
     pub progress: SetupDto,
     #[serde(default)]
     active_step: Option<String>,
+    /// The worker's platform target, once the probe has read it.
+    #[serde(default)]
+    target: Option<String>,
 }
 
 fn with_binaries() -> bool {
@@ -56,6 +60,8 @@ fn steps(request: &SetupRequest, update: bool, binaries: bool) -> Vec<SetupStep>
             name,
             complete: false,
             error: None,
+            title: String::new(),
+            manual: None,
         })
         .collect()
 }
@@ -204,7 +210,7 @@ impl Hosts {
             .lock()
             .unwrap()
             .get(name)
-            .map(|r| r.progress.clone())
+            .map(|r| r.view(&self.0.cfg))
     }
 
     /// Every saved setup and update, by saved name.
@@ -343,7 +349,7 @@ impl Hosts {
                     if record.request != request || record.binaries != binaries {
                         return Err("wait for the active update before changing selections".into());
                     }
-                    return Ok(record.progress.clone());
+                    return Ok(record.view(&self.0.cfg));
                 }
                 let source_changed =
                     record.request.source != request.source || record.binaries != binaries;
@@ -394,6 +400,8 @@ impl Hosts {
                                     name,
                                     complete: false,
                                     error: None,
+                                    title: String::new(),
+                                    manual: None,
                                 });
                             }
                         }
@@ -404,7 +412,7 @@ impl Hosts {
                 record.progress.state,
                 SetupState::Running | SetupState::Pending | SetupState::Complete
             ) {
-                return Ok(record.progress.clone());
+                return Ok(record.view(&self.0.cfg));
             }
         } else {
             if self.list().iter().any(|h| h.name == name)
@@ -422,6 +430,7 @@ impl Hosts {
                     request: request.clone(),
                     binaries,
                     active_step: None,
+                    target: None,
                     progress: SetupDto {
                         name: worker.clone(),
                         state: SetupState::Pending,
@@ -446,6 +455,8 @@ impl Hosts {
                     name: "prerequisite:git".into(),
                     complete: false,
                     error: None,
+                    title: String::new(),
+                    manual: None,
                 },
             );
         }
@@ -453,7 +464,7 @@ impl Hosts {
         for step in &mut record.progress.steps {
             step.error = None;
         }
-        let progress = record.progress.clone();
+        let progress = record.view(&self.0.cfg);
         save(&self.0.cfg.root, &records)?;
         drop(records);
         let this = self.clone();
@@ -695,6 +706,7 @@ fi
                 );
             }
         };
+        self.0.setup.lock().unwrap().get_mut(name).unwrap().target = Some(target.into());
         self.checkpoint(name, "probe")?;
         let home = lines[2];
         let service_path = if captured_path.is_empty() {

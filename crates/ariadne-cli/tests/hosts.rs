@@ -2485,6 +2485,109 @@ async fn worker_inspection_review_and_resume_use_the_local_setup_contract() {
 }
 
 #[tokio::test]
+async fn worker_inspection_review_and_status_print_three_groups_with_manual_commands() {
+    let linger = json!({"reason":"Ask an administrator to turn on lingering","command":"sudo loginctl enable-linger \"$USER\""});
+    let inspection = json!({"target":"x86_64-unknown-linux-gnu","checks":[],"supported_agents":["codex-acp"],"supported_credentials":["codex","github"],
+        "agents":[
+            {"id":"codex-acp","name":"Codex","on_this_machine":true,"group":"ariadne_installs","manual":null,"sign_in":"codex"},
+            {"id":"amp-acp","name":"Amp","on_this_machine":false,"group":"manual","manual":{"reason":"Ariadne cannot install Amp","command":null},"sign_in":null}
+        ],
+        "github":{"group":"already_present","manual":null},
+        "sign_ins":[{"id":"claude","name":"Claude","copy_supported":false,"command":"claude auth login"}]});
+    let reviewed = json!({"inspection":inspection,"actions":[],"prerequisites":[],"preserved":[],"plan":[
+        {"id":"install","title":"Install the Ariadne programs","group":"ariadne_installs","detail":"Copy ariadne and ariadned","manual":null},
+        {"id":"tool:git","title":"Install Git","group":"already_present","detail":"Git is already on the new machine","manual":null},
+        {"id":"service","title":"Start the Ariadne service","group":"manual","detail":"The systemd user service is not ready","manual":linger}
+    ]});
+    let progress = json!({"name":"worker","state":"incomplete","steps":[
+        {"name":"install","complete":true,"error":null,"title":"Install the Ariadne programs","manual":null},
+        {"name":"service","complete":false,"error":"user service unavailable","title":"Start the Ariadne service","manual":linger}
+    ]});
+    let app = Router::new()
+        .route(
+            "/v1/hosts/worker/setup/inspect",
+            post(move || async move { Json(inspection) }),
+        )
+        .route(
+            "/v1/hosts/worker/setup/review",
+            post(move || async move { Json(reviewed) }),
+        )
+        .route(
+            "/v1/hosts/worker/setup",
+            get(move || async move { Json(progress) }),
+        );
+    let (endpoint, server) = serve(app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("request.json");
+    std::fs::write(
+        &file,
+        json!({"ssh":"ssh://worker@box","source":{"kind":"local","cli":"/cli","daemon":"/daemon"}})
+            .to_string(),
+    )
+    .unwrap();
+    let run = |args: Vec<&str>| {
+        let endpoint = endpoint.clone();
+        let args: Vec<String> = args.into_iter().map(String::from).collect();
+        async move {
+            let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+                .args(["--endpoint", &endpoint])
+                .args(args)
+                .env("ARIADNE_TELEMETRY", "off")
+                .output()
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
+    };
+    let text = run(vec![
+        "host",
+        "inspect",
+        "worker",
+        "--ssh",
+        "ssh://worker@box",
+    ])
+    .await;
+    let installs = text
+        .find("Ariadne installs:\n  Codex (codex-acp) — on this machine")
+        .expect(&text);
+    let present = text.find("Already present:\n  GitHub CLI").expect(&text);
+    let manual = text
+        .find("Manual:\n  Amp (amp-acp)\n    Ariadne cannot install Amp")
+        .expect(&text);
+    assert!(installs < present && present < manual, "{text}");
+    assert!(
+        text.contains("Claude: sign in on the new machine — $ claude auth login"),
+        "{text}"
+    );
+    let text = run(vec![
+        "host",
+        "review",
+        "worker",
+        "--request",
+        file.to_str().unwrap(),
+    ])
+    .await;
+    assert!(
+        text.contains(
+            "Ariadne installs:\n  Install the Ariadne programs — Copy ariadne and ariadned"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("Already present:\n  Install Git — Git is already on the new machine"),
+        "{text}"
+    );
+    assert!(text.contains("Manual:\n  Start the Ariadne service — The systemd user service is not ready\n    Ask an administrator to turn on lingering\n    $ sudo loginctl enable-linger \"$USER\""), "{text}");
+    let text = run(vec!["host", "setup-status", "worker"]).await;
+    assert!(
+        text.contains("Ariadne installs:\n  Install the Ariadne programs — install: complete"),
+        "{text}"
+    );
+    assert!(text.contains("Manual:\n  Start the Ariadne service — service: pending — user service unavailable\n    Ask an administrator to turn on lingering\n    $ sudo loginctl enable-linger \"$USER\""), "{text}");
+    server.abort();
+}
+
+#[tokio::test]
 async fn onboarding_commands_refuse_other_hosts_with_a_setup_reason() {
     let registry = json!([
         {"name":"local","kind":"local","status":"ready","endpoint":"http://127.0.0.1:1","error":null,"remote":null,"sync":{"state":"in_sync","error":null,"missing_repositories":[],"skipped_permissions":0}},

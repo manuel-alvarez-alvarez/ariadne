@@ -2098,6 +2098,216 @@ async fn review_lists_transfers_and_manual_actions_without_changing_the_worker()
     assert!(!remote.path().join(".local").exists());
 }
 
+/// A worker PATH with Git, Node.js and npm, and with no GitHub CLI, uv, Homebrew or user service.
+fn worker_with_git_and_node(remote: &std::path::Path) -> std::path::PathBuf {
+    let bin = remote.join("worker-bin");
+    std::fs::create_dir(&bin).unwrap();
+    std::os::unix::fs::symlink("/usr/bin/git", bin.join("git")).unwrap();
+    let present = common::shared_script("#!/bin/sh\nexit 0\n");
+    for tool in ["node", "npm"] {
+        std::os::unix::fs::symlink(&present, bin.join(tool)).unwrap();
+    }
+    bin
+}
+
+fn group_of<'v>(items: &'v serde_json::Value, id: &str) -> &'v serde_json::Value {
+    items
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == id)
+        .unwrap_or_else(|| panic!("no {id} in {items}"))
+}
+
+#[tokio::test]
+async fn inspection_names_who_installs_each_agent_github_and_each_sign_in() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = worker_with_git_and_node(remote.path());
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path(),"path":bin},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let inspect = || async {
+        h.json::<Value>(
+            common::post_json(
+                "/v1/hosts/builder/setup/inspect",
+                json!({"ssh":"ssh://worker@box"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await
+    };
+    common::eventually(common::TIMEOUT, "the stub agent is ready here", || async {
+        group_of(&inspect().await["agents"], common::STUB)["on_this_machine"] == true
+    })
+    .await;
+    let result = inspect().await;
+    let agents = &result["agents"];
+    let codex = group_of(agents, "codex-acp");
+    assert_eq!(codex["name"], "Codex");
+    assert_eq!(codex["group"], "ariadne_installs");
+    assert_eq!(codex["manual"], Value::Null);
+    assert_eq!(codex["sign_in"], "codex");
+    let uv = group_of(agents, "fast-agent");
+    assert_eq!(uv["group"], "manual");
+    assert_eq!(
+        uv["manual"]["command"],
+        "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    );
+    let binary = group_of(agents, "amp-acp");
+    assert_eq!(binary["group"], "manual");
+    assert!(binary["manual"]["reason"].as_str().unwrap().contains("Amp"));
+    assert_eq!(binary["manual"]["command"], Value::Null);
+    let custom = group_of(agents, common::STUB);
+    assert_eq!(custom["group"], "manual");
+    assert!(
+        custom["manual"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("configuration")
+    );
+    assert_eq!(result["github"]["group"], "manual");
+    assert!(
+        result["github"]["manual"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("GitHub CLI")
+    );
+    assert_eq!(
+        result["sign_ins"],
+        json!([
+            {"id":"codex","name":"Codex","copy_supported":true,"command":"codex login"},
+            {"id":"github","name":"GitHub","copy_supported":true,"command":"gh auth login --hostname github.com"},
+            {"id":"claude","name":"Claude","copy_supported":false,"command":"claude auth login"},
+            {"id":"opencode","name":"OpenCode","copy_supported":false,"command":"opencode auth login"},
+            {"id":"ssh","name":"SSH keys","copy_supported":false,"command":null}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn review_plans_each_requested_item_in_one_of_three_groups() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = worker_with_git_and_node(remote.path());
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path(),"path":bin},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let source = h.launcher.cfg.native_home.join(".codex/auth.json");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(source, r#"{"token":"plan-private-value"}"#).unwrap();
+    let result: Value = h.json(common::post_json("/v1/hosts/builder/setup/review", json!({
+        "ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+        "tools":{"agents":["codex-acp","amp-acp"],"github":true}, "credentials":["codex","claude"]
+    })), axum::http::StatusCode::OK).await;
+    let plan = &result["plan"];
+    let ids: Vec<_> = plan
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["id"].as_str().unwrap(), i["group"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            ("install", "manual"),
+            ("tool:git", "already_present"),
+            ("tool:github", "manual"),
+            ("tool:codex-acp", "ariadne_installs"),
+            ("tool:amp-acp", "manual"),
+            ("credential:codex", "ariadne_installs"),
+            ("credential:claude", "manual"),
+            ("authentication:github", "manual"),
+            ("authentication:codex-acp", "ariadne_installs"),
+            ("authentication:amp-acp", "manual"),
+            ("service", "manual"),
+            ("register", "ariadne_installs"),
+        ]
+    );
+    for item in plan.as_array().unwrap() {
+        assert!(!item["title"].as_str().unwrap().is_empty(), "{item}");
+        assert!(!item["detail"].as_str().unwrap().is_empty(), "{item}");
+        assert_eq!(
+            item["group"] == "manual",
+            item["manual"]["reason"].is_string(),
+            "{item}"
+        );
+    }
+    assert_eq!(
+        group_of(plan, "credential:claude")["manual"]["command"],
+        "claude auth login"
+    );
+    assert_eq!(
+        group_of(plan, "authentication:github")["manual"]["command"],
+        "gh auth login --hostname github.com"
+    );
+    assert_eq!(
+        group_of(plan, "service")["manual"]["command"],
+        "sudo loginctl enable-linger \"$USER\""
+    );
+    assert_eq!(group_of(plan, "install")["manual"]["command"], Value::Null);
+    assert!(!result.to_string().contains("plan-private-value"));
+    assert!(!remote.path().join(".local").exists());
+}
+
+#[tokio::test]
+async fn a_step_that_waits_for_manual_work_says_what_its_plan_item_says() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = worker_with_git_and_node(remote.path());
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path(),"path":bin},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let request = json!({
+        "ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+        "tools":{"agents":["amp-acp"],"github":false}
+    });
+    let review: Value = h
+        .json(
+            common::post_json("/v1/hosts/manual/setup/review", request.clone()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/manual/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "setup stops for manual work", || async {
+        let state: Value = h.get("/v1/hosts/manual/setup").await;
+        state["state"] == "incomplete"
+    })
+    .await;
+    let state: Value = h.get("/v1/hosts/manual/setup").await;
+    let steps = state["steps"].as_array().unwrap();
+    for step in steps {
+        assert!(!step["title"].as_str().unwrap().is_empty(), "{step}");
+    }
+    assert!(
+        steps
+            .iter()
+            .any(|s| s["name"] == "tool:amp-acp" && s["title"] == "Install Amp")
+    );
+    let waiting: Vec<_> = steps.iter().filter(|s| !s["manual"].is_null()).collect();
+    assert_eq!(
+        waiting
+            .iter()
+            .map(|s| s["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["validate", "tool:amp-acp", "authentication:amp-acp"],
+        "{state}"
+    );
+    for step in waiting {
+        let item = match step["name"].as_str().unwrap() {
+            "validate" => "install",
+            name => name,
+        };
+        assert_eq!(
+            step["manual"],
+            group_of(&review["plan"], item)["manual"],
+            "{step}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn missing_binaries_do_not_block_an_independent_selected_credential_transfer() {
     use serde_json::{Value, json};

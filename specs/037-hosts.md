@@ -492,6 +492,35 @@ picker, the Hosts screen and one stream per host — is spec
 81. `ariadne host setups` prints the list, and `ariadne host discard NAME` discards one setup.
     Both use the local daemon, and JSON output uses the route DTOs.
 
+### Setup groups
+
+82. `SetupGroup` is `ariadne_installs`, `already_present`, or `manual`. It says who installs an item on the worker.
+    `ManualAction` is `{reason, command}`. `reason` is plain words. `command` is the exact worker command, or null.
+    No manual action contains a credential value or provider command output.
+83. `InspectionDto.agents` lists each shipped registry agent, then each agent that only this daemon's configuration names.
+    Each entry has `id`, display `name`, `on_this_machine`, `group`, `manual`, and `sign_in`.
+    `on_this_machine` is true when this daemon's agent registry reports the agent ready.
+    An npm agent is `ariadne_installs` when the worker has Node.js and npm, or user-owned Homebrew.
+    A uv agent is `ariadne_installs` when the worker has uv, or user-owned Homebrew.
+    Configured commands, binary distributions, and unknown agents are `manual`.
+    `sign_in` names the `sign_ins` entry of the agent: `codex`, `claude`, `opencode`, or null.
+84. `InspectionDto.github` is `{group, manual}`. GitHub CLI on the worker is `already_present`.
+    Without it, user-owned Homebrew makes it `ariadne_installs`; otherwise it is `manual`.
+85. `InspectionDto.sign_ins` lists `codex`, `github`, `claude`, `opencode`, and `ssh` with `name`, `copy_supported`, and `command`.
+    Only `codex` and `github` support copying (rule 54). `command` signs in on the worker, or is null for `ssh`.
+86. `SetupReviewDto.plan` has one `{id, title, group, detail, manual}` item for each thing that the request causes.
+    The order is the setup order: `install`, Git, GitHub CLI, agents, credentials, authentication checks,
+    repositories, `service`, and `register`. Each `id` is the name of the progress step that does the item.
+    Git is `prerequisite:git` without tool selections and `tool:git` with them.
+    `manual` is set exactly for items in the `manual` group.
+87. `SetupStep.title` is a plain-words title for every step. `SetupStep.manual` is set when a failed step needs manual work.
+    It equals the `manual` of the plan item with the same id. `validate` uses the `install` item.
+    A failed `validate` step of a release source has no manual action.
+88. All new fields are additive. Existing request formats are unchanged.
+    The CLI reads responses without the new fields. Stored operations without them gain titles when read.
+89. `host inspect`, `host review`, and `host setup-status` print items under "Ariadne installs", "Already present", and "Manual".
+    Each manual item prints its reason and its command. `--format json` prints the DTO.
+
 ## Acceptance criteria
 
 - Rules 79 and 80: hosts.rs::saved_setups_are_listed_without_credentials_and_only_a_stopped_one_is_discarded proves the list, the refusals, the untouched worker and the fresh restart.
@@ -725,6 +754,12 @@ Partial setup proof: `hosts.rs::setup_reports_custom_tools_without_executing_ins
 Resume proof: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
 Desktop proof: `ui/src/features/hosts/worker-setup.test.tsx`.
 
+- Rules 79–82: `hosts.rs::inspection_names_who_installs_each_agent_github_and_each_sign_in`.
+- Rules 79 and 83: `hosts.rs::review_plans_each_requested_item_in_one_of_three_groups`.
+- Rule 84: `hosts.rs::a_step_that_waits_for_manual_work_says_what_its_plan_item_says`.
+- Rules 85 and 86: `crates/ariadne-cli/tests/hosts.rs::worker_inspection_review_and_status_print_three_groups_with_manual_commands`
+  and `::worker_inspection_review_and_resume_use_the_local_setup_contract`, which reads responses without the new fields.
+
 ## Sources
 
 `crates/ariadne-client/src/endpoint.rs`, `crates/ariadne-api/src/hosts.rs`,
@@ -736,4 +771,4 @@ Desktop proof: `ui/src/features/hosts/worker-setup.test.tsx`.
 `crates/ariadne-daemon/src/http/query/fan.rs`, `docs/configuration.md`,
 `docs/telemetry.md`.
 
-SSH setup sources: `crates/ariadne-daemon/src/hosts/setup.rs`, `ui/src/features/hosts/worker-setup.tsx`.
+SSH setup sources: `crates/ariadne-daemon/src/hosts/setup.rs`, `crates/ariadne-daemon/src/hosts/setup/plan.rs`, `ui/src/features/hosts/worker-setup.tsx`.

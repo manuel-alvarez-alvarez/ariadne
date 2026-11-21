@@ -140,10 +140,10 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
         } => hosts::resume(&client, &name, format).await,
         Command::Host {
             command: HostCommand::Inspect { name, ssh },
-        } => hosts::inspect(&client, &name, &ssh).await,
+        } => hosts::inspect(&client, &name, &ssh, format).await,
         Command::Host {
             command: HostCommand::Review { name, request },
-        } => hosts::review(&client, &name, &request).await,
+        } => hosts::review(&client, &name, &request, format).await,
         Command::Host {
             command: HostCommand::Update { name, request },
         } => hosts::setup(&client, &name, Some(&request), format, true).await,

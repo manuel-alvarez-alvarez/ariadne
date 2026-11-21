@@ -1204,18 +1204,29 @@ pub(crate) async fn setup(
 }
 
 fn show_setup(progress: ariadne_api::hosts::SetupDto, format: Format, update: bool) -> Result<()> {
+    use ariadne_api::hosts::SetupGroup;
     if format == Format::Json {
         output::print_json(&progress)?;
     } else {
         println!("{}: {:?}", progress.name, progress.state);
-        for step in progress.steps {
-            println!(
+        print_groups(progress.steps.iter().map(|step| Grouped {
+            group: if step.manual.is_some() {
+                SetupGroup::Manual
+            } else {
+                SetupGroup::AriadneInstalls
+            },
+            title: step_title(step),
+            detail: Some(format!(
                 "{}: {}{}",
                 step.name,
                 if step.complete { "complete" } else { "pending" },
-                step.error.map(|e| format!(" — {e}")).unwrap_or_default()
-            );
-        }
+                step.error
+                    .as_ref()
+                    .map(|e| format!(" — {e}"))
+                    .unwrap_or_default()
+            )),
+            manual: step.manual.as_ref(),
+        }));
     }
     if matches!(
         progress.state,
@@ -1232,7 +1243,7 @@ fn show_setup(progress: ariadne_api::hosts::SetupDto, format: Format, update: bo
 }
 
 /// Read-only inspection uses the settings daemon's SSH configuration.
-pub(crate) async fn inspect(client: &Client, name: &str, ssh: &str) -> Result<()> {
+pub(crate) async fn inspect(client: &Client, name: &str, ssh: &str, format: Format) -> Result<()> {
     validate_setup_name(name)?;
     let result: ariadne_api::hosts::InspectionDto = client
         .post_json(
@@ -1240,18 +1251,132 @@ pub(crate) async fn inspect(client: &Client, name: &str, ssh: &str) -> Result<()
             &ariadne_api::hosts::InspectRequest { ssh: ssh.into() },
         )
         .await?;
-    output::print_json(&result)?;
+    if format == Format::Json {
+        return output::print_json(&result);
+    }
+    print_inspection(&result);
     Ok(())
 }
 
-pub(crate) async fn review(client: &Client, name: &str, file: &std::path::Path) -> Result<()> {
+pub(crate) async fn review(
+    client: &Client,
+    name: &str,
+    file: &std::path::Path,
+    format: Format,
+) -> Result<()> {
     validate_setup_name(name)?;
     let request: ariadne_api::hosts::SetupRequest = serde_json::from_slice(&std::fs::read(file)?)?;
     let result: ariadne_api::hosts::SetupReviewDto = client
         .post_json(&format!("/v1/hosts/{name}/setup/review"), &request)
         .await?;
-    output::print_json(&result)?;
+    if format == Format::Json {
+        return output::print_json(&result);
+    }
+    println!("{name}: {}", result.inspection.target);
+    print_groups(result.plan.iter().map(|item| Grouped {
+        group: item.group,
+        title: item.title.clone(),
+        detail: Some(item.detail.clone()),
+        manual: item.manual.as_ref(),
+    }));
+    print_unmet(&result.prerequisites);
+    for line in &result.preserved {
+        println!("Kept: {line}");
+    }
     Ok(())
+}
+
+fn print_inspection(result: &ariadne_api::hosts::InspectionDto) {
+    println!("Target: {}", result.target);
+    print_groups(
+        std::iter::once(Grouped {
+            group: result.github.group,
+            title: "GitHub CLI".into(),
+            detail: None,
+            manual: result.github.manual.as_ref(),
+        })
+        .chain(result.agents.iter().map(|agent| Grouped {
+            group: agent.group,
+            title: format!("{} ({})", agent.name, agent.id),
+            detail: agent.on_this_machine.then(|| "on this machine".to_owned()),
+            manual: agent.manual.as_ref(),
+        })),
+    );
+    if !result.sign_ins.is_empty() {
+        println!("Sign-ins:");
+        for sign_in in &result.sign_ins {
+            println!(
+                "  {}: {}{}",
+                sign_in.name,
+                if sign_in.copy_supported {
+                    "Ariadne can copy it"
+                } else {
+                    "sign in on the new machine"
+                },
+                sign_in
+                    .command
+                    .as_ref()
+                    .map(|c| format!(" — $ {c}"))
+                    .unwrap_or_default()
+            );
+        }
+    }
+    print_unmet(&result.checks);
+}
+
+/// The checks that are not met, with what resolves each one.
+fn print_unmet(checks: &[ariadne_api::hosts::SetupCheck]) {
+    for check in checks.iter().filter(|c| !c.satisfied) {
+        println!(
+            "Missing {}: {} {}",
+            check.id, check.missing, check.resolution
+        );
+    }
+}
+
+/// One line of a setup listing, before it is put under its group.
+struct Grouped<'a> {
+    group: ariadne_api::hosts::SetupGroup,
+    title: String,
+    detail: Option<String>,
+    manual: Option<&'a ariadne_api::hosts::ManualAction>,
+}
+
+fn step_title(step: &ariadne_api::hosts::SetupStep) -> String {
+    if step.title.is_empty() {
+        step.name.clone()
+    } else {
+        step.title.clone()
+    }
+}
+
+/// Print the items under the three groups, in this order, skipping an empty group.
+fn print_groups<'a>(items: impl Iterator<Item = Grouped<'a>>) {
+    use ariadne_api::hosts::SetupGroup;
+    let items: Vec<_> = items.collect();
+    for (group, heading) in [
+        (SetupGroup::AriadneInstalls, "Ariadne installs:"),
+        (SetupGroup::AlreadyPresent, "Already present:"),
+        (SetupGroup::Manual, "Manual:"),
+    ] {
+        let mut members = items.iter().filter(|i| i.group == group).peekable();
+        if members.peek().is_none() {
+            continue;
+        }
+        println!("{heading}");
+        for item in members {
+            match &item.detail {
+                Some(detail) => println!("  {} — {detail}", item.title),
+                None => println!("  {}", item.title),
+            }
+            if let Some(manual) = item.manual {
+                println!("    {}", manual.reason);
+                if let Some(command) = &manual.command {
+                    println!("    $ {command}");
+                }
+            }
+        }
+    }
 }
 
 fn validate_setup_name(name: &str) -> Result<()> {

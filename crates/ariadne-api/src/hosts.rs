@@ -162,6 +162,36 @@ pub struct SetupStep {
     pub name: String,
     pub complete: bool,
     pub error: Option<String>,
+    /// What the step does, in plain words.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub title: String,
+    /// The work the user does by hand when the step waits for it. It is the
+    /// same as the `manual` of the plan item of this step.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub manual: Option<ManualAction>,
+}
+
+/// Who installs one item of a setup on the new machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupGroup {
+    /// Ariadne installs or copies the item during setup.
+    AriadneInstalls,
+    /// The item is already on the new machine. Nobody installs it.
+    AlreadyPresent,
+    /// The user installs or signs in by hand on the new machine.
+    Manual,
+}
+
+/// Work the user does by hand on the new machine. It never holds a credential value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ManualAction {
+    /// Why Ariadne cannot do this, and what to do, in plain words.
+    pub reason: String,
+    /// The exact command to run on the new machine, or null where no command exists.
+    pub command: Option<String>,
 }
 
 /// Durable setup progress. No credential values are accepted or returned.
@@ -258,6 +288,73 @@ pub struct InspectionDto {
     pub checks: Vec<SetupCheck>,
     pub supported_agents: Vec<String>,
     pub supported_credentials: Vec<String>,
+    /// Each agent that a setup request can name.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub agents: Vec<InspectedAgent>,
+    /// Who installs GitHub CLI on the inspected machine.
+    #[serde(default = "github_unknown")]
+    #[schema(required = true)]
+    pub github: InspectedGithub,
+    /// Each sign-in that a setup request can name in `credentials`.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sign_ins: Vec<SignIn>,
+}
+
+/// One agent that setup can install or that the user installs by hand.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct InspectedAgent {
+    pub id: String,
+    /// The display name.
+    pub name: String,
+    /// Whether this daemon can run the agent on its own machine now.
+    pub on_this_machine: bool,
+    /// Who installs the agent on the inspected machine.
+    pub group: SetupGroup,
+    pub manual: Option<ManualAction>,
+    /// The `id` of the `sign_ins` entry the agent uses, or null.
+    pub sign_in: Option<String>,
+}
+
+/// GitHub CLI on the inspected machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct InspectedGithub {
+    pub group: SetupGroup,
+    pub manual: Option<ManualAction>,
+}
+
+/// The value an older daemon's inspection, which has no `github`, reads as.
+fn github_unknown() -> InspectedGithub {
+    InspectedGithub {
+        group: SetupGroup::Manual,
+        manual: None,
+    }
+}
+
+/// A sign-in service. It never carries a credential value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SignIn {
+    /// The reference a setup request names in `credentials`.
+    pub id: String,
+    pub name: String,
+    /// Whether Ariadne can copy this sign-in from this machine.
+    pub copy_supported: bool,
+    /// The command that signs in on the new machine, or null where none exists.
+    pub command: Option<String>,
+}
+
+/// One thing that a setup request causes, and who does it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PlanItem {
+    /// The name of the progress step that does the item.
+    pub id: String,
+    pub title: String,
+    pub group: SetupGroup,
+    /// What happens, in plain words.
+    pub detail: String,
+    /// The work by hand, for an item in the `manual` group. Null otherwise.
+    pub manual: Option<ManualAction>,
 }
 
 /// Review of selected actions. Inspection and review never persist an operation.
@@ -267,4 +364,8 @@ pub struct SetupReviewDto {
     pub actions: Vec<String>,
     pub prerequisites: Vec<SetupCheck>,
     pub preserved: Vec<String>,
+    /// One item for each thing that the request causes, each in one group.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub plan: Vec<PlanItem>,
 }

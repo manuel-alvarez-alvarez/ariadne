@@ -216,6 +216,17 @@ pub(super) async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The agents this daemon can run on its own machine now.
+async fn ready_agents(s: &AppState) -> Vec<String> {
+    s.agent_registry
+        .agents()
+        .await
+        .into_iter()
+        .filter(|a| a.status == ariadne_api::agents::AcpAgentStatus::Ready)
+        .map(|a| a.id)
+        .collect()
+}
+
 #[utoipa::path(post, path="/v1/hosts/{name}/setup/inspect", tag="hosts", params(("name"=String, Path)), request_body=ariadne_api::hosts::InspectRequest, responses((status=200,body=ariadne_api::hosts::InspectionDto)))]
 pub(super) async fn inspect_setup(
     State(s): State<AppState>,
@@ -223,7 +234,7 @@ pub(super) async fn inspect_setup(
     Json(request): Json<ariadne_api::hosts::InspectRequest>,
 ) -> ApiResult<Json<ariadne_api::hosts::InspectionDto>> {
     s.hosts
-        .inspect_setup(&name, request)
+        .inspect_setup(&name, request, &ready_agents(&s).await)
         .await
         .map(Json)
         .map_err(ApiError::bad_request)
@@ -235,7 +246,7 @@ pub(super) async fn review_setup(
     Json(request): Json<ariadne_api::hosts::SetupRequest>,
 ) -> ApiResult<Json<ariadne_api::hosts::SetupReviewDto>> {
     s.hosts
-        .review_setup(&name, request)
+        .review_setup(&name, request, &ready_agents(&s).await)
         .await
         .map(Json)
         .map_err(ApiError::bad_request)

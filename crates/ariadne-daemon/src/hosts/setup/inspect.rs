@@ -1,6 +1,12 @@
 //! Read-only worker inspection and a review of explicitly selected actions.
+use super::plan::{
+    Install, agent_name, agent_sign_in, index, install, manual_for, sign_ins, title,
+};
 use super::*;
-use ariadne_api::hosts::{InspectRequest, InspectionDto, SetupCheck, SetupReviewDto};
+use ariadne_api::hosts::{
+    InspectRequest, InspectedAgent, InspectedGithub, InspectionDto, ManualAction, PlanItem,
+    SetupCheck, SetupGroup, SetupReviewDto,
+};
 
 fn check(id: &str, satisfied: bool, missing: &str, resolution: &str) -> SetupCheck {
     SetupCheck {
@@ -32,6 +38,7 @@ impl Hosts {
         &self,
         name: &str,
         request: InspectRequest,
+        local_agents: &[String],
     ) -> Result<InspectionDto, String> {
         let request = connection(request.ssh);
         validate(name, &request)?;
@@ -106,8 +113,7 @@ exit 0
                 "Sign in on the worker. Setup verifies authentication after installation.",
             ));
         }
-        let index: serde_json::Value =
-            serde_json::from_str(crate::acp_discovery::SHIPPED_INDEX).unwrap();
+        let index = index();
         let supported_agents = index["agents"]
             .as_array()
             .unwrap()
@@ -119,11 +125,73 @@ exit 0
             })
             .filter_map(|a| a["id"].as_str().map(String::from))
             .collect();
+        let os = if target.ends_with("apple-darwin") {
+            "Darwin"
+        } else {
+            "Linux"
+        };
+        let has = |tool: &str| available.contains(&tool);
+        let brew = has("brew");
+        let mut ids: Vec<String> = index["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|a| a["id"].as_str().map(String::from))
+            .collect();
+        for custom in &self.0.cfg.acp_agents {
+            if !ids.contains(&custom.id) {
+                ids.push(custom.id.clone());
+            }
+        }
+        let agents = ids
+            .into_iter()
+            .map(|id| {
+                let installs = match install(&self.0.cfg, &id) {
+                    Install::Npm => brew || (has("node") && has("npm")),
+                    Install::Uv => brew || has("uv"),
+                    Install::Custom | Install::Unsupported => false,
+                };
+                let key = format!("tool:{id}");
+                InspectedAgent {
+                    name: agent_name(&id),
+                    on_this_machine: local_agents.contains(&id),
+                    group: if installs {
+                        SetupGroup::AriadneInstalls
+                    } else {
+                        SetupGroup::Manual
+                    },
+                    manual: (!installs)
+                        .then(|| manual_for(&self.0.cfg, &key, Some(os)))
+                        .flatten(),
+                    sign_in: agent_sign_in(&id).map(String::from),
+                    id,
+                }
+            })
+            .collect();
+        let github = if has("gh") {
+            InspectedGithub {
+                group: SetupGroup::AlreadyPresent,
+                manual: None,
+            }
+        } else if brew {
+            InspectedGithub {
+                group: SetupGroup::AriadneInstalls,
+                manual: None,
+            }
+        } else {
+            InspectedGithub {
+                group: SetupGroup::Manual,
+                manual: manual_for(&self.0.cfg, "tool:github", Some(os)),
+            }
+        };
         Ok(InspectionDto {
             target: target.into(),
             checks,
             supported_agents,
             supported_credentials: vec!["codex".into(), "github".into()],
+            agents,
+            github,
+            sign_ins: sign_ins(),
         })
     }
 
@@ -131,6 +199,7 @@ exit 0
         &self,
         name: &str,
         request: SetupRequest,
+        local_agents: &[String],
     ) -> Result<SetupReviewDto, String> {
         validate(name, &request)?;
         let inspection = self
@@ -139,6 +208,7 @@ exit 0
                 InspectRequest {
                     ssh: request.ssh.clone(),
                 },
+                local_agents,
             )
             .await?;
         let mut actions = vec!["Install Ariadne binaries in ~/.local/bin and configure the user service.".into(), "Synchronize registered skill bundles, workflows, permissions, and portable settings after registration.".into()];
@@ -271,7 +341,9 @@ exit 0
             ));
             actions.push(format!("Clone repository {id} into {destination}, or reuse its registered forge identity. Copy no local edits."));
         }
+        let plan = self.plan(&request, &inspection, &prerequisites);
         Ok(SetupReviewDto {
+            plan,
             inspection,
             actions,
             prerequisites,
@@ -281,5 +353,245 @@ exit 0
                 "Preserve worker-only catalog entries and repository destinations.".into(),
             ],
         })
+    }
+}
+
+fn item(
+    id: String,
+    group: SetupGroup,
+    detail: impl Into<String>,
+    manual: Option<ManualAction>,
+) -> PlanItem {
+    PlanItem {
+        title: title(&id),
+        manual: (group == SetupGroup::Manual).then_some(manual).flatten(),
+        id,
+        group,
+        detail: detail.into(),
+    }
+}
+
+impl Hosts {
+    /// One item for each step the request causes, in the order setup runs them.
+    fn plan(
+        &self,
+        request: &SetupRequest,
+        inspection: &InspectionDto,
+        prerequisites: &[SetupCheck],
+    ) -> Vec<PlanItem> {
+        let cfg = &self.0.cfg;
+        let os = Some(if inspection.target.ends_with("apple-darwin") {
+            "Darwin"
+        } else {
+            "Linux"
+        });
+        let manual = |id: &str| manual_for(cfg, id, os);
+        let present = |id: &str| inspection.checks.iter().any(|c| c.id == id && c.satisfied);
+        let met = |id: &str| prerequisites.iter().any(|c| c.id == id && c.satisfied);
+        let mut plan = Vec::new();
+        plan.push(match &request.source {
+            BinarySource::Local { .. } if met("binaries") => item(
+                "install".into(),
+                SetupGroup::AriadneInstalls,
+                format!("Copy ariadne and ariadned from this machine to ~/.local/bin. Both run on {}.", inspection.target),
+                None,
+            ),
+            BinarySource::Local { .. } => item(
+                "install".into(),
+                SetupGroup::Manual,
+                "Ariadne cannot use the selected programs.",
+                manual("install"),
+            ),
+            BinarySource::Release { repository, tag } => item(
+                "install".into(),
+                SetupGroup::AriadneInstalls,
+                format!("Download release {tag} of {repository}, verify it, and install it in ~/.local/bin."),
+                None,
+            ),
+        });
+        let git = if request.tools.is_some() {
+            "tool:git"
+        } else {
+            "prerequisite:git"
+        };
+        plan.push(if present("git") {
+            item(
+                git.into(),
+                SetupGroup::AlreadyPresent,
+                "Git is already on the new machine.",
+                None,
+            )
+        } else if request.tools.is_some() && present("brew") {
+            item(
+                git.into(),
+                SetupGroup::AriadneInstalls,
+                "Install Git with the user-owned Homebrew.",
+                None,
+            )
+        } else {
+            item(
+                git.into(),
+                SetupGroup::Manual,
+                "Git is not on the new machine.",
+                manual(git),
+            )
+        });
+        if let Some(tools) = &request.tools {
+            if tools.github {
+                let github = &inspection.github;
+                let detail = match github.group {
+                    SetupGroup::AlreadyPresent => "GitHub CLI is already on the new machine.",
+                    SetupGroup::AriadneInstalls => {
+                        "Install GitHub CLI with the user-owned Homebrew."
+                    }
+                    SetupGroup::Manual => "GitHub CLI is not on the new machine.",
+                };
+                plan.push(item(
+                    "tool:github".into(),
+                    github.group,
+                    detail,
+                    github.manual.clone(),
+                ));
+            }
+            for id in &tools.agents {
+                let key = format!("tool:{id}");
+                let name = agent_name(id);
+                let (group, manual) = inspection
+                    .agents
+                    .iter()
+                    .find(|a| a.id == *id)
+                    .map_or((SetupGroup::Manual, manual(&key)), |a| {
+                        (a.group, a.manual.clone())
+                    });
+                let detail = if group == SetupGroup::AriadneInstalls {
+                    format!("Install {name} from the shipped agent registry.")
+                } else {
+                    format!("Ariadne cannot install {name}.")
+                };
+                plan.push(item(key, group, detail, manual));
+            }
+        }
+        let mut copied = Vec::new();
+        for id in &request.credentials {
+            let key = format!("credential:{id}");
+            let available = met(&format!("source-credential:{id}"));
+            plan.push(match id.as_str() {
+                "codex" if available => item(
+                    key,
+                    SetupGroup::AriadneInstalls,
+                    "Copy ~/.codex/auth.json from this machine with mode 0600.",
+                    None,
+                ),
+                "github" if available => item(
+                    key,
+                    SetupGroup::AriadneInstalls,
+                    "Copy the GitHub token from this machine, and set up Git to use it.",
+                    None,
+                ),
+                _ => item(
+                    key.clone(),
+                    SetupGroup::Manual,
+                    "Ariadne copies no sign-in for this selection.",
+                    manual(&key),
+                ),
+            });
+            if available {
+                copied.push(id.as_str());
+            }
+        }
+        let sign_in = |key: String, copy: &str, file: &str, name: &str| {
+            if copied.contains(&copy) {
+                item(
+                    key,
+                    SetupGroup::AriadneInstalls,
+                    format!("Check the {name} sign-in after Ariadne copies it."),
+                    None,
+                )
+            } else if present(file) {
+                item(
+                    key,
+                    SetupGroup::AlreadyPresent,
+                    format!("{name} is already signed in on the new machine. Setup checks it."),
+                    None,
+                )
+            } else {
+                let manual = manual(&key);
+                item(
+                    key,
+                    SetupGroup::Manual,
+                    format!("{name} is not signed in on the new machine."),
+                    manual,
+                )
+            }
+        };
+        if request.tools.as_ref().is_some_and(|t| t.github)
+            || request.credentials.iter().any(|c| c == "github")
+        {
+            plan.push(sign_in(
+                "authentication:github".into(),
+                "github",
+                "credential-file:github",
+                "GitHub CLI",
+            ));
+        }
+        for id in request.tools.iter().flat_map(|t| &t.agents) {
+            let key = format!("authentication:{id}");
+            plan.push(match id.as_str() {
+                "codex-acp" => sign_in(key, "codex", "credential-file:codex", "Codex"),
+                "claude-acp" => sign_in(key, "claude", "credential-file:claude", "Claude"),
+                _ => {
+                    let manual = manual(&key);
+                    item(
+                        key,
+                        SetupGroup::Manual,
+                        format!("Ariadne cannot check the sign-in of {}.", agent_name(id)),
+                        manual,
+                    )
+                }
+            });
+        }
+        for (id, destination) in &request.repositories {
+            plan.push(if met(&format!("repository:{id}")) {
+                PlanItem {
+                    title: format!("Clone and register repository {id}"),
+                    ..item(format!("repository:{id}"), SetupGroup::AriadneInstalls, format!("Clone {id} from its Git remote into {destination}, then register it. Local edits stay on this machine."), None)
+                }
+            } else {
+                PlanItem {
+                    title: format!("Clone and register repository {id}"),
+                    ..item(format!("repository:{id}"), SetupGroup::Manual, format!("Repository {id} is not registered on this machine."), Some(ManualAction {
+                        reason: format!("Repository {id} is not registered on this machine. Select a registered repository, then review again."),
+                        command: None,
+                    }))
+                }
+            });
+        }
+        let service = if os == Some("Darwin") {
+            "launchd"
+        } else {
+            "systemd"
+        };
+        plan.push(if present("service") {
+            item(
+                "service".into(),
+                SetupGroup::AriadneInstalls,
+                format!("Register the Ariadne service with {service} and start it."),
+                None,
+            )
+        } else {
+            item(
+                "service".into(),
+                SetupGroup::Manual,
+                format!("The {service} user service is not ready on the new machine."),
+                manual("service"),
+            )
+        });
+        plan.push(item(
+            "register".into(),
+            SetupGroup::AriadneInstalls,
+            "Connect this daemon to the new machine, then copy skills, workflows, permissions and portable settings.",
+            None,
+        ));
+        plan
     }
 }

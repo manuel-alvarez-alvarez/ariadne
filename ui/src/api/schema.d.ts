@@ -4108,8 +4108,32 @@ export interface components {
         InspectRequest: {
             ssh: string;
         };
+        /** @description One agent that setup can install or that the user installs by hand. */
+        InspectedAgent: {
+            /** @description Who installs the agent on the inspected machine. */
+            group: components["schemas"]["SetupGroup"];
+            id: string;
+            manual?: components["schemas"]["ManualAction"] | null;
+            /** @description The display name. */
+            name: string;
+            /** @description Whether this daemon can run the agent on its own machine now. */
+            on_this_machine: boolean;
+            /** @description The `id` of the `sign_ins` entry the agent uses, or null. */
+            sign_in?: string | null;
+        };
+        /** @description GitHub CLI on the inspected machine. */
+        InspectedGithub: {
+            group: components["schemas"]["SetupGroup"];
+            manual?: components["schemas"]["ManualAction"] | null;
+        };
         InspectionDto: {
+            /** @description Each agent that a setup request can name. */
+            agents: components["schemas"]["InspectedAgent"][];
             checks: components["schemas"]["SetupCheck"][];
+            /** @description Who installs GitHub CLI on the inspected machine. */
+            github: components["schemas"]["InspectedGithub"];
+            /** @description Each sign-in that a setup request can name in `credentials`. */
+            sign_ins: components["schemas"]["SignIn"][];
             supported_agents: string[];
             supported_credentials: string[];
             target: string;
@@ -4227,6 +4251,13 @@ export interface components {
         };
         MaintenanceRequest: {
             active: boolean;
+        };
+        /** @description Work the user does by hand on the new machine. It never holds a credential value. */
+        ManualAction: {
+            /** @description The exact command to run on the new machine, or null where no command exists. */
+            command?: string | null;
+            /** @description Why Ariadne cannot do this, and what to do, in plain words. */
+            reason: string;
         };
         MessageDto: {
             body: string;
@@ -4388,6 +4419,16 @@ export interface components {
             available: boolean;
             name: string;
             reason: string;
+        };
+        /** @description One thing that a setup request causes, and who does it. */
+        PlanItem: {
+            /** @description What happens, in plain words. */
+            detail: string;
+            group: components["schemas"]["SetupGroup"];
+            /** @description The name of the progress step that does the item. */
+            id: string;
+            manual?: components["schemas"]["ManualAction"] | null;
+            title: string;
         };
         /** @description An agent command, keyed by its stable registry identifier. */
         PortableAgentDto: {
@@ -4856,6 +4897,11 @@ export interface components {
          * @enum {string}
          */
         SetupOperation: "setup" | "update";
+        /**
+         * @description Who installs one item of a setup on the new machine.
+         * @enum {string}
+         */
+        SetupGroup: "ariadne_installs" | "already_present" | "manual";
         /** @description An SSH worker installation request. SSH uses the daemon user's keys and config. */
         SetupRequest: {
             /** @description Source credential references only: `codex` and `github`. Never send credential values. */
@@ -4873,6 +4919,8 @@ export interface components {
         SetupReviewDto: {
             actions: string[];
             inspection: components["schemas"]["InspectionDto"];
+            /** @description One item for each thing that the request causes, each in one group. */
+            plan: components["schemas"]["PlanItem"][];
             prerequisites: components["schemas"]["SetupCheck"][];
             preserved: string[];
         };
@@ -4881,12 +4929,25 @@ export interface components {
         SetupStep: {
             complete: boolean;
             error?: string | null;
+            manual: components["schemas"]["ManualAction"] | null;
             name: string;
+            /** @description What the step does, in plain words. */
+            title: string;
         };
         /** @description Programs required on the worker. Git is always required when this section is present. */
         SetupTools: {
             agents?: string[];
             github?: boolean;
+        };
+        /** @description A sign-in service. It never carries a credential value. */
+        SignIn: {
+            /** @description The command that signs in on the new machine, or null where none exists. */
+            command?: string | null;
+            /** @description Whether Ariadne can copy this sign-in from this machine. */
+            copy_supported: boolean;
+            /** @description The reference a setup request names in `credentials`. */
+            id: string;
+            name: string;
         };
         SkillDto: {
             /**
