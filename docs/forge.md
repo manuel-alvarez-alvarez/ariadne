@@ -138,14 +138,14 @@ once, even while it is still a draft — staffed on the pin you gave that
 ask, in a worktree detached at the request's head rather than a branch of
 its own.
 The first briefing asks for a review of the current head.
-On your own request, a push starts another round after the head stays unchanged for five minutes.
-A further push restarts that interval.
-On another author's request, a push starts no round.
+A new head starts another round immediately, on your requests and another author's requests.
+A reply from the other side in a thread with an Ariadne review comment also starts a round.
+Each reply starts only one round.
 A new forge review request starts one when your assignment changes from absent to present.
 Press **New turn** beside **Stop review** in the **Review** group to request a round now.
 You can also run `ariadne pr review <repo-id> <number> --again`.
 Each round waits for the session to become idle, then moves its worktree to the current head.
-Comments, thread replies, checks and review decisions start no round.
+Comments in other threads, conversation comments, checks and review decisions start no round.
 The reviewer reads its threads during each round.
 
 Nothing starts that session on its own: the request is tracked the moment

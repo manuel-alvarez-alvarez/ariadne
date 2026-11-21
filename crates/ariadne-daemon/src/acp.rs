@@ -336,6 +336,7 @@ pub(crate) enum Delivery {
 pub(crate) struct NewsDelivery {
     pub(crate) pull_request_id: String,
     pub(crate) comment_ids: Vec<String>,
+    pub(crate) reviewer: bool,
     pub(crate) told: PullRequestTold,
     pub(crate) before: PullRequestTold,
 }
@@ -1631,10 +1632,11 @@ impl AcpRuntime {
                 Delivery::PullRequestNews(news) => {
                     self.inner
                         .store
-                        .release_pull_request_news(
+                        .release_pull_request_news_for_seat(
                             &news.pull_request_id,
                             &news.comment_ids,
                             &news.before,
+                            news.reviewer,
                         )
                         .await
                 }
@@ -2852,11 +2854,12 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
         Delivery::Message(id) => store.mark_message_delivered(id).await,
         Delivery::PullRequestNews(news) => {
             store
-                .claim_pull_request_news(
+                .claim_pull_request_news_for_seat(
                     &news.pull_request_id,
                     &news.comment_ids,
                     &news.before,
                     &news.told,
+                    news.reviewer,
                 )
                 .await
         }

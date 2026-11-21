@@ -40,6 +40,12 @@ impl Store {
         )
     }
 
+    /// Reply ids already delivered to the reviewer, separately from keeper news.
+    pub async fn reviewer_told_comments(&self, pull_request_id: &str) -> Result<Vec<String>> {
+        sqlx::query_scalar("SELECT forge_id FROM pull_request_comment_marks WHERE pull_request_id = ? AND reviewer_told_at IS NOT NULL")
+            .bind(pull_request_id).fetch_all(self.r()).await.map_err(Into::into)
+    }
+
     /// Mark comments an Ariadne review session posted (029): under the
     /// user's login, yet the review's, so on a request of the user's own
     /// the task's author answers them.
@@ -137,6 +143,19 @@ impl Store {
         before: &PullRequestTold,
         told: &PullRequestTold,
     ) -> Result<bool> {
+        self.claim_pull_request_news_for_seat(pull_request_id, comment_ids, before, told, false)
+            .await
+    }
+
+    /// Apply delivery marks for the selected seat.
+    pub async fn claim_pull_request_news_for_seat(
+        &self,
+        pull_request_id: &str,
+        comment_ids: &[String],
+        before: &PullRequestTold,
+        told: &PullRequestTold,
+        reviewer: bool,
+    ) -> Result<bool> {
         let mut tx = self.w().begin().await?;
         let unmoved: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM pull_requests
@@ -161,18 +180,24 @@ impl Store {
         }
         let at = now();
         for id in comment_ids {
-            let stamped = sqlx::query(
+            let statement = if reviewer {
+                "INSERT INTO pull_request_comment_marks (pull_request_id, forge_id, reviewer_told_at)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT (pull_request_id, forge_id) DO UPDATE SET reviewer_told_at = excluded.reviewer_told_at
+                  WHERE pull_request_comment_marks.reviewer_told_at IS NULL"
+            } else {
                 "INSERT INTO pull_request_comment_marks (pull_request_id, forge_id, told_at)
                  VALUES (?, ?, ?)
                  ON CONFLICT (pull_request_id, forge_id) DO UPDATE SET told_at = excluded.told_at
-                  WHERE pull_request_comment_marks.told_at IS NULL",
-            )
-            .bind(pull_request_id)
-            .bind(id)
-            .bind(&at)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
+                  WHERE pull_request_comment_marks.told_at IS NULL"
+            };
+            let stamped = sqlx::query(statement)
+                .bind(pull_request_id)
+                .bind(id)
+                .bind(&at)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
             // Dropped without a commit, so nothing this claim wrote stays.
             if stamped != 1 {
                 return Ok(false);
@@ -197,16 +222,32 @@ impl Store {
         comment_ids: &[String],
         before: &PullRequestTold,
     ) -> Result<()> {
+        self.release_pull_request_news_for_seat(pull_request_id, comment_ids, before, false)
+            .await
+    }
+
+    /// Apply delivery marks for the selected seat.
+    pub async fn release_pull_request_news_for_seat(
+        &self,
+        pull_request_id: &str,
+        comment_ids: &[String],
+        before: &PullRequestTold,
+        reviewer: bool,
+    ) -> Result<()> {
         let mut tx = self.w().begin().await?;
         for id in comment_ids {
-            sqlx::query(
+            let statement = if reviewer {
+                "UPDATE pull_request_comment_marks SET reviewer_told_at = NULL
+                  WHERE pull_request_id = ? AND forge_id = ?"
+            } else {
                 "UPDATE pull_request_comment_marks SET told_at = NULL
-                  WHERE pull_request_id = ? AND forge_id = ?",
-            )
-            .bind(pull_request_id)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+                  WHERE pull_request_id = ? AND forge_id = ?"
+            };
+            sqlx::query(statement)
+                .bind(pull_request_id)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
         }
         write_told(&mut tx, pull_request_id, before).await?;
         tx.commit().await?;
