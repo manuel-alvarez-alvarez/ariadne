@@ -821,7 +821,7 @@ npm)
     case $1 in
       list) [ -e "$HOME/npm-installed" ];;
       install) touch "$HOME/npm-installed";;
-      exec) [ -e "$HOME/npm-installed" ];;
+      exec) exit 1;;
       *) exit 0;;
     esac;;
 codex) [ ! -e "$HOME/fail-auth" ] && [ -s "$HOME/.codex/auth.json" ];;
@@ -864,6 +864,15 @@ esac
     let npm_runs = std::fs::read_to_string(remote.path().join("npm-runs")).unwrap();
     assert!(npm_runs.contains("install --global --prefix"));
     assert!(npm_runs.contains("@agentclientprotocol/codex-acp@1.13.1"));
+    assert!(!npm_runs.lines().any(|line| line.starts_with("exec ")));
+    let state: Value = h.get("/v1/hosts/unselected/setup").await;
+    assert!(
+        state["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| { s["name"] == "tool:codex-acp" && s["complete"] == true })
+    );
 
     let _: Value = h
         .json(
@@ -923,6 +932,21 @@ esac
             .filter(|r| r.args.last().is_some_and(|s| s.contains("cat > \"$temp\"")))
             .count(),
         1
+    );
+    let npm_runs = std::fs::read_to_string(remote.path().join("npm-runs")).unwrap();
+    assert!(!npm_runs.lines().any(|line| line.starts_with("exec ")));
+    assert_eq!(
+        npm_runs
+            .lines()
+            .filter(|line| line.starts_with("install "))
+            .count(),
+        1
+    );
+    assert!(
+        npm_runs
+            .lines()
+            .any(|line| line.starts_with("list --global --prefix ")
+                && line.ends_with("@agentclientprotocol/codex-acp@1.13.1"))
     );
 }
 

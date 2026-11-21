@@ -100,7 +100,7 @@ impl Hosts {
                 let script = if let Some(package) = distribution["npx"]["package"].as_str() {
                     // npm owns only the worker user's prefix. Verify the installed package before each retry.
                     format!(
-                        "{PREREQUISITE}\nensure node node\nensure npm node\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\npackage={package}\nnpm list --global --prefix \"$HOME/.local\" --depth=0 \"$package\" >/dev/null 2>&1 || npm install --global --prefix \"$HOME/.local\" -- \"$package\" >/dev/null 2>&1\nnpm exec --yes --offline --prefix \"$HOME/.local\" -- \"$package\" --help >/dev/null 2>&1",
+                        "{PREREQUISITE}\nensure node node\nensure npm node\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\npackage={package}\nnpm list --global --prefix \"$HOME/.local\" --depth=0 \"$package\" >/dev/null 2>&1 || npm install --global --prefix \"$HOME/.local\" -- \"$package\" >/dev/null 2>&1\nnpm list --global --prefix \"$HOME/.local\" --depth=0 \"$package\" >/dev/null 2>&1",
                         package = quote(package)
                     )
                 } else if let Some(package) = distribution["uvx"]["package"].as_str() {

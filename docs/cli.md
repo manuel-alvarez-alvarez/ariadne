@@ -881,6 +881,7 @@ the daemon cannot find or cannot use.
    Complete their login separately; setup does not automate provider login flows.
    Progress names each tool, credential transfer, and authentication check.
    Retries preserve successful credential transfers and recheck programs and authentication.
+   npm checks the selected package in the worker user's global installation prefix and preserves installed packages.
    Retry with exactly the original request, including its selections.
 
 2. Start setup with `ariadne host setup builder --request worker.json`.

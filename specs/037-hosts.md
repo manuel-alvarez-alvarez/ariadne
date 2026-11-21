@@ -300,6 +300,7 @@ picker, the Hosts section of its settings and one stream per host — is spec
     User-configured commands override registry IDs and receive manual installation guidance.
     Unsupported IDs and distributions receive manual installation guidance without generated commands.
     npm uses the worker user's `.local` prefix. uv manages user tools and Python.
+    Setup verifies npm packages with `npm list --global` in that prefix after installation and during retries.
     Missing Git, gh, Node/npm, or uv use existing user-owned Homebrew without administrator commands.
     Without that installation path, progress reports administrator prerequisites and remains incomplete.
 54. Credential references accept `codex`, `github`, `claude`, `opencode`, and `ssh`.
