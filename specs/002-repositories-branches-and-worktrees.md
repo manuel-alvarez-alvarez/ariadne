@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-11-08
+updated: 2026-11-21
 areas: [store, api, daemon, cli, ui]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
@@ -89,7 +89,9 @@ and the integration with it (025).
     repository share one filesystem watch. After a ref update, the daemon
     recreates that watch, so refs deleted by git pack-refs remain neither
     watched nor open. A repository wake still resolves each followed branch
-    once, and only a moved branch emits an event.
+    once, and only a moved branch emits an event. Reading a ref, or changing
+    only its metadata such as the access time a read can update, wakes no
+    one, so resolving a branch never wakes the watch again.
 12. The permission mode — `auto`, `ask`, `learn` or `ai` — says how every ACP
     session that works in the repository answers its permission requests
     (021). It defaults to `auto`, is set when the repository is registered
@@ -162,6 +164,9 @@ and the integration with it (025).
   (`branch.rs::twelve_followed_branches_share_one_repository_watch`), and
   packing those refs releases the descriptors for deleted files
   (`branch.rs::packing_refs_releases_deleted_ref_descriptors`).
+- Reading refs, or touching their access time and mode, does not wake the
+  repository watch, while a commit still does
+  (`branch.rs::reading_or_touching_refs_does_not_wake_the_watch`).
 - A repository watch that failed to arm can start on the next follow request
   (`branch.rs::a_failed_repository_watch_can_be_started_again`).
 

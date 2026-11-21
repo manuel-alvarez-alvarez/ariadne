@@ -42,7 +42,7 @@ pub(crate) async fn run(client: &Client, command: ForgeCommand, format: Format) 
     print(format, &tunnel, || print_kv(&rows(&tunnel)))
 }
 
-/// The tunnel in a few words: `up https://x.loca.lt`, `down`, `off`.
+/// The tunnel in a few words: `up https://smee.io/<channel>`, `down`, `off`.
 pub(crate) fn label(tunnel: &ForgeTunnelDto) -> String {
     let state = match tunnel.state {
         TunnelState::Up => "up",
@@ -80,7 +80,7 @@ mod tests {
             } else {
                 TunnelState::Off
             },
-            url: enabled.then(|| "https://amber-104233.loca.lt".into()),
+            url: enabled.then(|| "https://smee.io/Tl13s4JZbHs6Ww60eXq7Ab".into()),
             listen: Some("127.0.0.1:49152".into()),
             since: "2026-10-08T10:00:00.000Z".into(),
             error: None,
@@ -90,7 +90,10 @@ mod tests {
     #[test]
     fn the_tunnel_prints_its_state_url_and_bound_address() {
         let block = crate::output::kv_block(&rows(&tunnel(true)), &crate::output::View::plain());
-        assert!(block.contains("up https://amber-104233.loca.lt"), "{block}");
+        assert!(
+            block.contains("up https://smee.io/Tl13s4JZbHs6Ww60eXq7Ab"),
+            "{block}"
+        );
         assert!(block.contains("127.0.0.1:49152"), "{block}");
         assert!(
             block

@@ -272,8 +272,8 @@ pub struct AcpRegistryIndex {
 pub struct ForgeSettings {
     /// Whether the daemon opens a tunnel to the webhook listener.
     pub tunnel_enabled: bool,
-    /// The subdomain the tunnel asks for; None until the first tunnel.
-    pub tunnel_subdomain: Option<String>,
+    /// The smee.io channel the tunnel listens on; None until the first tunnel.
+    pub tunnel_channel: Option<String>,
     pub updated_at: String,
 }
 

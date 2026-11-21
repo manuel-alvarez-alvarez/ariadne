@@ -101,14 +101,9 @@ pub(crate) async fn reconcile(
     public: &Public,
 ) -> Result<ForgeIntegration, String> {
     let client = ForgeClient::for_repository(cfg, &row);
-    let desired = public.url.as_deref().filter(|_| row.enabled).map(|url| {
-        format!(
-            "{}/webhooks/{}/{}",
-            url.trim_end_matches('/'),
-            row.kind,
-            row.repository_id
-        )
-    });
+    let desired = public
+        .hook(&row.kind, &row.repository_id)
+        .filter(|_| row.enabled);
     row.webhook_error = None;
     if let Some(url) = desired {
         if row.webhook_secret.is_none() {

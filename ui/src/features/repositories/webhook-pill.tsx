@@ -2,7 +2,7 @@
  * The repositories table's Webhook cell (026, 027): one pill that says how
  * the repository's requests reach Ariadne, and whether that works.
  *
- * `localtunnel` while the webhook tunnel is switched on: the forge pushes
+ * `smee` while the webhook tunnel is switched on: the forge pushes
  * each change through it, and the pill is green only while the hook is
  * live. `polling` while it is off: Ariadne fetches on a timer, and the pill
  * is green only while the last fetch worked. The tooltip says the rest — the
@@ -22,7 +22,7 @@ function delivery(forge: ForgeDto, tunnel: ForgeTunnelDto | undefined) {
   const working = tunnelled
     ? webhook.state === "live" && !webhook.fetch_error
     : !webhook.fetch_error
-  return { mode: tunnelled ? "localtunnel" : "polling", working }
+  return { mode: tunnelled ? "smee" : "polling", working }
 }
 
 /**
@@ -33,7 +33,7 @@ function delivery(forge: ForgeDto, tunnel: ForgeTunnelDto | undefined) {
  */
 export function pushesLive(forge: ForgeDto, tunnel: ForgeTunnelDto | undefined) {
   const { mode, working } = delivery(forge, tunnel)
-  return mode === "localtunnel" && working
+  return mode === "smee" && working
 }
 
 export function WebhookPill({
@@ -89,10 +89,10 @@ function Explanation({
 }) {
   const { webhook } = forge
   const lines: { text: string; mono?: boolean }[] = []
-  if (mode === "localtunnel" && working) {
+  if (mode === "smee" && working) {
     lines.push({ text: "The webhook is live: changes arrive the moment they happen." })
     if (webhook.url) lines.push({ text: webhook.url, mono: true })
-  } else if (mode === "localtunnel") {
+  } else if (mode === "smee") {
     lines.push({
       text: "The webhook is not working. Ariadne checks the forge every 5 minutes until it works.",
     })

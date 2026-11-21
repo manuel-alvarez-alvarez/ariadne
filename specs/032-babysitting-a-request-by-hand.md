@@ -192,8 +192,8 @@ reads behind them ([026](026-pull-requests.md)).
 15. The readiness item covers a hand-kept request with the same evidence as a task-kept request (031 rule 15).
 ## Desktop
 
-16. The Pull requests panel offers Start babysit and Stop babysit beside
-    Start review and Stop review, on any open request that no task keeps.
+16. The Pull requests panel offers Start babysit and Stop babysit in the
+    Babysit group, beside the Review group, on any open request that no task keeps.
     The dialog asks the model, the effort and the skills beside
     `pr-babysit`, which is always loaded and cannot be turned off. Starting
     closes the dialog and, once the daemon has the keeper session up, opens
@@ -213,7 +213,7 @@ reads behind them ([026](026-pull-requests.md)).
     With no news, it asks the keeper to read the request again. No keeper returns 409.
     `pr babysit <repo> <number> --again` calls it, including on task-kept requests.
     `--again` conflicts with `--model`, `--effort`, `--skill`, `--attach` and `--stop`.
-    The panel offers Keeper turn on kept open requests.
+    The panel shows a **Babysit** button group on an open request: **Start babysit** when no keeper runs, **Stop babysit** with **New turn** while a babysitter runs, and only **New turn** on a task-kept request. **New turn** calls the keeper-turn route.
 ## Acceptance criteria
 
 - A request of Ariadne's maps to the author role; Dependabot's and another
@@ -330,7 +330,7 @@ reads behind them ([026](026-pull-requests.md)).
   `pr.rs::tests::pr_babysit_again_posts_an_empty_keeper_turn`.
 - The CLI refuses incompatible keeper-turn flags:
   `pr.rs::tests::pr_babysit_again_conflicts_with_every_start_or_stop_flag`.
-- The panel sends Keeper turn on a task-kept request and shows a refusal:
+- The panel sends the Babysit New turn on a task-kept request and shows a refusal:
   `pull-request-panel.test.tsx::asks for a keeper turn on a task kept request and shows the daemon refusal`.
 - The skill names its two seats once, and a keeper fixes only what the
   request's own change breaks:

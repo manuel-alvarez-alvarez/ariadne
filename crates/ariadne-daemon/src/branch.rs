@@ -35,7 +35,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::event::{AccessKind, AccessMode, ModifyKind};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
@@ -328,6 +329,22 @@ async fn watch_repository(
     drop(refs);
 }
 
+/// Whether a filesystem event can be a ref update.
+///
+/// A metadata change or a plain access cannot be one. Every `git` that
+/// resolves a ref reads `packed-refs`, and a read that updates the access time
+/// arrives as a metadata change. Waking on it would make the watch's own
+/// `git rev-parse` wake it again, in a loop that never settles. A write that
+/// finishes (`Access(Close(Write))` on Linux) still counts.
+fn changes_a_ref(kind: &EventKind) -> bool {
+    match kind {
+        EventKind::Modify(ModifyKind::Metadata(_)) => false,
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
 /// The `notify` watch behind one repository: the two places its refs can be
 /// read from.
 struct Refs {
@@ -348,10 +365,12 @@ impl Refs {
     /// where it was before there was a watch.
     fn arm(git_dir: &Path, tx: mpsc::Sender<()>) -> Option<Self> {
         let handler = move |event: notify::Result<notify::Event>| match event {
-            // Unfiltered: every other branch of the repository is written into
-            // the same directory, and matching paths would mean second-guessing
-            // what a backend resolved through a symlink on the way back. A
-            // wake-up that was not about this branch costs one `git rev-parse`.
+            Ok(event) if !changes_a_ref(&event.kind) => {}
+            // Unfiltered by path: every other branch of the repository is
+            // written into the same directory, and matching paths would mean
+            // second-guessing what a backend resolved through a symlink on the
+            // way back. A wake-up that was not about this branch costs one
+            // `git rev-parse`.
             Ok(_) => {
                 let _ = tx.try_send(());
             }
@@ -605,6 +624,49 @@ mod tests {
 
         let committed = commit(&repo, "v2");
         assert_eq!(next_head(&mut rx).await, committed);
+    }
+
+    /// Reading a ref is not a ref update, so it does not wake the watch.
+    ///
+    /// Every `git` that resolves a ref reads `packed-refs`, the watch's own
+    /// `git rev-parse` included. Where a read updates the access time, the
+    /// watch hears an attribute change. Waking on that wakes it again for
+    /// every rev-parse of every followed branch, forever. `touch -a` and
+    /// `chmod` make the same metadata-only change on any filesystem, so the
+    /// test does not depend on how the volume keeps access times.
+    ///
+    /// The commit at the end proves the watch was armed throughout.
+    #[tokio::test]
+    async fn reading_or_touching_refs_does_not_wake_the_watch() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        sh(&repo, "git branch other && git pack-refs --all");
+        let (changes, mut woken) = broadcast::channel(16);
+        let (ready_tx, mut ready) = watch::channel(false);
+        let handle = tokio::spawn(watch_repository(
+            GitManager,
+            repo.clone(),
+            changes,
+            ready_tx,
+        ));
+        ready.wait_for(|ready| *ready).await.unwrap();
+
+        sh(
+            &repo,
+            "git rev-parse --verify --quiet work^{commit} && \
+             git rev-parse --verify --quiet other^{commit} && \
+             touch -a .git/packed-refs && chmod 600 .git/packed-refs && \
+             chmod 644 .git/packed-refs && touch -a .git/refs/heads",
+        );
+        let quiet = tokio::time::timeout(DEBOUNCE * 10, woken.recv()).await;
+        assert!(quiet.is_err(), "a ref read or touch woke the watch");
+
+        commit(&repo, "v2");
+        tokio::time::timeout(PATIENCE, woken.recv())
+            .await
+            .expect("a commit did not wake the watch")
+            .unwrap();
+        handle.abort();
     }
 
     /// `packed-refs` is watched too, and the watch on it survives git

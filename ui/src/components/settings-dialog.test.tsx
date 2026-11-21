@@ -23,7 +23,7 @@ function aTunnel(overrides: Partial<ForgeTunnelDto> = {}): ForgeTunnelDto {
   return {
     enabled: true,
     state: "up",
-    url: "https://amber-104233.loca.lt",
+    url: "https://smee.io/Tl13s4JZbHs6Ww60eXq7Ab",
     listen: "127.0.0.1:49152",
     since: "2026-10-08T10:00:00.000Z",
     error: null,
@@ -124,7 +124,7 @@ describe("SettingsDialog", () => {
 
     expect(screen.getByText(/forwards to the daemon/)).toBeDefined()
     expect(await screen.findByText("Tunnel up")).toBeDefined()
-    expect(screen.getByText("https://amber-104233.loca.lt")).toBeDefined()
+    expect(screen.getByText("https://smee.io/Tl13s4JZbHs6Ww60eXq7Ab")).toBeDefined()
     const toggle = screen.getByRole("switch", { name: "Webhook tunnel" })
     expect(toggle.getAttribute("aria-checked")).toBe("true")
 

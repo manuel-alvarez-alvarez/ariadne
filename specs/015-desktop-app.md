@@ -1143,9 +1143,13 @@ Out: the daemon endpoints themselves (012).
     Named local views save scope and presentation in feature-local browser storage.
     Users can save, reopen, rename and delete them. They do not change host selection. Repository paths match across hosts.
 
-50. The request panel offers **Review again** beside **Stop review** while review is asked (029 rule 8).
-    The button calls the round route and shows the daemon's refusal text.
+50. The request panel shows a **Review** button group on an open request (029 rule 8).
+    It offers **Start review** when no review runs, and **Stop review** with **New turn** while one runs.
+    The **Babysit** group is the rule of 032 rules 16 and 17.
+    The group label tells the two **New turn** buttons apart.
+    The Review **New turn** button calls the round route and shows the daemon's refusal text.
     Proof: `ui/src/features/pull-requests/pull-request-panel.test.tsx::asks for another review round and shows the daemon refusal`.
+    Proof: `pull-request-panel.test.tsx::groups the review and babysit buttons, each group by what runs`, `…::shows Start review and Start babysit in their groups when nothing runs`, `…::shows only New turn in the babysit group of a task-kept request` and `…::shows no group on a request that is not open`.
 
 51. The app reads every host of the settings daemon's `GET /v1/hosts` (037).
     `local` is the settings daemon, at the settings base URL. A named host is
@@ -1379,8 +1383,8 @@ Out: the daemon endpoints themselves (012).
     console on box” in `ui/src/features/pull-requests/hosts.test.tsx`;
     “opens the new session on the host Start review picked, not on the panel's
     host” in `ui/src/features/forge/forge-hosts.test.tsx`, which also proves
-    the host select; “sends Review again and Stop review to the host that
-    reviews, with its repository id”, “sends Keeper turn and Stop babysit to
+    the host select; “sends New turn and Stop review to the host that
+    reviews, with its repository id”, “sends New turn and Stop babysit to
     the host that keeps, with its repository id” and “links the task that
     keeps the request on the host of the task” in `hosts.test.tsx` for the
     hidden starts. `pull-request-panel.test.tsx` proves local starts.
@@ -1470,7 +1474,7 @@ Out: the daemon endpoints themselves (012).
       that keeps, and "Kept by" links the task panel on the host of the task.
       The Review goal and Babysit goal links open on the host of that goal.
       `HostLabel` draws each host name, where rule 74 names the panel's host.
-    - Review again and Stop review go to the host that reviews. Keeper turn and
+    - Review New turn and Stop review go to the host that reviews. Babysit New turn and
       Stop babysit go to the host that keeps. Each uses that host's repository
       id.
     - The Sessions tab lists the Ariadne sessions and the task workflow
@@ -1484,8 +1488,8 @@ Out: the daemon endpoints themselves (012).
     Tests in `ui/src/features/pull-requests/hosts.test.tsx`: “names the host
     that reviews and the task that keeps a request read on another host”,
     “links the task that keeps the request on the host of the task”, “links
-    the babysit goal on the host that babysits”, “sends Review again and Stop
-    review to the host that reviews, with its repository id”, “sends Keeper
+    the babysit goal on the host that babysits”, “sends New turn and Stop
+    review to the host that reviews, with its repository id”, “sends New
     turn and Stop babysit to the host that keeps, with its repository id”,
     “lists the sessions of every host, each row named by its host, and opens
     one on its host”, and “warns of a host it cannot read, by name and reason,

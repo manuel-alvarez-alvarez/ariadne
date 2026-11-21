@@ -56,7 +56,7 @@ function aTunnel(overrides: Partial<ForgeTunnelDto> = {}): ForgeTunnelDto {
   return {
     enabled: true,
     state: "up",
-    url: "https://amber-104233.loca.lt",
+    url: "https://smee.io/Tl13s4JZbHs6Ww60eXq7Ab",
     listen: "127.0.0.1:49152",
     since: "2026-10-08T10:00:00.000Z",
     error: null,
@@ -125,7 +125,7 @@ describe("RepositoriesPage", () => {
     expect(screen.queryByRole("dialog")).toBeNull()
   })
 
-  it("shows localtunnel green while the hook is live, and red with the error when it is not", async () => {
+  it("shows smee green while the hook is live, and red with the error when it is not", async () => {
     const user = userEvent.setup()
     stubDaemon([
       {
@@ -134,7 +134,7 @@ describe("RepositoriesPage", () => {
           enabled: true,
           webhook: {
             state: "live",
-            url: "https://amber-104233.loca.lt/webhooks/github/repo",
+            url: "https://smee.io/Tl13s4JZbHs6Ww60eXq7Ab?route=/webhooks/github/repo",
             error: null,
             last_delivery_at: "2026-10-07T10:00:00Z",
             fetch_error: null,
@@ -158,16 +158,16 @@ describe("RepositoriesPage", () => {
     ])
     renderScreen(<RepositoriesPage />)
 
-    const working = await screen.findByRole("img", { name: "localtunnel: working" })
-    expect(working.textContent).toBe("localtunnel")
+    const working = await screen.findByRole("img", { name: "smee: working" })
+    expect(working.textContent).toBe("smee")
     expect(working.className).toContain("bg-status-done-soft")
     expect(screen.queryByText("2026-10-07T10:00:00Z")).toBeNull()
     await user.hover(working)
     expect(
-      await screen.findByText("https://amber-104233.loca.lt/webhooks/github/repo"),
+      await screen.findByText("https://smee.io/Tl13s4JZbHs6Ww60eXq7Ab?route=/webhooks/github/repo"),
     ).toBeDefined()
 
-    const failing = screen.getByRole("img", { name: "localtunnel: not working" })
+    const failing = screen.getByRole("img", { name: "smee: not working" })
     expect(failing.className).toContain("bg-status-danger-soft")
     await user.hover(failing)
     expect(await screen.findByText("Webhook: HTTP 403: needs admin rights")).toBeDefined()
@@ -202,7 +202,7 @@ describe("RepositoriesPage", () => {
 
     await user.hover(screen.getByRole("img", { name: "polling: not working" }))
     expect(await screen.findByText("gh: HTTP 502")).toBeDefined()
-    expect(screen.queryByRole("img", { name: /localtunnel/ })).toBeNull()
+    expect(screen.queryByRole("img", { name: /smee/ })).toBeNull()
   })
 
   it("shows the forge each remote is on over two lines, and whether it is enabled", async () => {

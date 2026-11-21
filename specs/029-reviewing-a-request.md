@@ -165,7 +165,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 10aa. `pr review <repo> <number> --again` calls the round route in rule 8.
     It conflicts with `--model`, `--effort`, `--skill`, `--attach` and `--stop`.
-    The request panel offers **Review again** beside **Stop review** while review is asked.
+    The request panel offers **New turn** beside **Stop review** in the **Review** group while review is asked.
     It shows the daemon's refusal text.
 
 10b. A review ask makes one active goal of the review operation, and a

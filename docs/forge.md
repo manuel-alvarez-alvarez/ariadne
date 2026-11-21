@@ -118,7 +118,7 @@ It keeps every commit others added. It never force-pushes main.
 The daemon marks your checked draft ready for review automatically.
 It raises readiness attention from current forge evidence: successful checks, clean mergeability and no unanswered comments.
 A newer comment delays keeper news for five minutes. Failures and final states arrive immediately.
-Use `ariadne pr babysit <repo> <number> --again` or **Keeper turn** to wake a keeper now.
+Use `ariadne pr babysit <repo> <number> --again` or **New turn** in the **Babysit** group to wake a keeper now.
 This also works on a request a task keeps.
 Once you merge the request, the agent brings the base
 branch up to date and completes the column, which finishes the task when
@@ -142,7 +142,7 @@ On your own request, a push starts another round after the head stays unchanged 
 A further push restarts that interval.
 On another author's request, a push starts no round.
 A new forge review request starts one when your assignment changes from absent to present.
-Press **Review again** beside **Stop review** to request a round now.
+Press **New turn** beside **Stop review** in the **Review** group to request a round now.
 You can also run `ariadne pr review <repo-id> <number> --again`.
 Each round waits for the session to become idle, then moves its worktree to the current head.
 Comments, thread replies, checks and review decisions start no round.
@@ -344,8 +344,27 @@ and polling traffic above.
 ## The tunnel
 
 With no `webhook_public_url` configured, Ariadne can open its own tunnel so
-a forge on the public internet reaches your webhook listener without one —
-the `localtunnel-client` crate, no Node or `lt` binary needed.
+a forge on the public internet reaches your webhook listener without one. The
+tunnel is a [smee.io](https://smee.io) channel. GitHub posts each delivery to
+the channel, the daemon holds the channel's event stream open, and it passes
+each delivery on to the listener. No Node or `smee` binary is needed.
+
+Each hook is registered as `https://smee.io/<channel>?route=/webhooks/github/<id>`.
+The channel is a random 22-letter name, picked the first time the tunnel
+opens and kept, so the hooks' URL survives a restart.
+
+Two things come with smee.io that you should know before you turn it on:
+
+- **A channel is public.** Anyone who knows its URL can open it and read
+  every delivery while it happens, private repositories included: request
+  titles, bodies and comments. The random name is the channel's only
+  protection, so treat the URL as a password. Where that is not acceptable,
+  set `webhook_public_url` to a tunnel you control instead.
+- **A delivery is passed on as smee.io re-serializes it.** smee.io parses
+  each body and sends it as compact JSON, not as the bytes GitHub signed.
+  GitHub's own payloads are compact already, so the signature check holds.
+  A body that comes back different fails the check, and that one delivery
+  is lost. See [Troubleshooting](#troubleshooting).
 
 A brand-new installation starts with the switch off: every enabled
 repository polls on its five-minute timer until you turn the tunnel on
@@ -365,7 +384,7 @@ address), `since` and `error` (each `-` where there is nothing to show). In the
 desktop app, **Settings** (the gear in the header) has the **Webhook tunnel**
 switch, what it does, and its state: "Tunnel up" with the URL, "Tunnel down"
 with the error, or "Tunnel off". The repositories table's Webhook column
-shows a pill for each enabled repository: `localtunnel` while the tunnel is
+shows a pill for each enabled repository: `smee` while the tunnel is
 switched on, `polling` while it is off. It is green while that works and red
 when it does not; hover it for the hook URL, the error, or how to turn the
 tunnel on. `ariadne repo inspect` prints the same, with the last fetch
@@ -489,8 +508,16 @@ is lost, only slower.
 This is Ariadne retrying on its own with a capped backoff, not a fixed
 failure: every enabled repository keeps fetching on its timer in the
 meantime. If it never comes back, check your network can reach
-`tunnel_host` (default `https://localtunnel.me`); a firewall or proxy that
-blocks outbound connections to it keeps the tunnel down forever.
+`tunnel_host` (default `https://smee.io`); a firewall or proxy that
+blocks outbound connections to it keeps the tunnel down forever. An open
+stream that hears nothing for 90 seconds, not even the server's ping, also
+counts as down, and the daemon reconnects.
+
+**The tunnel is `up` but a change did not arrive.**
+The daemon logs `the listener refused a delivery through the tunnel` when
+a delivery's signature did not match the body as smee.io passed it on. That
+delivery is lost, but the next one wakes the fetch, and that fetch reads
+everything the forge holds. Until then, `ariadne pr refresh` fetches at once.
 
 **The tunnel reads `off`.**
 With `webhook_public_url` set in `config.toml`, this is expected and nothing
