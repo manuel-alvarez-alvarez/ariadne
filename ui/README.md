@@ -49,8 +49,8 @@ Expand Daemon setup help for startup and TCP listener instructions.
 Use Retry connection after checking the setup. The other settings apply immediately.
 
 That daemon is `local`. The app also reads every host its `GET /v1/hosts`
-lists: the `[hosts.<name>]` tables of its `config.toml`. The settings dialog's
-Hosts section lists each host's name, kind, status, endpoint and error, as
+lists: the `[hosts.<name>]` tables of its `config.toml`. The Hosts screen
+(`#/hosts`) lists each host's name, kind, status, endpoint and error, as
 `ariadne host ls` does. A named host is reached at its endpoint when that is
 `http://` or `https://` and the host is `ready`; the app opens one event
 stream per reachable host. The host picker in the header picks All, `local`
@@ -117,7 +117,7 @@ Regenerating the API types after a daemon change is covered in
 | `⌘,` / `Ctrl+,` | settings |
 | `N` | new goal, from any screen |
 | `[` | fold the sidebar down to an icon rail, and back |
-| `G` then `G`/`S`/`K`/`A`/`R` | goals, sessions, skills, agents, repositories |
+| `G` then `G`/`S`/`K`/`A`/`H`/`R` | goals, sessions, skills, agents, hosts, repositories |
 | `?` | the cheat sheet: this table, in the app |
 | `Escape` | closes the palette, then the topmost panel |
 | `⌘Esc` / `Ctrl+Esc` | leaves a focused console for the pane or the modal around it |

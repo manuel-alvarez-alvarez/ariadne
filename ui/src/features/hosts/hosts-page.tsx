@@ -1,16 +1,21 @@
 /**
- * The settings dialog's Hosts section: every host of the settings daemon's
- * `GET /v1/hosts`, with the facts `ariadne host ls` prints — name, kind,
- * status, endpoint and error — live through `host_updated`.
+ * The Hosts screen: every host of the settings daemon's `GET /v1/hosts`, with
+ * the facts `ariadne host ls` prints — name, kind, status, endpoint and
+ * error — live through `host_updated`.
  *
- * Configured hosts and provisioned workers share this list. Setup uses the
- * settings daemon's durable SSH setup operation.
+ * Configured hosts and provisioned workers share this list. The "Set up
+ * worker" action opens the settings daemon's durable SSH setup operation. The
+ * screen reads `local` only, so the header's host picker does not change it.
  */
+
+import { PlusIcon } from "lucide-react"
+import { useState } from "react"
 
 import { type HostView, useHosts } from "@/api"
 import { hostStatus } from "@/components/host-picker"
+import { PageHeader } from "@/components/page-header"
 import { ReconnectHostButton } from "@/components/reconnect-host-button"
-import { FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -21,25 +26,28 @@ import {
 } from "@/components/ui/table"
 import { useHostDaemon } from "@/hooks/use-host-daemon"
 import { describeError, formatDuration } from "@/lib/format"
-import { WorkerSetup } from "./worker-setup"
+import { WorkerSetupDialog } from "./worker-setup-dialog"
 
-export function HostsSettings() {
+export function HostsPage() {
   const { hosts, error } = useHosts()
+  const [setupOpen, setSetupOpen] = useState(false)
   return (
-    <section aria-labelledby="settings-hosts" className="flex flex-col gap-2">
-      <FieldLabel id="settings-hosts">Hosts</FieldLabel>
-      <FieldDescription>
-        The daemons this app reads, as the <code className="font-mono">[hosts.&lt;name&gt;]</code>{" "}
-        tables of the <code className="font-mono">config.toml</code> of the daemon above configure
-        them. Setup adds worker connections below. <code className="font-mono">local</code> is that
-        daemon itself.
-      </FieldDescription>
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title="Hosts"
+        description="The daemons this app reads. The [hosts.<name>] tables of the config.toml of the settings daemon configure them, and setup adds worker connections. local is that daemon itself."
+        actions={
+          <Button onClick={() => setSetupOpen(true)}>
+            <PlusIcon />
+            Set up worker
+          </Button>
+        }
+      />
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           Could not load the hosts: {describeError(error)}
         </p>
       ) : null}
-      <WorkerSetup />
       <Table>
         <TableHeader>
           <TableRow>
@@ -60,7 +68,8 @@ export function HostsSettings() {
           ))}
         </TableBody>
       </Table>
-    </section>
+      <WorkerSetupDialog open={setupOpen} onOpenChange={setSetupOpen} />
+    </div>
   )
 }
 

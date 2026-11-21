@@ -17,7 +17,7 @@ tests:
   - crates/ariadne-cli/src/commands/query.rs
   - crates/ariadne-daemon/src/hosts.rs
   - crates/ariadne-daemon/src/hosts/sync.rs
-  - ui/src/components/worker-setup.test.tsx
+  - ui/src/features/hosts/worker-setup.test.tsx
 ---
 
 # Hosts
@@ -34,7 +34,7 @@ daemon, a reconnect of every host in one request, cloning a repository on
 a host and any write from a host back to this
 daemon. CLI selection follows spec 014 (rules 43 to 50). The transports and the
 event stream are spec 012's. The desktop app's reading of the hosts — the host
-picker, the Hosts section of its settings and one stream per host — is spec
+picker, the Hosts screen and one stream per host — is spec
 015's (rules 51 to 60).
 
 ## Behavior
@@ -291,7 +291,7 @@ picker, the Hosts section of its settings and one stream per host — is spec
     `ariadne host setup-status NAME` shows progress and per-step errors.
     Both use the local daemon; JSON output uses the operation DTO.
     A failed or incomplete result exits unsuccessfully.
-52. Desktop Settings includes SSH access, local binary paths, and verified release selection.
+52. The Desktop Hosts screen has a "Set up worker" dialog. It includes SSH access, local binary paths, and verified release selection.
     Both binary path labels identify the source daemon machine that runs the settings daemon.
     It shows completed steps and failures, polls active setup, and permits retry with the same request.
     Entering a worker name and loading progress restores its durable operation view.
@@ -427,7 +427,8 @@ picker, the Hosts section of its settings and one stream per host — is spec
 - Rule 46, control characters: `hosts.rs::setup_rejects_control_characters_in_remote_path_before_transfer`.
 - Rule 46, shell fallback: `hosts.rs::setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path`.
 - Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
-- Rule 50: `ui/src/components/worker-setup.test.tsx::starts setup and shows retained steps and a failure`.
+- Rule 50: `ui/src/features/hosts/worker-setup.test.tsx::starts setup and shows retained steps and a failure`.
+- Rule 52: `ui/src/features/hosts/hosts-page.test.tsx::titles the screen Hosts and opens the worker setup from its Set up worker action`.
 
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync
@@ -452,7 +453,7 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
   `::selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy`,
   `::credential_values_are_rejected_before_an_operation_is_persisted`,
   `::selected_github_credentials_enable_git_without_entering_command_arguments`.
-- Desktop selections: `worker-setup.test.tsx::sends explicit tool and credential selections`.
+- Desktop selections: `ui/src/features/hosts/worker-setup.test.tsx::sends explicit tool and credential selections`.
 
 ## Sources
 
@@ -465,4 +466,4 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
 `crates/ariadne-daemon/src/http/query/fan.rs`, `docs/configuration.md`,
 `docs/telemetry.md`.
 
-SSH setup sources: `crates/ariadne-daemon/src/hosts/setup.rs`, `ui/src/components/worker-setup.tsx`.
+SSH setup sources: `crates/ariadne-daemon/src/hosts/setup.rs`, `ui/src/features/hosts/worker-setup.tsx`.

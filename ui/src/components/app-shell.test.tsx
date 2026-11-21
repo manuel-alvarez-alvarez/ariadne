@@ -76,6 +76,7 @@ it("ends the navigation with dashboards, and lists Forge beside the other screen
     "Repositories",
     "Workflows",
     "Agents",
+    "Hosts",
     "Skills",
     "Permissions",
     "Dashboards",

@@ -26,6 +26,7 @@ import { AgentsPage } from "@/features/agents/agents-page"
 import { ForgePage } from "@/features/forge/forge-page"
 import { AttentionPage } from "@/features/goals/attention-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
+import { HostsPage } from "@/features/hosts/hosts-page"
 import { IssuesPage } from "@/features/issues/issues-page"
 import { PermissionsPage } from "@/features/permissions/permissions-page"
 import { PullRequestsPage } from "@/features/pull-requests/pull-requests-page"
@@ -75,6 +76,7 @@ const routes: RouteObject[] = [
   { path: "agents", element: <AgentsPage />, handle: { title: "Agents" } },
   // The models were folded into the agents screen; the address outlives it.
   { path: "models", element: <Navigate to={paths.agents()} replace /> },
+  { path: "hosts", element: <HostsPage />, handle: { title: "Hosts" } },
   {
     path: "permissions",
     element: <PermissionsPage />,

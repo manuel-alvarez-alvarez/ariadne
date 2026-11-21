@@ -15,7 +15,7 @@ import { shortcutLabel } from "@/lib/shortcuts"
 import { KeyboardShortcutsDialog } from "./keyboard-shortcuts-dialog"
 
 /** Every chord the README documents, as the sheet spells it. */
-const CHORDS = ["N", "[", "G G", "G S", "G K", "G A", "G R", "?", "Esc"]
+const CHORDS = ["N", "[", "G G", "G S", "G K", "G A", "G H", "G R", "?", "Esc"]
 
 it("lists every chord, screen by screen", () => {
   render(<KeyboardShortcutsDialog open onOpenChange={() => {}} />)
@@ -35,6 +35,7 @@ it("lists every chord, screen by screen", () => {
   ).toBeTruthy()
   // The screens are named, not just keyed.
   expect(screen.getByText("Go to Sessions")).toBeTruthy()
+  expect(screen.getByText("Go to Hosts")).toBeTruthy()
 })
 
 it("says what the two vocabularies are, since neither is guessable", () => {
