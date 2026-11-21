@@ -227,8 +227,10 @@ impl Place {
         let socket_path = home
             .join("relays")
             .join(format!("{}.sock", pane.session_id));
+        let mut told = false;
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(mut socket) => {
+                told = true;
                 tokio::time::timeout(crate::timeouts::Timeouts::default().probe, async {
                     socket.write_all(b"{\"type\":\"stop\"}\n").await?;
                     let mut discarded = Vec::new();
@@ -246,6 +248,9 @@ impl Place {
             Err(error) => return Err(error).context("connecting to relay for stop"),
         }
         if let Self::Herdr(socket) = self {
+            if told {
+                herdr_relay_exits(&socket_path, socket, home, pane).await;
+            }
             return herdr_close(socket, home, pane).await;
         }
         if self
@@ -501,6 +506,22 @@ async fn herdr_panes(socket: &Path, home: &Path) -> Result<Vec<Pane>> {
             })
         })
         .collect())
+}
+
+/// Closing a pane hangs up its terminal, and a relay that is hung up before
+/// it finishes stopping leaves its socket behind. Give the relay the time
+/// to remove it, until the pane ends or the probe time runs out.
+async fn herdr_relay_exits(relay_socket: &Path, socket: &Path, home: &Path, pane: &Pane) {
+    let _ = tokio::time::timeout(crate::timeouts::Timeouts::default().probe, async {
+        while relay_socket.exists()
+            && herdr_panes(socket, home)
+                .await
+                .is_ok_and(|panes| panes.iter().any(|live| live.id == pane.id))
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
 }
 
 async fn herdr_close(socket: &Path, home: &Path, pane: &Pane) -> Result<()> {

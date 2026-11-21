@@ -11,6 +11,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -25,6 +26,7 @@ struct State {
 pub(crate) struct FakeHerdr {
     dir: tempfile::TempDir,
     state: Arc<Mutex<State>>,
+    ended: Arc<AtomicBool>,
 }
 
 impl FakeHerdr {
@@ -44,15 +46,21 @@ impl FakeHerdr {
         let listener = UnixListener::bind(dir.path().join("herdr.sock")).unwrap();
         let state = Arc::new(Mutex::new(State::default()));
         let served = state.clone();
+        let ended = Arc::new(AtomicBool::new(false));
+        let ending = ended.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
+                if ending.load(Ordering::SeqCst) {
+                    break;
+                }
                 let served = served.clone();
                 std::thread::spawn(move || {
                     if answers {
                         serve(stream, &served);
                     } else {
-                        // Hold the connection open without a word.
-                        std::thread::sleep(std::time::Duration::from_secs(60));
+                        // Hold the connection open without a word, until the
+                        // client gives up on it.
+                        let _ = std::io::copy(&mut &stream, &mut std::io::sink());
                     }
                 });
             }
@@ -62,7 +70,7 @@ impl FakeHerdr {
         let herdr = binary.join("herdr");
         std::fs::write(&herdr, "#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&herdr, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Self { dir, state }
+        Self { dir, state, ended }
     }
 
     pub(crate) fn socket(&self) -> PathBuf {
@@ -120,6 +128,9 @@ impl FakeHerdr {
 
 impl Drop for FakeHerdr {
     fn drop(&mut self) {
+        // Wake the accept loop so its thread ends with the fixture.
+        self.ended.store(true, Ordering::SeqCst);
+        let _ = UnixStream::connect(self.socket());
         let mut state = self.state.lock().unwrap();
         for (_, child) in state.panes.values_mut() {
             let _ = child.kill();
