@@ -171,11 +171,12 @@ async fn a_server_that_exits_during_the_pane_listing_returns_no_panes_and_warns(
     let dir = tempfile::tempdir().unwrap();
     let binary = dir.path().join("tmux");
     let state = dir.path().join("state");
-    // The first session lists its pane, the second finds the server gone.
+    // The first session lists its pane, the second finds the server gone, and the recheck
+    // sees it exit, then find it gone: one warning for the whole listing.
     std::fs::write(
         &binary,
         format!(
-            "#!/bin/sh\ncase \"$3\" in\nlist-sessions)\n  if [ -e {0} ]; then echo 'no server running' >&2; exit 1; fi\n  echo ariadne-a; echo ariadne-b ;;\nlist-panes)\n  if [ \"$5\" = '=ariadne-a:' ]; then echo '%0 ariadne-a first'; else touch {0}; echo 'server exited unexpectedly' >&2; exit 1; fi ;;\nesac\n",
+            "#!/bin/sh\ncase \"$3\" in\nlist-sessions)\n  if [ -e {0}.2 ]; then echo 'no server running' >&2; exit 1; fi\n  if [ -e {0} ]; then touch {0}.2; echo 'server exited unexpectedly' >&2; exit 1; fi\n  echo ariadne-a; echo ariadne-b ;;\nlist-panes)\n  if [ \"$5\" = '=ariadne-a:' ]; then echo '%0 ariadne-a first'; else touch {0}; echo 'server exited unexpectedly' >&2; exit 1; fi ;;\nesac\n",
             state.display()
         ),
     )

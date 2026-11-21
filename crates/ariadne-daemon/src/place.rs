@@ -161,7 +161,11 @@ impl Place {
     /// target" on a server that has no session, so the sessions are listed
     /// first and each relay session is asked for its own panes.
     pub async fn live_panes(&self, home: &std::path::Path) -> Result<Vec<Pane>> {
-        let Some(names) = self.relay_sessions(home).await? else {
+        let (names, exited) = self.relay_sessions(home).await?;
+        let Some(names) = names else {
+            if exited {
+                tracing::warn!("the tmux server exited while its relay sessions were listed");
+            }
             return Ok(Vec::new());
         };
         let mut panes = Vec::new();
@@ -176,7 +180,7 @@ impl Place {
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
                 // The session ended, or the server with it, since the listing.
-                match self.relay_sessions(home).await? {
+                match self.relay_sessions(home).await?.0 {
                     Some(names) if names.contains(&name) => {}
                     Some(_) => continue,
                     None => {
@@ -200,32 +204,29 @@ impl Place {
         Ok(panes)
     }
 
-    /// The relay session names, or `None` when no tmux server runs.
+    /// The relay session names, or `None` when no tmux server runs, and whether
+    /// the server exited during the call.
     ///
     /// A server that closes with its last session can answer a client that is
     /// already connected with "server exited unexpectedly". Ask again: once it
     /// has closed, no server runs. A server that keeps failing is an error.
-    async fn relay_sessions(&self, home: &std::path::Path) -> Result<Option<Vec<String>>> {
+    async fn relay_sessions(&self, home: &std::path::Path) -> Result<(Option<Vec<String>>, bool)> {
         let mut attempts = 0;
         loop {
             let mut command = self.command(home)?;
             command.args(["list-sessions", "-F", "#{session_name}"]);
             let output = run(command).await?;
             if output.status.success() {
-                return Ok(Some(
-                    String::from_utf8(output.stdout)?
-                        .lines()
-                        .filter(|name| name.starts_with("ariadne-"))
-                        .map(String::from)
-                        .collect(),
-                ));
+                let names = String::from_utf8(output.stdout)?
+                    .lines()
+                    .filter(|name| name.starts_with("ariadne-"))
+                    .map(String::from)
+                    .collect();
+                return Ok((Some(names), false));
             }
             let error = String::from_utf8_lossy(&output.stderr);
             if error.contains("no server running") || error.contains("No such file") {
-                if attempts > 0 {
-                    tracing::warn!("the tmux server exited while its relay sessions were listed");
-                }
-                return Ok(None);
+                return Ok((None, attempts > 0));
             }
             attempts += 1;
             if !error.contains("server exited unexpectedly") || attempts == 5 {

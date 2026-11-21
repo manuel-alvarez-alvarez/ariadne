@@ -423,7 +423,7 @@ it leaves nothing to delete.
     It returns no panes when no server runs, or when the server has no relay session.
     It finds a pane directly after that pane starts.
     A tmux error other than a missing server or session fails with tmux's reason.
-    A server that closes with its last session is asked again, and the listing logs one warning when the server exited during it, in the session listing or the pane listing.
+    A server that closes with its last session is asked again, and the listing logs one warning when the server exited during it, in the session listing or the pane listing, never two for one listing.
     A server that exits during the pane listing yields no panes, including none collected before.
     A server that keeps failing is an error.
     A daemon stop closes its connection without stopping the relay, pane, or agent.
