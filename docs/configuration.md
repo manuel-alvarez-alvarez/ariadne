@@ -187,6 +187,19 @@ host's own API:
   workflow, the base branch, the description, the permission mode and
   whether the forge integration is on.
 
+Skills include their registered document and supporting files under their skill directory.
+The transfer preserves nested paths and executable scripts. File changes and removals
+reach workers after the next host check. Matching skills take the local contents.
+A failed skill waits for its retry; file checks do not restart it.
+Skills that exist only on the worker remain there.
+
+A symbolic link that escapes its skill directory fails that skill transfer.
+The error names its path. The worker keeps its previous skill, and other transfers continue.
+Explicit Markdown links to external local files produce warnings without blocking transfer.
+Web links produce no warning. External files and dependencies are never copied.
+Warnings appear in `sync.error` while the state remains `in_sync`.
+The desktop and `ariadne host ls` show these messages.
+
 An item with the same name on the host is overwritten. An item that only the
 host has stays as it is. After that, each local create, change or delete is
 pushed as it happens.

@@ -49,6 +49,7 @@ mod models;
 mod pins;
 mod plan_finalize;
 mod prompts;
+mod relay;
 mod repositories;
 mod resume;
 mod scheduler_attention;

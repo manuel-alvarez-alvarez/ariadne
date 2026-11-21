@@ -9480,6 +9480,32 @@
           }
         }
       },
+      "SkillFile": {
+        "type": "object",
+        "description": "A regular supporting file, relative to its skill directory.",
+        "required": [
+          "path",
+          "bytes",
+          "executable"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "executable": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "SkillSeat": {
         "type": "string",
         "description": "Where a skill is used: by the orchestrator, or to staff a task agent.",
@@ -10200,6 +10226,16 @@
               "null"
             ],
             "description": "The new document. Absent = unchanged; putting a built-in back on the\ntext Ariadne ships is `POST /v1/skills/{name}/document/reset`."
+          },
+          "files": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SkillFile"
+            },
+            "description": "Complete supporting-file snapshot. Absent leaves existing files unchanged."
           }
         },
         "additionalProperties": false

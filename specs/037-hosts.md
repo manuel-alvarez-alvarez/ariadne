@@ -232,25 +232,37 @@ picker, the Hosts section of its settings and one stream per host — is spec
 29. Writes go to the local daemon. Nothing is read back from a host into
     this daemon.
 
+43. Skill pushes include the registered document and a complete supporting-file snapshot.
+    Paths stay within the destination skill directory. Nested paths and executable bits survive transfer.
+    Matching names take source contents; worker-only skills remain unchanged.
+    The daemon checks supporting files at each `host_check`, including file removals.
+    A transfer rechecks its source before it reports success.
+    Scans skip failed skills; only the backoff of rule 25 retries them.
+44. Escaping symbolic links fail that skill push and name the offending path.
+    Other skills continue. Failed staging or replacement preserves recoverable previous worker contents.
+    Explicit Markdown local-file links outside the skill directory produce warnings in `sync.error`.
+    Such warnings leave successful transfers `in_sync`; web links produce no warning.
+    External files are not transferred. Prose and shell examples are not dependency detection inputs.
+
 ### SSH worker setup
 
-43. `POST /v1/hosts/{name}/setup` starts or retries setup and returns `202` with `SetupDto`.
+45. `POST /v1/hosts/{name}/setup` starts or retries setup and returns `202` with `SetupDto`.
     `GET` on the same path returns progress, or `404` for an unknown operation.
     Reserved or invalid names and invalid requests return `400`.
-44. A request contains `ssh`, optional absolute socket `remote`, and `source`.
+46. A request contains `ssh`, optional absolute socket `remote`, and `source`.
     SSH uses `ssh://[user@]host[:port]`, BatchMode, and the daemon user's existing SSH authentication.
     Passwords in URLs are refused. No credential values are accepted or returned.
     A local source contains `kind: local`, `cli`, and `daemon`.
     Both paths refer to files on the source daemon machine that runs the settings daemon.
     A release source contains `kind: release`, `repository`, and an explicit `tag`.
     Tools, credentials, and repository installation remain outside this setup operation.
-45. Setup probes the remote OS, architecture, and home before transfer.
+47. Setup probes the remote OS, architecture, and home before transfer.
     macOS and Linux support ARM64 and x86_64.
     Both local binaries must have matching executable headers before either transfers.
     macOS accepts thin binaries and universal binaries with a compatible executable slice.
     Release assets use `ariadne-<target>.tar.gz`.
     GitHub CLI 2.102.0 or later verifies the selected repository's release workflow and exact tag before extraction.
-46. Setup installs binaries under the remote user's `~/.local/bin`.
+48. Setup installs binaries under the remote user's `~/.local/bin`.
     It registers `dev.ariadne.daemon` with launchd or `ariadned.service` with systemd user services.
     New service definitions use the remote user's PATH from a noninteractive login shell, with `~/.local/bin` first.
     Setup uses only PATH text between unique probe markers, ignoring login-profile banners and other output.
@@ -262,22 +274,22 @@ picker, the Hosts section of its settings and one stream per host — is spec
     Configuration and worker data remain intact.
     Missing git, tar, user services, or Linux lingering produce prerequisite guidance without administrator commands.
     An existing custom socket must be supplied through `remote`.
-47. Progress states are `pending`, `running`, `incomplete`, `failed`, and `complete`.
+49. Progress states are `pending`, `running`, `incomplete`, `failed`, and `complete`.
     Steps are probe, validate, transfer, install, service, health, and register.
     Failure retains completed steps and records the failing step's error.
     No successful step means `failed`; otherwise failure means `incomplete`.
     Completion requires a successful daemon status check and local connection registration.
-48. The settings daemon stores operations atomically in `worker-setup.json` under its home.
+50. The settings daemon stores operations atomically in `worker-setup.json` under its home.
     Restart converts interrupted operations to `incomplete` and restores registered connections.
     The same request resumes setup without transferring installed binaries again.
     Retry rechecks access and binaries, restarts the service, and checks health.
     Concurrent repeats return the existing operation. Changed requests are refused.
     A complete request stays complete on repetition.
-49. `ariadne host setup NAME --request FILE` starts or retries an operation.
+51. `ariadne host setup NAME --request FILE` starts or retries an operation.
     `ariadne host setup-status NAME` shows progress and per-step errors.
     Both use the local daemon; JSON output uses the operation DTO.
     A failed or incomplete result exits unsuccessfully.
-50. Desktop Settings includes SSH access, local binary paths, and verified release selection.
+52. Desktop Settings includes SSH access, local binary paths, and verified release selection.
     Both binary path labels identify the source daemon machine that runs the settings daemon.
     It shows completed steps and failures, polls active setup, and permits retry with the same request.
     Entering a worker name and loading progress restores its durable operation view.
@@ -401,6 +413,18 @@ and query tests serve the second harness daemon on a loopback port, and give
 the local one a `direct` host that points at it. The health tests serve the
 second harness daemon behind a switch that turns its `GET /v1/health` off and
 on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
+
+- Failed skill pushes wait for backoff despite supporting-file scans
+  (`host_sync.rs::a_failed_skill_waits_for_backoff_despite_bundle_scans`).
+- Skill bundles retain layout, executable bits, updates and removals
+  (`host_sync.rs::supporting_files_reach_the_worker_and_later_changes_replace_them`).
+- Unsafe paths preserve the worker document (`host_sync.rs::an_invalid_bundle_preserves_the_worker_skill`).
+- Failed staging preserves previous binary files
+  (`host_sync.rs::failed_staging_preserves_the_previous_worker_files`).
+- Escaping links preserve the worker and allow unrelated skills
+  (`host_sync.rs::an_escaping_link_preserves_the_worker_and_does_not_block_other_skills`).
+- External Markdown links warn without copying dependencies
+  (`host_sync.rs::external_markdown_links_warn_without_copying_external_files`).
 
 ## Sources
 

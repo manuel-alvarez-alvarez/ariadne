@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::common::{
-    Harness, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json, put_json,
-    roomy_hardware, sh,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, delete, eventually, get, harness, next_event, post_json,
+    put_json, roomy_hardware, sh,
 };
 use ariadne_api::hosts::{HostDto, HostStatus, HostSyncDto, MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
@@ -834,4 +834,223 @@ async fn sync_stops_blocked_and_queued_pushes_until_the_host_recovers() {
     until_in_sync(&local).await;
     assert!(skill_on(&far, "lead").await.is_some());
     assert!(skill_on(&far, "queued").await.is_some());
+}
+
+#[tokio::test]
+async fn supporting_files_reach_the_worker_and_later_changes_replace_them() {
+    let (far, local, _dir) = far_and_local().await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "bundle", "document": skill("bundle", "bundle")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let source = local.launcher.cfg.skills_dir.join("bundle");
+    std::fs::create_dir_all(source.join("scripts")).unwrap();
+    std::fs::write(source.join("scripts/run"), b"first").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            source.join("scripts/run"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    let target = far.launcher.cfg.skills_dir.join("bundle/scripts/run");
+    assert_eq!(std::fs::read(&target).unwrap(), b"first");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o111,
+            0o111
+        );
+    }
+    std::fs::write(source.join("scripts/run"), b"second").unwrap();
+    eventually(TIMEOUT, "the supporting file update", || async {
+        std::fs::read(&target).ok().as_deref() == Some(b"second")
+    })
+    .await;
+    std::fs::remove_file(source.join("scripts/run")).unwrap();
+    eventually(TIMEOUT, "the supporting file removal", || async {
+        !target.exists()
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_invalid_bundle_preserves_the_worker_skill() {
+    let far = harness().await;
+    let _: SkillDto = far
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "bundle", "document": skill("bundle", "old")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let (status, _) = far.send(put_json("/v1/skills/bundle", json!({"document": skill("bundle", "new"), "files": [{"path": "../outside", "bytes": [1], "executable": false}]}))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(skill_on(&far, "bundle").await.unwrap().summary, "old");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_escaping_link_preserves_the_worker_and_does_not_block_other_skills() {
+    let (far, local, dir) = far_and_local().await;
+    for h in [&far, &local] {
+        let _: SkillDto = h.json(post_json("/v1/skills", json!({"name": "bundle", "document": skill("bundle", if std::ptr::eq(h, &far) { "old" } else { "new" })})), StatusCode::CREATED).await;
+    }
+    let outside = dir.path().join("secret");
+    std::fs::write(&outside, "secret").unwrap();
+    std::os::unix::fs::symlink(
+        &outside,
+        local.launcher.cfg.skills_dir.join("bundle/escape"),
+    )
+    .unwrap();
+    local.state.hosts.start();
+    eventually(TIMEOUT, "the escaped path reported", || async {
+        sync_of(&local)
+            .await
+            .error
+            .is_some_and(|e| e.contains("escape"))
+    })
+    .await;
+    assert_eq!(skill_on(&far, "bundle").await.unwrap().summary, "old");
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "unrelated", "document": skill("unrelated", "arrives")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    eventually(TIMEOUT, "the unrelated skill", || async {
+        skill_on(&far, "unrelated").await.is_some()
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn external_markdown_links_warn_without_copying_external_files() {
+    let (far, local, _dir) = far_and_local().await;
+    let document = format!(
+        "{}\n[external](../external.txt)\n[web](https://example.com/file)\n",
+        skill("bundle", "links")
+    );
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "bundle", "document": document}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    let status = sync_of(&local).await;
+    let warning = status.error.unwrap();
+    assert!(warning.contains("../external.txt"));
+    assert!(!warning.contains("https://"));
+    assert!(!far.launcher.cfg.skills_dir.join("external.txt").exists());
+    assert_eq!(skill_on(&far, "bundle").await.unwrap().summary, "links");
+}
+
+#[tokio::test]
+async fn failed_staging_preserves_the_previous_worker_files() {
+    let far = harness().await;
+    let _: SkillDto = far
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "bundle", "document": skill("bundle", "old")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let path = far.launcher.cfg.skills_dir.join("bundle/data.bin");
+    std::fs::write(&path, [0, 255, 17]).unwrap();
+    let (status, _) = far.send(put_json("/v1/skills/bundle", json!({"document": skill("bundle", "new"), "files": [{"path": "collision", "bytes": [7], "executable": false}, {"path": "collision/child", "bytes": [8], "executable": false}]}))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(std::fs::read(path).unwrap(), [0, 255, 17]);
+    assert_eq!(skill_on(&far, "bundle").await.unwrap().summary, "old");
+    assert!(!far.launcher.cfg.skills_dir.join("bundle/new.bin").exists());
+}
+
+#[tokio::test]
+async fn a_failed_skill_waits_for_backoff_despite_bundle_scans() {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (attempts, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let router = far.router.clone().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let attempts = attempts.clone();
+            async move {
+                if request.method() == axum::http::Method::PUT
+                    && request.uri().path() == "/v1/skills/bundle"
+                {
+                    attempts.send(()).unwrap();
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+                next.run(request).await
+            }
+        },
+    ));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        format!("[hosts.far]\nendpoint = \"http://{address}\"\n"),
+    )
+    .unwrap();
+    let local = harness()
+        .home(dir.path().to_path_buf())
+        .ai_permissions_hardware(roomy_hardware())
+        .timeouts(Timeouts {
+            host_check: RUNS_OUT / 100,
+            host_sync_retry: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "bundle", "document": skill("bundle", "refused")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    tokio::time::timeout(TIMEOUT, received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        tokio::time::timeout(QUIET, received.recv()).await.is_err(),
+        "a bundle scan retried before backoff"
+    );
+    tokio::time::timeout(TIMEOUT, received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        tokio::time::timeout(QUIET, received.recv()).await.is_err(),
+        "a bundle scan bypassed the doubled backoff"
+    );
+    tokio::time::timeout(TIMEOUT, received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    server.abort();
 }

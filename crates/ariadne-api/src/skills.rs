@@ -53,7 +53,19 @@ pub struct CreateSkillRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateSkillRequest {
+    /// Complete supporting-file snapshot. Absent leaves existing files unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<SkillFile>>,
     /// The new document. Absent = unchanged; putting a built-in back on the
     /// text Ariadne ships is `POST /v1/skills/{name}/document/reset`.
     pub document: Option<String>,
+}
+
+/// A regular supporting file, relative to its skill directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillFile {
+    pub path: String,
+    pub bytes: Vec<u8>,
+    pub executable: bool,
 }
