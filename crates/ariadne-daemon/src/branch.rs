@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use notify::event::{AccessKind, AccessMode, ModifyKind};
+use notify::event::ModifyKind;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
@@ -334,15 +334,13 @@ async fn watch_repository(
 /// A metadata change or a plain access cannot be one. Every `git` that
 /// resolves a ref reads `packed-refs`, and a read that updates the access time
 /// arrives as a metadata change. Waking on it would make the watch's own
-/// `git rev-parse` wake it again, in a loop that never settles. A write that
-/// finishes (`Access(Close(Write))` on Linux) still counts.
+/// `git rev-parse` wake it again, in a loop that never settles. Content writes
+/// produce `Modify(Data)` events; closing a writable file alone proves no write.
 fn changes_a_ref(kind: &EventKind) -> bool {
-    match kind {
-        EventKind::Modify(ModifyKind::Metadata(_)) => false,
-        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
-        EventKind::Access(_) => false,
-        _ => true,
-    }
+    !matches!(
+        kind,
+        EventKind::Modify(ModifyKind::Metadata(_)) | EventKind::Access(_)
+    )
 }
 
 /// The `notify` watch behind one repository: the two places its refs can be
@@ -365,8 +363,6 @@ impl Refs {
     /// where it was before there was a watch.
     fn arm(git_dir: &Path, tx: mpsc::Sender<()>) -> Option<Self> {
         let handler = move |event: notify::Result<notify::Event>| {
-            #[cfg(test)]
-            eprintln!("temporary ref watcher diagnostic: {event:?}");
             match event {
                 Ok(event) if !changes_a_ref(&event.kind) => {}
                 // Unfiltered by path: every other branch of the repository is
@@ -416,6 +412,8 @@ mod tests {
     use super::*;
 
     use std::process::Command;
+
+    use notify::event::{AccessKind, AccessMode};
 
     use tokio::sync::broadcast::Receiver;
 
@@ -630,6 +628,15 @@ mod tests {
         assert_eq!(next_head(&mut rx).await, committed);
     }
 
+    /// Linux reports CLOSE_WRITE even when a writable file was never written.
+    /// The Ubuntu metadata-touch failure carried this event without changed content.
+    #[test]
+    fn closing_a_writable_ref_without_writing_does_not_count_as_an_update() {
+        assert!(!changes_a_ref(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write,
+        ))));
+    }
+
     /// Reading a ref is not a ref update, so it does not wake the watch.
     ///
     /// Every `git` that resolves a ref reads `packed-refs`, the watch's own
@@ -655,6 +662,13 @@ mod tests {
         ));
         ready.wait_for(|ready| *ready).await.unwrap();
 
+        // Linux sends CLOSE_WRITE even when this handle writes nothing.
+        drop(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(repo.join(".git/packed-refs"))
+                .unwrap(),
+        );
         sh(
             &repo,
             "git rev-parse --verify --quiet work^{commit} && \
