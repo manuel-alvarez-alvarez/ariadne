@@ -206,7 +206,8 @@ picker, the Hosts screen and one stream per host — is spec
     queued and when it runs, so no retry writes an older version over a
     newer one. When the host leaves `ready`, the tries stop and the host is
     `pending` with a null `error`. Its next `ready` starts the push of rule
-    23 again.
+    23 again. Queued or interrupted deletions remain pending across recovery.
+    A later change of the same item supersedes its pending deletion.
 26. A local repository matches a host repository on the same forge
     repository (kind, host, owner, name). One on the same base branch is
     taken first, else the first one left; each host repository matches once.
@@ -418,7 +419,10 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 24
   (`host_sync.rs::each_later_change_reaches_the_host_and_a_delete_removes_it`).
 - Rule 25
-  (`host_sync.rs::a_refused_push_holds_back_no_later_change`,
+  (`host_sync.rs::a_queued_skill_deletion_reaches_the_host_after_recovery`,
+  `::an_interrupted_skill_deletion_reaches_the_host_after_recovery`,
+  `::a_recreated_skill_supersedes_its_queued_deletion_after_recovery`,
+  `::a_refused_push_holds_back_no_later_change`,
   `::a_refused_repository_holds_back_no_other_repository`,
   `::a_newer_push_of_an_item_ends_its_older_failed_push`,
   `ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`).

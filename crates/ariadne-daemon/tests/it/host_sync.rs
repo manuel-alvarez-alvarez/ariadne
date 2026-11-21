@@ -764,13 +764,8 @@ async fn a_newer_push_of_an_item_ends_its_older_failed_push() {
     assert_eq!(shared.map(|skill| skill.summary).as_deref(), Some("second"));
 }
 
-/// The sync of the next `host_updated` on the bus that moves it.
-///
-/// A `host_updated` also carries a move of the host's status, endpoint or
-/// error, which a health check can publish between two sync changes. Such
-/// an event is skipped. One that moves nothing at all fails the test: each
-/// change publishes one event.
-async fn next_sync(rx: &mut Receiver<BusEvent>, last: &mut Option<HostDto>) -> HostSyncDto {
+/// The full host in the next sync change, retained for failure diagnostics.
+async fn next_sync_host(rx: &mut Receiver<BusEvent>, last: &mut Option<HostDto>) -> HostSyncDto {
     loop {
         let event = next_event(rx, |event| {
             matches!(event.event, DomainEvent::HostUpdated(_))
@@ -783,7 +778,10 @@ async fn next_sync(rx: &mut Receiver<BusEvent>, last: &mut Option<HostDto>) -> H
         let Some(previous) = previous else {
             return host.sync;
         };
-        assert_ne!(previous, host, "a host_updated that moved nothing");
+        assert_ne!(
+            previous, host,
+            "a host_updated that moved nothing: {host:?}"
+        );
         if previous.sync != host.sync {
             return host.sync;
         }
@@ -798,10 +796,13 @@ async fn each_change_of_the_sync_publishes_one_host_updated() {
     local.state.hosts.start();
     // The first event is the host's `ready`, before any push lands.
     assert_eq!(
-        next_sync(&mut rx, &mut last).await.state,
+        next_sync_host(&mut rx, &mut last).await.state,
         SyncState::Pending
     );
-    assert_eq!(next_sync(&mut rx, &mut last).await, HostSyncDto::in_sync());
+    assert_eq!(
+        next_sync_host(&mut rx, &mut last).await,
+        HostSyncDto::in_sync()
+    );
 
     let _: SkillDto = local
         .json(
@@ -813,10 +814,13 @@ async fn each_change_of_the_sync_publishes_one_host_updated() {
         )
         .await;
     assert_eq!(
-        next_sync(&mut rx, &mut last).await.state,
+        next_sync_host(&mut rx, &mut last).await.state,
         SyncState::Pending
     );
-    assert_eq!(next_sync(&mut rx, &mut last).await, HostSyncDto::in_sync());
+    assert_eq!(
+        next_sync_host(&mut rx, &mut last).await,
+        HostSyncDto::in_sync()
+    );
 }
 
 #[tokio::test]
@@ -880,6 +884,111 @@ async fn sync_stops_blocked_and_queued_pushes_until_the_host_recovers() {
     until_in_sync(&local).await;
     assert!(skill_on(&far, "lead").await.is_some());
     assert!(skill_on(&far, "queued").await.is_some());
+}
+
+async fn skill_deletion_after_recovery(interrupted: bool, recreate: bool) {
+    let far = harness().ai_permissions_hardware(roomy_hardware()).await;
+    let gate = Gate::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    serve_gated(&far, listener, &gate);
+    let (local, _dir) = local_with_host(&format!("http://{address}")).await;
+    let _: SkillDto = local
+        .json(
+            post_json(
+                "/v1/skills",
+                json!({"name": "victim", "document": skill("victim", "remove me")}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    assert!(skill_on(&far, "victim").await.is_some());
+
+    if interrupted {
+        gate.hold_only(&["DELETE /v1/skills/victim"]);
+    } else {
+        gate.hold_only(&["PUT /v1/skills/lead"]);
+        let _: SkillDto = local
+            .json(
+                post_json(
+                    "/v1/skills",
+                    json!({"name": "lead", "document": skill("lead", "held")}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+        eventually(TIMEOUT, "the leading push held", || async {
+            gate.held_requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|request| request == "PUT /v1/skills/lead")
+        })
+        .await;
+    }
+    assert_eq!(
+        local.send(delete("/v1/skills/victim")).await.0,
+        StatusCode::NO_CONTENT
+    );
+    if interrupted {
+        eventually(TIMEOUT, "the delete held before recovery", || async {
+            gate.held_requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|request| request == "DELETE /v1/skills/victim")
+        })
+        .await;
+    }
+    gate.health_off.store(true, Ordering::SeqCst);
+    eventually(TIMEOUT, "the host down with the delete queued", || async {
+        let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
+        hosts[1].status == HostStatus::Down
+    })
+    .await;
+    if recreate {
+        let _: SkillDto = local
+            .json(
+                post_json(
+                    "/v1/skills",
+                    json!({"name": "victim", "document": skill("victim", "recreated")}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+    }
+    gate.release();
+    gate.health_off.store(false, Ordering::SeqCst);
+    until_in_sync(&local).await;
+    let victim = skill_on(&far, "victim").await;
+    if recreate {
+        assert_eq!(
+            victim.map(|skill| skill.summary).as_deref(),
+            Some("recreated")
+        );
+    } else {
+        assert!(
+            victim.is_none(),
+            "recovery must deliver the queued deletion"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_queued_skill_deletion_reaches_the_host_after_recovery() {
+    skill_deletion_after_recovery(false, false).await;
+}
+
+#[tokio::test]
+async fn an_interrupted_skill_deletion_reaches_the_host_after_recovery() {
+    skill_deletion_after_recovery(true, false).await;
+}
+
+#[tokio::test]
+async fn a_recreated_skill_supersedes_its_queued_deletion_after_recovery() {
+    skill_deletion_after_recovery(false, true).await;
 }
 
 #[tokio::test]

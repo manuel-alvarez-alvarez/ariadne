@@ -1524,11 +1524,10 @@ impl Harness {
         .unwrap();
     }
 
-    /// Export every metric now, off this test's runtime thread: a flush
-    /// blocks its caller until the exporter has written, and a daemon task
-    /// on this runtime — the retention pass holding the telemetry writer —
-    /// may be what that write waits on.
-    pub(crate) async fn flush_metrics(&self) {
+    /// Export telemetry now, off this test's runtime thread: a flush
+    /// blocks its caller until the exporter has written. This leaves the
+    /// runtime thread free to run other tasks while the export completes.
+    pub(crate) async fn flush_telemetry(&self) {
         let telemetry = self.telemetry.clone();
         tokio::task::spawn_blocking(move || telemetry.flush())
             .await
@@ -1540,7 +1539,7 @@ impl Harness {
     /// the telemetry store: the newest sample of each series, 0 where none
     /// matches. A histogram is read by its `_count` or `_sum` series.
     pub(crate) async fn metric(&self, name: &str, labels: &[(&str, &str)]) -> f64 {
-        self.flush_metrics().await;
+        self.flush_telemetry().await;
         let mut total = 0.0;
         for series in self.telemetry_store.list_series(&[]).await.unwrap() {
             if series.name != name
@@ -1568,7 +1567,7 @@ impl Harness {
 
     /// Every label set metric `name` was recorded under, once flushed.
     pub(crate) async fn metric_labels(&self, name: &str) -> Vec<serde_json::Value> {
-        self.flush_metrics().await;
+        self.flush_telemetry().await;
         self.telemetry_store
             .list_series(&[])
             .await
