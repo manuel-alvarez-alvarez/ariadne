@@ -18,9 +18,10 @@ use ariadne_api::hosts::{HostDto, HostKind, HostStatus, HostSyncDto, SyncState};
 use ariadne_client::Client;
 use ariadne_client::endpoint::HostConfig;
 use ariadne_store::Store;
+use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
@@ -575,6 +576,8 @@ exit "$status"
             Ok(child) => child,
             Err(error) => return Ended::Down(format!("cannot run {ssh}: {error}")),
         };
+        let group = Pid::from_raw(child.id().expect("a spawned SSH process").cast_signed())
+            .expect("a positive process ID");
         // Child::wait closes its stdin. Keep this end until the forward ends.
         let _lifetime = child.stdin.take();
         acted(asked);
@@ -597,14 +600,14 @@ exit "$status"
             status = child.wait() => Err(status),
             answered = self.answer_within(&client) => Ok(answered),
             Some(reply) = requests.recv() => {
-                let _ = child.kill().await;
+                end_forward(&mut child, group).await;
                 return Ended::Again(reply);
             }
         };
         let status = match answered {
             Err(status) => status,
             Ok(Err(why)) => {
-                let _ = child.kill().await;
+                end_forward(&mut child, group).await;
                 return Ended::Down(format!(
                     "the far daemon does not answer through the forward: {why}"
                 ));
@@ -617,7 +620,7 @@ exit "$status"
                     tokio::select! {
                         status = child.wait() => break status,
                         error = self.until_silent(&client, &local) => {
-                            let _ = child.kill().await;
+                            end_forward(&mut child, group).await;
                             return Ended::Down(error);
                         }
                         Some(reply) = requests.recv() => {
@@ -626,7 +629,7 @@ exit "$status"
                                     let _ = reply.send(());
                                 }
                                 Err(why) => {
-                                    let _ = child.kill().await;
+                                    end_forward(&mut child, group).await;
                                     let error = format!("{local} does not answer: {why}");
                                     warn!(endpoint = %local, %error, "ssh forward down");
                                     self.set(index, HostStatus::Down, None, Some(error));
@@ -638,6 +641,7 @@ exit "$status"
                 }
             }
         };
+        end_forward(&mut child, group).await;
         let last = match stderr {
             Some(task) => timeout(self.timeouts.ssh_probe, task)
                 .await
@@ -702,6 +706,13 @@ exit "$status"
             }
         }
     }
+}
+
+/// End the group before publishing Down or starting its replacement.
+/// The lifetime watcher handles exec; normal exits must not depend on it.
+async fn end_forward(child: &mut Child, group: Pid) {
+    let _ = kill_process_group(group, Signal::KILL);
+    let _ = child.wait().await;
 }
 
 #[cfg(test)]

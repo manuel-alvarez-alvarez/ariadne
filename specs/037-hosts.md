@@ -80,6 +80,8 @@ picker, the Hosts section of its settings and one stream per host — is spec
     `host_unanswered`, the daemon kills the process and the host is `down`
     with the error `the far daemon does not answer through the forward:
     <reason>`. The restart of rule 12 follows.
+    Every forward exit ends its process group and reaps SSH before publishing
+    `down` or starting a replacement. This includes reconnect requests.
 12. When the process exits, the host is `down`, `endpoint` is null and `error`
     is the last non-empty stderr line of the process (else its exit status).
     The daemon starts it again after `ssh_retry`, doubled after each exit up

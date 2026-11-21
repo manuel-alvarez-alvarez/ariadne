@@ -149,6 +149,9 @@ The daemon checks the status of each host again and again, so
   `host_updated` event. Stopping the daemon ends every check and every `ssh`
   it started.
 
+An SSH host reports `down` after its forward process ends.
+The daemon also stops other processes in that forward's process group before starting a replacement.
+
 To try one host again at once, send `POST /v1/hosts/<name>/reconnect`.
 The daemon does not wait for the next check or the next start of `ssh`:
 
