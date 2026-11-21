@@ -393,3 +393,16 @@ fn executable_upgrade_preserves_running_relay_and_protocol() {
     stop(&mut after);
     assert!(relay.child.wait().unwrap().success());
 }
+
+#[test]
+fn a_closed_status_pipe_does_not_stop_the_relay() {
+    let mut relay = Relay::start("import sys\nsys.stdin.readline()");
+    // Swap the status reader for an already finished child's, which closes the relay's stdout.
+    let mut spare = Command::new("true").stdout(Stdio::piped()).spawn().unwrap();
+    let spare_out = BufReader::new(spare.stdout.take().unwrap());
+    spare.wait().unwrap();
+    drop(std::mem::replace(&mut relay.status, spare_out));
+    let mut peer = relay.connect();
+    stop(&mut peer);
+    assert!(relay.child.wait().unwrap().success());
+}

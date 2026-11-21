@@ -88,6 +88,7 @@ Daemon launch integration, tmux, and herdr are outside this spec.
    States are `offline`, `connected`, and `exited`.
    Activity tracks agent output and exit using UTC timestamps.
    The status requires no daemon or terminal escape support.
+   A thread of its own writes the status. A full or closed stdout never stops the transport.
 
 10. An upgrade replaces the daemon executable.
     Each running relay keeps its existing code until its session stops.
@@ -102,6 +103,7 @@ Daemon launch integration, tmux, and herdr are outside this spec.
   proves child launch, socket traffic, durable output, cumulative acknowledgments, and ordered reconnect replay.
 - Rules 3, 6, 7: `disconnected_agent_finishes_and_next_connection_receives_output_and_exit`
   proves permission replay, answer forwarding, stderr collection, final output, and exit acknowledgment.
+- Rule 9: `a_closed_status_pipe_does_not_stop_the_relay` proves a closed stdout leaves the relay working.
 - Rules 4, 7, 9: `offline_status_and_output_do_not_need_a_daemon`
   proves disconnected completion, journal replay, and status without a daemon.
 - Rule 8: `stop_kills_the_full_process_group` proves descendant termination through closure of its private socket.

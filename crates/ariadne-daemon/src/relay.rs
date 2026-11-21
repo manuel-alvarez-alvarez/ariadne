@@ -140,6 +140,13 @@ pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()
     let mut last_activity = chrono::Utc::now().to_rfc3339();
     let mut connection: Option<tokio::task::JoinHandle<()>> = None;
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    // A thread of its own writes the status, so a full or closed stdout never stalls the loop.
+    let (status_lines, mut status_rx) = mpsc::channel::<String>(1);
+    std::thread::spawn(move || {
+        while let Some(line) = status_rx.blocking_recv() {
+            let _ = writeln!(std::io::stdout(), "{line}");
+        }
+    });
     let mut exit_recorded = false;
     let stopped = loop {
         if let Some(status) = status
@@ -193,7 +200,7 @@ pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()
             }
             _ = tick.tick() => {
                 let state = if status.is_some() { "exited" } else if connection.as_ref().is_some_and(|c| !c.is_finished()) { "connected" } else { "offline" };
-                println!("session={} agent={} task={} state={state} activity={last_activity} pid={} | ariadne attach {}", args.session, args.agent, args.task, group.0.as_raw_nonzero(), args.session);
+                let _ = status_lines.try_send(format!("session={} agent={} task={} state={state} activity={last_activity} pid={} | ariadne attach {}", args.session, args.agent, args.task, group.0.as_raw_nonzero(), args.session));
             }
         }
     };
