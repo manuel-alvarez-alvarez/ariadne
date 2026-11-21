@@ -14,7 +14,6 @@ use populate::selection_steps;
 pub(super) struct Record {
     pub request: SetupRequest,
     pub progress: SetupDto,
-    pub remote: Option<String>,
     #[serde(default)]
     active_step: Option<String>,
 }
@@ -207,7 +206,6 @@ impl Hosts {
                 name.clone(),
                 Record {
                     request: request.clone(),
-                    remote: None,
                     active_step: None,
                     progress: SetupDto {
                         name: name.clone(),
@@ -493,28 +491,14 @@ fi
             .await?;
         self.begin(name, "register")?;
         {
-            let mut records = self.0.setup.lock().unwrap();
-            records.get_mut(name).unwrap().remote = Some(remote.clone());
-            save(&self.0.cfg.root, &records)?;
-        }
-        if !self.list().iter().any(|h| h.name == name) {
-            let mut cfg = (*self.0.cfg).clone();
-            cfg.hosts = vec![(
-                name.into(),
-                HostConfig {
-                    endpoint: request.ssh.clone(),
-                    remote: Some(remote),
-                },
-            )];
-            let host = Hosts::configured(
-                Arc::new(cfg),
-                self.0.store.clone(),
-                self.0.events.clone(),
-                self.0.timeouts,
-                BTreeMap::new(),
-            );
-            host.start();
-            self.0.extra.lock().unwrap().push(host);
+            let _mutation = self.mutation().await;
+            let color = self
+                .list()
+                .iter()
+                .find(|h| h.name == name)
+                .and_then(|h| h.color);
+            self.save_connection(name, Some(&request.ssh), Some(&remote), color)
+                .await?;
         }
         self.checkpoint(name, "register")?;
         if !request.repositories.is_empty() {

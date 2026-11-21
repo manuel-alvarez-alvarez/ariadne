@@ -149,7 +149,7 @@ impl AppState {
         skills::reset_document,
         workflows::create, workflows::list, workflows::get, workflows::update,
         workflows::delete, workflows::reset, workflows::parse,
-        hosts::list, hosts::reconnect, hosts::setup, hosts::setup_status,
+        hosts::list, hosts::create, hosts::patch, hosts::delete, hosts::reconnect, hosts::setup, hosts::setup_status,
         dashboards::create, dashboards::list, dashboards::get, dashboards::update, dashboards::delete, dashboards::reset,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
@@ -188,7 +188,7 @@ impl AppState {
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
-        ariadne_api::hosts::HostDto, ariadne_api::hosts::HostKind, ariadne_api::hosts::HostStatus,
+        ariadne_api::hosts::HostColor, hosts::CreateHost, hosts::PatchHost, ariadne_api::hosts::HostDto, ariadne_api::hosts::HostKind, ariadne_api::hosts::HostStatus,
         ariadne_api::hosts::HostSyncDto, ariadne_api::hosts::SyncState,
         ariadne_api::hosts::MissingRepositoryDto,
         ariadne_api::events::AgentEventDto, ariadne_api::events::AgentEventSummaryDto,
@@ -315,7 +315,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/workflows/{name}/reset", post(workflows::reset))
         .route("/v1/workflows/parse", post(workflows::parse))
-        .route("/v1/hosts", get(hosts::list))
+        .route("/v1/hosts", get(hosts::list).post(hosts::create))
+        .route(
+            "/v1/hosts/{name}",
+            axum::routing::patch(hosts::patch).delete(hosts::delete),
+        )
         .route(
             "/v1/hosts/{name}/setup",
             get(hosts::setup_status).post(hosts::setup),

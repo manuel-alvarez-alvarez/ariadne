@@ -200,8 +200,8 @@ daemon's `error` sentence.
 
 The same routes are served under `/v1/hosts/{host}/`, for example
 `/v1/hosts/build/api/v1/query` or `/v1/hosts/all/loki/api/v1/query_range`.
-`{host}` is a host name from `[hosts.<name>]` in
-[Configuration](configuration.md), `local`, or `all`.
+`{host}` is a name from the settings daemon database, `local`, or `all`.
+See [Configuration](configuration.md) for host management.
 
 - A host name sends the request to that host's daemon and returns its answer.
   An unknown host answers `404`. A host that is not `ready` answers `503` and

@@ -469,7 +469,7 @@ export interface paths {
         };
         get: operations["hosts_list"];
         put?: never;
-        post?: never;
+        post: operations["hosts_create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1521,6 +1521,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["hosts_delete"];
+        options?: never;
+        head?: never;
+        patch: operations["hosts_patch"];
         trace?: never;
     };
     "/v1/hosts/{name}/reconnect": {
@@ -3385,6 +3401,12 @@ export interface components {
              */
             workflow?: string | null;
         };
+        CreateHost: {
+            color?: components["schemas"]["HostColor"] | null;
+            endpoint: string;
+            name: string;
+            remote?: string | null;
+        };
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
@@ -3658,6 +3680,11 @@ export interface components {
             data: components["schemas"]["HostDto"];
             /** @enum {string} */
             event: "host_updated";
+        } | {
+            /** @description A host was removed from the settings database (037). */
+            data: components["schemas"]["HostDto"];
+            /** @enum {string} */
+            event: "host_deleted";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -3898,8 +3925,14 @@ export interface components {
             /** @description The daemon's version, as `GET /v1/version` reports it. */
             version: string;
         };
-        /** @description One host a client can address: this daemon, or one `config.toml` lists. */
+        /**
+         * @description A host's optional colour override.
+         * @enum {string}
+         */
+        HostColor: "red" | "orange" | "amber" | "green" | "teal" | "blue" | "violet" | "pink";
+        /** @description One host a client can address: this daemon, or one the database stores. */
         HostDto: {
+            color?: components["schemas"]["HostColor"] | null;
             /**
              * @description The address a client on this machine uses. For an `ssh` host it is
              *     null until a forward is up.
@@ -4154,6 +4187,11 @@ export interface components {
         ParsedWorkflowDto: {
             name: string;
             steps: components["schemas"]["WorkflowStepDto"][];
+        };
+        PatchHost: {
+            color?: components["schemas"]["HostColor"] | null;
+            endpoint?: string;
+            remote?: string | null;
         };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
@@ -5953,6 +5991,109 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HostDto"][];
                 };
+            };
+        };
+    };
+    hosts_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateHost"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    hosts_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    hosts_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchHost"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -396,6 +396,16 @@ impl HarnessBuilder {
                 home
             }
         };
+        // Host fixtures seed the settings database; config.toml never holds hosts.
+        if let Ok(raw) = std::fs::read_to_string(home.join("host-fixture.toml")) {
+            let fixture: ariadne_client::endpoint::FileConfig = toml::from_str(&raw).unwrap();
+            for (name, host) in fixture.hosts.0 {
+                store
+                    .save_host(&name, Some(&host.endpoint), host.remote.as_deref(), None)
+                    .await
+                    .unwrap();
+            }
+        }
         let mut config = Config::load(Some(home)).unwrap();
         config.native_home = dir.path().join("native-home");
         ariadne_daemon::agents::sync_skills(&store, &config.skills_dir, &config.native_home)
@@ -515,7 +525,8 @@ impl HarnessBuilder {
             store.clone(),
             bus.clone(),
             self.timeouts,
-        );
+        )
+        .await;
         let state = AppState {
             tunnel,
             hosts,

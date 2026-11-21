@@ -75,11 +75,7 @@ unknown key stops the daemon rather than being ignored):
   ssh_bin                  the `ssh` each ssh:// host's forward runs (default: ssh
                            on this daemon's PATH)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
-  [hosts.<name>]           another machine's daemon, listed by GET /v1/hosts: `endpoint`
-                           is ssh://[user@]host[:port], http://host:port or an
-                           absolute socket path; `remote` (ssh:// only) is the
-                           far daemon's socket path or loopback host:port.
-                           A name has letters, digits, - and _; `local` is taken
+
 
   ariadned --check-config reads that file and exits.\
 ";
@@ -251,7 +247,8 @@ async fn main() -> Result<()> {
         store.clone(),
         events.clone(),
         ariadne_daemon::timeouts::Timeouts::default(),
-    );
+    )
+    .await;
     hosts.start();
     let sched_tx = ariadne_daemon::scheduler::start(
         store.clone(),

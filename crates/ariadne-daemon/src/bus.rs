@@ -150,6 +150,10 @@ impl EventBus {
 
     /// Publish a host whose status, endpoint or error moved (037). The
     /// forward's state is no store row: only the daemon can build it.
+    pub fn host_deleted(&self, host: ariadne_api::hosts::HostDto) {
+        self.publish(unscoped(DomainEvent::HostDeleted(host)));
+    }
+
     pub fn host_updated(&self, host: ariadne_api::hosts::HostDto) {
         self.publish(unscoped(DomainEvent::HostUpdated(host)));
     }

@@ -7394,3 +7394,31 @@ async fn splitting_pull_request_causes_preserves_existing_occurrences_and_work()
     copied_pool.close().await;
     pool.close().await;
 }
+
+#[tokio::test]
+async fn host_rows_survive_reopening_and_keep_local_color() {
+    let (store, dir) = test_store().await;
+    store
+        .save_host(
+            "box",
+            Some("ssh://box"),
+            Some("/tmp/worker.sock"),
+            Some("teal"),
+        )
+        .await
+        .unwrap();
+    store
+        .save_host("local", None, None, Some("pink"))
+        .await
+        .unwrap();
+    drop(store);
+    let reopened = Store::open(dir.path().join("test.db")).await.unwrap();
+    let rows = reopened.list_hosts().await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].endpoint.as_deref(), Some("ssh://box"));
+    assert_eq!(rows[0].remote.as_deref(), Some("/tmp/worker.sock"));
+    assert_eq!(rows[0].color.as_deref(), Some("teal"));
+    assert_eq!(rows[1].color.as_deref(), Some("pink"));
+    reopened.delete_host("box").await.unwrap();
+    assert_eq!(reopened.list_hosts().await.unwrap().len(), 1);
+}

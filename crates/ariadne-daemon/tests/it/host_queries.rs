@@ -66,7 +66,7 @@ async fn pair() -> (Harness, Harness, tempfile::TempDir) {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
-        home.join("config.toml"),
+        home.join("host-fixture.toml"),
         // No `ssh` runs: the forward of `box` cannot start.
         format!(
             "ssh_bin = \"{}\"\n\
@@ -75,6 +75,11 @@ async fn pair() -> (Harness, Harness, tempfile::TempDir) {
              [hosts.box]\nendpoint = \"ssh://me@box\"\n",
             dir.path().join("no-ssh").display()
         ),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!("ssh_bin = {:?}", dir.path().join("no-ssh")),
     )
     .unwrap();
     let local = harness().home(home).await;

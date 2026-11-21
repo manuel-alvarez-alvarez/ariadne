@@ -413,7 +413,8 @@ which its row in the header's host picker and the Hosts screen's table read.
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 | `dashboard_created`, `dashboard_updated` | patch `dashboards.detail`, invalidate `dashboards.lists` |
 | `dashboard_deleted` | remove `dashboards.detail`, invalidate `dashboards.lists` |
-| `host_updated` | from `local`'s stream only: patch the row in `hosts.list()`, point `api(host)` at the new address, and invalidate `qk.host(name)` when the host came up or moved |
+| `host_updated` | from `local`'s stream only: add or replace the row in `hosts.list()`, point `api(host)` at the new address, and invalidate `qk.host(name)` when the host came up or moved |
+| `host_deleted` | from `local`'s stream only: remove the row from `hosts.list()`, close its stream through the host provider, and drop `qk.host(name)` |
 
 `dashboard_deleted` is the one `*_deleted` event that is fat like its own
 `*_created`/`*_updated`, carrying the whole `DashboardDto` rather than the
