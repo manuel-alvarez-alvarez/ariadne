@@ -34,7 +34,7 @@ const NEAR = 1
 export function StepTrack({ task, steps }: { task: TaskDto; steps: WorkflowStepDto[] }) {
   const current = steps.findIndex((step) => step.id === task.step)
   const folds = steps.length > FOLD_OVER
-  const anchor = current < 0 ? 0 : current
+  const anchor = Math.max(current, 0)
   const far = (index: number) => folds && Math.abs(index - anchor) > NEAR
   return (
     <ol

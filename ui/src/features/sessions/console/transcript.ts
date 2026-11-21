@@ -240,6 +240,7 @@ export function applyEvent(transcript: Transcript, event: AgentEventDto): Transc
     blocks,
     subagents,
     running: now,
+    // biome-ignore lint/complexity/useMathMinMax: event ids are strings, so Math.max does not apply.
     newest: event.id > transcript.newest ? event.id : transcript.newest,
     turnStartedAt: now ? (transcript.turnStartedAt ?? event.created_at) : undefined,
     queuedPrompts: unqueue(transcript.queuedPrompts, event),
