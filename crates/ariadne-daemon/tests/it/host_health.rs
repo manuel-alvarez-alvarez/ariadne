@@ -359,7 +359,10 @@ async fn cleanup_retries_keep_a_zombie_group_owned_until_it_disappears() {
     }
     let run = stub.runs()[0].clone();
     std::fs::write(&release, "").unwrap();
-    assert_eq!(updates.next().await.status, HostStatus::Down);
+    assert_eq!(
+        updates.next_status(HostStatus::Connecting).await.status,
+        HostStatus::Down
+    );
     assert!(
         !pid_is_alive(run.pid),
         "Down requires the old PID to be reaped"
