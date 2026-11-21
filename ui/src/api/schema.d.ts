@@ -4626,6 +4626,12 @@ export interface components {
             summary: string;
             updated_at: string;
         };
+        /** @description A regular supporting file, relative to its skill directory. */
+        SkillFile: {
+            bytes: number[];
+            executable: boolean;
+            path: string;
+        };
         /**
          * @description Where a skill is used: by the orchestrator, or to staff a task agent.
          * @enum {string}
@@ -4954,6 +4960,8 @@ export interface components {
              *     text Ariadne ships is `POST /v1/skills/{name}/document/reset`.
              */
             document?: string | null;
+            /** @description Complete supporting-file snapshot. Absent leaves existing files unchanged. */
+            files?: components["schemas"]["SkillFile"][] | null;
         };
         /** @description Partial update; only allowed while the task is pending, ready or failed. */
         UpdateTaskRequest: {

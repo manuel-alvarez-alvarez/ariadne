@@ -1,7 +1,7 @@
 ---
 id: 037
 status: current
-updated: 2026-11-17
+updated: 2026-11-21
 areas: [api, daemon, client, cli, docs]
 commits: []
 tests:
@@ -231,6 +231,17 @@ picker, the Hosts section of its settings and one stream per host — is spec
 29. Writes go to the local daemon. Nothing is read back from a host into
     this daemon.
 
+35. Skill pushes include the registered document and a complete supporting-file snapshot.
+    Paths stay within the destination skill directory. Nested paths and executable bits survive transfer.
+    Matching names take source contents; worker-only skills remain unchanged.
+    The daemon checks supporting files at each `host_check`, including file removals.
+    A transfer rechecks its source before it reports success.
+36. Escaping symbolic links fail that skill push and name the offending path.
+    Other skills continue. Failed staging or replacement preserves recoverable previous worker contents.
+    Explicit Markdown local-file links outside the skill directory produce warnings in `sync.error`.
+    Such warnings leave successful transfers `in_sync`; web links produce no warning.
+    External files are not transferred. Prose and shell examples are not dependency detection inputs.
+
 ## Acceptance criteria
 
 - Hosts keep file order and an unknown key is refused by name
@@ -336,6 +347,16 @@ and query tests serve the second harness daemon on a loopback port, and give
 the local one a `direct` host that points at it. The health tests serve the
 second harness daemon behind a switch that turns its `GET /v1/health` off and
 on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
+
+- Skill bundles retain layout, executable bits, updates and removals
+  (`host_sync.rs::supporting_files_reach_the_worker_and_later_changes_replace_them`).
+- Unsafe paths preserve the worker document (`host_sync.rs::an_invalid_bundle_preserves_the_worker_skill`).
+- Rejected documents restore previous binary files
+  (`host_sync.rs::a_rejected_document_restores_the_previous_worker_files`).
+- Escaping links preserve the worker and allow unrelated skills
+  (`host_sync.rs::an_escaping_link_preserves_the_worker_and_does_not_block_other_skills`).
+- External Markdown links warn without copying dependencies
+  (`host_sync.rs::external_markdown_links_warn_without_copying_external_files`).
 
 ## Sources
 

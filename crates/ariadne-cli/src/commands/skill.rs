@@ -161,6 +161,7 @@ pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> R
                     &skill_path(&name),
                     &UpdateSkillRequest {
                         document: Some(document),
+                        ..Default::default()
                     },
                 )
                 .await?;

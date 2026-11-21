@@ -274,6 +274,7 @@ dependencies = [
  "opentelemetry-appender-tracing",
  "opentelemetry_sdk",
  "promql-parser",
+ "pulldown-cmark",
  "regex",
  "reqwest 0.13.5",
  "rustix",

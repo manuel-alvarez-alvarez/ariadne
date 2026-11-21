@@ -114,17 +114,76 @@ pub(super) async fn update(
     Json(req): Json<UpdateSkillRequest>,
 ) -> ApiResult<Json<SkillDto>> {
     let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
-    let skill = match req.document {
-        Some(document) => state.store.set_skill_document(&name, &document).await?,
-        None => state.store.get_skill(&name).await?,
+    let old = state.store.get_skill(&name).await?;
+    let root = canonical_skills_dir(&state)?;
+    if let Some(reason) = skill_name_rejection(&name, &root) {
+        return Err(invalid_name(&name, reason));
+    }
+    let staged = req
+        .files
+        .as_ref()
+        .map(|files| {
+            crate::skill_bundle::stage(
+                root.parent().unwrap_or(&root),
+                req.document.as_deref().unwrap_or(old.document_text()),
+                files,
+            )
+        })
+        .transpose()
+        .map_err(|e| invalid_name(&name, &e))?;
+    let backup = tempfile::tempdir_in(root.parent().unwrap_or(&root))
+        .map_err(|e| sync_error(e.into()))?
+        .keep();
+    let target = root.join(&name);
+    let saved = backup.join("previous");
+    if let Some(staged) = &staged {
+        if target.exists() {
+            std::fs::rename(&target, &saved).map_err(|e| sync_error(e.into()))?;
+        }
+        if let Err(error) = std::fs::rename(staged.path(), &target) {
+            if saved.exists() && std::fs::rename(&saved, &target).is_err() {
+                tracing::error!(path = %backup.display(), "previous skill preserved for recovery");
+            }
+            return Err(sync_error(error.into()));
+        }
+    }
+    let result = match req.document {
+        Some(document) => state.store.set_skill_document(&name, &document).await,
+        None => state.store.get_skill(&name).await,
     };
-    crate::agents::sync_skills(
+    let skill = match result {
+        Ok(skill) => skill,
+        Err(error) => {
+            if staged.is_some() {
+                let _ = std::fs::remove_dir_all(&target);
+                if saved.exists() && std::fs::rename(&saved, &target).is_err() {
+                    tracing::error!(path = %backup.display(), "previous skill preserved for recovery");
+                }
+            }
+            return Err(error.into());
+        }
+    };
+    if let Err(error) = crate::agents::sync_skills(
         &state.store,
         &state.launcher.cfg.skills_dir,
         &state.launcher.cfg.native_home,
     )
     .await
-    .map_err(sync_error)?;
+    {
+        if staged.is_some() {
+            let _ = std::fs::remove_dir_all(&target);
+            if saved.exists() && std::fs::rename(&saved, &target).is_err() {
+                let recovery = &backup;
+                tracing::error!(path = %recovery.display(), "previous skill preserved for recovery");
+            }
+            let _ = state
+                .store
+                .set_skill_document(&name, old.document_text())
+                .await;
+        }
+        return Err(sync_error(error));
+    }
+    let _ = std::fs::remove_dir_all(&backup);
     Ok(Json(skill_dto(skill)))
 }
 
