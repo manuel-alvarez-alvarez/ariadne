@@ -1986,6 +1986,8 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
         {"name":"install", "complete":true, "error":null},
         {"name":"service", "complete":false, "error":"Enable user services"},
         {"name":"tool:codex-acp", "complete":true, "error":null},
+        {"name":"clone:source", "complete":true, "error":null},
+        {"name":"repository:source", "complete":false, "error":"Repository registration failed"},
         {"name":"authentication:github", "complete":false, "error":"Sign in separately on the worker"}
     ]});
     let answer = progress.clone();
@@ -2003,7 +2005,7 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("request.json");
-    std::fs::write(&file, json!({"ssh":"ssh://me@worker", "source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}, "tools":{"agents":["codex-acp"],"github":true}, "credentials":["codex"]}).to_string()).unwrap();
+    std::fs::write(&file, json!({"ssh":"ssh://me@worker", "source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}, "tools":{"agents":["codex-acp"],"github":true}, "credentials":["codex"], "repositories":{"source":"~/workspace/project"}}).to_string()).unwrap();
     for args in [
         vec![
             "host",
@@ -2026,6 +2028,8 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
         assert!(text.contains("install: complete"), "{text}");
         assert!(text.contains("Enable user services"), "{text}");
         assert!(text.contains("tool:codex-acp: complete"), "{text}");
+        assert!(text.contains("clone:source: complete"), "{text}");
+        assert!(text.contains("Repository registration failed"), "{text}");
         assert!(text.contains("Sign in separately on the worker"), "{text}");
     }
     assert_eq!(
@@ -2038,5 +2042,224 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
         json!({"agents":["codex-acp"], "github":true})
     );
     assert_eq!(request["credentials"], json!(["codex"]));
+    assert_eq!(
+        request["repositories"],
+        json!({"source":"~/workspace/project"})
+    );
     server.abort();
+}
+
+type Seen = Arc<Mutex<Vec<(String, String, serde_json::Value)>>>;
+
+/// A daemon that records each host write it gets and answers it with the
+/// row of `build`, a 404 for the name `gone` and a 409 for `dupe`.
+async fn writes_registry() -> (String, Seen) {
+    use axum::http::Method;
+    use axum::response::IntoResponse;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let seen: Seen = Arc::default();
+    let log = Arc::clone(&seen);
+    let app = Router::new().fallback(move |method: Method, request: Request| {
+        let log = Arc::clone(&log);
+        async move {
+            let path = request.uri().path().to_owned();
+            let bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            log.lock()
+                .unwrap()
+                .push((method.to_string(), path.clone(), body));
+            if path.ends_with("/gone") || path.ends_with("/dupe") {
+                let status = if path.ends_with("/gone") {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::CONFLICT
+                };
+                return (
+                    status,
+                    Json(json!({"error":{"code":"unknown_host","message":"no host named gone"}})),
+                )
+                    .into_response();
+            }
+            let mut row = host_row("build", "direct", "ready", None);
+            row["color"] = json!("teal");
+            match method {
+                Method::POST => (StatusCode::CREATED, Json(row)).into_response(),
+                Method::PATCH => Json(row).into_response(),
+                _ => StatusCode::NO_CONTENT.into_response(),
+            }
+        }
+    });
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (endpoint, seen)
+}
+
+/// Spec 014, rule 52.
+#[tokio::test]
+async fn host_add_posts_the_host_and_prints_its_row() {
+    let (endpoint, seen) = writes_registry().await;
+    let (code, text) = run_cli(&[
+        "--endpoint",
+        &endpoint,
+        "host",
+        "add",
+        "build",
+        "--endpoint",
+        "http://10.0.0.2:7676",
+        "--color",
+        "teal",
+    ])
+    .await;
+    assert_eq!(code, 0, "{text}");
+    assert!(text.lines().last().unwrap().starts_with("build"), "{text}");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].0, "POST");
+    assert_eq!(seen[0].1, "/v1/hosts");
+    assert_eq!(seen[0].2["name"], "build");
+    assert_eq!(seen[0].2["endpoint"], "http://10.0.0.2:7676");
+    assert_eq!(seen[0].2["color"], "teal");
+}
+
+/// Spec 014, rule 53.
+#[tokio::test]
+async fn host_edit_patches_only_the_given_fields_and_null_clears() {
+    let (endpoint, seen) = writes_registry().await;
+    for args in [
+        vec!["--endpoint", "http://10.0.0.3:7676"],
+        vec!["--remote", "127.0.0.1:7676", "--color", "pink"],
+        vec!["--no-remote", "--no-color"],
+    ] {
+        let mut full = vec!["--endpoint", endpoint.as_str(), "host", "edit", "build"];
+        full.extend(args.iter());
+        let (code, text) = run_cli(&full).await;
+        assert_eq!(code, 0, "{args:?}: {text}");
+        assert!(text.lines().last().unwrap().starts_with("build"), "{text}");
+    }
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen.iter()
+            .all(|(m, p, _)| m == "PATCH" && p == "/v1/hosts/build")
+    );
+    assert_eq!(seen[0].2, json!({"endpoint": "http://10.0.0.3:7676"}));
+    assert_eq!(
+        seen[1].2,
+        json!({"remote": "127.0.0.1:7676", "color": "pink"})
+    );
+    assert_eq!(seen[2].2, json!({"remote": null, "color": null}));
+}
+
+/// Spec 014, rule 53.
+#[tokio::test]
+async fn host_edit_with_no_flag_is_refused_before_any_request() {
+    let (endpoint, seen) = writes_registry().await;
+    let (code, text) = run_cli(&["--endpoint", &endpoint, "host", "edit", "build"]).await;
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("nothing to change"), "{text}");
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+/// Spec 014, rule 54.
+#[tokio::test]
+async fn host_flags_refuse_a_colour_outside_the_eight_and_a_clashing_pair() {
+    let (endpoint, seen) = writes_registry().await;
+    for args in [
+        vec!["host", "add", "x", "--endpoint", "e", "--color", "mauve"],
+        vec!["host", "edit", "x", "--color", "mauve"],
+        vec!["host", "edit", "x", "--color", "red", "--no-color"],
+        vec!["host", "edit", "x", "--remote", "r", "--no-remote"],
+    ] {
+        let mut full = vec!["--endpoint", endpoint.as_str()];
+        full.extend(args.iter());
+        let (code, text) = run_cli(&full).await;
+        assert_eq!(code, 2, "{args:?}: {text}");
+    }
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+/// Spec 014, rule 55.
+#[tokio::test]
+async fn host_rm_deletes_the_host_and_prints_its_name() {
+    let (endpoint, seen) = writes_registry().await;
+    let (code, text) = run_cli(&["--endpoint", &endpoint, "host", "rm", "build"]).await;
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(text.trim(), "build");
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        (seen[0].0.as_str(), seen[0].1.as_str()),
+        ("DELETE", "/v1/hosts/build")
+    );
+}
+
+/// Spec 014, rule 56.
+#[tokio::test]
+async fn host_writes_print_the_daemon_error_and_json_prints_the_dto() {
+    let (endpoint, _) = writes_registry().await;
+    let (code, text) = run_cli(&["--endpoint", &endpoint, "host", "rm", "gone"]).await;
+    assert_eq!(code, 1, "{text}");
+    assert!(text.contains("no host named gone"), "{text}");
+    let (code, text) = run_cli(&[
+        "--endpoint",
+        &endpoint,
+        "--format",
+        "json",
+        "host",
+        "rm",
+        "gone",
+    ])
+    .await;
+    assert_eq!(code, 1, "{text}");
+    let envelope: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+    assert_eq!(envelope["error"]["code"], "unknown_host", "{text}");
+    assert_eq!(envelope["error"]["status"], 404, "{text}");
+    assert_eq!(envelope["error"]["message"], "no host named gone", "{text}");
+    let (code, text) = run_cli(&[
+        "--endpoint",
+        &endpoint,
+        "host",
+        "edit",
+        "dupe",
+        "--color",
+        "red",
+    ])
+    .await;
+    assert_eq!(code, 1, "{text}");
+    assert!(text.contains("no host named gone"), "{text}");
+    let (code, text) = run_cli(&[
+        "--endpoint",
+        &endpoint,
+        "--format",
+        "json",
+        "host",
+        "edit",
+        "build",
+        "--color",
+        "teal",
+    ])
+    .await;
+    assert_eq!(code, 0, "{text}");
+    let host: ariadne_api::hosts::HostDto = serde_json::from_str(&text).unwrap();
+    assert_eq!(host.name, "build");
+    assert_eq!(host.color, Some(ariadne_api::hosts::HostColor::Teal));
+}
+
+/// Spec 014, rule 57: `--host` does not move a registry write off `local`.
+#[tokio::test]
+async fn host_writes_refuse_host_all_and_run_on_local_for_host_local() {
+    let (endpoint, seen) = writes_registry().await;
+    let (code, text) = run_cli(&[
+        "--endpoint",
+        &endpoint,
+        "--host",
+        "all",
+        "host",
+        "rm",
+        "build",
+    ])
+    .await;
+    assert_eq!(code, 2, "{text}");
+    assert!(seen.lock().unwrap().is_empty());
 }

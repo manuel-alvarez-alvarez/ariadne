@@ -65,8 +65,6 @@ pub struct Timeouts {
     /// same fetch, so a burst of webhook deliveries for one push costs one
     /// fetch rather than one per delivery.
     pub forge_wake_debounce: Duration,
-    /// How long the newest comment must stand before the keeper hears it.
-    pub keeper_comment_settle: Duration,
     /// How long a killed agent's running turn has to end once it is
     /// cancelled.
     ///
@@ -191,7 +189,6 @@ impl Default for Timeouts {
             forge_rate_limit_pause: Duration::from_secs(900),
             forge_poll_backoff_cap: Duration::from_secs(3600),
             forge_wake_debounce: Duration::from_secs(5),
-            keeper_comment_settle: Duration::from_secs(300),
             checkpoint: Duration::from_secs(30),
             telemetry_retention: Duration::from_secs(3600),
             dead_launch_patience: Duration::from_secs(30),

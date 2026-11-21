@@ -5,9 +5,38 @@ import { expect, it, vi } from "vitest"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { WorkerSetup } from "./worker-setup"
 
+it("selects repositories with a home workspace default and an editable destination", async () => {
+  const bodies: unknown[] = []
+  daemonFetch.mockImplementation(async (request: Request) => {
+    if (new URL(request.url).pathname === "/v1/repositories")
+      return jsonResponse([{ id: "source", path: "/source/project", forge: { name: "project" } }])
+    if (request.method === "POST") bodies.push(await request.clone().json())
+    return jsonResponse({ name: "builder", state: "incomplete", steps: [] })
+  })
+  renderScreen(<WorkerSetup />)
+  const user = userEvent.setup()
+  await user.type(screen.getByLabelText("Worker name"), "builder")
+  await user.type(screen.getByLabelText("SSH address"), "ssh://box")
+  await user.type(screen.getByLabelText("CLI binary path on the source daemon machine"), "/cli")
+  await user.type(
+    screen.getByLabelText("Daemon binary path on the source daemon machine"),
+    "/daemon",
+  )
+  await user.click(await screen.findByLabelText("/source/project"))
+  const destination = screen.getByLabelText("Destination for /source/project")
+  expect((destination as HTMLInputElement).value).toBe("~/workspace/project")
+  await user.clear(destination)
+  await user.type(destination, "/srv/project")
+  await user.click(screen.getByRole("button", { name: "Start or retry setup" }))
+  await waitFor(() => expect(bodies).toHaveLength(1))
+  expect(bodies[0]).toMatchObject({ repositories: { source: "/srv/project" } })
+})
+
 it("starts setup and shows retained steps and a failure", async () => {
   const requests: Request[] = []
   const fetch = vi.fn((request: Request) => {
+    if (new URL(request.url).pathname === "/v1/repositories")
+      return Promise.resolve(jsonResponse([]))
     requests.push(request)
     return Promise.resolve(
       jsonResponse({
@@ -56,6 +85,7 @@ it("starts setup and shows retained steps and a failure", async () => {
 it("sends explicit tool and credential selections", async () => {
   const bodies: unknown[] = []
   daemonFetch.mockImplementation(async (request: Request) => {
+    if (new URL(request.url).pathname === "/v1/repositories") return jsonResponse([])
     if (request.method === "POST") bodies.push(await request.clone().json())
     return jsonResponse({ name: "builder", state: "incomplete", steps: [] })
   })

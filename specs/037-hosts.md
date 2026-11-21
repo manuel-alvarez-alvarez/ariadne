@@ -34,8 +34,7 @@ In: database host connections, their validation, the
 SSH forward the daemon keeps for each `ssh://` host, the push of the local
 catalogs and settings to each host, and the query routes under
 `/v1/hosts/{host}`. Out: a Rust SSH library, a reverse forward from the far
-daemon, a reconnect of every host in one request, cloning a repository on
-a host and any write from a host back to this
+daemon, a reconnect of every host in one request, and any write from a host back to this
 daemon. CLI selection follows spec 014 (rules 43 to 50). The transports and the
 event stream are spec 012's. The desktop app's reading of the hosts — the host
 picker, the Hosts screen and one stream per host — is spec
@@ -298,7 +297,8 @@ picker, the Hosts screen and one stream per host — is spec
     Setup records hold operations only. Restart never restores connections from `worker-setup.json`.
     The same request resumes setup without transferring installed binaries again.
     Retry rechecks access and binaries, restarts the service, and checks health.
-    Concurrent repeats return the existing operation. Changed requests are refused.
+    Concurrent repeats return the existing operation. Changed requests are refused while setup is incomplete.
+    After completion, repository selections can change with the same SSH access and binary source.
     A complete request stays complete on repetition.
 51. `ariadne host setup NAME --request FILE` starts or retries an operation.
     `ariadne host setup-status NAME` shows progress and per-step errors.
@@ -344,10 +344,25 @@ picker, the Hosts screen and one stream per host — is spec
 61. The UI accepts host changes and deletions only from the `local` event stream.
     Deletion removes the cached host row, closes its stream through the host provider, and drops `qk.host(name)`.
     Host configuration and colours never enter catalog sync.
+62. `ariadne host add`, `edit` and `rm` call rules 57 to 59 on the local daemon
+    and take `--color` from the eight `HostColor` values (014, rules 52 to 57).
+
+
+63. Repository population extends setup with an optional `repositories` map from source IDs to worker destinations.
+    Destinations accept absolute paths or `~/` paths resolved against the probed worker home.
+    Desktop proposes `~/workspace/<repository>` and permits each destination to change.
+    Setup clones Git remote history without source edits or untracked files.
+    Registered checkout reuse follows rule 26, including base branch preference and preservation of worker paths.
+    Each selection records `clone:<id>` and `repository:<id>` progress.
+    Missing remotes, worker authentication failures, and inaccessible destinations leave setup incomplete.
+    Setup refuses unrelated existing destination directories.
+    Completed clone and registration checkpoints survive retries.
+    Registration invokes the normal host synchronization for settings and learned permissions.
+    Automatic enrollment of later repositories and movement of existing checkouts remain outside scope.
 
 ### Portable daemon configuration
 
-62. Each ready host receives portable daemon settings through `PUT /v1/config/sync`.
+64. Each ready host receives portable daemon settings through `PUT /v1/config/sync`.
     `GET` on that path returns `ConfigSyncDto`, with `state`, `error`, and `configuration`.
     The portable fields are `delete_merged_branches`, `delete_merged_worktrees`, `auto_switch`,
     `exhausted_patterns`, `log_filter`, the three `telemetry_*_days` values, `acp_registry_url`,
@@ -355,21 +370,21 @@ picker, the Hosts screen and one stream per host — is spec
     Source defaults participate. Worker-only agents and flag entries remain.
     Paths, listeners, origins, webhook addresses, hardware choices, sleep prevention,
     executable locations, hosts, and other settings remain the worker's.
-63. Custom agents match by identifier. An existing worker command takes precedence over the source command.
+65. Custom agents match by identifier. An existing worker command takes precedence over the source command.
     Without a mapping, the command must use an executable on the worker PATH.
     Explicit filesystem paths in commands or arguments require a worker mapping and otherwise fail synchronization.
     These are absolute paths, `~/`, `./`, `../`, and Windows paths.
     Other slash tokens remain portable, including provider/model identifiers and scoped package names.
     Path-bearing flags fail instead of silently installing unusable source paths.
     Matching portable flag lists take the source list. Worker-only flag lists remain.
-64. The worker saves accepted settings in `portable-config.json` under its own home.
+66. The worker saves accepted settings in `portable-config.json` under its own home.
     Startup overlays these settings without rewriting `config.toml` or changing worker locations.
     Worker commands configured in `config.toml` retain precedence by identifier.
     Cleanup policies, model switching, logging, and retention update live.
     Existing retention jobs use the updated cutoffs on their next pass.
     `RUST_LOG` keeps precedence over the synchronized logging filter.
     Registry additions and index changes require an idle restart.
-65. Maintenance snapshots admitted tasks under the same lock that guards admission.
+67. Maintenance snapshots admitted tasks under the same lock that guards admission.
     Admitted tasks continue through all remaining columns, including review and CI waits.
     New tasks remain queued. New review and babysit operations receive a maintenance conflict.
     Existing operations and their coordinating sessions can continue.
@@ -378,15 +393,24 @@ picker, the Hosts screen and one stream per host — is spec
     It preserves the PID, inherited environment, and service supervision for installed workers.
     Open event streams do not delay replacement.
     SSH forward guards close their process groups when replacement closes the daemon lifetime pipe.
-66. Host synchronization reports `pending_restart` while registry changes wait for maintenance.
+68. Host synchronization reports `pending_restart` while registry changes wait for maintenance.
     Successful replacement restores normal scheduling and reports `in_sync`.
     A replacement failure reports `failed` with its reason and restores admission.
     A later configuration transfer retries maintenance. CLI and desktop expose the state and error.
-67. Host checks detect source configuration and explicit agent-flag changes.
+69. Host checks detect source configuration and explicit agent-flag changes.
     Configuration failures use the existing independent retry queue from rule 25.
     They do not block catalog, repository, learned permission, or AI permission synchronization.
 
 ## Acceptance criteria
+
+- Rule 63: `hosts.rs::setup_accepts_selected_repository_destinations` and
+  `hosts.rs::selected_repositories_clone_only_committed_files_and_retry_registration`;
+  `hosts.rs::setup_rejects_unsafe_repository_destinations_before_starting` proves request validation.
+  `hosts.rs::repository_setup_preserves_unrelated_existing_destinations` proves preservation of unrelated directories, including empty directories.
+  `hosts.rs::repository_setup_reports_a_missing_source_remote` proves the missing-remote step failure.
+  `hosts.rs::repository_setup_reports_worker_git_authentication_failure` proves failure after a worker receives an HTTP authentication challenge.
+  `worker-setup.test.tsx` proves selection and destination editing.
+  `hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure` proves CLI selection and progress.
 
 - Rules 1 and 56, persistence: `crates/ariadne-store/tests/store.rs::host_rows_survive_reopening_and_keep_local_color`.
 - Rules 1–3, 6, and 56–60: `hosts.rs::host_routes_persist_nullable_overrides_and_publish_full_rows`,
@@ -400,6 +424,9 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 58 and 59: `host_health.rs::editing_and_deleting_a_host_stop_its_old_health_checks`,
   `ssh_forward.rs::changing_a_remote_replaces_the_forward_and_keeps_its_colour`,
   `::deleting_a_host_ends_its_forward`.
+- Rule 62: `crates/ariadne-cli/tests/hosts.rs::host_add_posts_the_host_and_prints_its_row`,
+  `::host_edit_patches_only_the_given_fields_and_null_clears`,
+  `::host_rm_deletes_the_host_and_prints_its_name`.
 - Rule 61: `ui/scripts/host-events.test.mjs::closes a deleted host stream and removes its cache only from local events`.
 - Rule 11, no answer through the forward
   (`host_health.rs::a_forward_whose_far_daemon_does_not_answer_is_down_and_starts_again`).

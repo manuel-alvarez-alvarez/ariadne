@@ -137,6 +137,23 @@ if "-T" in args and script.get("setup"):
     import subprocess
     setup = script["setup"]
     command = args[-1]
+    if "repository_fixture" in setup:
+        import shlex
+        parts = shlex.split(shlex.split(command)[2])
+        state = os.path.join(setup["home"], "worker-repositories.json")
+        if "repo" in parts and "ls" in parts:
+            print(open(state).read() if os.path.exists(state) else "[]")
+            sys.exit(0)
+        if "repo" in parts and "add" in parts:
+            if os.path.exists(os.path.join(setup["home"], "fail-registration")):
+                sys.exit(1)
+            repository = dict(setup["repository_fixture"])
+            repository["id"] = "worker-repository"
+            repository["path"] = parts[parts.index("add") + 1]
+            with open(state, "w") as output:
+                json.dump([repository], output)
+            print(json.dumps(repository))
+            sys.exit(0)
     if "uname -s" in command and "raw_path" in setup:
         print(setup.get("os", "Linux"))
         print(setup.get("arch", "x86_64"))

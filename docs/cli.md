@@ -884,6 +884,29 @@ the daemon cannot find or cannot use.
    npm checks the selected package in the worker user's global installation prefix and preserves installed packages.
    Retry with exactly the original request, including its selections.
 
+   Add selected source repository IDs and worker destinations:
+
+   ```json
+   "repositories": {"SOURCE_REPOSITORY_ID": "~/workspace/project"}
+   ```
+
+   Find source IDs with `ariadne repo ls --format json`.
+   The proposed workspace root is `~/workspace` on the worker.
+   Change each destination to an absolute path or a path that starts with `~/`.
+   Setup expands `~/` with the worker home from the SSH probe.
+   Git clones committed history from the selected repository's remote.
+   Local edits and untracked files stay on the source machine.
+   Git and forge authentication must work on the worker.
+   Setup reports missing remotes, authentication failures, and inaccessible destinations in the repository steps.
+   It never replaces an unrelated directory.
+   A matching registered forge checkout keeps its existing worker path.
+   Matching uses forge kind, host, owner, and name, with the same base branch preferred.
+   Completed clones and registrations survive retries.
+   Existing settings and learned permissions follow the normal host synchronization.
+   After setup completes, submit the same request with changed repository selections to populate more repositories.
+   This explicit update preserves existing checkout paths.
+   Desktop Settings provides repository checkboxes and editable destinations in the worker setup form.
+
 2. Start setup with `ariadne host setup builder --request worker.json`.
 3. Read progress with `ariadne host setup-status builder`.
 4. Correct any reported prerequisite and repeat the original setup command.
@@ -926,6 +949,11 @@ Use `ariadne host reconnect NAME` to reconnect one named host, or `ariadne host 
 The command waits until each host is `ready` or `down`, up to `--timeout SECONDS` (default 30).
 It then prints one row per host, with the columns of `host ls`; `--format json` prints the hosts.
 It exits 1 when a host is not `ready` at the end. `local` cannot be reconnected, and `--host` does not apply to it.
+Use `ariadne host add NAME --endpoint ENDPOINT [--remote REMOTE] [--color COLOR]` to add a host, and print its row.
+Use `ariadne host edit NAME` with `--endpoint`, `--remote`, `--no-remote`, `--color` or `--no-color` to change it. Only the flags you give change, and you must give one.
+Use `ariadne host rm NAME` to remove a host and print its name.
+`--color` takes `red`, `orange`, `amber`, `green`, `teal`, `blue`, `violet` or `pink`. On these commands, `--endpoint` and `--color` belong to the host. Put the global `--endpoint` before `host`.
+They run on the local daemon, and `--format json` prints the host.
 Use `--host NAME` to run a command on a ready host from the local daemon's registry.
 `--endpoint` still selects the local daemon that supplies this registry.
 `--host local` selects that same daemon.

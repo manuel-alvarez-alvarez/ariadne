@@ -9,6 +9,8 @@
  * 2. **Invalidate the lists.** List responses are paginated and filtered, so
  *    they are refetched rather than patched. Only `<entity>.lists()` is
  *    invalidated, which by the key convention never disturbs detail entries.
+ *    The sessions lists are the exception: they are patched from the event's
+ *    row (see `patchSessionLists`).
  *
  * Screens therefore need no event handling of their own: read with the keys in
  * `src/api/query-keys.ts` and the cache stays live.
@@ -36,6 +38,7 @@ import {
   LOCAL_HOST,
   qk,
   rememberHosts,
+  type SessionDto,
 } from "@/api"
 
 /**
@@ -126,13 +129,13 @@ export function dispatchDomainEvent(
     }
     case "session_created": {
       queryClient.setQueryData(qk.sessions.detail(host, event.data.id), event.data)
-      void queryClient.invalidateQueries({ queryKey: qk.sessions.lists(host) })
+      patchSessionLists(queryClient, host, event.data)
       invalidateWatchedPullRequest(queryClient, host, event.data.pull_request_id)
       break
     }
     case "session_updated": {
       queryClient.setQueryData(qk.sessions.detail(host, event.data.id), event.data)
-      void queryClient.invalidateQueries({ queryKey: qk.sessions.lists(host) })
+      patchSessionLists(queryClient, host, event.data)
       // An `exhausted` flag's own recovery state is a quota item's evidence.
       void queryClient.invalidateQueries({ queryKey: qk.attention.lists(host) })
       invalidateWatchedPullRequest(queryClient, host, event.data.pull_request_id)
@@ -286,6 +289,60 @@ function invalidateWatchedPullRequest(
   if (!pullRequestId) return
   void queryClient.invalidateQueries({ queryKey: qk.pullRequests.detail(host, pullRequestId) })
   void queryClient.invalidateQueries({ queryKey: qk.pullRequests.lists(host) })
+}
+
+/** The daemon-side filters a sessions list key carries (`SessionListFilters`). */
+interface SessionListKeyFilters {
+  goal?: string
+  task?: string
+  pull_request?: string
+  status?: string
+}
+
+/**
+ * Write a started or moved session into every cached sessions list, in place.
+ *
+ * This is the one list the dispatcher patches rather than refetches. A list
+ * holds every session the host ever ran (`all: true`), so a refetch reads the
+ * whole history page by page, and sessions move several times a second while
+ * agents work. Refetching on each move kept the daemon answering the same
+ * listing without end. The event carries the whole row, and the list is
+ * narrowed only by the fields on that row, so the patch is exact. The row
+ * goes where the daemon would put it: newest activity first.
+ *
+ * A list that is still being read is refetched instead, because the read that
+ * is under way would land after the patch and put the older row back.
+ */
+function patchSessionLists(queryClient: QueryClient, host: Host, session: SessionDto): void {
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: qk.sessions.lists(host) })) {
+    if (query.state.fetchStatus === "fetching") {
+      void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true })
+      continue
+    }
+    const rows = query.state.data
+    if (!Array.isArray(rows)) continue
+    const filters = (query.queryKey[3] ?? {}) as SessionListKeyFilters
+    const others = (rows as SessionDto[]).filter((row) => row.id !== session.id)
+    const next = belongsIn(session, filters) ? [...others, session].sort(newestFirst) : others
+    if (next.length === others.length && others.length === rows.length) continue
+    queryClient.setQueryData(query.queryKey, next)
+  }
+}
+
+function belongsIn(session: SessionDto, filters: SessionListKeyFilters): boolean {
+  return (
+    (!filters.goal || session.goal_id === filters.goal) &&
+    (!filters.task || session.task_id === filters.task) &&
+    (!filters.pull_request || session.pull_request_id === filters.pull_request) &&
+    (!filters.status || session.status === filters.status)
+  )
+}
+
+/** The daemon's listing order: last activity, newest first, then the id. */
+function newestFirst(left: SessionDto, right: SessionDto): number {
+  const activity = (session: SessionDto) =>
+    Date.parse(session.last_activity_at ?? session.created_at) || 0
+  return activity(right) - activity(left) || left.id.localeCompare(right.id)
 }
 
 /**

@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-11-16
+updated: 2026-11-21
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -156,7 +156,8 @@ reads behind them ([026](026-pull-requests.md)).
    own row, in the worktree above. A session that went away on its own is
    resumed on its own row and conversation, unless the pin moved since it
    started, the same as a reviewer session is (029 rule 5a).
-10. The keeper receives the same actionable news and comment cool-down as a task agent (026 rule 12).
+10. The keeper receives the same immediate comment and new-head news as a task agent (026 rule 12).
+    Its head mark is independent of the reviewer mark.
 11. Babysitting ends on an explicit stop, merge or close: the babysit goal
     and its task end (rule 7b), the keeper session is killed, its worktree and its local branch are removed, and Ariadne
     stops working on the request, unless a review is still asked of it.
@@ -209,7 +210,7 @@ reads behind them ([026](026-pull-requests.md)).
     It ends its turn on a merge or close.
     The daemon promotes drafts kept by hand under 026 rule 27. No seat has a draft-mark tool.
     `POST /v1/repositories/{id}/pull-requests/{number}/keeper-turn` accepts an empty body and returns 202.
-    It wakes a task's keeper or a keeper by hand with untold news immediately, bypassing comment settling.
+    It wakes a task's keeper or a keeper by hand with untold news immediately.
     With no news, it asks the keeper to read the request again. No keeper returns 409.
     `pr babysit <repo> <number> --again` calls it, including on task-kept requests.
     `--again` conflicts with `--model`, `--effort`, `--skill`, `--attach` and `--stop`.
@@ -228,6 +229,9 @@ reads behind them ([026](026-pull-requests.md)).
   either preserves the other, and stopping both removes the request row:
   `pull_request_babysit.rs::stopping_review_keeps_a_dependabot_keeper`,
   `pull_request_babysit.rs::stopping_babysitting_keeps_a_dependabot_reviewer`.
+
+- Concurrent review and babysit retain independent head delivery:
+  `pull_request_babysit.rs::keeper_push_and_external_push_reach_the_reviewer_independently`.
 
 - Asking on a request starts one keeper session, seat `keeper`,
   with `pr-babysit` indexed, its worktree on `ariadne/keep-<id>`; a comment

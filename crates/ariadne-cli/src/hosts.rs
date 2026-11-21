@@ -59,6 +59,96 @@ fn print_hosts(hosts: &[HostDto], format: Format) -> Result<()> {
     )
 }
 
+/// `host add`: store a host in the local daemon and print its row.
+pub(crate) async fn add(
+    client: &Client,
+    name: String,
+    endpoint: String,
+    remote: Option<String>,
+    color: Option<String>,
+    format: Format,
+) -> Result<()> {
+    let body = serde_json::json!({
+        "name": name, "endpoint": endpoint, "remote": remote, "color": color,
+    });
+    let host: HostDto = client
+        .post_json("/v1/hosts", &body)
+        .await
+        .map_err(refused)?;
+    print_host(host, format)
+}
+
+/// `host edit`: send only the given fields. `Some(None)` sends `null`.
+pub(crate) async fn edit(
+    client: &Client,
+    name: &str,
+    endpoint: Option<String>,
+    remote: Option<Option<String>>,
+    color: Option<Option<String>>,
+    format: Format,
+) -> Result<()> {
+    let mut body = serde_json::Map::new();
+    if let Some(endpoint) = endpoint {
+        body.insert("endpoint".into(), endpoint.into());
+    }
+    if let Some(remote) = remote {
+        body.insert("remote".into(), remote.into());
+    }
+    if let Some(color) = color {
+        body.insert("color".into(), color.into());
+    }
+    if body.is_empty() {
+        return Err(Failure::usage(
+            "nothing to change: give --endpoint, --remote, --no-remote, --color or --no-color",
+        )
+        .err());
+    }
+    let host: HostDto = client
+        .patch_json(&host_path(name), &Value::Object(body))
+        .await
+        .map_err(refused)?;
+    print_host(host, format)
+}
+
+/// One host: its `host ls` row, or its `HostDto` as JSON.
+fn print_host(host: HostDto, format: Format) -> Result<()> {
+    if format == Format::Json {
+        output::print_json(&host)
+    } else {
+        print_hosts(&[host], format)
+    }
+}
+
+/// `host rm`: remove a host from the local daemon and print its name.
+pub(crate) async fn remove(client: &Client, name: &str, format: Format) -> Result<()> {
+    client
+        .send_no_content::<()>(http::Method::DELETE, &host_path(name), None)
+        .await
+        .map_err(refused)?;
+    if format == Format::Json {
+        output::print_json(&serde_json::json!({ "name": name }))?;
+    } else {
+        println!("{name}");
+    }
+    Ok(())
+}
+
+/// A daemon refusal of a host write exits 1 whatever its status, and keeps
+/// the daemon's message and envelope. A daemon that does not answer keeps its
+/// own code.
+fn refused(error: ariadne_client::ClientError) -> anyhow::Error {
+    match error {
+        ariadne_client::ClientError::Api { .. } => {
+            anyhow::Error::new(error::ExitsAs::new(Exit::Failed, error))
+        }
+        other => other.into(),
+    }
+}
+
+fn host_path(name: &str) -> String {
+    format!("/v1/hosts/{}", crate::commands::path_segment(name))
+}
+
 /// `host reconnect NAME|all`: ask the local daemon to reconnect each target,
 /// wait until each is `ready` or `down`, and print their rows. Any host that
 /// is not `ready` at the end fails the command.
@@ -153,6 +243,7 @@ const SYNCED: &str = "these settings are written on local and synced to every ho
 const SYNCED_PERMISSIONS: &str = "these settings are written on local and synced to every host; \
      only `permissions ai set --device` is per host";
 const LIFECYCLE: &str = "daemon lifecycle commands run on the local daemon";
+const REGISTRY_WRITE: &str = "hosts are stored in the database of the local daemon";
 const REGISTRY: &str = "`host ls` reads the registry of the local daemon";
 
 /// The kind of every command path, as `main::command_path` spells it.
@@ -198,6 +289,9 @@ const KINDS: &[(&str, Kind)] = &[
         "host setup-status",
         Kind::Local("worker setup progress belongs to the local daemon"),
     ),
+    ("host add", Kind::Local(REGISTRY_WRITE)),
+    ("host edit", Kind::Local(REGISTRY_WRITE)),
+    ("host rm", Kind::Local(REGISTRY_WRITE)),
     (
         "host reconnect",
         Kind::Local("`host reconnect` reads and writes the registry of the local daemon"),

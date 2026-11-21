@@ -137,10 +137,40 @@ pub(crate) fn exit_code(err: &anyhow::Error) -> ExitCode {
     exit(err).into()
 }
 
+/// A daemon answer that exits with a code other than its status gives. It
+/// keeps the [`ClientError`], so the message and the JSON envelope stay the
+/// daemon's.
+#[derive(Debug)]
+pub(crate) struct ExitsAs {
+    exit: Exit,
+    source: ClientError,
+}
+
+impl ExitsAs {
+    pub(crate) fn new(exit: Exit, source: ClientError) -> Self {
+        Self { exit, source }
+    }
+}
+
+impl std::fmt::Display for ExitsAs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(f)
+    }
+}
+
+impl std::error::Error for ExitsAs {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 /// The same, as the enum — what the mapping is actually tested on.
 pub(crate) fn exit(err: &anyhow::Error) -> Exit {
     if let Some(failure) = err.chain().find_map(|e| e.downcast_ref::<Failure>()) {
         return failure.exit;
+    }
+    if let Some(over) = err.chain().find_map(|e| e.downcast_ref::<ExitsAs>()) {
+        return over.exit;
     }
     match client_error(err) {
         // A daemon that never answered and one that took too long are the

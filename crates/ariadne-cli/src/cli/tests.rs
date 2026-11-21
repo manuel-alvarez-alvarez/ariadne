@@ -164,8 +164,11 @@ fn an_issue_can_supply_the_goal_title_and_repository() {
 /// what it prints. Hidden internal commands are in here too: `--format`
 /// is global, so it reaches them whether or not anyone meant it to.
 const LEAVES: &[(&str, bool)] = &[
+    ("host add", true),
+    ("host edit", true),
     ("host ls", true),
     ("host reconnect", true),
+    ("host rm", true),
     ("host setup", true),
     ("host setup-status", true),
     ("agent ls", true),
@@ -379,11 +382,14 @@ fn the_listing_flags_are_advertised_exactly_where_they_are_honored() {
         );
         // Colour goes wherever output does, which is wherever `--format`
         // does: the two answer the same question about the same commands.
-        assert_eq!(
-            advertises(&cmd, &path, "color"),
-            advertises(&cmd, &path, "format"),
-            "--color on {leaf:?}"
-        );
+        // `host add` and `host edit` take `--color` for the host itself.
+        if !matches!(leaf.as_str(), "host add" | "host edit") {
+            assert_eq!(
+                advertises(&cmd, &path, "color"),
+                advertises(&cmd, &path, "format"),
+                "--color on {leaf:?}"
+            );
+        }
     }
 }
 
@@ -2254,4 +2260,31 @@ fn attention_supports_listing_watch_and_individual_dismissal() {
         matches!(parse(&["ariadne", "attention", "dismiss", "agent_request:one"]).command,
         Command::Attention { command: Some(AttentionCommand::Dismiss { item_id }), .. } if item_id == "agent_request:one")
     );
+}
+
+/// Spec 014, rule 54: the colour flag takes the eight `HostColor` values and
+/// offers them to shell completion.
+#[test]
+fn the_host_colour_flag_offers_exactly_the_eight_host_colours() {
+    let cmd = built();
+    let add = cmd
+        .find_subcommand("host")
+        .and_then(|host| host.find_subcommand("add"))
+        .unwrap();
+    let arg = add
+        .get_arguments()
+        .find(|a| a.get_id() == "host_color")
+        .unwrap();
+    let offered: Vec<String> = arg
+        .get_value_parser()
+        .possible_values()
+        .unwrap()
+        .map(|v| v.get_name().to_owned())
+        .collect();
+    assert_eq!(offered.len(), 8);
+    for name in offered {
+        let color: ariadne_api::hosts::HostColor =
+            serde_json::from_value(serde_json::Value::String(name.clone())).unwrap();
+        assert_eq!(serde_json::to_value(color).unwrap(), name);
+    }
 }

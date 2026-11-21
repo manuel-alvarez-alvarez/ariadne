@@ -680,17 +680,22 @@ impl super::Scheduler {
             return Ok(false);
         }
         let forced = self.launcher.live.take_keeper_turn(&pull.id);
+        let worktree_head = match session.worktree_path.as_deref() {
+            Some(path) => Some(
+                self.launcher
+                    .git
+                    .checkout_head(std::path::Path::new(path))
+                    .await?,
+            ),
+            None => None,
+        };
         let mut news = news::untold(
             &self.store,
             &self.launcher.live,
             pull,
             login,
             session.seat(),
-            if forced {
-                Duration::ZERO
-            } else {
-                self.timeouts.keeper_comment_settle
-            },
+            worktree_head.as_deref(),
         )
         .await?;
         if let Some(recovered) = news.recovered() {
