@@ -3,7 +3,6 @@
 //! one review through the daemon, and taken down once the request ends or no
 //! longer asks for my review.
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -11,13 +10,12 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh,
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh,
 };
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::SessionStatus;
 use ariadne_daemon::forge::poll::Mode;
-use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{AgentSession, SessionFilter};
 
 const PIN: &str = "stub:review-model";
@@ -543,7 +541,7 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     })
     .await;
     let news = h.prompts_to(&session).pop().unwrap();
-    assert!(news.contains("- Review again: settled push."), "{news}");
+    assert!(news.contains("- Review again: new head."), "{news}");
     assert!(
         news.contains(&format!("Head: <<<untrusted>>>{second}<<<end untrusted>>>")),
         "{news}"
@@ -567,6 +565,88 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
         briefed + 1,
         "the same head is no news"
     );
+}
+
+/// Only replies to review findings start rounds, and delivery consumes the reply.
+#[tokio::test]
+async fn a_reply_in_a_review_thread_starts_one_round() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    fetch_again(&h, &stub, &repo).await;
+    h.json::<Value>(
+        as_session(
+            &format!("/v1/pull-requests/{id}/reviews"),
+            &session.id,
+            json!({"event":"comment", "body":"Reviewed the head.", "comments":[
+                {"path":"a.txt", "line":1, "title":"Defect", "priority":"P1", "body":"Fix this."}
+            ]}),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+    let count = h.prompts_to(&session).len();
+    let comments = |reply: bool| {
+        let mut entries = vec![
+            json!({"id":501, "user":{"login":"me"}, "body":"finding",
+                "path":"a.txt", "line":1, "created_at":"2026-10-02T00:00:00Z"}),
+            json!({"id":600, "user":{"login":"other"}, "body":"unrelated",
+                "path":"a.txt", "line":1, "created_at":"2026-10-02T00:01:00Z"}),
+        ];
+        if reply {
+            entries.push(
+                json!({"id":601, "in_reply_to_id":501, "user":{"login":"me"},
+                "body":"Fixed", "path":"a.txt", "line":1,
+                "created_at":"2026-10-02T00:02:00Z"}),
+            );
+        }
+        let mut program = script(&Shown::open(&head));
+        for entry in program.as_array_mut().unwrap() {
+            if entry["args"] == json!(["pr", "view"]) || entry["args"] == json!(["pr", "list"]) {
+                let mut read: Value =
+                    serde_json::from_str(entry["stdout"].as_str().unwrap()).unwrap();
+                let at = if reply {
+                    "2026-10-04T00:00:00Z"
+                } else {
+                    "2026-10-03T00:00:00Z"
+                };
+                if let Some(rows) = read.as_array_mut() {
+                    for row in rows {
+                        row["updatedAt"] = json!(at);
+                    }
+                } else {
+                    read["updatedAt"] = json!(at);
+                }
+                entry["stdout"] = json!(read.to_string());
+            }
+            if entry["args"] == json!(["api", "repos/acme/widgets/pulls/1/comments"]) {
+                entry["stdout"] = json!(serde_json::to_string(&entries).unwrap());
+            }
+        }
+        program
+    };
+    stub.reprogram(comments(false));
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(h.prompts_to(&session).len(), count);
+    stub.reprogram(comments(true));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "the thread reply round", async || {
+        h.prompts_to(&session).len() == count + 1
+    })
+    .await;
+    let prompt = h.prompts_to(&session).pop().unwrap();
+    assert!(prompt.contains("- Review again: thread reply."), "{prompt}");
+    idle_session(&h, &id).await;
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(h.prompts_to(&session).len(), count + 1);
 }
 
 /// A pending review of the viewer's own, and its pending comments and
@@ -625,9 +705,7 @@ async fn a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_new
     );
 }
 
-/// A push reaches an idle review session once its head stood still for the
-/// settle interval (029), which the harness sets to nothing here: pushes
-/// that each stood still hand the agent their own prompt.
+/// Each push reaches an idle review session immediately.
 #[tokio::test]
 async fn a_push_reaches_an_idle_session_without_a_wait() {
     let stub = stub_forge_cli(json!([]));
@@ -693,7 +771,7 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     assert_eq!(
         h.prompts_to(&session).len(),
         briefed + 1,
-        "the push reaches the idle session at once, with a zero settle interval"
+        "the push reaches the idle session at once"
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), second);
 
@@ -714,102 +792,6 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
         h.prompts_to(&idle).len(),
         briefed + 2,
         "the next push reaches it too, at once"
-    );
-    assert_eq!(sh(&worktree, "git rev-parse HEAD"), third);
-}
-
-/// A run of pushes inside the settle interval is told once, as the last
-/// head (029 rule 8): the second push restarts the interval, and the
-/// session never hears of the head in between.
-#[tokio::test]
-async fn a_run_of_pushes_is_told_once_when_the_head_stands_still() {
-    let stub = stub_forge_cli(json!([]));
-    let h = harness()
-        .scheduler()
-        .timeouts(Timeouts {
-            review_push_settle: Duration::from_secs(3),
-            full_reconcile: Duration::from_millis(100),
-            cancel_grace: RUNS_OUT,
-            turn_end_grace: RUNS_OUT,
-            forge_wake_debounce: Duration::from_millis(1),
-            ..Timeouts::default()
-        })
-        .forge_cli(&stub)
-        .await;
-    let (path, first) = checkout(&h);
-    stub.reprogram(script(&Shown {
-        author: "me",
-        ..Shown::open(&first)
-    }));
-    let repo = repository(&h, &path).await;
-    eventually(
-        TIMEOUT,
-        "the repository's first fetch to finish",
-        async || stub.fetches() >= 1,
-    )
-    .await;
-    let before = stub.fetches();
-    let row: Value = h
-        .json(
-            put_review(&repo, json!({"asked": true, "model": PIN})),
-            StatusCode::OK,
-        )
-        .await;
-    let id = row["id"].as_str().unwrap().to_string();
-    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
-    let session = idle_session(&h, &id).await;
-    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
-        stub.fetches() > before
-    })
-    .await;
-    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
-    let briefed = h.prompts_to(&session).len();
-    let commit = |file: &str| {
-        sh(
-            &path,
-            &format!(
-                "git worktree add -q ../burst fix && cd ../burst && echo {file} > {file} && \
-                 git add {file} && git -c user.email=t@t -c user.name=t commit -qm {file} && \
-                 cd - >/dev/null && git worktree remove ../burst"
-            ),
-        );
-        sh(&path, "git rev-parse fix")
-    };
-
-    let second = commit("second.txt");
-    stub.reprogram(script(&Shown {
-        author: "me",
-        ..Shown::open(&second)
-    }));
-    fetch_again(&h, &stub, &repo).await;
-    let third = commit("third.txt");
-    stub.reprogram(script(&Shown {
-        author: "me",
-        ..Shown::open(&third)
-    }));
-    fetch_again(&h, &stub, &repo).await;
-    assert_eq!(
-        h.prompts_to(&session).len(),
-        briefed,
-        "a push inside the interval is not told"
-    );
-    assert_eq!(
-        sh(&worktree, "git rev-parse HEAD"),
-        first,
-        "the worktree stays on the head the session was told"
-    );
-
-    eventually(
-        TIMEOUT,
-        "the last head to reach the session once it stood still",
-        async || h.prompts_to(&session).len() == briefed + 1,
-    )
-    .await;
-    let told = h.prompts_to(&session).last().cloned().unwrap();
-    assert!(told.contains(&third), "the last head is told: {told}");
-    assert!(
-        !told.contains(&second),
-        "the head in between is not: {told}"
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), third);
 }
@@ -1196,10 +1178,25 @@ async fn a_submitted_review_stores_the_checkout_head_when_the_forge_head_moved()
     stub.reprogram(script(&Shown::open(&first)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
+    let release = h.at("review-release");
+    let mut turn = crate::common::acp::script();
+    let mut held = turn["prompts"][0].clone();
+    held["wait_for"] = json!(release.display().to_string());
+    turn["prompts"].as_array_mut().unwrap().push(held);
+    h.agent.reprogram(turn);
     ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
 
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "Review this head.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the review turn starts", async || {
+        release.with_extension("reached").exists()
+    })
+    .await;
+    let count = h.prompts_to(&session).len();
     let second = push(&path);
     stub.reprogram(script(&Shown::open(&second)));
     fetch_again(&h, &stub, &repo).await;
@@ -1217,6 +1214,26 @@ async fn a_submitted_review_stores_the_checkout_head_when_the_forge_head_moved()
         .await;
     let row = h.store.get_pull_request(&id).await.unwrap();
     assert_eq!(row.reviewed_sha.as_deref(), Some(first.as_str()));
+    assert_eq!(h.prompts_to(&session).len(), count);
+    let route = format!("/v1/repositories/{repo}/pull-requests/1/review-round");
+    for _ in 0..2 {
+        assert_eq!(
+            h.send(Request::post(&route).body(Body::empty()).unwrap())
+                .await
+                .0,
+            StatusCode::ACCEPTED
+        );
+    }
+    assert_eq!(h.prompts_to(&session).len(), count);
+    std::fs::write(&release, "").unwrap();
+    eventually(TIMEOUT, "one pending round after idle", async || {
+        h.prompts_to(&session).len() == count + 1
+    })
+    .await;
+    idle_session(&h, &id).await;
+    assert_eq!(sh(&worktree, "git rev-parse HEAD"), second);
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(h.prompts_to(&session).len(), count + 1);
 }
 
 /// The review session of a request that ends, or that no longer asks for
@@ -2458,12 +2475,16 @@ async fn a_review_round_needs_an_ask_and_runs_on_the_current_head() {
     let second = push(&path);
     stub.reprogram(script(&Shown::open(&second)));
     fetch_again(&h, &stub, &repo).await;
-    tokio::time::sleep(QUIET).await;
-    assert_eq!(
-        h.prompts_to(&session).len(),
-        count,
-        "another author's push is no round"
-    );
+    eventually(
+        TIMEOUT,
+        "another author's push starts a round",
+        async || h.prompts_to(&session).len() == count + 1,
+    )
+    .await;
+    let prompt = h.prompts_to(&session).pop().unwrap();
+    assert!(prompt.contains("- Review again: new head."), "{prompt}");
+    idle_session(&h, &id).await;
+    let count = h.prompts_to(&session).len();
     assert_eq!(h.send(request()).await.0, StatusCode::ACCEPTED);
     eventually(TIMEOUT, "the user round", async || {
         h.prompts_to(&session).len() == count + 1

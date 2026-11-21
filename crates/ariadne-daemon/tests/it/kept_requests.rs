@@ -2047,18 +2047,53 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         "path": "widget", "line": 1, "created_at": "2026-10-03T00:00:00Z"}),
     );
     holds(&mut script, json!(answered), summary);
-    stub.reprogram(script);
-    // A thread reply does not start a reviewer round.
-    let count = h.prompts_to(&review).len();
+    stub.reprogram(script.clone());
     h.flush_scheduler().await;
-    tokio::time::sleep(QUIET).await;
-    assert_eq!(h.prompts_to(&review).len(), count);
+    eventually(TIMEOUT, "the answer starts a reviewer round", async || {
+        h.prompts_to(&review)
+            .iter()
+            .any(|p| p.contains("- Review again: thread reply."))
+    })
+    .await;
     assert!(!h.prompted(&review).contains(answer["id"].as_str().unwrap()));
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(
         dto["unanswered_comments"], 0,
         "the agent's reply answers the finding"
     );
+    let keeper_before = h.prompts_to(&agent).len();
+    let reviewer_before = h.prompts_to(&review).len();
+    let mut human = posted.as_array().unwrap().clone();
+    human.push(json!({"id":602, "in_reply_to_id":501,
+        "user":{"login":"human"}, "body":"Please explain this finding.",
+        "path":"widget", "line":1, "created_at":"2026-10-05T00:00:00Z"}));
+    // Keep the previous author's reply in the forge read.
+    human.push(json!({"id":601, "in_reply_to_id":501, "user":me,
+        "body":"Added the test.", "path":"widget", "line":1,
+        "created_at":"2026-10-03T00:00:00Z"}));
+    let mut human_script = moved_at(script, "2026-10-05T00:00:00Z");
+    holds(&mut human_script, json!(human), json!([]));
+    stub.reprogram(human_script);
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "both seats receive the human reply", async || {
+        h.prompts_to(&agent)
+            .iter()
+            .skip(keeper_before)
+            .any(|p| p.contains("rc-602"))
+            && h.prompts_to(&review).len() == reviewer_before + 1
+    })
+    .await;
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        h.prompts_to(&agent)
+            .iter()
+            .skip(keeper_before)
+            .filter(|p| p.contains("rc-602"))
+            .count(),
+        1
+    );
+    assert_eq!(h.prompts_to(&review).len(), reviewer_before + 1);
 }
 
 /// A task over while the last read of its request still says open asks the

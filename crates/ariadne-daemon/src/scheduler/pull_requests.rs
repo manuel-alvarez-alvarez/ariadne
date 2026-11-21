@@ -366,7 +366,6 @@ impl super::Scheduler {
         }
         self.launcher.live.remove(id);
         self.pull_request_cleanup_retry.remove(id);
-        self.head_settle.forget(id);
         self.pull_request_read_retry.remove(id);
         self.keeper_skills_applied.remove(id);
         Ok(())
@@ -723,6 +722,7 @@ impl super::Scheduler {
         let delivery = NewsDelivery {
             pull_request_id: pull.id.clone(),
             comment_ids: news.comment_ids,
+            reviewer: session.seat() == Some(Seat::Reviewer),
             told: news.told,
             before: news.before,
         };
@@ -817,23 +817,29 @@ impl super::Scheduler {
                 .start_review_rounds(&pull.id, pull.review_requested);
             return self.start_pull_request_session(pull, pin, owner).await;
         };
-        let settled = self
-            .head_settle
-            .settled(&pull.id, &pull.head_sha, Instant::now());
         let pushed = pull
             .told_head_sha
             .as_deref()
             .is_some_and(|told| told != pull.head_sha);
+        let mut comments =
+            crate::forge::live::comments_of(&self.store, &self.launcher.live, pull).await?;
+        let reviewer_told = self.store.reviewer_told_comments(&pull.id).await?;
+        for comment in &mut comments {
+            comment.told_at = reviewer_told.contains(&comment.id).then(String::new);
+        }
+        let mut round = news::review_replies(pull, &comments);
         let pending = self.launcher.live.review_round(&pull.id);
         let reason = pending
             .map(|(_, reason)| reason)
-            .or_else(|| (pull.role == "author" && pushed && settled).then_some("settled push"));
+            .or_else(|| pushed.then_some("new head"))
+            .or_else(|| (!round.is_empty()).then_some("thread reply"));
         if session.status() == SessionStatus::Idle
             && let Some(reason) = reason
         {
             let repo = self.store.get_repository(&pull.repository_id).await?;
             self.launcher.review_worktree(pull, &repo).await?;
-            if self.tell_request_news(&session, pull, news::review_round(pull, reason))?
+            round.lines = news::review_round(pull, reason).lines;
+            if self.tell_request_news(&session, pull, round)?
                 && let Some((generation, _)) = pending
             {
                 self.launcher.live.finish_review_round(&pull.id, generation);
@@ -862,7 +868,6 @@ impl super::Scheduler {
         live: &[AgentSession],
     ) -> anyhow::Result<()> {
         self.launcher.live.end_review_rounds(&pull.id);
-        self.head_settle.forget(&pull.id);
         // Reached only once `review_pass` has already found the request no
         // longer wants a reviewer session, for any reason — closed, no
         // longer asking, or never asked for directly on its

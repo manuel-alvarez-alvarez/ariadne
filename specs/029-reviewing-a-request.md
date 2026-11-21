@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-11-16
+updated: 2026-11-21
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -99,16 +99,19 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 6. `pull_requests.told_head_sha` is the head the session was last told of.
    Each start and resume writes it to `head_sha`, since the briefing names
    that head.
-7. A reviewer receives only round prompts. Comments, thread replies, checks and
-   review decisions never wake it. Each round reads its threads with `list_comments`.
+7. A reviewer receives only round prompts. Replies from the other side in threads with a `from_review` comment wake it.
+   Other comments, checks and review decisions never wake it. Each round reads its threads with `list_comments`.
    The initial briefing asks for a round on the current head.
    Each later `PULL_REQUEST_NEWS` contains one line starting `- Review again:`.
-   It names the reason: settled push, forge re-request or user ask.
+   It names the reason: new head, thread reply, forge re-request or user ask.
    The head and last reviewed sha are each fenced as data; an absent reviewed sha reads `none`.
-8. On an `author` request, a changed head starts a round after
-   `Timeouts::review_push_settle`, 300 seconds by default.
-   Each further push restarts that interval. The harness uses zero.
-   On a `reviewer` request, a push alone starts no round.
+8. A changed head starts a round immediately on both `author` and `reviewer` requests.
+   No review push cool-down applies.
+   A reply from the other side after a `from_review` comment in the same thread also starts a round.
+   The conversation and other threads start no round.
+   Delivery marks each reply in `reviewer_told_at`, separately from the keeper’s `told_at`.
+   Each seat receives a human reply once; one seat’s delivery never consumes the other seat’s news.
+   Proof: `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_pr_agent`.
    A reviewer-role request that the forge's open list names again after session start, and did not name on the last read, queues a forge re-request round. It does so even where `review_requested` stayed true after a completed review.
    The fetch queues the round only after it keeps the read of that request.
    The round then names the head of that read and runs on it.
@@ -119,11 +122,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    Each queued round waits until the session is idle.
    The daemon moves the detached worktree to the current head before sending its prompt.
    Multiple pending asks can share one round.
-   Proof: `head_settle.rs::a_head_settles_exactly_when_the_whole_interval_has_passed`,
-   `::a_new_head_restarts_the_interval`,
-   `pull_request_reviews.rs::a_run_of_pushes_is_told_once_when_the_head_stands_still`,
+   Proof: `pull_request_reviews.rs::a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha`,
    `::a_push_reaches_an_idle_session_without_a_wait`,
    `::a_review_round_needs_an_ask_and_runs_on_the_current_head`,
+   `::a_reply_in_a_review_thread_starts_one_round`,
    `::a_forge_re_request_round_waits_for_the_read_of_the_new_head`.
 9. A request that turns merged or closed, or whose manual ask is stopped,
    has its reviewer session killed and its detached worktree removed. A

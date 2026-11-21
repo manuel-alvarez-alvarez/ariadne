@@ -154,7 +154,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
     `answered` holds where a later comment in the thread is the integration login's own side's.
-    What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, `from_review`, once an Ariadne review posted it (029), and `escalated_at`, `escalation_reason` and `escalated_after`, once the keeping agent escalated its thread (rule 15, migration `0010_escalated_comments.sql`). The marks go with their row.
+    What the database keeps of one is a mark (`pull_request_comment_marks`): `told_at`, once its session was told of it, `from_review`, once an Ariadne review posted it (029), and `escalated_at`, `escalation_reason` and `escalated_after`, once the keeping agent escalated its thread (rule 15, migration `0010_escalated_comments.sql`). Reviewer reply delivery uses a separate `reviewer_told_at` mark (029 rule 8). The marks go with their row.
     What Ariadne posts itself is held beside the last read until the next fetch reads it back.
 11. The DTO joins the forge's read and the row.
     It includes the request's fields, `failed_checks`, `behind_base`, `id`, `origin_task_id`, review ask, and `session_id`.
