@@ -184,6 +184,26 @@ async fn an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again() 
     .await;
 }
 
+#[tokio::test]
+async fn a_signalled_forward_reports_ssh_stderr_without_guard_diagnostics() {
+    let stub = stub_ssh(json!({
+        "stderr": "Connection to box closed by remote host.\n",
+        "signal": 15,
+    }));
+    let (h, _dir) = local(&stub, Some("/run/far.sock")).await;
+    let mut rx = Forward::new(h.bus.subscribe());
+    h.state.hosts.start();
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
+    let down = rx.next().await;
+    assert_eq!(down.status, HostStatus::Down);
+    assert_eq!(
+        down.error.as_deref(),
+        Some("Connection to box closed by remote host.")
+    );
+    assert!(!pid_is_alive(stub.runs()[0].pid));
+    h.state.hosts.shutdown().await;
+}
+
 /// A forward goes `connecting`, then `ready` at its port once the far daemon
 /// answers through it, then `down` when the process exits: one event each.
 async fn a_forward_comes_up_and_goes_down(remote: &str) {

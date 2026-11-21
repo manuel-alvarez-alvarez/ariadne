@@ -93,6 +93,7 @@ picker, the Hosts screen and one stream per host — is spec
     The daemon retains the old child and group, retries cleanup, and blocks replacement until the group disappears.
 12. When the process exits, the host is `down`, `endpoint` is null and `error`
     is the last non-empty stderr line of the process (else its exit status).
+    Guard and lifetime-watcher diagnostics never enter the SSH stderr pipe.
     The daemon starts it again after `ssh_retry`, doubled after each exit up
     to 60 seconds and reset by a `ready`; the host goes back to `connecting`.
 13. Daemon shutdown ends every ssh child process and every health check
@@ -473,7 +474,8 @@ picker, the Hosts screen and one stream per host — is spec
   `::a_forward_to_a_tcp_port_comes_up_and_goes_down`).
 - Rules 6, 11 and 12
   (`ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`,
-  `::an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again`).
+  `::an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again`,
+  `::a_signalled_forward_reports_ssh_stderr_without_guard_diagnostics`).
 - Rule 13 (`ssh_forward.rs::shutdown_ends_every_ssh_child`).
 - Rule 14 (`ssh_forward.rs::an_event_stream_and_a_post_both_cross_a_ready_forward`).
 - Rules 4, 7 and 22 (`hosts.rs::a_daemon_without_hosts_lists_only_local`,

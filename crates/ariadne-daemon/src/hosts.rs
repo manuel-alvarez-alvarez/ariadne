@@ -608,9 +608,11 @@ impl Inner {
         let ssh = self.cfg.ssh_bin.as_deref().unwrap_or("ssh");
         // Close the pipe on exec or process exit, including an idle restart.
         // The watcher ends the forward's process group when that happens.
-        const GUARD: &str = r#"exec 3<&0
-"$@" </dev/null 3<&- &
+        // Only SSH owns the stderr pipe; shell job notices must not replace its error.
+        const GUARD: &str = r#"exec 3<&0 4>&2 2>/dev/null
+"$@" </dev/null 3<&- 2>&4 4>&- &
 forward=$!
+exec 4>&-
 (read -r _ <&3; kill -s KILL 0) &
 watcher=$!
 wait "$forward"

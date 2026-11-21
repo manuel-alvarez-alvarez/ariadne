@@ -162,6 +162,7 @@ Each cleanup attempt can take up to five seconds.
 Unreaped processes within this deadline do not produce a cleanup error.
 If cleanup fails, the host stays `connecting` with a cleanup error while the daemon retries.
 The daemon retains the old group and blocks replacement until cleanup completes.
+When SSH exits, the host error shows its last stderr line, without shell job notices.
 
 To try one host again at once, send `POST /v1/hosts/<name>/reconnect`.
 The daemon does not wait for the next check or the next start of `ssh`:
