@@ -59,6 +59,7 @@ export const qk = {
    * from the settings daemon alone, so the key is always under `local`.
    */
   hosts: {
+    setup: (name: string) => [LOCAL_HOST, "hosts", "detail", name, "setup"] as const,
     lists: () => [LOCAL_HOST, "hosts", "list"] as const,
     list: () => [LOCAL_HOST, "hosts", "list", {}] as const,
   },

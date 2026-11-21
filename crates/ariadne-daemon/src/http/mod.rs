@@ -149,7 +149,7 @@ impl AppState {
         skills::reset_document,
         workflows::create, workflows::list, workflows::get, workflows::update,
         workflows::delete, workflows::reset, workflows::parse,
-        hosts::list, hosts::reconnect,
+        hosts::list, hosts::reconnect, hosts::setup, hosts::setup_status,
         dashboards::create, dashboards::list, dashboards::get, dashboards::update, dashboards::delete, dashboards::reset,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
@@ -316,6 +316,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/workflows/{name}/reset", post(workflows::reset))
         .route("/v1/workflows/parse", post(workflows::parse))
         .route("/v1/hosts", get(hosts::list))
+        .route(
+            "/v1/hosts/{name}/setup",
+            get(hosts::setup_status).post(hosts::setup),
+        )
         .route("/v1/hosts/{name}/reconnect", post(hosts::reconnect))
         .route(
             "/v1/dashboards",

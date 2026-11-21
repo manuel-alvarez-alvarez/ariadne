@@ -2076,6 +2076,73 @@
         }
       }
     },
+    "/v1/hosts/{name}/setup": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "setup_status",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupDto"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      },
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "setup",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/logs": {
       "get": {
         "tags": [
@@ -6067,6 +6134,55 @@
           }
         }
       },
+      "BinarySource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "cli",
+              "daemon",
+              "kind"
+            ],
+            "properties": {
+              "cli": {
+                "type": "string"
+              },
+              "daemon": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "local"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "repository",
+              "tag",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "release"
+                ]
+              },
+              "repository": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Binaries on the daemon machine, or assets from an explicitly selected release."
+      },
       "CompleteGoalRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is\ndone. Its call, not the user's, and it carries nothing — every task being\nfinished or cancelled is the whole of the argument, and the daemon checks\nthat itself.",
@@ -9240,6 +9356,83 @@
           }
         },
         "additionalProperties": false
+      },
+      "SetupDto": {
+        "type": "object",
+        "description": "Durable setup progress. No credential values are accepted or returned.",
+        "required": [
+          "name",
+          "state",
+          "steps"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupState"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupStep"
+            }
+          }
+        }
+      },
+      "SetupRequest": {
+        "type": "object",
+        "description": "An SSH worker installation request. SSH uses the daemon user's keys and config.",
+        "required": [
+          "ssh",
+          "source"
+        ],
+        "properties": {
+          "remote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/BinarySource"
+          },
+          "ssh": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SetupState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "incomplete",
+          "failed",
+          "complete"
+        ]
+      },
+      "SetupStep": {
+        "type": "object",
+        "required": [
+          "name",
+          "complete"
+        ],
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "SkillDto": {
         "type": "object",

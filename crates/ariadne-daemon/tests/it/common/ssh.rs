@@ -60,6 +60,18 @@ pub(crate) fn stub_ssh(script: Value) -> StubSsh {
     )
     .unwrap();
     std::fs::write(dir.path().join("ssh-stub.py"), STUB).unwrap();
+    let service = super::shared_script(
+        "#!/bin/sh\ncase ${0##*/} in uname) case $1 in -s) echo \"$ARIADNE_SETUP_OS\";; -m) echo \"$ARIADNE_SETUP_ARCH\";; esac;; *) [ ! -e \"$ARIADNE_SETUP_SERVICE_FAIL\" ] || exit 1; case ${0##*/} in loginctl) echo yes;; esac;; esac\n",
+    );
+    let service_bin = dir.path().join("service-bin");
+    std::fs::create_dir_all(&service_bin).unwrap();
+    for tool in ["systemctl", "launchctl", "loginctl", "uname"] {
+        std::os::unix::fs::symlink(&service, service_bin.join(tool)).unwrap();
+    }
+    let shell = super::shared_script(
+        "#!/bin/sh\n[ \"$1\" = -lc ] || exit 1\n[ \"$ARIADNE_SETUP_SHELL_FAIL\" != 1 ] || exit 1\nprintf '%s' \"$ARIADNE_SETUP_SHELL_BANNER\"\nif [ \"$ARIADNE_SETUP_NO_MARKERS\" = 1 ]; then printf '%s' \"$ARIADNE_SETUP_LOGIN_PATH\"; exit 0; fi\nPATH=$ARIADNE_SETUP_LOGIN_PATH\nexport PATH\n/bin/sh -c \"$2\"\nresult=$?\nprintf '%s' \"$ARIADNE_SETUP_SHELL_SUFFIX\"\nexit \"$result\"\n",
+    );
+    std::os::unix::fs::symlink(shell, dir.path().join("login-shell")).unwrap();
     let launcher = super::shared_script(LAUNCHER);
     let bin = dir.path().join("ssh");
     std::os::unix::fs::symlink(&launcher, &bin).unwrap();
@@ -98,6 +110,31 @@ def end():
     sys.stderr.write(script.get("stderr", ""))
     sys.stderr.flush()
     os._exit(script.get("exit", 255))
+
+if "-T" in args and script.get("setup"):
+    import subprocess
+    setup = script["setup"]
+    command = args[-1]
+    if "uname -s" in command and "raw_path" in setup:
+        print(setup.get("os", "Linux"))
+        print(setup.get("arch", "x86_64"))
+        print(setup["home"])
+        sys.stdout.write(setup["raw_path"])
+        sys.exit(0)
+    if "daemon status" in command:
+        sys.exit(0)
+    env = {**os.environ, "HOME": setup["home"],
+           "PATH": os.path.join(dir, "service-bin") + os.pathsep + setup.get("inherited_path", os.environ["PATH"]),
+           "SHELL": os.path.join(dir, "login-shell"),
+           "ARIADNE_SETUP_LOGIN_PATH": setup.get("path", "/usr/bin:/bin"),
+           "ARIADNE_SETUP_SHELL_FAIL": "1" if setup.get("shell_fail") else "0",
+           "ARIADNE_SETUP_SHELL_BANNER": setup.get("banner", ""),
+           "ARIADNE_SETUP_SHELL_SUFFIX": setup.get("suffix", ""),
+           "ARIADNE_SETUP_NO_MARKERS": "1" if setup.get("missing_markers") else "0",
+           "ARIADNE_SETUP_OS": setup.get("os", "Linux"),
+           "ARIADNE_SETUP_ARCH": setup.get("arch", "x86_64"),
+           "ARIADNE_SETUP_SERVICE_FAIL": setup.get("fail_service", "")}
+    sys.exit(subprocess.run(command, shell=True, env=env).returncode)
 
 if not script.get("forward"):
     end()

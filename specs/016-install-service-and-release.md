@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-11-09
+updated: 2026-11-21
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
@@ -38,7 +38,7 @@ upgrade.
 
 In: the installer and what it installs, the user service, release
 verification, the release-please loop, CI build caches, and the database
-migration policy.
+migration policy. SSH worker setup follows spec 037, rules 43–50.
 
 Out: what the daemon does once running (009, 012).
 
