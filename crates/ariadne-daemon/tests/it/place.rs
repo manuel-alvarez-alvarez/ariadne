@@ -1,5 +1,6 @@
 //! Select session locations without changing the process environment.
 use ariadne_daemon::place::Place;
+use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
@@ -8,16 +9,83 @@ fn automatic_selection_uses_tmux_before_a_direct_child() {
     let binary = dir.path().join("tmux");
     std::fs::write(&binary, "#!/bin/sh\nexit 0\n").unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    // Herdr remains unavailable, even if its executable exists.
+    // Herdr is passed over when its executable exists and no server answers.
     std::fs::copy(&binary, dir.path().join("herdr")).unwrap();
+    let missing = dir.path().join("no-herdr.sock");
     assert_eq!(
-        Place::find(None, Some(dir.path().as_os_str())).unwrap(),
+        Place::find_with(None, Some(dir.path().as_os_str()), Some(&missing)).unwrap(),
         Place::Tmux(binary)
     );
     assert_eq!(
         Place::find(Some("none"), Some(dir.path().as_os_str())).unwrap(),
         Place::None
     );
+}
+
+/// Put `tmux` beside the `herdr` of a stand-in, as a search path.
+fn search_path_with_tmux(
+    herdr: &crate::common::herdr::FakeHerdr,
+) -> (tempfile::TempDir, std::ffi::OsString) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("tmux"), "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(
+        dir.path().join("tmux"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let mut paths = vec![dir.path().to_path_buf()];
+    paths.extend(std::env::split_paths(&herdr.search_path()));
+    let path = std::env::join_paths(paths).unwrap();
+    (dir, path)
+}
+
+#[test]
+fn automatic_selection_uses_herdr_before_tmux() {
+    let herdr = crate::common::herdr::FakeHerdr::start();
+    let (_dir, path) = search_path_with_tmux(&herdr);
+    assert_eq!(
+        Place::find_with(None, Some(&path), Some(&herdr.socket())).unwrap(),
+        Place::Herdr(herdr.socket())
+    );
+    assert_eq!(
+        Place::find_with(Some("herdr"), Some(&path), Some(&herdr.socket())).unwrap(),
+        Place::Herdr(herdr.socket())
+    );
+}
+
+#[test]
+fn a_herdr_server_that_does_not_answer_is_not_found() {
+    let herdr = crate::common::herdr::FakeHerdr::silent();
+    let (_dir, path) = search_path_with_tmux(&herdr);
+    // Each silent server costs one probe time, so ask both questions together.
+    let (selected, error) = std::thread::scope(|scope| {
+        let auto = scope.spawn(|| Place::find_with(None, Some(&path), Some(&herdr.socket())));
+        let forced =
+            Place::find_with(Some("herdr"), Some(&path), Some(&herdr.socket())).unwrap_err();
+        (auto.join().unwrap().unwrap(), forced)
+    });
+    assert!(matches!(selected, Place::Tmux(_)), "{selected:?}");
+    assert_eq!(
+        error.to_string(),
+        "forced session place herdr was not found"
+    );
+}
+
+#[test]
+fn doctor_reports_herdr_as_the_selected_place_with_its_reason() {
+    let herdr = crate::common::herdr::FakeHerdr::start();
+    let report =
+        ariadne_daemon::place::report(None, Some(&herdr.search_path()), Some(&herdr.socket()));
+    assert_eq!(report.name, "herdr");
+    assert!(report.available);
+    assert_eq!(report.reason, "herdr is installed and its server answers");
+    let forced = ariadne_daemon::place::report(
+        Some("herdr"),
+        Some(&herdr.search_path()),
+        Some(&herdr.socket()),
+    );
+    assert_eq!((forced.name.as_str(), forced.available), ("herdr", true));
+    assert_eq!(forced.reason, "forced by session_place");
 }
 
 #[test]
@@ -252,6 +320,86 @@ async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
     assert!(
         error.contains("listing tmux relay sessions") || error.contains("running tmux"),
         "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_herdr_relay_pane_can_be_found_and_stopped_through_the_socket_api() {
+    use crate::common::{TIMEOUT, eventually};
+    use ariadne_daemon::place::PaneLaunch;
+    let herdr = crate::common::herdr::FakeHerdr::start();
+    let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
+    let other = tempfile::tempdir_in("/tmp").unwrap();
+    let place = Place::find_with(
+        Some("herdr"),
+        Some(&herdr.search_path()),
+        Some(&herdr.socket()),
+    )
+    .unwrap();
+    let args = vec![
+        "-u".into(),
+        "-c".into(),
+        "import sys; [print(line, flush=True) for line in sys.stdin]".into(),
+    ];
+    let launch = PaneLaunch {
+        home: home.0.path(),
+        cwd: home.0.path(),
+        session_id: "herdr-pane",
+        launch_id: "launch-herdr",
+        agent_id: "stub",
+        task_id: "task",
+        daemon: std::path::Path::new(env!("CARGO_BIN_EXE_ariadned")),
+        program: "python3",
+        args: &args,
+        env: &[("PANE_VALUE".into(), "kept".into())],
+    };
+    let pane = place.start_pane(&launch).await.unwrap();
+    assert_eq!(pane.name, "ariadne-launch-herdr");
+    assert_eq!(pane.session_id, "herdr-pane");
+    assert_eq!(herdr.methods(), ["workspace.create", "layout.apply"]);
+    let applied = &herdr.params_of("layout.apply")[0]["root"];
+    assert_eq!(applied["cwd"], home.0.path().to_str().unwrap());
+    assert_eq!(applied["env"]["PANE_VALUE"], "kept");
+    assert_eq!(applied["command"][1], "relay");
+    assert_eq!(applied["command"][11], "python3");
+    assert_eq!(
+        applied["command"][14],
+        "import sys; [print(line, flush=True) for line in sys.stdin]"
+    );
+    eventually(TIMEOUT, "relay socket", || async {
+        home.0.path().join("relays/herdr-pane.sock").exists()
+    })
+    .await;
+    assert_eq!(
+        place.live_panes(home.0.path()).await.unwrap(),
+        vec![pane.clone()]
+    );
+    assert!(
+        place.live_panes(other.path()).await.unwrap().is_empty(),
+        "another home does not see this home's panes"
+    );
+    place.stop_pane(home.0.path(), &pane).await.unwrap();
+    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+    assert!(!herdr.pane_running(&pane.id));
+
+    // A pane whose relay cannot be asked to stop is closed through the API.
+    let second = PaneLaunch {
+        session_id: "herdr-second",
+        launch_id: "launch-second",
+        ..launch
+    };
+    let pane = place.start_pane(&second).await.unwrap();
+    let unreachable = ariadne_daemon::place::Pane {
+        session_id: "no-relay".into(),
+        ..pane.clone()
+    };
+    assert!(herdr.pane_running(&pane.id));
+    place.stop_pane(home.0.path(), &unreachable).await.unwrap();
+    assert!(!herdr.pane_running(&pane.id));
+    assert!(
+        herdr
+            .params_of("pane.close")
+            .contains(&json!({"pane_id": pane.id}))
     );
 }
 

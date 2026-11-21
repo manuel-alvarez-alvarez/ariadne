@@ -136,23 +136,6 @@ impl Updates {
 
     /// The next `host_updated` that moves the status. Each one it skips
     /// moves only the sync and keeps the status `before`.
-    pub(crate) async fn finish_cleanup(&mut self, mut host: HostDto) -> HostDto {
-        tokio::time::timeout(TIMEOUT, async {
-            while host.status == HostStatus::Connecting {
-                assert!(
-                    host.error
-                        .as_deref()
-                        .is_some_and(|e| e.contains("cleanup attempt")),
-                    "unexpected connecting event: {host:?}"
-                );
-                host = self.next().await;
-            }
-            host
-        })
-        .await
-        .expect("cleanup completes before Down")
-    }
-
     pub(crate) async fn next_status(&mut self, before: HostStatus) -> HostDto {
         loop {
             let host = self.next().await;
@@ -302,7 +285,6 @@ async fn a_forward_whose_far_daemon_does_not_answer_is_down_and_starts_again() {
 
     assert_eq!(updates.next().await.status, HostStatus::Connecting);
     let down = updates.next().await;
-    let down = updates.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down, "{down:?}");
     assert_eq!(down.endpoint, None);
     let error = down.error.unwrap();
@@ -338,7 +320,6 @@ async fn a_ready_forward_that_stops_answering_loses_its_forward_and_starts_again
 
     health.set_off(true);
     let down = updates.next_status(HostStatus::Ready).await;
-    let down = updates.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     let error = down.error.unwrap();
@@ -353,6 +334,58 @@ async fn a_ready_forward_that_stops_answering_loses_its_forward_and_starts_again
     let again = updates.next_status(HostStatus::Connecting).await;
     assert_eq!(again.status, HostStatus::Ready);
     assert_eq!(stub.runs().len(), 2);
+}
+
+#[tokio::test]
+async fn a_zombie_reaped_before_the_deadline_reports_only_down() {
+    let nowhere = tempfile::tempdir().unwrap();
+    let release = nowhere.path().join("reap");
+    let remote = nowhere.path().join("nobody.sock").display().to_string();
+    let stub = stub_ssh(json!({"forward": true, "hold_reaping": release}));
+    let host = format!("endpoint = \"ssh://box\"\nremote = \"{remote}\"\n");
+    let (local, _dir) = local_with(
+        &host,
+        Some(&stub),
+        Timeouts {
+            ssh_forward_end: TIMEOUT,
+            ssh_retry: TIMEOUT,
+            ..timeouts()
+        },
+    )
+    .await;
+    let mut updates = Updates(local.bus.subscribe());
+    local.state.hosts.start();
+    assert_eq!(updates.next().await.status, HostStatus::Connecting);
+    eventually(TIMEOUT, "the killed forward becomes a zombie", || async {
+        let Some(run) = stub.runs().first().cloned() else {
+            return false;
+        };
+        let output = tokio::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &run.pid.to_string()])
+            .output()
+            .await
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .starts_with('Z')
+    })
+    .await;
+    assert!(
+        tokio::time::timeout(QUIET, updates.next()).await.is_err(),
+        "a zombie within the cleanup deadline does not report an error"
+    );
+    let run = stub.runs()[0].clone();
+    std::fs::write(&release, "").unwrap();
+    assert_eq!(updates.next().await.status, HostStatus::Down);
+    assert!(
+        !pid_is_alive(run.pid),
+        "Down requires the old PID to be reaped"
+    );
+    eventually(TIMEOUT, "the test reaper ends", || async {
+        !pid_is_alive(run.reaper.unwrap())
+    })
+    .await;
+    local.state.hosts.shutdown().await;
 }
 
 #[tokio::test]
