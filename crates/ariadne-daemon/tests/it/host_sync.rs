@@ -957,6 +957,9 @@ async fn skill_deletion_after_recovery(interrupted: bool, recreate: bool) {
         .await;
     }
     gate.health_off.store(true, Ordering::SeqCst);
+    let _: HostDto = local
+        .json(post("/v1/hosts/far/reconnect"), StatusCode::OK)
+        .await;
     eventually(TIMEOUT, "the host down with the delete queued", || async {
         let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
         hosts[1].status == HostStatus::Down
