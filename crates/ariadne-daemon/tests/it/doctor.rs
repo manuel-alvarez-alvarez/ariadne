@@ -136,13 +136,9 @@ async fn endpoint_is_in_the_openapi_document() {
 
 #[tokio::test]
 async fn doctor_reports_a_missing_forced_place_and_its_reason() {
-    let home = tempfile::tempdir().unwrap();
-    std::fs::write(
-        home.path().join("config.toml"),
-        "session_place = \"herdr\"\n",
-    )
-    .unwrap();
-    let h = harness().home(home.path().to_path_buf()).await;
+    // A herdr server that never answers is the same as no herdr.
+    let herdr = crate::common::herdr::FakeHerdr::silent();
+    let h = harness().session_place("herdr").herdr(&herdr).await;
     let report: serde_json::Value = h.get("/v1/doctor").await;
     assert_eq!(report["place"]["name"], "herdr");
     assert_eq!(report["place"]["available"], false);
@@ -150,4 +146,14 @@ async fn doctor_reports_a_missing_forced_place_and_its_reason() {
         report["place"]["reason"],
         "forced session place herdr was not found"
     );
+}
+
+#[tokio::test]
+async fn doctor_reports_herdr_as_the_selected_place_with_its_reason() {
+    let herdr = crate::common::herdr::FakeHerdr::start();
+    let h = harness().session_place("herdr").herdr(&herdr).await;
+    let report: serde_json::Value = h.get("/v1/doctor").await;
+    assert_eq!(report["place"]["name"], "herdr");
+    assert_eq!(report["place"]["available"], true);
+    assert_eq!(report["place"]["reason"], "forced by session_place");
 }

@@ -50,10 +50,7 @@ pub(super) async fn report(State(state): State<AppState>) -> Json<DaemonReportDt
     let python = crate::ai_permissions::python::probe_python(cfg.python_bin.as_deref(), path).await;
 
     Json(DaemonReportDto {
-        place: Some(crate::place::report(
-            cfg.session_place.map(|place| place.as_str()),
-            path,
-        )),
+        place: Some(state.launcher.acp.place_report()),
         version: env!("CARGO_PKG_VERSION").into(),
         path: std::env::var("PATH").ok(),
         home: cfg.root.display().to_string(),
