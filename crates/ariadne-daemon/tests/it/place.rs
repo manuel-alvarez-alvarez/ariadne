@@ -168,6 +168,13 @@ async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
     let place = Place::find(Some("tmux"), Some(dir.path().as_os_str())).unwrap();
     let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
     assert!(error.contains("protocol version mismatch"), "{error}");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\necho 'server exited unexpectedly' >&2\nexit 1\n",
+    )
+    .unwrap();
+    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    assert!(error.contains("server exited unexpectedly"), "{error}");
     std::fs::remove_file(&binary).unwrap();
     std::fs::write(&binary, [0u8; 8]).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();

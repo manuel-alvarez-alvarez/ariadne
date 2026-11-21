@@ -206,10 +206,7 @@ impl Place {
         let output = run(command).await?;
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            if error.contains("no server running")
-                || error.contains("No such file")
-                || error.contains("server exited unexpectedly")
-            {
+            if error.contains("no server running") || error.contains("No such file") {
                 return Ok(None);
             }
             bail!("listing tmux relay sessions: {}", error.trim());
