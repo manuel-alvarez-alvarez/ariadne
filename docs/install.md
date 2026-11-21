@@ -145,6 +145,8 @@ Its TCP connection is off by default; set `tcp_listen` in
 `~/.ariadne/config.toml` before connecting the app. See
 [Configuration](configuration.md).
 
+Desktop Settings shows the saved daemon address and the live connection state. Saving an address starts a connection attempt. If it fails, start the daemon, check `tcp_listen`, and select Retry connection. The connection status opens daemon logs. See the [desktop specification](../specs/015-desktop-app.md#connection-recovery).
+
 ## Removing Ariadne
 
 The uninstaller reads `~/.ariadne/install.env` as fixed `KEY=value` data; it

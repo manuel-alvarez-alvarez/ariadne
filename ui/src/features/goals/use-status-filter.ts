@@ -40,7 +40,10 @@ export function useStatusFilter(): StatusFilterState {
   // Read the restored params rather than waiting for the effect below to put
   // them in the URL: the board asks the daemon for the right statuses on its
   // first render, instead of loading the unfiltered list and replacing it.
-  const restored = restoreStatusFilter(search, remembered)
+  const restored = restoreStatusFilter(
+    search,
+    ["q", "repo", "presentation"].some((key) => search.has(key)) ? "" : remembered,
+  )
   const statuses = readStatusFilter(restored ?? search)
   const restoreTo = restored?.toString() ?? null
   const selected = serializeStatusFilter(statuses)

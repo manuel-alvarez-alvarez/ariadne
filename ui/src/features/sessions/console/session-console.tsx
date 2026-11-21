@@ -116,6 +116,7 @@ import {
   tokenTotals,
   view,
 } from "./transcript"
+import { TranscriptFind } from "./transcript-find"
 import { ConsoleWorkspace } from "./workspace"
 
 /** Numbers the sends of every console, so a retained failure never shares an id with a new send. */
@@ -961,6 +962,7 @@ function ConsolePane({
 
   return (
     <div
+      data-console
       className={cn(
         "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-background text-sm text-foreground shadow-xs",
         className,
@@ -992,6 +994,13 @@ function ConsolePane({
           </Button>
         ) : null}
       </div>
+      <TranscriptFind
+        key={`${key}:${shown ?? "main"}`}
+        entries={blocks.map((block) => ({ id: block.id, text: blocksText([block]) }))}
+        older={history.state !== "start"}
+        loading={history.state === "loading"}
+        loadOlder={() => void loadOlder()}
+      />
       <div ref={body} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
         <ConsoleWorkspace
           tool={tool}

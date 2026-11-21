@@ -857,6 +857,14 @@ A host that lacks the ID of a filter, such as `task ls --goal G`, adds no rows.
 When no host has that ID, the command fails as not found.
 A host that is down, has no endpoint or fails produces a warning.
 One successful host gives exit code 0.
+With `--watch --host all`, goal, task, session and PR lists redraw one merged table after host changes.
+`attention --watch --host all` redraws its merged view too.
+`events -f --host all` follows every ready host and labels each line with its host.
+JSON event lines have a `host` field.
+`daemon logs -f --host all` labels each log line with its host.
+Task and session logs find the host with the ID before following it.
+An unavailable host produces one warning. Other hosts continue after a host drops, without reconnecting to it.
+Ctrl-C stops all followers. These forms also work when the registry contains only `local`.
 A command for one ID, such as `task inspect`, finds the host that has the ID.
 Its first line is `host: NAME`, and in JSON the answer has a `host` field.
 When the ID or its prefix matches on two hosts, the command is refused, and the message names both hosts.
@@ -867,7 +875,6 @@ These reads are `version`, `daemon status`, `doctor`, `models show`, `skill get`
 With `--format json`, such a read prints an array, and each item has a `host` field.
 `daemon logs --host all` prints the recent lines of each host, each led by the host name.
 A host that is down or fails prints one warning on stderr, and the other hosts still print.
-Streams, such as `events`, print the first host that answers.
 
 Writes run on one host. With `--host all`, a write is refused, and the message names the hosts that take it.
 Skills, workflows, permissions and repository settings are written on `local`.

@@ -43,6 +43,10 @@ to the daemon** switch is on by default and controls OTLP logs and metrics.
 Both settings are persisted to
 `localStorage` under `ariadne.settings`; the theme lives under `ariadne.theme`.
 Changing the URL clears the query cache and reconnects the event stream.
+Settings shows the configured address and live stream state together.
+Saving the address starts a connection attempt; it does not confirm a connection.
+Expand Daemon setup help for startup and TCP listener instructions.
+Use Retry connection after checking the setup. The other settings apply immediately.
 
 That daemon is `local`. The app also reads every host its `GET /v1/hosts`
 lists: the `[hosts.<name>]` tables of its `config.toml`. The settings dialog's
@@ -152,3 +156,36 @@ Only the hint printed next to the header's search button picks a side
 
 See [`AGENTS.md`](AGENTS.md#keyboard) for how chords are bound and guarded, and
 for the command palette.
+
+### Keep the overview available
+
+Details open as an overlay by default. On windows at least 72rem wide,
+select **Pin inspector** to keep the overview available beside the details.
+The inspector reserves space and removes its scrim. Resize its left edge
+with the pointer or arrow keys. The split leaves room for the overview.
+
+Use Tab to reach **Focus overview** or **Focus inspector**.
+Find **Focus inspector** in the reserved row below the overview. Press Enter to
+move focus between these regions. Escape inside the inspector closes it.
+Escape inside a console keeps its existing console action. Confirmation
+dialogs remain modal and receive Escape first.
+
+Select **Unpin inspector** to restore the overlay. Expansion also uses the
+overlay. Narrow windows use the overlay automatically. Collapsing or widening
+restores your pin choice until you close the inspector. These mode changes
+preserve the current selection, history, console draft, and transcript position.
+See [the desktop specification](../specs/015-desktop-app.md) for the layout rules.
+
+## Find text in a console
+
+Select **Find in transcript** to search the current view's loaded text.
+Ctrl+F or Cmd+F opens find when a console control has focus.
+Text fields, the composer, editors, and nested dialogs keep their shortcuts.
+Use Previous and Next, or Enter and Shift+Enter in the search field, to select a match.
+The result pane marks the occurrence and shows its block, including folded tool input, output, and diffs.
+The console keeps its reading position and draft. Escape or Close find returns focus to the original control.
+Search does not change sessions or child views.
+
+The coverage message states when older history remains unloaded.
+Select **Load earlier history** to fetch one existing history page and update the count.
+New stream text updates counts without moving focus or changing an available selected occurrence.
