@@ -10,11 +10,12 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, ensure};
 use clap::Args as ClapArgs;
-use rustix::process::{Pid, Signal, kill_process_group};
+use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::signal::unix::{Signal as UnixSignal, SignalKind, signal};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 #[derive(ClapArgs)]
@@ -68,6 +69,18 @@ struct Group {
     pid: Pid,
     armed: bool,
 }
+impl Group {
+    async fn kill_and_reap(
+        &mut self,
+        child: &mut tokio::process::Child,
+    ) -> Result<std::process::ExitStatus> {
+        // Keep the group leader unreaped until all its descendants have been signalled.
+        let _ = kill_process_group(self.pid, Signal::KILL);
+        let status = child.wait().await?;
+        self.armed = false;
+        Ok(status)
+    }
+}
 impl Drop for Group {
     fn drop(&mut self) {
         if self.armed {
@@ -117,6 +130,8 @@ pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()
     let changed = Arc::new(Notify::new());
     let stop = Arc::new(Notify::new());
     let finished = Arc::new(Notify::new());
+    // Subscribe before spawning, so an immediate exit cannot lose its notification.
+    let mut child_exits = signal(SignalKind::child())?;
     let mut child = tokio::process::Command::new(&args.command[0])
         .args(&args.command[1..])
         .stdin(Stdio::piped())
@@ -165,8 +180,6 @@ pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()
             && !err_open
             && !exit_recorded
         {
-            // The child is reaped and both pipes are closed. Never signal this PID again.
-            group.armed = false;
             journal
                 .lock()
                 .unwrap()
@@ -205,14 +218,9 @@ pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()
                     None => err_open = false,
                 }
             }
-            result = child.wait(), if status.is_none() => {
-                status = Some(result?);
-                // A descendant must not retain the session's pipes after agent exit.
-                if out_open || err_open {
-                    let _ = kill_process_group(group.pid, Signal::KILL);
-                } else {
-                    group.armed = false;
-                }
+            result = agent_exited(group.pid, &mut child_exits), if status.is_none() => {
+                result?;
+                status = Some(group.kill_and_reap(&mut child).await?);
                 writer.abort();
                 last_activity = chrono::Utc::now().to_rfc3339();
             }
@@ -222,18 +230,32 @@ pub(super) async fn run(args: Args, home_override: Option<PathBuf>) -> Result<()
             }
         }
     };
-    drop(group);
     writer.abort();
     if let Some((_, connection)) = connection {
         connection.abort();
     }
     if status.is_none() {
-        child.wait().await?;
+        group.kill_and_reap(&mut child).await?;
     }
     if stopped {
         std::fs::remove_file(path)?;
     }
     Ok(())
+}
+
+async fn agent_exited(pid: Pid, signals: &mut UnixSignal) -> Result<()> {
+    loop {
+        match waitid(
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => (),
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        }
+        signals.recv().await.context("agent exit signal closed")?;
+    }
 }
 
 async fn serve(

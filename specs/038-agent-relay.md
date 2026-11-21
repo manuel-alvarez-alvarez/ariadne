@@ -83,9 +83,11 @@ Daemon launch integration, tmux, and herdr are outside this spec.
    Forward messages without ACP changes.
    Permission requests remain journaled like any stdout message.
    Disconnection never closes agent stdin or supplies a permission answer.
-7. When the agent exits, stop its remaining process group and drain both output pipes.
-   After reaping the agent and closing both output pipes, disarm process group cleanup.
-   Send no further process group signal during terminal reporting or shutdown.
+7. Detect agent exit without reaping the agent.
+   Send SIGKILL to the full process group before reaping, even when descendants have redirected output.
+   Reap the direct child after the kill, then disarm process group cleanup.
+   Send no kill after that reap, including during terminal reporting or shutdown.
+   Drain both output pipes.
    Journal `{"type":"exit","seq":N,"code":7,"signal":null}` after all output.
    A signal exit has `code:null` and the numeric Unix `signal`.
    Stop agent execution immediately; retain the socket in the `exited` state.
@@ -93,7 +95,9 @@ Daemon launch integration, tmux, and herdr are outside this spec.
    A later connection therefore receives outstanding output and the exit status.
    Remove the socket when the relay exits; retain the completed journal for inspection.
 8. Accept `{"type":"stop"}` with or without replay in every protocol version.
-   Kill the running agent's whole process group with SIGKILL and reap the direct child.
+   If the agent is unreaped, send SIGKILL to its full process group first.
+   Reap the direct child after the kill, then disarm process group cleanup.
+   If the relay already reaped the agent, send no further kill.
    Remove the socket and journal, then exit 0.
    Ctrl-C uses the same stop behavior.
 9. Print a status line at startup and once per second on stdout.
@@ -123,7 +127,12 @@ Daemon launch integration, tmux, and herdr are outside this spec.
   Both prove continued input forwarding and stop handling.
 - Rules 4, 7, 9: `offline_status_and_output_do_not_need_a_daemon`
   proves disconnected completion, journal replay, and status without a daemon.
-- Rule 8: `stop_kills_the_full_process_group` proves descendant termination through closure of its private socket.
+- Rule 7: `agent_exit_kills_descendants_without_session_pipes` proves cleanup of descendants with redirected output after agent exit.
+- Rules 7–8: `stop_after_agent_exit_keeps_descendants_stopped` covers stop after reaping the agent.
+  `ctrl_c_after_agent_exit_keeps_descendants_stopped` covers Ctrl-C after reaping.
+- Rule 8: `stop_kills_descendants_without_session_pipes` proves cleanup of redirected descendants after stop.
+  `ctrl_c_kills_descendants_without_session_pipes` proves the same cleanup after Ctrl-C.
+  `stop_kills_the_full_process_group` proves descendant termination through closure of its private socket.
   `journals_before_delivery_and_replays_only_unacknowledged_messages` also checks session-file removal.
 
 - Rules 1–2: `session_paths_are_private_and_cannot_be_overwritten` proves path protection, permissions, and command exit codes.

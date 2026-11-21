@@ -576,3 +576,77 @@ fn invalid_input_does_not_advance_acceptance() {
     stop(&mut peer);
     assert!(relay.child.wait().unwrap().success());
 }
+
+fn relay_with_redirected_descendant() -> (Relay, BufReader<UnixStream>, UnixStream) {
+    let descendant = "import socket; s=socket.socket(socket.AF_UNIX); s.bind('descendant.sock'); s.listen(); print('ready',flush=True); c,_=s.accept(); c.sendall(b'R'); c.recv(1)";
+    let script = format!(
+        "import os,subprocess,sys\np=subprocess.Popen(['python3','-u','-c',{descendant:?}],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)\nassert p.stdout.readline()==b'ready\\n'\nprint('ready',flush=True)\nos.close(1); os.close(2)\nsys.stdin.readline()\nos._exit(7)"
+    );
+    let relay = Relay::start(&script);
+    let mut peer = relay.connect();
+    replay(&mut peer, 0);
+    assert_eq!(receive(&mut peer)["data"], "ready");
+    let mut socket = UnixStream::connect(relay.home.path().join("descendant.sock")).unwrap();
+    socket
+        .set_read_timeout(Some(crate::common::TIMEOUT))
+        .unwrap();
+    let mut byte = [0];
+    std::io::Read::read_exact(&mut socket, &mut byte).unwrap();
+    assert_eq!(byte, [b'R']);
+    (relay, peer, socket)
+}
+
+fn assert_descendant_stopped(mut socket: UnixStream) {
+    let mut byte = [0];
+    assert_eq!(std::io::Read::read(&mut socket, &mut byte).unwrap(), 0);
+}
+
+#[test]
+fn agent_exit_kills_descendants_without_session_pipes() {
+    let (mut relay, mut peer, socket) = relay_with_redirected_descendant();
+    send(&mut peer, json!({"type":"message","seq":1,"data":"exit"}));
+    let exit = receive(&mut peer);
+    assert_eq!(exit["type"], "exit");
+    assert_eq!(exit["code"], 7);
+    assert_descendant_stopped(socket);
+    send(&mut peer, json!({"type":"ack","seq":exit["seq"]}));
+    assert!(relay.child.wait().unwrap().success());
+}
+
+#[test]
+fn stop_kills_descendants_without_session_pipes() {
+    let (mut relay, mut peer, socket) = relay_with_redirected_descendant();
+    stop(&mut peer);
+    assert!(relay.child.wait().unwrap().success());
+    assert_descendant_stopped(socket);
+}
+
+#[test]
+fn ctrl_c_kills_descendants_without_session_pipes() {
+    let (mut relay, _peer, socket) = relay_with_redirected_descendant();
+    let pid = rustix::process::Pid::from_raw(relay.child.id() as i32).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::INT).unwrap();
+    assert!(relay.child.wait().unwrap().success());
+    assert_descendant_stopped(socket);
+}
+
+#[test]
+fn stop_after_agent_exit_keeps_descendants_stopped() {
+    let (mut relay, mut peer, socket) = relay_with_redirected_descendant();
+    send(&mut peer, json!({"type":"message","seq":1,"data":"exit"}));
+    assert_eq!(receive(&mut peer)["type"], "exit");
+    assert_descendant_stopped(socket);
+    stop(&mut peer);
+    assert!(relay.child.wait().unwrap().success());
+}
+
+#[test]
+fn ctrl_c_after_agent_exit_keeps_descendants_stopped() {
+    let (mut relay, mut peer, socket) = relay_with_redirected_descendant();
+    send(&mut peer, json!({"type":"message","seq":1,"data":"exit"}));
+    assert_eq!(receive(&mut peer)["type"], "exit");
+    assert_descendant_stopped(socket);
+    let pid = rustix::process::Pid::from_raw(relay.child.id() as i32).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::INT).unwrap();
+    assert!(relay.child.wait().unwrap().success());
+}
