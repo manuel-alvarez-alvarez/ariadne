@@ -420,6 +420,7 @@ it leaves nothing to delete.
     Pass the working directory, command arguments, and environment without shell interpretation.
     Send ACP through the relay socket, never pane keystrokes or pane text.
     Pane discovery works in UTF-8 and non-UTF-8 daemon locales.
+    An exiting tmux server that reports no current target has no live panes.
     A daemon stop closes its connection without stopping the relay, pane, or agent.
     A session kill stops the relay's agent process group before removing its pane.
 
@@ -477,6 +478,8 @@ it leaves nothing to delete.
   `doctor.rs::doctor_reports_a_missing_forced_place_and_its_reason`.
 - A detached pane starts, lists, and stops:
   `place.rs::a_detached_relay_pane_can_be_found_and_stopped`.
+- An exiting tmux server without a current target has no live panes:
+  `place.rs::a_tmux_server_without_a_current_target_has_no_live_panes`.
 - Pane discovery also works with a non-UTF-8 tmux client locale:
   `place.rs::a_detached_relay_pane_is_discoverable_in_the_c_locale`.
 - Arguments, environment, and working directory reach the agent without shell interpretation:

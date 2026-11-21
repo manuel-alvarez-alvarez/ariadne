@@ -418,3 +418,18 @@ async fn a_detached_relay_pane_is_discoverable_in_the_c_locale() {
         "the pane lifecycle test did not run: {stdout}"
     );
 }
+
+/// Ubuntu tmux can answer this while its last session exits.
+#[tokio::test]
+async fn a_tmux_server_without_a_current_target_has_no_live_panes() {
+    let home = tempfile::tempdir().unwrap();
+    let binary = home.path().join("tmux");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\nprintf 'no current target\\n' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let place = Place::Tmux(binary);
+    assert!(place.live_panes(home.path()).await.unwrap().is_empty());
+}
