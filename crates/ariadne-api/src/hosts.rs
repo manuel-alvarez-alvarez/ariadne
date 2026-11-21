@@ -50,6 +50,8 @@ pub enum SyncState {
     Pending,
     /// The last push failed. It is tried again while the host is `ready`.
     Failed,
+    /// Configuration is saved and waits for an idle restart.
+    PendingRestart,
 }
 
 /// The sync of one host (037).
@@ -127,4 +129,38 @@ pub struct SetupDto {
     pub name: String,
     pub state: SetupState,
     pub steps: Vec<SetupStep>,
+}
+
+/// Settings shared between machines. Worker locations never enter this payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PortableConfigDto {
+    pub delete_merged_branches: bool,
+    pub delete_merged_worktrees: bool,
+    pub auto_switch: bool,
+    pub exhausted_patterns: Vec<String>,
+    pub log_filter: String,
+    pub telemetry_samples_days: i64,
+    pub telemetry_logs_days: i64,
+    pub telemetry_rollups_days: i64,
+    pub acp_registry_url: String,
+    pub acp_agents: Vec<PortableAgentDto>,
+    /// Only explicitly configured flags participate in synchronization.
+    pub agent_flags: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// An agent command, keyed by its stable registry identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PortableAgentDto {
+    pub id: String,
+    pub command: Vec<String>,
+}
+
+/// The worker's effective live settings and pending registry changes.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ConfigSyncDto {
+    pub state: SyncState,
+    pub error: Option<String>,
+    pub configuration: PortableConfigDto,
 }

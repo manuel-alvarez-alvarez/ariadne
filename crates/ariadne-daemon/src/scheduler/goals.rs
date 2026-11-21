@@ -15,6 +15,9 @@ use super::SPAWN_RETRY_BUDGET;
 impl super::Scheduler {
     pub(super) async fn reconcile_goal(&mut self, goal_id: &str) -> anyhow::Result<()> {
         let goal = self.store.get_goal(goal_id).await?;
+        if !goal.status().is_terminal() && !self.launcher.cfg.portable.allows_goal(&goal.id) {
+            return Ok(());
+        }
         match goal.status() {
             // A goal in planning wants a live orchestrator session.
             GoalStatus::Planning => {
@@ -171,7 +174,7 @@ impl super::Scheduler {
             .launcher
             .cleanup_task(
                 task_id,
-                self.launcher.cfg.delete_merged_worktrees,
+                self.launcher.cfg.live_settings().delete_merged_worktrees,
                 false,
                 false,
             )

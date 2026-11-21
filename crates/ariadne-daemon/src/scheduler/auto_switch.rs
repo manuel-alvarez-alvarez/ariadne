@@ -33,7 +33,7 @@ pub(crate) async fn recovery_block(
         // already acted, and the old row is not the one left to answer.
         return Ok(None);
     }
-    if !launcher.cfg.auto_switch {
+    if !launcher.cfg.live_settings().auto_switch {
         return Ok(Some(QuotaBlock {
             switches: 0,
             reason: "automatic model switching is disabled",
@@ -113,7 +113,7 @@ impl super::Scheduler {
         {
             return;
         }
-        if !self.launcher.cfg.auto_switch {
+        if !self.launcher.cfg.live_settings().auto_switch {
             return;
         }
         // A store that would not answer is waited out for the next sweep

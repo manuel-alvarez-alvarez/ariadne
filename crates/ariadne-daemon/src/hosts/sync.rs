@@ -13,7 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ariadne_api::hosts::{MissingRepositoryDto, SyncState};
+use ariadne_api::hosts::{ConfigSyncDto, MissingRepositoryDto, PortableConfigDto, SyncState};
 use ariadne_api::permissions::{
     AiPermissionsStatusDto, Flavour, LearnedPermissionDto, LearnedPermissionLevel,
     LearnedPermissionsResponse, RecordLearnedPermissionRequest, UpdateAiPermissionsRequest,
@@ -52,6 +52,7 @@ enum Push {
     Learned(LearnedPermissionDto),
     LearnedDeleted(LearnedPermissionDto),
     Ai(AiChoice),
+    Config,
 }
 
 /// The item a push is about: a later push of the same item replaces a
@@ -64,6 +65,7 @@ enum Item<'a> {
     Repositories,
     Learned(&'a str, &'a str, LearnedPermissionLevel, &'a str),
     Ai,
+    Config,
 }
 
 impl Push {
@@ -79,6 +81,7 @@ impl Push {
                 Item::Learned(&row.repository_id, &row.tool_name, row.level, &row.key)
             }
             Push::Ai(_) => Item::Ai,
+            Push::Config => Item::Config,
         }
     }
 }
@@ -129,6 +132,9 @@ pub(super) async fn run(
             index,
             client: super::client_for(&endpoint),
             last_ai: None,
+            last_config: None,
+            config_attempt: None,
+            pending_restart: false,
             pairs: None,
             bundles: HashMap::new(),
             warnings: HashMap::new(),
@@ -154,7 +160,7 @@ pub(super) async fn run(
                     Err(TryRecvError::Closed) => return,
                 }
             }
-            pushes.show(&inner, index, &pusher.warnings);
+            pushes.show(&inner, index, &pusher.warnings, pusher.pending_restart);
             if let Some(push) = pushes.queue.pop_front() {
                 tokio::select! {
                     biased;
@@ -167,7 +173,7 @@ pub(super) async fn run(
                 } else if retry_at.is_none() {
                     retry_at = Some(Instant::now() + backoff);
                 }
-                pushes.show(&inner, index, &pusher.warnings);
+                pushes.show(&inner, index, &pusher.warnings, pusher.pending_restart);
                 continue;
             }
             let Some(at) = retry_at else {
@@ -314,7 +320,13 @@ impl Pushes {
 
     /// Publish where the sync stands: `failed` while any push has failed,
     /// else `pending` while one waits, else `in_sync`.
-    fn show(&self, inner: &Inner, index: usize, warnings: &HashMap<String, Vec<String>>) {
+    fn show(
+        &self,
+        inner: &Inner,
+        index: usize,
+        warnings: &HashMap<String, Vec<String>>,
+        pending_restart: bool,
+    ) {
         let (state, error) = match self.failed.last() {
             Some((_, error)) => (SyncState::Failed, Some(error.clone())),
             None if self.queue.is_empty() => {
@@ -326,7 +338,11 @@ impl Pushes {
                     .collect();
                 messages.sort();
                 (
-                    SyncState::InSync,
+                    if pending_restart {
+                        SyncState::PendingRestart
+                    } else {
+                        SyncState::InSync
+                    },
                     (!messages.is_empty()).then(|| messages.join("; ")),
                 )
             }
@@ -347,6 +363,9 @@ struct Pusher<'a> {
     /// The AI choice the host last took: the status event also moves with
     /// every step of an install, which changes no choice.
     last_ai: Option<AiChoice>,
+    last_config: Option<PortableConfigDto>,
+    config_attempt: Option<Result<PortableConfigDto, String>>,
+    pending_restart: bool,
     /// The local repository ids paired with the host's, as the last push
     /// of the repositories read them.
     pairs: Option<HashMap<String, String>>,
@@ -356,6 +375,18 @@ struct Pusher<'a> {
 
 impl Pusher<'_> {
     async fn scan(&mut self, pushes: &mut Pushes) {
+        let desired = self.source_config().await;
+        let changed = self.config_attempt.as_ref() != Some(&desired);
+        let failed = pushes
+            .failed
+            .iter()
+            .any(|(push, _)| push.item() == Item::Config);
+        if (changed || (self.pending_restart && !failed))
+            && !pushes.queue.iter().any(|push| push.item() == Item::Config)
+        {
+            pushes.supersede(&Push::Config);
+            pushes.queue.push_back(Push::Config);
+        }
         let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
         let Ok(skills) = self.inner.store.list_skills().await else {
             return;
@@ -419,6 +450,7 @@ impl Pusher<'_> {
                 self.count_skipped(&pairs).await
             }
             Push::Ai(choice) => self.ai(choice).await,
+            Push::Config => self.config().await,
         }
     }
 
@@ -451,6 +483,7 @@ impl Pusher<'_> {
                 .then_some((settings.allow_threshold, settings.deny_threshold)),
             flavour,
         }));
+        pushes.push(Push::Config);
         Ok(pushes)
     }
 
@@ -729,6 +762,46 @@ impl Pusher<'_> {
         self.delete(&format!("/v1/permissions/learned/{}", remote.id))
             .await
             .map_err(failed)
+    }
+
+    async fn source_config(&self) -> Result<PortableConfigDto, String> {
+        let cfg = crate::config::Config::load(Some(self.inner.cfg.root.clone()))
+            .map_err(|e| format!("daemon configuration: {e}"))?;
+        let mut desired = cfg.live_settings();
+        for row in self
+            .inner
+            .store
+            .list_agent_configs()
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            desired
+                .agent_flags
+                .insert(row.agent_id.clone(), row.extra_flags());
+        }
+        Ok(desired)
+    }
+
+    async fn config(&mut self) -> Result<(), String> {
+        let desired = self.source_config().await;
+        self.config_attempt = Some(desired.clone());
+        let desired = desired?;
+        let status: ConfigSyncDto = if self.last_config.as_ref() == Some(&desired) {
+            self.client.get_json("/v1/config/sync").await
+        } else {
+            self.client.put_json("/v1/config/sync", &desired).await
+        }
+        .map_err(|e| format!("daemon configuration: {e}"))?;
+        self.pending_restart = status.state == SyncState::PendingRestart;
+        if status.state == SyncState::Failed {
+            self.last_config = None;
+            return Err(format!(
+                "daemon configuration: {}",
+                status.error.unwrap_or_else(|| "application failed".into())
+            ));
+        }
+        self.last_config = Some(desired);
+        Ok(())
     }
 
     async fn ai(&mut self, choice: &AiChoice) -> Result<(), String> {

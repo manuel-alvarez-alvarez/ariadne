@@ -93,6 +93,14 @@ impl super::Scheduler {
             Err(StoreError::NotFound { .. }) => return Ok(()),
             Err(e) => return Err(e.into()),
         };
+        if !self
+            .launcher
+            .cfg
+            .portable
+            .allows_pull(&named.id, named.origin_task_id.as_deref())
+        {
+            return Ok(());
+        }
         // What follows acts on the operation goals and their sessions: it
         // holds the request's operation lock, and reads the row again under
         // it, so it never sees a start or a stop the HTTP route has half

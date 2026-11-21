@@ -18,6 +18,7 @@ use crate::ai_permissions::hardware::HardwareOverride;
 /// Fully resolved daemon configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub portable: std::sync::Arc<crate::portable::PortableRuntime>,
     pub root: PathBuf,
     pub socket_path: PathBuf,
     pub db_path: PathBuf,
@@ -128,7 +129,8 @@ impl Config {
         validate_telemetry_retention_days(&file)?;
         validate_hosts(&file)?;
 
-        let config = Config {
+        let mut config = Config {
+            portable: Default::default(),
             socket_path: file
                 .socket_path
                 .unwrap_or_else(|| endpoint::default_socket_path(&root)),
@@ -178,6 +180,7 @@ impl Config {
             root,
         };
 
+        crate::portable::restore(&mut config)?;
         validate_tcp_config(&config)?;
 
         for dir in [
@@ -204,6 +207,7 @@ impl Config {
     pub fn check(home_override: Option<PathBuf>) -> Result<String> {
         let root = endpoint::home(home_override)
             .context("cannot determine home directory; pass --home")?;
+        crate::portable::saved(&root)?;
         let path = endpoint::config_file(&root);
         let file = endpoint::parse_config(&root)?;
         let has_file = file.is_some();

@@ -169,6 +169,53 @@
         }
       }
     },
+    "/v1/config/sync": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigSyncDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "apply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortableConfigDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigSyncDto"
+                }
+              }
+            }
+          },
+          "400": {}
+        }
+      }
+    },
     "/v1/dashboards": {
       "get": {
         "tags": [
@@ -6209,6 +6256,28 @@
         },
         "additionalProperties": false
       },
+      "ConfigSyncDto": {
+        "type": "object",
+        "description": "The worker's effective live settings and pending registry changes.",
+        "required": [
+          "state",
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/PortableConfigDto"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/SyncState"
+          }
+        }
+      },
       "ConsoleCancelRequest": {
         "type": "object",
         "description": "Body of `POST /v1/sessions/{id}/console/cancel`. Omitted, or omitting\n`subagent_id`, cancels the session's own running turn, as before (021).\nNaming a child cancels that child's turn instead, and is refused with\n`409` where the child is unknown, has already ended, or never advertised\nthe capability.",
@@ -8332,6 +8401,98 @@
           "session_id": {}
         }
       },
+      "PortableAgentDto": {
+        "type": "object",
+        "description": "An agent command, keyed by its stable registry identifier.",
+        "required": [
+          "id",
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PortableConfigDto": {
+        "type": "object",
+        "description": "Settings shared between machines. Worker locations never enter this payload.",
+        "required": [
+          "delete_merged_branches",
+          "delete_merged_worktrees",
+          "auto_switch",
+          "exhausted_patterns",
+          "log_filter",
+          "telemetry_samples_days",
+          "telemetry_logs_days",
+          "telemetry_rollups_days",
+          "acp_registry_url",
+          "acp_agents",
+          "agent_flags"
+        ],
+        "properties": {
+          "acp_agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortableAgentDto"
+            }
+          },
+          "acp_registry_url": {
+            "type": "string"
+          },
+          "agent_flags": {
+            "type": "object",
+            "description": "Only explicitly configured flags participate in synchronization.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "auto_switch": {
+            "type": "boolean"
+          },
+          "delete_merged_branches": {
+            "type": "boolean"
+          },
+          "delete_merged_worktrees": {
+            "type": "boolean"
+          },
+          "exhausted_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "log_filter": {
+            "type": "string"
+          },
+          "telemetry_logs_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "telemetry_rollups_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "telemetry_samples_days": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
       "PrOperation": {
         "type": "string",
         "description": "The work Ariadne does on one pull request as a goal of its own: one active\ngoal per request and operation, staffed by one task whose single column\nruns on a workflow only that operation reads (029, 030).",
@@ -9577,7 +9738,8 @@
         "enum": [
           "in_sync",
           "pending",
-          "failed"
+          "failed",
+          "pending_restart"
         ]
       },
       "TaskAgentDto": {

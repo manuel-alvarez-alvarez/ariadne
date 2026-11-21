@@ -460,9 +460,10 @@ impl HarnessBuilder {
             store.clone(),
             self.timeouts.failure_diagnosis_decision,
         );
+        let config = Arc::new(config);
         let launcher = Arc::new(Launcher {
             forge_poll: Default::default(),
-            cfg: Arc::new(config),
+            cfg: config.clone(),
             store: store.clone(),
             git: GitManager,
             acp: ariadne_daemon::acp::AcpRuntime::with_transcripts(
@@ -471,6 +472,7 @@ impl HarnessBuilder {
                 transcript_homes(dir.path()),
             )
             .with_exhausted_patterns(exhausted_patterns)
+            .with_portable_config(config.clone())
             .with_ai_permissions(ai_permissions.clone())
             .with_failure_diagnosis(failure_diagnosis.clone()),
             registry: agent_registry.clone(),

@@ -1225,6 +1225,21 @@ pub(super) async fn ask_review(
     // the half of one (029).
     let _operation = state.store.pr_operation_lock(&id, number).await;
     let row = state.store.pull_request_by_number(&id, number).await?;
+    let _admission = state.launcher.cfg.portable.admission.read().await;
+    if req.asked {
+        let existing = state
+            .store
+            .active_pr_goal(&id, number, PrOperation::Review)
+            .await?;
+        if !state
+            .launcher
+            .cfg
+            .portable
+            .allows_goal(existing.as_ref().map_or("", |goal| goal.id.as_str()))
+        {
+            return Err(ApiError::conflict("worker maintenance blocks new work"));
+        }
+    }
     let pin = match req.asked {
         false => None,
         true => {
@@ -1440,6 +1455,21 @@ pub(super) async fn ask_babysit(
     let row = state.store.pull_request_by_number(&id, number).await?;
     if row.as_ref().is_some_and(|row| row.origin_task_id.is_some()) {
         return Err(ApiError::conflict("a task already keeps this request"));
+    }
+    let _admission = state.launcher.cfg.portable.admission.read().await;
+    if req.asked {
+        let existing = state
+            .store
+            .active_pr_goal(&id, number, PrOperation::Babysit)
+            .await?;
+        if !state
+            .launcher
+            .cfg
+            .portable
+            .allows_goal(existing.as_ref().map_or("", |goal| goal.id.as_str()))
+        {
+            return Err(ApiError::conflict("worker maintenance blocks new work"));
+        }
     }
     let pin = match req.asked {
         false => None,

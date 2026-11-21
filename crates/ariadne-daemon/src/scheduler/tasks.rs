@@ -55,8 +55,8 @@ impl super::Scheduler {
                 self.launcher
                     .cleanup_task(
                         &task.id,
-                        self.launcher.cfg.delete_merged_worktrees,
-                        self.launcher.cfg.delete_merged_branches,
+                        self.launcher.cfg.live_settings().delete_merged_worktrees,
+                        self.launcher.cfg.live_settings().delete_merged_branches,
                         true,
                     )
                     .await?;
@@ -124,6 +124,10 @@ impl super::Scheduler {
             return Ok(());
         }
         if task.status() == TaskStatus::Ready {
+            let _admission = self.launcher.cfg.portable.admission.read().await;
+            if !self.launcher.cfg.portable.allows_task(&task.id) {
+                return Ok(());
+            }
             // A task starts on its first column and walks every one of them,
             // so each needs its agent before the first is started. The store
             // refuses a staffing that leaves one out once the goal runs, and

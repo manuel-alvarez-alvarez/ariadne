@@ -550,9 +550,23 @@ impl Inner {
         };
         self.set(index, HostStatus::Connecting, None, None);
         let ssh = self.cfg.ssh_bin.as_deref().unwrap_or("ssh");
-        let mut child = match Command::new(ssh)
+        // Close the pipe on exec or process exit, including an idle restart.
+        // The watcher ends the forward's process group when that happens.
+        const GUARD: &str = r#"exec 3<&0
+"$@" </dev/null 3<&- &
+forward=$!
+(read -r _ <&3; kill -s KILL 0) &
+watcher=$!
+wait "$forward"
+status=$?
+kill "$watcher" 2>/dev/null
+exit "$status"
+"#;
+        let mut child = match Command::new("/bin/sh")
+            .args(["-c", GUARD, "ariadne-ssh-guard", ssh])
             .args(&args)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
+            .process_group(0)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -561,6 +575,8 @@ impl Inner {
             Ok(child) => child,
             Err(error) => return Ended::Down(format!("cannot run {ssh}: {error}")),
         };
+        // Child::wait closes its stdin. Keep this end until the forward ends.
+        let _lifetime = child.stdin.take();
         acted(asked);
         // The last line the process wrote is why it ended.
         let stderr = child.stderr.take().map(|stderr| {

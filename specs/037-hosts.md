@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-client/src/endpoint.rs
   - crates/ariadne-daemon/tests/it/hosts.rs
   - crates/ariadne-daemon/tests/it/ssh_forward.rs
+  - crates/ariadne-daemon/tests/it/portable_config.rs
   - crates/ariadne-daemon/tests/it/host_sync.rs
   - crates/ariadne-daemon/tests/it/host_health.rs
   - crates/ariadne-daemon/tests/it/host_reconnect.rs
@@ -175,7 +176,7 @@ picker, the Hosts section of its settings and one stream per host — is spec
 
 ### Sync
 
-22. `sync` is `state` (`in_sync`, `pending`, `failed`), `error` (string or
+22. `sync` is `state` (`in_sync`, `pending`, `pending_restart`, `failed`), `error` (string or
     null) and `missing_repositories` (`MissingRepositoryDto[]`: the local
     repository's `id`, and `forge`, its `owner/repo`, or null for a
     repository with no forge) and `skipped_permissions` (rule 27). `local`
@@ -293,6 +294,45 @@ picker, the Hosts section of its settings and one stream per host — is spec
     Both binary path labels identify the source daemon machine that runs the settings daemon.
     It shows completed steps and failures, polls active setup, and permits retry with the same request.
     Entering a worker name and loading progress restores its durable operation view.
+
+### Portable daemon configuration
+
+53. Each ready host receives portable daemon settings through `PUT /v1/config/sync`.
+    `GET` on that path returns `ConfigSyncDto`, with `state`, `error`, and `configuration`.
+    The portable fields are `delete_merged_branches`, `delete_merged_worktrees`, `auto_switch`,
+    `exhausted_patterns`, `log_filter`, the three `telemetry_*_days` values, `acp_registry_url`,
+    `acp_agents`, and explicitly stored `agent_flags`.
+    Source defaults participate. Worker-only agents and flag entries remain.
+    Paths, listeners, origins, webhook addresses, hardware choices, sleep prevention,
+    executable locations, hosts, and other settings remain the worker's.
+54. Custom agents match by identifier. An existing worker command takes precedence over the source command.
+    Without a mapping, the command must use an executable on the worker PATH.
+    Source paths in commands or arguments require a worker mapping and otherwise fail synchronization.
+    Path-bearing flags fail instead of silently installing unusable source paths.
+    Matching portable flag lists take the source list. Worker-only flag lists remain.
+55. The worker saves accepted settings in `portable-config.json` under its own home.
+    Startup overlays these settings without rewriting `config.toml` or changing worker locations.
+    Worker commands configured in `config.toml` retain precedence by identifier.
+    Cleanup policies, model switching, logging, and retention update live.
+    Existing retention jobs use the updated cutoffs on their next pass.
+    `RUST_LOG` keeps precedence over the synchronized logging filter.
+    Registry additions and index changes require an idle restart.
+56. Maintenance snapshots admitted tasks under the same lock that guards admission.
+    Admitted tasks continue through all remaining columns, including review and CI waits.
+    New tasks remain queued. New review and babysit operations receive a maintenance conflict.
+    Existing operations and their coordinating sessions can continue.
+    The worker waits for admitted tasks and active turns before replacing its process.
+    Process replacement supports directly launched macOS and Linux workers.
+    It preserves the PID, inherited environment, and service supervision for installed workers.
+    Open event streams do not delay replacement.
+    SSH forward guards close their process groups when replacement closes the daemon lifetime pipe.
+57. Host synchronization reports `pending_restart` while registry changes wait for maintenance.
+    Successful replacement restores normal scheduling and reports `in_sync`.
+    A replacement failure reports `failed` with its reason and restores admission.
+    A later configuration transfer retries maintenance. CLI and desktop expose the state and error.
+58. Host checks detect source configuration and explicit agent-flag changes.
+    Configuration failures use the existing independent retry queue from rule 25.
+    They do not block catalog, repository, learned permission, or AI permission synchronization.
 
 ## Acceptance criteria
 
@@ -425,6 +465,31 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
   (`host_sync.rs::an_escaping_link_preserves_the_worker_and_does_not_block_other_skills`).
 - External Markdown links warn without copying dependencies
   (`host_sync.rs::external_markdown_links_warn_without_copying_external_files`).
+
+- Portable live settings preserve worker locations and survive reload
+  (`portable_config.rs::portable_settings_apply_without_changing_worker_paths`).
+- Worker commands and worker-only entries survive matching source updates
+  (`portable_config.rs::worker_commands_and_worker_only_agents_survive_source_replacement`).
+- Unmapped paths and invalid retention fail before installation
+  (`portable_config.rs::an_unmapped_source_path_fails_without_applying_settings`,
+  `::invalid_retention_fails_before_any_setting_changes`).
+- Maintenance lets admitted tasks continue and holds new work
+  (`portable_config.rs::maintenance_keeps_admitted_tasks_running_and_holds_new_tasks`).
+- Process replacement keeps the worker PID and works with an open event stream
+  (`portable_config.rs::an_idle_worker_restarts_with_an_open_event_stream`).
+- A failed replacement retains service availability and permits retry
+  (`portable_config.rs::a_failed_process_replacement_keeps_the_worker_available_and_can_retry`).
+- Existing retention and cleanup consumers use live policies
+  (`portable_config.rs::a_running_retention_job_uses_the_new_cutoff`,
+  `::a_live_cleanup_policy_keeps_the_finished_worktree`,
+  `::the_logging_filter_changes_without_a_restart`,
+  `::an_existing_runtime_classifies_errors_with_the_new_patterns`).
+- Source file and flag changes reach workers; configuration errors leave catalog transfers working
+  (`host_sync.rs::portable_policies_and_flags_reach_the_worker_after_source_changes`,
+  `::unmapped_configuration_fails_without_blocking_catalogs_and_can_retry`).
+- CLI listings expose pending restart (`crates/ariadne-cli/tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).
+  Desktop sync lines expose pending restart and configuration errors
+  (`ui/src/components/host-sync.test.tsx`: `shows configuration status %s`).
 
 ## Sources
 

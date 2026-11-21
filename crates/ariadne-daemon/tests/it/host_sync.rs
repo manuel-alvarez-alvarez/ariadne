@@ -1054,3 +1054,63 @@ async fn a_failed_skill_waits_for_backoff_despite_bundle_scans() {
         .unwrap();
     server.abort();
 }
+
+#[tokio::test]
+async fn portable_policies_and_flags_reach_the_worker_after_source_changes() {
+    let (far, local, _dir) = far_and_local().await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    let source = local.launcher.cfg.root.join("config.toml");
+    let hosts = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(&source, format!("auto_switch = false\ndelete_merged_worktrees = false\ntelemetry_logs_days = 2\nlog_filter = \"warn\"\n{hosts}")).unwrap();
+    local
+        .store
+        .update_agent_config("stub", vec!["--shared".into()])
+        .await
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "portable policy and flags on the worker",
+        || async {
+            let status: serde_json::Value = far.get("/v1/config/sync").await;
+            status["configuration"]["auto_switch"] == false
+                && status["configuration"]["delete_merged_worktrees"] == false
+                && status["configuration"]["telemetry_logs_days"] == 2
+                && status["configuration"]["log_filter"] == "warn"
+                && status["configuration"]["agent_flags"]["stub"] == json!(["--shared"])
+        },
+    )
+    .await;
+    until_in_sync(&local).await;
+    assert_eq!(
+        far.launcher.cfg.root,
+        far.launcher.cfg.db_path.parent().unwrap()
+    );
+    local.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn unmapped_configuration_fails_without_blocking_catalogs_and_can_retry() {
+    let (far, local, _dir) = far_and_local().await;
+    let source = local.launcher.cfg.root.join("config.toml");
+    let hosts = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(
+        &source,
+        format!("{hosts}\n[[acp_agents]]\nid = \"unmapped\"\ncommand = [\"/source/bin/agent\"]\n"),
+    )
+    .unwrap();
+    local.state.hosts.start();
+    eventually(TIMEOUT, "unmapped command failure", || async {
+        let sync = sync_of(&local).await;
+        sync.state == SyncState::Failed && sync.error.is_some_and(|error| error.contains("mapping"))
+    })
+    .await;
+    let _: SkillDto = local.json(post_json("/v1/skills", json!({"name":"after-config-failure", "document":skill("after-config-failure", "still transfers")})), StatusCode::CREATED).await;
+    eventually(TIMEOUT, "skill after configuration failure", || async {
+        skill_on(&far, "after-config-failure").await.is_some()
+    })
+    .await;
+    std::fs::write(&source, hosts).unwrap();
+    until_in_sync(&local).await;
+    local.state.hosts.shutdown().await;
+}
