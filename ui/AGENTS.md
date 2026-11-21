@@ -193,8 +193,9 @@ src/
     repositories/  the registered checkouts goals are created against, their
                    forge integration, and the webhook tunnel switch
                    the settings dialog shows
-    hosts/         the Hosts screen: the hosts table, and the "Set up worker"
-                   dialog with its SSH worker setup form
+    hosts/         the Hosts screen: the hosts table, the add, edit and remove
+                   dialogs, and the "Set up worker" dialog with its SSH worker
+                   setup form
     agents/        agents screen: the flags each registry agent is launched
                    with, and the model catalog each may be staffed on (what
                    `#/models` redirects onto)

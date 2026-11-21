@@ -77,6 +77,8 @@ export type AgentEventDto = Schemas["AgentEventDto"]
 export type ResyncDto = Schemas["ResyncDto"]
 export type HeartbeatDto = Schemas["HeartbeatDto"]
 export type HostDto = Schemas["HostDto"]
+export type CreateHost = Schemas["CreateHost"]
+export type PatchHost = Schemas["PatchHost"]
 
 export type AiPermissionsStatusDto = Schemas["AiPermissionsStatusDto"]
 export type PythonDto = Schemas["PythonDto"]
