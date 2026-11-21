@@ -76,6 +76,20 @@ Out: the daemon endpoints themselves (012).
    the expanded console or diff. Open dialogs retain their own focus.
    The header does not shrink, and the body scrolls within the
    remaining height, with one full-height child for the session view.
+   In the shell, **Pin inspector** appears from a window width of 72rem.
+   Pinning reserves the inspector width beside the overview, without a scrim
+   or Tab trap. The inspector remains a named nonmodal region. Nested dialogs
+   retain their modal semantics, focus handling and Escape ownership.
+   Pinned resizing leaves at least 48rem for the sidebar and overview.
+   **Focus overview** moves focus to the main region. **Focus inspector**
+   returns focus to that control. The shell reserves a row after the overview
+   for this button. It follows the overview in Tab order and covers no sidebar
+   controls. Both controls support Tab and Enter.
+   Unpinning, expansion, or a window narrower than 72rem restores the overlay.
+   Collapsing or widening restores the explicit pin choice for this inspector.
+   Closing forgets that choice. Mode changes keep the same content mounted,
+   without URL or history writes, preserving drafts, transcript position and
+   the original focus-return target.
    On Linux (WebKitGTK) every scroll area gets a thin scrollbar in theme
    colours, light and dark, from one rule in `index.css` keyed on a
    `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
@@ -1119,10 +1133,15 @@ Out: the daemon endpoints themselves (012).
     the guide's secondary action. The goal tabs and the header's New task
     action stay as they were.
 
-49. The goals screen shows only the board: one swimlane per goal, with no
-    List view, no Board/List toggle and no repository filter. A title-only
-    search combines with the status filters to narrow the board, and an empty
-    search result says that nothing matches the search.
+49. Goal views keep title search (`q`), repository path (`repo`), and
+    presentation (`presentation=board|compact`) in the URL beside status.
+    View controls preserve detail parameters. Explicit scope parameters suppress
+    remembered status restoration. Board remains the initial presentation.
+    Compact uses the same filtered goals, visible tasks, attention, host errors,
+    and expansion state. Its fixed columns align goal, task, status, step, attention and host.
+    One focusable scroll area serves all lanes. Empty lanes have no table. Planning goals remain visible without tasks.
+    Named local views save scope and presentation in feature-local browser storage.
+    Users can save, reopen, rename and delete them. They do not change host selection. Repository paths match across hosts.
 
 50. The request panel offers **Review again** beside **Stop review** while review is asked (029 rule 8).
     The button calls the round route and shows the daemon's refusal text.
@@ -1481,7 +1500,24 @@ Out: the daemon endpoints themselves (012).
     pick leaves the new goal's host out, the toast has a "Show all hosts"
     action that sets the pick to All hosts.
 
+### Connection recovery
+
+81. Settings shows the configured daemon address and the event stream connection state together. Saving the address starts a connection attempt and does not confirm success. Retry requests a stream reconnection. Settings gives daemon startup and TCP listener guidance, and identifies settings that apply immediately. Setup help expands with the keyboard. The live status announces changes without moving focus. The sidebar connection status keeps daemon logs reachable; host errors remain in Hosts.
+
 ## Acceptance criteria
+
+- Settings shows the configured address, stream state and recovery guidance: `ui/src/components/settings-dialog.test.tsx::shows the saved address and live connection state with recovery guidance`; `::announces stream changes without moving focus and gives neutral failure guidance`.
+- The inspector focus control occupies a reserved row after the overview and
+  leaves connection status available
+  (`ui/src/components/app-shell.test.tsx::reserves a focus-control row after the overview without covering connection status`).
+
+- Pinning reserves space without a scrim, and mode changes preserve content
+  (`ui/src/components/pinned-inspector.test.tsx::reserves overview space only when pinned and preserves content through fallback and expansion`).
+- Visible controls move focus between regions, and pinned Tab can leave
+  (`ui/src/components/pinned-inspector.test.tsx::moves focus between regions and lets Tab leave the pinned inspector`).
+- Nested confirmations remain modal and own Escape
+  (`ui/src/components/pinned-inspector.test.tsx::keeps nested confirmations modal and gives Escape to the dialog first`).
+
 
 - A task card of a named host links to its panel on that host
   (`ui/src/features/tasks/task-card.test.tsx::links a local card to its panel and a remote card to its panel on its host`).
@@ -2462,10 +2498,17 @@ Out: the daemon endpoints themselves (012).
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
   `::keeps the cached task and its empty messages under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
+- URL controls preserve detail selection (`goals-list-page.test.tsx::keeps detail selection while changing URL-backed workload controls`).
+- Local views support their complete lifecycle (`goals-list-page.test.tsx::saves, reopens, renames and deletes a local compact scope`).
+- Compact retains planning goals (`goals-list-page.test.tsx::shows planning goals without tasks in compact presentation`).
+- Explicit scope overrides remembered status (`ui/src/features/goals/goals-list-page.test.tsx::honors explicit scope %s over remembered status`).
+- Expansion survives presentation changes (`ui/src/features/goals/goals-list-page.test.tsx::keeps goal expansion when switching presentations`).
+- Compact aligns shared columns in a focusable scrollport (`ui/src/features/goals/goal-swimlanes.test.tsx::aligns compact goals and tasks on fixed shared columns in one focusable scrollport`).
+- Compact distinguishes loading and unavailable tasks (`ui/src/features/goals/goal-swimlanes.test.tsx::omits compact tables while tasks load`, `::keeps unavailable task hosts distinct from empty compact lanes`).
 - The goals screen narrows the board by title, names only the search when
-  nothing matches, and has no Board/List toggle or repository filter
+  nothing matches, and offers Board, Compact and repository scope
   (`ui/src/features/goals/goals-list-page.test.tsx::narrows the board by title, and names only the search when nothing matches`,
-  `::has no Board/List toggle and no repository filter`); the search matches
+  `::starts on Board and offers Compact and repository scope`); the search matches
   the title alone, never a repository path, and combines with the status
   filters
   (`::matches the title alone, not a repository path`,
@@ -2599,6 +2642,10 @@ account of the sessions screen in particular rests on reading
 `sessions-page.tsx` rather than on a test asserting it, apart from the host
 behaviour of rule 61.
 
+## Attention workspace
+
+The [attention specification](031-needs-attention.md#attention-workspace) defines the workspace and its return navigation.
+
 ## Sources
 
 `ui/AGENTS.md` (the layout and the conventions), `ui/src/`, `ui/src-tauri/`,
@@ -2611,3 +2658,16 @@ for conversation beside selected activity details. Ariadne retains its own compo
 
 The user’s later Develop instruction places permission requests in the details pane or drawer, like tools.
 This overrides the original requirement to keep permission responses inline. Questions remain in the conversation.
+
+### Loaded transcript find
+
+The console offers Find in transcript and a scoped Ctrl/Cmd+F shortcut.
+Text fields, editors, the composer, and nested dialogs retain keyboard ownership.
+Search uses the current view's loaded block text, including folded activity and tool details.
+Each occurrence has a count and an active mark in a separate result pane.
+Previous and Next controls select occurrences. Enter and Shift+Enter in the search field also select occurrences.
+The pane leaves transcript folds, reading position, pending requests, and drafts intact.
+Escape closes find and restores focus. Stream updates retain the selected block and occurrence offset while available.
+The coverage message identifies unloaded history. Load earlier history uses the existing page action.
+
+Acceptance: `ui/src/features/sessions/console/transcript-find.test.tsx` proves result navigation, history selection stability, focus return, and shortcut ownership.

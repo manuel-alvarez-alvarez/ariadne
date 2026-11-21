@@ -8,13 +8,14 @@
  * state is read back off what the daemon answers.
  */
 
-import { screen } from "@testing-library/react"
+import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { DEFAULT_BASE_URL, type ForgeTunnelDto } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
 import { useSettingsStore } from "@/stores/settings"
+import { useStreamStore } from "@/stores/stream"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { SettingsDialog } from "./settings-dialog"
 
@@ -37,6 +38,7 @@ let tunnel: ForgeTunnelDto
 let tunnelWrites: unknown[] = []
 
 beforeEach(() => {
+  useStreamStore.getState().reset()
   tunnel = aTunnel()
   tunnelWrites = []
   useSettingsStore.setState({ baseUrl: DEFAULT_BASE_URL, diagnosticsEnabled: true })
@@ -72,13 +74,18 @@ describe("SettingsDialog", () => {
       </>,
     )
 
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Daemon setup help"))
     const field = screen.getByLabelText("Daemon URL")
     await user.clear(field)
     await user.type(field, "http://localhost:9999")
-    await user.click(screen.getByRole("button", { name: "Save" }))
+    await user.click(screen.getByRole("button", { name: "Save address" }))
 
     expect(await screen.findByText("Daemon URL updated")).toBeDefined()
-    expect(screen.getByText("http://localhost:9999")).toBeDefined()
+    expect(
+      within(screen.getByRole("region", { name: "Connection recovery" })).getByText(
+        "http://localhost:9999",
+      ),
+    ).toBeDefined()
     expect(useSettingsStore.getState().baseUrl).toBe("http://localhost:9999")
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
@@ -88,10 +95,11 @@ describe("SettingsDialog", () => {
     const onOpenChange = vi.fn()
     renderScreen(<SettingsDialog open onOpenChange={onOpenChange} />)
 
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Daemon setup help"))
     const field = screen.getByLabelText("Daemon URL")
     await user.clear(field)
     await user.type(field, "not a url")
-    await user.click(screen.getByRole("button", { name: "Save" }))
+    await user.click(screen.getByRole("button", { name: "Save address" }))
 
     expect(await screen.findByText("Not a valid URL, e.g. http://127.0.0.1:7676")).toBeDefined()
     expect(useSettingsStore.getState().baseUrl).toBe(DEFAULT_BASE_URL)
@@ -137,5 +145,28 @@ describe("SettingsDialog", () => {
 
     expect(await screen.findByText("Tunnel down")).toBeDefined()
     expect(screen.getByText("connection refused")).toBeDefined()
+  })
+  it("shows the saved address and live connection state with recovery guidance", () => {
+    renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+    expect(screen.getByText(/Configured address:/)).toBeDefined()
+    expect(screen.getByText(/Connection: Connecting/)).toBeDefined()
+    expect(screen.getByRole("button", { name: "Retry connection" })).toBeDefined()
+    expect(screen.getByText(/Start the daemon/)).toBeDefined()
+  })
+
+  it("announces stream changes without moving focus and gives neutral failure guidance", async () => {
+    const user = userEvent.setup()
+    renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Daemon setup help"))
+    const field = screen.getByLabelText("Daemon URL")
+    await user.click(field)
+    act(() => useStreamStore.getState().setStatus("reconnecting"))
+    expect(screen.getByRole("status").textContent).toContain("Disconnected")
+    expect(screen.getByText(/The connection failed/)).toBeDefined()
+    expect(document.activeElement).toBe(field)
+    act(() => useStreamStore.getState().markOpen())
+    expect(screen.getByRole("status").textContent).toContain("Connected")
+    expect(screen.queryByText(/The connection failed/)).toBeNull()
+    expect(document.activeElement).toBe(field)
   })
 })

@@ -25,6 +25,7 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { TunnelSettings } from "@/features/repositories/tunnel-settings"
+import { useConnection } from "@/hooks/use-connection"
 import { useSettingsStore } from "@/stores/settings"
 
 export function SettingsDialog({
@@ -34,6 +35,7 @@ export function SettingsDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const { status, retry } = useConnection()
   const baseUrl = useSettingsStore((state) => state.baseUrl)
   const setBaseUrl = useSettingsStore((state) => state.setBaseUrl)
   const diagnosticsEnabled = useSettingsStore((state) => state.diagnosticsEnabled)
@@ -65,7 +67,7 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
@@ -75,6 +77,35 @@ export function SettingsDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-6 py-4">
+            <section aria-label="Connection recovery" className="rounded-md border p-3 text-sm">
+              <h3 className="font-medium">Connection recovery</h3>
+              <p>
+                Configured address: <span className="font-mono">{baseUrl}</span>
+              </p>
+              <p role="status" aria-live="polite">
+                Connection:{" "}
+                {status === "connected"
+                  ? "Connected"
+                  : status === "connecting"
+                    ? "Connecting"
+                    : "Disconnected"}
+              </p>
+              {status === "disconnected" && (
+                <p>The connection failed. Check the address and daemon setup, then retry.</p>
+              )}
+              <details>
+                <summary className="cursor-pointer">Daemon setup help</summary>
+                <p>
+                  Start the daemon with <code>ariadne daemon start</code>. Enable{" "}
+                  <code>tcp_listen = "127.0.0.1:7676"</code> in <code>~/.ariadne/config.toml</code>{" "}
+                  and restart the daemon.
+                </p>
+                <p>Open daemon logs from the connection status at the bottom of the sidebar.</p>
+              </details>
+              <Button type="button" variant="outline" size="sm" onClick={retry}>
+                Retry connection
+              </Button>
+            </section>
             <Field data-invalid={error ? "" : undefined}>
               <FieldLabel htmlFor="daemon-base-url">Daemon URL</FieldLabel>
               <div className="flex gap-2">
@@ -92,18 +123,20 @@ export function SettingsDialog({
                 />
                 {/* No `pending`: this writes to the local store and nothing else.
                     There is no request to wait for, so a spinner would be a lie. */}
-                <Button type="submit">Save</Button>
+                <Button type="submit">Save address</Button>
               </div>
               {error ? (
                 <FieldError>{error}</FieldError>
               ) : (
                 <FieldDescription>
-                  The <code className="font-mono">tcp_listen</code> address from{" "}
+                  Saving the address starts a connection attempt; it does not confirm a connection.
+                  The <code className="font-mono">tcp_listen</code> address is from{" "}
                   <code className="font-mono">~/.ariadne/config.toml</code>. Changing it clears
                   everything cached from the previous daemon.
                 </FieldDescription>
               )}
             </Field>
+            <p className="text-sm text-muted-foreground">The settings below apply immediately.</p>
             <Field orientation="horizontal">
               <div className="flex-1">
                 <FieldLabel htmlFor="send-app-diagnostics">

@@ -402,6 +402,7 @@ function Hint({ keys, children }: { keys: string; children: ReactNode }) {
  */
 const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
+  { label: "Attention", path: paths.attention(), icon: RadioTowerIcon },
   { label: "Sessions", path: paths.sessions(), icon: RadioTowerIcon },
   { label: "Skills", path: paths.skills(), icon: CpuIcon },
   { label: "Workflows", path: paths.workflows(), icon: WorkflowIcon },

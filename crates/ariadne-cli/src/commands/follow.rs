@@ -101,6 +101,9 @@ pub(crate) async fn frames_reconnecting(
     path: &str,
     mut on_frame: impl FnMut(SseEvent) -> Result<Next>,
 ) -> Result<()> {
+    if std::env::var_os("ARIADNE_HOST_STREAM_ONCE").is_some() {
+        return frames(client, path, on_frame).await.map(|_| ());
+    }
     let Some(mut stream) = open(client, path).await? else {
         return Ok(());
     };
