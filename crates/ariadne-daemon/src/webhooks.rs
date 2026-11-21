@@ -21,17 +21,62 @@ pub struct WebhookUrl(watch::Sender<Public>);
 pub(crate) struct Public {
     pub(crate) url: Option<String>,
     pub(crate) why: Option<String>,
+    pub(crate) route: Route,
+}
+/// Where a hook URL puts the listener's route.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Route {
+    /// After the public URL's path: a proxy forwards the path as it is.
+    #[default]
+    Path,
+    /// In the `route` query parameter: a smee.io channel serves its own path
+    /// only, and hands the query to the tunnel with each delivery (027).
+    Query,
+}
+impl Public {
+    /// The URL a hook of `kind` for `repository_id` registers, where there is one.
+    pub(crate) fn hook(&self, kind: &str, repository_id: &str) -> Option<String> {
+        let url = self.url.as_deref()?;
+        let route = format!("/webhooks/{kind}/{repository_id}");
+        Some(match self.route {
+            Route::Path => format!("{}{route}", url.trim_end_matches('/')),
+            Route::Query => format!("{url}?route={route}"),
+        })
+    }
 }
 impl WebhookUrl {
     pub(crate) fn new(url: Option<String>) -> Self {
-        Self(watch::channel(Public { url, why: None }).0)
+        Self(
+            watch::channel(Public {
+                url,
+                why: None,
+                route: Route::Path,
+            })
+            .0,
+        )
     }
     pub fn set(&self, url: Option<String>) {
-        self.0.send_replace(Public { url, why: None });
+        self.0.send_replace(Public {
+            url,
+            why: None,
+            route: Route::Path,
+        });
+    }
+    /// Publish a smee.io channel's URL: each hook names its route in the query.
+    pub(crate) fn set_channel(&self, url: String) {
+        self.0.send_replace(Public {
+            url: Some(url),
+            why: None,
+            route: Route::Query,
+        });
     }
     /// Withdraw the URL and name the reason, once per change.
     pub(crate) fn withdraw(&self, why: Option<String>) {
-        let next = Public { url: None, why };
+        let next = Public {
+            url: None,
+            why,
+            route: Route::Path,
+        };
         self.0.send_if_modified(|current| {
             let changed = *current != next;
             *current = next.clone();

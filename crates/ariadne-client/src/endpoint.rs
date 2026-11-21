@@ -106,9 +106,12 @@ pub struct FileConfig {
     pub tcp_allowed_origins: Vec<String>,
     pub webhook_listen: Option<SocketAddr>,
     pub webhook_public_url: Option<String>,
-    /// The localtunnel server the webhook tunnel registers with.
+    /// The smee.io server the webhook tunnel listens on.
     pub tunnel_host: Option<String>,
-    /// The subdomain the tunnel asks for, over the stored one.
+    /// The channel the tunnel listens on, over the stored one.
+    pub tunnel_channel: Option<String>,
+    /// The localtunnel subdomain the tunnel used to ask for. No longer read:
+    /// kept so a `config.toml` that still sets it loads.
     pub tunnel_subdomain: Option<String>,
     /// tracing filter, e.g. "info,ariadne_daemon=debug"
     pub log_filter: Option<String>,

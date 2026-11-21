@@ -72,11 +72,11 @@ webhook_listen = "127.0.0.1:7677"  # the signed webhook listener's address
 webhook_public_url = "https://hooks.example.com"
                                    # the public URL forwarded to the webhook
                                    # listener; set, the daemon opens no tunnel
-tunnel_host = "https://localtunnel.me"
-                                   # the localtunnel server the webhook tunnel
-                                   # registers with when webhook_public_url is
+tunnel_host = "https://smee.io"    # the smee.io server the webhook tunnel
+                                   # listens on when webhook_public_url is
                                    # unset (default shown)
-tunnel_subdomain = "my-ariadne"    # the subdomain the tunnel asks for
+tunnel_channel = "Tl13s4JZbHs6Ww60eXq7Ab"
+                                   # the channel the tunnel listens on
                                    # (default: the one already stored, else a
                                    # random one kept on first use)
 
@@ -269,7 +269,10 @@ the daemon itself runs for a repository's forge integration; no agent
 ever runs it. `webhook_listen` is the address the signed webhook listener
 binds; left unset, the daemon binds a random free loopback port. With no
 `webhook_public_url` configured, Ariadne opens a tunnel to that listener on
-`tunnel_host`, asking for `tunnel_subdomain` where one is set. See [The forge
+`tunnel_host`, listening on `tunnel_channel` where one is set. Anyone who
+knows a channel can read what passes through it, so set one only to a long
+random name. `tunnel_subdomain`, the key of the localtunnel tunnel before it,
+is still accepted and no longer read. See [The forge
 integration](forge.md) for enabling a repository's integration and what each
 of these keys is for.
 

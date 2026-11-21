@@ -1,24 +1,30 @@
-//! The webhook tunnel (027): a localtunnel to the bound webhook listener,
-//! kept up, and switched on and off at run time.
+//! The webhook tunnel (027): a smee.io channel relayed to the bound webhook
+//! listener, kept up, and switched on and off at run time.
 //!
-//! The tunnel writes its URL into [`WebhookUrl`] while it is up and withdraws
-//! it while it is down or off. The hook reconcile does the rest: it moves each
-//! hook to the URL, and each repository's fetch between `WakeOnly` and
-//! `Timer`. The transport is the daemon's alone: a fetch records the same rows
-//! whatever woke it.
+//! The forge posts each delivery to the channel, and the channel streams it
+//! to the tunnel as a server-sent event, which the tunnel posts on to the
+//! listener. The tunnel writes the channel URL into [`WebhookUrl`] while it
+//! is up and withdraws it while it is down or off. The hook reconcile does
+//! the rest: it moves each hook to the URL, and each repository's fetch
+//! between `WakeOnly` and `Timer`. The transport is the daemon's alone: a
+//! fetch records the same rows whatever woke it.
 
+use std::collections::VecDeque;
+use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use ariadne_api::repositories::{ForgeTunnelDto, TunnelState};
 use ariadne_api::stream::DomainEvent;
+use ariadne_client::{SseEvent, SseParser};
 use ariadne_store::{Store, StoreError};
 use chrono::{SecondsFormat, Utc};
-use localtunnel_client::{ClientConfig, broadcast, open_tunnel};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Notify, watch};
-use tokio::task::{JoinHandle, JoinSet};
+use reqwest::StatusCode;
+use serde::Deserialize;
+use serde_json::value::RawValue;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep_until, timeout};
 use tracing::{info, warn};
 
@@ -31,14 +37,13 @@ use crate::webhooks::{WebhookListen, WebhookUrl};
 /// The longest wait between two reconnects.
 const BACKOFF_CAP: Duration = Duration::from_secs(60);
 
-/// The most connections the client holds open to the tunnel server.
-const MAX_CONNECTIONS: u8 = 10;
+/// The letters of a random channel name.
+const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-/// Words for a random subdomain: a word, a hyphen and six digits.
-const WORDS: &[&str] = &[
-    "amber", "birch", "cedar", "delta", "ember", "fjord", "grove", "heron", "iris", "juniper",
-    "kelp", "lumen", "maple", "nectar", "orchid", "pebble",
-];
+/// How long a random channel name is. Anyone who knows the channel reads
+/// every delivery sent to it, so the name is the only secret it has: 22
+/// letters of 62 carry about 130 bits.
+const CHANNEL_LENGTH: usize = 22;
 
 /// The daemon's tunnel. Cheap to clone: every clone is the same tunnel.
 #[derive(Clone)]
@@ -55,6 +60,10 @@ struct Inner {
     /// The switch moved: the supervisor reads what it wants again.
     changed: Notify,
     task: Mutex<Option<JoinHandle<()>>>,
+    http: reqwest::Client,
+    /// Posts to the listener directly: a proxy in the environment carries
+    /// the channel's stream, never the loopback delivery (027).
+    listener: reqwest::Client,
 }
 
 #[derive(Clone, PartialEq)]
@@ -93,6 +102,11 @@ impl Tunnel {
             listen: OnceLock::new(),
             changed: Notify::new(),
             task: Mutex::new(None),
+            http: reqwest::Client::new(),
+            listener: reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("a client with no proxy builds"),
         }))
     }
 
@@ -182,7 +196,7 @@ impl Inner {
 
     async fn up(&self, url: String) {
         info!(%url, "webhook tunnel up");
-        self.url.set(Some(url.clone()));
+        self.url.set_channel(url.clone());
         self.set_status(|_| Status {
             state: TunnelState::Up,
             url: Some(url),
@@ -284,7 +298,7 @@ impl Inner {
                 continue;
             }
             // A switch off or a last disabled integration cancels the attempt.
-            let attempt = self.open(listen);
+            let attempt = self.open();
             tokio::pin!(attempt);
             let attempted = loop {
                 tokio::select! {
@@ -305,25 +319,24 @@ impl Inner {
                     }
                     backoff = base;
                     self.up(open.url.clone()).await;
-                    // One outage clock for the whole hold: an unrelated
+                    // One silence clock for the whole hold: an unrelated
                     // repository event must not restart it.
-                    let lost = open.relay.lost(self.timeouts.tunnel_connect);
+                    let lost = self.relay(&mut open, listen);
                     tokio::pin!(lost);
-                    let wanted = loop {
+                    let lost = loop {
                         tokio::select! {
-                            () = &mut lost => break true,
+                            why = &mut lost => break Some(why),
                             _ = self.until_changed(&mut events, None) => {
                                 if !self.wanted().await {
-                                    break false;
+                                    break None;
                                 }
                             }
                         }
                     };
-                    if !wanted {
+                    let Some(why) = lost else {
                         continue;
-                    }
-                    self.down("the tunnel server closed every connection".into())
-                        .await;
+                    };
+                    self.down(why).await;
                 }
                 Some(Err(error)) => self.down(error).await,
             }
@@ -339,150 +352,204 @@ impl Inner {
         }
     }
 
-    /// The subdomain to ask for: the configured one, else the stored one,
+    /// The channel to listen on: the configured one, else the stored one,
     /// else a random one stored now.
-    async fn subdomain(&self) -> Result<String, String> {
-        if let Some(subdomain) = &self.cfg.tunnel_subdomain {
-            return Ok(subdomain.clone());
+    async fn channel(&self) -> Result<String, String> {
+        if let Some(channel) = &self.cfg.tunnel_channel {
+            return Ok(channel.clone());
         }
         let settings = self
             .store
             .forge_settings()
             .await
             .map_err(|e| e.to_string())?;
-        if let Some(subdomain) = settings.tunnel_subdomain {
-            return Ok(subdomain);
+        if let Some(channel) = settings.tunnel_channel {
+            return Ok(channel);
         }
-        let mut bytes = [0u8; 8];
+        let mut bytes = [0u8; CHANNEL_LENGTH];
         getrandom::fill(&mut bytes).map_err(|e| e.to_string())?;
-        let word = WORDS[usize::from(bytes[0]) % WORDS.len()];
-        let digits = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) % 1_000_000;
-        let picked = format!("{word}-{digits:06}");
+        // 256 is 62 * 4 + 8: the bias toward the first eight letters is
+        // under 4 percent, and the name stays far beyond guessing.
+        let picked: String = bytes
+            .iter()
+            .map(|b| char::from(ALPHABET[usize::from(*b) % ALPHABET.len()]))
+            .collect();
         let kept = self
             .store
-            .keep_tunnel_subdomain(&picked)
+            .keep_tunnel_channel(&picked)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(kept.tunnel_subdomain.unwrap_or(picked))
+        Ok(kept.tunnel_channel.unwrap_or(picked))
     }
 
-    /// One connection attempt: register with the server and wait for the
-    /// first tunnel connection, within `tunnel_connect`.
-    async fn open(&self, listen: SocketAddr) -> Result<Open, String> {
-        let subdomain = self.subdomain().await?;
-        let relay = Relay::bind(listen).await.map_err(|e| e.to_string())?;
-        let (stop, _) = broadcast::channel(1);
-        let config = ClientConfig {
-            server: Some(self.cfg.tunnel_host.trim_end_matches('/').to_string()),
-            subdomain: Some(subdomain),
-            local_host: Some("127.0.0.1".into()),
-            local_port: relay.port,
-            shutdown_signal: stop.clone(),
-            max_conn: MAX_CONNECTIONS,
-            credential: None,
-            // The supervisor here re-registers, so the client never does.
-            reregister_after: Some(Duration::from_secs(24 * 60 * 60)),
-        };
-        let mut open = Open {
-            url: String::new(),
-            stop,
-            relay,
-        };
-        let mut connections = open.relay.connections.clone();
+    /// One connection attempt: open the channel's event stream and wait for
+    /// its `ready` event, within `tunnel_connect`.
+    async fn open(&self) -> Result<Open, String> {
+        let channel = self.channel().await?;
+        let url = format!("{}/{channel}", self.cfg.tunnel_host.trim_end_matches('/'));
         let limit = self.timeouts.tunnel_connect;
-        open.url = timeout(limit, async {
-            let url = open_tunnel(config)
+        timeout(limit, async {
+            let response = self
+                .http
+                .get(&url)
+                .header(reqwest::header::ACCEPT, "text/event-stream")
+                .send()
                 .await
-                .map_err(|error| format!("{error:#}"))?;
-            connections
-                .wait_for(|count| *count > 0)
-                .await
-                .map_err(|_| "the relay stopped".to_string())?;
-            Ok::<_, String>(url)
+                .map_err(|error| chain(&error))?;
+            if !response.status().is_success() {
+                return Err(format!("{url} answered {}", response.status()));
+            }
+            let mut stream = Stream {
+                response,
+                parser: SseParser::new(),
+                pending: VecDeque::new(),
+            };
+            while stream.next().await?.event != "ready" {}
+            Ok(Open {
+                url: url.clone(),
+                stream,
+            })
         })
         .await
-        .map_err(|_| format!("no tunnel connection within {limit:?}"))??;
-        Ok(open)
+        .map_err(|_| format!("no answer from {url} within {limit:?}"))?
+    }
+
+    /// Post each delivery the channel streams on to the listener, until the
+    /// stream ends or stays silent for `tunnel_idle`. Answers why it ended.
+    async fn relay(&self, open: &mut Open, listen: SocketAddr) -> String {
+        let idle = self.timeouts.tunnel_idle;
+        loop {
+            match timeout(idle, open.stream.next()).await {
+                Err(_) => return format!("no word from the tunnel server for {idle:?}"),
+                Ok(Err(error)) => return error,
+                // `ready` and `ping` only prove the stream is alive.
+                Ok(Ok(event)) if event.event == "message" => {
+                    self.forward(listen, &event.data).await;
+                }
+                Ok(Ok(_)) => {}
+            }
+        }
+    }
+
+    /// Post one delivery to the listener, as the forge sent it to the channel.
+    ///
+    /// smee.io parses the body and streams it as JSON, so the bytes posted
+    /// here are its serialization, not necessarily the forge's. A forge's
+    /// compact JSON usually survives that whole, and its signature holds; a
+    /// body that does not, fails the listener's signature check, and that
+    /// delivery is lost (027).
+    async fn forward(&self, listen: SocketAddr, data: &str) {
+        let delivery: Delivery = match serde_json::from_str(data) {
+            Ok(delivery) => delivery,
+            Err(error) => {
+                warn!(%error, "the tunnel dropped a delivery it cannot read");
+                return;
+            }
+        };
+        let Some(route) = delivery
+            .query
+            .route
+            .filter(|route| route.starts_with("/webhooks/"))
+        else {
+            warn!("the tunnel dropped a delivery that names no webhook route");
+            return;
+        };
+        let mut request = self
+            .listener
+            .post(format!("http://{listen}{route}"))
+            .timeout(self.timeouts.tunnel_connect)
+            .body(delivery.body.map_or("", RawValue::get).to_owned());
+        for (name, value) in [
+            ("Content-Type", delivery.content_type),
+            ("X-Github-Event", delivery.event),
+            ("X-Github-Delivery", delivery.id),
+            ("X-Hub-Signature-256", delivery.signature),
+        ] {
+            if let Some(value) = value {
+                request = request.header(name, value);
+            }
+        }
+        match request.send().await.map(|response| response.status()) {
+            Ok(StatusCode::ACCEPTED) => {}
+            Ok(StatusCode::UNAUTHORIZED) => warn!(
+                %route,
+                "the listener refused a delivery through the tunnel: its signature \
+                 does not match the body as smee.io passed it on"
+            ),
+            Ok(status) => {
+                warn!(%route, %status, "the listener refused a delivery through the tunnel")
+            }
+            Err(error) => {
+                warn!(%route, error = chain(&error), "the tunnel cannot reach the listener")
+            }
+        }
     }
 }
 
-/// An open tunnel. Dropping it closes the client and the relay.
+/// An error and every cause under it: reqwest's own text names only the URL.
+fn chain(error: &dyn Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+/// One delivery as smee.io streams it: the forge's headers, lowercased, at
+/// the top level beside the parsed body and the query.
+#[derive(Deserialize)]
+struct Delivery<'a> {
+    #[serde(borrow)]
+    body: Option<&'a RawValue>,
+    #[serde(default)]
+    query: Query,
+    #[serde(rename = "content-type")]
+    content_type: Option<String>,
+    #[serde(rename = "x-github-event")]
+    event: Option<String>,
+    #[serde(rename = "x-github-delivery")]
+    id: Option<String>,
+    #[serde(rename = "x-hub-signature-256")]
+    signature: Option<String>,
+}
+
+/// The query of the hook URL: the listener route the delivery is for.
+#[derive(Default, Deserialize)]
+struct Query {
+    route: Option<String>,
+}
+
+/// An open tunnel: the channel URL and its event stream. Dropping it closes
+/// the stream.
 struct Open {
     url: String,
-    stop: broadcast::Sender<()>,
-    relay: Relay,
+    stream: Stream,
 }
 
-impl Drop for Open {
-    fn drop(&mut self) {
-        let _ = self.stop.send(());
-    }
+/// A channel's event stream, read one whole event at a time.
+struct Stream {
+    response: reqwest::Response,
+    parser: SseParser,
+    pending: VecDeque<SseEvent>,
 }
 
-/// A loopback relay between the tunnel client and the webhook listener.
-///
-/// `localtunnel-client` reports no dropped tunnel: it reconnects on its own
-/// and says nothing. Each tunnel connection it holds opens one local
-/// connection at once, so the relay counts the open tunnel connections. An up
-/// tunnel with no open connection for `tunnel_connect` is down. The relay
-/// listens on loopback only and forwards to the bound listener address and
-/// nowhere else.
-struct Relay {
-    port: u16,
-    connections: watch::Receiver<usize>,
-    task: JoinHandle<()>,
-}
-
-impl Drop for Relay {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-impl Relay {
-    async fn bind(listen: SocketAddr) -> std::io::Result<Self> {
-        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
-        let port = listener.local_addr()?.port();
-        let (count, connections) = watch::channel(0usize);
-        let count = Arc::new(count);
-        let task = tokio::spawn(async move {
-            // Dropped with the task, which aborts every forward.
-            let mut forwards = JoinSet::new();
-            loop {
-                tokio::select! {
-                    accepted = listener.accept() => {
-                        let Ok((mut inbound, _)) = accepted else { continue };
-                        count.send_modify(|n| *n += 1);
-                        let count = count.clone();
-                        forwards.spawn(async move {
-                            if let Ok(mut outbound) = TcpStream::connect(listen).await {
-                                let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
-                            }
-                            count.send_modify(|n| *n -= 1);
-                        });
-                    }
-                    Some(_) = forwards.join_next() => {}
-                }
-            }
-        });
-        Ok(Self {
-            port,
-            connections,
-            task,
-        })
-    }
-
-    /// Answers once no tunnel connection has been open for `grace`.
-    async fn lost(&mut self, grace: Duration) {
+impl Stream {
+    async fn next(&mut self) -> Result<SseEvent, String> {
         loop {
-            if self.connections.wait_for(|n| *n == 0).await.is_err() {
-                return;
+            if let Some(event) = self.pending.pop_front() {
+                return Ok(event);
             }
-            if timeout(grace, self.connections.wait_for(|n| *n > 0))
-                .await
-                .is_err()
-            {
-                return;
+            match self.response.chunk().await {
+                Ok(Some(chunk)) => {
+                    let mut out = Vec::new();
+                    self.parser.push(&chunk, &mut out);
+                    self.pending.extend(out);
+                }
+                Ok(None) => return Err("the tunnel server closed the stream".into()),
+                Err(error) => return Err(chain(&error)),
             }
         }
     }

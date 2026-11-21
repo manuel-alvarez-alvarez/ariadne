@@ -1,7 +1,7 @@
 ---
 id: webhooks-and-tunnel
 status: current
-updated: 2026-10-17
+updated: 2026-11-21
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -30,8 +30,8 @@ A port of its own keeps that surface narrow: one signed route and nothing of `/v
 A tunnel forwards every request to its target port, so the API must use a different port.
 
 In: the listener, authentication, hook registration, public URL handle, fetch modes, visible hook status,
-and the localtunnel client that writes the public URL at run time, with its switch.
-Out: Node, the `lt` binary, and a tunnel server of Ariadne's own.
+and the smee.io client that writes the public URL at run time, with its switch.
+Out: Node, the `smee` binary, and a tunnel server of Ariadne's own.
 
 The transport is the daemon's alone.
 A fetch records the same pull request rows whether a delivery or the timer brought it.
@@ -71,6 +71,8 @@ The session task's tests prove that rule for a prompt.
    The secret is stored before creation because the forge can immediately send a ping.
    Public DTOs exclude it, and hook errors redact it.
 6. An enabled integration with a public URL wants one hook at `<url>/webhooks/<kind>/<repository_id>`.
+   A smee.io channel URL serves its own path only, so through the tunnel the route goes in the query instead:
+   `<channel url>?route=/webhooks/<kind>/<repository_id>`.
    Reconciliation creates a missing hook, checks a stored hook at startup, and updates a changed URL.
    GitHub requests `pull_request`, `pull_request_review`, `pull_request_review_comment`, `issue_comment`,
    `check_suite`, `check_run`, `status`, and `issues` events, with TLS verification enabled.
@@ -104,7 +106,7 @@ The session task's tests prove that rule for a prompt.
     The poll worker writes it after every fetch, and only a change publishes `repository_updated`.
     `repo inspect` prints the same fields, and missing values appear as `-`.
     The repositories table's Webhook column shows one pill per enabled integration.
-    With the tunnel switched on the pill reads `localtunnel`: green while the hook is `live` and the last fetch worked,
+    With the tunnel switched on the pill reads `smee`: green while the hook is `live` and the last fetch worked,
     red otherwise, with the tunnel, hook and fetch errors in its tooltip, or the hook URL while green.
     With the tunnel switched off it reads `polling`: green while the last fetch worked, with how to turn the tunnel on
     in Settings in its tooltip, and red with the fetch error otherwise.
@@ -120,30 +122,38 @@ A disabled integration has no worker, regardless of its retained hook status.
 
 ### The tunnel
 
-11. The one `forge_settings` row holds `tunnel_enabled` (0 or 1, default 0) and `tunnel_subdomain` (NULL until first use).
+11. The one `forge_settings` row holds `tunnel_enabled` (0 or 1, default 0) and `tunnel_channel` (NULL until first use).
     `0001`'s own seed writes the row with the tunnel off, and that seed runs exactly once, ever, so every fresh installation starts polling, by default. `PUT /v1/forge/tunnel` is the only other place that writes the column.
-    `config.toml` adds `tunnel_host` (default `https://localtunnel.me`) and `tunnel_subdomain`.
-    The configured subdomain wins over the stored one.
+    `0013` renames `0001`'s `tunnel_subdomain` to `tunnel_channel` and clears it: a guessable localtunnel subdomain must not become a public channel.
+    `config.toml` adds `tunnel_host` (default `https://smee.io`) and `tunnel_channel`.
+    The configured channel wins over the stored one.
+    `tunnel_subdomain` is still accepted in `config.toml`, so an old configuration loads, and nothing reads it.
 12. The tunnel runs when `tunnel_enabled` holds, at least one integration is enabled, and `webhook_public_url` is unset.
     A set `webhook_public_url` opens no tunnel, whatever the switch, and the tunnel never touches that URL.
-13. The daemon opens the tunnel with the `localtunnel-client` crate, without Node or `lt`.
+13. The daemon listens on a smee.io channel itself, with reqwest and the client's SSE parser, without Node or `smee`.
     It reads the bound listener address from `WebhookListen::address`.
-    It asks for the configured subdomain, else the stored one.
-    Else it picks a random word and six digits and stores it before the request.
-    So the URL survives a restart where the server grants the subdomain again.
-14. A loopback relay sits between the client and the listener.
-    It listens on `127.0.0.1` only and forwards each connection to the bound listener address and nowhere else.
-    The crate reports no dropped tunnel, so the relay counts the open tunnel connections.
-    Each tunnel connection opens one relay connection at once, so the count is the client's live connections.
-15. One connection attempt registers with `tunnel_host` and waits for the first tunnel connection.
+    It listens on the configured channel, else the stored one.
+    Else it picks 22 random letters and digits and stores them before the request.
+    So the URL survives a restart. A channel is public to anyone who knows it, so the name is its only secret.
+14. The channel streams each delivery as one event: the forge's headers, lowercased, beside `body` and `query`.
+    The tunnel posts it on to the bound listener address and nowhere else, at the `query.route` the hook URL named.
+    That post never goes through a proxy: `HTTP_PROXY` and its kin carry the channel's stream, not the loopback post.
+    A route that does not start with `/webhooks/` is dropped with a warning.
+    It passes on `Content-Type`, `X-Github-Event`, `X-Github-Delivery` and `X-Hub-Signature-256`.
+    The body is the event's `body` text as smee.io wrote it, unparsed.
+    smee.io parsed the forge's body and wrote it back compact, so the signature holds only where that
+    reproduces the forge's bytes. GitHub sends compact JSON, so it does. A body that comes back different
+    fails rule 3's check, and that delivery is lost; the tunnel logs the listener's refusal.
+15. One connection attempt opens the channel's event stream at `<tunnel_host>/<channel>` and waits for its `ready` event.
     `Timeouts::tunnel_connect` (default 15 s) bounds the attempt.
-    A success writes the URL into `WebhookUrl`, and the tunnel is `up`.
+    A success writes the channel URL into `WebhookUrl`, with rule 6's query route, and the tunnel is `up`.
     The hook reconcile (rules 6 and 7) then creates or updates each hook, enters `live` and `WakeOnly`, and fetches once.
-16. The tunnel is `down` when an attempt fails, or when an `up` tunnel holds no open connection for `tunnel_connect`.
+16. The tunnel is `down` when an attempt fails, when the stream ends or fails,
+    or when an `up` stream carries no event, not even smee.io's `ping`, for `Timeouts::tunnel_idle` (default 90 s).
     Down withdraws the URL with the reason "tunnel down since <time>".
     The hook reconcile then sets each integration to `polling` with that `webhook_error`, restores `Timer`, and fetches once.
     The time is the moment the tunnel went down, and it stays the same across retries.
-    One outage clock runs for the whole time the tunnel is up: an unrelated repository event does not restart it.
+    One silence clock runs for the whole time the tunnel is up: an unrelated repository event does not restart it.
 17. A down tunnel reconnects with a capped backoff, forever.
     The first wait is `Timeouts::tunnel_retry` (default 1 s), and each failed attempt doubles it, up to 60 s.
     A good attempt resets the wait.
@@ -210,8 +220,8 @@ A disabled integration has no worker, regardless of its retained hook status.
   `webhooks.rs::replacing_and_enabling_a_remote_in_one_edit_creates_its_own_hook`.
 - CLI inspection includes the webhook block:
   `repo.rs::tests::repo_inspect_prints_the_forge_block_with_the_login`.
-- The table shows `localtunnel` green with the URL, and red with the error:
-  `repositories-page.test.tsx::shows localtunnel green while the hook is live, and red with the error when it is not`.
+- The table shows `smee` green with the URL, and red with the error:
+  `repositories-page.test.tsx::shows smee green while the hook is live, and red with the error when it is not`.
   With the tunnel off it shows `polling`, green with how to turn the tunnel on and red with the fetch error:
   `repositories-page.test.tsx::shows polling with the tunnel off: green with how to turn it on, red with the fetch error`.
 - The last fetch error is written only when it changes:
@@ -227,14 +237,17 @@ A disabled integration has no worker, regardless of its retained hook status.
   repositories by timer, unaffected by the switch:
   `pull_requests.rs::timer_wake_only_and_disable_control_repository_fetches`.
 - With one enabled integration, the switch on and no public URL, the tunnel opens to the stand-in at the random
-  listener port, and the hook is created with the stand-in's URL. A signed delivery to that URL reaches the listener
-  and triggers one fetch:
+  listener port, and the hook is created with the stand-in's channel URL and its query route. A signed compact delivery
+  to that URL, with non-ASCII text, reaches the listener and triggers one fetch. A spaced body the stand-in writes back
+  compact, as smee.io does, fails the signature and records no delivery and no fetch:
   `tunnel.rs::a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_fetches_once`.
 - A stand-in that closes flips the integration to `polling` with the error and `Timer`.
   One that answers again flips it to `live` and `WakeOnly` with one catch-up fetch and no fetch after it:
   Edits to another repository during the outage do not hold off the flip:
   `tunnel.rs::a_server_that_goes_away_restores_the_timer_and_one_that_returns_goes_live_with_one_catch_up_fetch`.
   A fetch that runs when the hook goes live coalesces the catch-up wake into one more fetch (026).
+- A stream that stays open but stops its pings for `tunnel_idle` makes the tunnel `down`:
+  `tunnel.rs::a_silent_server_counts_as_down`.
 - A switch off during a held registration cancels it, and no URL or hook follows its release:
   `tunnel.rs::a_switch_off_during_registration_cancels_it_and_publishes_no_url`.
 - SIGTERM closes the tunnel and the listener while an open event stream holds the HTTP drain:
@@ -242,8 +255,10 @@ A disabled integration has no worker, regardless of its retained hook status.
 - The switch off closes the tunnel, gives "tunnel off" and `Timer`, publishes `forge_settings_updated`,
   and makes no hook call. On returns to `live` and `WakeOnly`. The switch survives a restart:
   `tunnel.rs::the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_restart`.
-- The configured subdomain is requested, and the stored one again after a restart:
-  `tunnel.rs::the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_restart`.
+- The configured channel is listened on, and the stored random one again after a restart:
+  `tunnel.rs::the_configured_channel_is_asked_for_and_the_stored_one_again_after_a_restart`.
+- With `HTTP_PROXY` set to a dead proxy and the channel host in `NO_PROXY`, a delivery still reaches the listener:
+  `tunnel.rs::a_proxy_in_the_environment_never_carries_the_post_to_the_listener`.
 - A public URL or no enabled integration opens no tunnel:
   `tunnel.rs::a_public_url_or_no_enabled_integration_opens_no_tunnel`.
 - A delivery and a timer fetch record the same pull request rows:
@@ -265,12 +280,15 @@ A disabled integration has no worker, regardless of its retained hook status.
 
 `crates/ariadne-daemon/src/webhooks.rs`, `crates/ariadne-daemon/src/forge/hooks.rs`,
 `crates/ariadne-daemon/src/forge/github/hooks.rs`,
-`crates/ariadne-store/migrations/0001_init.sql`, `crates/ariadne-store/src/webhooks.rs`,
+`crates/ariadne-store/migrations/0001_init.sql`, `crates/ariadne-store/migrations/0013_tunnel_channel.sql`,
+`crates/ariadne-store/src/webhooks.rs`,
 `crates/ariadne-daemon/src/forge/tunnel.rs`, `crates/ariadne-daemon/src/http/forge.rs`.
 
-The tunnel protocol follows `localtunnel-client` 0.1.8 (<https://github.com/kaichaosun/rlt>, MIT):
-one HTTPS request answers an id, a URL, a port and a connection count,
-and the client proxies each TCP connection to that port to the local address.
+The tunnel protocol follows smee.io (<https://github.com/probot/smee.io>) as it answered on 2026-11-21:
+`GET /<channel>` with `Accept: text/event-stream` streams a `ready` event, then a `ping` about every 30 s,
+and each `POST /<channel>` as an unnamed event of the headers, lowercased, beside the parsed `body` and the `query`.
+A posted body with a `\u00e9` escape, a `1.0` and extra spaces came back as `é`, `1` and none.
+Any channel name is accepted, and a path below the channel answers 404.
 
 Hook request shapes follow the [GitHub webhook API](https://docs.github.com/en/rest/repos/webhooks).
 

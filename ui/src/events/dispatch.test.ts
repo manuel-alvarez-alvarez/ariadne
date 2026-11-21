@@ -322,7 +322,7 @@ describe("forge settings events", () => {
     const up = {
       enabled: true,
       state: "up" as const,
-      url: "https://amber-104233.loca.lt",
+      url: "https://smee.io/Tl13s4JZbHs6Ww60eXq7Ab",
       listen: "127.0.0.1:49152",
       since: "2026-10-08T10:00:00.000Z",
       error: null,
