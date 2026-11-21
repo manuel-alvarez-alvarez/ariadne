@@ -2329,7 +2329,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SetupRequest"
+                "$ref": "#/components/schemas/UpdateRequest"
               }
             }
           },
@@ -2499,6 +2499,23 @@
       }
     },
     "/v1/maintenance": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "operationId": "maintenance_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceDto"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "hosts"
@@ -8335,10 +8352,15 @@
       },
       "MaintenanceDto": {
         "type": "object",
+        "description": "The worker's explicit maintenance hold and drain state.",
         "required": [
+          "active",
           "ready"
         ],
         "properties": {
+          "active": {
+            "type": "boolean"
+          },
           "ready": {
             "type": "boolean"
           }
@@ -10754,6 +10776,33 @@
               {
                 "$ref": "#/components/schemas/PermissionMode",
                 "description": "Absent = unchanged."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateRequest": {
+        "type": "object",
+        "description": "Explicit updates use the selected worker's saved SSH connection.",
+        "properties": {
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BinarySource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tools": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SetupTools"
               },
               {
                 "type": "null"

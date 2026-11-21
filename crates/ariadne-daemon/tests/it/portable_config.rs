@@ -682,3 +682,43 @@ async fn explicit_updates_hold_new_tasks_until_maintenance_ends() {
     h.flush_scheduler().await;
     assert_eq!(h.status(&queued.id).await, TaskStatus::InProgress);
 }
+
+#[tokio::test]
+async fn releasing_update_maintenance_preserves_a_pending_configuration_drain() {
+    use super::common::{TIMEOUT, eventually, post_json};
+    use ariadne_core::TaskStatus;
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.cast().await;
+    h.activate(&cast.goal).await;
+    eventually(TIMEOUT, "admitted task", || async {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+    })
+    .await;
+    let _: Value = h
+        .json(
+            post_json("/v1/maintenance", json!({"active":true})),
+            StatusCode::OK,
+        )
+        .await;
+    let _: Value = h
+        .json(put_json("/v1/config/sync", settings()), StatusCode::OK)
+        .await;
+    let _: Value = h
+        .json(
+            post_json("/v1/maintenance", json!({"active":false})),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(
+        !h.launcher
+            .cfg
+            .portable
+            .restart_ready(&h.store)
+            .await
+            .unwrap()
+    );
+    let result: Value = h.get("/v1/maintenance").await;
+    assert_eq!(result["active"], false);
+    assert_eq!(result["ready"], false);
+}

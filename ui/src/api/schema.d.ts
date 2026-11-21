@@ -1658,7 +1658,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["hosts_maintenance_status"];
         put?: never;
         post: operations["hosts_maintenance"];
         delete?: never;
@@ -4136,7 +4136,9 @@ export interface components {
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
         };
+        /** @description The worker's explicit maintenance hold and drain state. */
         MaintenanceDto: {
+            active: boolean;
             ready: boolean;
         };
         MaintenanceRequest: {
@@ -5141,6 +5143,11 @@ export interface components {
             forge?: components["schemas"]["ForgeUpdate"] | null;
             path?: string | null;
             permission_mode?: components["schemas"]["PermissionMode"] | null;
+        };
+        /** @description Explicit updates use the selected worker's saved SSH connection. */
+        UpdateRequest: {
+            source?: components["schemas"]["BinarySource"] | null;
+            tools?: components["schemas"]["SetupTools"] | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateSkillRequest: {
@@ -6363,7 +6370,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SetupRequest"];
+                "application/json": components["schemas"]["UpdateRequest"];
             };
         };
         responses: {
@@ -6448,6 +6455,25 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": components["schemas"]["LogSnapshotResponse"];
+                };
+            };
+        };
+    };
+    hosts_maintenance_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaintenanceDto"];
                 };
             };
         };

@@ -260,6 +260,7 @@ const KINDS: &[(&str, Kind)] = &[
         Kind::Local("`completions install` writes the shell configuration of this machine"),
     ),
     ("daemon logs", Kind::Stream),
+    ("daemon maintenance", Kind::Write),
     ("daemon restart", Kind::Local(LIFECYCLE)),
     ("daemon start", Kind::Local(LIFECYCLE)),
     ("daemon status", Kind::ReadEach),
@@ -1168,9 +1169,14 @@ pub(crate) async fn setup(
     let operation = if update { "update" } else { "setup" };
     let path = format!("/v1/hosts/{name}/{operation}");
     let progress: ariadne_api::hosts::SetupDto = if let Some(file) = request {
-        let request: ariadne_api::hosts::SetupRequest =
-            serde_json::from_slice(&std::fs::read(file)?)?;
-        client.post_json(&path, &request).await?
+        let bytes = std::fs::read(file)?;
+        if update {
+            let request: ariadne_api::hosts::UpdateRequest = serde_json::from_slice(&bytes)?;
+            client.post_json(&path, &request).await?
+        } else {
+            let request: ariadne_api::hosts::SetupRequest = serde_json::from_slice(&bytes)?;
+            client.post_json(&path, &request).await?
+        }
     } else {
         client.get_json(&path).await?
     };
@@ -1191,9 +1197,11 @@ pub(crate) async fn setup(
         progress.state,
         ariadne_api::hosts::SetupState::Failed | ariadne_api::hosts::SetupState::Incomplete
     ) {
-        return Err(Failure::usage(
-            "worker setup is incomplete; correct the cause and retry the original request",
-        )
+        return Err(Failure::usage(if update {
+            "worker update is incomplete; correct the cause or revise selections, then retry"
+        } else {
+            "worker setup is incomplete; correct the cause and retry the original request"
+        })
         .err());
     }
     Ok(())

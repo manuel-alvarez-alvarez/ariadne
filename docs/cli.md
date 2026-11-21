@@ -831,21 +831,41 @@ the daemon cannot find or cannot use.
 
 ## Update an SSH worker
 
-Use explicit updates to change worker binaries and selected agent programs.
+Select the worker by name.
+Updates use its saved SSH address and socket.
 
-1. Create a setup request with the worker's configured SSH address and socket.
-2. Select compatible local binaries or an explicit verified release.
-3. Add tools to select agent IDs and optional GitHub CLI updates.
-4. Remove credential and repository selections.
-5. Run `ariadne host update builder --request worker-update.json`.
-6. Read progress with `ariadne host update-status builder`.
+1. Create a JSON request with binary selections, tool selections, or both.
+2. Run `ariadne host update builder --request worker-update.json`.
+3. Read progress with `ariadne host update-status builder`.
 
-The Desktop Hosts screen provides the same controls under **Update worker**.
-Binary paths refer to the settings daemon machine.
-The worker must already support maintenance and have curl installed.
+A tools-only request leaves worker binaries in place:
+
+```json
+{"tools":{"agents":["codex-acp"],"github":true}}
+```
+
+A binary-only request leaves agent programs in place:
+
+```json
+{"source":{"kind":"local","cli":"/build/ariadne","daemon":"/build/ariadned"}}
+```
+
+Combine both sections to update binaries and tools together.
+The source also accepts an explicit verified release, as described under [worker setup](#install-an-ssh-worker).
+Local binary paths refer to the settings daemon machine.
+Do not include SSH settings, credentials, or repositories in update requests.
+
+The Desktop Hosts screen offers the same selections under **Update worker**.
+Select **Update Ariadne binaries**, **Update agent tools**, or both.
+
+The current worker and selected replacements must support maintenance.
+Ariadne checks the current worker before transfer.
+It checks staged replacements before changing installed binaries.
+Unsupported versions produce guidance and preserve installed worker binaries.
+Updates use Ariadne's own CLI and do not require curl.
 
 Maintenance prevents new task starts and lets running tasks finish.
-The operation then installs binaries, updates selected programs, restarts the service, and checks health.
+The operation then changes selected programs, restarts the service, and checks health.
 Successful maintenance restores scheduling.
 Automatic configuration synchronization never updates worker programs.
 
@@ -854,10 +874,16 @@ npm packages use the worker user's prefix.
 Unsupported programs require manual installation.
 No update runs administrator commands.
 
-A failure retains completed steps and keeps the worker in maintenance.
-Correct the reported cause.
-Retry with the original request to finish the remaining steps.
-A completed update permits another explicit update with new selections.
+A failed update retains completed steps and reports the failed step.
+Ariadne checks worker health after failure.
+A healthy worker resumes scheduling.
+Pending configuration maintenance can still delay new task starts.
+Failed health checks or maintenance release leave scheduling held and report a separate resume error.
+
+Correct the cause or change the failed selections, then retry.
+For example, remove an unsupported tool or select another verified release.
+Retries preserve unchanged completed steps and rerun work affected by changed selections.
+Running operations refuse selection changes until they finish.
 
 See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for the update contract.
 

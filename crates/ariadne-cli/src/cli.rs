@@ -537,6 +537,12 @@ pub(crate) enum McpCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum DaemonCommand {
+    /// Worker update transport: read or change the explicit maintenance hold
+    #[command(hide = true)]
+    Maintenance {
+        #[arg(long, action = clap::ArgAction::Set)]
+        active: Option<bool>,
+    },
     /// Start ariadned in the background
     Start,
     /// Stop a running ariadned and wait for it to be gone

@@ -3,7 +3,7 @@ use super::{
     AppState,
     error::{ApiError, ApiResult, Json},
 };
-use ariadne_api::hosts::{ConfigSyncDto, PortableConfigDto};
+use ariadne_api::hosts::{ConfigSyncDto, MaintenanceDto, PortableConfigDto};
 use axum::extract::State;
 
 #[utoipa::path(get, path="/v1/config/sync", tag="hosts", responses((status=200,body=ConfigSyncDto)))]
@@ -36,9 +36,19 @@ pub(super) struct MaintenanceRequest {
     active: bool,
 }
 
-#[derive(serde::Serialize, utoipa::ToSchema)]
-pub(super) struct MaintenanceDto {
-    ready: bool,
+#[utoipa::path(get, path="/v1/maintenance", tag="hosts", responses((status=200,body=MaintenanceDto)))]
+pub(super) async fn maintenance_status(
+    State(s): State<AppState>,
+) -> ApiResult<Json<MaintenanceDto>> {
+    let runtime = &s.launcher.cfg.portable;
+    let ready = runtime
+        .restart_ready(&s.store)
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(MaintenanceDto {
+        active: runtime.explicit_maintenance(),
+        ready,
+    }))
 }
 
 #[utoipa::path(post, path="/v1/maintenance", tag="hosts", request_body=MaintenanceRequest,
@@ -52,6 +62,11 @@ pub(super) async fn maintenance(
         .portable
         .hold(&s.launcher.cfg, &s.store, request.active)
         .await
-        .map(|ready| Json(MaintenanceDto { ready }))
+        .map(|ready| {
+            Json(MaintenanceDto {
+                active: request.active,
+                ready,
+            })
+        })
         .map_err(|e| ApiError::bad_request(e.to_string()))
 }

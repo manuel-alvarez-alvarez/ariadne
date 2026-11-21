@@ -410,14 +410,22 @@ picker, the Hosts screen and one stream per host — is spec
 
 70. POST /v1/hosts/{name}/update starts or retries an explicit update and returns 202 with SetupDto.
     GET returns its durable progress, or 404 for an unknown update.
-    Requests use SetupRequest with the configured SSH address, socket, and selected binary source.
+    UpdateRequest accepts optional source and tools selections. At least one section is required.
+    Binary-only, tools-only, and combined updates are supported.
+    The worker name selects its saved SSH address and socket. Requests accept no SSH overrides.
     Credentials and repositories are refused. Setup records and update records remain separate.
-    Active repeats return the existing operation. Incomplete updates require the original request.
+    Active repeats return the existing operation. Changed selections are refused while running or pending.
+    Failed or incomplete updates accept revised selections.
+    Unchanged work retains its completed checkpoints. A changed binary source invalidates binary installation checkpoints.
+    Removed tool steps disappear. New tool steps start incomplete.
     A new request after completion starts another update.
 71. Updates reuse binary compatibility checks, release verification, installation, service restart, and health checks from setup.
     Before installation, the worker closes admission and waits for admitted tasks and active sessions.
     New tasks stay queued. Existing tasks can finish every column.
+    GET /v1/maintenance reports the explicit hold and drain status.
     POST /v1/maintenance with active true acquires this hold and reports ready after draining.
+    The internal CLI daemon maintenance command reads status. Its --active true or false option changes the hold.
+    Updates use the worker CLI for these requests, without curl.
     The hold survives worker restart in worker-maintenance.json.
     Automatic configuration synchronization cannot release the hold or upgrade programs.
 72. Selected tools upgrade only during an explicit update.
@@ -427,18 +435,37 @@ picker, the Hosts screen and one stream per host — is spec
     Unsupported tools and unavailable user-owned prerequisites report per-step failures without administrator commands.
     Successful tool steps survive retries without another upgrade.
 73. After successful service restart and health checks, the update releases maintenance and restores scheduling.
-    Failures preserve installed binaries, completed steps, and the maintenance hold.
-    Retrying the original request performs unfinished steps.
-    The worker requires curl and maintenance API support before its first explicit update.
+    Failures preserve completed steps and report the primary error.
+    After failure, the controller checks worker health and releases maintenance when the worker is healthy.
+    Release preserves any pending configuration drain and its admitted tasks.
+    Failed health checks or release requests retain maintenance and report a separate resume-step error.
+    Retries reacquire maintenance before changing installed programs.
+    The current worker must answer maintenance status before any binary transfer.
+    Staged replacement CLI binaries must support daemon maintenance.
+    Staged replacement daemons must report protocol 1 with --maintenance-protocol.
+    These capability checks finish before maintenance or installation.
+    An unsupported current worker or replacement receives guidance while installed binaries remain unchanged.
 74. CLI commands host update NAME --request FILE and host update-status NAME use the local daemon.
-    The Desktop Hosts screen offers Update worker with source and tool selections.
+    The Desktop Hosts screen offers Update worker with independent binary and tool selections.
+    It uses saved SSH settings and permits revised selections after failure.
     Both interfaces show individual steps and retained failures.
 
 ## Acceptance criteria
 
+- Rules 70 and 73: hosts.rs::unsupported_tools_can_be_removed_on_retry_without_reinstalling_binaries and
+  hosts.rs::invalid_binary_sources_can_change_on_retry prove both review recovery cases.
+- Rule 70: hosts.rs::revised_binary_sources_invalidate_the_install_checkpoint proves source-dependent checkpoint invalidation.
+- Rule 70: hosts.rs::tools_only_updates_preserve_worker_binaries proves independent tool selection.
+- Rules 70 and 74: hosts.rs::updates_use_saved_ssh_and_allow_binary_only_selection proves saved SSH and binary-only updates.
+- Rule 73: hosts.rs::failed_updates_keep_maintenance_when_worker_health_fails proves failed health recovery.
+- Rule 73: hosts.rs::unsupported_current_workers_fail_before_binary_transfer and
+  hosts.rs::unsupported_replacements_fail_before_installation_or_maintenance prove compatibility refusal.
+- Rule 71: crates/ariadne-cli/tests/hosts.rs::maintenance_cli_reads_and_changes_the_selected_worker_hold proves maintenance without curl.
+- Rule 74: worker-setup.test.tsx::allows a tools-only update without binary paths or SSH inputs proves desktop independence.
 - Rules 70–73: hosts.rs::updates_wait_for_idle_and_retry_without_replacing_installed_binaries proves idle waiting, selected upgrades, checkpoints, failure, and retry.
 - Rules 71–73: portable_config.rs::explicit_updates_hold_new_tasks_until_maintenance_ends proves admission and continuing tasks.
 - Rule 71: portable_config.rs::explicit_maintenance_survives_restart_and_restores_admission proves the durable hold.
+- Rules 71 and 73: portable_config.rs::releasing_update_maintenance_preserves_a_pending_configuration_drain proves safe release during configuration changes.
 - Rule 74: crates/ariadne-cli/tests/hosts.rs::worker_update_and_status_show_each_completed_step_and_failure proves command routing and progress.
 - Rule 74: worker-setup.test.tsx::starts an explicit update with selected tools and shows maintenance progress proves desktop selection.
 

@@ -263,6 +263,10 @@ impl PortableRuntime {
         Ok(drain)
     }
 
+    pub(crate) fn explicit_maintenance(&self) -> bool {
+        *self.external.lock().unwrap()
+    }
+
     pub(crate) async fn hold(&self, cfg: &Config, store: &Store, active: bool) -> Result<bool> {
         let _admission = self.admission.write().await;
         let path = cfg.root.join("worker-maintenance.json");
@@ -280,16 +284,21 @@ impl PortableRuntime {
             }
             self.restart_ready(store).await
         } else {
+            let live = cfg.live_settings();
+            let startup = cfg.startup_settings();
+            let remaining = if live.acp_agents != startup.acp_agents
+                || live.acp_registry_url != startup.acp_registry_url
+            {
+                Some(Self::snapshot(store).await?)
+            } else {
+                None
+            };
             if path.exists() {
                 std::fs::remove_file(path)?;
                 std::fs::File::open(&cfg.root)?.sync_all()?;
             }
             *self.external.lock().unwrap() = false;
-            let live = cfg.live_settings();
-            let startup = cfg.startup_settings();
-            *self.maintenance.lock().unwrap() = (live.acp_agents != startup.acp_agents
-                || live.acp_registry_url != startup.acp_registry_url)
-                .then(Drain::default);
+            *self.maintenance.lock().unwrap() = remaining;
             Ok(true)
         }
     }

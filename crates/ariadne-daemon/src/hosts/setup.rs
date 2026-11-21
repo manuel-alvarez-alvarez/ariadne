@@ -1,6 +1,8 @@
 //! Durable, resumable SSH worker setup. Each remote command is noninteractive.
 use super::*;
-use ariadne_api::hosts::{BinarySource, SetupDto, SetupRequest, SetupState, SetupStep};
+use ariadne_api::hosts::{
+    BinarySource, SetupDto, SetupRequest, SetupState, SetupStep, UpdateRequest,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -13,9 +15,46 @@ use populate::selection_steps;
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Record {
     pub request: SetupRequest,
+    #[serde(default = "with_binaries")]
+    binaries: bool,
     pub progress: SetupDto,
     #[serde(default)]
     active_step: Option<String>,
+}
+
+fn with_binaries() -> bool {
+    true
+}
+
+fn steps(request: &SetupRequest, update: bool, binaries: bool) -> Vec<SetupStep> {
+    ["probe"]
+        .into_iter()
+        .map(String::from)
+        .chain((update).then_some("worker-capability".into()))
+        .chain(binaries.then_some("validate".into()))
+        .chain(binaries.then_some("transfer".into()))
+        .chain((update && binaries).then_some("replacement-capability".into()))
+        .chain(update.then_some("maintenance".into()))
+        .chain(binaries.then_some("install".into()))
+        .chain(selection_steps(request))
+        .chain(
+            request
+                .repositories
+                .keys()
+                .flat_map(|id| [format!("clone:{id}"), format!("repository:{id}")]),
+        )
+        .chain(
+            ["service", "health", "register"]
+                .into_iter()
+                .map(String::from),
+        )
+        .chain(update.then_some("resume".into()))
+        .map(|name| SetupStep {
+            name,
+            complete: false,
+            error: None,
+        })
+        .collect()
 }
 
 pub(super) fn load(root: &Path) -> BTreeMap<String, Record> {
@@ -158,22 +197,35 @@ impl Hosts {
     }
 
     pub(crate) fn setup(&self, name: String, request: SetupRequest) -> Result<SetupDto, String> {
-        self.start_operation(name, request, false)
+        self.start_operation(name, request, false, true)
     }
 
     pub(crate) fn update_status(&self, name: &str) -> Option<SetupDto> {
         self.setup_status(&format!("update:{name}"))
     }
 
-    pub(crate) fn update(&self, name: String, request: SetupRequest) -> Result<SetupDto, String> {
+    pub(crate) fn update(&self, name: String, request: UpdateRequest) -> Result<SetupDto, String> {
         let connection = self.connection(&name).ok_or("unknown worker")?;
-        if connection.endpoint != request.ssh || connection.remote != request.remote {
-            return Err("use the configured worker SSH address and socket".into());
+        if !connection.endpoint.starts_with("ssh://") {
+            return Err("select an SSH worker".into());
         }
-        if !request.credentials.is_empty() || !request.repositories.is_empty() {
-            return Err("updates accept binary and tool selections only".into());
+        if request.source.is_none() && request.tools.is_none() {
+            return Err("select binaries, tools, or both".into());
         }
-        self.start_operation(name, request, true)
+        let binaries = request.source.is_some();
+        let request = SetupRequest {
+            ssh: connection.endpoint,
+            remote: connection.remote,
+            // Tool-only records share the setup runner but never read this placeholder source.
+            source: request.source.unwrap_or(BinarySource::Local {
+                cli: String::new(),
+                daemon: String::new(),
+            }),
+            tools: request.tools,
+            credentials: vec![],
+            repositories: BTreeMap::new(),
+        };
+        self.start_operation(name, request, true, binaries)
     }
 
     fn start_operation(
@@ -181,6 +233,7 @@ impl Hosts {
         worker: String,
         request: SetupRequest,
         update: bool,
+        binaries: bool,
     ) -> Result<SetupDto, String> {
         validate(&worker, &request)?;
         let name = if update {
@@ -215,22 +268,67 @@ impl Hosts {
             serde_json::from_slice::<BTreeMap<String, Record>>(&bytes).map_err(|_| "stored worker setup is invalid; preserve the file and repair it before retrying")?;
         }
         if let Some(record) = records.get_mut(&name) {
-            if record.request != request {
-                let mut previous = record.request.clone();
-                previous.repositories = request.repositories.clone();
-                if record.progress.state != SetupState::Complete || previous != request {
-                    return Err("retry with the original setup request; change repository selections only after setup completes".into());
+            if update {
+                if matches!(
+                    record.progress.state,
+                    SetupState::Pending | SetupState::Running
+                ) {
+                    if record.request != request || record.binaries != binaries {
+                        return Err("wait for the active update before changing selections".into());
+                    }
+                    return Ok(record.progress.clone());
                 }
+                let source_changed =
+                    record.request.source != request.source || record.binaries != binaries;
+                let connection_changed =
+                    record.request.ssh != request.ssh || record.request.remote != request.remote;
+                let old_steps = &record.progress.steps;
+                let new_steps = steps(&request, true, binaries)
+                    .into_iter()
+                    .map(|mut step| {
+                        let affected = connection_changed
+                            || (source_changed
+                                && matches!(
+                                    step.name.as_str(),
+                                    "validate"
+                                        | "transfer"
+                                        | "replacement-capability"
+                                        | "install"
+                                        | "service"
+                                        | "health"
+                                        | "register"
+                                        | "resume"
+                                ));
+                        if !affected
+                            && let Some(old) = old_steps.iter().find(|old| old.name == step.name)
+                        {
+                            step.complete = old.complete;
+                        }
+                        step
+                    })
+                    .collect();
                 record.request = request.clone();
-                record.progress.state = SetupState::Incomplete;
-                for id in request.repositories.keys() {
-                    for name in [format!("clone:{id}"), format!("repository:{id}")] {
-                        if !record.progress.steps.iter().any(|s| s.name == name) {
-                            record.progress.steps.push(SetupStep {
-                                name,
-                                complete: false,
-                                error: None,
-                            });
+                record.binaries = binaries;
+                record.progress.steps = new_steps;
+                record.active_step = None;
+            } else {
+                if record.request != request {
+                    let mut previous = record.request.clone();
+                    previous.repositories = request.repositories.clone();
+                    if record.progress.state != SetupState::Complete || previous != request {
+                        return Err("retry with the original setup request; change repository selections only after setup completes".into());
+                    }
+                    record.request = request.clone();
+                    record.progress.state = SetupState::Incomplete;
+                    for id in request.repositories.keys() {
+                        for name in [format!("clone:{id}"), format!("repository:{id}")] {
+                            if !record.progress.steps.iter().any(|s| s.name == name) {
+                                record.progress.steps.push(SetupStep {
+                                    name,
+                                    complete: false,
+                                    error: None,
+                                });
+                            }
                         }
                     }
                 }
@@ -255,41 +353,12 @@ impl Hosts {
                 name.clone(),
                 Record {
                     request: request.clone(),
+                    binaries,
                     active_step: None,
                     progress: SetupDto {
                         name: worker.clone(),
                         state: SetupState::Pending,
-                        steps: ["probe", "validate"]
-                            .into_iter()
-                            .map(String::from)
-                            .chain(if update {
-                                vec!["maintenance".into()]
-                            } else {
-                                vec![]
-                            })
-                            .chain(["transfer", "install"].into_iter().map(String::from))
-                            .chain(selection_steps(&request))
-                            .chain(
-                                request.repositories.keys().flat_map(|id| {
-                                    [format!("clone:{id}"), format!("repository:{id}")]
-                                }),
-                            )
-                            .chain(
-                                ["service", "health", "register"]
-                                    .into_iter()
-                                    .map(String::from),
-                            )
-                            .chain(if update {
-                                vec!["resume".into()]
-                            } else {
-                                vec![]
-                            })
-                            .map(|name| SetupStep {
-                                name,
-                                complete: false,
-                                error: None,
-                            })
-                            .collect(),
+                        steps: steps(&request, update, binaries),
                     },
                 },
             );
@@ -305,6 +374,9 @@ impl Hosts {
         let this = self.clone();
         self.0.tasks.lock().unwrap().push(tokio::spawn(async move {
             if let Err(error) = this.run_setup(&name, &request).await {
+                if update {
+                    this.recover_update(&name, &request).await;
+                }
                 let mut records = this.0.setup.lock().unwrap();
                 let record = records.get_mut(&name).unwrap();
                 record.progress.state = if record.progress.steps.iter().any(|s| s.complete) {
@@ -326,6 +398,61 @@ impl Hosts {
             }
         }));
         Ok(progress)
+    }
+
+    async fn recover_update(&self, name: &str, request: &SetupRequest) {
+        let held = {
+            let records = self.0.setup.lock().unwrap();
+            let record = &records[name];
+            record.progress.steps.iter().any(|s| {
+                s.name == "maintenance"
+                    && (s.complete || record.active_step.as_deref() == Some("maintenance"))
+            })
+        };
+        if !held {
+            return;
+        }
+        // Recovery never changes the primary failing step or its error.
+        let result = async {
+            let cli = self.worker_cli(request).await?;
+            let remote = request.remote.clone().unwrap_or_else(|| {
+                cli.trim_end_matches("/.local/bin/ariadne").to_owned() + "/.ariadne/ariadne.sock"
+            });
+            self.ssh(
+                request,
+                &format!(
+                    "{} --endpoint {} daemon status >/dev/null 2>&1",
+                    quote(&cli),
+                    quote(&remote)
+                ),
+                None,
+            )
+            .await?;
+            self.maintenance(request, &cli, &remote, Some(false))
+                .await?;
+            Ok::<_, String>(())
+        }
+        .await;
+        let mut records = self.0.setup.lock().unwrap();
+        if let Some(step) = records
+            .get_mut(name)
+            .unwrap()
+            .progress
+            .steps
+            .iter_mut()
+            .find(|s| s.name == "resume")
+        {
+            step.complete = result.is_ok();
+            step.error = result.err().map(|_| "worker health or maintenance release failed; scheduling remains held; repair the worker and retry".into());
+        }
+    }
+
+    async fn worker_cli(&self, request: &SetupRequest) -> Result<String, String> {
+        let home = self.ssh(request, "printf '%s' \"$HOME\"", None).await?;
+        if !home.starts_with('/') || home.chars().any(char::is_control) {
+            return Err("invalid worker home".into());
+        }
+        Ok(format!("{home}/.local/bin/ariadne"))
     }
 
     fn begin(&self, name: &str, step: &str) -> Result<(), String> {
@@ -498,49 +625,73 @@ fi
             .remote
             .clone()
             .unwrap_or_else(|| format!("{home}/.ariadne/ariadne.sock"));
-        self.begin(name, "validate")?;
-        let source = self.binaries(name, request, target).await?;
-        let cli = std::fs::read(&source.0).map_err(|_| "cannot read the local CLI binary")?;
-        let daemon = std::fs::read(&source.1).map_err(|_| "cannot read the local daemon binary")?;
-        if !compatible(&cli, target) || !compatible(&daemon, target) {
-            return Err(format!(
-                "both binaries must be compatible with {target}; nothing was transferred"
-            ));
+        let worker_cli = format!("{home}/.local/bin/ariadne");
+        if update {
+            self.begin(name, "worker-capability")?;
+            self.maintenance(request, &worker_cli, &remote, None)
+                .await?;
+            self.checkpoint(name, "worker-capability")?;
         }
-        self.checkpoint(name, "validate")?;
+        let binaries = self.0.setup.lock().unwrap()[name].binaries;
+        let installed = self.0.setup.lock().unwrap()[name]
+            .progress
+            .steps
+            .iter()
+            .any(|s| s.name == "install" && s.complete);
+        let stage = format!("{home}/.ariadne/worker-setup-{name}");
+        if binaries {
+            self.begin(name, "validate")?;
+            let source = self.binaries(name, request, target).await?;
+            let cli = std::fs::read(&source.0).map_err(|_| "cannot read the local CLI binary")?;
+            let daemon =
+                std::fs::read(&source.1).map_err(|_| "cannot read the local daemon binary")?;
+            if !compatible(&cli, target) || !compatible(&daemon, target) {
+                return Err(format!(
+                    "both binaries must be compatible with {target}; nothing was transferred"
+                ));
+            }
+            self.checkpoint(name, "validate")?;
+            if !installed {
+                self.begin(name, "transfer")?;
+                for (binary, data) in [("ariadne", cli), ("ariadned", daemon)] {
+                    self.ssh(
+                        request,
+                        &format!(
+                            "set -eu; umask 077; mkdir -p {}; cat > {}",
+                            quote(&stage),
+                            quote(&format!("{stage}/{binary}"))
+                        ),
+                        Some(data),
+                    )
+                    .await?;
+                }
+                self.checkpoint(name, "transfer")?;
+                if update {
+                    self.begin(name, "replacement-capability")?;
+                    let protocol = self.ssh(request, &format!(
+                        "set -eu; chmod 755 {stage}/ariadne {stage}/ariadned; {stage}/ariadne daemon maintenance --help >/dev/null; {stage}/ariadned --maintenance-protocol",
+                        stage=quote(&stage)), None).await.map_err(|_| "replacement lacks maintenance support; select a supported release or compatible local binaries".to_owned())?;
+                    if protocol.trim() != "1" {
+                        return Err("replacement maintenance protocol is unsupported; worker binaries were preserved".into());
+                    }
+                    self.checkpoint(name, "replacement-capability")?;
+                }
+            }
+        }
         if update {
             self.begin(name, "maintenance")?;
-            // Each bounded request renews observation, without releasing admission.
             loop {
-                let status = self.maintenance(request, &remote, true).await?;
-                if status {
+                if self
+                    .maintenance(request, &worker_cli, &remote, Some(true))
+                    .await?
+                {
                     break;
                 }
                 tokio::time::sleep(self.0.timeouts.worker_maintenance).await;
             }
             self.checkpoint(name, "maintenance")?;
         }
-        let installed = self.0.setup.lock().unwrap()[name]
-            .progress
-            .steps
-            .iter()
-            .any(|s| s.name == "install" && s.complete);
-        if !installed {
-            self.begin(name, "transfer")?;
-            let stage = format!("{home}/.ariadne/worker-setup-{name}");
-            for (binary, data) in [("ariadne", cli), ("ariadned", daemon)] {
-                self.ssh(
-                    request,
-                    &format!(
-                        "set -eu; umask 077; mkdir -p {}; cat > {}",
-                        quote(&stage),
-                        quote(&format!("{stage}/{binary}"))
-                    ),
-                    Some(data),
-                )
-                .await?;
-            }
-            self.checkpoint(name, "transfer")?;
+        if binaries && !installed {
             self.begin(name, "install")?;
             self.ssh(request, &format!("set -eu; mkdir -p {bin}; chmod 755 {stage}/ariadne {stage}/ariadned; mv -f {stage}/ariadne {bin}/ariadne; mv -f {stage}/ariadned {bin}/ariadned; rmdir {stage}", bin=quote(&format!("{home}/.local/bin")), stage=quote(&stage)), None).await?;
             self.checkpoint(name, "install")?;
@@ -580,7 +731,8 @@ fi
         }
         if update {
             self.begin(name, "resume")?;
-            self.maintenance(request, &remote, false).await?;
+            self.maintenance(request, &worker_cli, &remote, Some(false))
+                .await?;
             self.checkpoint(name, "resume")?;
         }
         let mut records = self.0.setup.lock().unwrap();
@@ -591,14 +743,16 @@ fi
     async fn maintenance(
         &self,
         request: &SetupRequest,
+        cli: &str,
         remote: &str,
-        active: bool,
+        active: Option<bool>,
     ) -> Result<bool, String> {
-        let body = serde_json::json!({"active":active}).to_string();
-        let output = self.ssh(request, &format!(
-            "curl --fail --silent --show-error --max-time 30 --unix-socket {} -H 'Content-Type: application/json' -X POST --data {} http://localhost/v1/maintenance",
-            quote(remote), quote(&body)), None).await
-            .map_err(|_| "worker maintenance unavailable; require curl and a worker with maintenance support".to_owned())?;
+        let action = active
+            .map(|active| format!(" --active {active}"))
+            .unwrap_or_default();
+        let output = self.ssh(request, &format!("{} --endpoint {} --format json daemon maintenance{action}",
+            quote(cli), quote(remote)), None).await
+            .map_err(|_| "worker maintenance support is unavailable; install a maintenance-capable Ariadne version before updating".to_owned())?;
         serde_json::from_str::<serde_json::Value>(&output)
             .ok()
             .and_then(|v| v["ready"].as_bool())

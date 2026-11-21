@@ -137,16 +137,24 @@ if "-T" in args and script.get("setup"):
     import subprocess
     setup = script["setup"]
     command = args[-1]
-    if "maintenance_fixture" in setup and "http://localhost/v1/maintenance" in command:
+    if setup.get("maintenance_fixture") and "--maintenance-protocol" in command:
+        if not setup.get("replacement_maintenance", True):
+            sys.exit(2)
+        print("1")
+        sys.exit(0)
+    if setup.get("maintenance_fixture") and "daemon maintenance" in command:
         import shlex
+        if not setup.get("worker_maintenance", True):
+            sys.exit(2)
         parts = shlex.split(shlex.split(command)[2])
-        body = json.loads(parts[parts.index("--data") + 1])
-        if body["active"]:
+        if "--active" not in parts:
+            print('{"active":false,"ready":false}')
+        elif parts[parts.index("--active") + 1] == "true":
             open(os.path.join(setup["home"], "maintenance-held"), "w").close()
-            print(json.dumps({"ready": os.path.exists(os.path.join(setup["home"], "idle"))}))
+            print(json.dumps({"active": True, "ready": os.path.exists(os.path.join(setup["home"], "idle"))}))
         else:
             open(os.path.join(setup["home"], "maintenance-resumed"), "w").close()
-            print('{"ready":true}')
+            print('{"active":false,"ready":true}')
         sys.exit(0)
     if "repository_fixture" in setup:
         import shlex
@@ -172,7 +180,7 @@ if "-T" in args and script.get("setup"):
         sys.stdout.write(setup["raw_path"])
         sys.exit(0)
     if "daemon status" in command:
-        sys.exit(0)
+        sys.exit(1 if setup.get("health_failure") else 0)
     env = {**os.environ, "HOME": setup["home"],
            "PATH": os.path.join(dir, "service-bin") + os.pathsep + setup.get("inherited_path", os.environ["PATH"]),
            "SHELL": os.path.join(dir, "login-shell"),

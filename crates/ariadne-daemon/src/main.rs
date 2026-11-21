@@ -19,7 +19,7 @@ use ariadne_daemon::http::{self, AppState};
 
 mod relay;
 
-/// Everything that configures the daemon outside its own two flags, one line
+/// Everything that configures the daemon outside its command-line flags, one line
 /// each: `--help` is where an operator looks for it, and a key that is not
 /// written down here is one nobody knows to set.
 const ENVIRONMENT: &str = "\
@@ -97,6 +97,9 @@ struct Args {
     /// would run on, checked while the daemon that is running keeps running.
     #[arg(long)]
     check_config: bool,
+    /// Print the supported worker maintenance protocol and exit
+    #[arg(long, hide = true)]
+    maintenance_protocol: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -112,6 +115,10 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(Command::Relay(relay)) = args.command {
         return relay::run(relay, args.home).await;
+    }
+    if args.maintenance_protocol {
+        println!("1");
+        return Ok(());
     }
     if args.check_config {
         println!("{}", Config::check(args.home)?);

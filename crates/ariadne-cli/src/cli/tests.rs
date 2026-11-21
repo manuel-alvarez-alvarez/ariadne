@@ -182,6 +182,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("completions", false),
     ("completions install", false),
     ("daemon logs", false),
+    ("daemon maintenance", true),
     ("daemon restart", true),
     ("daemon start", true),
     ("daemon status", true),

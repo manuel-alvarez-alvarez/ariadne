@@ -419,6 +419,9 @@ prove that the CLI installs without GUI downloads, extraction, or npm operations
 Explicit program updates use spec 037, rules 70–74.
 They drain admitted work, preserve user service definitions, and retain maintenance through service restart.
 Updates share setup verification and durable installation checkpoints.
+Staged daemon binaries report their maintenance protocol with --maintenance-protocol before configuration loading.
+Unsupported replacements never replace installed binaries.
+Failures restore scheduling when the existing worker passes its health check.
 Acceptance: hosts.rs::updates_wait_for_idle_and_retry_without_replacing_installed_binaries.
 
 ### Worker program installation

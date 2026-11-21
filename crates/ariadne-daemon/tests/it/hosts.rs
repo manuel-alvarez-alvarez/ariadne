@@ -1677,7 +1677,7 @@ esac
             StatusCode::CREATED,
         )
         .await;
-    let request = json!({"ssh":"ssh://box","source":{"kind":"local","cli":cli,"daemon":daemon},"tools":{"agents":["codex-acp"]}});
+    let request = json!({"source":{"kind":"local","cli":cli,"daemon":daemon},"tools":{"agents":["codex-acp"]}});
     let _: Value = h
         .json(
             post_json("/v1/hosts/builder/update", request.clone()),
@@ -1700,14 +1700,7 @@ esac
         header
     );
     assert!(remote.path().join("maintenance-held").exists());
-    assert!(!remote.path().join("maintenance-resumed").exists());
-    let mut changed = request.clone();
-    changed["source"]["cli"] = json!("/another-cli");
-    h.error(
-        post_json("/v1/hosts/builder/update", changed),
-        StatusCode::BAD_REQUEST,
-    )
-    .await;
+    assert!(remote.path().join("maintenance-resumed").exists());
     std::fs::remove_file(fail).unwrap();
     std::fs::write(
         remote.path().join(".local/bin/ariadne"),
@@ -1768,4 +1761,228 @@ esac
         StatusCode::NOT_FOUND,
     )
     .await;
+}
+
+struct UpdateFixture {
+    h: common::Harness,
+    remote: tempfile::TempDir,
+    _ssh: common::ssh::StubSsh,
+}
+
+impl UpdateFixture {
+    async fn new(options: serde_json::Value) -> Self {
+        use axum::http::StatusCode;
+        use serde_json::{Value, json};
+        let remote = tempfile::tempdir().unwrap();
+        let bin = remote.path().join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let program = common::shared_script(
+            r#"#!/bin/sh
+case ${0##*/} in
+brew) case $1 in --prefix) printf '%s\n' "$HOME";; esac;;
+npm|node|codex) exit 0;;
+esac
+"#,
+        );
+        for tool in ["brew", "npm", "node", "codex"] {
+            std::os::unix::fs::symlink(&program, bin.join(tool)).unwrap();
+        }
+        let mut header = vec![0u8; 64];
+        header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        header[16] = 2;
+        header[18] = 62;
+        for file in ["source-cli", "source-daemon"] {
+            std::fs::write(remote.path().join(file), &header).unwrap();
+        }
+        std::fs::write(remote.path().join("idle"), "").unwrap();
+        let mut setup = options;
+        setup["home"] = json!(remote.path());
+        setup["maintenance_fixture"] = json!(true);
+        let ssh = common::ssh::stub_ssh(json!({"setup":setup,"exit":0}));
+        let h = harness().ssh(&ssh).await;
+        let _: Value = h
+            .json(
+                common::post_json(
+                    "/v1/hosts",
+                    json!({"name":"builder","endpoint":"ssh://saved@box:2222"}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+        Self {
+            h,
+            remote,
+            _ssh: ssh,
+        }
+    }
+
+    fn request(&self) -> serde_json::Value {
+        serde_json::json!({"source":{"kind":"local","cli":self.remote.path().join("source-cli"),"daemon":self.remote.path().join("source-daemon")}})
+    }
+
+    async fn start(&self, request: serde_json::Value) {
+        let _: serde_json::Value = self
+            .h
+            .json(
+                common::post_json("/v1/hosts/builder/update", request),
+                axum::http::StatusCode::ACCEPTED,
+            )
+            .await;
+    }
+
+    async fn terminal(&self) -> serde_json::Value {
+        common::eventually(common::TIMEOUT, "terminal worker update", || async {
+            matches!(
+                self.h
+                    .get::<serde_json::Value>("/v1/hosts/builder/update")
+                    .await["state"]
+                    .as_str(),
+                Some("complete" | "incomplete" | "failed")
+            )
+        })
+        .await;
+        self.h.get("/v1/hosts/builder/update").await
+    }
+}
+
+#[tokio::test]
+async fn updates_use_saved_ssh_and_allow_binary_only_selection() {
+    let f = UpdateFixture::new(serde_json::json!({})).await;
+    f.start(f.request()).await;
+    assert_eq!(f.terminal().await["state"], "complete");
+    assert!(f.remote.path().join(".local/bin/ariadne").exists());
+    assert!(f.remote.path().join("maintenance-resumed").exists());
+}
+
+#[tokio::test]
+async fn tools_only_updates_preserve_worker_binaries() {
+    let f = UpdateFixture::new(serde_json::json!({})).await;
+    std::fs::write(f.remote.path().join(".local/bin/ariadne"), "existing CLI").unwrap();
+    f.start(serde_json::json!({"tools":{"agents":[]}})).await;
+    assert_eq!(f.terminal().await["state"], "complete");
+    assert_eq!(
+        std::fs::read_to_string(f.remote.path().join(".local/bin/ariadne")).unwrap(),
+        "existing CLI"
+    );
+    assert!(!f.remote.path().join(".local/bin/ariadned").exists());
+}
+
+#[tokio::test]
+async fn unsupported_tools_can_be_removed_on_retry_without_reinstalling_binaries() {
+    let f = UpdateFixture::new(serde_json::json!({})).await;
+    let mut request = f.request();
+    request["tools"] = serde_json::json!({"agents":["unknown-agent"]});
+    f.start(request).await;
+    let result = f.terminal().await;
+    assert_eq!(result["state"], "incomplete");
+    assert!(result["steps"].as_array().unwrap().iter().any(|s| {
+        s["name"] == "tool:unknown-agent"
+            && s["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("unsupported"))
+    }));
+    assert!(f.remote.path().join("maintenance-resumed").exists());
+    std::fs::write(
+        f.remote.path().join(".local/bin/ariadne"),
+        "retained installation",
+    )
+    .unwrap();
+    f.start(f.request()).await;
+    assert_eq!(f.terminal().await["state"], "complete");
+    assert_eq!(
+        std::fs::read_to_string(f.remote.path().join(".local/bin/ariadne")).unwrap(),
+        "retained installation"
+    );
+}
+
+#[tokio::test]
+async fn invalid_binary_sources_can_change_on_retry() {
+    let f = UpdateFixture::new(serde_json::json!({})).await;
+    let invalid = f.remote.path().join("invalid-cli");
+    std::fs::write(&invalid, "incompatible").unwrap();
+    let mut request = f.request();
+    request["source"]["cli"] = serde_json::json!(invalid);
+    f.start(request).await;
+    assert_eq!(f.terminal().await["state"], "incomplete");
+    assert!(!f.remote.path().join("maintenance-held").exists());
+    f.start(f.request()).await;
+    assert_eq!(f.terminal().await["state"], "complete");
+}
+
+#[tokio::test]
+async fn unsupported_replacements_fail_before_installation_or_maintenance() {
+    let f = UpdateFixture::new(serde_json::json!({"replacement_maintenance":false})).await;
+    f.start(f.request()).await;
+    let result = f.terminal().await;
+    assert_eq!(result["state"], "incomplete");
+    assert!(result["steps"].as_array().unwrap().iter().any(|s| {
+        s["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("maintenance"))
+    }));
+    assert!(!f.remote.path().join(".local/bin/ariadne").exists());
+    assert!(!f.remote.path().join("maintenance-held").exists());
+}
+
+#[tokio::test]
+async fn failed_updates_keep_maintenance_when_worker_health_fails() {
+    let f = UpdateFixture::new(serde_json::json!({"health_failure":true})).await;
+    let mut request = f.request();
+    request["tools"] = serde_json::json!({"agents":["unknown-agent"]});
+    f.start(request).await;
+    let result = f.terminal().await;
+    assert_eq!(result["state"], "incomplete");
+    assert!(f.remote.path().join("maintenance-held").exists());
+    assert!(!f.remote.path().join("maintenance-resumed").exists());
+    assert!(
+        result["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "resume" && s["error"].is_string())
+    );
+}
+
+#[tokio::test]
+async fn unsupported_current_workers_fail_before_binary_transfer() {
+    let f = UpdateFixture::new(serde_json::json!({"worker_maintenance":false})).await;
+    f.start(f.request()).await;
+    let result = f.terminal().await;
+    assert_eq!(result["state"], "incomplete");
+    assert!(
+        result["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "worker-capability" && s["error"].is_string())
+    );
+    assert!(
+        !f.remote
+            .path()
+            .join(".ariadne/worker-setup-update:builder")
+            .exists()
+    );
+    assert!(!f.remote.path().join("maintenance-held").exists());
+}
+
+#[tokio::test]
+async fn revised_binary_sources_invalidate_the_install_checkpoint() {
+    let f = UpdateFixture::new(serde_json::json!({})).await;
+    let mut request = f.request();
+    request["tools"] = serde_json::json!({"agents":["unknown-agent"]});
+    f.start(request).await;
+    assert_eq!(f.terminal().await["state"], "incomplete");
+    let old = std::fs::read(f.remote.path().join(".local/bin/ariadne")).unwrap();
+    let mut replacement = old.clone();
+    replacement.extend_from_slice(b"selected replacement");
+    let source = f.remote.path().join("replacement-cli");
+    std::fs::write(&source, &replacement).unwrap();
+    let mut request = f.request();
+    request["source"]["cli"] = serde_json::json!(source);
+    f.start(request).await;
+    assert_eq!(f.terminal().await["state"], "complete");
+    assert_eq!(
+        std::fs::read(f.remote.path().join(".local/bin/ariadne")).unwrap(),
+        replacement
+    );
 }

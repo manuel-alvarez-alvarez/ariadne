@@ -195,6 +195,14 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             command,
         } => commands::completions::run(shell, static_script, command),
         Command::Daemon { home, command } => match command {
+            DaemonCommand::Maintenance { active } => {
+                let client = if cli.host.as_deref().is_some_and(|h| h != "local") {
+                    Arc::clone(&client)
+                } else {
+                    Arc::new(Client::resolve(cli.endpoint.as_deref(), home))
+                };
+                commands::daemon::maintenance(&client, active, format).await
+            }
             DaemonCommand::Start => commands::daemon::start(home, format).await,
             DaemonCommand::Stop { timeout } => commands::daemon::stop(home, timeout, format).await,
             DaemonCommand::Restart { timeout } => {

@@ -121,9 +121,10 @@ it("starts an explicit update with selected tools and shows maintenance progress
     })
   })
   renderScreen(<WorkerSetup update />)
+  expect(screen.queryByLabelText("SSH address")).toBeNull()
+  fireEvent.click(screen.getByLabelText("Update agent tools"))
   for (const [label, value] of [
     ["Worker name", "builder"],
-    ["SSH address", "ssh://box"],
     ["CLI binary path on the source daemon machine", "/cli"],
     ["Daemon binary path on the source daemon machine", "/daemon"],
     ["Required agent IDs", "codex-acp"],
@@ -137,4 +138,21 @@ it("starts an explicit update with selected tools and shows maintenance progress
     tools: { agents: ["codex-acp"], github: false },
   })
   expect(screen.queryByText("Worker repositories")).toBeNull()
+})
+
+it("allows a tools-only update without binary paths or SSH inputs", async () => {
+  const bodies: unknown[] = []
+  daemonFetch.mockImplementation(async (request: Request) => {
+    if (new URL(request.url).pathname === "/v1/repositories") return jsonResponse([])
+    if (request.method === "POST") bodies.push(await request.clone().json())
+    return jsonResponse({ name: "builder", state: "complete", steps: [] })
+  })
+  renderScreen(<WorkerSetup update />)
+  fireEvent.change(screen.getByLabelText("Worker name"), { target: { value: "builder" } })
+  fireEvent.click(screen.getByLabelText("Update Ariadne binaries"))
+  fireEvent.click(screen.getByLabelText("Update agent tools"))
+  fireEvent.change(screen.getByLabelText("Required agent IDs"), { target: { value: "codex-acp" } })
+  await userEvent.setup().click(screen.getByRole("button", { name: "Start or retry update" }))
+  await waitFor(() => expect(bodies).toHaveLength(1))
+  expect(bodies[0]).toEqual({ tools: { agents: ["codex-acp"], github: false } })
 })

@@ -62,11 +62,11 @@ pub(super) async fn setup_status(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "unknown worker setup"))
 }
 
-#[utoipa::path(post, path="/v1/hosts/{name}/update", tag="hosts", params(("name"=String, Path)), request_body=ariadne_api::hosts::SetupRequest, responses((status=202,body=ariadne_api::hosts::SetupDto)))]
+#[utoipa::path(post, path="/v1/hosts/{name}/update", tag="hosts", params(("name"=String, Path)), request_body=ariadne_api::hosts::UpdateRequest, responses((status=202,body=ariadne_api::hosts::SetupDto)))]
 pub(super) async fn update(
     State(s): State<AppState>,
     Path(name): Path<String>,
-    Json(request): Json<ariadne_api::hosts::SetupRequest>,
+    Json(request): Json<ariadne_api::hosts::UpdateRequest>,
 ) -> ApiResult<(StatusCode, Json<ariadne_api::hosts::SetupDto>)> {
     let progress = s
         .hosts
