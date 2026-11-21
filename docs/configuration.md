@@ -100,7 +100,7 @@ A missing forced multiplexer fails the launch with a clear reason.
 `ariadne doctor` reports the selected place and its reason.
 
 With herdr or tmux, agents continue while the daemon stops or restarts.
-Herdr shows each agent as a workspace with one pane. Closing that pane stops the agent.
+Herdr shows each agent as a workspace with one pane. To stop an agent, kill its session. Closing the pane by hand does not stop the agent.
 The new daemon reconnects and stores output collected during the stop.
 Reconnect keeps each running session's place, even when this setting changes.
 Resume starts a new process and selects its place again.
