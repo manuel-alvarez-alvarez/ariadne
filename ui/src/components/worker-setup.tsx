@@ -17,6 +17,10 @@ export function WorkerSetup() {
   const [daemon, setDaemon] = useState("")
   const [repository, setRepository] = useState("")
   const [tag, setTag] = useState("")
+  const [agents, setAgents] = useState("")
+  const [github, setGithub] = useState(false)
+  const [codexCredentials, setCodexCredentials] = useState(false)
+  const [githubCredentials, setGithubCredentials] = useState(false)
   const [active, setActive] = useState("")
   const status = useQuery({
     queryKey: qk.hosts.setup(active),
@@ -37,6 +41,17 @@ export function WorkerSetup() {
         api(LOCAL_HOST).POST("/v1/hosts/{name}/setup", {
           params: { path: { name } },
           body: {
+            ...(agents.trim() || github
+              ? { tools: { agents: agents.split(/[\s,]+/).filter(Boolean), github } }
+              : {}),
+            ...(codexCredentials || githubCredentials
+              ? {
+                  credentials: [
+                    ...(codexCredentials ? ["codex"] : []),
+                    ...(githubCredentials ? ["github"] : []),
+                  ],
+                }
+              : {}),
             ssh,
             remote: remote || null,
             source: release ? { kind: "release", repository, tag } : { kind: "local", cli, daemon },
@@ -144,6 +159,52 @@ export function WorkerSetup() {
           </label>
         </>
       )}
+      <label htmlFor={`${fieldId}-agents`}>
+        Required agent IDs
+        <Input
+          id={`${fieldId}-agents`}
+          value={agents}
+          onChange={(e) => setAgents(e.target.value)}
+          disabled={busy}
+          placeholder="codex-acp, claude-acp"
+        />
+      </label>
+      <p className="text-sm text-muted-foreground">
+        Select registry IDs separated by commas. Setup installs Git and supported packages in
+        user-owned locations. Custom commands require manual installation. Missing authentication
+        requires a separate worker login.
+      </p>
+      <label>
+        <input
+          type="checkbox"
+          checked={github}
+          onChange={(e) => setGithub(e.target.checked)}
+          disabled={busy}
+        />{" "}
+        Install GitHub CLI
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={codexCredentials}
+          onChange={(e) => setCodexCredentials(e.target.checked)}
+          disabled={busy}
+        />{" "}
+        Copy Codex file credentials
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={githubCredentials}
+          onChange={(e) => setGithubCredentials(e.target.checked)}
+          disabled={busy}
+        />{" "}
+        Copy GitHub credentials
+      </label>
+      <p className="text-sm text-muted-foreground">
+        Copy only selected credentials from the source daemon machine through SSH. Keychain
+        credentials require separate worker login.
+      </p>
       <div className="flex gap-2">
         <Button
           type="button"

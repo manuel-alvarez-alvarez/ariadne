@@ -9388,6 +9388,13 @@
           "source"
         ],
         "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Source credential references only: `codex` and `github`. Never send credential values."
+          },
           "remote": {
             "type": [
               "string",
@@ -9399,6 +9406,17 @@
           },
           "ssh": {
             "type": "string"
+          },
+          "tools": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SetupTools",
+                "description": "Selected registry agent IDs and forge tooling. Omission preserves binary-only setup."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -9433,6 +9451,22 @@
             "type": "string"
           }
         }
+      },
+      "SetupTools": {
+        "type": "object",
+        "description": "Programs required on the worker. Git is always required when this section is present.",
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "github": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
       },
       "SkillDto": {
         "type": "object",

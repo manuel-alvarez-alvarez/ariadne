@@ -2,7 +2,7 @@
 import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
-import { jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { WorkerSetup } from "./worker-setup"
 
 it("starts setup and shows retained steps and a failure", async () => {
@@ -20,7 +20,7 @@ it("starts setup and shows retained steps and a failure", async () => {
       }),
     )
   })
-  vi.stubGlobal("fetch", fetch)
+  daemonFetch.mockImplementation(fetch)
   renderScreen(<WorkerSetup />)
   const user = userEvent.setup()
   await user.type(screen.getByLabelText("Worker name"), "builder")
@@ -51,4 +51,30 @@ it("starts setup and shows retained steps and a failure", async () => {
   const retried = requests.filter((request) => request.method === "POST")[1]
   if (!retried) throw new Error("no retry request")
   expect(await retried.clone().json()).toEqual(await posted?.clone().json())
+})
+
+it("sends explicit tool and credential selections", async () => {
+  const bodies: unknown[] = []
+  daemonFetch.mockImplementation(async (request: Request) => {
+    if (request.method === "POST") bodies.push(await request.clone().json())
+    return jsonResponse({ name: "builder", state: "incomplete", steps: [] })
+  })
+  renderScreen(<WorkerSetup />)
+  const user = userEvent.setup()
+  await user.type(screen.getByLabelText("Worker name"), "builder")
+  await user.type(screen.getByLabelText("SSH address"), "ssh://box")
+  await user.type(screen.getByLabelText("CLI binary path on the source daemon machine"), "/cli")
+  await user.type(
+    screen.getByLabelText("Daemon binary path on the source daemon machine"),
+    "/daemon",
+  )
+  await user.type(screen.getByLabelText("Required agent IDs"), "codex-acp")
+  await user.click(screen.getByLabelText("Install GitHub CLI"))
+  await user.click(screen.getByLabelText("Copy Codex file credentials"))
+  await user.click(screen.getByRole("button", { name: "Start or retry setup" }))
+  await waitFor(() => expect(bodies).toHaveLength(1))
+  expect(bodies[0]).toMatchObject({
+    tools: { agents: ["codex-acp"], github: true },
+    credentials: ["codex"],
+  })
 })
