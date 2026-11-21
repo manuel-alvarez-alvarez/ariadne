@@ -248,8 +248,11 @@ async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
     std::fs::write(&binary, [0u8; 8]).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
     let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
-    assert!(error.contains("listing tmux relay sessions"), "{error}");
-    assert!(error.contains("tmux"), "{error}");
+    // macOS runs the file as a script and reports its failure; Linux cannot start it.
+    assert!(
+        error.contains("listing tmux relay sessions") || error.contains("running tmux"),
+        "{error}"
+    );
 }
 
 #[tokio::test]
