@@ -69,7 +69,7 @@ pub(crate) fn stub_ssh(script: Value) -> StubSsh {
         std::os::unix::fs::symlink(&service, service_bin.join(tool)).unwrap();
     }
     let shell = super::shared_script(
-        "#!/bin/sh\n[ \"$1\" = -lc ] || exit 1\n[ \"$ARIADNE_SETUP_SHELL_FAIL\" != 1 ] || exit 1\nPATH=$ARIADNE_SETUP_LOGIN_PATH\nexport PATH\nexec /bin/sh -c \"$2\"\n",
+        "#!/bin/sh\n[ \"$1\" = -lc ] || exit 1\n[ \"$ARIADNE_SETUP_SHELL_FAIL\" != 1 ] || exit 1\nprintf '%s' \"$ARIADNE_SETUP_SHELL_BANNER\"\nif [ \"$ARIADNE_SETUP_NO_MARKERS\" = 1 ]; then printf '%s' \"$ARIADNE_SETUP_LOGIN_PATH\"; exit 0; fi\nPATH=$ARIADNE_SETUP_LOGIN_PATH\nexport PATH\n/bin/sh -c \"$2\"\nresult=$?\nprintf '%s' \"$ARIADNE_SETUP_SHELL_SUFFIX\"\nexit \"$result\"\n",
     );
     std::os::unix::fs::symlink(shell, dir.path().join("login-shell")).unwrap();
     let launcher = super::shared_script(LAUNCHER);
@@ -128,6 +128,9 @@ if "-T" in args and script.get("setup"):
            "SHELL": os.path.join(dir, "login-shell"),
            "ARIADNE_SETUP_LOGIN_PATH": setup.get("path", "/usr/bin:/bin"),
            "ARIADNE_SETUP_SHELL_FAIL": "1" if setup.get("shell_fail") else "0",
+           "ARIADNE_SETUP_SHELL_BANNER": setup.get("banner", ""),
+           "ARIADNE_SETUP_SHELL_SUFFIX": setup.get("suffix", ""),
+           "ARIADNE_SETUP_NO_MARKERS": "1" if setup.get("missing_markers") else "0",
            "ARIADNE_SETUP_OS": setup.get("os", "Linux"),
            "ARIADNE_SETUP_ARCH": setup.get("arch", "x86_64"),
            "ARIADNE_SETUP_SERVICE_FAIL": setup.get("fail_service", "")}

@@ -280,18 +280,40 @@ impl Hosts {
     async fn run_setup(&self, name: &str, request: &SetupRequest) -> Result<(), String> {
         self.begin(name, "probe")?;
         // The first three lines identify the platform and home. The remaining bytes
-        // carry PATH without a trailing newline, so validation cannot trim controls.
-        let probe = self.ssh(request, r#"set -eu
+        // carry the selected PATH verbatim, without an added terminator.
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random).map_err(|_| "cannot create remote PATH markers")?;
+        let token = hex::encode(random);
+        let start = format!("__ARIADNE_PATH_{token}_START__");
+        let end = format!("__ARIADNE_PATH_{token}_END__");
+        let path_command = quote(&format!("printf '%s%s%s' '{start}' \"$PATH\" '{end}'"));
+        let script = format!(
+            r#"set -eu
 uname -s
 uname -m
 printf '%s\n' "$HOME"
 for tool in git tar; do command -v "$tool" >/dev/null || exit 12; done
-if remote_path=$("${SHELL:-/bin/sh}" -lc 'printf "%s" "$PATH"; printf "."' 2>/dev/null); then
-    printf '%s' "${remote_path%.}"
+path_start='{start}'
+path_end='{end}'
+if remote_path=$("${{SHELL:-/bin/sh}}" -lc {path_command} 2>/dev/null); then
+    case "$remote_path" in
+        *"$path_start"*"$path_end"*)
+            remote_path=${{remote_path#*"$path_start"}}
+            remote_path=${{remote_path%%"$path_end"*}}
+            if [ -n "$remote_path" ]; then
+                printf '%s' "$remote_path"
+            else
+                printf '%s' "$PATH"
+            fi
+            ;;
+        *) printf '%s' "$PATH" ;;
+    esac
 else
     printf '%s' "$PATH"
 fi
-"#, None).await.map_err(|_| "SSH probe failed; check SSH access and ask the administrator to install git and tar".to_owned())?;
+"#
+        );
+        let probe = self.ssh(request, &script, None).await.map_err(|_| "SSH probe failed; check SSH access and ask the administrator to install git and tar".to_owned())?;
         let lines: Vec<_> = probe.splitn(4, '\n').collect();
         if lines.len() != 4 || !lines[2].starts_with('/') || lines[2].chars().any(char::is_control)
         {

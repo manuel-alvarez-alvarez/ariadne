@@ -579,24 +579,29 @@ async fn setup_rejects_control_characters_in_remote_path_before_transfer() {
 }
 
 #[tokio::test]
-async fn setup_uses_the_ssh_path_when_the_login_shell_fails() {
+async fn setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path() {
     use common::{TIMEOUT, eventually, post_json};
     use serde_json::{Value, json};
-    let remote = tempfile::tempdir().unwrap();
-    let local = tempfile::tempdir().unwrap();
-    let mut binary = vec![0; 64];
-    binary[..6].copy_from_slice(b"\x7fELF\x02\x01");
-    binary[16] = 2;
-    binary[18] = 62;
-    let cli = local.path().join("ariadne");
-    let daemon = local.path().join("ariadned");
-    std::fs::write(&cli, &binary).unwrap();
-    std::fs::write(&daemon, &binary).unwrap();
-    let ssh = common::ssh::stub_ssh(
-        json!({"setup": {"home":remote.path(), "shell_fail":true, "inherited_path":"/fallback/tools:/usr/bin:/bin"}, "exit":0}),
-    );
-    let h = harness().ssh(&ssh).await;
-    let _: Value = h
+    for mut setup in [
+        json!({"shell_fail":true}),
+        json!({"missing_markers":true, "path":"/unmarked/tools:/usr/bin:/bin", "banner":"Welcome!\n"}),
+        json!({"path":"", "banner":"Welcome!"}),
+    ] {
+        let remote = tempfile::tempdir().unwrap();
+        let local = tempfile::tempdir().unwrap();
+        let mut binary = vec![0; 64];
+        binary[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        binary[16] = 2;
+        binary[18] = 62;
+        let cli = local.path().join("ariadne");
+        let daemon = local.path().join("ariadned");
+        std::fs::write(&cli, &binary).unwrap();
+        std::fs::write(&daemon, &binary).unwrap();
+        setup["home"] = json!(remote.path());
+        setup["inherited_path"] = json!("/fallback/tools:/usr/bin:/bin");
+        let ssh = common::ssh::stub_ssh(json!({"setup":setup, "exit":0}));
+        let h = harness().ssh(&ssh).await;
+        let _: Value = h
         .json(
             post_json(
                 "/v1/hosts/fallback/setup",
@@ -605,22 +610,99 @@ async fn setup_uses_the_ssh_path_when_the_login_shell_fails() {
             axum::http::StatusCode::ACCEPTED,
         )
         .await;
-    eventually(TIMEOUT, "fallback PATH installation", || async {
+        eventually(TIMEOUT, "fallback PATH installation", || async {
+            let state: Value = h.get("/v1/hosts/fallback/setup").await;
+            state["state"] == "complete"
+                || state["state"] == "failed"
+                || state["state"] == "incomplete"
+        })
+        .await;
         let state: Value = h.get("/v1/hosts/fallback/setup").await;
-        state["state"] == "complete" || state["state"] == "failed" || state["state"] == "incomplete"
-    })
-    .await;
-    let state: Value = h.get("/v1/hosts/fallback/setup").await;
-    assert_eq!(state["state"], "complete", "{state}");
-    let unit = std::fs::read_to_string(remote.path().join(".config/systemd/user/ariadned.service"))
-        .unwrap();
-    assert!(
-        unit.contains(&format!(
-            "Environment=\"PATH={}/.local/bin:",
+        assert_eq!(state["state"], "complete", "{state}");
+        let unit =
+            std::fs::read_to_string(remote.path().join(".config/systemd/user/ariadned.service"))
+                .unwrap();
+        assert!(
+            unit.contains(&format!(
+                "Environment=\"PATH={}/.local/bin:",
+                remote.path().display()
+            )),
+            "{unit}"
+        );
+        assert!(unit.contains(":/fallback/tools:/usr/bin:/bin\""), "{unit}");
+        h.state.hosts.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn setup_ignores_login_banners_with_a_newline_in_service_paths() {
+    assert_login_banner_does_not_change_service_path("Welcome to the worker!\n").await;
+}
+
+#[tokio::test]
+async fn setup_ignores_login_banners_without_a_newline_in_service_paths() {
+    assert_login_banner_does_not_change_service_path("Welcome to the worker!").await;
+}
+
+async fn assert_login_banner_does_not_change_service_path(banner: &str) {
+    use common::{TIMEOUT, eventually, post_json};
+    use serde_json::{Value, json};
+    for os in ["Linux", "Darwin"] {
+        let remote = tempfile::tempdir().unwrap();
+        let local = tempfile::tempdir().unwrap();
+        let mut binary = vec![0; 64];
+        if os == "Linux" {
+            binary[..6].copy_from_slice(b"\x7fELF\x02\x01");
+            binary[16] = 2;
+            binary[18] = 62;
+        } else {
+            binary[..8].copy_from_slice(&[0xcf, 0xfa, 0xed, 0xfe, 7, 0, 0, 1]);
+            binary[12] = 2;
+        }
+        let cli = local.path().join("ariadne");
+        let daemon = local.path().join("ariadned");
+        std::fs::write(&cli, &binary).unwrap();
+        std::fs::write(&daemon, &binary).unwrap();
+        let ssh = common::ssh::stub_ssh(
+            json!({"setup": {"home":remote.path(), "os":os, "banner":banner, "suffix":"Goodbye!\n", "path":"/remote/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin"}, "exit":0}),
+        );
+        let h = harness().ssh(&ssh).await;
+        let _: Value = h.json(post_json("/v1/hosts/banner/setup", json!({"ssh":"ssh://box", "source":{"kind":"local", "cli":cli, "daemon":daemon}})), axum::http::StatusCode::ACCEPTED).await;
+        eventually(TIMEOUT, "login banner setup result", || async {
+            let state: Value = h.get("/v1/hosts/banner/setup").await;
+            state["state"] == "complete"
+                || state["state"] == "failed"
+                || state["state"] == "incomplete"
+        })
+        .await;
+        let state: Value = h.get("/v1/hosts/banner/setup").await;
+        assert_eq!(state["state"], "complete", "{os}: {state}");
+        let expected = format!(
+            "{}/.local/bin:/remote/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin",
             remote.path().display()
-        )),
-        "{unit}"
-    );
-    assert!(unit.contains(":/fallback/tools:/usr/bin:/bin\""), "{unit}");
-    h.state.hosts.shutdown().await;
+        );
+        if os == "Linux" {
+            let unit = std::fs::read_to_string(
+                remote.path().join(".config/systemd/user/ariadned.service"),
+            )
+            .unwrap();
+            assert!(
+                unit.lines()
+                    .any(|line| line == format!("Environment=\"PATH={expected}\"")),
+                "{unit}"
+            );
+        } else {
+            let plist = remote
+                .path()
+                .join("Library/LaunchAgents/dev.ariadne.daemon.plist");
+            let parsed = std::process::Command::new("python3").args(["-c", "import plistlib,sys; print(plistlib.load(open(sys.argv[1], 'rb'))['EnvironmentVariables']['PATH'], end='')"]).arg(plist).output().unwrap();
+            assert!(
+                parsed.status.success(),
+                "{}",
+                String::from_utf8_lossy(&parsed.stderr)
+            );
+            assert_eq!(String::from_utf8(parsed.stdout).unwrap(), expected);
+        }
+        h.state.hosts.shutdown().await;
+    }
 }

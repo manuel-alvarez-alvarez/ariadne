@@ -253,7 +253,8 @@ picker, the Hosts section of its settings and one stream per host — is spec
 46. Setup installs binaries under the remote user's `~/.local/bin`.
     It registers `dev.ariadne.daemon` with launchd or `ariadned.service` with systemd user services.
     New service definitions use the remote user's PATH from a noninteractive login shell, with `~/.local/bin` first.
-    If that shell fails, setup uses the SSH session's PATH.
+    Setup uses only PATH text between unique probe markers, ignoring login-profile banners and other output.
+    If the shell fails, markers are missing, or the marked PATH is empty, setup uses the SSH session's PATH.
     Setup rejects PATH values with control characters before transfer, including newline and NUL.
     Systemd values escape backslashes, quotes, and percent specifiers; dollar signs stay literal in `Environment=`.
     Launchd stores the XML-escaped PATH in its `EnvironmentVariables` dictionary.
@@ -384,8 +385,10 @@ picker, the Hosts section of its settings and one stream per host — is spec
 - Rules 45 and 46: `hosts.rs::setup_checks_each_platform_before_it_transfers_a_binary`.
 - Rule 45: `hosts.rs::release_setup_requires_workflow_and_tag_verification_before_transfer`.
 - Rules 46–48: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
+- Rule 46, banners: `hosts.rs::setup_ignores_login_banners_with_a_newline_in_service_paths`,
+  `hosts.rs::setup_ignores_login_banners_without_a_newline_in_service_paths`.
 - Rule 46, control characters: `hosts.rs::setup_rejects_control_characters_in_remote_path_before_transfer`.
-- Rule 46, shell fallback: `hosts.rs::setup_uses_the_ssh_path_when_the_login_shell_fails`.
+- Rule 46, shell fallback: `hosts.rs::setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path`.
 - Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
 - Rule 50: `ui/src/components/worker-setup.test.tsx::starts setup and shows retained steps and a failure`.
 
