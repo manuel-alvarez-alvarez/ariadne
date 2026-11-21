@@ -76,6 +76,31 @@ impl Hosts {
             .any(|s| s.name == step && s.complete)
     }
 
+    pub(super) fn population_result(
+        &self,
+        name: &str,
+        step: &str,
+        result: Result<(), String>,
+    ) -> Result<(), String> {
+        if name.starts_with("update:") {
+            return result;
+        }
+        if let Err(error) = result {
+            let mut records = self.0.setup.lock().unwrap();
+            let record = records.get_mut(name).unwrap();
+            let step = record
+                .progress
+                .steps
+                .iter_mut()
+                .find(|s| s.name == step)
+                .unwrap();
+            step.complete = false;
+            step.error = Some(error);
+            save(&self.0.cfg.root, &records)?;
+        }
+        Ok(())
+    }
+
     async fn population_command(
         &self,
         request: &SetupRequest,
@@ -105,73 +130,81 @@ impl Hosts {
                 if binary == "gh" && !tools.github {
                     continue;
                 }
-                if update && self.population_done(name, step) {
+                if self.population_done(name, step) {
                     continue;
                 }
-                self.begin(name, step)?;
-                let action = if update {
-                    format!("upgrade {formula}")
-                } else {
-                    format!("ensure {binary} {formula}")
-                };
-                self.population_command(request, path, &format!("{PREREQUISITE}\n{action}"), None).await
-                    .map_err(|_| format!("missing {binary}; provide user-owned Homebrew or ask an administrator to install this prerequisite"))?;
-                self.checkpoint(name, step)?;
+                let result: Result<(), String> = async {
+                    self.begin(name, step)?;
+                    let action = if update {
+                        format!("upgrade {formula}")
+                    } else {
+                        format!("ensure {binary} {formula}")
+                    };
+                    self.population_command(request, path, &format!("{PREREQUISITE}\n{action}"), None).await
+                        .map_err(|_| format!("missing {binary}; provide user-owned Homebrew or ask an administrator to install this prerequisite"))?;
+                    self.checkpoint(name, step)?;
+                    Ok(())
+                }.await;
+                self.population_result(name, step, result)?;
             }
             for id in &tools.agents {
                 let step = format!("tool:{id}");
-                if update && self.population_done(name, &step) {
+                if self.population_done(name, &step) {
                     continue;
                 }
-                self.begin(name, &step)?;
-                // Configured custom commands override registry discovery. Do not infer their installer.
-                if self.0.cfg.acp_agents.iter().any(|a| &a.id == id) {
-                    return Err("custom agent commands require manual installation; no installation instructions are available".into());
-                }
-                let index: serde_json::Value =
-                    serde_json::from_str(crate::acp_discovery::SHIPPED_INDEX).unwrap();
-                let distribution = index["agents"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|a| a["id"] == *id)
-                    .map(|a| &a["distribution"]);
-                let Some(distribution) = distribution else {
-                    return Err(
-                        "unsupported agent; manual installation and worker login are required"
-                            .into(),
-                    );
-                };
-                let script = if let Some(package) = distribution["npx"]["package"].as_str() {
-                    let runtime_command = if update {
-                        "upgrade node"
-                    } else {
-                        "ensure node node"
+                let result: Result<(), String> = async {
+                    self.begin(name, &step)?;
+                    // Configured custom commands override registry discovery. Do not infer their installer.
+                    if self.0.cfg.acp_agents.iter().any(|a| &a.id == id) {
+                        return Err("custom agent commands require manual installation; no installation instructions are available".into());
+                    }
+                    let index: serde_json::Value =
+                        serde_json::from_str(crate::acp_discovery::SHIPPED_INDEX).unwrap();
+                    let distribution = index["agents"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|a| a["id"] == *id)
+                        .map(|a| &a["distribution"]);
+                    let Some(distribution) = distribution else {
+                        return Err(
+                            "unsupported agent; manual installation and worker login are required"
+                                .into(),
+                        );
                     };
-                    format!(
-                        "{PREREQUISITE}\n{runtime_command}\nensure npm node\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\n{}",
-                        npm_package(package, update)
-                    )
-                } else if let Some(package) = distribution["uvx"]["package"].as_str() {
-                    let runtime_command = if update { "upgrade uv" } else { "ensure uv uv" };
-                    let upgrade = if update { " --upgrade" } else { "" };
-                    format!(
-                        "{PREREQUISITE}\n{runtime_command}\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1\nuv tool install{upgrade} -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
-                        package = quote(package)
-                    )
-                } else {
-                    return Err("unsupported distribution; manual installation and worker login are required".into());
-                };
-                let script = match id.as_str() {
-                    "codex-acp" => format!("{script}\n{}", npm_package("@openai/codex", update)),
-                    "claude-acp" => format!(
-                        "{script}\n{}",
-                        npm_package("@anthropic-ai/claude-code", update)
-                    ),
-                    _ => script,
-                };
-                self.population_command(request, path, &script, None).await.map_err(|_| "agent installation or runtime check failed; provide user-owned Homebrew or ask an administrator for Node/npm or uv prerequisites".to_owned())?;
-                self.checkpoint(name, &step)?;
+                    let script = if let Some(package) = distribution["npx"]["package"].as_str() {
+                        let runtime_command = if update {
+                            "upgrade node"
+                        } else {
+                            "ensure node node"
+                        };
+                        format!(
+                            "{PREREQUISITE}\n{runtime_command}\nensure npm node\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\n{}",
+                            npm_package(package, update)
+                        )
+                    } else if let Some(package) = distribution["uvx"]["package"].as_str() {
+                        let runtime_command = if update { "upgrade uv" } else { "ensure uv uv" };
+                        let upgrade = if update { " --upgrade" } else { "" };
+                        format!(
+                            "{PREREQUISITE}\n{runtime_command}\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1\nuv tool install{upgrade} -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
+                            package = quote(package)
+                        )
+                    } else {
+                        return Err("unsupported distribution; manual installation and worker login are required".into());
+                    };
+                    let script = match id.as_str() {
+                        "codex-acp" => format!("{script}\n{}", npm_package("@openai/codex", update)),
+                        "claude-acp" => format!(
+                            "{script}\n{}",
+                            npm_package("@anthropic-ai/claude-code", update)
+                        ),
+                        _ => script,
+                    };
+                    self.population_command(request, path, &script, None).await.map_err(|_| "agent installation or runtime check failed; provide user-owned Homebrew or ask an administrator for Node/npm or uv prerequisites".to_owned())?;
+                    self.checkpoint(name, &step)?;
+                    Ok(())
+                }.await;
+                self.population_result(name, &step, result)?;
             }
         }
         for id in &request.credentials {
@@ -184,55 +217,67 @@ impl Hosts {
             {
                 continue;
             }
-            self.begin(name, &step)?;
-            // Successful transfers are not repeated. Authentication below always runs again.
-            // A checkpoint is durable only after SSH confirms the write or login.
-            match id.as_str() {
-                "codex" => {
-                    let source = self.0.cfg.native_home.join(".codex/auth.json");
-                    let data = std::fs::read(source).map_err(
-                        |_| "Codex file credentials unavailable; sign in separately on the worker",
-                    )?;
-                    serde_json::from_slice::<serde_json::Value>(&data).map_err(
-                        |_| "Codex file credentials invalid; sign in separately on the worker",
-                    )?;
-                    self.population_command(request, path, r#"mkdir -p "$HOME/.codex"; chmod 700 "$HOME/.codex"; temp=$(mktemp "$HOME/.codex/auth.XXXXXXXX"); trap 'rm -f "$temp"' EXIT HUP INT TERM; cat > "$temp"; chmod 600 "$temp"; mv -f "$temp" "$HOME/.codex/auth.json""#, Some(data)).await
-                        .map_err(|_| "Codex credential transfer failed; retry setup or sign in separately on the worker")?;
-                }
-                "github" => {
-                    let gh = self.0.cfg.gh_bin.as_deref().unwrap_or("gh");
-                    let token = self.command(Command::new(gh).args(["auth", "token", "--hostname", "github.com"]), None).await.map_err(|_| "GitHub source credentials unavailable; sign in separately on the worker")?;
-                    if token.trim().is_empty() {
-                        return Err("GitHub source credentials unavailable; sign in separately on the worker".into());
+            let result: Result<(), String> = async {
+                self.begin(name, &step)?;
+                // Successful transfers are not repeated. Authentication below always runs again.
+                // A checkpoint is durable only after SSH confirms the write or login.
+                match id.as_str() {
+                    "codex" => {
+                        let source = self.0.cfg.native_home.join(".codex/auth.json");
+                        let data = std::fs::read(source).map_err(
+                            |_| "Codex file credentials unavailable; sign in separately on the worker",
+                        )?;
+                        serde_json::from_slice::<serde_json::Value>(&data).map_err(
+                            |_| "Codex file credentials invalid; sign in separately on the worker",
+                        )?;
+                        self.population_command(request, path, r#"mkdir -p "$HOME/.codex"; chmod 700 "$HOME/.codex"; temp=$(mktemp "$HOME/.codex/auth.XXXXXXXX"); trap 'rm -f "$temp"' EXIT HUP INT TERM; cat > "$temp"; chmod 600 "$temp"; mv -f "$temp" "$HOME/.codex/auth.json""#, Some(data)).await
+                            .map_err(|_| "Codex credential transfer failed; retry setup or sign in separately on the worker")?;
                     }
-                    self.population_command(request, path, "gh auth login --hostname github.com --git-protocol https --with-token >/dev/null 2>&1", Some(token.into_bytes())).await.map_err(|_| "GitHub credential transfer failed; sign in separately on the worker")?;
+                    "github" => {
+                        let gh = self.0.cfg.gh_bin.as_deref().unwrap_or("gh");
+                        let token = self.command(Command::new(gh).args(["auth", "token", "--hostname", "github.com"]), None).await.map_err(|_| "GitHub source credentials unavailable; sign in separately on the worker")?;
+                        if token.trim().is_empty() {
+                            return Err("GitHub source credentials unavailable; sign in separately on the worker".into());
+                        }
+                        self.population_command(request, path, "gh auth login --hostname github.com --git-protocol https --with-token >/dev/null 2>&1", Some(token.into_bytes())).await.map_err(|_| "GitHub credential transfer failed; sign in separately on the worker")?;
+                    }
+                    _ => {
+                        return Err(
+                            "unsupported credential transfer; sign in separately on the worker".into(),
+                        );
+                    }
                 }
-                _ => {
-                    return Err(
-                        "unsupported credential transfer; sign in separately on the worker".into(),
-                    );
-                }
-            }
-            self.checkpoint(name, &step)?;
+                self.checkpoint(name, &step)?;
+                Ok(())
+            }.await;
+            self.population_result(name, &step, result)?;
         }
         if request.tools.as_ref().is_some_and(|t| t.github)
             || request.credentials.iter().any(|c| c == "github")
         {
-            self.begin(name, "authentication:github")?;
-            self.population_command(request, path, "gh auth status --hostname github.com >/dev/null 2>&1 && gh auth setup-git --hostname github.com >/dev/null 2>&1", None).await.map_err(|_| "GitHub authentication missing; run gh auth login separately on the worker")?;
-            self.checkpoint(name, "authentication:github")?;
+            let result: Result<(), String> = async {
+                self.begin(name, "authentication:github")?;
+                self.population_command(request, path, "gh auth status --hostname github.com >/dev/null 2>&1 && gh auth setup-git --hostname github.com >/dev/null 2>&1", None).await.map_err(|_| "GitHub authentication missing; run gh auth login separately on the worker")?;
+                self.checkpoint(name, "authentication:github")?;
+                Ok(())
+            }.await;
+            self.population_result(name, "authentication:github", result)?;
         }
         if let Some(tools) = &request.tools {
             for id in &tools.agents {
                 let step = format!("authentication:{id}");
-                self.begin(name, &step)?;
-                let check = match id.as_str() {
-                    "codex-acp" => "codex login status",
-                    "claude-acp" => "claude auth status",
-                    _ => return Err("agent authentication verification unsupported; sign in separately on the worker".into()),
-                };
-                self.population_command(request, path, &format!("{check} >/dev/null 2>&1"), None).await.map_err(|_| "agent authentication unavailable; install the provider CLI and sign in separately on the worker")?;
-                self.checkpoint(name, &step)?;
+                let result: Result<(), String> = async {
+                    self.begin(name, &step)?;
+                    let check = match id.as_str() {
+                        "codex-acp" => "codex login status",
+                        "claude-acp" => "claude auth status",
+                        _ => return Err("agent authentication verification unsupported; sign in separately on the worker".into()),
+                    };
+                    self.population_command(request, path, &format!("{check} >/dev/null 2>&1"), None).await.map_err(|_| "agent authentication unavailable; install the provider CLI and sign in separately on the worker")?;
+                    self.checkpoint(name, &step)?;
+                    Ok(())
+                }.await;
+                self.population_result(name, &step, result)?;
             }
         }
         Ok(())

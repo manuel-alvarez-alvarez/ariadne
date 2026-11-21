@@ -136,6 +136,15 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
 
     let outcome = match cli.command {
         Command::Host {
+            command: HostCommand::Resume { name },
+        } => hosts::resume(&client, &name, format).await,
+        Command::Host {
+            command: HostCommand::Inspect { name, ssh },
+        } => hosts::inspect(&client, &name, &ssh).await,
+        Command::Host {
+            command: HostCommand::Review { name, request },
+        } => hosts::review(&client, &name, &request).await,
+        Command::Host {
             command: HostCommand::Update { name, request },
         } => hosts::setup(&client, &name, Some(&request), format, true).await,
         Command::Host {

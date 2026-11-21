@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
+mod inspect;
 mod populate;
 mod repositories;
 use populate::selection_steps;
@@ -194,6 +195,19 @@ impl Hosts {
             .unwrap()
             .get(name)
             .map(|r| r.progress.clone())
+    }
+
+    pub(crate) fn resume_setup(&self, name: String) -> Result<SetupDto, String> {
+        let request = self
+            .0
+            .setup
+            .lock()
+            .unwrap()
+            .get(&name)
+            .ok_or("Unknown worker setup. Start setup with a reviewed request first.")?
+            .request
+            .clone();
+        self.setup(name, request)
     }
 
     pub(crate) fn setup(&self, name: String, request: SetupRequest) -> Result<SetupDto, String> {
@@ -562,17 +576,11 @@ impl Hosts {
         let start = format!("__ARIADNE_PATH_{token}_START__");
         let end = format!("__ARIADNE_PATH_{token}_END__");
         let path_command = quote(&format!("printf '%s%s%s' '{start}' \"$PATH\" '{end}'"));
-        let probe_tools = if request.tools.is_some() {
-            "tar"
-        } else {
-            "git tar"
-        };
         let script = format!(
             r#"set -eu
 uname -s
 uname -m
 printf '%s\n' "$HOME"
-for tool in {probe_tools}; do command -v "$tool" >/dev/null || exit 12; done
 path_start='{start}'
 path_end='{end}'
 if remote_path=$("${{SHELL:-/bin/sh}}" -lc {path_command} 2>/dev/null); then
@@ -593,11 +601,13 @@ else
 fi
 "#
         );
-        let probe = self.ssh(request, &script, None).await.map_err(|_| "SSH probe failed; check SSH access and ask the administrator to install git and tar".to_owned())?;
+        let probe = self.ssh(request, &script, None).await.map_err(|_| {
+            "SSH probe failed; check SSH access and the worker shell configuration".to_owned()
+        })?;
         let lines: Vec<_> = probe.splitn(4, '\n').collect();
         if lines.len() != 4 || !lines[2].starts_with('/') || lines[2].chars().any(char::is_control)
         {
-            return Err("SSH probe failed; install git and tar through the administrator".into());
+            return Err("SSH probe failed; check the worker platform and home directory".into());
         }
         let captured_path = lines[3];
         if captured_path.chars().any(char::is_control) {
@@ -641,15 +651,31 @@ fi
         let stage = format!("{home}/.ariadne/worker-setup-{name}");
         if binaries {
             self.begin(name, "validate")?;
-            let source = self.binaries(name, request, target).await?;
-            let cli = std::fs::read(&source.0).map_err(|_| "cannot read the local CLI binary")?;
-            let daemon =
-                std::fs::read(&source.1).map_err(|_| "cannot read the local daemon binary")?;
-            if !compatible(&cli, target) || !compatible(&daemon, target) {
-                return Err(format!(
-                    "both binaries must be compatible with {target}; nothing was transferred"
-                ));
+            let selected = async {
+                let source = self.binaries(name, request, target).await?;
+                let cli =
+                    std::fs::read(&source.0).map_err(|_| "Cannot read the local CLI binary.")?;
+                let daemon =
+                    std::fs::read(&source.1).map_err(|_| "Cannot read the local daemon binary.")?;
+                if !compatible(&cli, target) || !compatible(&daemon, target) {
+                    return Err(format!(
+                        "both binaries must be compatible with {target}; nothing was transferred"
+                    ));
+                }
+                Ok::<_, String>((cli, daemon))
             }
+            .await;
+            let (cli, daemon) = match selected {
+                Ok(selected) => selected,
+                Err(error) if !update => {
+                    self.population_result(name, "validate", Err(error))?;
+                    self.populate(name, request, &service_path).await?;
+                    let mut records = self.0.setup.lock().unwrap();
+                    records.get_mut(name).unwrap().progress.state = SetupState::Incomplete;
+                    return save(&self.0.cfg.root, &records);
+                }
+                Err(error) => return Err(error),
+            };
             self.checkpoint(name, "validate")?;
             if !installed {
                 self.begin(name, "transfer")?;
@@ -714,6 +740,17 @@ fi
         self.checkpoint(name, "health")?;
         self.setup_repositories(name, request, home, &remote, &service_path)
             .await?;
+        if !update
+            && self.0.setup.lock().unwrap()[name]
+                .progress
+                .steps
+                .iter()
+                .any(|s| s.error.is_some())
+        {
+            let mut records = self.0.setup.lock().unwrap();
+            records.get_mut(name).unwrap().progress.state = SetupState::Incomplete;
+            return save(&self.0.cfg.root, &records);
+        }
         self.begin(name, "register")?;
         if !update {
             let _mutation = self.mutation().await;

@@ -215,3 +215,39 @@ pub(super) async fn delete(
         .map_err(ApiError::bad_request)?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[utoipa::path(post, path="/v1/hosts/{name}/setup/inspect", tag="hosts", params(("name"=String, Path)), request_body=ariadne_api::hosts::InspectRequest, responses((status=200,body=ariadne_api::hosts::InspectionDto)))]
+pub(super) async fn inspect_setup(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Json(request): Json<ariadne_api::hosts::InspectRequest>,
+) -> ApiResult<Json<ariadne_api::hosts::InspectionDto>> {
+    s.hosts
+        .inspect_setup(&name, request)
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+#[utoipa::path(post, path="/v1/hosts/{name}/setup/review", tag="hosts", params(("name"=String, Path)), request_body=ariadne_api::hosts::SetupRequest, responses((status=200,body=ariadne_api::hosts::SetupReviewDto)))]
+pub(super) async fn review_setup(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Json(request): Json<ariadne_api::hosts::SetupRequest>,
+) -> ApiResult<Json<ariadne_api::hosts::SetupReviewDto>> {
+    s.hosts
+        .review_setup(&name, request)
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+#[utoipa::path(post, path="/v1/hosts/{name}/setup/resume", tag="hosts", params(("name"=String, Path)), responses((status=202,body=ariadne_api::hosts::SetupDto)))]
+pub(super) async fn resume_setup(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<(StatusCode, Json<ariadne_api::hosts::SetupDto>)> {
+    s.hosts
+        .resume_setup(name)
+        .map(|p| (StatusCode::ACCEPTED, Json(p)))
+        .map_err(ApiError::bad_request)
+}

@@ -282,6 +282,9 @@ const KINDS: &[(&str, Kind)] = &[
     ("goal ls", Kind::List),
     ("goal rm", Kind::Write),
     ("host ls", Kind::Local(REGISTRY)),
+    ("host inspect", Kind::Local(REGISTRY)),
+    ("host resume", Kind::Local(REGISTRY)),
+    ("host review", Kind::Local(REGISTRY)),
     (
         "host setup",
         Kind::Local("worker setup runs on the local daemon"),
@@ -1180,6 +1183,10 @@ pub(crate) async fn setup(
     } else {
         client.get_json(&path).await?
     };
+    show_setup(progress, format, update)
+}
+
+fn show_setup(progress: ariadne_api::hosts::SetupDto, format: Format, update: bool) -> Result<()> {
     if format == Format::Json {
         output::print_json(&progress)?;
     } else {
@@ -1205,6 +1212,51 @@ pub(crate) async fn setup(
         .err());
     }
     Ok(())
+}
+
+/// Read-only inspection uses the settings daemon's SSH configuration.
+pub(crate) async fn inspect(client: &Client, name: &str, ssh: &str) -> Result<()> {
+    validate_setup_name(name)?;
+    let result: ariadne_api::hosts::InspectionDto = client
+        .post_json(
+            &format!("/v1/hosts/{name}/setup/inspect"),
+            &ariadne_api::hosts::InspectRequest { ssh: ssh.into() },
+        )
+        .await?;
+    output::print_json(&result)?;
+    Ok(())
+}
+
+pub(crate) async fn review(client: &Client, name: &str, file: &std::path::Path) -> Result<()> {
+    validate_setup_name(name)?;
+    let request: ariadne_api::hosts::SetupRequest = serde_json::from_slice(&std::fs::read(file)?)?;
+    let result: ariadne_api::hosts::SetupReviewDto = client
+        .post_json(&format!("/v1/hosts/{name}/setup/review"), &request)
+        .await?;
+    output::print_json(&result)?;
+    Ok(())
+}
+
+fn validate_setup_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c))
+    {
+        return Err(Failure::usage("invalid worker name").err());
+    }
+    Ok(())
+}
+
+pub(crate) async fn resume(client: &Client, name: &str, format: Format) -> Result<()> {
+    validate_setup_name(name)?;
+    let progress = client
+        .post_json(
+            &format!("/v1/hosts/{name}/setup/resume"),
+            &serde_json::json!({}),
+        )
+        .await?;
+    show_setup(progress, format, false)
 }
 
 #[cfg(test)]

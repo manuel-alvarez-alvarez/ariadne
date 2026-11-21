@@ -291,7 +291,7 @@ picker, the Hosts screen and one stream per host — is spec
     Launchd stores the XML-escaped PATH in its `EnvironmentVariables` dictionary.
     Existing service definitions, including PATH and machine-specific settings, remain unchanged through retries.
     Configuration and worker data remain intact.
-    Missing git, tar, user services, or Linux lingering produce prerequisite guidance without administrator commands.
+    Inspection reports missing Git, tar, user services, and Linux lingering without administrator commands.
     An existing custom socket must be supplied through `remote`.
 49. Progress states are `pending`, `running`, `incomplete`, `failed`, and `complete`.
     Base steps are probe, validate, transfer, install, service, health, and register.
@@ -303,7 +303,7 @@ picker, the Hosts screen and one stream per host — is spec
     Restart converts interrupted operations to `incomplete`. The register step writes the host into the database.
     Setup records hold operations only. Restart never restores connections from `worker-setup.json`.
     The same request resumes setup without transferring installed binaries again.
-    Retry rechecks access and binaries, restarts the service, and checks health.
+    Retry rechecks access and binaries, preserves completed package installations, restarts the service, and checks health.
     Concurrent repeats return the existing operation. Changed requests are refused while setup is incomplete.
     After completion, repository selections can change with the same SSH access and binary source.
     A complete request stays complete on repetition.
@@ -451,6 +451,30 @@ picker, the Hosts screen and one stream per host — is spec
     The Desktop Hosts screen offers Update worker with independent binary and tool selections.
     It uses saved SSH settings and permits revised selections after failure.
     Both interfaces show individual steps and retained failures.
+
+### Inspection, review, and resume
+
+75. `POST /v1/hosts/{name}/setup/inspect` accepts only an SSH address and changes no worker files.
+    Inspection requires an account with configured noninteractive SSH authentication and host trust.
+    It reports supported platform targets, command availability, credential-file presence, and user-service prerequisites.
+    Provider authentication remains unverified until application because provider commands can create files.
+    Each check includes an identifier, satisfaction state, missing capability, resolution, and recheck instructions.
+    Supported transfers remain Codex file credentials and GitHub tokens.
+76. `POST /v1/hosts/{name}/setup/review` accepts the existing setup request and starts no durable operation.
+    Review uses the same inspection result as CLI and Desktop.
+    It lists installations, selected transfers, repository destinations, preserved machine settings, and prerequisites.
+    Local executable compatibility appears before application. Release verification retains rule 47.
+    Credential values and provider command output never enter inspection or review responses.
+77. Setup continues independent selected tool and credential actions after prerequisite failures.
+    It also continues independent repository selections after clone or registration failures.
+    A failed selection keeps its error and prevents setup completion and initial host registration.
+    Successful installation and credential checkpoints prevent repeated work.
+    Authentication checks run again on retry. Explicit worker-update policy remains unchanged.
+78. `POST /v1/hosts/{name}/setup/resume` retries the exact durable request without new selections.
+    Existing setup POST and GET routes retain their request and progress formats.
+    CLI provides `host inspect`, `host review`, and `host resume` through the local settings daemon.
+    Desktop requires inspection and review before application and invalidates review when selections change.
+    Desktop can load progress by worker name and resume the saved operation.
 
 ## Acceptance criteria
 
@@ -673,6 +697,12 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
 - CLI listings expose pending restart (`crates/ariadne-cli/tests/hosts.rs::named_hosts_and_guards_use_the_local_registry`).
   Desktop sync lines expose pending restart and configuration errors
   (`ui/src/components/host-sync.test.tsx`: `shows configuration status %s`).
+
+Inspection and review proof: `hosts.rs::inspection_needs_only_ssh_and_does_not_install_or_register`
+and `hosts.rs::review_lists_transfers_and_manual_actions_without_changing_the_worker`.
+Partial setup proof: `hosts.rs::setup_reports_custom_tools_without_executing_install_commands`.
+Resume proof: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
+Desktop proof: `ui/src/features/hosts/worker-setup.test.tsx`.
 
 ## Sources
 

@@ -889,7 +889,16 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
 
 ## Install an SSH worker
 
-1. Create a request file on the machine where you run the CLI:
+1. Create a worker account and configure noninteractive SSH authentication and host trust.
+2. Inspect the worker with `ariadne host inspect builder --ssh ssh://worker@build-machine:22`.
+
+   Inspection requires no worker tools and changes no worker files.
+   It reports the platform, available commands, credential-file presence, and user-service prerequisites.
+   Provider login verification runs during setup because provider commands can create files.
+   Each prerequisite names the missing capability, its resolution, and the recheck procedure.
+   Inspection also lists supported agent packages and credential transfers.
+
+3. Create a request file on the machine where you run the CLI:
 
    ```json
    {
@@ -938,7 +947,7 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
    Other agents lack supported authentication checks and leave setup incomplete.
    Complete their login separately; setup does not automate provider login flows.
    Progress names each tool, credential transfer, and authentication check.
-   Retries preserve successful credential transfers and recheck programs and authentication.
+   Retries preserve successful installations and credential transfers. Authentication checks run again.
    npm checks the selected package in the worker user's global installation prefix and preserves installed packages.
    Retry with exactly the original request, including its selections.
 
@@ -965,12 +974,25 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
    This explicit update preserves existing checkout paths.
    Desktop Settings provides repository checkboxes and editable destinations in the worker setup form.
 
-2. Start setup with `ariadne host setup builder --request worker.json`.
-3. Read progress with `ariadne host setup-status builder`.
-4. Correct any reported prerequisite and repeat the original setup command.
+4. Review the plan with `ariadne host review builder --request worker.json`.
+
+   Review shows installations, selected credential transfers, repository destinations, preserved settings, and prerequisites.
+   Review changes no worker files and starts no setup operation.
+
+5. Apply the selections with `ariadne host setup builder --request worker.json`.
+6. Read progress with `ariadne host setup-status builder`.
+7. Resolve manual prerequisites on the worker.
+8. Run `ariadne host resume builder` to recheck prerequisites and continue the saved operation.
+
+Setup continues independent automatic actions when a selected tool or login needs manual action.
+The worker remains incomplete until all selected required actions succeed.
+Resume retains completed installations, credential transfers, clones, and registrations.
+Desktop provides Inspect worker, Review setup, an explicit apply button, and Recheck and resume setup.
+A changed selection requires a new review before application.
+Load setup progress by worker name to resume without entering the selections again.
 
 Setup uses existing SSH keys, agent access, and SSH configuration without password prompts.
-Install tar on the worker before setup. Binary-only requests also require Git before setup.
+Inspection reports missing Git and tar. Install prerequisites manually when no supported automatic installation is available.
 Release verification requires GitHub CLI 2.102.0 or later on the source daemon machine.
 An administrator must provide missing system packages or user service support.
 Linux workers need systemd user services and lingering for operation after logout.

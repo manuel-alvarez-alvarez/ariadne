@@ -2366,3 +2366,68 @@ async fn maintenance_cli_reads_and_changes_the_selected_worker_hold() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn worker_inspection_review_and_resume_use_the_local_setup_contract() {
+    let inspection = json!({"target":"x86_64-unknown-linux-gnu","checks":[{
+        "id":"service","satisfied":false,"missing":"User services are unavailable",
+        "resolution":"Enable lingering on the worker","recheck":"Resume setup"
+    }],"supported_agents":["codex-acp"],"supported_credentials":["codex","github"]});
+    let inspected = inspection.clone();
+    let reviewed = json!({"inspection":inspection,"actions":["Copy selected Codex credentials"],"prerequisites":[],"preserved":["Preserve machine settings"]});
+    let app = Router::new()
+        .route("/v1/hosts/worker/setup/inspect", post(move |Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body, json!({"ssh":"ssh://worker@box"}));
+            Json(inspected)
+        }))
+        .route("/v1/hosts/worker/setup/review", post(move |Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body["credentials"], json!(["codex"]));
+            Json(reviewed)
+        }))
+        .route("/v1/hosts/worker/setup/resume", post(|| async {
+            Json(json!({"name":"worker","state":"incomplete","steps":[{"name":"service","complete":false,"error":"Enable lingering on the worker"}]}))
+        }));
+    let (endpoint, server) = serve(app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("request.json");
+    std::fs::write(&file, json!({"ssh":"ssh://worker@box","source":{"kind":"local","cli":"/cli","daemon":"/daemon"},"credentials":["codex"]}).to_string()).unwrap();
+    for (args, code, expected) in [
+        (
+            vec!["host", "inspect", "worker", "--ssh", "ssh://worker@box"],
+            0,
+            "Enable lingering on the worker",
+        ),
+        (
+            vec![
+                "host",
+                "review",
+                "worker",
+                "--request",
+                file.to_str().unwrap(),
+            ],
+            0,
+            "Preserve machine settings",
+        ),
+        (
+            vec!["host", "resume", "worker"],
+            2,
+            "Enable lingering on the worker",
+        ),
+    ] {
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_ariadne"))
+            .args(["--endpoint", &endpoint])
+            .args(args)
+            .env("ARIADNE_TELEMETRY", "off")
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
+    }
+    server.abort();
+}

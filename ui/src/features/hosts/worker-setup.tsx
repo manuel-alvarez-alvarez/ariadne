@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useId, useState } from "react"
 import { api, LOCAL_HOST, unwrap } from "@/api/client"
 import { qk } from "@/api/query-keys"
+import type { components } from "@/api/schema"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { describeError } from "@/lib/format"
@@ -44,6 +45,61 @@ export function WorkerSetup({ update = false }: { update?: boolean }) {
       void client.invalidateQueries({ queryKey: qk.hosts.lists() })
     }
   }, [client, status.data?.state])
+  const setupRequest = {
+    ...(Object.keys(destinations).length ? { repositories: destinations } : {}),
+    ...(agents.trim() || github
+      ? { tools: { agents: agents.split(/[\s,]+/).filter(Boolean), github } }
+      : {}),
+    ...(codexCredentials || githubCredentials
+      ? {
+          credentials: [
+            ...(codexCredentials ? ["codex"] : []),
+            ...(githubCredentials ? ["github"] : []),
+          ],
+        }
+      : {}),
+    ssh,
+    remote: remote || null,
+    source: release
+      ? { kind: "release" as const, repository, tag }
+      : { kind: "local" as const, cli, daemon },
+  }
+  const fingerprint = JSON.stringify({ name, ...setupRequest })
+  const [inspection, setInspection] = useState<{
+    connection: string
+    data: components["schemas"]["InspectionDto"]
+  } | null>(null)
+  const [review, setReview] = useState<{
+    fingerprint: string
+    data: components["schemas"]["SetupReviewDto"]
+  } | null>(null)
+  const connection = JSON.stringify({ name, ssh })
+  const inspected = inspection?.connection === connection
+  const reviewed = inspected && review?.fingerprint === fingerprint
+  const inspect = useMutation({
+    mutationFn: async () => ({
+      connection,
+      data: await unwrap(
+        api(LOCAL_HOST).POST("/v1/hosts/{name}/setup/inspect", {
+          params: { path: { name } },
+          body: { ssh },
+        }),
+      ),
+    }),
+    onSuccess: setInspection,
+  })
+  const preview = useMutation({
+    mutationFn: async () => ({
+      fingerprint,
+      data: await unwrap(
+        api(LOCAL_HOST).POST("/v1/hosts/{name}/setup/review", {
+          params: { path: { name } },
+          body: setupRequest,
+        }),
+      ),
+    }),
+    onSuccess: setReview,
+  })
   const start = useMutation({
     mutationFn: () => {
       const source = release
@@ -64,21 +120,7 @@ export function WorkerSetup({ update = false }: { update?: boolean }) {
       return unwrap(
         api(LOCAL_HOST).POST("/v1/hosts/{name}/setup", {
           params: { path: { name } },
-          body: {
-            ...(Object.keys(destinations).length ? { repositories: destinations } : {}),
-            ...(agents.trim() || github ? { tools: selectedTools } : {}),
-            ...(codexCredentials || githubCredentials
-              ? {
-                  credentials: [
-                    ...(codexCredentials ? ["codex"] : []),
-                    ...(githubCredentials ? ["github"] : []),
-                  ],
-                }
-              : {}),
-            ssh,
-            remote: remote || null,
-            source,
-          },
+          body: setupRequest,
         }),
       )
     },
@@ -88,7 +130,23 @@ export function WorkerSetup({ update = false }: { update?: boolean }) {
       void client.invalidateQueries({ queryKey: qk.hosts.lists() })
     },
   })
-  const busy = start.isPending || ["pending", "running"].includes(status.data?.state ?? "")
+  const resume = useMutation({
+    mutationFn: () =>
+      unwrap(
+        api(LOCAL_HOST).POST("/v1/hosts/{name}/setup/resume", {
+          params: { path: { name: active } },
+        }),
+      ),
+    onSuccess: (progress) => {
+      client.setQueryData(progressKey(active), progress)
+    },
+  })
+  const busy =
+    resume.isPending ||
+    inspect.isPending ||
+    preview.isPending ||
+    start.isPending ||
+    ["pending", "running"].includes(status.data?.state ?? "")
   return (
     <fieldset className="flex flex-col gap-2" aria-label="SSH worker setup">
       <h3>{update ? "Update an SSH worker when idle" : "Install an SSH worker"}</h3>
@@ -313,12 +371,73 @@ export function WorkerSetup({ update = false }: { update?: boolean }) {
           </fieldset>
         </>
       )}
+      {!update ? (
+        <>
+          <Button type="button" disabled={busy || !name || !ssh} onClick={() => inspect.mutate()}>
+            Inspect worker
+          </Button>
+          {inspected && inspection ? (
+            <div role="status">
+              <p>Worker target: {inspection.data.target}</p>
+              <p>Supported agents: {inspection.data.supported_agents.join(", ")}</p>
+              {inspection.data.checks.map((check) => (
+                <p key={check.id}>
+                  {check.id}: {check.satisfied ? "available" : check.missing}{" "}
+                  {!check.satisfied ? `${check.resolution} ${check.recheck}` : ""}
+                </p>
+              ))}
+              <Button
+                type="button"
+                disabled={
+                  busy ||
+                  (!cli && !release) ||
+                  (!daemon && !release) ||
+                  (release && (!repository || !tag))
+                }
+                onClick={() => preview.mutate()}
+              >
+                Review setup
+              </Button>
+            </div>
+          ) : null}
+          {reviewed && review ? (
+            <section aria-label="Setup preview">
+              <h4>Planned actions</h4>
+              <ul>
+                {review.data.actions.map((action) => (
+                  <li key={action}>{action}</li>
+                ))}
+              </ul>
+              <h4>Preserved settings</h4>
+              <ul>
+                {review.data.preserved.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+              <h4>Prerequisites</h4>
+              {review.data.prerequisites.map((check) => (
+                <p key={check.id}>
+                  {check.id}:{" "}
+                  {check.satisfied
+                    ? "satisfied"
+                    : `${check.missing} ${check.resolution} ${check.recheck}`}
+                </p>
+              ))}
+              <p>
+                Apply independent actions now. Setup stays incomplete until all required actions
+                succeed.
+              </p>
+            </section>
+          ) : null}
+        </>
+      ) : null}
       <div className="flex gap-2">
         <Button
           type="button"
           onClick={() => start.mutate()}
           disabled={
             busy ||
+            (!update && !reviewed) ||
             !name ||
             (!update && !ssh) ||
             (update && !binaries && !tools) ||
@@ -339,12 +458,21 @@ export function WorkerSetup({ update = false }: { update?: boolean }) {
           Load {operation} progress
         </Button>
       </div>
-      {start.error || status.error ? (
-        <p role="alert">{describeError(start.error ?? status.error)}</p>
+      {resume.error || inspect.error || preview.error || start.error || status.error ? (
+        <p role="alert">
+          {describeError(
+            resume.error ?? inspect.error ?? preview.error ?? start.error ?? status.error,
+          )}
+        </p>
       ) : null}
       {status.data ? (
         <div role="status">
           <p>{status.data.state}</p>
+          {!update && ["incomplete", "failed"].includes(status.data.state) ? (
+            <Button type="button" disabled={busy} onClick={() => resume.mutate()}>
+              Recheck and resume setup
+            </Button>
+          ) : null}
           <ol>
             {status.data.steps.map((step) => (
               <li key={step.name}>

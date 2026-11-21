@@ -648,7 +648,7 @@ async fn setup_preserves_installation_after_service_failure_and_retries_safely()
         std::fs::remove_file(fail).unwrap();
         let _: Value = h
             .json(
-                post_json("/v1/hosts/builder/setup", request),
+                post_json("/v1/hosts/builder/setup/resume", json!({})),
                 axum::http::StatusCode::ACCEPTED,
             )
             .await;
@@ -1120,13 +1120,16 @@ async fn setup_reports_custom_tools_without_executing_install_commands() {
     std::fs::write(&daemon, &header).unwrap();
     let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
     let h = harness().ssh(&ssh).await;
+    let source = h.launcher.cfg.native_home.join(".codex/auth.json");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, r#"{"token":"private-test-value"}"#).unwrap();
     let _: Value = h
         .json(
             common::post_json(
                 "/v1/hosts/tools/setup",
                 json!({
                     "ssh":"ssh://worker@box", "source":{"kind":"local","cli":cli,"daemon":daemon},
-                    "tools":{"agents":["custom-agent"],"github":false}
+                    "tools":{"agents":["custom-agent"],"github":false}, "credentials":["codex"]
                 }),
             ),
             axum::http::StatusCode::ACCEPTED,
@@ -1137,6 +1140,10 @@ async fn setup_reports_custom_tools_without_executing_install_commands() {
         state["state"] == "incomplete"
     })
     .await;
+    assert_eq!(
+        std::fs::read(remote.path().join(".codex/auth.json")).unwrap(),
+        std::fs::read(&source).unwrap()
+    );
     let state: Value = h.get("/v1/hosts/tools/setup").await;
     let step = state["steps"]
         .as_array()
@@ -1152,7 +1159,7 @@ async fn setup_reports_custom_tools_without_executing_install_commands() {
             .contains("manual installation")
     );
     assert!(
-        !remote
+        remote
             .path()
             .join(".config/systemd/user/ariadned.service")
             .exists()
@@ -2017,4 +2024,103 @@ esac
         std::fs::read_to_string(f.remote.path().join("uv-version")).unwrap(),
         "current"
     );
+}
+
+#[tokio::test]
+async fn inspection_needs_only_ssh_and_does_not_install_or_register() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let result: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/builder/setup/inspect",
+                json!({"ssh":"ssh://worker@box"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(result["target"], "x86_64-unknown-linux-gnu");
+    assert!(
+        result["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "service")
+    );
+    assert!(std::fs::read_dir(remote.path()).unwrap().next().is_none());
+    assert!(!remote.path().join(".ariadne").exists());
+    let hosts: Value = h.get("/v1/hosts").await;
+    assert_eq!(hosts.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn review_lists_transfers_and_manual_actions_without_changing_the_worker() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let source = h.launcher.cfg.native_home.join(".codex/auth.json");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(source, r#"{"token":"review-private-value"}"#).unwrap();
+    let result: Value = h.json(common::post_json("/v1/hosts/builder/setup/review", json!({
+        "ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+        "tools":{"agents":["custom-agent"],"github":false}, "credentials":["codex"]
+    })), axum::http::StatusCode::OK).await;
+    assert!(
+        result["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a.as_str().unwrap().contains("Codex"))
+    );
+    assert!(
+        result["prerequisites"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == "binaries" && p["satisfied"] == false)
+    );
+    assert!(
+        result["preserved"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p.as_str().unwrap().contains("machine"))
+    );
+    assert!(!result.to_string().contains("review-private-value"));
+    assert!(!remote.path().join(".local").exists());
+}
+
+#[tokio::test]
+async fn missing_binaries_do_not_block_an_independent_selected_credential_transfer() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let source = h.launcher.cfg.native_home.join(".codex/auth.json");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, r#"{"token":"test-private-value"}"#).unwrap();
+    let _: Value = h.json(common::post_json("/v1/hosts/partial/setup", json!({"ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"}, "credentials":["codex"]})), axum::http::StatusCode::ACCEPTED).await;
+    common::eventually(common::TIMEOUT, "partial setup", || async {
+        let state: Value = h.get("/v1/hosts/partial/setup").await;
+        state["state"] == "incomplete"
+    })
+    .await;
+    let state: Value = h.get("/v1/hosts/partial/setup").await;
+    assert!(
+        state["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "credential:codex" && s["complete"] == true)
+    );
+    assert_eq!(
+        std::fs::read(remote.path().join(".codex/auth.json")).unwrap(),
+        std::fs::read(source).unwrap()
+    );
+    assert!(!state.to_string().contains("test-private-value"));
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert!(!hosts.iter().any(|h| h.name == "partial"));
 }
