@@ -186,6 +186,183 @@ async fn openapi_carries_the_route_the_dto_and_the_event() {
 }
 
 #[tokio::test]
+async fn selected_repositories_clone_only_committed_files_and_retry_registration() {
+    use common::{TIMEOUT, eventually, post_json};
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let binaries = tempfile::tempdir().unwrap();
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    let cli = binaries.path().join("ariadne");
+    let daemon = binaries.path().join("ariadned");
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    let source = harness().await;
+    let source_path = source.git_repo("source-project");
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&source_path)
+            .args(["remote", "add", "origin"])
+            .arg(&source_path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let repository: Value = source
+        .json(
+            post_json(
+                "/v1/repositories",
+                json!({"path":source_path,"base_branch":"main"}),
+            ),
+            axum::http::StatusCode::CREATED,
+        )
+        .await;
+    std::fs::write(source_path.join("untracked-secret"), "private").unwrap();
+    std::fs::write(source_path.join("file.txt"), "uncommitted edit").unwrap();
+    let ssh = common::ssh::stub_ssh(
+        json!({"setup": {"home": remote.path(), "os":"Linux", "repository_fixture": repository}, "exit": 0}),
+    );
+    let h = harness().ssh(&ssh).await;
+    // Select a repository registered on the source settings daemon.
+    let selected: Value = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                json!({"path":source_path,"base_branch":"main"}),
+            ),
+            axum::http::StatusCode::CREATED,
+        )
+        .await;
+    let id = selected["id"].as_str().unwrap();
+    let destination = remote.path().join("workspace/project");
+    let fail = remote.path().join("fail-registration");
+    std::fs::write(&fail, "").unwrap();
+    let request = json!({"ssh":"ssh://box", "source":{"kind":"local","cli":cli,"daemon":daemon},"repositories":{id:destination}});
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/setup", request.clone()),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "registration failure", || async {
+        h.get::<Value>("/v1/hosts/builder/setup").await["state"] == "incomplete"
+    })
+    .await;
+    let progress: Value = h.get("/v1/hosts/builder/setup").await;
+    assert!(
+        progress["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == format!("clone:{id}") && s["complete"] == true),
+        "{progress}"
+    );
+    assert!(!destination.join("untracked-secret").exists());
+    assert_eq!(
+        std::fs::read_to_string(destination.join("file.txt")).unwrap(),
+        "v1\n"
+    );
+    std::fs::write(destination.join("worker-note"), "keep").unwrap();
+    std::fs::remove_file(&fail).unwrap();
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/setup", request.clone()),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "registration retry", || async {
+        h.get::<Value>("/v1/hosts/builder/setup").await["state"] == "complete"
+    })
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(destination.join("worker-note")).unwrap(),
+        "keep"
+    );
+    let reused_path = h.git_repo("reused-source");
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&reused_path)
+            .args(["remote", "add", "origin", "git@github.com:org/project.git"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let reused: Value = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                json!({"path":reused_path,"base_branch":"main"}),
+            ),
+            axum::http::StatusCode::CREATED,
+        )
+        .await;
+    let reused_id = reused["id"].as_str().unwrap();
+    let mut worker = reused.clone();
+    worker["id"] = json!("existing-worker-repository");
+    worker["path"] = json!("/existing/worker/checkout");
+    worker["forge"]["remote"] = json!("https-origin");
+    let registered_path = remote.path().join("worker-repositories.json");
+    std::fs::write(&registered_path, json!([worker]).to_string()).unwrap();
+    let proposed = remote.path().join("workspace/ignored-destination");
+    let mut update = request;
+    update["repositories"] = json!({reused_id:proposed});
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/setup", update),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "registered checkout reuse", || async {
+        h.get::<Value>("/v1/hosts/builder/setup").await["state"] == "complete"
+    })
+    .await;
+    assert!(!proposed.exists());
+    let retained: Value = serde_json::from_slice(&std::fs::read(registered_path).unwrap()).unwrap();
+    assert_eq!(retained[0]["path"], "/existing/worker/checkout");
+}
+
+#[tokio::test]
+async fn setup_rejects_unsafe_repository_destinations_before_starting() {
+    use serde_json::json;
+    let h = harness().await;
+    for destination in [
+        "relative/project",
+        "~other/project",
+        "/tmp/project\n",
+        "/tmp/project\0",
+    ] {
+        h.error(common::post_json("/v1/hosts/builder/setup", json!({"ssh":"ssh://box", "source":{"kind":"local","cli":"/cli","daemon":"/daemon"}, "repositories":{"source":destination}})), axum::http::StatusCode::BAD_REQUEST).await;
+    }
+    h.error(
+        common::get("/v1/hosts/builder/setup"),
+        axum::http::StatusCode::NOT_FOUND,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn setup_accepts_selected_repository_destinations() {
+    let h = harness().await;
+    let _: serde_json::Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/builder/setup",
+                serde_json::json!({
+                    "ssh": "ssh://box",
+                    "source": {"kind": "local", "cli": "/tmp/ariadne", "daemon": "/tmp/ariadned"},
+                    "repositories": {"source-id": "/home/worker/workspace/project"}
+                }),
+            ),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+}
+
+#[tokio::test]
 async fn setup_rejects_reserved_names_and_keeps_unknown_operations_absent() {
     let h = harness().await;
     h.error(common::post_json("/v1/hosts/local/setup", serde_json::json!({"ssh":"ssh://box", "source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}})), axum::http::StatusCode::BAD_REQUEST).await;

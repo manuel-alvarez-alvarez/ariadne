@@ -100,6 +100,9 @@ pub struct SetupRequest {
     /// Source credential references only: `codex` and `github`. Never send credential values.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub credentials: Vec<String>,
+    /// Selected source repository IDs and absolute destination paths on the worker.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub repositories: std::collections::BTreeMap<String, String>,
 }
 
 /// Binaries on the daemon machine, or assets from an explicitly selected release.

@@ -4632,6 +4632,10 @@ export interface components {
             /** @description Source credential references only: `codex` and `github`. Never send credential values. */
             credentials?: string[];
             remote?: string | null;
+            /** @description Selected source repository IDs and absolute destination paths on the worker. */
+            repositories?: {
+                [key: string]: string;
+            };
             source: components["schemas"]["BinarySource"];
             ssh: string;
             tools?: components["schemas"]["SetupTools"] | null;

@@ -1985,6 +1985,8 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
         {"name":"install", "complete":true, "error":null},
         {"name":"service", "complete":false, "error":"Enable user services"},
         {"name":"tool:codex-acp", "complete":true, "error":null},
+        {"name":"clone:source", "complete":true, "error":null},
+        {"name":"repository:source", "complete":false, "error":"Repository registration failed"},
         {"name":"authentication:github", "complete":false, "error":"Sign in separately on the worker"}
     ]});
     let answer = progress.clone();
@@ -2002,7 +2004,7 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("request.json");
-    std::fs::write(&file, json!({"ssh":"ssh://me@worker", "source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}, "tools":{"agents":["codex-acp"],"github":true}, "credentials":["codex"]}).to_string()).unwrap();
+    std::fs::write(&file, json!({"ssh":"ssh://me@worker", "source":{"kind":"local", "cli":"/tmp/ariadne", "daemon":"/tmp/ariadned"}, "tools":{"agents":["codex-acp"],"github":true}, "credentials":["codex"], "repositories":{"source":"~/workspace/project"}}).to_string()).unwrap();
     for args in [
         vec![
             "host",
@@ -2025,6 +2027,8 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
         assert!(text.contains("install: complete"), "{text}");
         assert!(text.contains("Enable user services"), "{text}");
         assert!(text.contains("tool:codex-acp: complete"), "{text}");
+        assert!(text.contains("clone:source: complete"), "{text}");
+        assert!(text.contains("Repository registration failed"), "{text}");
         assert!(text.contains("Sign in separately on the worker"), "{text}");
     }
     assert_eq!(
@@ -2037,5 +2041,9 @@ async fn worker_setup_and_status_show_each_completed_step_and_failure() {
         json!({"agents":["codex-acp"], "github":true})
     );
     assert_eq!(request["credentials"], json!(["codex"]));
+    assert_eq!(
+        request["repositories"],
+        json!({"source":"~/workspace/project"})
+    );
     server.abort();
 }
