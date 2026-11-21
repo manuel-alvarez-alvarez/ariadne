@@ -10442,7 +10442,8 @@
           "name",
           "complete",
           "title",
-          "manual"
+          "manual",
+          "group"
         ],
         "properties": {
           "complete": {
@@ -10452,6 +10453,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "group": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SetupGroup",
+                "description": "Who does the step's item: `manual` when `manual` is set, `already_present`\nwhen the step succeeded and installed nothing, else `ariadne_installs`.\nNull in a response from a daemon without groups."
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "manual": {

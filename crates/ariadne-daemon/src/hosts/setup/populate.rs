@@ -28,7 +28,12 @@ pub(super) fn selection_steps(request: &SetupRequest) -> Vec<String> {
     steps
 }
 
+/// Printed by a selection script that installs something. Without it, the
+/// step found its item present and reused it.
+const INSTALLED: &str = "__ARIADNE_INSTALLED__";
+
 // Homebrew refuses root. Require a user-owned prefix before any installation.
+// `ensure` prints INSTALLED only when it installs.
 const PREREQUISITE: &str = r#"
 upgrade() {
     command -v brew >/dev/null 2>&1 || exit 12
@@ -49,6 +54,7 @@ ensure() {
     prefix=$(brew --prefix)
     [ -O "$prefix" ] && [ -w "$prefix" ] || exit 12
     HOMEBREW_NO_AUTO_UPDATE=1 brew install "$2" >/dev/null 2>&1
+    echo __ARIADNE_INSTALLED__
     command -v "$1" >/dev/null 2>&1
     "$1" --version >/dev/null 2>&1
 }
@@ -63,7 +69,7 @@ fn npm_package(package: &str, update: bool) -> String {
     if update {
         format!("{install}\n{check}")
     } else {
-        format!("{check} || {install}\n{check}")
+        format!("{check} || {{ {install}; echo {INSTALLED}; }}\n{check}")
     }
 }
 
@@ -107,14 +113,24 @@ impl Hosts {
         path: &str,
         script: &str,
         input: Option<Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         self.ssh(
             request,
             &format!("set -eu; umask 077; export PATH={}; {script}", quote(path)),
             input,
         )
         .await
-        .map(|_| ())
+    }
+
+    /// Record whether a successful step reused an item that was already present.
+    fn found_present(&self, name: &str, step: &str, present: bool) {
+        let mut records = self.0.setup.lock().unwrap();
+        let record = records.get_mut(name).unwrap();
+        if present {
+            record.present.insert(step.into());
+        } else {
+            record.present.remove(step);
+        }
     }
 
     pub(super) async fn populate(
@@ -130,8 +146,10 @@ impl Hosts {
             let result = self.population_command(request, path,
                 "command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1", None)
                 .await
+                .map(|_| ())
                 .map_err(|_| "Git is missing or unusable on the worker; install Git on the worker and resume setup".to_owned());
             if result.is_ok() {
+                self.found_present(name, step, true);
                 self.checkpoint(name, step)?;
             }
             self.population_result(name, step, result)?;
@@ -152,8 +170,9 @@ impl Hosts {
                     } else {
                         format!("ensure {binary} {formula}")
                     };
-                    self.population_command(request, path, &format!("{PREREQUISITE}\n{action}"), None).await
+                    let output = self.population_command(request, path, &format!("{PREREQUISITE}\n{action}"), None).await
                         .map_err(|_| format!("missing {binary}; provide user-owned Homebrew or ask an administrator to install this prerequisite"))?;
+                    self.found_present(name, step, !update && !output.contains(INSTALLED));
                     self.checkpoint(name, step)?;
                     Ok(())
                 }.await;
@@ -197,22 +216,21 @@ impl Hosts {
                     } else if let Some(package) = distribution["uvx"]["package"].as_str() {
                         let runtime_command = if update { "upgrade uv" } else { "ensure uv uv" };
                         let upgrade = if update { " --upgrade" } else { "" };
+                        let (tool, version) = package.split_once("==").unwrap_or((package, ""));
                         format!(
-                            "{PREREQUISITE}\n{runtime_command}\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1\nuv tool install{upgrade} -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
+                            "{PREREQUISITE}\n{runtime_command}\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv tool list 2>/dev/null | grep -Fqx -- {listed} || echo {INSTALLED}\nuv python install >/dev/null 2>&1\nuv tool install{upgrade} -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
+                            listed = quote(&format!("{tool} v{version}")),
                             package = quote(package)
                         )
                     } else {
                         return Err("unsupported distribution; manual installation and worker login are required".into());
                     };
-                    let script = match id.as_str() {
-                        "codex-acp" => format!("{script}\n{}", npm_package("@openai/codex", update)),
-                        "claude-acp" => format!(
-                            "{script}\n{}",
-                            npm_package("@anthropic-ai/claude-code", update)
-                        ),
-                        _ => script,
+                    let script = match super::plan::provider_cli(id) {
+                        Some(cli) => format!("{script}\n{}", npm_package(cli, update)),
+                        None => script,
                     };
-                    self.population_command(request, path, &script, None).await.map_err(|_| "agent installation or runtime check failed; provide user-owned Homebrew or ask an administrator for Node/npm or uv prerequisites".to_owned())?;
+                    let output = self.population_command(request, path, &script, None).await.map_err(|_| "agent installation or runtime check failed; provide user-owned Homebrew or ask an administrator for Node/npm or uv prerequisites".to_owned())?;
+                    self.found_present(name, &step, !update && !output.contains(INSTALLED));
                     self.checkpoint(name, &step)?;
                     Ok(())
                 }.await;
@@ -270,6 +288,8 @@ impl Hosts {
             let result: Result<(), String> = async {
                 self.begin(name, "authentication:github")?;
                 self.population_command(request, path, "gh auth status --hostname github.com >/dev/null 2>&1 && gh auth setup-git --hostname github.com >/dev/null 2>&1", None).await.map_err(|_| "GitHub authentication missing; run gh auth login separately on the worker")?;
+                let copied = request.credentials.iter().any(|c| c == "github");
+                self.found_present(name, "authentication:github", !copied);
                 self.checkpoint(name, "authentication:github")?;
                 Ok(())
             }.await;
@@ -286,6 +306,8 @@ impl Hosts {
                         _ => return Err("agent authentication verification unsupported; sign in separately on the worker".into()),
                     };
                     self.population_command(request, path, &format!("{check} >/dev/null 2>&1"), None).await.map_err(|_| "agent authentication unavailable; install the provider CLI and sign in separately on the worker")?;
+                    let copied = id == "codex-acp" && request.credentials.iter().any(|c| c == "codex");
+                    self.found_present(name, &step, !copied);
                     self.checkpoint(name, &step)?;
                     Ok(())
                 }.await;

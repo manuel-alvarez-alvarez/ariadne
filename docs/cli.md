@@ -996,6 +996,8 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
 6. Read progress with `ariadne host setup-status builder`.
 
    Progress prints each step with its title, its name, its state and its error.
+   Each step is under one of the three groups.
+   A step that found its item on the worker and installed nothing is under **Already present**.
    A step that waits for manual work is under **Manual**, with the same reason and command as its plan item.
 
 7. Resolve manual prerequisites on the worker.

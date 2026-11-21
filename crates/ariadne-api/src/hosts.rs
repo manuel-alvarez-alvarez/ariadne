@@ -171,6 +171,12 @@ pub struct SetupStep {
     #[serde(default)]
     #[schema(required = true)]
     pub manual: Option<ManualAction>,
+    /// Who does the step's item: `manual` when `manual` is set, `already_present`
+    /// when the step succeeded and installed nothing, else `ariadne_installs`.
+    /// Null in a response from a daemon without groups.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub group: Option<SetupGroup>,
 }
 
 /// Who installs one item of a setup on the new machine.

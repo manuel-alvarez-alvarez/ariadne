@@ -1,7 +1,7 @@
 //! Plain titles and manual work for setup items. Review and progress share them,
 //! so a step that waits for the user says what its plan item says.
 use super::*;
-use ariadne_api::hosts::{ManualAction, SignIn};
+use ariadne_api::hosts::{ManualAction, SetupGroup, SignIn};
 
 const GITHUB_LOGIN: &str = "gh auth login --hostname github.com";
 
@@ -39,6 +39,83 @@ pub(super) fn install(cfg: &Config, id: &str) -> Install {
     } else {
         Install::Unsupported
     }
+}
+
+/// The npm or uv packages that setup installs for an agent, as setup names
+/// them, or `None` for an agent that setup cannot install.
+pub(super) fn packages(cfg: &Config, id: &str) -> Option<Vec<String>> {
+    let index = index();
+    let agent = index["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == id)?;
+    let package = match install(cfg, id) {
+        Install::Npm => agent["distribution"]["npx"]["package"].as_str()?,
+        Install::Uv => agent["distribution"]["uvx"]["package"].as_str()?,
+        Install::Custom | Install::Unsupported => return None,
+    };
+    let mut all = vec![package.to_owned()];
+    all.extend(provider_cli(id).map(String::from));
+    Some(all)
+}
+
+/// The provider CLI that setup installs beside an agent's ACP package.
+pub(super) fn provider_cli(id: &str) -> Option<&'static str> {
+    match id {
+        "codex-acp" => Some("@openai/codex"),
+        "claude-acp" => Some("@anthropic-ai/claude-code"),
+        _ => None,
+    }
+}
+
+/// A read-only probe that prints `package:<name>` for each package that setup
+/// would find installed and reuse. It prints no package manager output.
+pub(super) fn packages_script(cfg: &Config) -> String {
+    let index = index();
+    let mut npm = Vec::new();
+    let mut uv = Vec::new();
+    for agent in index["agents"].as_array().unwrap() {
+        let Some(id) = agent["id"].as_str() else {
+            continue;
+        };
+        match install(cfg, id) {
+            Install::Npm => npm.extend(agent["distribution"]["npx"]["package"].as_str().map(quote)),
+            Install::Uv => uv.extend(agent["distribution"]["uvx"]["package"].as_str().map(quote)),
+            Install::Custom | Install::Unsupported => {}
+        }
+    }
+    let providers = ["codex-acp", "claude-acp"]
+        .into_iter()
+        .filter_map(provider_cli)
+        .map(quote)
+        .collect::<Vec<_>>()
+        .join(" ");
+    // npm prints `path:name@version` lines. setup checks the exact registry version, or
+    // any version of a provider CLI, in the same `.local` prefix.
+    format!(
+        r#"if command -v npm >/dev/null 2>&1; then
+    listing="$(npm list --global --prefix "$HOME/.local" --depth=0 --parseable --long 2>/dev/null || true)
+"
+    for spec in {npm}; do case "$listing" in *":$spec
+"*) printf 'package:%s
+' "$spec";; esac; done
+    for name in {providers}; do case "$listing" in *":$name@"*) printf 'package:%s
+' "$name";; esac; done
+fi
+if command -v uv >/dev/null 2>&1; then
+    tools="
+$(uv tool list 2>/dev/null || true)
+"
+    for spec in {uv}; do case "$tools" in *"
+${{spec%%==*}} v${{spec#*==}}
+"*) printf 'package:%s
+' "$spec";; esac; done
+fi
+"#,
+        npm = npm.join(" "),
+        uv = uv.join(" "),
+    )
 }
 
 pub(super) fn agent_name(id: &str) -> String {
@@ -242,6 +319,13 @@ impl Record {
                 .as_ref()
                 .filter(|_| step.name != "validate" || local)
                 .and_then(|_| manual_for(cfg, &step.name, os));
+            step.group = Some(if step.manual.is_some() {
+                SetupGroup::Manual
+            } else if step.complete && self.present.contains(&step.name) {
+                SetupGroup::AlreadyPresent
+            } else {
+                SetupGroup::AriadneInstalls
+            });
         }
         progress
     }

@@ -4929,6 +4929,7 @@ export interface components {
         SetupStep: {
             complete: boolean;
             error?: string | null;
+            group: components["schemas"]["SetupGroup"] | null;
             manual: components["schemas"]["ManualAction"] | null;
             name: string;
             /** @description What the step does, in plain words. */

@@ -1,6 +1,7 @@
 //! Read-only worker inspection and a review of explicitly selected actions.
 use super::plan::{
-    Install, agent_name, agent_sign_in, index, install, manual_for, sign_ins, title,
+    Install, agent_name, agent_sign_in, index, install, manual_for, packages, packages_script,
+    sign_ins, title,
 };
 use super::*;
 use ariadne_api::hosts::{
@@ -43,7 +44,7 @@ impl Hosts {
         let request = connection(request.ssh);
         validate(name, &request)?;
         // Suppress all provider output. Only fixed capability identifiers leave the worker.
-        let output = self.ssh(&request, r#"set -eu
+        let script = r#"set -eu
 uname -s
 uname -m
 marker=__ARIADNE_INSPECT_PATH__
@@ -69,8 +70,12 @@ esac
 if [ -s "${XDG_CONFIG_HOME:-$HOME/.config}/gh/hosts.yml" ]; then echo credential-file:github; fi
 if [ -s "$HOME/.codex/auth.json" ]; then echo credential-file:codex; fi
 if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; fi
-exit 0
-"#, None).await.map_err(|_| "Inspection failed. Check the worker account, SSH keys, and configured host trust.".to_owned())?;
+"#;
+        let script = format!("{script}{}exit 0\n", packages_script(&self.0.cfg));
+        let output = self.ssh(&request, &script, None).await.map_err(|_| {
+            "Inspection failed. Check the worker account, SSH keys, and configured host trust."
+                .to_owned()
+        })?;
         let mut lines = output.lines();
         let target = match (lines.next(), lines.next()) {
             (Some("Linux"), Some("x86_64")) => "x86_64-unknown-linux-gnu",
@@ -146,21 +151,26 @@ exit 0
         let agents = ids
             .into_iter()
             .map(|id| {
+                let present = packages(&self.0.cfg, &id)
+                    .is_some_and(|all| all.iter().all(|p| has(&format!("package:{p}"))));
                 let installs = match install(&self.0.cfg, &id) {
                     Install::Npm => brew || (has("node") && has("npm")),
                     Install::Uv => brew || has("uv"),
                     Install::Custom | Install::Unsupported => false,
                 };
                 let key = format!("tool:{id}");
+                let group = if present {
+                    SetupGroup::AlreadyPresent
+                } else if installs {
+                    SetupGroup::AriadneInstalls
+                } else {
+                    SetupGroup::Manual
+                };
                 InspectedAgent {
                     name: agent_name(&id),
                     on_this_machine: local_agents.contains(&id),
-                    group: if installs {
-                        SetupGroup::AriadneInstalls
-                    } else {
-                        SetupGroup::Manual
-                    },
-                    manual: (!installs)
+                    group,
+                    manual: (group == SetupGroup::Manual)
                         .then(|| manual_for(&self.0.cfg, &key, Some(os)))
                         .flatten(),
                     sign_in: agent_sign_in(&id).map(String::from),
@@ -463,10 +473,14 @@ impl Hosts {
                     .map_or((SetupGroup::Manual, manual(&key)), |a| {
                         (a.group, a.manual.clone())
                     });
-                let detail = if group == SetupGroup::AriadneInstalls {
-                    format!("Install {name} from the shipped agent registry.")
-                } else {
-                    format!("Ariadne cannot install {name}.")
+                let detail = match group {
+                    SetupGroup::AriadneInstalls => {
+                        format!("Install {name} from the shipped agent registry.")
+                    }
+                    SetupGroup::AlreadyPresent => {
+                        format!("{name} is already on the new machine. Setup reuses it.")
+                    }
+                    SetupGroup::Manual => format!("Ariadne cannot install {name}."),
                 };
                 plan.push(item(key, group, detail, manual));
             }

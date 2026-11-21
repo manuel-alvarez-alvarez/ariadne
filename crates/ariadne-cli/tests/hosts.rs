@@ -2500,7 +2500,9 @@ async fn worker_inspection_review_and_status_print_three_groups_with_manual_comm
         {"id":"service","title":"Start the Ariadne service","group":"manual","detail":"The systemd user service is not ready","manual":linger}
     ]});
     let progress = json!({"name":"worker","state":"incomplete","steps":[
+        // A daemon without groups sends no `group`, as for `install` and `service`.
         {"name":"install","complete":true,"error":null,"title":"Install the Ariadne programs","manual":null},
+        {"name":"tool:git","complete":true,"error":null,"title":"Install Git","manual":null,"group":"already_present"},
         {"name":"service","complete":false,"error":"user service unavailable","title":"Start the Ariadne service","manual":linger}
     ]});
     let app = Router::new()
@@ -2579,10 +2581,13 @@ async fn worker_inspection_review_and_status_print_three_groups_with_manual_comm
     );
     assert!(text.contains("Manual:\n  Start the Ariadne service — The systemd user service is not ready\n    Ask an administrator to turn on lingering\n    $ sudo loginctl enable-linger \"$USER\""), "{text}");
     let text = run(vec!["host", "setup-status", "worker"]).await;
-    assert!(
-        text.contains("Ariadne installs:\n  Install the Ariadne programs — install: complete"),
-        "{text}"
-    );
+    let installs = text
+        .find("Ariadne installs:\n  Install the Ariadne programs — install: complete\n")
+        .expect(&text);
+    let present = text
+        .find("Already present:\n  Install Git — tool:git: complete\n")
+        .expect(&text);
+    assert!(installs < present, "{text}");
     assert!(text.contains("Manual:\n  Start the Ariadne service — service: pending — user service unavailable\n    Ask an administrator to turn on lingering\n    $ sudo loginctl enable-linger \"$USER\""), "{text}");
     server.abort();
 }

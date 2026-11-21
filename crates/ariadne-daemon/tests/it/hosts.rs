@@ -2308,6 +2308,115 @@ async fn a_step_that_waits_for_manual_work_says_what_its_plan_item_says() {
     }
 }
 
+/// A worker like [`worker_with_git_and_node`] whose `.local` npm prefix already
+/// holds the shipped Codex ACP package and the Codex CLI. Every npm install fails.
+fn worker_with_codex_installed(remote: &std::path::Path) -> std::path::PathBuf {
+    let bin = worker_with_git_and_node(remote);
+    let index: serde_json::Value =
+        serde_json::from_str(ariadne_daemon::acp_discovery::SHIPPED_INDEX).unwrap();
+    let spec = index["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "codex-acp")
+        .unwrap()["distribution"]["npx"]["package"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let npm = common::shared_script(&format!(
+        "#!/bin/sh\ncase \"$1\" in\nlist) case \"$*\" in *--parseable*) printf '%s\\n' \"$HOME/.local/lib/node_modules/codex-acp:{spec}\" \"$HOME/.local/lib/node_modules/@openai/codex:@openai/codex@1.0.0\";; esac; exit 0;;\n--version) exit 0;;\n*) exit 1;;\nesac\n"
+    ));
+    std::fs::remove_file(bin.join("npm")).unwrap();
+    std::os::unix::fs::symlink(npm, bin.join("npm")).unwrap();
+    bin
+}
+
+#[tokio::test]
+async fn an_agent_package_already_on_the_worker_is_already_present() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = worker_with_codex_installed(remote.path());
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path(),"path":bin},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let inspection: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/builder/setup/inspect",
+                json!({"ssh":"ssh://worker@box"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        group_of(&inspection["agents"], "codex-acp")["group"],
+        "already_present"
+    );
+    assert_eq!(
+        group_of(&inspection["agents"], "codex-acp")["manual"],
+        Value::Null
+    );
+    // The Claude ACP package is not in the prefix, so setup installs it.
+    assert_eq!(
+        group_of(&inspection["agents"], "claude-acp")["group"],
+        "ariadne_installs"
+    );
+    let review: Value = h.json(common::post_json("/v1/hosts/builder/setup/review", json!({
+        "ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+        "tools":{"agents":["codex-acp"],"github":false}
+    })), axum::http::StatusCode::OK).await;
+    assert_eq!(
+        group_of(&review["plan"], "tool:codex-acp")["group"],
+        "already_present"
+    );
+}
+
+#[tokio::test]
+async fn progress_puts_a_step_that_reused_a_present_item_in_already_present() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = worker_with_codex_installed(remote.path());
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path(),"path":bin},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let request = json!({
+        "ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+        "tools":{"agents":["codex-acp"],"github":false}
+    });
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/present/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "setup stops for manual work", || async {
+        let state: Value = h.get("/v1/hosts/present/setup").await;
+        state["state"] == "incomplete"
+    })
+    .await;
+    let state: Value = h.get("/v1/hosts/present/setup").await;
+    let groups: Vec<_> = state["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap(), s["group"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            ("probe", "ariadne_installs"),
+            ("validate", "manual"),
+            ("transfer", "ariadne_installs"),
+            ("install", "ariadne_installs"),
+            ("tool:git", "already_present"),
+            ("tool:codex-acp", "already_present"),
+            ("authentication:codex-acp", "manual"),
+            ("service", "ariadne_installs"),
+            ("health", "ariadne_installs"),
+            ("register", "ariadne_installs"),
+        ],
+        "{state}"
+    );
+}
+
 #[tokio::test]
 async fn missing_binaries_do_not_block_an_independent_selected_credential_transfer() {
     use serde_json::{Value, json};

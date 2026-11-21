@@ -26,6 +26,9 @@ pub(super) struct Record {
     /// The worker's platform target, once the probe has read it.
     #[serde(default)]
     target: Option<String>,
+    /// The successful steps that found their item present and installed nothing.
+    #[serde(default)]
+    present: std::collections::BTreeSet<String>,
 }
 
 fn with_binaries() -> bool {
@@ -62,6 +65,7 @@ fn steps(request: &SetupRequest, update: bool, binaries: bool) -> Vec<SetupStep>
             error: None,
             title: String::new(),
             manual: None,
+            group: None,
         })
         .collect()
 }
@@ -402,6 +406,7 @@ impl Hosts {
                                     error: None,
                                     title: String::new(),
                                     manual: None,
+                                    group: None,
                                 });
                             }
                         }
@@ -431,6 +436,7 @@ impl Hosts {
                     binaries,
                     active_step: None,
                     target: None,
+                    present: Default::default(),
                     progress: SetupDto {
                         name: worker.clone(),
                         state: SetupState::Pending,
@@ -457,6 +463,7 @@ impl Hosts {
                     error: None,
                     title: String::new(),
                     manual: None,
+                    group: None,
                 },
             );
         }

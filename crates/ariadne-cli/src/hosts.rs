@@ -1210,11 +1210,12 @@ fn show_setup(progress: ariadne_api::hosts::SetupDto, format: Format, update: bo
     } else {
         println!("{}: {:?}", progress.name, progress.state);
         print_groups(progress.steps.iter().map(|step| Grouped {
-            group: if step.manual.is_some() {
+            // An older daemon sends no group.
+            group: step.group.unwrap_or(if step.manual.is_some() {
                 SetupGroup::Manual
             } else {
                 SetupGroup::AriadneInstalls
-            },
+            }),
             title: step_title(step),
             detail: Some(format!(
                 "{}: {}{}",

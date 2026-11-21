@@ -502,6 +502,9 @@ picker, the Hosts screen and one stream per host — is spec
     `on_this_machine` is true when this daemon's agent registry reports the agent ready.
     An npm agent is `ariadne_installs` when the worker has Node.js and npm, or user-owned Homebrew.
     A uv agent is `ariadne_installs` when the worker has uv, or user-owned Homebrew.
+    An agent is `already_present` when setup would reuse its packages without installing them.
+    For npm, the `.local` prefix holds the exact registry version, and any Codex or Claude CLI that setup adds.
+    For uv, `uv tool list` shows the exact registry version. The probe prints only fixed package markers.
     Configured commands, binary distributions, and unknown agents are `manual`.
     `sign_in` names the `sign_ins` entry of the agent: `codex`, `claude`, `opencode`, or null.
 84. `InspectionDto.github` is `{group, manual}`. GitHub CLI on the worker is `already_present`.
@@ -514,10 +517,14 @@ picker, the Hosts screen and one stream per host — is spec
     Git is `prerequisite:git` without tool selections and `tool:git` with them.
     `manual` is set exactly for items in the `manual` group.
 87. `SetupStep.title` is a plain-words title for every step. `SetupStep.manual` is set when a failed step needs manual work.
+    `SetupStep.group` is `manual` when `manual` is set. It is `already_present` for a complete step that installed nothing:
+    a found Git, GitHub CLI, or agent package, and a sign-in check that no copy preceded. Otherwise it is `ariadne_installs`.
+    Updates always install, so their steps are never `already_present`.
     It equals the `manual` of the plan item with the same id. `validate` uses the `install` item.
     A failed `validate` step of a release source has no manual action.
 88. All new fields are additive. Existing request formats are unchanged.
-    The CLI reads responses without the new fields. Stored operations without them gain titles when read.
+    The CLI reads responses without the new fields. A step without `group` is `manual` when it has `manual`.
+    Stored operations without the new fields gain titles and groups when read.
 89. `host inspect`, `host review`, and `host setup-status` print items under "Ariadne installs", "Already present", and "Manual".
     Each manual item prints its reason and its command. `--format json` prints the DTO.
 
@@ -757,6 +764,8 @@ Desktop proof: `ui/src/features/hosts/worker-setup.test.tsx`.
 - Rules 79–82: `hosts.rs::inspection_names_who_installs_each_agent_github_and_each_sign_in`.
 - Rules 79 and 83: `hosts.rs::review_plans_each_requested_item_in_one_of_three_groups`.
 - Rule 84: `hosts.rs::a_step_that_waits_for_manual_work_says_what_its_plan_item_says`.
+- Rules 80, 83 and 84, present packages: `hosts.rs::an_agent_package_already_on_the_worker_is_already_present`
+  and `hosts.rs::progress_puts_a_step_that_reused_a_present_item_in_already_present`.
 - Rules 85 and 86: `crates/ariadne-cli/tests/hosts.rs::worker_inspection_review_and_status_print_three_groups_with_manual_commands`
   and `::worker_inspection_review_and_resume_use_the_local_setup_contract`, which reads responses without the new fields.
 
