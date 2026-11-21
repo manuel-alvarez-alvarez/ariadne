@@ -167,8 +167,11 @@ unique temporary filename and remains available after a purge.
 The installer registers a user service with restart-on-failure. Use
 `ariadne daemon start`, `ariadne daemon stop`, or `ariadne daemon restart` to
 control it, and `ariadne daemon status` to see its manager. The daemon starts
-the ACP agents as child processes and keeps their conversations available
-through the console.
+agents through tmux relays when available, with direct children as the fallback.
+Read their conversations through the console.
+Reinstall to update an existing Linux service for relay persistence across daemon stops.
+For an existing remote Linux worker, add `KillMode=process` under `[Service]` in its systemd unit.
+Run `systemctl --user daemon-reload` on that worker before restarting the daemon.
 
 On macOS the service is registered as interactive work (`ProcessType`
 `Interactive` in `~/Library/LaunchAgents/dev.ariadne.daemon.plist`). Without

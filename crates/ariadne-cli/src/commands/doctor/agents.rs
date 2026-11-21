@@ -113,6 +113,15 @@ pub(super) fn daemon_environment(
         daemon.path.clone().unwrap_or_else(|| "unset".to_string()),
     )];
 
+    if let Some(place) = &daemon.place {
+        let detail = format!("{}: {}", place.name, place.reason);
+        checks.push(if place.available {
+            Check::ok("session place", detail)
+        } else {
+            Check::fail("session place", detail)
+        });
+    }
+
     // A forge CLI is judged by the same two questions wherever it is reported
     // from, and neither of them stops a session being spawned.
     checks.extend(daemon.tools.iter().map(|tool| {
@@ -287,6 +296,11 @@ mod tests {
             writable: true,
         };
         let daemon = DaemonReportDto {
+            place: Some(ariadne_api::doctor::PlaceDto {
+                name: "tmux".into(),
+                reason: "herdr was not found; tmux is available".into(),
+                available: true,
+            }),
             version: "0.0.0".into(),
             path: Some("/usr/bin".into()),
             home: "/home/me/.ariadne".into(),
@@ -310,6 +324,10 @@ mod tests {
         assert!(by_name(&checks, "gh").detail.contains("not signed in"));
         assert_eq!(by_name(&checks, "python").status, Status::Ok);
         assert_eq!(by_name(&checks, "ai permissions").status, Status::Ok);
+        assert_eq!(
+            by_name(&checks, "session place").detail,
+            "tmux: herdr was not found; tmux is available"
+        );
 
         let checks = daemon_environment(None, None);
         assert_eq!(checks.len(), 1);

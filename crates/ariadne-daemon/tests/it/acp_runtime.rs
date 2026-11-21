@@ -976,7 +976,7 @@ async fn assert_launch_carries_mcp_and_skills(
 /// link, on a new session, on `session/resume` and on `session/load`.
 #[tokio::test]
 async fn every_supported_agent_launches_with_the_mcp_server_and_the_skills() {
-    for agent_id in SUPPORTED_AGENTS {
+    futures_util::future::join_all(SUPPORTED_AGENTS.map(|agent_id| async move {
         for load in [false, true] {
             let mut scripted = script();
             scripted["stored_sessions"] = json!(["stub-session"]);
@@ -1015,7 +1015,8 @@ async fn every_supported_agent_launches_with_the_mcp_server_and_the_skills() {
             assert_launch_carries_mcp_and_skills(&h, &session, &resumed["mcpServers"], agent_id)
                 .await;
         }
-    }
+    }))
+    .await;
 }
 
 /// A cancel ends the turn with every open permission answered `cancelled`,
@@ -1057,4 +1058,953 @@ async fn the_prompt_after_a_cancelled_turn_says_nobody_refused_its_calls() {
         prompts[2]
     );
     let _ = h.launcher.kill_session(&session.id).await;
+}
+
+#[tokio::test]
+async fn a_tmux_session_runs_acp_through_its_relay() {
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("tmux-acp").await;
+    h.agent_runs(&session).await;
+    let stored = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(stored.place.as_deref(), Some("tmux"));
+    assert!(
+        h.launcher
+            .cfg
+            .root
+            .join(format!("relays/{}.sock", session.id))
+            .exists()
+    );
+    let (status, _) = h
+        .send(common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            json!({"text":"continue through relay"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "relay prompt completion", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(
+        h.agent.calls_of("session/prompt").last().unwrap()["prompt"][0]["text"],
+        "continue through relay"
+    );
+    h.launcher.kill_session(&session.id).await.unwrap();
+    eventually(TIMEOUT, "relay pane stopped", || async {
+        !h.launcher
+            .cfg
+            .root
+            .join(format!("relays/{}.sock", session.id))
+            .exists()
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_automatic_resume_reselects_after_the_old_multiplexer_disappears() {
+    use ariadne_daemon::acp::{AcpLaunch, AcpRuntime};
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("tmux-reselect").await;
+    h.agent_runs(&session).await;
+    let saved = h
+        .launcher
+        .cfg
+        .root
+        .join(format!("relays/{}.launch.json", session.id));
+    let mut launch: AcpLaunch = serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+    launch.launch_id = ariadne_core::id::new_id();
+    launch.config.resume_session_id = h
+        .store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .internal_session_id;
+    h.store
+        .set_session_launch(&session.id, &launch.launch_id)
+        .await
+        .unwrap();
+    let empty_path = tempfile::tempdir().unwrap();
+    let runtime = AcpRuntime::new(h.store.clone())
+        .with_places(
+            h.launcher.cfg.root.clone(),
+            env!("CARGO_BIN_EXE_ariadned").into(),
+            None,
+        )
+        .with_place_path(empty_path.path().as_os_str().to_owned());
+    runtime.launch(launch).await.unwrap();
+    let row = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.place.as_deref(), Some("none"));
+    assert!(
+        !h.launcher
+            .cfg
+            .root
+            .join(format!("relays/{}.sock", session.id))
+            .exists()
+    );
+    eventually(TIMEOUT, "resumed ACP conversation", || async {
+        h.agent.calls_of("session/resume").len() == 1
+    })
+    .await;
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn a_missing_forced_place_refuses_a_resume_with_its_reason() {
+    use ariadne_daemon::acp::{AcpLaunch, AcpRuntime};
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("tmux-forced-resume").await;
+    h.agent_runs(&session).await;
+    let saved = h
+        .launcher
+        .cfg
+        .root
+        .join(format!("relays/{}.launch.json", session.id));
+    let mut launch: AcpLaunch = serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+    launch.launch_id = ariadne_core::id::new_id();
+    launch.config.resume_session_id = h
+        .store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .internal_session_id;
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("herdr".into()),
+    );
+    assert_eq!(
+        runtime.launch(launch).await.unwrap_err().to_string(),
+        "forced session place herdr was not found"
+    );
+    h.launcher.acp.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn a_tmux_permission_answer_reaches_the_agent_once() {
+    let mut scripted = script();
+    scripted["relay_parent"] = json!(true);
+    scripted["prompts"] = json!([{
+        "permission": {"toolCall": {"toolCallId":"write", "title":"Write", "kind":"write"},
+            "options":[{"optionId":"yes", "name":"Allow", "kind":"allow_once"}]},
+        "updates": [], "stop_reason":"end_turn"
+    }]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+    let replies = stub
+        .messages()
+        .into_iter()
+        .filter(|message| {
+            message.get("method").is_none()
+                && message.get("id").and_then(Value::as_str) == Some("permission-1")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(replies.len(), 1);
+    assert_eq!(
+        replies[0]["result"]["outcome"],
+        json!({"outcome":"selected", "optionId":"yes"})
+    );
+    let kinds = event_kinds(&h, &session.id).await;
+    for kind in ["permission_request", "permission.replied"] {
+        assert!(kinds.iter().any(|stored| stored == kind));
+    }
+    h.launcher.acp.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn daemon_disconnection_leaves_the_pane_relay_and_agent_alive() {
+    use ariadne_daemon::relay_link::RelayLink;
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("tmux-detach").await;
+    h.agent_runs(&session).await;
+    let before = h.store.get_session(&session.id).await.unwrap();
+    h.launcher.acp.detach_relays().await;
+    assert!(!h.launcher.acp.is_running(&session.id));
+    let row = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.status, before.status);
+    assert_eq!(row.launch_id, before.launch_id);
+    let mut link = RelayLink::connect(
+        h.store.clone(),
+        &h.launcher.cfg.root,
+        &session.id,
+        row.launch_id.as_deref().unwrap(),
+    )
+    .await
+    .unwrap();
+    link.send(
+        &json!({"jsonrpc":"2.0", "id":"after-stop", "method":"session/set_config_option",
+        "params":{"sessionId":row.internal_session_id, "configId":"model", "value":"test-model"}})
+        .to_string(),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let frame = link.receive().await.unwrap();
+            if frame["stream"] == "stdout" {
+                let message: Value = serde_json::from_str(frame["data"].as_str().unwrap()).unwrap();
+                if message["id"] == "after-stop" {
+                    assert!(message.get("result").is_some());
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.agent.calls_of("initialize").len(), 1);
+    assert!(
+        !event_kinds(&h, &session.id)
+            .await
+            .iter()
+            .any(|kind| kind == "session_end")
+    );
+}
+
+#[tokio::test]
+async fn reconnect_keeps_the_live_relay_place_when_the_forced_setting_changes() {
+    use ariadne_daemon::acp::AcpRuntime;
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("tmux-reconnect").await;
+    h.agent_runs(&session).await;
+    let before = h.store.get_session(&session.id).await.unwrap();
+    h.launcher.acp.detach_relays().await;
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("herdr".into()),
+    );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    assert!(runtime.is_running(&session.id));
+    let attached = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(attached.place.as_deref(), Some("tmux"));
+    assert_eq!(attached.launch_id, before.launch_id);
+    assert_eq!(attached.internal_session_id, before.internal_session_id);
+    let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
+        cfg: h.launcher.cfg.clone(),
+        forge_poll: Default::default(),
+        store: h.store.clone(),
+        git: ariadne_daemon::gitwt::GitManager,
+        acp: runtime.clone(),
+        registry: h.launcher.registry.clone(),
+        branches: ariadne_daemon::branch::BranchWatchers::new(h.bus.clone()),
+        live: Default::default(),
+    });
+    let scheduler = ariadne_daemon::scheduler::start(h.store.clone(), launcher, false, h.timeouts);
+    scheduler
+        .send(ariadne_daemon::scheduler::SchedEvent::FullReconcile)
+        .unwrap();
+    ariadne_daemon::scheduler::flush_for_test(&scheduler).await;
+    assert!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live()
+    );
+    runtime
+        .send_prompt(&session.id, "continue after reconnect".into())
+        .unwrap();
+    eventually(TIMEOUT, "reconnected prompt completion", || async {
+        h.agent.calls_of("session/prompt").len() == 1
+            && h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(h.agent.calls_of("initialize").len(), 1);
+    assert_eq!(h.agent.calls_of("session/new").len(), 1);
+    let kinds = event_kinds(&h, &session.id).await;
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| kind.as_str() == "session_start")
+            .count(),
+        1
+    );
+    assert!(!kinds.iter().any(|kind| kind == "session_end"));
+    h.store
+        .set_goal_status(
+            session.goal_id.as_deref().unwrap(),
+            ariadne_core::GoalStatus::Cancelled,
+        )
+        .await
+        .unwrap();
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn reconnect_restores_offline_text_usage_and_an_answered_permission_without_repeating_input()
+{
+    use ariadne_daemon::acp::AcpRuntime;
+    let agent_dir = tempfile::tempdir().unwrap();
+    let finish = agent_dir.path().join("finish");
+    let late = agent_dir.path().join("late");
+    let mut scripted = script();
+    scripted["relay_parent"] = json!(true);
+    scripted["prompts"] = json!([{
+        "permission": {"toolCall":{"toolCallId":"write", "title":"Write", "kind":"write"},
+            "options":[{"optionId":"yes","name":"Allow","kind":"allow_once"}]},
+        "updates":[{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"before "}}],
+        "wait_for":finish,
+        "updates_when":{"file":late,"updates":[{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"offline"}}]},
+        "usage":{"inputTokens":12,"cachedReadTokens":4,"outputTokens":3}, "stop_reason":"end_turn"
+    }]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let cast = acp_cast(&h).await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    let row = h.store.get_session(&session.id).await.unwrap();
+    eventually(TIMEOUT, "first text handled by the old daemon", || async {
+        h.store
+            .relay_outputs(&session.id, row.launch_id.as_deref().unwrap())
+            .await
+            .unwrap()
+            .iter()
+            .any(|output| {
+                let frame: Value = serde_json::from_str(&output.frame).unwrap();
+                output.processed
+                    && frame["data"]
+                        .as_str()
+                        .is_some_and(|data| data.contains("before "))
+            })
+    })
+    .await;
+    h.launcher.acp.detach_relays().await;
+    std::fs::write(&late, "1").unwrap();
+    let journal = h
+        .launcher
+        .cfg
+        .root
+        .join(format!("relays/{}.jsonl", session.id));
+    eventually(TIMEOUT, "offline text journaled", || async {
+        std::fs::read_to_string(&journal)
+            .unwrap()
+            .contains("offline")
+    })
+    .await;
+    std::fs::write(&finish, "1").unwrap();
+    eventually(TIMEOUT, "offline usage journaled", || async {
+        std::fs::read_to_string(&journal)
+            .unwrap()
+            .contains("outputTokens")
+    })
+    .await;
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("herdr".into()),
+    );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    eventually(TIMEOUT, "replayed turn stored", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let events = h.store.list_session_events(&session.id).await.unwrap();
+    let messages: Vec<Value> = events
+        .iter()
+        .filter(|event| event.kind == "agent_message")
+        .map(|event| serde_json::from_str(&event.payload).unwrap())
+        .collect();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["text"], "before offline");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "user_prompt_submit")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events.iter().filter(|event| event.kind == "stop").count(),
+        1
+    );
+    let usage = h.store.session_usage(&session.id).await.unwrap();
+    assert_eq!(
+        (
+            usage.input_tokens,
+            usage.cached_input_tokens,
+            usage.output_tokens
+        ),
+        (16, 4, 3)
+    );
+    assert_eq!(stub.calls_of("session/prompt").len(), 1);
+    assert_eq!(stub.calls_of("initialize").len(), 1);
+    assert_eq!(
+        stub.messages()
+            .iter()
+            .filter(|message| message.get("method").is_none() && message["id"] == "permission-1")
+            .count(),
+        1
+    );
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn an_unanswered_permission_returns_to_the_console_after_reconnect() {
+    use ariadne_daemon::acp::AcpRuntime;
+    use tower::ServiceExt;
+    let mut scripted = script();
+    scripted["relay_parent"] = json!(true);
+    scripted["prompts"] = json!([{"permission":{"toolCall":{"toolCallId":"write","title":"Write","kind":"write"},
+        "options":[{"optionId":"yes","name":"Allow","kind":"allow_once"}]}, "updates":[]}]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, ariadne_core::PermissionMode::Ask)
+        .await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "permission stored before disconnect", || async {
+        h.attention(&session).await == Some(ariadne_core::AttentionReason::WaitingPermission)
+    })
+    .await;
+    h.launcher.acp.detach_relays().await;
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("none".into()),
+    );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    eventually(TIMEOUT, "restored permission answer slot", || async {
+        runtime.permission_pending(&session.id)
+    })
+    .await;
+    let mut state = h.state.clone();
+    state.launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
+        cfg: h.launcher.cfg.clone(),
+        forge_poll: Default::default(),
+        store: h.store.clone(),
+        git: ariadne_daemon::gitwt::GitManager,
+        acp: runtime.clone(),
+        registry: h.launcher.registry.clone(),
+        branches: ariadne_daemon::branch::BranchWatchers::new(h.bus.clone()),
+        live: Default::default(),
+    });
+    let response = ariadne_daemon::http::router(state)
+        .oneshot(common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            json!({"text":"yes"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "restored permission turn complete", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let kinds = event_kinds(&h, &session.id).await;
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| kind.as_str() == "permission_request")
+            .count(),
+        1
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| kind.as_str() == "permission.replied")
+            .count(),
+        1
+    );
+    assert_eq!(stub.calls_of("session/prompt").len(), 1);
+    assert_eq!(
+        stub.messages()
+            .iter()
+            .filter(|message| message.get("method").is_none() && message["id"] == "permission-1")
+            .count(),
+        1
+    );
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn a_tmux_resume_replaces_the_old_pane_and_keeps_the_conversation() {
+    use ariadne_daemon::{
+        acp::{AcpLaunch, AcpRuntime},
+        place::Place,
+    };
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("tmux-new-pane").await;
+    h.agent_runs(&session).await;
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let old = place
+        .live_panes(&h.launcher.cfg.root)
+        .await
+        .unwrap()
+        .remove(0);
+    let saved = h
+        .launcher
+        .cfg
+        .root
+        .join(format!("relays/{}.launch.json", session.id));
+    let mut launch: AcpLaunch = serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+    let internal = h
+        .store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .internal_session_id;
+    launch.config.resume_session_id = internal.clone();
+    launch.launch_id = ariadne_core::id::new_id();
+    let launch_id = launch.launch_id.clone();
+    h.store
+        .set_session_launch(&session.id, &launch_id)
+        .await
+        .unwrap();
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("tmux".into()),
+    );
+    runtime.launch(launch).await.unwrap();
+    eventually(TIMEOUT, "resumed conversation opened", || async {
+        h.agent.calls_of("session/resume").len() == 1
+    })
+    .await;
+    let panes = place.live_panes(&h.launcher.cfg.root).await.unwrap();
+    assert_eq!(panes.len(), 1);
+    assert_ne!(panes[0].name, old.name);
+    assert_eq!(panes[0].name, format!("ariadne-{launch_id}"));
+    let row = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.internal_session_id, internal);
+    assert_eq!(row.place.as_deref(), Some("tmux"));
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn reconnect_keeps_the_question_raised_by_the_current_turn_open() {
+    use ariadne_daemon::acp::AcpRuntime;
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let mut scripted = script();
+    scripted["relay_parent"] = json!(true);
+    scripted["prompts"] = json!([{"updates":[],"wait_for":release}]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let cast = acp_cast(&h).await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "held question turn", || async {
+        release.with_extension("reached").exists()
+    })
+    .await;
+    let opened: Value = h
+        .json(
+            common::as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                json!({"summary":"Choose the next action."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    h.launcher.acp.detach_relays().await;
+    std::fs::write(&release, "go").unwrap();
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("none".into()),
+    );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    eventually(TIMEOUT, "question turn restored and completed", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let question = h
+        .store
+        .session_agent_request(opened["id"].as_str().unwrap(), &session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(question.resolution, None);
+    runtime
+        .send_prompt(&session.id, "continue without raising the question".into())
+        .unwrap();
+    eventually(TIMEOUT, "a later turn expires the old question", || async {
+        h.store
+            .session_agent_request(opened["id"].as_str().unwrap(), &session.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .resolution
+            .as_deref()
+            == Some("expired")
+    })
+    .await;
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn reconnect_finds_a_live_relay_without_the_pane_metadata_file() {
+    use ariadne_daemon::acp::AcpRuntime;
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let session = h.lone_session("tmux-metadata").await;
+    h.agent_runs(&session).await;
+    h.launcher.acp.detach_relays().await;
+    std::fs::remove_file(
+        h.launcher
+            .cfg
+            .root
+            .join(format!("relays/{}.pane.json", session.id)),
+    )
+    .unwrap();
+    let empty_path = tempfile::tempdir().unwrap();
+    let runtime = AcpRuntime::new(h.store.clone())
+        .with_places(
+            h.launcher.cfg.root.clone(),
+            env!("CARGO_BIN_EXE_ariadned").into(),
+            Some("herdr".into()),
+        )
+        .with_place_path(empty_path.path().as_os_str().to_owned());
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    runtime
+        .send_prompt(&session.id, "continue with the existing relay".into())
+        .unwrap();
+    eventually(TIMEOUT, "relay recovered without pane metadata", || async {
+        h.agent.calls_of("session/prompt").len() == 1
+            && h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(h.agent.calls_of("initialize").len(), 1);
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .place
+            .as_deref(),
+        Some("tmux")
+    );
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn reconnect_keeps_a_subagent_announced_in_an_earlier_turn() {
+    use ariadne_daemon::acp::AcpRuntime;
+    let agent_dir = tempfile::tempdir().unwrap();
+    let finish = agent_dir.path().join("finish");
+    let late = agent_dir.path().join("late");
+    let mut scripted = script();
+    scripted["relay_parent"] = json!(true);
+    scripted["prompts"] = json!([
+        {"updates":[{"sessionUpdate":"subagent_spawned", "subagentSessionId":"child",
+            "name":"Worker", "task":"work", "capabilities":{}}]},
+        {"updates":[{"as_session":"child", "sessionUpdate":"agent_message_chunk",
+            "content":{"type":"text","text":"before "}}], "wait_for":finish,
+         "updates_when":{"file":late,"updates":[{"as_session":"child",
+            "sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"offline"}}]}}
+    ]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let cast = acp_cast(&h).await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "first turn complete", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "continue".into())
+        .unwrap();
+    let row = h.store.get_session(&session.id).await.unwrap();
+    eventually(TIMEOUT, "child text processed", || async {
+        h.store
+            .relay_outputs(&session.id, row.launch_id.as_deref().unwrap())
+            .await
+            .unwrap()
+            .iter()
+            .any(|output| output.processed && output.frame.contains("before "))
+    })
+    .await;
+    h.launcher.acp.detach_relays().await;
+    std::fs::write(&late, "1").unwrap();
+    let journal = h
+        .launcher
+        .cfg
+        .root
+        .join(format!("relays/{}.jsonl", session.id));
+    eventually(TIMEOUT, "offline child text journaled", || async {
+        std::fs::read_to_string(&journal)
+            .unwrap()
+            .contains("offline")
+    })
+    .await;
+    std::fs::write(&finish, "1").unwrap();
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("none".into()),
+    );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    eventually(TIMEOUT, "recovered child turn complete", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let messages: Vec<Value> = h
+        .store
+        .list_session_events(&session.id)
+        .await
+        .unwrap()
+        .iter()
+        .filter(|event| event.kind == "agent_message")
+        .map(|event| serde_json::from_str(&event.payload).unwrap())
+        .collect();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["text"], "before offline");
+    assert_eq!(
+        messages[0]["subagent"],
+        json!({"id":"child", "title":"Worker"})
+    );
+    assert_eq!(stub.calls_of("session/prompt").len(), 2);
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn reconnect_restores_commands_offered_in_a_completed_turn() {
+    use ariadne_daemon::acp::AcpRuntime;
+    use tower::ServiceExt;
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["relay_parent"] = json!(true);
+    scripted["prompts"] = json!([{"updates":[{"sessionUpdate":"available_commands_update",
+        "availableCommands":[{"name":"inspect","description":"Inspect the task"}]}]}]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+    h.launcher.acp.detach_relays().await;
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("none".into()),
+    );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    let mut state = h.state.clone();
+    state.launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
+        cfg: h.launcher.cfg.clone(),
+        forge_poll: Default::default(),
+        store: h.store.clone(),
+        git: ariadne_daemon::gitwt::GitManager,
+        acp: runtime.clone(),
+        registry: h.launcher.registry.clone(),
+        branches: ariadne_daemon::branch::BranchWatchers::new(h.bus.clone()),
+        live: Default::default(),
+    });
+    runtime.send_prompt(&session.id, "continue".into()).unwrap();
+    eventually(TIMEOUT, "new turn after restored setup", || async {
+        stub.calls_of("session/prompt").len() == 2
+            && h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let response = ariadne_daemon::http::router(state)
+        .oneshot(common::get(&format!("/v1/sessions/{}/console", session.id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let snapshot: Vec<Value> = serde_json::from_slice(&body).unwrap();
+    let commands: Vec<Value> = snapshot
+        .iter()
+        .filter(|event| event["kind"] == "available_commands_update")
+        .map(|event| event["payload"]["available_commands"].clone())
+        .collect();
+    assert_eq!(
+        commands,
+        vec![json!([{"name":"inspect", "description":"Inspect the task"}])]
+    );
+    runtime.kill_and_wait(&session.id).await;
+}
+
+#[tokio::test]
+async fn a_stale_relay_socket_does_not_block_other_reconnects_or_the_liveness_sweep() {
+    assert_failed_relay_is_swept("stale socket", true).await;
+}
+
+#[tokio::test]
+async fn missing_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep() {
+    assert_failed_relay_is_swept("missing launch", true).await;
+}
+
+#[tokio::test]
+async fn unreadable_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep() {
+    assert_failed_relay_is_swept("unreadable launch", true).await;
+}
+
+#[tokio::test]
+async fn mismatched_relay_launch_metadata_does_not_block_other_reconnects_or_the_liveness_sweep() {
+    assert_failed_relay_is_swept("mismatched launch", true).await;
+}
+
+#[tokio::test]
+async fn a_stale_relay_socket_without_a_tmux_server_is_left_for_the_liveness_sweep() {
+    assert_failed_relay_is_swept("stale socket", false).await;
+}
+
+/// Leave a failed row for the sweep and optionally reconnect a healthy row after it.
+async fn assert_failed_relay_is_swept(fault: &str, keep_healthy: bool) {
+    use ariadne_daemon::acp::{AcpLaunch, AcpRuntime};
+    let h = harness().session_place("tmux").await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let dead = h.lone_session("dead-relay").await;
+    let healthy = h.lone_session("healthy-relay").await;
+    assert!(
+        dead.id < healthy.id,
+        "the failed relay must precede the healthy relay"
+    );
+    h.agent_runs(&healthy).await;
+    if !keep_healthy {
+        h.launcher.acp.kill_and_wait(&healthy.id).await;
+        h.store
+            .set_goal_status(
+                healthy.goal_id.as_deref().unwrap(),
+                ariadne_core::GoalStatus::Cancelled,
+            )
+            .await
+            .unwrap();
+        let place =
+            ariadne_daemon::place::Place::find(Some("tmux"), std::env::var_os("PATH").as_deref())
+                .unwrap();
+        assert!(
+            place
+                .live_panes(&h.launcher.cfg.root)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+    h.launcher.acp.detach_relays().await;
+    let directory = h.launcher.cfg.root.join("relays");
+    let launch_path = directory.join(format!("{}.launch.json", dead.id));
+    let mut launch: AcpLaunch = serde_json::from_slice(
+        &std::fs::read(directory.join(format!("{}.launch.json", healthy.id))).unwrap(),
+    )
+    .unwrap();
+    launch.session_id = dead.id.clone();
+    launch.launch_id = ariadne_core::id::new_id();
+    h.store
+        .set_session_launch(&dead.id, &launch.launch_id)
+        .await
+        .unwrap();
+    h.store.set_session_place(&dead.id, "tmux").await.unwrap();
+    h.store
+        .set_session_status(&dead.id, SessionStatus::Idle)
+        .await
+        .unwrap();
+    h.store
+        .set_goal_status(
+            dead.goal_id.as_deref().unwrap(),
+            ariadne_core::GoalStatus::Cancelled,
+        )
+        .await
+        .unwrap();
+    match fault {
+        "missing launch" => {}
+        "unreadable launch" => std::fs::create_dir(&launch_path).unwrap(),
+        "stale socket" | "mismatched launch" => {
+            if fault == "mismatched launch" {
+                launch.launch_id = "previous-launch".into();
+            }
+            std::fs::write(&launch_path, serde_json::to_vec(&launch).unwrap()).unwrap();
+        }
+        _ => panic!("unknown relay fault: {fault}"),
+    }
+    let socket_path = directory.join(format!("{}.sock", dead.id));
+    drop(std::os::unix::net::UnixListener::bind(&socket_path).unwrap());
+    assert!(
+        socket_path.exists(),
+        "model the socket left by an unclean relay exit"
+    );
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("herdr".into()),
+    );
+    assert_eq!(
+        runtime.reconnect_relays().await.unwrap(),
+        usize::from(keep_healthy)
+    );
+    assert!(!runtime.is_running(&dead.id));
+    assert_eq!(runtime.is_running(&healthy.id), keep_healthy);
+    let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
+        cfg: h.launcher.cfg.clone(),
+        forge_poll: Default::default(),
+        store: h.store.clone(),
+        git: ariadne_daemon::gitwt::GitManager,
+        acp: runtime.clone(),
+        registry: h.launcher.registry.clone(),
+        branches: ariadne_daemon::branch::BranchWatchers::new(h.bus.clone()),
+        live: Default::default(),
+    });
+    let scheduler = ariadne_daemon::scheduler::start(h.store.clone(), launcher, false, h.timeouts);
+    scheduler
+        .send(ariadne_daemon::scheduler::SchedEvent::FullReconcile)
+        .unwrap();
+    ariadne_daemon::scheduler::flush_for_test(&scheduler).await;
+    assert_eq!(h.session_status(&dead).await, SessionStatus::Exited);
+    assert_eq!(
+        h.store
+            .get_session(&healthy.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live(),
+        keep_healthy
+    );
+    if keep_healthy {
+        runtime
+            .send_prompt(&healthy.id, "continue past a failed relay".into())
+            .unwrap();
+        eventually(
+            TIMEOUT,
+            "healthy relay receives input after recovery",
+            || async {
+                h.agent.calls_of("session/prompt").len() == 1
+                    && h.session_status(&healthy).await == SessionStatus::Idle
+            },
+        )
+        .await;
+    }
+    h.store
+        .set_goal_status(
+            healthy.goal_id.as_deref().unwrap(),
+            ariadne_core::GoalStatus::Cancelled,
+        )
+        .await
+        .unwrap();
+    runtime.kill_and_wait(&healthy.id).await;
 }

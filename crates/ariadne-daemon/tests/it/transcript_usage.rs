@@ -296,3 +296,53 @@ async fn a_session_without_a_transcript_keeps_its_prompt_responses_figure() {
 
     assert_eq!(usage(&h, &session.id).await, tokens(14681, 11136, 5));
 }
+
+#[tokio::test]
+async fn reconnect_keeps_the_resumed_launchs_original_transcript_baseline() {
+    use ariadne_daemon::acp::AcpRuntime;
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut first = script();
+    first["relay_parent"] = json!(true);
+    first["stored_sessions"] = json!(["stub-session"]);
+    first["prompts"] = json!([{"updates":[],"usage":small_usage()}]);
+    let stub = stub_acp_agent(agent_dir.path(), first);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .discover_agents()
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    discovery_settled(&h, &stub).await;
+    append(&rollout(&h), &[token_count(1000, 800, 100)]);
+    let cast = cast(&h).await;
+    let session = started(&h, &cast).await;
+    eventually(TIMEOUT, "first transcript total", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+            && usage(&h, &session.id).await == tokens(1000, 800, 100)
+    })
+    .await;
+    h.launcher.acp.kill_and_wait(&session.id).await;
+    let release = agent_dir.path().join("release");
+    let mut second = held_script(&release);
+    second["relay_parent"] = json!(true);
+    stub.reprogram(second);
+    let resumed = started(&h, &cast).await;
+    held_open(&release).await;
+    h.launcher.acp.detach_relays().await;
+    append(&rollout(&h), &[token_count(200, 150, 20)]);
+    std::fs::write(&release, "go").unwrap();
+    let runtime = AcpRuntime::with_transcripts(h.store.clone(), h.timeouts, h.transcript_homes())
+        .with_places(
+            h.launcher.cfg.root.clone(),
+            env!("CARGO_BIN_EXE_ariadned").into(),
+            Some("none".into()),
+        );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    eventually(TIMEOUT, "reconnected transcript turn complete", || async {
+        h.session_status(&resumed).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(usage(&h, &resumed.id).await, tokens(1200, 950, 120));
+    assert_eq!(stub.calls_of("session/prompt").len(), 2);
+    runtime.kill_and_wait(&resumed.id).await;
+}

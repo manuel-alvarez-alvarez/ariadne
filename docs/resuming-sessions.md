@@ -83,3 +83,7 @@ An agent must support ACP resume or load to reopen its stored conversation.
 Run `ariadne doctor` to inspect its capabilities.
 A session without an internal agent id cannot resume.
 A session of a cancelled goal cannot resume.
+
+A resume selects the session's place again and stops any remaining process from its previous place.
+A daemon reconnect keeps a live relay's existing place.
+See [`session_place`](configuration.md) to force a place or use automatic selection.

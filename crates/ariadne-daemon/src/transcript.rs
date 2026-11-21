@@ -24,7 +24,7 @@ use ariadne_core::TokenUsage;
 use serde_json::Value;
 
 /// Where the agents keep their transcripts.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TranscriptHomes {
     /// Codex's home: `$CODEX_HOME`, else `~/.codex`.
     pub codex: PathBuf,
@@ -55,6 +55,7 @@ impl TranscriptHomes {
 }
 
 /// One launch's reading of its session's transcript.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct LaunchTranscript {
     homes: TranscriptHomes,
     internal_session_id: String,
@@ -65,6 +66,7 @@ pub(crate) struct LaunchTranscript {
     found: Option<Found>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 enum Found {
     Codex(CodexRollout),
     Claude(ClaudeTranscript),
@@ -174,6 +176,7 @@ fn codex_rollout(dir: &Path, id: &str) -> Option<PathBuf> {
 /// A file read a line at a time as it grows: each read hands back the whole
 /// lines written since the last, and keeps a line still being written for
 /// the next.
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Tail {
     path: PathBuf,
     offset: u64,
@@ -227,6 +230,7 @@ impl Tail {
 /// output_tokens` and `cache_write_input_tokens` always 0. A cache write is
 /// part of the prompt, so it stays inside `input_tokens`, and
 /// `cached_input_tokens` counts cache reads only.
+#[derive(serde::Serialize, serde::Deserialize)]
 struct CodexRollout {
     tail: Tail,
     /// The segments that have ended, summed.
@@ -277,6 +281,7 @@ impl CodexRollout {
 /// written over as many lines as it has content blocks, each with the same
 /// usage, so requests are counted once each by `message.id`
 /// ([`claude_request_usage`]).
+#[derive(serde::Serialize, serde::Deserialize)]
 struct ClaudeTranscript {
     main: Tail,
     subagents_dir: PathBuf,

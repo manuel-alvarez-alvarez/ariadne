@@ -128,6 +128,7 @@ pub(crate) fn apply_agent_launch_environment(
 /// from the adapter's spawn plan: the registry command with the planned
 /// flags behind it, the environment as planned, and the launch file as the
 /// protocol's half.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct AcpLaunch {
     pub session_id: String,
     /// The launch every event of this process reports under.
@@ -161,7 +162,31 @@ pub struct AcpRuntime {
     inner: Arc<Inner>,
 }
 
+#[derive(Clone)]
+struct Places {
+    home: PathBuf,
+    daemon: PathBuf,
+    forced: Option<String>,
+    path: Option<std::ffi::OsString>,
+}
+
+struct RelayProcess {
+    place: crate::place::Place,
+    home: PathBuf,
+    pane: crate::place::Pane,
+    bridge: tokio::task::JoinHandle<()>,
+    effects: Arc<crate::acp_recovery::RelayEffects>,
+    recovery: Option<crate::acp_recovery::RecoveryHistory>,
+    active_turn: Option<PersistedTurn>,
+}
+impl Drop for RelayProcess {
+    fn drop(&mut self) {
+        self.bridge.abort();
+    }
+}
+
 struct Inner {
+    places: Option<Places>,
     store: Store,
     timeouts: Timeouts,
     /// Where the agents write the transcripts a launch reads its usage from.
@@ -257,7 +282,7 @@ impl Drop for LaunchGate {
 const ANSWER_DELIVERY: &str = "answer_delivery";
 
 /// Where a prompt came from, as `user_prompt_submit` reports it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum PromptSource {
     /// Typed into the session's console.
     Console,
@@ -275,6 +300,7 @@ impl PromptSource {
 }
 
 /// One `session/prompt` waiting its turn.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Prompt {
     text: String,
     source: PromptSource,
@@ -291,10 +317,20 @@ struct Prompt {
     answers: Option<String>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedTurn {
+    version: u32,
+    launch_id: String,
+    turn_id: String,
+    prompt: Prompt,
+    full: String,
+    brief_after: Option<String>,
+}
+
 /// What a daemon prompt hands over that the store records as handed, claimed
 /// by the driver right before the prompt goes out and given back where the
 /// prompt was never written.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Delivery {
     Step(String),
     /// An agent message, by id (018).
@@ -333,7 +369,7 @@ pub(crate) enum Delivery {
 /// One pull request's news, as its prompt delivers it: the comments it
 /// names, the told mark it leaves, and the mark it found, which a prompt
 /// that never went out puts back.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct NewsDelivery {
     pub(crate) pull_request_id: String,
     pub(crate) comment_ids: Vec<String>,
@@ -497,6 +533,8 @@ fn tagged(mut payload: Value, subagent: Option<&Value>) -> Value {
 }
 
 struct RunningAgent {
+    persistent: bool,
+    driver: Option<tokio::task::AbortHandle>,
     /// The launch this agent runs under: what tells a driver's own entry from
     /// a successor's on the same seat. A relaunch replaces the entry while
     /// the old driver is still winding down, and the old driver's parting
@@ -597,8 +635,9 @@ impl Outbound {
 /// The transport, the permission reply slot, the turn and the report channel
 /// a driver owns for one child.
 struct DriverIo {
-    stdin: tokio::process::ChildStdin,
-    stdout: tokio::process::ChildStdout,
+    stdin: Box<dyn tokio::io::AsyncWrite + Send + Unpin>,
+    stdout: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    relay: Option<RelayProcess>,
     outbound: Outbound,
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     turn: Arc<tokio::sync::Mutex<Turn>>,
@@ -627,6 +666,7 @@ impl AcpRuntime {
         Self {
             inner: Arc::new(Inner {
                 store,
+                places: None,
                 timeouts,
                 transcripts,
                 running: Mutex::new(HashMap::new()),
@@ -644,6 +684,115 @@ impl AcpRuntime {
                 agent_requests: tokio::sync::Mutex::new(()),
             }),
         }
+    }
+
+    /// Configure the daemon's relay locations. Test runtimes default to direct children.
+    pub fn with_places(mut self, home: PathBuf, daemon: PathBuf, forced: Option<String>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("runtime is not shared while configured")
+            .places = Some(Places {
+            home,
+            daemon,
+            forced,
+            path: std::env::var_os("PATH"),
+        });
+        self
+    }
+
+    /// Override the multiplexer search path for an embedded daemon.
+    pub fn with_place_path(mut self, path: std::ffi::OsString) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("runtime is not shared while configured")
+            .places
+            .as_mut()
+            .expect("configure places before their search path")
+            .path = Some(path);
+        self
+    }
+
+    /// Disconnect daemon drivers while leaving relay-owned agents alive.
+    pub async fn detach_relays(&self) {
+        let detached = {
+            let mut running = self.inner.running.lock().expect("acp registry lock");
+            let ids = running
+                .iter()
+                .filter(|(_, agent)| agent.persistent)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            ids.into_iter()
+                .filter_map(|id| running.remove(&id))
+                .collect::<Vec<_>>()
+        };
+        for agent in detached {
+            if let Some(driver) = &agent.driver {
+                driver.abort();
+            }
+            let ended = agent.ended.clone();
+            drop(agent);
+            let _ = ended.await;
+        }
+    }
+
+    /// Connect existing relay sessions before the scheduler can retire their rows.
+    pub async fn reconnect_relays(&self) -> Result<usize> {
+        let Some(settings) = &self.inner.places else {
+            return Ok(0);
+        };
+        let sessions = self
+            .inner
+            .store
+            .list_sessions(ariadne_store::SessionFilter {
+                live_only: true,
+                ..Default::default()
+            })
+            .await?;
+        let mut attached = 0;
+        for session in sessions {
+            if session.place.as_deref() != Some("tmux")
+                || self.is_running(&session.id)
+                || !settings
+                    .home
+                    .join("relays")
+                    .join(format!("{}.sock", session.id))
+                    .exists()
+            {
+                continue;
+            }
+            let reconnected: Result<()> = async {
+                let launch: AcpLaunch = serde_json::from_slice(&std::fs::read(
+                    settings
+                        .home
+                        .join("relays")
+                        .join(format!("{}.launch.json", session.id)),
+                )?)?;
+                if session.launch_id.as_deref() != Some(launch.launch_id.as_str()) {
+                    bail!("relay launch does not match session {}", session.id);
+                }
+                let branch_path = settings
+                    .home
+                    .join("relays")
+                    .join(format!("{}.branch.json", session.id));
+                let branch = if let Some(task_id) = &session.task_id {
+                    Some(self.inner.store.get_task(task_id).await?.branch)
+                } else if branch_path.exists() {
+                    serde_json::from_slice::<Option<String>>(&std::fs::read(branch_path)?)?
+                } else {
+                    None
+                };
+                self.set_task_branch(&session.id, branch);
+                self.launch_inner(launch, true).await
+            }
+            .await;
+            match reconnected {
+                Ok(()) => attached += 1,
+                Err(error) => tracing::warn!(
+                    session = %session.id,
+                    error = %format!("{error:#}"),
+                    "agent relay reconnect failed; leaving row for liveness sweep"
+                ),
+            }
+        }
+        Ok(attached)
     }
 
     /// Share live model-switching policy with the worker configuration endpoint.
@@ -1135,7 +1284,7 @@ impl AcpRuntime {
 
     /// Whether the session's agent waits on a permission answer now, so
     /// console input goes to it rather than to a question.
-    pub(crate) fn permission_pending(&self, session_id: &str) -> bool {
+    pub fn permission_pending(&self, session_id: &str) -> bool {
         let running = self.inner.running.lock().expect("acp registry lock");
         running.get(session_id).is_some_and(|agent| {
             agent
@@ -1300,50 +1449,103 @@ impl AcpRuntime {
     /// The agent leads a process group of its own, which the kill takes
     /// whole (see [`Self::drive`]).
     pub async fn launch(&self, launch: AcpLaunch) -> Result<()> {
-        self.take_down(&launch.session_id);
+        self.launch_inner(launch, false).await
+    }
+
+    async fn launch_inner(&self, launch: AcpLaunch, reconnect: bool) -> Result<()> {
+        if !reconnect {
+            self.take_down(&launch.session_id);
+        }
         for reaped in self.ending_for(&launch.session_id) {
             let _ = reaped.await;
         }
-        let mut command = Command::new(&launch.program);
-        command
-            .args(&launch.args)
-            .envs(launch.env.iter().cloned())
-            .current_dir(&launch.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0)
-            .kill_on_drop(true);
-        apply_agent_launch_environment(&mut command, &launch.agent_id, Some(&launch.config));
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                crate::metrics::record_launch_failed_to_spawn();
-                return Err(anyhow::Error::new(error).context(format!(
-                    "starting ACP agent {} in {}",
-                    launch.program,
-                    launch.cwd.display()
-                )));
+        let session = self.inner.store.get_session(&launch.session_id).await?;
+        let place = if reconnect {
+            let settings = self
+                .inner
+                .places
+                .as_ref()
+                .context("relay paths are not configured")?;
+            existing_relay_pane(settings, &launch).await?.0
+        } else {
+            let place = crate::place::Place::find(
+                self.inner
+                    .places
+                    .as_ref()
+                    .map_or(Some("none"), |settings| settings.forced.as_deref()),
+                self.inner
+                    .places
+                    .as_ref()
+                    .and_then(|settings| settings.path.as_deref()),
+            )?;
+            if let Some(settings) = &self.inner.places {
+                cleanup_relay(settings, &launch.session_id, session.place.as_deref()).await?;
             }
+            self.inner
+                .store
+                .set_session_place(&launch.session_id, place.name())
+                .await?;
+            place
+        };
+        let (child, stdin, stdout, relay) = if matches!(place, crate::place::Place::Tmux(_)) {
+            let settings = self
+                .inner
+                .places
+                .as_ref()
+                .expect("tmux requires configured paths");
+            let (stdin, stdout, relay) = self
+                .start_relay(&launch, &session, settings, place, reconnect)
+                .await?;
+            (None, stdin, stdout, Some(relay))
+        } else {
+            let mut command = Command::new(&launch.program);
+            command
+                .args(&launch.args)
+                .envs(launch.env.iter().cloned())
+                .current_dir(&launch.cwd)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(0)
+                .kill_on_drop(true);
+            apply_agent_launch_environment(&mut command, &launch.agent_id, Some(&launch.config));
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    crate::metrics::record_launch_failed_to_spawn();
+                    return Err(anyhow::Error::new(error).context(format!(
+                        "starting ACP agent {} in {}",
+                        launch.program,
+                        launch.cwd.display()
+                    )));
+                }
+            };
+            let stdin = child
+                .stdin
+                .take()
+                .context("opening the ACP agent's stdin")?;
+            let stdout = child
+                .stdout
+                .take()
+                .context("opening the ACP agent's stdout")?;
+            if let Some(stderr) = child.stderr.take() {
+                let session = launch.session_id.clone();
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        tracing::debug!(session = %session, "acp agent stderr: {line}");
+                    }
+                });
+            }
+
+            (
+                Some(child),
+                Box::new(stdin) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>,
+                Box::new(stdout) as Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+                None,
+            )
         };
         crate::metrics::record_launch_spawned(&launch.launch_id);
-        let stdin = child
-            .stdin
-            .take()
-            .context("opening the ACP agent's stdin")?;
-        let stdout = child
-            .stdout
-            .take()
-            .context("opening the ACP agent's stdout")?;
-        if let Some(stderr) = child.stderr.take() {
-            let session = launch.session_id.clone();
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    tracing::debug!(session = %session, "acp agent stderr: {line}");
-                }
-            });
-        }
 
         let (stop, stopped) = oneshot::channel();
         let (reaped, ended) = oneshot::channel();
@@ -1363,6 +1565,8 @@ impl AcpRuntime {
             .insert(
                 launch.session_id.clone(),
                 RunningAgent {
+                    persistent: relay.is_some(),
+                    driver: None,
                     launch_id: launch.launch_id.clone(),
                     stop,
                     prompts,
@@ -1378,7 +1582,9 @@ impl AcpRuntime {
                 },
             );
         let runtime = self.clone();
-        tokio::spawn(async move {
+        let session_id = launch.session_id.clone();
+        let launch_id = launch.launch_id.clone();
+        let driver = tokio::spawn(async move {
             runtime
                 .drive(
                     launch,
@@ -1386,6 +1592,7 @@ impl AcpRuntime {
                     DriverIo {
                         stdin,
                         stdout,
+                        relay,
                         outbound,
                         permission,
                         turn,
@@ -1400,13 +1607,191 @@ impl AcpRuntime {
                 .await;
             drop(reaped);
         });
+        if let Some(agent) = self
+            .inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get_mut(&session_id)
+            && agent.launch_id == launch_id
+        {
+            agent.driver = Some(driver.abort_handle());
+        }
         Ok(())
+    }
+
+    async fn start_relay(
+        &self,
+        launch: &AcpLaunch,
+        session: &ariadne_store::AgentSession,
+        settings: &Places,
+        place: crate::place::Place,
+        reconnect: bool,
+    ) -> Result<(
+        Box<dyn tokio::io::AsyncWrite + Send + Unpin>,
+        Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        RelayProcess,
+    )> {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = settings.home.join("relays");
+        std::fs::create_dir_all(&directory)?;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        if !reconnect {
+            save_relay_metadata(
+                &directory.join(format!("{}.launch.json", launch.session_id)),
+                launch,
+            )?;
+            save_relay_metadata(
+                &directory.join(format!("{}.branch.json", launch.session_id)),
+                &self.task_branch(&launch.session_id),
+            )?;
+        }
+        let mut command = Command::new(&launch.program);
+        command.envs(launch.env.iter().cloned());
+        apply_agent_launch_environment(&mut command, &launch.agent_id, Some(&launch.config));
+        let env = command
+            .as_std()
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let pane_path = directory.join(format!("{}.pane.json", launch.session_id));
+        let pane = if reconnect {
+            existing_relay_pane(settings, launch).await?.1
+        } else {
+            let pane = place
+                .start_pane(&crate::place::PaneLaunch {
+                    home: &settings.home,
+                    cwd: &launch.cwd,
+                    session_id: &launch.session_id,
+                    launch_id: &launch.launch_id,
+                    agent_id: &launch.agent_id,
+                    task_id: session.task_id.as_deref().unwrap_or("none"),
+                    daemon: &settings.daemon,
+                    program: &launch.program,
+                    args: &launch.args,
+                    env: &env,
+                })
+                .await?;
+            save_relay_metadata(&pane_path, &(place.clone(), pane.clone()))?;
+            pane
+        };
+        let recovery = if reconnect {
+            let history = crate::acp_recovery::RecoveryHistory::load(
+                &self.inner.store,
+                &launch.session_id,
+                &launch.launch_id,
+            )
+            .await?;
+            Some(history)
+        } else {
+            None
+        };
+        let turn_path = directory.join(format!("{}.turn.json", launch.session_id));
+        let active_turn = if recovery.as_ref().is_some_and(|history| {
+            history.pending_prompt().is_some()
+                || (!history
+                    .requests
+                    .iter()
+                    .any(|request| request.message["method"] == "session/prompt")
+                    && turn_path.exists())
+        }) {
+            let turn: PersistedTurn = serde_json::from_slice(
+                &std::fs::read(&turn_path).context("reading active relay turn")?,
+            )?;
+            if turn.version != 1 || turn.launch_id != launch.launch_id {
+                bail!("unsupported or stale relay turn metadata");
+            }
+            Some(turn)
+        } else {
+            None
+        };
+        let linked = tokio::time::timeout(self.inner.timeouts.probe, async {
+            loop {
+                match crate::relay_link::RelayLink::connect(
+                    self.inner.store.clone(),
+                    &settings.home,
+                    &launch.session_id,
+                    &launch.launch_id,
+                )
+                .await
+                {
+                    Ok(link) => break Ok(link),
+                    Err(error) => {
+                        let transient =
+                            error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                                matches!(
+                                    error.kind(),
+                                    std::io::ErrorKind::NotFound
+                                        | std::io::ErrorKind::ConnectionRefused
+                                )
+                            });
+                        if !transient {
+                            break Err(error);
+                        }
+                        if !place
+                            .live_panes(&settings.home)
+                            .await?
+                            .iter()
+                            .any(|live| live.id == pane.id)
+                        {
+                            break Err(error.context("relay pane exited before connecting"));
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }
+            }
+        })
+        .await;
+        let link = match linked {
+            Ok(Ok(link)) => link,
+            result => {
+                let _ = place.stop_pane(&settings.home, &pane).await;
+                return match result {
+                    Ok(Err(error)) => Err(error),
+                    _ => Err(anyhow!("timed out connecting to relay pane")),
+                };
+            }
+        };
+        let (sdk, socket) = tokio::io::duplex(65536);
+        let (stdout, stdin) = tokio::io::split(sdk);
+        let effects = Arc::new(crate::acp_recovery::RelayEffects::new(
+            self.inner.store.clone(),
+            launch.session_id.clone(),
+            launch.launch_id.clone(),
+        ));
+        let bridge = tokio::spawn(relay_bridge(
+            link,
+            socket,
+            launch.session_id.clone(),
+            effects.clone(),
+            recovery.clone(),
+        ));
+        Ok((
+            Box::new(stdin),
+            Box::new(stdout),
+            RelayProcess {
+                place,
+                home: settings.home.clone(),
+                pane,
+                bridge,
+                effects,
+                recovery,
+                active_turn,
+            },
+        ))
     }
 
     /// Take the agent down and wait until the driver has cancelled the turn and
     /// reaped the child: for a caller that starts another agent on the same
     /// work under another session id, which no launch of this one waits for.
-    pub(crate) async fn kill_and_wait(&self, session_id: &str) {
+    pub async fn kill_and_wait(&self, session_id: &str) {
         self.take_down(session_id);
         for reaped in self.ending_for(session_id) {
             let _ = reaped.await;
@@ -1529,13 +1914,20 @@ impl AcpRuntime {
     async fn drive(
         self,
         launch: AcpLaunch,
-        mut child: Child,
+        mut child: Option<Child>,
         io: DriverIo,
         stopped: oneshot::Receiver<()>,
         prompts: mpsc::UnboundedReceiver<Prompt>,
         switches: mpsc::UnboundedReceiver<ConfigSwitch>,
     ) {
+        let active_turn = io
+            .relay
+            .as_ref()
+            .and_then(|relay| relay.active_turn.clone());
+        let recovery = io.relay.as_ref().and_then(|relay| relay.recovery.clone());
+        let effects = io.relay.as_ref().map(|relay| relay.effects.clone());
         let sink = EventSink {
+            effect: None,
             runtime: self.clone(),
             session_id: launch.session_id.clone(),
             launch_id: launch.launch_id.clone(),
@@ -1569,6 +1961,9 @@ impl AcpRuntime {
             reports: io.reports.clone(),
             subagents: io.subagents.clone(),
         };
+        if let Some(history) = &recovery {
+            incoming.restore_prior_turn_state(history).await;
+        }
         // The protocol's own outcome, set inside the connection: the
         // connection future answers for the link, not for the conversation.
         let mut protocol_outcome = None;
@@ -1578,14 +1973,37 @@ impl AcpRuntime {
                 .name("ariadne")
                 .on_receive_notification(
                     async |update: RawSessionUpdate, _cx| {
-                        incoming.clone().handle_update(&update.0).await?;
+                        let mut incoming = incoming.clone();
+                        incoming.sink.effect = effects
+                            .as_ref()
+                            .and_then(|effects| effects.take("session/update", &update.0));
+                        let effect = incoming.sink.effect.clone();
+                        incoming.handle_update(&update.0).await?;
+                        if let (Some(effects), Some(effect)) = (&effects, effect) {
+                            effects.processed(effect.seq).await?;
+                        }
                         Ok(())
                     },
                     agent_client_protocol::on_receive_notification!(),
                 )
                 .on_receive_request(
                     async |request: RawPermissionRequest, responder, _cx| {
-                        let answer = incoming.clone().handle_permission(&request.0).await?;
+                        let mut incoming = incoming.clone();
+                        incoming.sink.effect = effects.as_ref().and_then(|effects| {
+                            effects.take("session/request_permission", &request.0)
+                        });
+                        let key = serde_json::to_value(responder.id())
+                            .expect("request IDs serialize")
+                            .to_string();
+                        let cached = recovery
+                            .as_ref()
+                            .and_then(|history| history.answered_permissions.get(&key));
+                        let answer = if let Some(answer) = cached {
+                            incoming.end_text().await;
+                            answer.clone()
+                        } else {
+                            incoming.handle_permission(&request.0).await?
+                        };
                         responder.respond(answer)
                     },
                     agent_client_protocol::on_receive_request!(),
@@ -1603,13 +2021,55 @@ impl AcpRuntime {
                         closing.clone(),
                         turn_ended.clone(),
                     );
+                    rpc.effects = effects.clone();
+                    rpc.active_turn = active_turn.clone();
                     rpc.in_flight = in_flight.clone();
                     rpc.seat_brief = seat_brief_in_turns(&launch.config.system_prompt);
                     rpc.brief = rpc.seat_brief.clone();
-                    protocol_outcome = Some(
-                        run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts, switches)
-                            .await,
-                    );
+                    let mut config = launch.config.clone();
+                    if let Some(history) = &recovery {
+                        let pending = history.pending_prompt();
+                        let had_prompt = history
+                            .requests
+                            .iter()
+                            .any(|request| request.message["method"] == "session/prompt");
+                        if had_prompt {
+                            rpc.brief = None;
+                        }
+                        if let Some(pending) = pending {
+                            config.initial_prompt = pending
+                                .message
+                                .pointer("/params/prompt/0/text")
+                                .and_then(Value::as_str)
+                                .map(str::to_string);
+                        } else if had_prompt {
+                            config.initial_prompt = None;
+                        }
+                        if let Some(active) = &active_turn {
+                            config.initial_prompt = Some(active.full.clone());
+                        }
+                        rpc.after_cancel = history
+                            .requests
+                            .iter()
+                            .rev()
+                            .find(|request| request.message["method"] == "session/prompt")
+                            .and_then(|request| request.response.as_ref())
+                            .is_some_and(|response| {
+                                response["result"]["stopReason"] == "cancelled"
+                            });
+                        for request in &history.requests {
+                            if request.message["method"] == "session/prompt"
+                                && pending
+                                    .is_none_or(|pending| request.input_seq != pending.input_seq)
+                                && let Some(response) = &request.response
+                                && let Some(usage) = usage_for_prompt_response(&response["result"])
+                            {
+                                rpc.launch_usage += usage;
+                            }
+                        }
+                    }
+                    protocol_outcome =
+                        Some(run_protocol(&mut rpc, &launch.cwd, &config, prompts, switches).await);
                     Ok(())
                 }),
         );
@@ -1674,11 +2134,19 @@ impl AcpRuntime {
         // app-server` — otherwise leaves that process up past the reap, still
         // the writer of the conversation a relaunch is about to resume. The
         // child is not reaped yet, so its pid still names its group.
-        if let Some(group) = child.id().and_then(|pid| Pid::from_raw(pid.cast_signed())) {
-            let _ = kill_process_group(group, Signal::KILL);
+        if let Some(child) = child.as_mut() {
+            if let Some(group) = child.id().and_then(|pid| Pid::from_raw(pid.cast_signed())) {
+                let _ = kill_process_group(group, Signal::KILL);
+            }
+            let _ = child.start_kill();
+            let _ = child.wait().await;
         }
-        let _ = child.start_kill();
-        let _ = child.wait().await;
+        if let Some(relay) = io.relay {
+            relay.bridge.abort();
+            if let Err(error) = relay.place.stop_pane(&relay.home, &relay.pane).await {
+                tracing::warn!(session = %launch.session_id, %error, "stopping relay pane failed");
+            }
+        }
         if let Some(Err(error)) = &outcome {
             tracing::warn!(session = %launch.session_id, error = %format!("{error:#}"), "ACP agent failed");
             let protocol = error
@@ -1919,6 +2387,7 @@ struct RawPermissionRequest(Value);
 /// the console streams alone.
 #[derive(Clone)]
 struct EventSink {
+    effect: Option<crate::acp_recovery::Effect>,
     runtime: AcpRuntime,
     session_id: String,
     launch_id: String,
@@ -1981,7 +2450,19 @@ impl EventSink {
             kind: kind.to_string(),
             payload,
         };
-        let event = match ingest_event(&self.runtime.inner.store, &request).await {
+        let recorded = match &self.effect {
+            Some(effect) => {
+                crate::http::ingest_relay_event(
+                    &self.runtime.inner.store,
+                    &request,
+                    &effect.source,
+                    effect.ordinal.fetch_add(1, Ordering::SeqCst),
+                )
+                .await
+            }
+            None => ingest_event(&self.runtime.inner.store, &request).await,
+        };
+        let event = match recorded {
             Ok(event) => event,
             Err(e) => {
                 tracing::warn!(session = %self.session_id, kind, error = %e, "recording an ACP event failed");
@@ -2050,6 +2531,8 @@ impl EventSink {
 }
 
 struct Rpc {
+    active_turn: Option<PersistedTurn>,
+    effects: Option<Arc<crate::acp_recovery::RelayEffects>>,
     /// The live connection to the agent, for everything this launch sends.
     connection: ConnectionTo<Agent>,
     /// The lock a `session/prompt` takes while it is written, so that a
@@ -2095,6 +2578,8 @@ impl Rpc {
         turn_ended: Arc<Notify>,
     ) -> Self {
         Self {
+            active_turn: None,
+            effects: None,
             connection,
             outbound,
             sink,
@@ -2147,6 +2632,47 @@ struct RuntimeIncoming {
 }
 
 impl RuntimeIncoming {
+    /// Rebuild state that persists between turns without publishing old effects again.
+    async fn restore_prior_turn_state(&self, history: &crate::acp_recovery::RecoveryHistory) {
+        let cursor = history.replay_after();
+        for output in history
+            .outputs
+            .iter()
+            .filter(|output| output.seq <= cursor as i64)
+        {
+            let Ok(frame) = serde_json::from_str::<Value>(&output.frame) else {
+                continue;
+            };
+            if frame["stream"] != "stdout" {
+                continue;
+            }
+            let Some(data) = frame["data"].as_str() else {
+                continue;
+            };
+            let Ok(message) = serde_json::from_str::<Value>(data) else {
+                continue;
+            };
+            if message["method"] != "session/update" {
+                continue;
+            }
+            let params = &message["params"];
+            let session = &params["sessionId"];
+            let update = &params["update"];
+            self.subagents.fold(session, update);
+            if update["sessionUpdate"] == "available_commands_update"
+                && self.subagents.tag(session).is_none()
+            {
+                self.turn.lock().await.available_commands = Some(AvailableCommands {
+                    session_id: session.clone(),
+                    commands: update["availableCommands"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default(),
+                });
+            }
+        }
+    }
+
     async fn handle_update(&mut self, params: &Value) -> Result<()> {
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let update = params.get("update").cloned().unwrap_or_default();
@@ -2713,6 +3239,13 @@ async fn run_protocol(
     prompts: mpsc::UnboundedReceiver<Prompt>,
     switches: mpsc::UnboundedReceiver<ConfigSwitch>,
 ) -> Result<()> {
+    if rpc.effects.is_some() {
+        rpc.sink.effect = Some(crate::acp_recovery::Effect {
+            seq: 0,
+            source: "setup".into(),
+            ordinal: Default::default(),
+        });
+    }
     let initialized = rpc.call("initialize", initialize()).await?;
     if initialized.protocol_version != ProtocolVersion::V1 {
         bail!("ACP agent did not negotiate protocol version 1");
@@ -2727,12 +3260,41 @@ async fn run_protocol(
         cwd.to_path_buf(),
     );
     let resumed = config.resume_session_id.is_some();
-    rpc.transcript = tokio::task::spawn_blocking(move || {
-        LaunchTranscript::open(homes, &internal, &cwd_owned, resumed)
-    })
-    .await
-    .ok()
-    .map(|transcript| Arc::new(Mutex::new(transcript)));
+    let baseline = rpc
+        .effects
+        .as_ref()
+        .and_then(|_| rpc.sink.runtime.inner.places.as_ref())
+        .map(|settings| {
+            settings
+                .home
+                .join("relays")
+                .join(format!("{}.transcript.json", rpc.sink.session_id))
+        });
+    if let Some(path) = baseline {
+        let launch = rpc.sink.launch_id.clone();
+        let transcript = tokio::task::spawn_blocking(move || -> Result<LaunchTranscript> {
+            if path.exists() {
+                let (saved_launch, transcript): (String, LaunchTranscript) =
+                    serde_json::from_slice(&std::fs::read(&path)?)?;
+                if saved_launch == launch {
+                    return Ok(transcript);
+                }
+            }
+            let transcript = LaunchTranscript::open(homes, &internal, &cwd_owned, resumed);
+            save_relay_metadata(&path, &(launch, &transcript))?;
+            Ok(transcript)
+        })
+        .await
+        .context("reading relay transcript baseline")??;
+        rpc.transcript = Some(Arc::new(Mutex::new(transcript)));
+    } else {
+        rpc.transcript = tokio::task::spawn_blocking(move || {
+            LaunchTranscript::open(homes, &internal, &cwd_owned, resumed)
+        })
+        .await
+        .ok()
+        .map(|transcript| Arc::new(Mutex::new(transcript)));
+    }
     let mut options = pin_or_fall_back(
         rpc,
         &session_id,
@@ -2760,14 +3322,22 @@ async fn run_protocol(
         .emit("session_start", json!({"session_id": session_id}))
         .await;
     if let Some(prompt) = config.initial_prompt.as_deref() {
-        let prompt = Prompt {
-            text: prompt.to_string(),
-            source: PromptSource::Daemon,
-            delivery: None,
-            kind: None,
-            answers: None,
-        };
+        let prompt = rpc
+            .active_turn
+            .as_ref()
+            .map(|turn| turn.prompt.clone())
+            .unwrap_or_else(|| Prompt {
+                text: prompt.to_string(),
+                source: PromptSource::Daemon,
+                delivery: None,
+                kind: None,
+                answers: None,
+            });
+        if let Some(delivery) = &prompt.delivery {
+            rpc.in_flight.claim(delivery.clone());
+        }
         prompt_once(rpc, &session_id, &prompt).await?;
+        rpc.in_flight.settle();
     }
     serve_with_input(rpc, &session_id, prompts, switches, options).await
 }
@@ -3251,6 +3821,7 @@ fn seat_brief_in_turns(system_prompt: &str) -> Option<String> {
 /// switch carries the seat brief ahead of it; a slash command the agent
 /// offers never carries it.
 async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result<()> {
+    rpc.sink.effect = None;
     let command = rpc.turn.lock().await.is_command(&prompt.text);
     let full = match rpc.brief.take_if(|_| !command) {
         Some(brief) => format!("{brief}\n\n{}", prompt.text),
@@ -3269,7 +3840,37 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     } else {
         full
     };
-    let turn_id = new_id();
+    let (turn_id, full) = if let Some(active) = rpc.active_turn.take() {
+        rpc.brief = active.brief_after;
+        (active.turn_id, active.full)
+    } else {
+        (new_id(), full)
+    };
+    if let Some(settings) = rpc
+        .effects
+        .as_ref()
+        .and_then(|_| rpc.sink.runtime.inner.places.as_ref())
+    {
+        save_relay_metadata(
+            &settings
+                .home
+                .join("relays")
+                .join(format!("{}.turn.json", rpc.sink.session_id)),
+            &PersistedTurn {
+                version: 1,
+                launch_id: rpc.sink.launch_id.clone(),
+                turn_id: turn_id.clone(),
+                prompt: prompt.clone(),
+                full: full.clone(),
+                brief_after: rpc.brief.clone(),
+            },
+        )?;
+        rpc.sink.effect = Some(crate::acp_recovery::Effect {
+            seq: 0,
+            source: format!("turn:{turn_id}"),
+            ordinal: Default::default(),
+        });
+    }
     {
         let mut turn = rpc.turn.lock().await;
         turn.running = true;
@@ -3279,22 +3880,24 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         // A call the last turn left open is not this turn's to finish.
         turn.tools.clear();
     }
-    rpc.sink
-        .emit(
-            "user_prompt_submit",
-            json!({
-                "session_id": session_id,
-                "prompt": full,
-                "text": prompt.text,
-                "source": prompt.source.as_str(),
-                "prompt_kind": match (&prompt.answers, prompt.kind) {
-                    (Some(_), _) => Some(ANSWER_DELIVERY),
-                    (None, kind) => kind.map(|kind| kind.as_str()),
-                },
-                "request_id": prompt.answers,
-            }),
-        )
-        .await;
+    {
+        rpc.sink
+            .emit(
+                "user_prompt_submit",
+                json!({
+                    "session_id": session_id,
+                    "prompt": full,
+                    "text": prompt.text,
+                    "source": prompt.source.as_str(),
+                    "prompt_kind": match (&prompt.answers, prompt.kind) {
+                        (Some(_), _) => Some(ANSWER_DELIVERY),
+                        (None, kind) => kind.map(|kind| kind.as_str()),
+                    },
+                    "request_id": prompt.answers,
+                }),
+            )
+            .await;
+    }
     // The transcript is read again while the turn runs, so a long turn's
     // figure moves before its `stop`.
     let (reading, sink) = (rpc.transcript.clone(), rpc.sink.clone());
@@ -3312,11 +3915,12 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
             let _sending = rpc.outbound.sending.lock().await;
             rpc.connection.send_request(PromptTurn(to_params(&prompt)?))
         };
+        let request_id = serde_json::to_value(sent.id())?;
         let request = async { sent.block_task().await.context("ACP session/prompt failed") };
         tokio::pin!(request);
         let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
+        let response = loop {
             tokio::select! {
                 response = &mut request => break response,
                 _ = ticks.tick(), if reading.is_some() => {
@@ -3325,7 +3929,12 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
                     }
                 }
             }
-        }
+        };
+        rpc.sink.effect = rpc
+            .effects
+            .as_ref()
+            .and_then(|effects| effects.response(&request_id));
+        response
     }
     .await;
     {
@@ -3449,6 +4058,22 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         );
     }
     rpc.sink.emit("stop", stop).await;
+    if let (Some(effects), Some(effect)) = (&rpc.effects, &rpc.sink.effect) {
+        effects.processed(effect.seq).await?;
+    }
+    if let Some(settings) = rpc
+        .effects
+        .as_ref()
+        .and_then(|_| rpc.sink.runtime.inner.places.as_ref())
+    {
+        let _ = std::fs::remove_file(
+            settings
+                .home
+                .join("relays")
+                .join(format!("{}.turn.json", rpc.sink.session_id)),
+        );
+    }
+
     rpc.turn_ended.notify_waiters();
     report(&rpc.reports, TurnReport::TurnEnded);
     Ok(())
@@ -3781,6 +4406,200 @@ fn permission_answer(option_id: Option<&str>, label: Option<&str>, params: &Valu
     }
 }
 
+async fn relay_bridge(
+    mut link: crate::relay_link::RelayLink,
+    stream: tokio::io::DuplexStream,
+    session: String,
+    effects: Arc<crate::acp_recovery::RelayEffects>,
+    recovery: Option<crate::acp_recovery::RecoveryHistory>,
+) {
+    use tokio::io::AsyncWriteExt;
+    let (reader, mut writer) = tokio::io::split(stream);
+    let mut input = BufReader::new(reader).lines();
+    let mut cached: std::collections::VecDeque<_> = recovery
+        .as_ref()
+        .map(|history| {
+            history
+                .requests
+                .iter()
+                .take_while(|request| request.message["method"] != "session/prompt")
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let old_responses: HashSet<_> = recovery
+        .as_ref()
+        .map(|history| {
+            history
+                .requests
+                .iter()
+                .filter(|request| request.response.is_some())
+                .map(|request| request.message["id"].to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut pending = recovery
+        .as_ref()
+        .and_then(|history| history.pending_prompt())
+        .cloned();
+    let cursor = recovery
+        .as_ref()
+        .map(|history| history.replay_after())
+        .unwrap_or(0);
+    let mut replay: std::collections::VecDeque<_> = recovery
+        .as_ref()
+        .map(|history| {
+            history
+                .outputs
+                .iter()
+                .map(|output| output.frame.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut seen = HashSet::new();
+    let mut ids = HashMap::<String, Value>::new();
+    let epoch = new_id();
+    let result: Result<()> = async {
+        loop {
+            tokio::select! {
+                line = input.next_line() => {
+                    let Some(line) = line? else { return Ok(()); };
+                    let mut message: Value = serde_json::from_str(&line)?;
+                    if message.get("method").is_some() && message.get("id").is_some() {
+                        let sdk_id = message["id"].clone();
+                        if let Some(previous) = cached.pop_front() {
+                            if previous.message["method"] != message["method"] { bail!("ACP recovery setup differs from the retained launch"); }
+                            if let Some(mut response) = previous.response {
+                                response["id"] = sdk_id;
+                                writer.write_all(format!("{response}\n").as_bytes()).await?;
+                            } else { ids.insert(previous.message["id"].to_string(), sdk_id); }
+                            continue;
+                        }
+                        if message["method"] == "session/prompt" && let Some(previous) = pending.take() {
+                            ids.insert(previous.message["id"].to_string(), sdk_id);
+                            continue;
+                        }
+                        let wire_id = Value::String(format!("{epoch}-{}", sdk_id));
+                        ids.insert(wire_id.to_string(), sdk_id);
+                        message["id"] = wire_id;
+                    }
+                    let already_sent = recovery.as_ref().is_some_and(|history| message.get("method").is_none()
+                        && message.get("id").is_some_and(|id| history.answered_permissions.get(&id.to_string()) == message.get("result")));
+                    if !already_sent { link.send(&message.to_string()).await?; }
+                    if message.get("method").is_none() && let Some(id) = message.get("id") { effects.reply_sent(id).await?; }
+                }
+                frame = async {
+                    if let Some(frame) = replay.pop_front() { serde_json::from_str(&frame).map_err(anyhow::Error::from) }
+                    else { link.receive().await }
+                }, if cached.is_empty() && pending.is_none() => {
+                    let frame = frame?;
+                    let seq = frame["seq"].as_u64().context("relay output has no sequence")?;
+                    if !seen.insert(seq) || seq <= cursor { continue; }
+                    if frame["type"] == "exit" { return Ok(()); }
+                    let data = frame["data"].as_str().context("relay message has no data")?;
+                    if frame["stream"] == "stdout" {
+                        let mut message: Value = serde_json::from_str(data)?;
+                        if message.get("method").is_none() && let Some(id) = message.get("id") {
+                            let key = id.to_string();
+                            if let Some(sdk_id) = ids.remove(&key) { message["id"] = sdk_id; }
+                            else if old_responses.contains(&key) { continue; }
+                        }
+                        effects.track(&frame, &message)?;
+                        writer.write_all(format!("{message}\n").as_bytes()).await?;
+                    } else { tracing::debug!(%session, "acp agent stderr: {data}"); }
+                }
+            }
+        }
+    }.await;
+    if let Err(error) = result {
+        tracing::warn!(%session, %error, "relay transport ended");
+    }
+}
+
+async fn cleanup_relay(settings: &Places, session: &str, old_place: Option<&str>) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let path = settings.home.join("relays").join(format!("{session}.sock"));
+    if let Ok(mut socket) = tokio::net::UnixStream::connect(&path).await {
+        tokio::time::timeout(Timeouts::default().probe, async {
+            socket.write_all(b"{\"type\":\"stop\"}\n").await?;
+            socket.read_to_end(&mut Vec::new()).await?;
+            std::io::Result::Ok(())
+        })
+        .await
+        .context("waiting for the old relay to stop")??;
+    }
+    if old_place == Some("tmux")
+        && let Ok(place) = crate::place::Place::find(Some("tmux"), settings.path.as_deref())
+    {
+        for pane in place
+            .live_panes(&settings.home)
+            .await?
+            .into_iter()
+            .filter(|pane| pane.session_id == session)
+        {
+            place.stop_pane(&settings.home, &pane).await?;
+        }
+    }
+    for extension in ["sock", "jsonl", "transcript.json", "turn.json"] {
+        let path = settings
+            .home
+            .join("relays")
+            .join(format!("{session}.{extension}"));
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+async fn existing_relay_pane(
+    settings: &Places,
+    launch: &AcpLaunch,
+) -> Result<(crate::place::Place, crate::place::Pane)> {
+    let path = settings
+        .home
+        .join("relays")
+        .join(format!("{}.pane.json", launch.session_id));
+    match std::fs::read(&path) {
+        Ok(bytes) => return serde_json::from_slice(&bytes).context("reading relay pane metadata"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("reading relay pane metadata"),
+    }
+    // The daemon can stop after tmux creates the pane and before metadata publication.
+    // Reconnect still uses the stored place when its executable is no longer discoverable.
+    let place = crate::place::Place::find(Some("tmux"), settings.path.as_deref())
+        .unwrap_or_else(|_| crate::place::Place::Tmux(PathBuf::from("tmux")));
+    let name = format!("ariadne-{}", launch.launch_id);
+    let mut pane = place
+        .live_panes(&settings.home)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|pane| pane.name == name)
+        .unwrap_or(crate::place::Pane {
+            id: String::new(),
+            name,
+            session_id: launch.session_id.clone(),
+        });
+    pane.session_id = launch.session_id.clone();
+    save_relay_metadata(&path, &(place.clone(), pane.clone()))?;
+    Ok((place, pane))
+}
+
+fn save_relay_metadata(path: &Path, value: &impl serde::Serialize) -> Result<()> {
+    use std::io::Write;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(path.parent().context("relay metadata directory")?)?;
+    temporary.write_all(&serde_json::to_vec(value)?)?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(path)
+        .context("publishing relay metadata")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -4010,6 +4829,7 @@ mod tests {
         let runtime = super::AcpRuntime::new(store.clone());
         let (console, mut rx) = tokio::sync::broadcast::channel(8);
         let sink = super::EventSink {
+            effect: None,
             runtime,
             session_id: "session".into(),
             launch_id: "launch".into(),

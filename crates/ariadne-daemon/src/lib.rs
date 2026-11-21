@@ -36,3 +36,9 @@ pub mod transcript;
 pub mod webhooks;
 
 mod skill_bundle;
+
+pub mod place;
+
+pub mod relay_link;
+
+pub mod acp_recovery;

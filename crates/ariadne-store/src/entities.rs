@@ -520,6 +520,8 @@ pub struct TaskAgent {
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AgentSession {
+    /// The location that owns the current agent process.
+    pub place: Option<String>,
     pub id: String,
     pub goal_id: Option<String>,
     pub task_id: Option<String>,

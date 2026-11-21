@@ -368,6 +368,7 @@ mod tests {
 
     fn reviewer(pull_request_id: &str) -> AgentSession {
         AgentSession {
+            place: None,
             id: "session".into(),
             goal_id: None,
             task_id: None,

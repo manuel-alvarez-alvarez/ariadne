@@ -197,6 +197,11 @@ async fn main() -> Result<()> {
         store: store.clone(),
         git: ariadne_daemon::gitwt::GitManager,
         acp: ariadne_daemon::acp::AcpRuntime::new(store.clone())
+            .with_places(
+                config.root.clone(),
+                std::env::current_exe()?,
+                config.session_place.map(|place| place.as_str().to_string()),
+            )
             .with_exhausted_patterns(config.exhausted_patterns.clone())
             .with_portable_config(config.clone())
             .with_ai_permissions(ai_permissions.clone())
@@ -205,6 +210,11 @@ async fn main() -> Result<()> {
         branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),
         live: ariadne_daemon::forge::live::LivePulls::default(),
     });
+    launcher
+        .acp
+        .reconnect_relays()
+        .await
+        .context("reconnecting agent relays")?;
     // The watches are the process's own: whatever was in flight when the last
     // daemon stopped is picked up again here.
     if let Err(e) = launcher.watch_task_branches().await {
@@ -285,6 +295,7 @@ async fn main() -> Result<()> {
         hosts: hosts.clone(),
         reply_locks: Default::default(),
     };
+    let acp_shutdown = state.launcher.acp.clone();
     let ai_permissions_shutdown = state.ai_permissions.clone();
     let unix_app = http::router(state.clone());
 
@@ -318,6 +329,7 @@ async fn main() -> Result<()> {
     };
 
     // Best-effort cleanup of runtime files.
+    acp_shutdown.detach_relays().await;
     failure_diagnosis.shutdown().await;
     ai_permissions_shutdown.shutdown().await;
     // Flushes the last batch of logs and metrics; blocking (each provider
