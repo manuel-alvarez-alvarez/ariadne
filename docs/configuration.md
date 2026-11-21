@@ -142,6 +142,7 @@ The daemon checks the status of each host again and again, so
 
 An SSH host reports `down` after every process in its forward's process group has ended and been reaped.
 Each cleanup attempt can take up to five seconds.
+Unreaped processes within this deadline do not produce a cleanup error.
 If cleanup fails, the host stays `connecting` with a cleanup error while the daemon retries.
 The daemon retains the old group and blocks replacement until cleanup completes.
 

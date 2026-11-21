@@ -786,7 +786,8 @@ exit "$status"
 async fn end_forward(child: &mut Child, group: Pid, timeouts: &Timeouts) -> Result<(), String> {
     let cleanup = async {
         match kill_process_group(group, Signal::KILL) {
-            Ok(()) | Err(rustix::io::Errno::SRCH) => (),
+            // macOS reports EPERM for an owned group containing only zombies.
+            Ok(()) | Err(rustix::io::Errno::SRCH | rustix::io::Errno::PERM) => (),
             Err(error) => return Err(std::io::Error::from(error)),
         }
         child.wait().await?;
@@ -796,8 +797,8 @@ async fn end_forward(child: &mut Child, group: Pid, timeouts: &Timeouts) -> Resu
             match test_kill_process_group(group) {
                 Err(rustix::io::Errno::SRCH) => return Ok(()),
                 Err(rustix::io::Errno::INTR) => continue,
+                Ok(()) | Err(rustix::io::Errno::PERM) => sleep(timeouts.ssh_forward_poll).await,
                 Err(error) => return Err(std::io::Error::from(error)),
-                Ok(()) => sleep(timeouts.ssh_forward_poll).await,
             }
         }
     };
