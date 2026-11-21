@@ -24,6 +24,7 @@ pub mod http;
 pub mod launcher;
 pub(crate) mod learned_key;
 pub mod metrics;
+pub mod portable;
 pub mod resource;
 pub mod scheduler;
 pub(crate) mod sleep;

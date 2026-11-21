@@ -268,6 +268,11 @@ impl Launcher {
     /// first events would name a launch the row had not heard of; written any
     /// earlier, the old agent's last ones would still count.
     async fn launch(&self, session: &AgentSession, plan: SpawnPlan, launch_id: &str) -> Result<()> {
+        let _admission = self.cfg.portable.admission.read().await;
+        anyhow::ensure!(
+            self.cfg.portable.allows_session(session),
+            "worker maintenance blocks new work"
+        );
         if let Some(internal) = &plan.internal_session_id {
             self.store
                 .set_session_internal_id(&session.id, internal)
@@ -764,6 +769,10 @@ impl Launcher {
         previous: AgentSession,
         instruction: Option<&str>,
     ) -> Result<AgentSession> {
+        anyhow::ensure!(
+            self.cfg.portable.allows_session(&previous),
+            "worker maintenance blocks new work"
+        );
         let internal = previous
             .internal_session_id
             .as_deref()
@@ -848,6 +857,10 @@ impl Launcher {
         reason: &str,
     ) -> Result<AgentSession> {
         let old = self.store.get_session(session_id).await?;
+        anyhow::ensure!(
+            self.cfg.portable.allows_session(&old),
+            "worker maintenance blocks new work"
+        );
         if let Some(goal_id) = old.goal_id.as_deref()
             && self.store.get_goal(goal_id).await?.status() == GoalStatus::Cancelled
         {

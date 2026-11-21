@@ -945,7 +945,8 @@ See [the setup contract](../specs/037-hosts.md#ssh-worker-setup).
 Without `--host`, commands use the resolved daemon endpoint.
 
 Use `ariadne host ls` to list configured hosts. The columns are `name`, `kind`, `status`, `endpoint`, `remote`, `sync`, `missing`, `skipped`, `error` and `sync_error`.
-The `sync` column is `in_sync`, `pending` or `failed`. `missing` counts the repositories the host lacks. `skipped` counts the learned permissions not pushed. `remote` is the far address of an `ssh` host. `sync_error` is why the last push failed. `--columns` selects them, and `--format json` prints the host objects.
+The `sync` column is `in_sync`, `pending`, `pending_restart` or `failed`.
+`pending_restart` means the worker waits for admitted tasks before applying registry changes. `missing` counts the repositories the host lacks. `skipped` counts the learned permissions not pushed. `remote` is the far address of an `ssh` host. `sync_error` is why the last push failed. `--columns` selects them, and `--format json` prints the host objects.
 Use `ariadne host reconnect NAME` to reconnect one named host, or `ariadne host reconnect all` for each named host.
 The command waits until each host is `ready` or `down`, up to `--timeout SECONDS` (default 30).
 It then prints one row per host, with the columns of `host ls`; `--format json` prints the hosts.

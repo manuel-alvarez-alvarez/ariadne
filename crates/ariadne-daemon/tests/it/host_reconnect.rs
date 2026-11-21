@@ -112,6 +112,31 @@ async fn a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once() {
 }
 
 #[tokio::test]
+async fn each_reconnect_reaps_the_previous_forward_before_answering() {
+    let nowhere = tempfile::tempdir().unwrap();
+    let remote = nowhere.path().join("nobody.sock").display().to_string();
+    let stub = stub_ssh(json!({"forward": true}));
+    let host = format!("endpoint = \"ssh://box\"\nremote = \"{remote}\"\n");
+    let (local, _dir) = local_with(&host, Some(&stub), still()).await;
+    local.state.hosts.start();
+
+    for run in 1..=16 {
+        eventually(TIMEOUT, "the current SSH forward starts", || async {
+            stub.runs().len() == run
+        })
+        .await;
+        let previous = stub.runs()[run - 1].pid;
+        let host = reconnect(&local).await;
+        assert_eq!(host.status, HostStatus::Connecting);
+        assert!(
+            !pid_is_alive(previous),
+            "the previous forward must be reaped before reconnect answers"
+        );
+    }
+    local.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_ready_forward_takes_one_check_and_a_good_answer_cuts_no_stream() {
     let far = harness().ai_permissions_hardware(roomy_hardware()).await;
     let health = Health::default();
@@ -173,6 +198,7 @@ async fn a_ready_forward_whose_check_fails_is_down_and_starts_again_at_once() {
     let host = reconnect(&local).await;
     assert_eq!(host.status, HostStatus::Connecting);
     let down = updates.next_status(HostStatus::Ready).await;
+    let down = updates.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     let error = down.error.unwrap();

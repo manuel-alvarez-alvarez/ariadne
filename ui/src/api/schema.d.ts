@@ -118,6 +118,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/config/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_status"];
+        put: operations["hosts_apply"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/dashboards": {
         parameters: {
             query?: never;
@@ -3336,6 +3352,12 @@ export interface components {
             /** @description What the next column's agent is briefed with. */
             reason: string;
         };
+        /** @description The worker's effective live settings and pending registry changes. */
+        ConfigSyncDto: {
+            configuration: components["schemas"]["PortableConfigDto"];
+            error?: string | null;
+            state: components["schemas"]["SyncState"];
+        };
         /**
          * @description Body of `POST /v1/sessions/{id}/console/cancel`. Omitted, or omitting
          *     `subagent_id`, cancels the session's own running turn, as before (021).
@@ -4236,6 +4258,31 @@ export interface components {
             risk_tags?: string[] | null;
             session_id: unknown;
         };
+        /** @description An agent command, keyed by its stable registry identifier. */
+        PortableAgentDto: {
+            command: string[];
+            id: string;
+        };
+        /** @description Settings shared between machines. Worker locations never enter this payload. */
+        PortableConfigDto: {
+            acp_agents: components["schemas"]["PortableAgentDto"][];
+            acp_registry_url: string;
+            /** @description Only explicitly configured flags participate in synchronization. */
+            agent_flags: {
+                [key: string]: string[];
+            };
+            auto_switch: boolean;
+            delete_merged_branches: boolean;
+            delete_merged_worktrees: boolean;
+            exhausted_patterns: string[];
+            log_filter: string;
+            /** Format: int64 */
+            telemetry_logs_days: number;
+            /** Format: int64 */
+            telemetry_rollups_days: number;
+            /** Format: int64 */
+            telemetry_samples_days: number;
+        };
         /**
          * @description The work Ariadne does on one pull request as a goal of its own: one active
          *     goal per request and operation, staffed by one task whose single column
@@ -4769,7 +4816,7 @@ export interface components {
          * @description Whether a host holds what this daemon last pushed to it.
          * @enum {string}
          */
-        SyncState: "in_sync" | "pending" | "failed";
+        SyncState: "in_sync" | "pending" | "failed" | "pending_restart";
         /**
          * @description One agent staffed on a task: the column it works, what it knows, and what
          *     it runs on.
@@ -5279,6 +5326,54 @@ export interface operations {
             };
             /** @description Item no longer exists */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    hosts_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigSyncDto"];
+                };
+            };
+        };
+    };
+    hosts_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortableConfigDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigSyncDto"];
+                };
+            };
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -138,12 +138,19 @@ async fn main() -> Result<()> {
     // Everything that passes the filter goes to stdout as before, and
     // through the OpenTelemetry bridge into the telemetry database behind
     // `/v1/logs`.
+    let (filter, filter_reload) = tracing_subscriber::reload::Layer::new(filter);
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer())
         .with(telemetry.log_layer())
         .init();
 
+    config.portable.set_log_reload(move |value| {
+        if std::env::var_os("RUST_LOG").is_none() {
+            filter_reload.reload(EnvFilter::try_new(value)?)?;
+        }
+        Ok(())
+    });
     info!(root = %config.root.display(), "starting ariadned {}", env!("CARGO_PKG_VERSION"));
     ariadne_daemon::resource::raise_open_file_limit();
 
@@ -191,6 +198,7 @@ async fn main() -> Result<()> {
         git: ariadne_daemon::gitwt::GitManager,
         acp: ariadne_daemon::acp::AcpRuntime::new(store.clone())
             .with_exhausted_patterns(config.exhausted_patterns.clone())
+            .with_portable_config(config.clone())
             .with_ai_permissions(ai_permissions.clone())
             .with_failure_diagnosis(failure_diagnosis.clone()),
         registry: agent_registry.clone(),
@@ -214,12 +222,10 @@ async fn main() -> Result<()> {
         ariadne_daemon::timeouts::Timeouts::default().checkpoint,
     );
     ariadne_daemon::metrics::start([config.db_path.clone(), config.telemetry_db_path.clone()]);
-    ariadne_daemon::telemetry::retention::start(
+    ariadne_daemon::telemetry::retention::start_live(
         telemetry_store.clone(),
         ariadne_daemon::timeouts::Timeouts::default().telemetry_retention,
-        config.telemetry_samples_days,
-        config.telemetry_logs_days,
-        config.telemetry_rollups_days,
+        config.clone(),
     );
     let forge_poll = ariadne_daemon::forge::poll::start(
         store.clone(),
@@ -254,6 +260,11 @@ async fn main() -> Result<()> {
         store.clone(),
         launcher.clone(),
         config.prevent_sleep,
+        ariadne_daemon::timeouts::Timeouts::default(),
+    );
+    ariadne_daemon::portable::start_restart(
+        launcher.clone(),
+        telemetry.clone(),
         ariadne_daemon::timeouts::Timeouts::default(),
     );
     // A changed pull request is what starts, tells and ends its session.

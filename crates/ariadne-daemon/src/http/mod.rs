@@ -8,6 +8,7 @@ mod caller;
 mod catalog;
 mod channel;
 pub(crate) mod classify;
+mod config;
 mod console;
 pub(crate) mod convert;
 mod dashboards;
@@ -142,6 +143,7 @@ impl AppState {
     ),
     paths(
         health,
+        config::status, config::apply,
         version,
         doctor::report,
         agents::list, agents::update, acp_agents::list, acp_agents::refresh,
@@ -188,8 +190,10 @@ impl AppState {
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
-        ariadne_api::hosts::HostColor, hosts::CreateHost, hosts::PatchHost, ariadne_api::hosts::HostDto, ariadne_api::hosts::HostKind, ariadne_api::hosts::HostStatus,
-        ariadne_api::hosts::HostSyncDto, ariadne_api::hosts::SyncState,
+        ariadne_api::hosts::HostColor, hosts::CreateHost, hosts::PatchHost,
+        ariadne_api::hosts::HostDto, ariadne_api::hosts::HostKind, ariadne_api::hosts::HostStatus,
+        ariadne_api::hosts::ConfigSyncDto, ariadne_api::hosts::PortableConfigDto,
+        ariadne_api::hosts::PortableAgentDto, ariadne_api::hosts::HostSyncDto, ariadne_api::hosts::SyncState,
         ariadne_api::hosts::MissingRepositoryDto,
         ariadne_api::events::AgentEventDto, ariadne_api::events::AgentEventSummaryDto,
         ariadne_api::events::EventOrder, ariadne_api::events::PermissionReplyDto,
@@ -284,6 +288,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit",
             put(pull_requests::ask_babysit),
         )
+        .route("/v1/config/sync", get(config::status).put(config::apply))
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
         .route("/v1/doctor", get(doctor::report))

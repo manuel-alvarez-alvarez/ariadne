@@ -82,6 +82,23 @@ impl Forward {
         Self { rx, last: None }
     }
 
+    async fn finish_cleanup(&mut self, mut host: HostDto) -> HostDto {
+        tokio::time::timeout(TIMEOUT, async {
+            while host.status == HostStatus::Connecting {
+                assert!(
+                    host.error
+                        .as_deref()
+                        .is_some_and(|e| e.contains("cleanup attempt")),
+                    "{host:?}"
+                );
+                host = self.next().await;
+            }
+            host
+        })
+        .await
+        .expect("cleanup completes before Down")
+    }
+
     /// The next `host_updated` that moves the forward's status, endpoint or
     /// error. One that moves only the host's sync is skipped.
     async fn next(&mut self) -> HostDto {
@@ -167,6 +184,7 @@ async fn an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again() 
     assert_eq!(connecting.error, None);
 
     let down = rx.next().await;
+    let down = rx.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     assert_eq!(
@@ -217,6 +235,7 @@ async fn a_forward_comes_up_and_goes_down(remote: &str) {
 
     std::fs::write(&gone, "").unwrap();
     let down = rx.next().await;
+    let down = rx.finish_cleanup(down).await;
     assert_eq!(down.status, HostStatus::Down);
     assert_eq!(down.endpoint, None);
     assert_eq!(

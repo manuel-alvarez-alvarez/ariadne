@@ -26,6 +26,10 @@ pub struct Timeouts {
     /// How long one probe of a forward's port may take: a request through
     /// the forward to the far daemon (037).
     pub ssh_probe: Duration,
+    /// Bound each cleanup attempt for an SSH forward's process group.
+    pub ssh_forward_end: Duration,
+    /// Poll a terminated SSH group until every member has been reaped.
+    pub ssh_forward_poll: Duration,
     /// Bound each SSH setup command, including release verification.
     pub worker_setup_command: Duration,
     /// The wait between two probes of a forward that has not answered yet
@@ -42,6 +46,8 @@ pub struct Timeouts {
     /// Each failure doubles it, up to 60 seconds; a push that succeeds
     /// resets it.
     pub host_sync_retry: Duration,
+    /// Check whether worker maintenance has drained its admitted tasks.
+    pub worker_maintenance: Duration,
     /// How long one detail fetch of a pull request may take: its comments,
     /// checks and base, read off the forge after a repository fetch (026).
     pub forge_details: Duration,
@@ -171,11 +177,14 @@ impl Default for Timeouts {
             tunnel_retry: Duration::from_secs(1),
             ssh_retry: Duration::from_secs(1),
             ssh_probe: Duration::from_secs(5),
+            ssh_forward_end: Duration::from_secs(5),
+            ssh_forward_poll: Duration::from_millis(10),
             worker_setup_command: Duration::from_secs(120),
             ssh_probe_interval: Duration::from_millis(200),
             host_check: Duration::from_secs(5),
             host_unanswered: Duration::from_secs(15),
             host_sync_retry: Duration::from_secs(1),
+            worker_maintenance: Duration::from_millis(100),
             forge_details: Duration::from_secs(30),
             forge_rate_limit_pause: Duration::from_secs(900),
             forge_poll_backoff_cap: Duration::from_secs(3600),

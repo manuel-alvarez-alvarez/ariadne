@@ -14,6 +14,7 @@ import { cn } from "@/lib/format"
 const STATE_LABEL: Record<HostView["sync"]["state"], string> = {
   in_sync: "in sync",
   pending: "pending",
+  pending_restart: "pending restart",
   failed: "failed",
 }
 
@@ -30,6 +31,7 @@ export function syncLabel(host: HostView): string {
 const STATE_TONE: Record<HostView["sync"]["state"], string> = {
   in_sync: "bg-status-done",
   pending: "bg-status-warn",
+  pending_restart: "bg-status-warn",
   failed: "bg-status-danger",
 }
 

@@ -438,11 +438,20 @@ async fn status_pipe_keeps_transport_running(writer: std::io::PipeWriter) {
         std::path::Path::new(env!("CARGO_BIN_EXE_ariadned")),
         output,
     );
-    crate::common::eventually(crate::common::TIMEOUT, "relay socket", || async {
-        relay.home.path().join("relays/session1.sock").exists()
-    })
+    let socket = crate::common::eventually_some(
+        crate::common::TIMEOUT,
+        "relay accepts a connection",
+        || async { UnixStream::connect(relay.home.path().join("relays/session1.sock")).ok() },
+    )
     .await;
-    let mut peer = relay.connect();
+    socket
+        .set_read_timeout(Some(crate::common::TIMEOUT))
+        .unwrap();
+    let mut peer = BufReader::new(socket);
+    let hello = receive(&mut peer);
+    assert_eq!(hello["type"], "hello");
+    assert_eq!(hello["protocol_version"], 1);
+    assert!(hello["last_input_seq"].is_u64());
     replay(&mut peer, 0);
     send(
         &mut peer,

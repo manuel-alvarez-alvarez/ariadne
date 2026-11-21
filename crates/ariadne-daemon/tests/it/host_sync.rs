@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::common::{
     Harness, QUIET, RUNS_OUT, TIMEOUT, delete, eventually, eventually_some, get, harness,
-    next_event, post_json, put_json, roomy_hardware, sh,
+    next_event, post, post_json, put_json, roomy_hardware, sh,
 };
 use ariadne_api::hosts::{HostDto, HostStatus, HostSyncDto, MissingRepositoryDto, SyncState};
 use ariadne_api::permissions::{AiPermissionsStatusDto, LearnedPermissionsResponse};
@@ -55,12 +55,14 @@ async fn local_with_host_on(
         format!("[hosts.far]\nendpoint = \"{endpoint}\"\n"),
     )
     .unwrap();
+    std::fs::write(home.join("config.toml"), "").unwrap();
     let h = harness()
         .ai_permissions_hardware(hardware)
         .home(home)
         .timeouts(Timeouts {
             host_sync_retry: RUNS_OUT,
-            host_unanswered: RUNS_OUT,
+            // These cases test synchronization, not a health deadline.
+            host_unanswered: TIMEOUT,
             host_check: RUNS_OUT / 10,
             ..Timeouts::default()
         })
@@ -84,6 +86,7 @@ struct Gate {
     permits: Arc<Semaphore>,
     /// Each request that waited at the gate, as `METHOD path`.
     held_requests: Arc<Mutex<Vec<String>>>,
+    held_events: tokio::sync::broadcast::Sender<String>,
     /// Each request the far daemon has answered, as `METHOD path`.
     answered: Arc<Mutex<Vec<String>>>,
 }
@@ -96,6 +99,7 @@ impl Gate {
             health_off: Arc::new(AtomicBool::new(false)),
             permits: Arc::new(Semaphore::new(0)),
             held_requests: Arc::new(Mutex::new(Vec::new())),
+            held_events: tokio::sync::broadcast::channel(16).0,
             answered: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -158,6 +162,7 @@ fn serve_gated(far: &Harness, listener: tokio::net::TcpListener, gate: &Gate) {
                 };
                 if gate.held.load(Ordering::SeqCst) && selected {
                     gate.held_requests.lock().unwrap().push(what.clone());
+                    let _ = gate.held_events.send(what.clone());
                     gate.permits.acquire().await.unwrap().forget();
                 }
                 let response = next.run(request).await;
@@ -855,14 +860,23 @@ async fn sync_stops_blocked_and_queued_pushes_until_the_host_recovers() {
             .await;
         }
     }
+    let mut held_events = gate.held_events.subscribe();
     gate.health_off.store(true, Ordering::SeqCst);
+    let _: HostDto = local
+        .json(post("/v1/hosts/far/reconnect"), StatusCode::OK)
+        .await;
     eventually(TIMEOUT, "the host is down", || async {
         let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
         hosts[1].status == HostStatus::Down
     })
     .await;
     gate.permits.add_permits(1);
-    tokio::time::sleep(crate::common::QUIET).await;
+    assert!(
+        tokio::time::timeout(QUIET, held_events.recv())
+            .await
+            .is_err(),
+        "a queued push reached the down host"
+    );
     assert!(
         !gate
             .held_requests
@@ -943,6 +957,9 @@ async fn skill_deletion_after_recovery(interrupted: bool, recreate: bool) {
         .await;
     }
     gate.health_off.store(true, Ordering::SeqCst);
+    let _: HostDto = local
+        .json(post("/v1/hosts/far/reconnect"), StatusCode::OK)
+        .await;
     eventually(TIMEOUT, "the host down with the delete queued", || async {
         let hosts: Vec<HostDto> = local.get("/v1/hosts").await;
         hosts[1].status == HostStatus::Down
@@ -1208,6 +1225,66 @@ async fn a_failed_skill_waits_for_backoff_despite_bundle_scans() {
         .unwrap()
         .unwrap();
     server.abort();
+}
+
+#[tokio::test]
+async fn portable_policies_and_flags_reach_the_worker_after_source_changes() {
+    let (far, local, _dir) = far_and_local().await;
+    local.state.hosts.start();
+    until_in_sync(&local).await;
+    let source = local.launcher.cfg.root.join("config.toml");
+    let hosts = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(&source, format!("auto_switch = false\ndelete_merged_worktrees = false\ntelemetry_logs_days = 2\nlog_filter = \"warn\"\n{hosts}")).unwrap();
+    local
+        .store
+        .update_agent_config("stub", vec!["--shared".into()])
+        .await
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "portable policy and flags on the worker",
+        || async {
+            let status: serde_json::Value = far.get("/v1/config/sync").await;
+            status["configuration"]["auto_switch"] == false
+                && status["configuration"]["delete_merged_worktrees"] == false
+                && status["configuration"]["telemetry_logs_days"] == 2
+                && status["configuration"]["log_filter"] == "warn"
+                && status["configuration"]["agent_flags"]["stub"] == json!(["--shared"])
+        },
+    )
+    .await;
+    until_in_sync(&local).await;
+    assert_eq!(
+        far.launcher.cfg.root,
+        far.launcher.cfg.db_path.parent().unwrap()
+    );
+    local.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn unmapped_configuration_fails_without_blocking_catalogs_and_can_retry() {
+    let (far, local, _dir) = far_and_local().await;
+    let source = local.launcher.cfg.root.join("config.toml");
+    let hosts = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(
+        &source,
+        format!("{hosts}\n[[acp_agents]]\nid = \"unmapped\"\ncommand = [\"/source/bin/agent\"]\n"),
+    )
+    .unwrap();
+    local.state.hosts.start();
+    eventually(TIMEOUT, "unmapped command failure", || async {
+        let sync = sync_of(&local).await;
+        sync.state == SyncState::Failed && sync.error.is_some_and(|error| error.contains("mapping"))
+    })
+    .await;
+    let _: SkillDto = local.json(post_json("/v1/skills", json!({"name":"after-config-failure", "document":skill("after-config-failure", "still transfers")})), StatusCode::CREATED).await;
+    eventually(TIMEOUT, "skill after configuration failure", || async {
+        skill_on(&far, "after-config-failure").await.is_some()
+    })
+    .await;
+    std::fs::write(&source, hosts).unwrap();
+    until_in_sync(&local).await;
+    local.state.hosts.shutdown().await;
 }
 
 #[tokio::test]

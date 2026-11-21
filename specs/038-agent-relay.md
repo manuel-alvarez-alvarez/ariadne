@@ -100,6 +100,7 @@ Daemon launch integration, tmux, and herdr are outside this spec.
    If the relay already reaped the agent, send no further kill.
    Remove the socket and journal, then exit 0.
    Ctrl-C uses the same stop behavior.
+   Register its interrupt listener before readiness and retain it across transport loop iterations.
 9. Print a status line at startup and once per second on stdout.
    Include session, agent, task, state, last activity time, agent PID, and `ariadne attach ID`.
    States are `offline`, `connected`, and `exited`.
