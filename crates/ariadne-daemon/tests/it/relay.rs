@@ -161,6 +161,8 @@ fn disconnected_agent_finishes_and_next_connection_receives_output_and_exit() {
         &mut peer,
         json!({"type":"message","data":"{\"result\":\"allow\"}"}),
     );
+    // Input has no relay acknowledgment: the agent's response proves it was forwarded.
+    while receive(&mut peer)["data"] != "{\"result\":\"allow\"}" {}
     drop(peer);
     let mut peer = relay.connect();
     replay(&mut peer, 0);

@@ -72,6 +72,8 @@ Daemon launch integration, tmux, and herdr are outside this spec.
    Disconnection never closes agent stdin or supplies a permission answer.
    A full stdin queue closes the connection, so control requests remain available on reconnect.
    Daemon input has no relay acknowledgment; the daemon uses ACP responses to confirm processing.
+   A message the relay has queued reaches the agent even when its connection closes.
+   A caller that replaces a connection before the ACP response sends the message again.
 7. When the agent exits, stop its remaining process group and drain both output pipes.
    Journal `{"type":"exit","seq":N,"code":7,"signal":null}` after all output.
    A signal exit has `code:null` and the numeric Unix `signal`.
