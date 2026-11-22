@@ -490,3 +490,41 @@ it.each([
     expect(seen.some((request) => request.method === "PUT")).toBe(false)
   },
 )
+
+it.each([
+  ["review", "Start review", "Start an Ariadne review"],
+  ["babysit", "Start babysit", "Start Ariadne babysitting"],
+] as const)(
+  "keeps an open %s dialog while a failing box is read again",
+  async (_work, start, title) => {
+    let hold = false
+    twoCopies(
+      {},
+      {},
+      {
+        local: { "/v1/models": [aModel({ id: "stub:review-model" })], "/v1/skills": [] },
+        box: {
+          // Box fails, then holds its next read unanswered once the test says so.
+          "/v1/repositories/repo-box/pull-requests/42": () =>
+            hold ? undefined : errorResponse(502, "forge_unavailable", "The forge did not answer"),
+        },
+      },
+    )
+    const { queryClient } = renderScreen(
+      <PullRequestPanel id="repo-local:42" onClose={() => {}} />,
+      { route: "/forge/pull-requests?pr=repo-local%3A42" },
+    )
+    const button = await screen.findByRole("button", { name: start })
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false))
+    fireEvent.click(button)
+    const dialog = await screen.findByRole("dialog", { name: title })
+    hold = true
+    void queryClient.invalidateQueries({ queryKey: qk.pullRequests.detail("box", "repo-box:42") })
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: start }).hasAttribute("disabled")).toBe(
+        true,
+      ),
+    )
+    expect(screen.getByRole("dialog", { name: title })).toBe(dialog)
+  },
+)
