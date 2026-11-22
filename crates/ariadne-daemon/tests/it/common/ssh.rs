@@ -11,6 +11,11 @@
 //!   until it is killed, and a run that does not forward ends at once.
 //! - `stderr` and `exit`: what the run writes and exits with when it ends.
 //! - `signal`: end with this signal after writing stderr, instead of an exit code.
+//! - `home`: a run with no `-L`, which asks for the far `$HOME`, prints this
+//!   and exits 0. `home_stderr` and `home_exit` make it write and exit with
+//!   those instead, and `home_hang` makes it write `home_stderr`, then wait
+//!   until it is killed.
+//! - `connect_stderr`: what a forward writes to stderr when its far end refuses.
 //! - `hold_reaping`: keep the killed forward as a zombie until this file exists.
 //!
 //! [`super::HarnessBuilder::ssh`] points the daemon's `ssh_bin` at it.
@@ -197,6 +202,16 @@ if "-T" in args and script.get("setup"):
            "ARIADNE_SETUP_SERVICE_FAIL": setup.get("fail_service", "")}
     sys.exit(subprocess.run(command, shell=True, env=env).returncode)
 
+if "-L" not in args and ("home" in script or script.get("home_hang")):
+    sys.stderr.write(script.get("home_stderr", ""))
+    sys.stderr.flush()
+    if script.get("home_hang"):
+        # Block until killed, with no clock.
+        threading.Event().wait()
+    sys.stdout.write(script.get("home", ""))
+    sys.stdout.flush()
+    os._exit(script.get("home_exit", 0))
+
 if not script.get("forward"):
     end()
 
@@ -236,6 +251,8 @@ def serve():
         try:
             far = target()
         except OSError:
+            sys.stderr.write(script.get("connect_stderr", ""))
+            sys.stderr.flush()
             conn.close()
             continue
         threading.Thread(target=pump, args=(conn, far), daemon=True).start()

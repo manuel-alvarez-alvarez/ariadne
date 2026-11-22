@@ -131,15 +131,17 @@ ssh -N -L 127.0.0.1:<port>:<remote> -o ServerAliveInterval=15 \
 - `ssh` is `ssh_bin`. The forward is your own `ssh`, so your SSH keys, your
   agent and your `~/.ssh/config` apply. `BatchMode=yes` means it never asks
   for a password: set up key or agent login to the host first.
-- `remote` defaults to this daemon's own `socket_path`, for a far daemon at
-  the same path. A socket path forwards to a unix socket; a `host:port`
+- `remote` defaults to the far daemon's own socket,
+  `<far $HOME>/.ariadne/ariadne.sock`. The daemon asks the far machine for
+  `$HOME` through `ssh` before each forward. Set `remote` for a far daemon with
+  a custom `ARIADNE_HOME` or `socket_path`. A socket path forwards to a unix socket; a `host:port`
   forwards to TCP on the far machine.
 - The host is `connecting` while `ssh` starts. The daemon then asks the far
   daemon for `/v1/health` through the port. On the first good answer the
   host is `ready`, and its `endpoint` is `http://127.0.0.1:<port>`. When no
   good answer comes in 15 seconds, the daemon stops `ssh`, and the host is
   `down` with the error `the far daemon does not answer through the
-  forward`.
+  forward`, and the last line `ssh` wrote to stderr, if any.
 - When `ssh` exits, the host is `down` and its `error` is the last line
   `ssh` wrote to stderr. The daemon starts `ssh` again after 1 second, and
   doubles the wait after each exit, up to 60 seconds.

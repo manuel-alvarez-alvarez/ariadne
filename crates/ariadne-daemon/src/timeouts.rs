@@ -23,6 +23,9 @@ pub struct Timeouts {
     /// (037). Each exit doubles it, up to 60 seconds; a forward that came up
     /// resets it.
     pub ssh_retry: Duration,
+    /// How long the call that asks an `ssh://` host without a `remote` for
+    /// its user's `$HOME` may take before its forward starts (037).
+    pub ssh_home: Duration,
     /// How long one probe of a forward's port may take: a request through
     /// the forward to the far daemon (037).
     pub ssh_probe: Duration,
@@ -179,6 +182,7 @@ impl Default for Timeouts {
             tunnel_idle: Duration::from_secs(90),
             tunnel_retry: Duration::from_secs(1),
             ssh_retry: Duration::from_secs(1),
+            ssh_home: Duration::from_secs(15),
             ssh_probe: Duration::from_secs(5),
             ssh_forward_end: Duration::from_secs(5),
             ssh_forward_poll: Duration::from_millis(10),

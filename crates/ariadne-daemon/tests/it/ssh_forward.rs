@@ -35,6 +35,15 @@ fn home_with(toml: &str) -> (tempfile::TempDir, PathBuf) {
 /// A daemon whose one host `box` is `ssh://me@box:2222` at `remote`, on
 /// `stub`, with its forward restarted after `RUNS_OUT`.
 async fn local(stub: &StubSsh, remote: Option<&str>) -> (Harness, tempfile::TempDir) {
+    local_with(stub, remote, Timeouts::default()).await
+}
+
+/// `local`, with `timeouts` and its forward restarted after `RUNS_OUT`.
+async fn local_with(
+    stub: &StubSsh,
+    remote: Option<&str>,
+    timeouts: Timeouts,
+) -> (Harness, tempfile::TempDir) {
     let remote = remote.map_or(String::new(), |remote| format!("remote = {remote:?}\n"));
     let (dir, home) = home_with(&format!(
         "[hosts.box]\nendpoint = \"ssh://me@box:2222\"\n{remote}"
@@ -45,7 +54,7 @@ async fn local(stub: &StubSsh, remote: Option<&str>) -> (Harness, tempfile::Temp
         .ssh(stub)
         .timeouts(Timeouts {
             ssh_retry: RUNS_OUT,
-            ..Timeouts::default()
+            ..timeouts
         })
         .await;
     (h, dir)
@@ -117,24 +126,39 @@ fn forwarded_port(args: &[String]) -> String {
     args[at + 1].split(':').nth(1).unwrap().to_string()
 }
 
+/// The ssh call that asks the far machine for its user's `$HOME`.
+fn home_call() -> Vec<String> {
+    [
+        "-o",
+        "BatchMode=yes",
+        "-p",
+        "2222",
+        "me@box",
+        "printf %s \"$HOME\"",
+    ]
+    .map(String::from)
+    .into()
+}
+
 #[tokio::test]
-async fn a_forward_runs_ssh_to_the_local_socket_path_by_default() {
-    let stub = stub_ssh(json!({"stderr": "refused\n", "exit": 255}));
+async fn a_host_with_no_remote_forwards_to_the_far_users_own_socket() {
+    let stub = stub_ssh(json!({"home": "/home/malvarez", "stderr": "refused\n", "exit": 255}));
     let (h, _dir) = local(&stub, None).await;
     h.state.hosts.start();
-    eventually(TIMEOUT, "the first ssh run", || async {
-        !stub.runs().is_empty()
+    eventually(TIMEOUT, "the forward's ssh run", || async {
+        stub.runs().len() >= 2
     })
     .await;
-    let args = stub.runs()[0].args.clone();
+    let runs = stub.runs();
+    assert_eq!(runs[0].args, home_call());
+    let args = runs[1].args.clone();
     let port = forwarded_port(&args);
-    let socket = h.launcher.cfg.socket_path.display().to_string();
     assert_eq!(
         args,
         [
             "-N".to_string(),
             "-L".into(),
-            format!("127.0.0.1:{port}:{socket}"),
+            format!("127.0.0.1:{port}:/home/malvarez/.ariadne/ariadne.sock"),
             "-o".into(),
             "ServerAliveInterval=15".into(),
             "-o".into(),
@@ -148,6 +172,226 @@ async fn a_forward_runs_ssh_to_the_local_socket_path_by_default() {
             "me@box".into(),
         ]
     );
+    // The stored host keeps no remote, and neither does its DTO.
+    assert_eq!(h.store.list_hosts().await.unwrap()[0].remote, None);
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert_eq!(hosts[1].remote, None);
+    h.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_host_with_a_remote_forwards_to_it_and_asks_for_no_home() {
+    let stub = stub_ssh(json!({"home": "/home/malvarez", "stderr": "refused\n", "exit": 255}));
+    let (h, _dir) = local(&stub, Some("/run/far.sock")).await;
+    h.state.hosts.start();
+    eventually(TIMEOUT, "two forward runs", || async {
+        stub.runs().len() >= 2
+    })
+    .await;
+    for run in stub.runs() {
+        let at = run.args.iter().position(|arg| arg == "-L").unwrap();
+        assert!(run.args[at + 1].ends_with(":/run/far.sock"), "{run:?}");
+    }
+    h.state.hosts.shutdown().await;
+}
+
+/// The host `box` is `down` with `error` after one home call that `script`
+/// scripts, and a second forward attempt follows.
+async fn a_failed_home_lookup_is_down(script: serde_json::Value, error: &str) {
+    let stub = stub_ssh(script);
+    let error = error.replace("{ssh}", &stub.ssh);
+    let (h, _dir) = local_with(
+        &stub,
+        None,
+        Timeouts {
+            ssh_home: RUNS_OUT,
+            ..Timeouts::default()
+        },
+    )
+    .await;
+    let mut rx = Forward::new(h.bus.subscribe());
+    h.state.hosts.start();
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
+    let down = rx.next().await;
+    assert_eq!(down.status, HostStatus::Down);
+    assert_eq!(down.endpoint, None);
+    assert_eq!(down.error.as_deref(), Some(error.as_str()));
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
+    eventually(TIMEOUT, "a second home call", || async {
+        stub.runs().len() == 2
+    })
+    .await;
+    assert!(stub.runs().iter().all(|run| run.args == home_call()));
+    h.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_home_call_that_fails_makes_the_host_down_with_its_last_stderr_line() {
+    a_failed_home_lookup_is_down(
+        json!({"home": "", "home_exit": 255, "home_stderr": "debug1: x\nssh: Could not resolve hostname box\n"}),
+        "the far home lookup failed: {ssh} exited: exit status: 255: ssh: Could not resolve hostname box",
+    )
+    .await;
+}
+
+/// A last stderr line longer than any buffer of the daemon.
+fn long_line() -> String {
+    format!("ssh: {}", "x".repeat(20_000))
+}
+
+#[tokio::test]
+async fn a_home_call_that_exits_keeps_a_long_last_stderr_line_whole() {
+    let line = long_line();
+    a_failed_home_lookup_is_down(
+        json!({"home": "", "home_exit": 255, "home_stderr": format!("first\n{line}\n")}),
+        &format!("the far home lookup failed: {{ssh}} exited: exit status: 255: {line}"),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_home_call_past_its_bound_keeps_a_long_unended_stderr_line_whole() {
+    let line = long_line();
+    let stub = stub_ssh(json!({"home_hang": true, "home_stderr": format!("first\n{line}")}));
+    let (h, _dir) = local_with(
+        &stub,
+        None,
+        Timeouts {
+            ssh_home: std::time::Duration::from_millis(300),
+            ..Timeouts::default()
+        },
+    )
+    .await;
+    let mut rx = Forward::new(h.bus.subscribe());
+    h.state.hosts.start();
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
+    let error = rx.next().await.error.unwrap();
+    assert!(error.ends_with(&format!(": {line}")), "{}", &error[..80]);
+    h.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_empty_home_makes_the_host_down() {
+    a_failed_home_lookup_is_down(
+        json!({"home": ""}),
+        "the far home lookup failed: the far $HOME is empty",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_relative_home_makes_the_host_down() {
+    a_failed_home_lookup_is_down(
+        json!({"home": "home/far", "home_stderr": "motd\n"}),
+        "the far home lookup failed: the far $HOME \"home/far\" is not an absolute path: motd",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_home_call_past_its_bound_is_down_and_its_process_ends() {
+    let stub = stub_ssh(json!({
+        "home_hang": true,
+        "home_stderr": "debug1: x\nssh: connect to host box port 2222: Operation timed out",
+    }));
+    let (h, _dir) = local_with(
+        &stub,
+        None,
+        Timeouts {
+            ssh_home: std::time::Duration::from_millis(300),
+            ..Timeouts::default()
+        },
+    )
+    .await;
+    let mut rx = Forward::new(h.bus.subscribe());
+    h.state.hosts.start();
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
+    let down = rx.next().await;
+    assert_eq!(down.status, HostStatus::Down);
+    let error = down.error.unwrap();
+    assert!(
+        error.starts_with("the far home lookup failed: no answer in"),
+        "{error}"
+    );
+    assert!(
+        error.ends_with(": ssh: connect to host box port 2222: Operation timed out"),
+        "{error}"
+    );
+    let pid = stub.runs()[0].pid;
+    eventually(TIMEOUT, "the home call's process to end", || async {
+        !pid_is_alive(pid)
+    })
+    .await;
+    h.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_reconnect_ends_a_home_call_under_way() {
+    let stub = stub_ssh(json!({"home_hang": true}));
+    let (h, _dir) = local(&stub, None).await;
+    h.state.hosts.start();
+    eventually(TIMEOUT, "the home call", || async {
+        !stub.runs().is_empty()
+    })
+    .await;
+    let pid = stub.runs()[0].pid;
+    let _ = h.state.hosts.reconnect("box").await;
+    eventually(TIMEOUT, "the first call to end", || async {
+        !pid_is_alive(pid)
+    })
+    .await;
+    h.state.hosts.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutdown_ends_a_home_call_under_way() {
+    let stub = stub_ssh(json!({"home_hang": true}));
+    let (h, _dir) = local(&stub, None).await;
+    h.state.hosts.start();
+    eventually(TIMEOUT, "the home call", || async {
+        !stub.runs().is_empty()
+    })
+    .await;
+    let pid = stub.runs()[0].pid;
+    assert!(pid_is_alive(pid));
+    // Shutdown aborts the host's task, which drops the call's future.
+    h.state.hosts.shutdown().await;
+    eventually(TIMEOUT, "the home call's process to end", || async {
+        !pid_is_alive(pid)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_unanswered_forward_names_the_far_daemon_and_ssh_last_line() {
+    let stub = stub_ssh(json!({
+        "forward": true,
+        "connect_stderr": "channel 2: open failed: connect failed: No such file or directory\n",
+    }));
+    let (h, _dir) = local_with(
+        &stub,
+        Some("/nowhere/far.sock"),
+        Timeouts {
+            host_unanswered: std::time::Duration::from_millis(500),
+            ..Timeouts::default()
+        },
+    )
+    .await;
+    let mut rx = Forward::new(h.bus.subscribe());
+    h.state.hosts.start();
+    assert_eq!(rx.next().await.status, HostStatus::Connecting);
+    let down = rx.next().await;
+    assert_eq!(down.status, HostStatus::Down);
+    let error = down.error.unwrap();
+    assert!(
+        error.starts_with("the far daemon does not answer through the forward: "),
+        "{error}"
+    );
+    assert!(
+        error.ends_with(": channel 2: open failed: connect failed: No such file or directory"),
+        "{error}"
+    );
+    h.state.hosts.shutdown().await;
 }
 
 #[tokio::test]

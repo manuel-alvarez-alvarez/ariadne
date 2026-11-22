@@ -19,7 +19,7 @@ use ariadne_client::Client;
 use ariadne_client::endpoint::HostConfig;
 use ariadne_store::Store;
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -365,15 +365,29 @@ pub(crate) async fn check(client: &Client, bound: Duration) -> Result<(), String
     }
 }
 
-/// The arguments of one forward from `127.0.0.1:port` to `remote` on the
-/// host of the `ssh://` `endpoint`.
-fn ssh_args(endpoint: &str, remote: &str, port: u16) -> Result<Vec<String>, String> {
+/// The part of an `ssh` command line that names the far machine: its port
+/// and `[user@]host`.
+fn ssh_peer(endpoint: &str) -> Result<Vec<String>, String> {
     let url = Url::parse(endpoint).map_err(|error| format!("{endpoint}: {error}"))?;
     let host = url
         .host_str()
         .ok_or_else(|| format!("{endpoint}: no host"))?
         .trim_start_matches('[')
         .trim_end_matches(']');
+    let mut peer = Vec::new();
+    if let Some(port) = url.port() {
+        peer.extend(["-p".into(), port.to_string()]);
+    }
+    peer.push(match url.username() {
+        "" => host.to_string(),
+        user => format!("{user}@{host}"),
+    });
+    Ok(peer)
+}
+
+/// The arguments of one forward from `127.0.0.1:port` to `remote` on the
+/// host of the `ssh://` `endpoint`.
+fn ssh_args(endpoint: &str, remote: &str, port: u16) -> Result<Vec<String>, String> {
     let mut args: Vec<String> = [
         "-N",
         "-L",
@@ -389,14 +403,50 @@ fn ssh_args(endpoint: &str, remote: &str, port: u16) -> Result<Vec<String>, Stri
     ]
     .map(String::from)
     .into();
-    if let Some(port) = url.port() {
-        args.extend(["-p".into(), port.to_string()]);
-    }
-    args.push(match url.username() {
-        "" => host.to_string(),
-        user => format!("{user}@{host}"),
-    });
+    args.extend(ssh_peer(endpoint)?);
     Ok(args)
+}
+
+// Close the pipe on exec or process exit, including an idle restart.
+// The watcher ends the forward's process group when that happens.
+// Only SSH owns the stderr pipe; shell job notices must not replace its error.
+const GUARD: &str = r#"exec 3<&0 4>&2 2>/dev/null
+"$@" </dev/null 3<&- 2>&4 4>&- &
+forward=$!
+exec 4>&-
+(read -r _ <&3; kill -s KILL 0) &
+watcher=$!
+wait "$forward"
+status=$?
+kill "$watcher" 2>/dev/null
+exit "$status"
+"#;
+
+/// `ssh` with `args` under `GUARD`, in a process group of its own, with a
+/// piped stdin and stderr. The caller keeps the stdin pipe open for as long as
+/// `ssh` may run: closing it, also by an `exec` of the daemon, ends the group.
+fn guarded_ssh(ssh: &str, args: &[String]) -> Command {
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", GUARD, "ariadne-ssh-guard", ssh])
+        .args(args)
+        .stdin(Stdio::piped())
+        .process_group(0)
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+
+/// The command that prints the far user's `$HOME`.
+const HOME_COMMAND: &str = r#"printf %s "$HOME""#;
+
+/// The last non-empty line of `text`, ended or not.
+fn last_line(text: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(text)
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .map(str::to_string)
 }
 
 /// How one run of a forward ended.
@@ -598,39 +648,27 @@ impl Inner {
             Ok(port) => port,
             Err(error) => return Ended::Down(format!("cannot pick a loopback port: {error}")),
         };
-        let remote = remote
-            .clone()
-            .unwrap_or_else(|| self.cfg.socket_path.display().to_string());
+        let ssh = self.cfg.ssh_bin.as_deref().unwrap_or("ssh");
+        self.set(index, HostStatus::Connecting, None, None);
+        let remote = match remote {
+            Some(remote) => remote.clone(),
+            None => {
+                acted(asked);
+                let home = tokio::select! {
+                    home = self.far_home(ssh, endpoint) => home,
+                    Some(reply) = requests.recv() => return Ended::Again(reply),
+                };
+                match home {
+                    Ok(home) => format!("{home}/.ariadne/ariadne.sock"),
+                    Err(error) => return Ended::Down(error),
+                }
+            }
+        };
         let args = match ssh_args(endpoint, &remote, port) {
             Ok(args) => args,
             Err(error) => return Ended::Down(error),
         };
-        self.set(index, HostStatus::Connecting, None, None);
-        let ssh = self.cfg.ssh_bin.as_deref().unwrap_or("ssh");
-        // Close the pipe on exec or process exit, including an idle restart.
-        // The watcher ends the forward's process group when that happens.
-        // Only SSH owns the stderr pipe; shell job notices must not replace its error.
-        const GUARD: &str = r#"exec 3<&0 4>&2 2>/dev/null
-"$@" </dev/null 3<&- 2>&4 4>&- &
-forward=$!
-exec 4>&-
-(read -r _ <&3; kill -s KILL 0) &
-watcher=$!
-wait "$forward"
-status=$?
-kill "$watcher" 2>/dev/null
-exit "$status"
-"#;
-        let mut child = match Command::new("/bin/sh")
-            .args(["-c", GUARD, "ariadne-ssh-guard", ssh])
-            .args(&args)
-            .stdin(Stdio::piped())
-            .process_group(0)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-        {
+        let mut child = match guarded_ssh(ssh, &args).stdout(Stdio::null()).spawn() {
             Ok(child) => child,
             Err(error) => return Ended::Down(format!("cannot run {ssh}: {error}")),
         };
@@ -666,9 +704,12 @@ exit "$status"
             Err(status) => status,
             Ok(Err(why)) => {
                 self.finish_forward(index, &mut child, group).await;
-                return Ended::Down(format!(
-                    "the far daemon does not answer through the forward: {why}"
-                ));
+                let mut error =
+                    format!("the far daemon does not answer through the forward: {why}");
+                if let Some(line) = self.last_stderr(stderr).await {
+                    error = format!("{error}: {line}");
+                }
+                return Ended::Down(error);
             }
             Ok(Ok(())) => {
                 *backoff = base;
@@ -700,17 +741,92 @@ exit "$status"
             }
         };
         self.finish_forward(index, &mut child, group).await;
-        let last = match stderr {
-            Some(task) => timeout(self.timeouts.ssh_probe, task)
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .flatten(),
-            None => None,
-        };
+        let last = self.last_stderr(stderr).await;
         Ended::Down(last.unwrap_or_else(|| match status {
             Ok(status) => format!("{ssh} exited: {status}"),
             Err(error) => format!("{ssh} could not be waited on: {error}"),
+        }))
+    }
+
+    /// The last line the ended forward wrote to stderr, if it wrote one.
+    async fn last_stderr(&self, task: Option<JoinHandle<Option<String>>>) -> Option<String> {
+        let task = task?;
+        timeout(self.timeouts.ssh_probe, task)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
+    }
+
+    /// The far user's `$HOME`, from one SSH call with the forward's `ssh_bin`,
+    /// user, host, port and `BatchMode=yes`. The call ends in `ssh_home`, and
+    /// its process ends with the call, also when this future is dropped.
+    /// Answers why it failed.
+    async fn far_home(&self, ssh: &str, endpoint: &str) -> Result<String, String> {
+        let mut args = vec!["-o".to_string(), "BatchMode=yes".into()];
+        args.extend(ssh_peer(endpoint)?);
+        args.push(HOME_COMMAND.into());
+        let fail = |why: String| format!("the far home lookup failed: {why}");
+        let mut child = guarded_ssh(ssh, &args)
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|error| fail(format!("cannot run {ssh}: {error}")))?;
+        // Child::wait closes its stdin. Keep this end until the call ends.
+        let _lifetime = child.stdin.take();
+        let mut stdout = child.stdout.take().expect("a piped stdout");
+        let stderr = child.stderr.take().expect("a piped stderr");
+        // The last line SSH wrote so far, kept for a call that times out.
+        let last = Mutex::new(None::<String>);
+        let call = async {
+            let read_out = async {
+                let mut home = String::new();
+                let _ = stdout.read_to_string(&mut home).await;
+                home
+            };
+            let read_err = async {
+                // The whole last line, also one SSH has not ended yet: a
+                // timeout may cut it.
+                let mut stderr = stderr;
+                let mut ended = None;
+                let mut open = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while let Ok(read @ 1..) = stderr.read(&mut chunk).await {
+                    let mut rest = &chunk[..read];
+                    while let Some(at) = rest.iter().position(|byte| *byte == b'\n') {
+                        open.extend_from_slice(&rest[..at]);
+                        ended = last_line(&open).or(ended);
+                        open.clear();
+                        rest = &rest[at + 1..];
+                    }
+                    open.extend_from_slice(rest);
+                    *last.lock().unwrap() = last_line(&open).or_else(|| ended.clone());
+                }
+            };
+            let (home, (), status) = tokio::join!(read_out, read_err, child.wait());
+            (home, status)
+        };
+        let stderr = || last.lock().unwrap().clone();
+        let with_stderr = |why: String| match stderr() {
+            Some(line) => fail(format!("{why}: {line}")),
+            None => fail(why),
+        };
+        let Ok((home, status)) = timeout(self.timeouts.ssh_home, call).await else {
+            return Err(with_stderr(format!(
+                "no answer in {:?}",
+                self.timeouts.ssh_home
+            )));
+        };
+        let status = status.map_err(|error| fail(format!("cannot wait for {ssh}: {error}")))?;
+        let home = home.trim().to_string();
+        if status.success() && home.starts_with('/') {
+            return Ok(home.trim_end_matches('/').to_string());
+        }
+        Err(with_stderr(if !status.success() {
+            format!("{ssh} exited: {status}")
+        } else if home.is_empty() {
+            "the far $HOME is empty".to_string()
+        } else {
+            format!("the far $HOME {home:?} is not an absolute path")
         }))
     }
 

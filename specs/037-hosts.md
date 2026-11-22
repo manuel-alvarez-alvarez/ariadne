@@ -76,16 +76,26 @@ picker, the Hosts screen and one stream per host — is spec
 10. At startup, for each `ssh` host, the daemon picks a free loopback port and
     runs `<ssh_bin> -N -L 127.0.0.1:<port>:<remote> -o ServerAliveInterval=15
     -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o BatchMode=yes
-    [-p <port>] [user@]host`. `remote` defaults to the local daemon's own
-    `socket_path`. A socket path forwards to a unix socket; a `host:port`
-    forwards to TCP.
+    [-p <port>] [user@]host`. A socket path forwards to a unix socket; a
+    `host:port` forwards to TCP. A host with no `remote` forwards to
+    `<far $HOME>/.ariadne/ariadne.sock`. Before each forward starts, one call
+    `<ssh_bin> -o BatchMode=yes [-p <port>] [user@]host 'printf %s "$HOME"'`
+    gets the far user's `$HOME`. The stored `remote` stays empty and
+    `HostDto.remote` stays `null`, so a host saved without a `remote` needs no
+    edit. A call that fails, prints an empty or a non-absolute path, or runs
+    past `ssh_home` makes the host `down` with the error `the far home lookup
+    failed: <reason>`, plus SSH's last stderr line if any. The restart of rule
+    12 follows. The call's process ends with the call, also on a reconnect and on
+    an idle restart of the daemon, as a forward's does. A
+    host with a `remote` makes no such call.
 11. The host is `connecting` while the process starts. The daemon probes
     `GET /v1/health` through the port every `ssh_probe_interval`, each probe
     bounded by `ssh_probe`. On the first good answer the host is `ready` and
     its `endpoint` is `http://127.0.0.1:<port>`. When no good answer comes in
     `host_unanswered`, the daemon kills the process and the host is `down`
     with the error `the far daemon does not answer through the forward:
-    <reason>`. The restart of rule 12 follows.
+    <reason>`, followed by `: <line>` when SSH wrote a last stderr line. The
+    restart of rule 12 follows.
     Forward cleanup waits until every process in its group is gone, including zombies,
     before publishing `down` or starting a replacement. This includes reconnect requests.
     Each cleanup attempt has a five-second deadline (`Timeouts::ssh_forward_end`).
@@ -666,7 +676,17 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 6, CLI event display: `commands/events.rs::a_deleted_host_frame_names_the_removed_host`.
 - Rule 7 (`hosts.rs::openapi_carries_the_route_the_dto_and_the_event`).
 - Rules 8 and 9 (`ssh_forward.rs::help_and_check_config_list_ssh_bin`).
-- Rule 10 (`ssh_forward.rs::a_forward_runs_ssh_to_the_local_socket_path_by_default`,
+- Rule 10 (`ssh_forward.rs::a_host_with_no_remote_forwards_to_the_far_users_own_socket`,
+  `::a_host_with_a_remote_forwards_to_it_and_asks_for_no_home`,
+  `::a_home_call_that_fails_makes_the_host_down_with_its_last_stderr_line`,
+  `::an_empty_home_makes_the_host_down`,
+  `::a_relative_home_makes_the_host_down`,
+  `::a_home_call_past_its_bound_is_down_and_its_process_ends`,
+  `::a_reconnect_ends_a_home_call_under_way`,
+  `::shutdown_ends_a_home_call_under_way`,
+  `portable_config.rs::an_idle_worker_restarts_with_an_open_event_stream`,
+  `::a_home_call_that_exits_keeps_a_long_last_stderr_line_whole`,
+  `::a_home_call_past_its_bound_keeps_a_long_unended_stderr_line_whole`,
   `src/hosts.rs::a_forward_names_the_user_the_port_and_the_remote`,
   `::a_forward_without_user_or_port_names_the_host_alone`,
   `ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`,
@@ -674,7 +694,8 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 6, 11 and 12
   (`ssh_forward.rs::a_forward_to_a_socket_path_comes_up_and_goes_down`,
   `::an_exited_forward_is_down_with_its_last_stderr_line_and_starts_again`,
-  `::a_signalled_forward_reports_ssh_stderr_without_guard_diagnostics`).
+  `::a_signalled_forward_reports_ssh_stderr_without_guard_diagnostics`,
+  `::an_unanswered_forward_names_the_far_daemon_and_ssh_last_line`).
 - Rule 13 (`ssh_forward.rs::shutdown_ends_every_ssh_child`).
 - Rule 14 (`ssh_forward.rs::an_event_stream_and_a_post_both_cross_a_ready_forward`).
 - Rules 4, 7 and 22 (`hosts.rs::a_daemon_without_hosts_lists_only_local`,
