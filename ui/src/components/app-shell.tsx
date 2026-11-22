@@ -30,7 +30,7 @@
  */
 
 import { PanelLeftCloseIcon, PanelLeftOpenIcon, SearchIcon, SettingsIcon } from "lucide-react"
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react"
+import { type ReactNode, useCallback, useMemo, useState } from "react"
 import { Outlet, useMatches, useNavigate } from "react-router-dom"
 
 import { AppSidebar } from "@/components/app-sidebar"
@@ -102,13 +102,8 @@ function AriadneMark() {
 }
 
 export function AppShell() {
-  const overview = useRef<HTMLElement>(null)
-  const [focusSlot, setFocusSlot] = useState<HTMLElement | null>(null)
   const [inspectorWidth, reserve] = useState(0)
-  const inspectorLayout = useMemo(
-    () => ({ focusSlot, reserve, focusOverview: () => overview.current?.focus() }),
-    [focusSlot],
-  )
+  const inspectorLayout = useMemo(() => ({ reserve }), [])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [createGoalOpen, setCreateGoalOpen] = useState(false)
@@ -255,18 +250,12 @@ export function AppShell() {
               <ConnectionBanner onOpenSettings={openSettings} />
               <div className="flex min-h-0 flex-1 flex-col">
                 <main
-                  ref={overview}
                   tabIndex={-1}
                   aria-label="Overview"
                   className="min-h-0 min-w-0 flex-1 overflow-auto p-4"
                 >
                   <Outlet />
                 </main>
-                <nav
-                  ref={setFocusSlot}
-                  aria-label="Inspector focus"
-                  className={cn("shrink-0 border-t p-2", inspectorWidth === 0 && "hidden")}
-                />
               </div>
             </div>
           </div>

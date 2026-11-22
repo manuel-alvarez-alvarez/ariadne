@@ -12,7 +12,7 @@ it("reserves overview space only when pinned and preserves content through fallb
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 })
   const reserve = vi.fn()
   renderScreen(
-    <InspectorLayoutContext.Provider value={{ reserve, focusOverview: () => {} }}>
+    <InspectorLayoutContext.Provider value={{ reserve }}>
       <PanelSheet onClose={() => {}}>
         <textarea aria-label="Draft" defaultValue="Keep this" />
       </PanelSheet>
@@ -43,33 +43,23 @@ it("reserves overview space only when pinned and preserves content through fallb
   expect(reserve).toHaveBeenLastCalledWith(0)
 })
 
-it("moves focus between regions and lets Tab leave the pinned inspector", async () => {
+it("shows an icon-only pin control without focus buttons", () => {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 })
-  const overview = document.createElement("button")
-  overview.textContent = "Overview action"
-  document.body.append(overview)
-  const close = vi.fn()
   renderScreen(
-    <InspectorLayoutContext.Provider
-      value={{ reserve: () => {}, focusOverview: () => overview.focus() }}
-    >
-      <PanelSheet onClose={close}>
-        <button type="button">Inside</button>
-      </PanelSheet>
+    <InspectorLayoutContext.Provider value={{ reserve: () => {} }}>
+      <PanelSheet onClose={() => {}}>Details</PanelSheet>
     </InspectorLayoutContext.Provider>,
   )
-  const user = userEvent.setup()
-  fireEvent.click(screen.getByRole("button", { name: "Pin inspector" }))
-  await user.click(screen.getByRole("button", { name: "Focus overview" }))
-  expect(document.activeElement).toBe(overview)
-  fireEvent.keyDown(overview, { key: "Escape" })
-  expect(close).not.toHaveBeenCalled()
-  await user.click(screen.getByRole("button", { name: "Focus inspector" }))
-  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Focus overview" }))
-  screen.getByRole("separator").focus()
-  await user.tab()
-  expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Close" }))
-  overview.remove()
+  const pin = screen.getByRole("button", { name: "Pin inspector" })
+  expect(pin.textContent).toBe("")
+  expect(pin.getAttribute("title")).toBe("Pin inspector")
+  expect(pin.getAttribute("aria-pressed")).toBe("false")
+  fireEvent.click(pin)
+  expect(pin.getAttribute("aria-label")).toBe("Unpin inspector")
+  expect(pin.getAttribute("title")).toBe("Unpin inspector")
+  expect(pin.getAttribute("aria-pressed")).toBe("true")
+  expect(screen.queryByRole("button", { name: "Focus overview" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "Focus inspector" })).toBeNull()
 })
 
 it("keeps nested confirmations modal and gives Escape to the dialog first", async () => {
@@ -92,7 +82,7 @@ it("keeps nested confirmations modal and gives Escape to the dialog first", asyn
     )
   }
   renderScreen(
-    <InspectorLayoutContext.Provider value={{ reserve: () => {}, focusOverview: () => {} }}>
+    <InspectorLayoutContext.Provider value={{ reserve: () => {} }}>
       <PanelSheet onClose={close}>
         <Content />
       </PanelSheet>

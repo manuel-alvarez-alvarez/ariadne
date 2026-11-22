@@ -164,9 +164,7 @@ select **Pin inspector** to keep the overview available beside the details.
 The inspector reserves space and removes its scrim. Resize its left edge
 with the pointer or arrow keys. The split leaves room for the overview.
 
-Use Tab to reach **Focus overview** or **Focus inspector**.
-Find **Focus inspector** in the reserved row below the overview. Press Enter to
-move focus between these regions. Escape inside the inspector closes it.
+Escape inside the inspector closes it.
 Escape inside a console keeps its existing console action. Confirmation
 dialogs remain modal and receive Escape first.
 

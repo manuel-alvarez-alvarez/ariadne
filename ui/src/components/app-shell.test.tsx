@@ -238,7 +238,7 @@ it("keeps the screen at full width behind an open goal", async () => {
   const main = screen.getByRole("main")
   // jsdom lays nothing out, so the claim is held where layout comes from:
   // The focus row is hidden in overlay mode, and the pane floats outside it.
-  expect(main.nextElementSibling?.className).toContain("hidden")
+  expect(main.nextElementSibling).toBeNull()
   expect(main.parentElement?.contains(pane)).toBe(false)
 })
 
@@ -256,43 +256,9 @@ it("reserves shell space and focuses the overview while the inspector stays moun
   await user.click(screen.getByRole("button", { name: "Pin inspector" }))
   const overview = screen.getByRole("main", { name: "Overview" })
   expect(overview.parentElement?.parentElement?.parentElement?.style.marginRight).toBe("576px")
-  await user.click(screen.getByRole("button", { name: "Focus overview" }))
-  expect(document.activeElement).toBe(overview)
-  await user.click(screen.getByRole("button", { name: "Focus inspector" }))
   await user.click(screen.getByRole("button", { name: "Unpin inspector" }))
   expect(overview.parentElement?.parentElement?.parentElement?.style.marginRight).toBe("0px")
   expect(screen.getByRole("textbox", { name: "Console draft" })).toBe(draft)
   expect((draft as HTMLTextAreaElement).value).toBe("Keep my draft")
   expect(window.location.href).toBe(address)
-})
-
-it("reserves a focus-control row after the overview without covering connection status", async () => {
-  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 })
-  startAt("/goals?goal=g1")
-  const router = createBrowserRouter([
-    {
-      path: "/",
-      element: <AppShell />,
-      children: [{ path: "goals", element: <button type="button">Last overview action</button> }],
-    },
-  ])
-  renderScreen(<RouterProvider router={router} />, { route: null })
-  await screen.findByRole("region")
-  const user = userEvent.setup()
-  await user.click(screen.getByRole("button", { name: "Pin inspector" }))
-  const control = screen.getByRole("button", { name: "Focus inspector" })
-  const row = screen.getByRole("navigation", { name: "Inspector focus" })
-  const overview = screen.getByRole("main")
-  expect(row.contains(control)).toBe(true)
-  expect(overview.nextElementSibling).toBe(row)
-  expect(row.className).toContain("shrink-0")
-  expect(control.className).not.toContain("fixed")
-  expect(document.querySelector("aside")?.contains(row)).toBe(false)
-  screen.getByRole("button", { name: "Last overview action" }).focus()
-  await user.tab()
-  expect(document.activeElement).toBe(control)
-  await user.keyboard("{Enter}")
-  expect(screen.getByRole("region").contains(document.activeElement)).toBe(true)
-  await user.click(screen.getByRole("button", { name: /Daemon status/ }))
-  expect(await screen.findByRole("dialog")).toBeTruthy()
 })

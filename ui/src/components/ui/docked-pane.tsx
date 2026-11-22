@@ -20,7 +20,6 @@ import {
   useRef,
   useState,
 } from "react"
-import { createPortal } from "react-dom"
 
 import { InspectorLayoutContext } from "@/components/inspector-layout-context"
 import { Button } from "@/components/ui/button"
@@ -62,7 +61,6 @@ export function DockedPane({
 }: ComponentProps<"div"> & { onClose: () => void }) {
   const layout = useContext(InspectorLayoutContext)
   const [pinned, setPinned] = useState(false)
-  const overviewReturn = useRef<HTMLElement | null>(null)
   const titleId = useId()
   const [expanded, setExpanded] = useState(false)
   const focused = useRef<{ pane: HTMLDivElement; control: Element } | null>(null)
@@ -141,22 +139,8 @@ export function DockedPane({
     setDragWidth(null)
   }
 
-  const focusControl = (
-    <Button
-      variant="outline"
-      onClick={() => {
-        const target = overviewReturn.current
-        if (target?.isConnected) target.focus()
-        else document.querySelector<HTMLElement>('[data-slot="docked-pane"]')?.focus()
-      }}
-    >
-      Focus inspector
-    </Button>
-  )
-
   return (
     <PaneTitleId.Provider value={titleId}>
-      {split && (layout?.focusSlot ? createPortal(focusControl, layout.focusSlot) : focusControl)}
       {/* A pointer's way out; Escape and the close button are the keyboard's. */}
       {split ? null : (
         <div
@@ -193,25 +177,13 @@ export function DockedPane({
           {canPin && !expanded ? (
             <Button
               variant="ghost"
-              size="sm"
+              size="icon-sm"
+              aria-label={pinned ? "Unpin inspector" : "Pin inspector"}
+              title={pinned ? "Unpin inspector" : "Pin inspector"}
               aria-pressed={pinned}
               onClick={() => setPinned((value) => !value)}
             >
               <PinIcon />
-              {pinned ? "Unpin inspector" : "Pin inspector"}
-            </Button>
-          ) : null}
-          {split ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                overviewReturn.current =
-                  document.activeElement instanceof HTMLElement ? document.activeElement : null
-                layout?.focusOverview()
-              }}
-            >
-              Focus overview
             </Button>
           ) : null}
           <Button
