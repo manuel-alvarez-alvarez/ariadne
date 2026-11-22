@@ -3,11 +3,12 @@
  * the facts `ariadne host ls` prints — name, kind, status, endpoint and
  * error — live through `host_updated`.
  *
- * Configured hosts and provisioned workers share this list. "Add host", and
- * each row's Edit and Remove, change a host through `POST`, `PATCH` and
- * `DELETE /v1/hosts`; the table follows `host_updated` and `host_deleted`. The
- * "Set up worker" action opens the settings daemon's durable SSH setup operation. The
- * screen reads `local` only, so the header's host picker does not change it.
+ * Configured hosts and installed machines share this list. "Add machine"
+ * opens one step-by-step dialog that installs Ariadne through SSH or connects
+ * to a daemon that already runs (`add-machine-dialog.tsx`). Each row's Edit
+ * and Remove change a host through `PATCH` and `DELETE /v1/hosts`; the table
+ * follows `host_updated` and `host_deleted`. The screen reads `local` only, so
+ * the header's host picker does not change it.
  */
 
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
@@ -29,6 +30,7 @@ import {
 } from "@/components/ui/table"
 import { useHostDaemon } from "@/hooks/use-host-daemon"
 import { describeError, formatDuration } from "@/lib/format"
+import { AddMachineDialog } from "./add-machine-dialog"
 import { HostFormDialog } from "./host-form-dialog"
 import { RemoveHostDialog } from "./remove-host-dialog"
 import { WorkerSetupDialog } from "./worker-setup-dialog"
@@ -36,7 +38,7 @@ import { WorkerSetupDialog } from "./worker-setup-dialog"
 export function HostsPage() {
   const { hosts, error } = useHosts()
   const [updateOpen, setUpdateOpen] = useState(false)
-  const [setupOpen, setSetupOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<HostView | null>(null)
   const [removeOpen, setRemoveOpen] = useState(false)
@@ -45,25 +47,15 @@ export function HostsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Hosts"
-        description="The daemons this app reads. Add, edit or remove one here, or set up a worker over SSH. local is the settings daemon itself."
+        description="The machines this app reads. Add a machine, or edit or remove one here. local is the daemon of this machine."
         actions={
           <>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setEditing(null)
-                setFormOpen(true)
-              }}
-            >
-              <PlusIcon />
-              Add host
-            </Button>
             <Button variant="outline" onClick={() => setUpdateOpen(true)}>
               Update worker
             </Button>
-            <Button onClick={() => setSetupOpen(true)}>
+            <Button onClick={() => setAddOpen(true)}>
               <PlusIcon />
-              Set up worker
+              Add machine
             </Button>
           </>
         }
@@ -104,8 +96,8 @@ export function HostsPage() {
           ))}
         </TableBody>
       </Table>
-      <WorkerSetupDialog update open={updateOpen} onOpenChange={setUpdateOpen} />
-      <WorkerSetupDialog open={setupOpen} onOpenChange={setSetupOpen} />
+      <WorkerSetupDialog open={updateOpen} onOpenChange={setUpdateOpen} />
+      <AddMachineDialog open={addOpen} onOpenChange={setAddOpen} />
       <HostFormDialog open={formOpen} onOpenChange={setFormOpen} host={editing} />
       <RemoveHostDialog open={removeOpen} onOpenChange={setRemoveOpen} name={removing} />
     </div>

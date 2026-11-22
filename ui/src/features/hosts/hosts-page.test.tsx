@@ -398,7 +398,7 @@ it("shows no reconnect button while the daemon lists local alone", async () => {
   expect(screen.queryByRole("button", { name: /Reconnect/ })).toBeNull()
 })
 
-it("titles the screen Hosts and opens the worker setup from its Set up worker action", async () => {
+it("titles the screen Hosts and opens the machine dialog from its Add machine action", async () => {
   const user = userEvent.setup()
   stubHosts({}, [LOCAL, BOX])
   startAt("/hosts")
@@ -415,13 +415,15 @@ it("titles the screen Hosts and opens the worker setup from its Set up worker ac
 
   expect(screen.getByRole("heading", { level: 1, name: "Hosts" })).toBeTruthy()
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3))
-  expect(screen.queryByLabelText("Worker name")).toBeNull()
+  expect(screen.queryByRole("dialog")).toBeNull()
+  expect(screen.queryByRole("button", { name: "Set up worker" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "Add host" })).toBeNull()
 
-  await user.click(screen.getByRole("button", { name: "Set up worker" }))
+  await user.click(screen.getByRole("button", { name: "Add machine" }))
 
-  expect(await screen.findByLabelText("Worker name")).toBeTruthy()
-  expect(screen.getByRole("button", { name: "Start or retry setup" })).toBeTruthy()
-  expect(screen.getByRole("button", { name: "Load setup progress" })).toBeTruthy()
+  const dialog = await screen.findByRole("dialog")
+  expect(within(dialog).getByRole("heading", { name: "Add machine" })).toBeTruthy()
+  expect(within(dialog).getAllByRole("radio")).toHaveLength(2)
 })
 
 it("shows the hosts of local whatever the header host picker selects", async () => {

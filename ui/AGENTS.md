@@ -193,9 +193,13 @@ src/
     repositories/  the registered checkouts goals are created against, their
                    forge integration, and the webhook tunnel switch
                    the settings dialog shows
-    hosts/         the Hosts screen: the hosts table, the add, edit and remove
-                   dialogs, and the "Set up worker" dialog with its SSH worker
-                   setup form
+    hosts/         the Hosts screen: the hosts table, the edit and remove
+                   dialogs, the "Update worker" dialog, and "Add machine": one
+                   step-by-step dialog that installs Ariadne through SSH
+                   (Connect, Select, Review, Install) or connects to a daemon
+                   that already runs. `setup-progress.tsx` is its Install step,
+                   which takes a setup name; `machine-setup.ts` holds the
+                   selection defaults and the setup request they make
     agents/        agents screen: the flags each registry agent is launched
                    with, and the model catalog each may be staffed on (what
                    `#/models` redirects onto)

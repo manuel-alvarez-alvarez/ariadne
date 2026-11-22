@@ -1045,12 +1045,12 @@ A failed or incomplete status returns a failure exit code.
 A complete status requires the daemon to answer and the connection to be registered.
 Use `--format json` for operation state and per-step results.
 
-The Desktop Hosts screen provides the same controls in its **Set up worker** dialog.
-The Hosts screen also has **Add host**, and **Edit** and **Remove** on each row, for the same changes as `host add`, `host edit` and `host rm`.
+The Desktop Hosts screen provides the same steps in its **Add machine** dialog.
+Select **Install Ariadne on a machine through SSH**, then follow the steps Connect, Select, Review and Install.
+Select **Connect to a daemon that already runs** for the same change as `host add`.
+Each row has **Edit** and **Remove**, for the same changes as `host edit` and `host rm`.
 Remove does not stop the daemon on the host.
-Select local binaries or a verified release, then select **Start or retry setup**.
-Enter an existing worker name and select **Load setup progress** to inspect a previous operation.
-Use the original request values when you retry.
+Select **Check again** on the Install step to resume a stopped setup with its original request.
 Agent installation, credential transfer, and repository cloning are separate operations.
 See [the setup contract](../specs/037-hosts.md#ssh-worker-setup).
 

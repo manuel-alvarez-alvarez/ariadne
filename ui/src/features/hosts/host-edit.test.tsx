@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
 /**
- * Adding, editing and removing a host on the Hosts screen, over the settings
- * daemon's `POST`, `PATCH` and `DELETE /v1/hosts`.
+ * Adding a host through "Add machine" and its "Connect to a daemon that
+ * already runs" method, and editing and removing a host on the Hosts screen,
+ * over the settings daemon's `POST`, `PATCH` and `DELETE /v1/hosts`.
  */
 
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react"
@@ -53,7 +54,22 @@ function type(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } })
 }
 
-it("adds a host with name, endpoint, remote and colour, and shows its row through host_updated", async () => {
+/**
+ * Opens "Add machine" at the connect method, and returns the dialog. These
+ * steps come before the claim of each test, so they go by `fireEvent`.
+ */
+async function openConnect(): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole("button", { name: "Add machine" }))
+  const dialog = await screen.findByRole("dialog")
+  fireEvent.click(
+    within(dialog).getByRole("radio", { name: "Connect to a daemon that already runs" }),
+  )
+  fireEvent.click(within(dialog).getByRole("button", { name: "Next" }))
+  await within(dialog).findByLabelText("Address")
+  return dialog
+}
+
+it("adds a host with name, address, colour and an Advanced remote socket, and shows its row through host_updated", async () => {
   const user = userEvent.setup()
   const hosts = [LOCAL, BOX]
   const seen = stubHosts(
@@ -67,13 +83,13 @@ it("adds a host with name, endpoint, remote and colour, and shows its row throug
   const { queryClient } = mount()
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3))
 
-  await user.click(screen.getByRole("button", { name: "Add host" }))
-  const dialog = await screen.findByRole("dialog")
+  const dialog = await openConnect()
   type("Name", "new-box")
-  type("Endpoint", "ssh://me@new-box")
-  type("Remote", "/run/new.sock")
+  type("Address", "ssh://me@new-box")
+  await user.click(within(dialog).getByText("Advanced"))
+  type("Remote socket", "/run/new.sock")
   await user.click(within(dialog).getByRole("radio", { name: "Pink" }))
-  await user.click(within(dialog).getByRole("button", { name: "Add host" }))
+  await user.click(within(dialog).getByRole("button", { name: "Add machine" }))
 
   await waitFor(() => expect(bodies(seen, "POST")).toHaveLength(1))
   expect(bodies(seen, "POST")[0]).toEqual({
@@ -90,11 +106,9 @@ it("adds a host with name, endpoint, remote and colour, and shows its row throug
 })
 
 it("offers Default and the eight colours as swatches", async () => {
-  const user = userEvent.setup()
   stubHosts({}, [LOCAL, BOX])
   mount()
-  await user.click(await screen.findByRole("button", { name: "Add host" }))
-  const dialog = await screen.findByRole("dialog")
+  const dialog = await openConnect()
   const labels = within(dialog)
     .getAllByRole("radio")
     .map((radio) => radio.closest("label")?.textContent)
@@ -156,29 +170,28 @@ it("shows a refusal at the field it names, and any other in the dialog", async (
   )
   stubHosts({ local: { "/v1/hosts": hostsRoute([LOCAL], () => answer) } }, [LOCAL])
   mount()
-  await user.click(await screen.findByRole("button", { name: "Add host" }))
-  const dialog = await screen.findByRole("dialog")
+  const dialog = await openConnect()
   type("Name", "x")
-  type("Endpoint", "nope")
-  await user.click(within(dialog).getByRole("button", { name: "Add host" }))
-  const endpointField = screen.getByLabelText("Endpoint")
+  type("Address", "nope")
+  await user.click(within(dialog).getByRole("button", { name: "Add machine" }))
+  const endpointField = screen.getByLabelText("Address")
   await waitFor(() => expect(endpointField.getAttribute("aria-invalid")).toBe("true"))
   expect(within(dialog).getByText(/must be ssh/)).toBeTruthy()
 
   answer = errorResponse(409, "conflict", "host name exists")
-  await user.click(within(dialog).getByRole("button", { name: "Add host" }))
+  await user.click(within(dialog).getByRole("button", { name: "Add machine" }))
   await waitFor(() =>
     expect(screen.getByLabelText("Name").getAttribute("aria-invalid")).toBe("true"),
   )
   expect(within(dialog).getByText(/host name exists/)).toBeTruthy()
 
   answer = errorResponse(409, "conflict", "the hosts file changed")
-  await user.click(within(dialog).getByRole("button", { name: "Add host" }))
+  await user.click(within(dialog).getByRole("button", { name: "Add machine" }))
   expect(await within(dialog).findByText(/the hosts file changed/)).toBeTruthy()
   expect(screen.getByLabelText("Name").getAttribute("aria-invalid")).toBeNull()
 
   answer = errorResponse(500, "internal", "the database is locked")
-  await user.click(within(dialog).getByRole("button", { name: "Add host" }))
+  await user.click(within(dialog).getByRole("button", { name: "Add machine" }))
   expect(await within(dialog).findByText(/the database is locked/)).toBeTruthy()
   expect(screen.getByLabelText("Name").getAttribute("aria-invalid")).toBeNull()
 })
@@ -194,11 +207,10 @@ it("disables the submit button while its request runs", async () => {
     [LOCAL],
   )
   mount()
-  await user.click(await screen.findByRole("button", { name: "Add host" }))
-  const dialog = await screen.findByRole("dialog")
+  const dialog = await openConnect()
   type("Name", "x")
-  type("Endpoint", "http://x:1")
-  const submit = within(dialog).getByRole("button", { name: "Add host" }) as HTMLButtonElement
+  type("Address", "http://x:1")
+  const submit = within(dialog).getByRole("button", { name: "Add machine" }) as HTMLButtonElement
   await user.click(submit)
   await waitFor(() => expect(submit.disabled).toBe(true))
   expect(seen.filter((one) => one.method === "POST")).toHaveLength(1)
@@ -249,11 +261,10 @@ it("sends color null when a new host keeps the Default colour", async () => {
     [LOCAL],
   )
   mount()
-  await user.click(await screen.findByRole("button", { name: "Add host" }))
-  const dialog = await screen.findByRole("dialog")
+  const dialog = await openConnect()
   type("Name", "new-box")
-  type("Endpoint", "ssh://me@new-box")
-  await user.click(within(dialog).getByRole("button", { name: "Add host" }))
+  type("Address", "ssh://me@new-box")
+  await user.click(within(dialog).getByRole("button", { name: "Add machine" }))
   await waitFor(() => expect(bodies(seen, "POST")).toHaveLength(1))
   expect(bodies(seen, "POST")[0]).toEqual({
     name: "new-box",

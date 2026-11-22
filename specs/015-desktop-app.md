@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-21
+updated: 2026-11-22
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1173,12 +1173,8 @@ Out: the daemon endpoints themselves (012).
     reach (rule 78).
     The screen reads the hosts of `local` only, so the header host picker
     does not change it. The settings dialog has no Hosts section.
-    Its page header has a "Set up worker" action. The action opens a dialog
-    that provisions SSH workers through spec 037, rules 43–50.
-    The setup dialog shows durable steps and permits safe retry.
-    The header also has an "Add host" action beside it. It opens a dialog with
-    the fields name, endpoint, remote and colour, and its submit sends
-    `POST /v1/hosts` to `local`. Each row has an Edit action. For a named host
+    Its page header has one "Add machine" action, which opens the dialog of
+    rule 52a. Each row has an Edit action. For a named host
     the dialog has endpoint, remote and colour, with the name read-only; for
     `local` it has colour alone, with no name field. Its submit sends `PATCH /v1/hosts/{name}` with
     the changed fields only, and an emptied remote is `null`. The colour field
@@ -1191,7 +1187,7 @@ Out: the daemon endpoints themselves (012).
     A failed removal shows its error in a toast. A submit button is disabled
     while its request runs. The table follows `host_updated` and
     `host_deleted` with no reload.
-    (`ui/src/features/hosts/host-edit.test.tsx::adds a host with name, endpoint, remote and colour, and shows its row through host_updated`,
+    (`ui/src/features/hosts/host-edit.test.tsx::adds a host with name, address, colour and an Advanced remote socket, and shows its row through host_updated`,
     `::offers Default and the eight colours as swatches`,
     `::sends only the changed fields of a named host, an emptied remote as null and Default as null`,
     `::edits the colour of local alone`,
@@ -1200,14 +1196,62 @@ Out: the daemon endpoints themselves (012).
     `::disables the submit button while its request runs`,
     `::removes a named host after a confirmation that says the far daemon keeps running`,
     `::shows the error of a failed removal in a toast`).
-    (`ui/src/features/hosts/hosts-page.test.tsx::titles the screen Hosts and opens the worker setup from its Set up worker action`,
+    (`ui/src/features/hosts/hosts-page.test.tsx::titles the screen Hosts and opens the machine dialog from its Add machine action`,
     `::shows the hosts of local whatever the header host picker selects`,
-    `ui/src/components/settings-dialog.test.tsx::has no Hosts section`,
-    `ui/src/features/hosts/worker-setup.test.tsx::starts setup and shows retained steps and a failure`).
+    `ui/src/components/settings-dialog.test.tsx::has no Hosts section`).
     The sidebar lists Hosts after Agents, and the chord `g h` opens it
     (`ui/src/components/app-shell.test.tsx`,
     `ui/src/hooks/use-global-shortcuts.test.tsx::opens the Hosts screen on G then H`,
     `ui/src/components/keyboard-shortcuts-dialog.test.tsx::lists every chord, screen by screen`).
+52a. "Add machine" is one step-by-step form dialog (`FormDialog`, `Field`).
+    Its first step asks for the method: "Install Ariadne on a machine through
+    SSH" or "Connect to a daemon that already runs", each with one line that
+    says when to use it. Every step has Back, Cancel and its submit. A
+    disabled submit shows its reason above the buttons. The dialog says "this
+    machine" and "the new machine", and never "worker", "source daemon
+    machine" or "settings daemon". An "Advanced" section holds each input that
+    a default replaces.
+    - The connect method asks for the name, the address and the colour, with
+      the remote socket under "Advanced". Its submit sends `POST /v1/hosts` to
+      `local`, as rule 52 states.
+    - The install method has the steps Connect, Select, Review and Install,
+      and a step bar shows the position. Connect asks for the name and the
+      SSH address, and says that Ariadne uses the SSH keys of this machine and
+      never asks for a password. Next sends
+      `POST /v1/hosts/{name}/setup/inspect` (spec 037, rule 75).
+    - Select shows the Ariadne programs that inspection reports as one line:
+      the method and the version. "Advanced" holds the remote socket, the two
+      program paths and the release inputs. The request has a `source` only
+      when the user fills them. Select lists each agent and GitHub CLI with a
+      checkbox and its group: Ariadne installs it, it is already on the new
+      machine, or the user installs it by hand with the command shown. The
+      agents that run on this machine, GitHub CLI and every registered
+      repository start selected. Each repository has a destination that starts
+      as `~/workspace/<name>`. Each sign-in that the selection needs offers
+      "Sign in on the new machine", the default with its command, and "Copy
+      from this machine", disabled where inspection does not permit a copy.
+      Next sends `POST /v1/hosts/{name}/setup/review`.
+    - Review shows the plan under "Ariadne installs", "Already on the
+      machine" and "You install by hand", and names each sign-in that setup
+      copies. Back keeps every input. Select reviews again on each Next, so
+      Install sends the request that was reviewed: `POST /v1/hosts/{name}/setup`.
+    - Install is `SetupProgress` (`features/hosts/setup-progress.tsx`), which
+      takes a setup name. It polls `GET /v1/hosts/{name}/setup` while the setup
+      is `pending` or `running`, and shows each step by its title. A step that
+      needs manual work shows its reason, its command with a copy control, and
+      "Check again", which sends `POST /v1/hosts/{name}/setup/resume`. The
+      dialog closes during Install with no question, and the setup continues in
+      the daemon.
+    (`ui/src/features/hosts/add-machine.test.tsx::replaces Add host and Set up worker with one Add machine action that asks for the method`,
+    `::asks Connect for the name and the SSH address alone, says why Next waits, and inspects`,
+    `::shows the programs as one line and selects available agents, GitHub CLI and every repository`,
+    `::asks one sign-in choice per needed sign-in, and copies only where inspection permits it`,
+    `::sends a source only when the Advanced inputs name the programs, and says why Next waits`,
+    `::reviews the plan in three groups, keeps the inputs on Back, and reviews a changed selection again`,
+    `::closes during the installation with no question, and the setup continues in the daemon`,
+    `ui/src/features/hosts/host-edit.test.tsx::shows a refusal at the field it names, and any other in the dialog`,
+    `ui/src/features/hosts/setup-progress.test.tsx::shows each step by its title, and a manual action with its reason, its command and a copy control`,
+    `::resumes the setup from Check again and shows the progress it answers with`).
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.

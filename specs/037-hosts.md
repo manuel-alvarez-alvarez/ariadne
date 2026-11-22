@@ -22,6 +22,8 @@ tests:
   - crates/ariadne-daemon/src/hosts.rs
   - crates/ariadne-daemon/src/hosts/sync.rs
   - ui/src/features/hosts/worker-setup.test.tsx
+  - ui/src/features/hosts/add-machine.test.tsx
+  - ui/src/features/hosts/setup-progress.test.tsx
 ---
 
 # Hosts
@@ -318,10 +320,10 @@ picker, the Hosts screen and one stream per host — is spec
     `ariadne host setup-status NAME` shows progress and per-step errors.
     Both use the local daemon; JSON output uses the operation DTO.
     A failed or incomplete result exits unsuccessfully.
-52. The Desktop Hosts screen has a "Set up worker" dialog. It includes SSH access, local binary paths, and verified release selection.
-    Both binary path labels identify the source daemon machine that runs the settings daemon.
-    It shows completed steps and failures, polls active setup, and permits retry with the same request.
-    Entering a worker name and loading progress restores its durable operation view.
+52. The Desktop Hosts screen installs a worker through the install method of its "Add machine" dialog (spec 015, rule 52a).
+    It sends no `source` unless the user fills local program paths or a verified release under "Advanced".
+    Its Install step shows each step by its title and its failure, and polls active setup.
+    "Check again" resumes a stopped setup with the same request (rule 78).
 
 53. Tool selections install Git and optional `gh`, plus npm or uv distributions from the shipped ACP registry.
     User-configured commands override registry IDs and receive manual installation guidance.
@@ -484,8 +486,8 @@ picker, the Hosts screen and one stream per host — is spec
     Existing setup POST and GET routes retain their request and progress formats.
     CLI provides `host inspect`, `host review`, and `host resume` through the local settings daemon.
     These commands reject other host selections with a worker setup reason and `--host local` guidance.
-    Desktop requires inspection and review before application and invalidates review when selections change.
-    Desktop can load progress by worker name and resume the saved operation.
+    Desktop requires inspection and review before application, and reviews again after a selection changes.
+    Desktop resumes a stopped setup from the "Check again" of its Install step.
 
 ### Saved setups
 
@@ -711,8 +713,9 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 46, shell fallback: `hosts.rs::setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path`.
 - Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
 - Rule 50: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
-- Rule 50: `ui/src/features/hosts/worker-setup.test.tsx::starts setup and shows retained steps and a failure`.
-- Rule 52: `ui/src/features/hosts/hosts-page.test.tsx::titles the screen Hosts and opens the worker setup from its Set up worker action`.
+- Rule 50: `ui/src/features/hosts/setup-progress.test.tsx::shows each step by its title, and a manual action with its reason, its command and a copy control`.
+- Rule 52: `ui/src/features/hosts/add-machine.test.tsx::sends a source only when the Advanced inputs name the programs, and says why Next waits`
+  and `ui/src/features/hosts/setup-progress.test.tsx::resumes the setup from Check again and shows the progress it answers with`.
 
 The tests run a stub `ssh` (`tests/it/common/ssh.rs`) that relays its `-L`
 port to its remote, with a second harness daemon as the far machine. The sync
@@ -737,7 +740,7 @@ on, and shorten `host_unanswered` and `host_check` through `Timeouts`.
   `::selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy`,
   `::credential_values_are_rejected_before_an_operation_is_persisted`,
   `::selected_github_credentials_enable_git_without_entering_command_arguments`.
-- Desktop selections: `ui/src/features/hosts/worker-setup.test.tsx::sends explicit tool and credential selections`.
+- Desktop selections: `ui/src/features/hosts/add-machine.test.tsx::asks one sign-in choice per needed sign-in, and copies only where inspection permits it`.
 
 - Portable live settings preserve worker locations and survive reload
   (`portable_config.rs::portable_settings_apply_without_changing_worker_paths`).
@@ -773,7 +776,7 @@ Git prerequisite proof: `hosts.rs::binary_only_setup_requires_git_and_resumes_af
 CLI host guard proof: `onboarding_commands_refuse_other_hosts_with_a_setup_reason`.
 Partial setup proof: `hosts.rs::setup_reports_custom_tools_without_executing_install_commands`.
 Resume proof: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
-Desktop proof: `ui/src/features/hosts/worker-setup.test.tsx`.
+Desktop proof: `ui/src/features/hosts/add-machine.test.tsx::reviews the plan in three groups, keeps the inputs on Back, and reviews a changed selection again`.
 
 - Rules 79–82: `hosts.rs::inspection_names_who_installs_each_agent_github_and_each_sign_in`.
 - Rules 79 and 83: `hosts.rs::review_plans_each_requested_item_in_one_of_three_groups`.
@@ -794,4 +797,5 @@ Desktop proof: `ui/src/features/hosts/worker-setup.test.tsx`.
 `crates/ariadne-daemon/src/http/query/fan.rs`, `docs/configuration.md`,
 `docs/telemetry.md`.
 
-SSH setup sources: `crates/ariadne-daemon/src/hosts/setup.rs`, `crates/ariadne-daemon/src/hosts/setup/plan.rs`, `ui/src/features/hosts/worker-setup.tsx`.
+SSH setup sources: `crates/ariadne-daemon/src/hosts/setup.rs`, `crates/ariadne-daemon/src/hosts/setup/plan.rs`, `ui/src/features/hosts/add-machine-dialog.tsx`, `ui/src/features/hosts/machine-setup.ts`,
+`ui/src/features/hosts/setup-progress.tsx`, `ui/src/features/hosts/worker-setup.tsx`.

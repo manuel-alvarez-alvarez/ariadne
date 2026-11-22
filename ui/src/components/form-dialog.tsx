@@ -30,6 +30,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react"
@@ -131,6 +132,9 @@ export function FormDialogContent({
   submitLabel,
   pending,
   submitDisabled = false,
+  disabledReason = null,
+  onBack,
+  cancelLabel = "Cancel",
   className,
   onKeyDown,
   children,
@@ -145,6 +149,15 @@ export function FormDialogContent({
   pending: boolean
   /** The form cannot submit until its required local choice is made. */
   submitDisabled?: boolean
+  /**
+   * Why the form cannot submit yet, shown above the buttons. A reason also
+   * disables the submit button.
+   */
+  disabledReason?: string | null
+  /** A step of a longer form goes back to the step before it. */
+  onBack?: () => void
+  /** The button that closes the form unsaved; null where the submit closes it. */
+  cancelLabel?: ReactNode | null
   /** Sizing for the dialog box; forms differ in how much they have to hold. */
   className?: string
   /**
@@ -156,11 +169,13 @@ export function FormDialogContent({
   onKeyDown?: (event: KeyboardEvent<HTMLFormElement>) => void
   children: ReactNode
 }) {
+  const reasonId = useId()
+  const disabled = submitDisabled || !!disabledReason
   return (
     <DialogContent className={className}>
       <form
         onSubmit={onSubmit}
-        onKeyDown={pending || submitDisabled ? undefined : onKeyDown}
+        onKeyDown={pending || disabled ? undefined : onKeyDown}
         className="grid gap-4"
       >
         <DialogHeader>
@@ -176,11 +191,34 @@ export function FormDialogContent({
             description={error.description}
           />
         ) : null}
+        {disabledReason && !pending ? (
+          <p id={reasonId} className="text-right text-sm text-muted-foreground">
+            {disabledReason}
+          </p>
+        ) : null}
         <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" disabled={pending} />}>
-            Cancel
-          </DialogClose>
-          <Button type="submit" pending={pending} disabled={submitDisabled}>
+          {onBack ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="sm:mr-auto"
+              disabled={pending}
+              onClick={onBack}
+            >
+              Back
+            </Button>
+          ) : null}
+          {cancelLabel === null ? null : (
+            <DialogClose render={<Button type="button" variant="outline" disabled={pending} />}>
+              {cancelLabel}
+            </DialogClose>
+          )}
+          <Button
+            type="submit"
+            pending={pending}
+            disabled={disabled}
+            aria-describedby={disabledReason && !pending ? reasonId : undefined}
+          >
             {submitLabel}
           </Button>
         </DialogFooter>
