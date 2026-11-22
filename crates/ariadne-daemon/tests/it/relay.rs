@@ -374,9 +374,11 @@ fn first_socket_frame_identifies_protocol_before_replay() {
 
 #[test]
 fn executable_upgrade_preserves_running_relay_and_protocol() {
-    let install = tempfile::tempdir().unwrap();
+    // Hard links cannot cross filesystems, and the system temporary directory can be another one.
+    let built = std::path::Path::new(env!("CARGO_BIN_EXE_ariadned"));
+    let install = tempfile::tempdir_in(built.parent().unwrap()).unwrap();
     let binary = install.path().join("ariadned");
-    std::fs::hard_link(env!("CARGO_BIN_EXE_ariadned"), &binary).unwrap();
+    std::fs::hard_link(built, &binary).unwrap();
     let mut relay = Relay::start_with_binary(
         "import sys\nfor line in sys.stdin: print(line.strip())",
         &binary,
