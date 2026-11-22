@@ -322,6 +322,23 @@ picker, the Hosts screen and one stream per host — is spec
     `Timeouts::worker_source_build` bounds the source transfer, the Rust installation, and the build.
     The worker needs network access to crates.io, and to rustup when Rust is missing.
 47. Setup probes the remote OS, architecture, and home before transfer.
+    Setup finds tools that the user installed by hand on the PATH of rule 48.
+    A runtime is present when its command runs: `node --version`, `npm --version`, `uv --version`.
+    A registry agent with an `npx` or `uvx` distribution is present when its registry command runs on that PATH (`<command> --version` with stdin from `/dev/null`), such as `claude-agent-acp`.
+    The registry command is the executable that the agent's package installs, from the `bin` of its npm package or the console script of its Python package.
+    `plan.rs` lists it for each agent, since the registry does not name it and it is not the package name: `@google/gemini-cli` installs `gemini`.
+    A unit test requires an entry for each npm or uv agent of the shipped registry.
+    An npm package of the registry version in `~/.local`, or a `uv tool` of the registry version, also counts.
+    A provider CLI is present when its command runs on that PATH, as above: `claude` for `claude-acp`, `codex` for `codex-acp`.
+    An npm package in `~/.local` also counts.
+    A command that exists but does not run is missing.
+    A present item is reused, is not installed again, and shows in `already_present`; a missing item is installed.
+    An update upgrades the npm and uv packages that setup installed, and leaves an agent or provider CLI that the user installed by hand.
+    An update upgrades a runtime, Git or GitHub CLI with user-owned Homebrew only where Homebrew installed it.
+    An update reuses one that runs and that Homebrew does not own, with or without Homebrew, and installs none beside it.
+    After an update upgrades or installs it, the command must run on the PATH, whatever Homebrew reported; if it does not, the step names the missing runtime.
+    A failed agent step names what is missing: Node.js and npm, uv, the ACP package, or the provider CLI.
+    The runtime presence check is one shell function, `runtime`, in `setup/populate.rs`.
     macOS and Linux support ARM64 and x86_64.
     Both local binaries must have matching executable headers before either transfers.
     macOS accepts thin binaries and universal binaries with a compatible executable slice.
@@ -330,9 +347,12 @@ picker, the Hosts screen and one stream per host — is spec
 48. Setup installs binaries under the remote user's `~/.local/bin`.
     It registers `dev.ariadne.daemon` with launchd or `ariadned.service` with systemd user services.
     New Linux service definitions preserve relay processes on daemon stop (016, rule 12).
-    New service definitions use the remote user's PATH from a noninteractive login shell, with `~/.local/bin` first.
-    Setup uses only PATH text between unique probe markers, ignoring login-profile banners and other output.
-    If the shell fails, markers are missing, or the marked PATH is empty, setup uses the SSH session's PATH.
+    New service definitions use the PATH of the remote user's terminal, with `~/.local/bin` first.
+    Setup reads it from `"$SHELL" -ilc`, an interactive login shell that reads stdin from `/dev/null`.
+    Setup uses only PATH text between unique probe markers, ignoring login-profile banners, job-control warnings and other output.
+    If the shell fails, markers are missing, or the marked PATH is empty, setup reads the login-shell PATH (`-lc`) in the same way.
+    If that also fails, setup uses the SSH session's PATH.
+    Inspection, the setup steps and the service definition all use that one PATH.
     Setup rejects PATH values with control characters before transfer, including newline and NUL.
     Systemd values escape backslashes, quotes, and percent specifiers; dollar signs stay literal in `Environment=`.
     Launchd stores the XML-escaped PATH in its `EnvironmentVariables` dictionary.
@@ -563,7 +583,7 @@ picker, the Hosts screen and one stream per host — is spec
     `on_this_machine` is true when this daemon's agent registry reports the agent ready.
     An npm agent is `ariadne_installs` when the worker has Node.js and npm, or user-owned Homebrew.
     A uv agent is `ariadne_installs` when the worker has uv, or user-owned Homebrew.
-    An agent is `already_present` when setup would reuse its packages without installing them.
+    An agent is `already_present` when setup would reuse its packages without installing them, or when its registry command and its provider CLI command run on the worker PATH (rule 47).
     For npm, the `.local` prefix holds the exact registry version, and any Codex or Claude CLI that setup adds.
     For uv, `uv tool list` shows the exact registry version. The probe prints only fixed package markers.
     Configured commands, binary distributions, and unknown agents are `manual`.
@@ -786,6 +806,16 @@ picker, the Hosts screen and one stream per host — is spec
   `hosts.rs::setup_ignores_login_banners_without_a_newline_in_service_paths`.
 - Rule 46, control characters: `hosts.rs::setup_rejects_control_characters_in_remote_path_before_transfer`.
 - Rule 46, shell fallback: `hosts.rs::setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path`.
+- Rules 47 and 48, PATH order: `hosts.rs::setup_reads_the_interactive_shell_path_first_and_falls_back_in_order`.
+- Rule 48, real bash, zsh and sh without a terminal: `setup.rs::tests::the_path_probe_reads_the_path_of_real_shells_without_a_terminal`.
+- Rule 47, a command that differs from its package name: `hosts.rs::an_agent_whose_command_differs_from_its_package_name_is_found_by_its_command` and `plan.rs::tests::every_npm_or_uv_registry_agent_has_its_executable_named`.
+- Rule 47, a command that exists but does not run: `hosts.rs::inspection_does_not_count_an_agent_or_provider_command_that_does_not_run` and the last two cases of `hosts.rs::a_failed_agent_step_names_what_is_missing`.
+- Rule 48, control characters of the interactive PATH: `hosts.rs::setup_rejects_a_control_character_in_the_interactive_shell_path`.
+- Rule 47, runtimes, agents and provider CLIs on the PATH: `hosts.rs::inspection_finds_runtimes_agents_and_provider_clis_on_the_interactive_shell_path`.
+- Rule 47, reuse of items installed by hand: `hosts.rs::setup_reuses_agents_and_provider_clis_that_the_user_installed_by_hand`.
+- Rule 47, what a failed agent step names: `hosts.rs::a_failed_agent_step_names_what_is_missing`.
+- Rule 47, an update still upgrades what setup installed: `hosts.rs::explicit_updates_upgrade_already_installed_uv_tools`.
+- Rule 47, an update reuses runtimes without Homebrew: `hosts.rs::an_update_reuses_hand_installed_node_and_npm_without_homebrew`, `hosts.rs::an_update_reuses_a_hand_installed_uv_without_homebrew` `hosts.rs::an_update_installs_no_second_runtime_beside_a_hand_installed_one` and `hosts.rs::an_update_names_the_runtime_that_homebrew_did_not_provide`.
 - Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
 - Rule 49, skip: `hosts.rs::skipped_failed_tool_and_sign_in_steps_let_setup_complete_and_connect_the_machine` proves
   the `409` while setup runs, each refusal, the kept error and manual action, no second sign-in check, and the connected machine.

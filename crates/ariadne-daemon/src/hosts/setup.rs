@@ -810,36 +810,15 @@ impl Hosts {
         self.begin(name, "probe")?;
         // The first three lines identify the platform and home. The remaining bytes
         // carry the selected PATH verbatim, without an added terminator.
-        let mut random = [0u8; 16];
-        getrandom::fill(&mut random).map_err(|_| "cannot create remote PATH markers")?;
-        let token = hex::encode(random);
-        let start = format!("__ARIADNE_PATH_{token}_START__");
-        let end = format!("__ARIADNE_PATH_{token}_END__");
-        let path_command = quote(&format!("printf '%s%s%s' '{start}' \"$PATH\" '{end}'"));
+        let token = path_token()?;
         let script = format!(
             r#"set -eu
 uname -s
 uname -m
 printf '%s\n' "$HOME"
-path_start='{start}'
-path_end='{end}'
-if remote_path=$("${{SHELL:-/bin/sh}}" -lc {path_command} 2>/dev/null); then
-    case "$remote_path" in
-        *"$path_start"*"$path_end"*)
-            remote_path=${{remote_path#*"$path_start"}}
-            remote_path=${{remote_path%%"$path_end"*}}
-            if [ -n "$remote_path" ]; then
-                printf '%s' "$remote_path"
-            else
-                printf '%s' "$PATH"
-            fi
-            ;;
-        *) printf '%s' "$PATH" ;;
-    esac
-else
-    printf '%s' "$PATH"
-fi
-"#
+{}printf '%s' "$worker_path"
+"#,
+            path_probe(&token)
         );
         let probe = self.ssh(request, &script, None).await.map_err(|_| {
             "SSH probe failed; check SSH access and the worker shell configuration".to_owned()
@@ -1135,6 +1114,39 @@ fi
     }
 }
 
+fn path_token() -> Result<String, String> {
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(|_| "cannot create remote PATH markers")?;
+    Ok(hex::encode(random))
+}
+
+/// A shell script that sets `worker_path` to the PATH of the user's terminal.
+/// It reads the PATH between unique markers from an interactive login shell,
+/// then from a login shell, then uses the SSH session's PATH. Each shell reads
+/// nothing from stdin, and its banners and warnings stay outside the markers.
+fn path_probe(token: &str) -> String {
+    let start = format!("__ARIADNE_PATH_{token}_START__");
+    let end = format!("__ARIADNE_PATH_{token}_END__");
+    let command = quote(&format!("printf '%s%s%s' '{start}' \"$PATH\" '{end}'"));
+    format!(
+        r#"path_start='{start}'
+path_end='{end}'
+worker_path=
+for shell_flags in -ilc -lc; do
+    if shell_output=$("${{SHELL:-/bin/sh}}" "$shell_flags" {command} </dev/null 2>/dev/null); then
+        case "$shell_output" in
+            *"$path_start"*"$path_end"*)
+                shell_output=${{shell_output#*"$path_start"}}
+                shell_output=${{shell_output%%"$path_end"*}}
+                if [ -n "$shell_output" ]; then worker_path=$shell_output; break; fi;;
+        esac
+    fi
+done
+[ -n "$worker_path" ] || worker_path=$PATH
+"#
+    )
+}
+
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -1267,5 +1279,52 @@ if ! launchctl print "$domain/dev.ariadne.daemon" >/dev/null 2>&1; then launchct
 launchctl kickstart -k "$domain/dev.ariadne.daemon"
 "#
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The probe on real shells without a terminal. Each shell prints a banner
+    /// from its startup files and finds the PATH that they set.
+    #[test]
+    fn the_path_probe_reads_the_path_of_real_shells_without_a_terminal() {
+        let home = tempfile::tempdir().unwrap();
+        for file in [".bashrc", ".bash_profile", ".zshenv", ".profile"] {
+            std::fs::write(
+                home.path().join(file),
+                "echo 'Welcome!'\nPATH=/startup/tools:$PATH\nexport PATH\n",
+            )
+            .unwrap();
+        }
+        let script = format!("{}printf '%s' \"$worker_path\"", path_probe("token"));
+        let mut tried = 0;
+        for shell in ["bash", "zsh", "sh"] {
+            let Ok(path) = std::process::Command::new("which").arg(shell).output() else {
+                continue;
+            };
+            let shell = String::from_utf8(path.stdout).unwrap();
+            if shell.trim().is_empty() {
+                continue;
+            }
+            tried += 1;
+            let output = std::process::Command::new("/bin/sh")
+                .args(["-c", &script])
+                .env("HOME", home.path())
+                .env("SHELL", shell.trim())
+                .stdin(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            let path = String::from_utf8(output.stdout).unwrap();
+            assert!(output.status.success(), "{shell}");
+            assert!(
+                path.contains("/startup/tools")
+                    && !path.contains("Welcome")
+                    && !path.contains('\n'),
+                "{shell}: {path:?}"
+            );
+        }
+        assert!(tried > 0);
     }
 }

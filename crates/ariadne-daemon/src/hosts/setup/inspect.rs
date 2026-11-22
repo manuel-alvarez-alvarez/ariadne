@@ -55,20 +55,14 @@ impl Hosts {
         let request = connection(request.ssh);
         validate(name, &request)?;
         // Suppress all provider output. Only fixed capability identifiers leave the worker.
-        let script = r#"set -eu
-os=$(uname -s)
-uname -s
-uname -m
-marker=__ARIADNE_INSPECT_PATH__
-if remote_path=$("${SHELL:-/bin/sh}" -lc 'printf "__ARIADNE_INSPECT_PATH__%s__ARIADNE_INSPECT_PATH__" "$PATH"' 2>/dev/null); then
-    case "$remote_path" in
-        *"$marker"*"$marker"*) remote_path=${remote_path#*"$marker"}; remote_path=${remote_path%%"$marker"*};
-            if [ -n "$remote_path" ]; then PATH=$remote_path; fi;;
-    esac
-fi
-export PATH="$HOME/.local/bin:$PATH"
-for tool in git tar gh node npm uv codex claude; do
+        let head = "set -eu\nos=$(uname -s)\nuname -s\nuname -m\n";
+        let tail = r#"case "$worker_path" in *[[:cntrl:]]*) exit 3;; esac
+export PATH="$HOME/.local/bin:$worker_path"
+for tool in git tar gh codex claude; do
     if command -v "$tool" >/dev/null 2>&1; then printf '%s\n' "$tool"; fi
+done
+for tool in node npm uv; do
+    if command -v "$tool" >/dev/null 2>&1 && "$tool" --version >/dev/null 2>&1; then printf '%s\n' "$tool"; fi
 done
 if command -v brew >/dev/null 2>&1 && [ "$(id -u)" != 0 ]; then
     prefix=$(brew --prefix 2>/dev/null) || prefix=
@@ -84,7 +78,8 @@ if [ -s "$HOME/.codex/auth.json" ]; then echo credential-file:codex; fi
 if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; fi
 "#;
         let script = format!(
-            "{script}{BUILD_PROBE}{}exit 0\n",
+            "{head}{}{tail}{BUILD_PROBE}{}exit 0\n",
+            path_probe(&path_token()?),
             packages_script(&self.0.cfg)
         );
         let output = self.ssh(&request, &script, None).await.map_err(|_| {

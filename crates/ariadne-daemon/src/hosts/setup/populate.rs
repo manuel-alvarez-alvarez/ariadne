@@ -35,6 +35,7 @@ pub(super) const INSTALLED: &str = "__ARIADNE_INSTALLED__";
 // Homebrew refuses root. Require a user-owned prefix before any installation.
 // `ensure` prints INSTALLED only when it installs.
 const PREREQUISITE: &str = r#"
+runs() { command -v "$1" >/dev/null 2>&1 && "$1" --version </dev/null >/dev/null 2>&1; }
 upgrade() {
     command -v brew >/dev/null 2>&1 || exit 12
     [ "$(id -u)" != 0 ] || exit 12
@@ -58,18 +59,79 @@ ensure() {
     command -v "$1" >/dev/null 2>&1
     "$1" --version >/dev/null 2>&1
 }
+# An update upgrades a program that Homebrew installed, and installs one that does not
+# run. It keeps a program that runs and that Homebrew does not own. The program must run
+# afterwards, whatever Homebrew reported.
+keep_or_upgrade() {
+    if runs "$1" && ! { command -v brew >/dev/null 2>&1 && brew list --versions "$1" >/dev/null 2>&1; }; then
+        return 0
+    fi
+    ( upgrade "$1" ) >/dev/null 2>&1 || true
+    runs "$1"
+}
 "#;
 
-fn npm_package(package: &str, update: bool) -> String {
-    let package = quote(package);
-    let check =
-        format!("npm list --global --prefix \"$HOME/.local\" --depth=0 {package} >/dev/null 2>&1");
-    let install =
-        format!("npm install --global --prefix \"$HOME/.local\" -- {package} >/dev/null 2>&1");
-    if update {
-        format!("{install}\n{check}")
+/// The functions of an agent script. `runtime` is the one place that decides a
+/// runtime is present: its command runs on the PATH. A script prints a
+/// `__ARIADNE_MISSING_<what>__` marker and stops when it cannot go on.
+const RUNTIME: &str = r#"
+missing() { echo "__ARIADNE_MISSING_$1__"; exit 0; }
+runtime() {
+    if runs "$1"; then return; fi
+    out=$(ensure "$1" "$2" 2>/dev/null) || missing "$3"
+    case "$out" in *__ARIADNE_INSTALLED__*) echo __ARIADNE_INSTALLED__;; esac
+}
+upgrade_runtime() {
+    [ -z "${upgraded:-}" ] || return 0
+    keep_or_upgrade "$1" || missing "$2"
+    upgraded=1
+}
+"#;
+
+const MISSING_NODE: &str = "__ARIADNE_MISSING_NODE__";
+const MISSING_UV: &str = "__ARIADNE_MISSING_UV__";
+const MISSING_PACKAGE: &str = "__ARIADNE_MISSING_PACKAGE__";
+const MISSING_PROVIDER: &str = "__ARIADNE_MISSING_PROVIDER__";
+
+/// What a finished agent script reports as missing, in words for the user.
+fn missing_error(output: &str, id: &str) -> Option<String> {
+    let provider = super::plan::provider_cli(id).unwrap_or("the provider CLI");
+    if output.contains(MISSING_NODE) {
+        Some("Node.js and npm are missing on the worker; install them, or provide user-owned Homebrew, and resume setup".into())
+    } else if output.contains(MISSING_UV) {
+        Some("uv is missing on the worker; install uv, or provide user-owned Homebrew, and resume setup".into())
+    } else if output.contains(MISSING_PACKAGE) {
+        Some(format!(
+            "the ACP package of {id} is missing on the worker and its installation failed; install it and resume setup"
+        ))
+    } else if output.contains(MISSING_PROVIDER) {
+        Some(format!(
+            "the provider CLI {provider} is missing on the worker and its installation failed; install it and resume setup"
+        ))
     } else {
-        format!("{check} || {{ {install}; echo {INSTALLED}; }}\n{check}")
+        None
+    }
+}
+
+/// Install one npm package into `~/.local` unless its `command` runs on the PATH or
+/// the package is there. An update leaves a program that the user installed by hand alone.
+fn npm_package(package: &str, command: &str, update: bool, failure: &str) -> String {
+    let spec = quote(package);
+    let name = quote(super::plan::package_name(package));
+    let command = quote(command);
+    let list = "npm list --global --prefix \"$HOME/.local\" --depth=0";
+    let check = format!("{list} {spec} >/dev/null 2>&1");
+    let install =
+        format!("npm install --global --prefix \"$HOME/.local\" -- {spec} >/dev/null 2>&1");
+    let found = format!("runs {command}");
+    if update {
+        format!(
+            "if ! {found} || {{ command -v npm >/dev/null 2>&1 && {list} {name} >/dev/null 2>&1; }}; then\nupgrade_runtime node NODE\nruntime npm node NODE\n{install} || missing {failure}\n{check} || missing {failure}\nfi"
+        )
+    } else {
+        format!(
+            "if {found} || {check}; then :; else\nruntime node node NODE\nruntime npm node NODE\n{install} || missing {failure}\n{check} || missing {failure}\necho {INSTALLED}\nfi"
+        )
     }
 }
 
@@ -176,7 +238,7 @@ impl Hosts {
                 let result: Result<(), String> = async {
                     self.begin(name, step)?;
                     let action = if update {
-                        format!("upgrade {formula}")
+                        format!("keep_or_upgrade {formula}")
                     } else {
                         format!("ensure {binary} {formula}")
                     };
@@ -214,32 +276,34 @@ impl Hosts {
                         );
                     };
                     let script = if let Some(package) = distribution["npx"]["package"].as_str() {
-                        let runtime_command = if update {
-                            "upgrade node"
-                        } else {
-                            "ensure node node"
-                        };
                         format!(
-                            "{PREREQUISITE}\n{runtime_command}\nensure npm node\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\n{}",
-                            npm_package(package, update)
+                            "{PREREQUISITE}\n{RUNTIME}\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\n{}",
+                            npm_package(package, super::plan::registry_command(id), update, "PACKAGE")
                         )
                     } else if let Some(package) = distribution["uvx"]["package"].as_str() {
-                        let runtime_command = if update { "upgrade uv" } else { "ensure uv uv" };
-                        let upgrade = if update { " --upgrade" } else { "" };
                         let (tool, version) = package.split_once("==").unwrap_or((package, ""));
-                        format!(
-                            "{PREREQUISITE}\n{runtime_command}\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv tool list 2>/dev/null | grep -Fqx -- {listed} || echo {INSTALLED}\nuv python install >/dev/null 2>&1\nuv tool install{upgrade} -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1",
-                            listed = quote(&format!("{tool} v{version}")),
-                            package = quote(package)
-                        )
+                        let command = quote(super::plan::registry_command(id));
+                        let package = quote(package);
+                        let body = if update {
+                            format!("if ! runs {command} || {{ command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q \"^{tool} \"; }}; then\nupgrade_runtime uv UV\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1 || missing PACKAGE\nuv tool install --upgrade -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1 || missing PACKAGE\nfi")
+                        } else {
+                            format!("if runs {command} || uv tool list 2>/dev/null | grep -Fqx -- {listed}; then :; else\nruntime uv uv UV\nexport UV_TOOL_BIN_DIR=\"$HOME/.local/bin\"\nuv python install >/dev/null 2>&1 || missing PACKAGE\nuv tool install -- {package} >/dev/null 2>&1 || uv tool upgrade -- {package} >/dev/null 2>&1 || missing PACKAGE\necho {INSTALLED}\nfi", listed = quote(&format!("{tool} v{version}")))
+                        };
+                        format!("{PREREQUISITE}\n{RUNTIME}\n{body}")
                     } else {
                         return Err("unsupported distribution; manual installation and worker login are required".into());
                     };
                     let script = match super::plan::provider_cli(id) {
-                        Some(cli) => format!("{script}\n{}", npm_package(cli, update)),
+                        Some(cli) => format!(
+                            "{script}\n{}",
+                            npm_package(cli, super::plan::provider_command(id).unwrap(), update, "PROVIDER")
+                        ),
                         None => script,
                     };
                     let output = self.population_command(request, path, &script, None).await.map_err(|_| "agent installation or runtime check failed; provide user-owned Homebrew or ask an administrator for Node/npm or uv prerequisites".to_owned())?;
+                    if let Some(error) = missing_error(&output, id) {
+                        return Err(error);
+                    }
                     self.found_present(name, &step, !update && !output.contains(INSTALLED));
                     self.checkpoint(name, &step)?;
                     Ok(())

@@ -2095,6 +2095,7 @@ async fn explicit_updates_upgrade_already_installed_uv_tools() {
     let uv = common::shared_script(
         r#"#!/bin/sh
 case "$*" in
+"--version") exit 0;;
 "python install") exit 0;;
 "tool install --upgrade -- "*) printf 'current' > "$HOME/uv-version";;
 "tool install -- "*) exit 0;;
@@ -2119,6 +2120,115 @@ esac
         std::fs::read_to_string(f.remote.path().join("uv-version")).unwrap(),
         "current"
     );
+}
+
+/// An update on a worker whose runtimes the user installed by hand. With `homebrew`, a
+/// Homebrew that owns none of them logs its calls to `$HOME/brew.log`. Each stub in
+/// `tools` logs its arguments to `$HOME/<name>.log` and succeeds.
+async fn update_of_hand_installed_runtimes(
+    agent: &str,
+    tools: &[&str],
+    homebrew: bool,
+) -> (UpdateFixture, serde_json::Value) {
+    let f = UpdateFixture::new(serde_json::json!({})).await;
+    let bin = f.remote.path().join(".local/bin");
+    std::fs::remove_file(bin.join("brew")).unwrap();
+    if homebrew {
+        let brew = common::shared_script(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/brew.log\"\ncase $1 in --prefix) printf '%s\\n' \"$HOME\";; list) exit 1;; esac\nexit 0\n",
+        );
+        std::os::unix::fs::symlink(brew, bin.join("brew")).unwrap();
+    }
+    std::fs::remove_file(bin.join("npm")).unwrap();
+    for tool in tools {
+        let stub = common::shared_script(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/${0##*/}.log\"\ncase \"$*\" in \"tool list\") echo 'fast-agent-acp v0.0.1';; esac\nexit 0\n",
+        );
+        let link = bin.join(tool);
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(stub, link).unwrap();
+    }
+    f.start(serde_json::json!({"tools":{"agents":[agent]}}))
+        .await;
+    let result = f.terminal().await;
+    (f, result)
+}
+
+#[tokio::test]
+async fn an_update_reuses_hand_installed_node_and_npm_without_homebrew() {
+    let (f, result) = update_of_hand_installed_runtimes("codex-acp", &["npm"], false).await;
+    let step = result["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "tool:codex-acp")
+        .unwrap();
+    assert_eq!(step["complete"], true, "{result}");
+    let log = std::fs::read_to_string(f.remote.path().join("npm.log")).unwrap();
+    assert!(log.contains("install --global"), "{log}");
+}
+
+#[tokio::test]
+async fn an_update_reuses_a_hand_installed_uv_without_homebrew() {
+    let (f, result) = update_of_hand_installed_runtimes("fast-agent", &["uv"], false).await;
+    let step = result["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "tool:fast-agent")
+        .unwrap();
+    assert_eq!(step["complete"], true, "{result}");
+    let log = std::fs::read_to_string(f.remote.path().join("uv.log")).unwrap();
+    assert!(log.contains("tool install --upgrade"), "{log}");
+}
+
+/// Homebrew is there, and it owns neither runtime nor Git: an update installs none of them.
+#[tokio::test]
+async fn an_update_installs_no_second_runtime_beside_a_hand_installed_one() {
+    for (agent, tool, log) in [
+        ("codex-acp", "npm", "install --global"),
+        ("fast-agent", "uv", "tool install --upgrade"),
+    ] {
+        let (f, result) = update_of_hand_installed_runtimes(agent, &[tool], true).await;
+        let name = format!("tool:{agent}");
+        for step in [name.as_str(), "tool:git"] {
+            let item = result["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["name"] == step)
+                .unwrap();
+            assert_eq!(item["complete"], true, "{result}");
+        }
+        let tool_log =
+            std::fs::read_to_string(f.remote.path().join(format!("{tool}.log"))).unwrap();
+        assert!(tool_log.contains(log), "{tool_log}");
+        let brew = std::fs::read_to_string(f.remote.path().join("brew.log")).unwrap_or_default();
+        assert!(
+            !brew.contains("install") && !brew.contains("upgrade"),
+            "{agent}: {brew}"
+        );
+    }
+}
+
+/// Homebrew reports success but leaves no runtime on the PATH: the update names the runtime.
+#[tokio::test]
+async fn an_update_names_the_runtime_that_homebrew_did_not_provide() {
+    for (agent, removed, expected) in [
+        ("codex-acp", ["node", "npm"], "Node.js and npm are missing"),
+        ("fast-agent", ["uv", "uv"], "uv is missing"),
+    ] {
+        let f = UpdateFixture::new(serde_json::json!({})).await;
+        let bin = f.remote.path().join(".local/bin");
+        for tool in removed {
+            let _ = std::fs::remove_file(bin.join(tool));
+        }
+        f.start(serde_json::json!({"tools":{"agents":[agent]}}))
+            .await;
+        let result = f.terminal().await;
+        assert_eq!(result["state"], "incomplete", "{agent}: {result}");
+        assert!(result.to_string().contains(expected), "{agent}: {result}");
+    }
 }
 
 #[tokio::test]
@@ -3495,4 +3605,356 @@ async fn a_skipped_failed_step_of_an_update_lets_the_update_complete() {
     for step in ["tool:unknown-agent", "authentication:unknown-agent"] {
         assert_eq!(step_of(&done, step)["skipped"], true, "{done}");
     }
+}
+
+/// A worker bin directory with Git and one stub per `(name, script)`.
+fn worker_bin(remote: &std::path::Path, dir: &str, tools: &[(&str, &str)]) -> std::path::PathBuf {
+    let bin = remote.join(dir);
+    std::fs::create_dir(&bin).unwrap();
+    std::os::unix::fs::symlink("/usr/bin/git", bin.join("git")).unwrap();
+    for (name, script) in tools {
+        let stub = common::shared_script(&format!("#!/bin/sh\n{script}\n"));
+        std::os::unix::fs::symlink(stub, bin.join(name)).unwrap();
+    }
+    bin
+}
+
+/// Run a setup of `request` to the end of its steps, and return its progress.
+async fn setup_to_the_end(
+    h: &common::Harness,
+    name: &str,
+    request: serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::Value;
+    let _: Value = h
+        .json(
+            common::post_json(&format!("/v1/hosts/{name}/setup"), request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "setup reaches its end", || async {
+        let state: Value = h.get(&format!("/v1/hosts/{name}/setup")).await;
+        matches!(
+            state["state"].as_str(),
+            Some("complete" | "failed" | "incomplete")
+        )
+    })
+    .await;
+    h.get(&format!("/v1/hosts/{name}/setup")).await
+}
+
+fn step<'v>(state: &'v serde_json::Value, name: &str) -> &'v serde_json::Value {
+    state["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == name)
+        .unwrap_or_else(|| panic!("no step {name} in {state}"))
+}
+
+#[tokio::test]
+async fn setup_reads_the_interactive_shell_path_first_and_falls_back_in_order() {
+    use serde_json::json;
+    futures_util::future::join_all(
+        [
+            // Criterion 1: the interactive shell wins when it gives a marked PATH.
+            (json!({}), "/interactive/tools"),
+            // Each failure of the interactive shell falls back to the login shell.
+            (json!({"interactive":"fail"}), "/login/tools"),
+            (json!({"interactive":"unmarked"}), "/login/tools"),
+            (json!({"interactive":"empty"}), "/login/tools"),
+            // Both shells failing falls back to the SSH session.
+            (json!({"shell_fail":true}), "/fallback/tools"),
+        ]
+        .map(|(mut setup, expected)| async move {
+            let remote = tempfile::tempdir().unwrap();
+            let local = tempfile::tempdir().unwrap();
+            let mut binary = vec![0; 64];
+            binary[..6].copy_from_slice(b"\x7fELF\x02\x01");
+            binary[16] = 2;
+            binary[18] = 62;
+            let cli = local.path().join("ariadne");
+            let daemon = local.path().join("ariadned");
+            std::fs::write(&cli, &binary).unwrap();
+            std::fs::write(&daemon, &binary).unwrap();
+            setup["home"] = json!(remote.path());
+            setup["path"] = json!("/login/tools:/usr/bin:/bin");
+            setup["interactive_path"] = json!("/interactive/tools:/usr/bin:/bin");
+            setup["inherited_path"] = json!("/fallback/tools:/usr/bin:/bin");
+            let ssh = common::ssh::stub_ssh(json!({"setup":setup, "exit":0}));
+            let h = harness().ssh(&ssh).await;
+            let state = setup_to_the_end(
+                &h,
+                "order",
+                json!({"ssh":"ssh://box", "source":{"kind":"local", "cli":cli, "daemon":daemon}}),
+            )
+            .await;
+            assert_eq!(state["state"], "complete", "{setup}: {state}");
+            let unit = std::fs::read_to_string(
+                remote.path().join(".config/systemd/user/ariadned.service"),
+            )
+            .unwrap();
+            let prefix = format!("Environment=\"PATH={}/.local/bin:", remote.path().display());
+            assert!(unit.contains(&prefix), "{setup}: {unit}");
+            assert!(
+                unit.contains(&format!(":{expected}:/usr/bin:/bin\"")),
+                "{setup}: {unit}"
+            );
+            h.state.hosts.shutdown().await;
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn setup_rejects_a_control_character_in_the_interactive_shell_path() {
+    use serde_json::json;
+    let remote = tempfile::tempdir().unwrap();
+    let setup = json!({"home":remote.path(), "interactive_path":"/tools\n/bin"});
+    let ssh = common::ssh::stub_ssh(json!({"setup":setup, "exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let state = setup_to_the_end(&h, "control", json!({"ssh":"ssh://box", "source":{"kind":"local", "cli":"/missing/ariadne", "daemon":"/missing/ariadned"}})).await;
+    assert_eq!(state["state"], "failed", "{state}");
+    assert!(
+        state["steps"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("PATH")
+    );
+    assert!(!remote.path().join(".local/bin/ariadne").exists());
+}
+
+#[tokio::test]
+async fn inspection_finds_runtimes_agents_and_provider_clis_on_the_interactive_shell_path() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    // The worker layout of a user with nvm: the tools are only on the interactive PATH.
+    let bin = worker_bin(
+        remote.path(),
+        "nvm-bin",
+        &[
+            ("node", "exit 0"),
+            ("npm", "exit 0"),
+            // A command that does not run is not a runtime.
+            ("uv", "exit 1"),
+            ("claude-agent-acp", "exit 0"),
+            ("codex-acp", "exit 0"),
+            ("claude", "exit 0"),
+            ("codex", "exit 0"),
+        ],
+    );
+    let ssh = common::ssh::stub_ssh(
+        json!({"setup":{"home":remote.path(), "path":"/usr/bin:/bin", "interactive_path":bin},"exit":0}),
+    );
+    let h = harness().ssh(&ssh).await;
+    let result: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/builder/setup/inspect",
+                json!({"ssh":"ssh://worker@box"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let satisfied = |id: &str| group_of(&result["checks"], id)["satisfied"].clone();
+    assert_eq!(satisfied("node"), true);
+    assert_eq!(satisfied("npm"), true);
+    assert_eq!(satisfied("uv"), false, "{result}");
+    for id in ["codex-acp", "claude-acp"] {
+        assert_eq!(
+            group_of(&result["agents"], id)["group"],
+            "already_present",
+            "{id}"
+        );
+    }
+    assert_eq!(group_of(&result["agents"], "fast-agent")["group"], "manual");
+}
+
+#[tokio::test]
+async fn setup_reuses_agents_and_provider_clis_that_the_user_installed_by_hand() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    // No node, npm or Homebrew: only the commands themselves.
+    let bin = worker_bin(
+        remote.path(),
+        "hand-bin",
+        &[
+            ("claude-agent-acp", "exit 0"),
+            ("codex-acp", "exit 0"),
+            ("claude", "exit 0"),
+            ("codex", "exit 0"),
+        ],
+    );
+    let ssh = common::ssh::stub_ssh(
+        json!({"setup":{"home":remote.path(), "path":"/usr/bin:/bin", "interactive_path":bin},"exit":0}),
+    );
+    let h = harness().ssh(&ssh).await;
+    let request = json!({
+        "ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+        "tools":{"agents":["codex-acp", "claude-acp"],"github":false}
+    });
+    let review: Value = h
+        .json(
+            common::post_json("/v1/hosts/hand/setup/review", request.clone()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    for id in ["tool:codex-acp", "tool:claude-acp"] {
+        assert_eq!(group_of(&review["plan"], id)["group"], "already_present");
+    }
+    let state = setup_to_the_end(&h, "hand", request).await;
+    for name in ["tool:codex-acp", "tool:claude-acp"] {
+        let item = step(&state, name);
+        assert_eq!(item["complete"], true, "{state}");
+        assert_eq!(item["group"], "already_present", "{state}");
+    }
+    assert!(!remote.path().join(".local/lib").exists());
+}
+
+#[tokio::test]
+async fn a_failed_agent_step_names_what_is_missing() {
+    use serde_json::json;
+    let npm_fails = "[ \"$1\" != --version ] || exit 0; exit 1";
+    let node_works = [("node", "exit 0"), ("npm", npm_fails)];
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
+    let cases: [Case; 6] = [
+        ("codex-acp", &[], "Node.js and npm are missing"),
+        ("fast-agent", &[], "uv"),
+        ("codex-acp", &node_works, "ACP package"),
+        (
+            "codex-acp",
+            &[
+                ("node", "exit 0"),
+                ("npm", npm_fails),
+                ("codex-acp", "exit 0"),
+            ],
+            "provider CLI",
+        ),
+        // A command that exists but does not run is missing.
+        (
+            "codex-acp",
+            &[
+                ("node", "exit 0"),
+                ("npm", npm_fails),
+                ("codex-acp", "exit 1"),
+                ("codex", "exit 0"),
+            ],
+            "ACP package",
+        ),
+        (
+            "codex-acp",
+            &[
+                ("node", "exit 0"),
+                ("npm", npm_fails),
+                ("codex-acp", "exit 0"),
+                ("codex", "exit 1"),
+            ],
+            "provider CLI",
+        ),
+    ];
+    // One run per case, side by side, so the test takes as long as its slowest case.
+    futures_util::future::join_all(cases.map(|(agent, tools, expected)| async move {
+        let remote = tempfile::tempdir().unwrap();
+        let bin = worker_bin(remote.path(), "bin", tools);
+        let ssh =
+            common::ssh::stub_ssh(json!({"setup":{"home":remote.path(), "path":bin},"exit":0}));
+        let h = harness().ssh(&ssh).await;
+        let state = setup_to_the_end(
+            &h,
+            "missing",
+            json!({
+                "ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+                "tools":{"agents":[agent],"github":false}
+            }),
+        )
+        .await;
+        let error = step(&state, &format!("tool:{agent}"))["error"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{agent}: no error in {state}"))
+            .to_owned();
+        assert!(error.contains(expected), "{agent}: {error}");
+        h.state.hosts.shutdown().await;
+    }))
+    .await;
+}
+
+#[tokio::test]
+async fn inspection_does_not_count_an_agent_or_provider_command_that_does_not_run() {
+    use serde_json::json;
+    let remote = tempfile::tempdir().unwrap();
+    let bin = worker_bin(
+        remote.path(),
+        "broken-bin",
+        &[
+            ("node", "exit 0"),
+            ("npm", "exit 0"),
+            ("claude-agent-acp", "exit 1"),
+            ("codex-acp", "exit 0"),
+            ("claude", "exit 0"),
+            ("codex", "exit 1"),
+        ],
+    );
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path(), "path":bin},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let result: serde_json::Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/builder/setup/inspect",
+                json!({"ssh":"ssh://worker@box"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    // The agent command does not run for Claude, and the provider command does not run for Codex.
+    for id in ["claude-acp", "codex-acp"] {
+        assert_eq!(
+            group_of(&result["agents"], id)["group"],
+            "ariadne_installs",
+            "{id}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_agent_whose_command_differs_from_its_package_name_is_found_by_its_command() {
+    use serde_json::json;
+    let remote = tempfile::tempdir().unwrap();
+    // Kilo's package is `@kilocode/cli` and installs `kilo`. An unrelated
+    // `cli` and `code` on the PATH are no proof of Kilo or of MiniMax Code.
+    let bin = worker_bin(
+        remote.path(),
+        "named-bin",
+        &[
+            ("node", "exit 0"),
+            ("npm", "exit 0"),
+            ("kilo", "exit 0"),
+            ("gemini", "exit 0"),
+            ("cli", "exit 0"),
+            ("code", "exit 0"),
+        ],
+    );
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path(), "path":bin},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let result: serde_json::Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/builder/setup/inspect",
+                json!({"ssh":"ssh://worker@box"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        group_of(&result["agents"], "kilo")["group"],
+        "already_present"
+    );
+    // `@google/gemini-cli` installs `gemini`, which is not the package name.
+    assert_eq!(
+        group_of(&result["agents"], "gemini")["group"],
+        "already_present"
+    );
+    assert_eq!(
+        group_of(&result["agents"], "minimax-code")["group"],
+        "ariadne_installs"
+    );
 }

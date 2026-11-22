@@ -136,6 +136,16 @@ impl Drop for RelayCleanup {
     }
 }
 
+impl Drop for Harness {
+    fn drop(&mut self) {
+        // The next harness in this process replaces the global meter provider, and
+        // dropping the old one runs its shutdown on that thread. Shut it down here,
+        // off the test thread, so a test with two harnesses does not wait for it.
+        let telemetry = self.telemetry.clone();
+        std::thread::spawn(move || telemetry.shutdown());
+    }
+}
+
 pub(crate) struct HarnessBuilder {
     session_place: Option<String>,
     herdr: Option<(PathBuf, std::ffi::OsString)>,

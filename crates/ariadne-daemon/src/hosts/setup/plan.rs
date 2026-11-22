@@ -69,8 +69,67 @@ pub(super) fn provider_cli(id: &str) -> Option<&'static str> {
     }
 }
 
+/// The provider CLI's command on the PATH.
+pub(super) fn provider_command(id: &str) -> Option<&'static str> {
+    match id {
+        "codex-acp" => Some("codex"),
+        "claude-acp" => Some("claude"),
+        _ => None,
+    }
+}
+
+/// An npm or uv package without its version: `@scope/name@1` and `name==1` give the name.
+pub(super) fn package_name(package: &str) -> &str {
+    let name = package.split("==").next().unwrap_or(package);
+    match name.get(1..).and_then(|rest| rest.find('@')) {
+        Some(at) => &name[..at + 1],
+        None => name,
+    }
+}
+
+/// The executable that each npm or uv registry agent installs on the PATH, from the
+/// `bin` of its npm package or the console script of its Python package. The
+/// registry names none, and it is not the package name: `@google/gemini-cli`
+/// installs `gemini`. A test checks that every such agent has one here.
+const REGISTRY_COMMANDS: &[(&str, &str)] = &[
+    ("agoragentic-acp", "agoragentic-mcp"),
+    ("auggie", "auggie"),
+    ("autohand", "autohand-acp"),
+    ("claude-acp", "claude-agent-acp"),
+    ("cline", "cline"),
+    ("codebuddy-code", "codebuddy"),
+    ("codex-acp", "codex-acp"),
+    ("deepagents", "deepagents-acp"),
+    ("dimcode", "dimcode"),
+    ("dirac", "dirac"),
+    ("factory-droid", "droid"),
+    ("fast-agent", "fast-agent-acp"),
+    ("gemini", "gemini"),
+    ("github-copilot-cli", "copilot"),
+    ("glm-acp-agent", "glm-acp-agent"),
+    ("grok-build", "grok"),
+    ("kilo", "kilo"),
+    ("minimax-code", "mcode"),
+    ("minion-code", "minion-code"),
+    ("nova", "nova"),
+    ("pi-acp", "pi-acp"),
+    ("qoder", "qodercli"),
+    ("qwen-code", "qwen"),
+    ("sigit", "sigit"),
+];
+
+/// The command that a registry agent installs on the PATH, or none for an agent
+/// that the table does not list.
+pub(super) fn registry_command(id: &str) -> &'static str {
+    REGISTRY_COMMANDS
+        .iter()
+        .find(|(agent, _)| *agent == id)
+        .map_or("", |(_, command)| command)
+}
+
 /// A read-only probe that prints `package:<name>` for each package that setup
-/// would find installed and reuse. It prints no package manager output.
+/// would find installed and reuse: a package in the `.local` prefix or a uv tool
+/// of the registry version, or its command that runs on the PATH. It prints no package manager output.
 pub(super) fn packages_script(cfg: &Config) -> String {
     let index = index();
     let mut npm = Vec::new();
@@ -80,41 +139,59 @@ pub(super) fn packages_script(cfg: &Config) -> String {
             continue;
         };
         match install(cfg, id) {
-            Install::Npm => npm.extend(agent["distribution"]["npx"]["package"].as_str().map(quote)),
-            Install::Uv => uv.extend(agent["distribution"]["uvx"]["package"].as_str().map(quote)),
+            Install::Npm => npm.extend(
+                agent["distribution"]["npx"]["package"]
+                    .as_str()
+                    .map(|p| quote(&format!("{p}:{}", registry_command(id)))),
+            ),
+            Install::Uv => uv.extend(
+                agent["distribution"]["uvx"]["package"]
+                    .as_str()
+                    .map(|p| quote(&format!("{p}:{}", registry_command(id)))),
+            ),
             Install::Custom | Install::Unsupported => {}
         }
     }
     let providers = ["codex-acp", "claude-acp"]
         .into_iter()
-        .filter_map(provider_cli)
-        .map(quote)
+        .filter_map(|id| {
+            Some(quote(&format!(
+                "{}:{}",
+                provider_cli(id)?,
+                provider_command(id)?
+            )))
+        })
         .collect::<Vec<_>>()
         .join(" ");
     // npm prints `path:name@version` lines. setup checks the exact registry version, or
     // any version of a provider CLI, in the same `.local` prefix.
     format!(
-        r#"if command -v npm >/dev/null 2>&1; then
+        r#"runs() {{ command -v "$1" >/dev/null 2>&1 && "$1" --version </dev/null >/dev/null 2>&1; }}
+for pair in {npm} {uvs} {providers}; do
+    if runs "${{pair#*:}}"; then printf 'package:%s
+' "${{pair%%:*}}"; fi
+done
+if command -v npm >/dev/null 2>&1; then
     listing="$(npm list --global --prefix "$HOME/.local" --depth=0 --parseable --long 2>/dev/null || true)
 "
-    for spec in {npm}; do case "$listing" in *":$spec
+    for pair in {npm}; do spec=${{pair%%:*}}; case "$listing" in *":$spec
 "*) printf 'package:%s
 ' "$spec";; esac; done
-    for name in {providers}; do case "$listing" in *":$name@"*) printf 'package:%s
+    for pair in {providers}; do name=${{pair%%:*}}; case "$listing" in *":$name@"*) printf 'package:%s
 ' "$name";; esac; done
 fi
 if command -v uv >/dev/null 2>&1; then
     tools="
 $(uv tool list 2>/dev/null || true)
 "
-    for spec in {uv}; do case "$tools" in *"
+    for pair in {uvs}; do spec=${{pair%%:*}}; case "$tools" in *"
 ${{spec%%==*}} v${{spec#*==}}
 "*) printf 'package:%s
 ' "$spec";; esac; done
 fi
 "#,
         npm = npm.join(" "),
-        uv = uv.join(" "),
+        uvs = uv.join(" "),
     )
 }
 
@@ -388,5 +465,21 @@ impl Record {
             });
         }
         progress
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_npm_or_uv_registry_agent_has_its_executable_named() {
+        for agent in index()["agents"].as_array().unwrap() {
+            let distribution = &agent["distribution"];
+            if distribution["npx"].is_object() || distribution["uvx"].is_object() {
+                let id = agent["id"].as_str().unwrap();
+                assert!(!registry_command(id).is_empty(), "{id} has no executable");
+            }
+        }
     }
 }

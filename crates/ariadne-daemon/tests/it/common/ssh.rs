@@ -18,6 +18,10 @@
 //! - `connect_stderr`: what a forward writes to stderr when its far end refuses.
 //! - `hold_reaping`: keep the killed forward as a zombie until this file exists.
 //!
+//! A `setup` script runs the command in a stub login shell. Its `path` is the PATH of
+//! `-lc`. `interactive_path` is the PATH of `-ilc`, and `interactive` is `fail`,
+//! `unmarked` or `empty` for an interactive shell that fails, prints no markers or prints an empty PATH.
+//!
 //! [`super::HarnessBuilder::ssh`] points the daemon's `ssh_bin` at it.
 
 use std::path::PathBuf;
@@ -78,7 +82,7 @@ pub(crate) fn stub_ssh(script: Value) -> StubSsh {
         std::os::unix::fs::symlink(&service, service_bin.join(tool)).unwrap();
     }
     let shell = super::shared_script(
-        "#!/bin/sh\n[ \"$1\" = -lc ] || exit 1\n[ \"$ARIADNE_SETUP_SHELL_FAIL\" != 1 ] || exit 1\nprintf '%s' \"$ARIADNE_SETUP_SHELL_BANNER\"\nif [ \"$ARIADNE_SETUP_NO_MARKERS\" = 1 ]; then printf '%s' \"$ARIADNE_SETUP_LOGIN_PATH\"; exit 0; fi\nPATH=$ARIADNE_SETUP_LOGIN_PATH\nexport PATH\n/bin/sh -c \"$2\"\nresult=$?\nprintf '%s' \"$ARIADNE_SETUP_SHELL_SUFFIX\"\nexit \"$result\"\n",
+        "#!/bin/sh\ncase \"$1\" in -lc) ;; -ilc) [ \"$ARIADNE_SETUP_INTERACTIVE\" != fail ] || exit 1;; *) exit 1;; esac\n[ \"$ARIADNE_SETUP_SHELL_FAIL\" != 1 ] || exit 1\nprintf '%s' \"$ARIADNE_SETUP_SHELL_BANNER\"\nif [ \"$ARIADNE_SETUP_NO_MARKERS\" = 1 ]; then printf '%s' \"$ARIADNE_SETUP_LOGIN_PATH\"; exit 0; fi\nPATH=$ARIADNE_SETUP_LOGIN_PATH\nif [ \"$1\" = -ilc ]; then\n    case \"$ARIADNE_SETUP_INTERACTIVE\" in\n        unmarked) printf '%s' \"$ARIADNE_SETUP_INTERACTIVE_PATH\"; exit 0;;\n        empty) PATH=;;\n        *) [ -z \"$ARIADNE_SETUP_INTERACTIVE_PATH\" ] || PATH=$ARIADNE_SETUP_INTERACTIVE_PATH;;\n    esac\nfi\nexport PATH\n/bin/sh -c \"$2\"\nresult=$?\nprintf '%s' \"$ARIADNE_SETUP_SHELL_SUFFIX\"\nexit \"$result\"\n",
     );
     std::os::unix::fs::symlink(shell, dir.path().join("login-shell")).unwrap();
     let launcher = super::shared_script(LAUNCHER);
@@ -193,6 +197,8 @@ if "-T" in args and script.get("setup"):
            "PATH": os.path.join(dir, "service-bin") + os.pathsep + setup.get("inherited_path", os.environ["PATH"]),
            "SHELL": os.path.join(dir, "login-shell"),
            "ARIADNE_SETUP_LOGIN_PATH": setup.get("path", "/usr/bin:/bin"),
+           "ARIADNE_SETUP_INTERACTIVE": setup.get("interactive", ""),
+           "ARIADNE_SETUP_INTERACTIVE_PATH": setup.get("interactive_path", ""),
            "ARIADNE_SETUP_SHELL_FAIL": "1" if setup.get("shell_fail") else "0",
            "ARIADNE_SETUP_SHELL_BANNER": setup.get("banner", ""),
            "ARIADNE_SETUP_SHELL_SUFFIX": setup.get("suffix", ""),
