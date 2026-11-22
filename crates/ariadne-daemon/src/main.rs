@@ -304,7 +304,7 @@ async fn main() -> Result<()> {
     };
     let acp_shutdown = state.launcher.acp.clone();
     let ai_permissions_shutdown = state.ai_permissions.clone();
-    let unix_app = http::router(state.clone());
+    let unix_app = http::socket_router(state.clone(), &config.tcp_allowed_origins);
 
     // The public ingress stops when shutdown starts: an open event stream
     // can hold the HTTP drain below for as long as its client stays.

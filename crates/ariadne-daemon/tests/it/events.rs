@@ -503,14 +503,86 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
         .unwrap();
     let response = tower::ServiceExt::oneshot(app, no_origin).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+}
 
-    let unix_request = Request::builder()
-        .uri("/v1/health")
-        .header(header::HOST, "attacker.example")
-        .header(header::ORIGIN, "https://evil.example")
+/// An SSH forward puts a worker's socket on a loopback port, where the
+/// desktop app calls it from its own origin: the socket answers that origin
+/// with CORS, refuses any other, and checks no Host, which the CLI's socket
+/// client sets to an encoded socket path.
+#[tokio::test]
+async fn the_socket_allows_the_app_origin_and_refuses_another() {
+    let h = harness().await;
+    let app = http::socket_router(h.state.clone(), &[]);
+    let socket_host = "2f746d702f61726961646e652e736f636b";
+
+    let request = Request::builder()
+        .uri("/v1/attention")
+        .header(header::HOST, "127.0.0.1:57222")
+        .header(header::ORIGIN, "tauri://localhost")
         .body(Body::empty())
         .unwrap();
-    assert_eq!(h.response(unix_request).await.status(), StatusCode::OK);
+    let response = tower::ServiceExt::oneshot(app.clone(), request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "tauri://localhost"
+    );
+
+    let preflight = Request::builder()
+        .method(Method::OPTIONS)
+        .uri("/v1/skills")
+        .header(header::HOST, "127.0.0.1:57222")
+        .header(header::ORIGIN, "tauri://localhost")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PATCH")
+        .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), preflight)
+        .await
+        .unwrap();
+    assert!(response.status().is_success(), "{}", response.status());
+    assert!(
+        response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_METHODS)
+    );
+
+    let refused = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/goals")
+        .header(header::HOST, "127.0.0.1:57222")
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from("{}"))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), refused)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(
+        !response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+    );
+    let body = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let error: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert_eq!(error.error.code, "forbidden");
+
+    let cli = Request::builder()
+        .uri("/v1/health")
+        .header(header::HOST, socket_host)
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app, cli).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 /// The launcher writes session rows through the same store, so its spawns

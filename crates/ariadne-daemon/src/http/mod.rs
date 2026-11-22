@@ -501,31 +501,47 @@ async fn record_request_duration(request: Request, next: Next) -> Response {
     response
 }
 
-/// Build the TCP router. The unix socket serves the unwrapped [`router`].
+/// Build the TCP router: the Host and Origin checks, then CORS.
 pub fn tcp_router(state: AppState, configured_origins: &[String]) -> Router {
     let allowed_origins = tcp_origins(configured_origins);
-    let cors_origins = allowed_origins.clone();
-
-    router(state)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::list(cors_origins))
-                .allow_methods([
-                    Method::GET,
-                    Method::POST,
-                    Method::PUT,
-                    Method::PATCH,
-                    Method::DELETE,
-                ])
-                .allow_headers([
-                    header::CONTENT_TYPE,
-                    HeaderName::from_static(SESSION_HEADER),
-                ]),
-        )
-        .layer(middleware::from_fn(move |request: Request, next: Next| {
+    with_cors(router(state), &allowed_origins).layer(middleware::from_fn(
+        move |request: Request, next: Next| {
             let allowed_origins = allowed_origins.clone();
             async move { guard_tcp_request(request, next, &allowed_origins).await }
-        }))
+        },
+    ))
+}
+
+/// Build the unix socket router: the Origin check, then CORS, and no Host
+/// check. An SSH forward puts the socket on a loopback port of another
+/// machine, where the desktop app calls it from its own origin, while the
+/// CLI's socket client sends no Origin and a Host that names no host.
+pub fn socket_router(state: AppState, configured_origins: &[String]) -> Router {
+    let allowed_origins = tcp_origins(configured_origins);
+    with_cors(router(state), &allowed_origins).layer(middleware::from_fn(
+        move |request: Request, next: Next| {
+            let allowed_origins = allowed_origins.clone();
+            async move { guard_origin(request, next, &allowed_origins).await }
+        },
+    ))
+}
+
+fn with_cors(router: Router, allowed_origins: &[HeaderValue]) -> Router {
+    router.layer(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(allowed_origins.to_vec()))
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+            ])
+            .allow_headers([
+                header::CONTENT_TYPE,
+                HeaderName::from_static(SESSION_HEADER),
+            ]),
+    )
 }
 
 const BUILTIN_TCP_ORIGINS: &[&str] = &[
@@ -557,12 +573,14 @@ async fn guard_tcp_request(
         return error::ApiError::forbidden("the TCP listener only serves loopback Host headers")
             .into_response();
     }
+    guard_origin(request, next, allowed_origins).await
+}
 
+async fn guard_origin(request: Request, next: Next, allowed_origins: &[HeaderValue]) -> Response {
     if let Some(origin) = request.headers().get(header::ORIGIN)
         && !allowed_origins.iter().any(|allowed| allowed == origin)
     {
-        return error::ApiError::forbidden("the TCP listener does not allow this Origin")
-            .into_response();
+        return error::ApiError::forbidden("the daemon does not allow this Origin").into_response();
     }
 
     next.run(request).await
