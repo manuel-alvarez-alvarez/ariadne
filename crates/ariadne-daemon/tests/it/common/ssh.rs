@@ -20,6 +20,7 @@
 //! - `ssh_config`: the lines a `-G` run prints, as `ssh -G` prints the
 //!   configuration it resolves. Without it a `-G` run prints nothing.
 //!
+//! `runtime_bash` in `setup` substitutes the Bash path to model a missing runtime supervisor.
 //! `runtime_disconnect` in `setup` names a FIFO. A runtime command closes its stdin
 //! when that FIFO reaches EOF, after the test observes an active download.
 //!
@@ -159,6 +160,8 @@ if "-T" in args and script.get("setup"):
     import subprocess
     setup = script["setup"]
     command = args[-1]
+    if "runtime_bash" in setup:
+        command = command.replace("/bin/bash", setup["runtime_bash"])
     if setup.get("maintenance_fixture") and "--maintenance-protocol" in command:
         if not setup.get("replacement_maintenance", True):
             sys.exit(2)

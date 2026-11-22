@@ -970,6 +970,7 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
    Missing Git and GitHub CLI use an existing user-owned Homebrew installation.
    A missing Node.js or uv uses Homebrew when it is user-owned. Otherwise setup installs it in `~/.local`, with no administrator command:
    Node.js from the current LTS archive on nodejs.org, checked against its `SHASUMS256.txt`, and uv with the installer from astral.sh.
+   If `/bin/bash` is missing, the step tells you to install Bash there and resume setup.
    The worker needs `/bin/bash` for runtime process supervision, `curl`, and for Node.js `tar`, and network access to nodejs.org or astral.sh.
    A failed install shows the network access and the command to run by hand.
    Otherwise, setup reports administrator prerequisites without running administrator commands.

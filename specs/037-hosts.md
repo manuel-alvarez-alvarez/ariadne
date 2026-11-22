@@ -349,6 +349,8 @@ picker, the Hosts screen and one stream per host — is spec
     For uv, setup downloads the standalone installer from `https://astral.sh/uv/install.sh` and runs it with `UV_UNMANAGED_INSTALL=~/.local/bin`.
     `Timeouts::worker_runtime_install` bounds each runtime download and install. The bound ends the SSH command. The install script runs each download in a process group of its own and ends it when the SSH connection ends, so no download outlives its step. The script also ends it 120 seconds after that bound, in case it never noticed.
     The runtime supervisor uses `/bin/bash` for noninteractive job control, including when the worker login shell is `sh`.
+    A worker without executable `/bin/bash` gets a Bash prerequisite error before any download starts.
+    The error tells the user to install Bash at that path and resume setup.
     Completed runtime work stops and reaps its watchdogs before the step returns.
     The worker needs `/bin/bash`, `curl` and, for Node.js, `tar`, and network access to nodejs.org for Node.js and to astral.sh for uv.
     A runtime that setup installed this way shows as installed by Ariadne; a runtime that was present shows as already present.
@@ -850,6 +852,7 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 47, a user-owned Homebrew comes first (criterion 1): `hosts.rs::setup_uses_a_user_owned_homebrew_before_it_downloads_a_runtime`.
 - Rule 47, a download that runs past `Timeouts::worker_runtime_install` ends with its step (criterion 5): `hosts.rs::a_runtime_install_that_runs_past_its_timeout_stops_the_step`.
   `hosts.rs::a_disconnected_runtime_install_ends_the_download_process` verifies cleanup after observing an active download.
+- Rule 47, a missing Bash supervisor names the prerequisite before downloading: `hosts.rs::a_worker_without_bash_names_the_missing_runtime_supervisor`.
 - Rule 47, a present runtime shows as already present (criterion 6): `hosts.rs::a_runtime_that_was_present_shows_as_already_present`.
 - Rule 47, an update upgrades what setup installed and leaves the user's runtime (criterion 7, Node.js and uv, owned and user-installed): `hosts.rs::an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_user_installed`.
 - Rule 83, the manual action of a failed uv install names astral.sh and the command (criterion 8): `hosts.rs::inspection_names_who_installs_each_agent_github_and_each_sign_in`.

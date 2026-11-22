@@ -4353,6 +4353,29 @@ async fn setup_installs_uv_with_the_standalone_installer_when_no_homebrew_exists
 }
 
 #[tokio::test]
+async fn a_worker_without_bash_names_the_missing_runtime_supervisor() {
+    use serde_json::json;
+    let w = RuntimeWorker::new();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{
+        "home":w.remote.path(),
+        "path":format!("{}:/usr/bin:/bin", w.bin.display()),
+        "runtime_bash":w.remote.path().join("missing-bash")
+    },"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "fast-agent").await;
+    let error = step(&state, "tool:fast-agent")["error"].as_str().unwrap();
+    assert!(
+        error.contains("Bash") && error.contains("/bin/bash"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("network") && !error.contains("install uv"),
+        "{error}"
+    );
+    assert_eq!(w.curl_log(), "");
+}
+
+#[tokio::test]
 async fn a_failed_uv_download_names_astral_sh() {
     let w = RuntimeWorker::new();
     let ssh = w.ssh();
