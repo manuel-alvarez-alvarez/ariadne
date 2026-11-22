@@ -12,3 +12,4 @@ Conventions for changing one are in [`AGENTS.md`](AGENTS.md).
 - [`token-usage/`](token-usage/README.md) — offline historical token and
   elapsed-time audit, its reconciliation rules, aggregate artifacts, and
   ranked candidates for separately approved work.
+- [`build-test-latency/`](build-test-latency/README.md) — baseline build and check latency, CI evidence, and proposed investigation boundaries.

@@ -23,6 +23,8 @@ None of this runs in CI.
   exports aggregate evidence only; source databases and raw transcripts never
   enter Git.
 
+- [`build-test-latency/`](build-test-latency/README.md) — report-only build and check latency measurements.
+
 ## Checks
 
 Each experiment's own README names its checks; there is no repository-wide
@@ -34,6 +36,7 @@ one. Today:
 - `ai-opportunities/progress/` — `python3 -m pytest tests/ -q`.
 - `ai-opportunities/handoff/` — `python3 -m pytest
   bench/ai-opportunities/handoff/tests -q`.
+- `build-test-latency/` — `git diff --check` and relative Markdown link validation.
 - `token-usage/` — `python3 bench/token-usage/test_followup.py`.
 
 Read the experiment's own README before changing it: a benchmark's cases,
