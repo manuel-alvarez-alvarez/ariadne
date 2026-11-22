@@ -457,6 +457,8 @@ picker, the Hosts screen and one stream per host — is spec
     Review names it the same way.
     For an SSH remote, setup copies the `known_hosts` lines that this machine's `ssh` trusts for the Git host
     to the worker's `~/.ssh/known_hosts`, unless the worker already knows that host.
+    Appending keys preserves existing entries, including a last line without a newline.
+    Host-key errors do not assume that this machine has no trusted key.
     Missing remotes, worker authentication failures, and inaccessible destinations leave setup incomplete.
     A failed clone names its cause: an existing destination, missing Git, an untrusted host key with the command
     that checks it, refused authentication, or a missing branch. It names the remote's host, never its URL or Git's output.

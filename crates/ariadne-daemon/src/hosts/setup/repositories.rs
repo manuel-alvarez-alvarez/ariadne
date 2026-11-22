@@ -106,7 +106,7 @@ fn clone_failure(
         }
         "host-key" => match ssh {
             Some(ssh) => format!(
-                "clone failed: the worker does not trust the SSH host key of {host}, and this machine has no known_hosts entry for it to copy; on the worker, run `ssh -T {}` once and check the fingerprint, then retry",
+                "clone failed: the worker does not trust the SSH host key of {host}, check the worker's SSH known-hosts configuration; on the worker, run `ssh -T {}` once and check the fingerprint, then retry",
                 ssh.destination()
             ),
             None => format!("clone failed: the worker does not trust the SSH host key of {host}"),
@@ -323,8 +323,11 @@ impl Hosts {
         known={known}
         if [ -n "$known" ]; then
             [ -d "$HOME/.ssh" ] || mkdir -m 700 -- "$HOME/.ssh"
-            ssh-keygen -F {lookup} -f "$HOME/.ssh/known_hosts" >/dev/null 2>&1 ||
-                printf '%s\n' "$known" >> "$HOME/.ssh/known_hosts"
+            if ! ssh-keygen -F {lookup} -f "$HOME/.ssh/known_hosts" >/dev/null 2>&1; then
+                f="$HOME/.ssh/known_hosts"
+                [ ! -s "$f" ] || [ -z "$(tail -c 1 "$f")" ] || printf '\n' >> "$f"
+                printf '%s\n' "$known" >> "$f"
+            fi
         fi
         log="$marker.log"
         if ! git clone --no-local --branch {branch} -- {url} "$destination" 2>"$log"; then
@@ -441,6 +444,14 @@ mod tests {
         let other = host(None, "git.example", Some(2222)).unwrap();
         assert_eq!(other.lookup(), "[git.example]:2222");
         assert_eq!(other.destination(), "git.example -p 2222");
+    }
+
+    #[test]
+    fn a_host_key_failure_does_not_claim_the_source_has_no_key() {
+        let ssh = host(Some("git"), "git.test", None).unwrap();
+        let message = clone_failure("host-key", "/w/p", "main", Some(&ssh), "git@git.test:p");
+        assert!(!message.contains("this machine has no"), "{message}");
+        assert!(message.contains("ssh -T git@git.test"), "{message}");
     }
 
     #[test]

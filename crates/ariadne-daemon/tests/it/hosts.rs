@@ -404,6 +404,9 @@ async fn repository_setup_copies_this_machines_host_key_to_the_worker() {
     );
     assert!(!remote.path().join("worker-repositories.json").exists());
 
+    std::fs::create_dir_all(remote.path().join(".ssh")).unwrap();
+    let existing = KEY.replace("git.test", "gitlab.com");
+    std::fs::write(remote.path().join(".ssh/known_hosts"), &existing).unwrap();
     std::fs::write(&known_hosts, format!("{KEY}\n")).unwrap();
     let _: Value = h
         .json(
@@ -419,7 +422,7 @@ async fn repository_setup_copies_this_machines_host_key_to_the_worker() {
     assert_eq!(clone_step(&state)["complete"], true, "{state}");
     assert_eq!(
         std::fs::read_to_string(remote.path().join(".ssh/known_hosts")).unwrap(),
-        format!("{KEY}\n")
+        format!("{existing}\n{KEY}\n")
     );
     assert!(destination.join("file.txt").exists());
     h.state.hosts.shutdown().await;
