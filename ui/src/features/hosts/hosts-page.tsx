@@ -7,7 +7,11 @@
  * opens one step-by-step dialog that installs Ariadne through SSH or connects
  * to a daemon that already runs (`add-machine-dialog.tsx`). Each row's Edit
  * and Remove change a host through `PATCH` and `DELETE /v1/hosts`; the table
- * follows `host_updated` and `host_deleted`. The screen reads `local` only, so
+ * follows `host_updated` and `host_deleted`. A host with a saved setup has an
+ * "Update" action (`update-machine-dialog.tsx`). A saved setup that is not
+ * complete has its own row, with "Continue setup" and, once it stopped,
+ * "Discard setup". `GET /v1/host-setups` has no event, so the table reads it
+ * every second while an operation runs. The screen reads `local` only, so
  * the header's host picker does not change it.
  */
 
@@ -31,13 +35,18 @@ import {
 import { useHostDaemon } from "@/hooks/use-host-daemon"
 import { describeError, formatDuration } from "@/lib/format"
 import { AddMachineDialog } from "./add-machine-dialog"
+import { DiscardSetupDialog } from "./discard-setup-dialog"
 import { HostFormDialog } from "./host-form-dialog"
+import { type HostSetup, useHostSetups } from "./queries"
 import { RemoveHostDialog } from "./remove-host-dialog"
-import { WorkerSetupDialog } from "./worker-setup-dialog"
+import { UpdateMachineDialog } from "./update-machine-dialog"
 
 export function HostsPage() {
   const { hosts, error } = useHosts()
-  const [updateOpen, setUpdateOpen] = useState(false)
+  const setups = useHostSetups().data ?? []
+  const [updating, setUpdating] = useState<HostSetup | null>(null)
+  const [continuing, setContinuing] = useState<string | null>(null)
+  const [discarding, setDiscarding] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<HostView | null>(null)
@@ -49,15 +58,15 @@ export function HostsPage() {
         title="Hosts"
         description="The machines this app reads. Add a machine, or edit or remove one here. local is the daemon of this machine."
         actions={
-          <>
-            <Button variant="outline" onClick={() => setUpdateOpen(true)}>
-              Update worker
-            </Button>
-            <Button onClick={() => setAddOpen(true)}>
-              <PlusIcon />
-              Add machine
-            </Button>
-          </>
+          <Button
+            onClick={() => {
+              setContinuing(null)
+              setAddOpen(true)
+            }}
+          >
+            <PlusIcon />
+            Add machine
+          </Button>
         }
       />
       {error ? (
@@ -84,6 +93,12 @@ export function HostsPage() {
             <HostRow
               key={host.name}
               host={host}
+              onUpdate={(() => {
+                const saved = setups.find((one) => one.name === host.name)
+                return saved && (saved.state === "complete" || saved.operation === "update")
+                  ? () => setUpdating(saved)
+                  : null
+              })()}
               onEdit={() => {
                 setEditing(host)
                 setFormOpen(true)
@@ -94,10 +109,28 @@ export function HostsPage() {
               }}
             />
           ))}
+          {setups
+            .filter((one) => one.state !== "complete")
+            .map((one) => (
+              <SetupRow
+                key={`setup:${one.name}`}
+                setup={one}
+                onContinue={() => {
+                  if (one.operation === "update") {
+                    setUpdating(one)
+                    return
+                  }
+                  setContinuing(one.name)
+                  setAddOpen(true)
+                }}
+                onDiscard={() => setDiscarding(one.name)}
+              />
+            ))}
         </TableBody>
       </Table>
-      <WorkerSetupDialog open={updateOpen} onOpenChange={setUpdateOpen} />
-      <AddMachineDialog open={addOpen} onOpenChange={setAddOpen} />
+      <UpdateMachineDialog setup={updating} onOpenChange={(open) => !open && setUpdating(null)} />
+      <AddMachineDialog open={addOpen} onOpenChange={setAddOpen} continueSetup={continuing} />
+      <DiscardSetupDialog name={discarding} onClose={() => setDiscarding(null)} />
       <HostFormDialog open={formOpen} onOpenChange={setFormOpen} host={editing} />
       <RemoveHostDialog open={removeOpen} onOpenChange={setRemoveOpen} name={removing} />
     </div>
@@ -107,10 +140,13 @@ export function HostsPage() {
 /** One host: what the app reaches of it, and the daemon its stream names. */
 function HostRow({
   host,
+  onUpdate,
   onEdit,
   onRemove,
 }: {
   host: HostView
+  /** Null where the host has no saved setup to update. */
+  onUpdate: (() => void) | null
   onEdit: () => void
   onRemove: () => void
 }) {
@@ -134,6 +170,11 @@ function HostRow({
           : "-"}
       </TableCell>
       <TableCell>
+        {onUpdate ? (
+          <Button type="button" variant="ghost" size="xs" onClick={onUpdate}>
+            Update
+          </Button>
+        ) : null}
         <ReconnectHostButton name={host.name} />
         <Button
           type="button"
@@ -155,6 +196,50 @@ function HostRow({
             <Trash2Icon />
           </Button>
         )}
+      </TableCell>
+    </TableRow>
+  )
+}
+
+/** The state of a saved operation, as the row says it. */
+function stateLabel(setup: HostSetup): string {
+  const noun = setup.operation === "update" ? "Update" : "Setup"
+  return `${noun} ${setup.state}`
+}
+
+/**
+ * A saved setup or update that is not complete. An update continues in the
+ * update dialog, and only a setup is discarded: the daemon keeps update records.
+ */
+function SetupRow({
+  setup,
+  onContinue,
+  onDiscard,
+}: {
+  setup: HostSetup
+  onContinue: () => void
+  onDiscard: () => void
+}) {
+  const stopped = setup.state === "incomplete" || setup.state === "failed"
+  return (
+    <TableRow>
+      <TableCell>{setup.name}</TableCell>
+      <TableCell>ssh</TableCell>
+      <TableCell>{stateLabel(setup)}</TableCell>
+      <TableCell className="font-mono break-all whitespace-normal">{setup.ssh}</TableCell>
+      <TableCell className="break-words whitespace-normal">
+        {setup.steps.find((step) => step.error)?.error ?? "-"}
+      </TableCell>
+      <TableCell>-</TableCell>
+      <TableCell>
+        <Button type="button" variant="ghost" size="xs" onClick={onContinue}>
+          {setup.operation === "update" ? "Continue update" : "Continue setup"}
+        </Button>
+        {stopped && setup.operation === "setup" ? (
+          <Button type="button" variant="ghost" size="xs" onClick={onDiscard}>
+            Discard setup
+          </Button>
+        ) : null}
       </TableCell>
     </TableRow>
   )

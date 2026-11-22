@@ -21,7 +21,7 @@ tests:
   - crates/ariadne-cli/src/commands/query.rs
   - crates/ariadne-daemon/src/hosts.rs
   - crates/ariadne-daemon/src/hosts/sync.rs
-  - ui/src/features/hosts/worker-setup.test.tsx
+  - ui/src/features/hosts/host-setups.test.tsx
   - ui/src/features/hosts/add-machine.test.tsx
   - ui/src/features/hosts/setup-progress.test.tsx
 ---
@@ -488,7 +488,7 @@ picker, the Hosts screen and one stream per host — is spec
     These capability checks finish before maintenance or installation.
     An unsupported current worker or replacement receives guidance while installed binaries remain unchanged.
 74. CLI commands host update NAME --request FILE and host update-status NAME use the local daemon.
-    The Desktop Hosts screen offers Update worker with independent binary and tool selections.
+    Each host row of the Desktop Hosts screen with a saved setup offers "Update", with independent program and tool selections (spec 015, rule 52b).
     It uses saved SSH settings and permits revised selections after failure.
     Both interfaces show individual steps and retained failures.
 
@@ -601,13 +601,13 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 73: hosts.rs::unsupported_current_workers_fail_before_binary_transfer and
   hosts.rs::unsupported_replacements_fail_before_installation_or_maintenance prove compatibility refusal.
 - Rule 71: crates/ariadne-cli/tests/hosts.rs::maintenance_cli_reads_and_changes_the_selected_worker_hold proves maintenance without curl.
-- Rule 74: worker-setup.test.tsx::allows a tools-only update without binary paths or SSH inputs proves desktop independence.
+- Rule 74: host-setups.test.tsx::sends tools alone when the programs are not selected, and says why it waits when nothing is proves desktop independence.
 - Rules 70–73: hosts.rs::updates_wait_for_idle_and_retry_without_replacing_installed_binaries proves idle waiting, selected upgrades, checkpoints, failure, and retry.
 - Rules 71–73: portable_config.rs::explicit_updates_hold_new_tasks_until_maintenance_ends proves admission and continuing tasks.
 - Rule 71: portable_config.rs::explicit_maintenance_survives_restart_and_restores_admission proves the durable hold.
 - Rules 71 and 73: portable_config.rs::releasing_update_maintenance_preserves_a_pending_configuration_drain proves safe release during configuration changes.
 - Rule 74: crates/ariadne-cli/tests/hosts.rs::worker_update_and_status_show_each_completed_step_and_failure proves command routing and progress.
-- Rule 74: worker-setup.test.tsx::starts an explicit update with selected tools and shows maintenance progress proves desktop selection.
+- Rule 74: host-setups.test.tsx::updates a machine with no name or SSH input, the programs of this machine and the saved tools selected proves desktop selection.
 
 - Rule 63: `hosts.rs::setup_accepts_selected_repository_destinations` and
   `hosts.rs::selected_repositories_clone_only_committed_files_and_retry_registration`;
@@ -615,7 +615,7 @@ picker, the Hosts screen and one stream per host — is spec
   `hosts.rs::repository_setup_preserves_unrelated_existing_destinations` proves preservation of unrelated directories, including empty directories.
   `hosts.rs::repository_setup_reports_a_missing_source_remote` proves the missing-remote step failure.
   `hosts.rs::repository_setup_reports_worker_git_authentication_failure` proves failure after a worker receives an HTTP authentication challenge.
-  `worker-setup.test.tsx` proves selection and destination editing.
+  `add-machine.test.tsx` proves selection and destination editing.
   `hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure` proves CLI selection and progress.
 
 - Rules 1 and 56, persistence: `crates/ariadne-store/tests/store.rs::host_rows_survive_reopening_and_keep_local_color`.
@@ -840,4 +840,4 @@ Desktop proof: `ui/src/features/hosts/add-machine.test.tsx::reviews the plan in 
 `docs/telemetry.md`.
 
 SSH setup sources: `crates/ariadne-daemon/src/hosts/setup.rs`, `crates/ariadne-daemon/src/hosts/setup/plan.rs`, `ui/src/features/hosts/add-machine-dialog.tsx`, `ui/src/features/hosts/machine-setup.ts`,
-`ui/src/features/hosts/setup-progress.tsx`, `ui/src/features/hosts/worker-setup.tsx`.
+`ui/src/features/hosts/setup-progress.tsx`, `ui/src/features/hosts/update-machine-dialog.tsx`.

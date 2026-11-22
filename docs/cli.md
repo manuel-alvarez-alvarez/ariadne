@@ -858,7 +858,7 @@ The source also accepts an explicit verified release, as described under [worker
 Local binary paths refer to the settings daemon machine.
 Do not include SSH settings, credentials, or repositories in update requests.
 
-The Desktop Hosts screen offers the same selections under **Update worker**.
+The Desktop Hosts screen offers the same selections under **Update** in the row of the machine.
 Select **Update Ariadne binaries**, **Update agent tools**, or both.
 
 The current worker and selected replacements must support maintenance.

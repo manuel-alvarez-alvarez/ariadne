@@ -99,7 +99,7 @@ export function signInChoice(draft: MachineDraft, signIn: SignIn): SignInChoice 
  * that setup can use. No Advanced input is no source: the daemon picks the
  * programs that inspection reports.
  */
-function sourceOf(draft: MachineDraft): { source?: BinarySource; blocker?: string } {
+export function sourceOf(draft: MachineDraft): { source?: BinarySource; blocker?: string } {
   const cli = draft.cli.trim()
   const daemon = draft.daemon.trim()
   const repository = draft.releaseRepository.trim()
@@ -172,4 +172,14 @@ export function programsLine(binaries: Inspection["binaries"]): string {
   if (binaries.commit) parts.push(`commit ${binaries.commit.slice(0, 8)}`)
   if (binaries.uncommitted) parts.push("uncommitted changes")
   return parts.join(" · ")
+}
+
+/** The display name of an agent that only its id names: `codex-acp` is Codex. */
+export function agentName(id: string): string {
+  return id
+    .replace(/-acp$/, "")
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ")
 }

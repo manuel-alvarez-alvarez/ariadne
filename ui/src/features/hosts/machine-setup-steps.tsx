@@ -72,7 +72,7 @@ export function StepBar({ current }: { current: InstallStep }) {
 }
 
 /** A titled group of the form, for the controls that belong together. */
-function Section({
+export function Section({
   title,
   description,
   children,
@@ -104,7 +104,7 @@ function GroupLine({ group, manual }: { group: SetupGroup; manual?: ManualAction
 }
 
 /** One checkbox with its label and the line under it. */
-function CheckLine({
+export function CheckLine({
   label,
   checked,
   onChange,

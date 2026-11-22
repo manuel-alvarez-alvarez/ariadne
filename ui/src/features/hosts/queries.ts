@@ -4,9 +4,12 @@
  * `host_updated` and `host_deleted` move it.
  */
 
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
-import { api, type CreateHost, LOCAL_HOST, type PatchHost, unwrap } from "@/api"
+import { api, type CreateHost, LOCAL_HOST, type PatchHost, qk, unwrap } from "@/api"
+import type { components } from "@/api/schema"
+
+export type HostSetup = components["schemas"]["HostSetupDto"]
 
 export function useCreateHost() {
   return useMutation({
@@ -25,5 +28,32 @@ export function useDeleteHost() {
   return useMutation({
     mutationFn: (name: string) =>
       unwrap(api(LOCAL_HOST).DELETE("/v1/hosts/{name}", { params: { path: { name } } })),
+  })
+}
+
+/** Whether a saved operation still runs in the daemon. */
+function isActive(state: HostSetup["state"]): boolean {
+  return state === "pending" || state === "running"
+}
+
+/**
+ * `GET /v1/host-setups`. No event carries a saved setup, so the list is read
+ * again every second while one operation is `pending` or `running`.
+ */
+export function useHostSetups() {
+  return useQuery({
+    queryKey: qk.hosts.setups(),
+    queryFn: () => unwrap(api(LOCAL_HOST).GET("/v1/host-setups")),
+    refetchInterval: (query) =>
+      query.state.data?.some((one) => isActive(one.state)) ? 1000 : false,
+  })
+}
+
+export function useDiscardSetup() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) =>
+      unwrap(api(LOCAL_HOST).DELETE("/v1/hosts/{name}/setup", { params: { path: { name } } })),
+    onSuccess: () => client.invalidateQueries({ queryKey: qk.hosts.setups() }),
   })
 }

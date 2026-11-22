@@ -63,6 +63,8 @@ export const qk = {
     setup: (name: string) => [LOCAL_HOST, "hosts", "detail", name, "setup"] as const,
     lists: () => [LOCAL_HOST, "hosts", "list"] as const,
     list: () => [LOCAL_HOST, "hosts", "list", {}] as const,
+    /** `GET /v1/host-setups`: every saved setup and update. */
+    setups: () => [LOCAL_HOST, "host-setups", "list", {}] as const,
   },
   pullRequests: {
     all: (host: Host) => [host, "pull-requests"] as const,

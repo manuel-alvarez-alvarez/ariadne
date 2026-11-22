@@ -1252,6 +1252,42 @@ Out: the daemon endpoints themselves (012).
     `ui/src/features/hosts/host-edit.test.tsx::shows a refusal at the field it names, and any other in the dialog`,
     `ui/src/features/hosts/setup-progress.test.tsx::shows each step by its title, and a manual action with its reason, its command and a copy control`,
     `::resumes the setup from Check again and shows the progress it answers with`).
+52b. Each host row can carry the actions of its machine, and no action asks
+    for a typed name. The table reads `GET /v1/host-setups` every second while
+    an operation is `pending` or `running`, so it stays current with no manual
+    reload. The page header has no "Update worker" button.
+    - Each saved setup or update that is not complete has its own row, with
+      its name and its state, also where a host of that name has a row. The
+      "Continue setup" of a setup opens the Install step of "Add machine" for
+      it, with live progress and the manual actions. The row of an update says
+      "Continue update" instead, and opens the update dialog on its progress. "Discard setup" appears for a setup
+      whose state is `incomplete` or `failed`, and never for an update, which
+      the daemon keeps (037, rule 80). It asks first, says that files on the
+      remote machine stay, and sends `DELETE /v1/hosts/{name}/setup`. A setup
+      that starts from "Add machine" refreshes the list, so its row appears
+      and the poll starts.
+    - A host with a complete saved setup has "Update". Its dialog is the form
+      dialog of "Add machine", and its title names the machine. It has no name
+      and no SSH input. It has two independent selections. "Ariadne programs"
+      is selected and updates to the version of this machine (`source` is
+      `{ "kind": "daemon" }`); "Advanced" holds the two program paths and the
+      release inputs. "Agents and tools" lists each agent by name and GitHub
+      CLI, and the saved selection of the setup starts selected. A request
+      with no program selection has no `source`. The dialog says that the
+      update waits for running tasks, then shows live progress with the step
+      titles and the manual actions through `SetupProgress`. A failed update
+      goes back to the selections with Back, and Update sends the request
+      again. The words "worker", "source daemon machine" and "settings
+      daemon" do not appear on the screen.
+    (`ui/src/features/hosts/host-setups.test.tsx::shows a row for each saved setup that is not complete, with its state and Continue and Discard actions`,
+    `::offers no Discard setup while the setup runs`,
+    `::opens the Install step of the setup from Continue setup`,
+    `::discards a stopped setup after a confirmation that says the remote files stay`,
+    `::updates a machine with no name or SSH input, the programs of this machine and the saved tools selected`,
+    `::sends tools alone when the programs are not selected, and says why it waits when nothing is`,
+    `::lets a failed update change its selections and try again`,
+    `::reads the saved setups again every second while an operation runs, and stops when it ends`,
+    `ui/src/features/hosts/add-machine.test.tsx::shows the row of a setup that starts while the saved setups list was empty`).
 53. `api(host)` is one host's typed client, and `eventStreamUrl(host, filters)`
     builds its stream URL. The app opens one domain stream per reachable host,
     and each event patches and invalidates the keys of the host it came from.

@@ -1,12 +1,13 @@
 /**
- * The Install step of "Add machine": the live progress of one machine setup,
- * read from the settings daemon's `GET /v1/hosts/{name}/setup` every second
- * while it is `pending` or `running`.
+ * The Install step of "Add machine" and the progress of an update: the live
+ * progress of one machine operation, read from the settings daemon's
+ * `GET /v1/hosts/{name}/setup` (or `/update`) every second while it is
+ * `pending` or `running`.
  *
  * Each step shows its title. A step that needs work by hand shows why, the
  * command to run on the new machine with a copy control, and "Check again",
- * which sends `POST /v1/hosts/{name}/setup/resume`. The setup runs in the
- * daemon, so the dialog around this can close at any time.
+ * which sends `POST /v1/hosts/{name}/setup/resume`; an update passes its own
+ * `retry` instead. The operation runs in the daemon, so the dialog around this can close at any time.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -27,41 +28,86 @@ import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/format"
 
+type SetupOperation = "setup" | "update"
+type SetupDto = components["schemas"]["SetupDto"]
 type SetupState = components["schemas"]["SetupState"]
 type SetupStep = components["schemas"]["SetupStep"]
 type ManualAction = components["schemas"]["ManualAction"]
 
 const ACTIVE: SetupState[] = ["pending", "running"]
 
-const SUMMARY: Record<SetupState, string> = {
-  pending: "Setup is about to start.",
-  running: "Setup is running.",
-  incomplete: "Setup stopped. Do the work below, then check again.",
-  failed: "Setup failed. Do the work below, then check again.",
-  complete: "Setup is complete. The new machine is in the hosts list.",
+const SUMMARY: Record<SetupOperation, Record<SetupState, string>> = {
+  setup: {
+    pending: "Setup is about to start.",
+    running: "Setup is running.",
+    incomplete: "Setup stopped. Do the work below, then check again.",
+    failed: "Setup failed. Do the work below, then check again.",
+    complete: "Setup is complete. The new machine is in the hosts list.",
+  },
+  update: {
+    pending: "The update is about to start.",
+    running: "The update is running.",
+    incomplete: "The update stopped. Do the work below, then check again.",
+    failed: "The update failed. Do the work below, then check again.",
+    complete: "The update is complete.",
+  },
 }
 
-export function SetupProgress({ name }: { name: string }) {
-  const client = useQueryClient()
-  const status = useQuery({
-    queryKey: qk.hosts.setup(name),
+/** The progress of one operation of a machine, read every second while it is active. */
+export function useProgress(name: string, operation: SetupOperation) {
+  return useQuery({
+    queryKey: operation === "update" ? qk.hosts.update(name) : qk.hosts.setup(name),
     queryFn: () =>
-      unwrap(api(LOCAL_HOST).GET("/v1/hosts/{name}/setup", { params: { path: { name } } })),
+      operation === "update"
+        ? unwrap(api(LOCAL_HOST).GET("/v1/hosts/{name}/update", { params: { path: { name } } }))
+        : unwrap(api(LOCAL_HOST).GET("/v1/hosts/{name}/setup", { params: { path: { name } } })),
     refetchInterval: (query) =>
       query.state.data && ACTIVE.includes(query.state.data.state) ? 1000 : false,
   })
+}
+
+export function SetupProgress({
+  name,
+  operation = "setup",
+  retry,
+}: {
+  name: string
+  operation?: SetupOperation
+  /** Starts the operation again; without it, "Check again" resumes the setup. */
+  retry?: () => Promise<SetupDto>
+}) {
+  const client = useQueryClient()
+  const status = useProgress(name, operation)
   const state = status.data?.state
   useEffect(() => {
-    if (state === "complete") void client.invalidateQueries({ queryKey: qk.hosts.lists() })
+    if (state === "complete") {
+      void client.invalidateQueries({ queryKey: qk.hosts.lists() })
+      void client.invalidateQueries({ queryKey: qk.hosts.setups() })
+    }
   }, [client, state])
   const resume = useMutation({
     mutationFn: () =>
-      unwrap(api(LOCAL_HOST).POST("/v1/hosts/{name}/setup/resume", { params: { path: { name } } })),
-    onSuccess: (progress) => client.setQueryData(qk.hosts.setup(name), progress),
+      retry
+        ? retry()
+        : unwrap(
+            api(LOCAL_HOST).POST("/v1/hosts/{name}/setup/resume", { params: { path: { name } } }),
+          ),
+    onSuccess: (progress) => {
+      client.setQueryData(
+        operation === "update" ? qk.hosts.update(name) : qk.hosts.setup(name),
+        progress,
+      )
+      void client.invalidateQueries({ queryKey: qk.hosts.setups() })
+    },
   })
 
   if (status.error && !status.data)
-    return <ErrorState title="Could not read the setup" error={status.error} />
+    return (
+      <ErrorState
+        title={operation === "update" ? "Could not read the update" : "Could not read the setup"}
+        error={status.error}
+      />
+    )
   if (!status.data) return <p className="text-sm text-muted-foreground">Reading the setup…</p>
 
   const stopped = state === "incomplete" || state === "failed"
@@ -73,7 +119,7 @@ export function SetupProgress({ name }: { name: string }) {
   return (
     <div className="flex flex-col gap-3">
       <p role="status" className="text-sm font-medium">
-        {SUMMARY[status.data.state]}
+        {SUMMARY[operation][status.data.state]}
       </p>
       <ol aria-label="Setup steps" className="flex flex-col gap-2">
         {steps.map((step, index) => (
@@ -97,7 +143,14 @@ export function SetupProgress({ name }: { name: string }) {
           Try again
         </Button>
       ) : null}
-      {resume.error ? <ErrorState title="Could not resume the setup" error={resume.error} /> : null}
+      {resume.error ? (
+        <ErrorState
+          title={
+            operation === "update" ? "Could not retry the update" : "Could not resume the setup"
+          }
+          error={resume.error}
+        />
+      ) : null}
     </div>
   )
 }
@@ -197,7 +250,7 @@ function ManualBlock({
   )
 }
 
-/** A command to run on the new machine, with a button that copies it. */
+/** A command to run on the machine, with a button that copies it. */
 export function CommandLine({ command }: { command: string }) {
   return (
     <CopyableId

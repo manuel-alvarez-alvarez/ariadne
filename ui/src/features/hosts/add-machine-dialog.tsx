@@ -75,9 +75,12 @@ const EMPTY_DAEMON: DaemonValues = { name: "", endpoint: "", remote: "", color: 
 export function AddMachineDialog({
   open,
   onOpenChange,
+  continueSetup = null,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** The name of a saved setup: the dialog then opens on its Install step. */
+  continueSetup?: string | null
 }) {
   // Each open starts from a blank dialog, never from the last attempt.
   const [session, setSession] = useState(0)
@@ -86,7 +89,14 @@ export function AddMachineDialog({
     setWasOpen(open)
     if (open) setSession((n) => n + 1)
   }
-  return <AddMachineFlow key={session} open={open} onOpenChange={onOpenChange} />
+  return (
+    <AddMachineFlow
+      key={session}
+      open={open}
+      onOpenChange={onOpenChange}
+      continueSetup={continueSetup}
+    />
+  )
 }
 
 /** What the one form of the dialog shows and does at the current step. */
@@ -108,17 +118,19 @@ interface StepView {
 function AddMachineFlow({
   open,
   onOpenChange,
+  continueSetup,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  continueSetup: string | null
 }) {
   const client = useQueryClient()
-  const [phase, setPhase] = useState<Phase>("method")
+  const [phase, setPhase] = useState<Phase>(continueSetup ? "install" : "method")
   const [method, setMethod] = useState<Method>("install")
   const [touched, setTouched] = useState(false)
   const [daemon, setDaemon] = useState<DaemonValues>(EMPTY_DAEMON)
   const [refusal, setRefusal] = useState<{ field: HostField | null; message: string } | null>(null)
-  const [draft, setDraft] = useState<MachineDraft>(EMPTY_DRAFT)
+  const [draft, setDraft] = useState<MachineDraft>({ ...EMPTY_DRAFT, name: continueSetup ?? "" })
   const change = (patch: (draft: MachineDraft) => MachineDraft) => {
     setTouched(true)
     setDraft(patch)
@@ -186,6 +198,7 @@ function AddMachineFlow({
     onSuccess: (progress) => {
       client.setQueryData(qk.hosts.setup(name), progress)
       void client.invalidateQueries({ queryKey: qk.hosts.lists() })
+      void client.invalidateQueries({ queryKey: qk.hosts.setups() })
       setPhase("install")
     },
   })

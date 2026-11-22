@@ -108,7 +108,7 @@ afterEach(() => {
 })
 
 /** The settings daemon, with one registered repository and the setup routes of `builder`. */
-function stubSetup() {
+function stubSetup(extra: Record<string, unknown> = {}) {
   return stubHosts(
     {
       local: {
@@ -138,6 +138,7 @@ function stubSetup() {
               },
             ],
           }),
+        ...extra,
       },
     },
     [LOCAL],
@@ -389,4 +390,31 @@ it("closes during the installation with no question, and the setup continues in 
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   expect(screen.queryByText("Discard this machine?")).toBeNull()
   expect(seen.some((one) => one.method === "DELETE")).toBe(false)
+})
+
+it("shows the row of a setup that starts while the saved setups list was empty", async () => {
+  let seen: SeenRequest[] = []
+  seen = stubSetup({
+    "/v1/host-setups": () =>
+      jsonResponse(
+        seen.some((one) => one.method === "POST" && one.url.pathname === "/v1/hosts/builder/setup")
+          ? [
+              {
+                name: "builder",
+                operation: "setup",
+                ssh: "ssh://me@builder",
+                state: "running",
+                steps: [],
+                tools: null,
+              },
+            ]
+          : [],
+      ),
+  })
+  renderScreen(<HostsPage />)
+  const dialog = await toSelect()
+  fireEvent.click(nextButton(dialog))
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Install" }))
+
+  expect(await screen.findByText("Setup running")).toBeTruthy()
 })
