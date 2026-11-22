@@ -356,7 +356,12 @@ impl Hosts {
         let output = self
             .ssh_held(
                 request,
-                &format!("set -eu; umask 077; export PATH={}; {script}", quote(path)),
+                // Noninteractive dash cannot enable job control. Bash creates the
+                // groups that bounded() must stop, including its watchdogs.
+                &format!(
+                    "exec /bin/bash -c {}",
+                    quote(&format!("set -eu; umask 077; export PATH={}; {script}", quote(path)))
+                ),
                 None,
                 limit,
                 true,

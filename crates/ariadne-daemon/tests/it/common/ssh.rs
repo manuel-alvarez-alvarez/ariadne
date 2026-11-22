@@ -20,6 +20,9 @@
 //! - `ssh_config`: the lines a `-G` run prints, as `ssh -G` prints the
 //!   configuration it resolves. Without it a `-G` run prints nothing.
 //!
+//! `runtime_disconnect` in `setup` names a FIFO. A runtime command closes its stdin
+//! when that FIFO reaches EOF, after the test observes an active download.
+//!
 //! A `setup` script runs the command in a stub login shell. Its `path` is the PATH of
 //! `-lc`. `interactive_path` is the PATH of `-ilc`, and `interactive` is `fail`,
 //! `unmarked` or `empty` for an interactive shell that fails, prints no markers or prints an empty PATH.
@@ -213,6 +216,13 @@ if "-T" in args and script.get("setup"):
            "ARIADNE_SETUP_OS": setup.get("os", "Linux"),
            "ARIADNE_SETUP_ARCH": setup.get("arch", "x86_64"),
            "ARIADNE_SETUP_SERVICE_FAIL": setup.get("fail_service", "")}
+    if setup.get("runtime_disconnect") and "bounded provide" in command:
+        child = subprocess.Popen(command, shell=True, env=env, stdin=subprocess.PIPE)
+        # Model remote stdin closing after the test observes an active download.
+        with open(setup["runtime_disconnect"], "rb") as gate:
+            gate.read()
+        child.stdin.close()
+        sys.exit(child.wait())
     sys.exit(subprocess.run(command, shell=True, env=env).returncode)
 
 if "-L" not in args and ("home" in script or script.get("home_hang")):

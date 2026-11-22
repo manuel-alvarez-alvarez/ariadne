@@ -4458,7 +4458,7 @@ async fn an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_us
 }
 
 #[tokio::test]
-async fn a_download_that_runs_past_its_timeout_ends_with_its_step() {
+async fn a_runtime_install_that_runs_past_its_timeout_stops_the_step() {
     use ariadne_daemon::timeouts::Timeouts;
     let w = RuntimeWorker::new();
     w.serve_node(None);
@@ -4482,8 +4482,42 @@ async fn a_download_that_runs_past_its_timeout_ends_with_its_step() {
     let state = w.setup(&h, "codex-acp").await;
     let error = step(&state, "tool:codex-acp")["error"].as_str().unwrap();
     assert!(error.contains("timed out"), "{error}");
-    // The step ended by its local bound, long before the worker's own backstop. The download
-    // process ends on the worker too, because its stdin closed with the ssh command.
+}
+
+#[tokio::test]
+async fn a_disconnected_runtime_install_ends_the_download_process() {
+    use serde_json::{Value, json};
+    let w = RuntimeWorker::new();
+    w.serve_node(None);
+    let _hold = Hold::new(w.remote.path().join("hold"));
+    let disconnect_path = w.remote.path().join("disconnect");
+    let disconnect = Hold::new(disconnect_path.clone());
+    let ssh = common::ssh::stub_ssh(json!({"setup":{
+        "home":w.remote.path(),
+        "path":format!("{}:/usr/bin:/bin", w.bin.display()),
+        "runtime_disconnect":disconnect_path
+    },"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let _: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/runtime/setup",
+                json!({
+                    "ssh":"ssh://worker@box",
+                    "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+                    "tools":{"agents":["codex-acp"],"github":false}
+                }),
+            ),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "the download starts", || async {
+        w.remote.path().join("curl.pid").exists()
+    })
+    .await;
+    disconnect.release().await;
+    let state = setup_ends(&h, "runtime").await;
+    assert_eq!(state["state"], "incomplete", "{state}");
     let pid = std::fs::read_to_string(w.remote.path().join("curl.pid"))
         .unwrap()
         .trim()
