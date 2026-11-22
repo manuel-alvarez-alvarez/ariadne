@@ -456,13 +456,6 @@ function recoveryTarget(
       return sessionTerminalFrom(pathname, current, item.target.session_id, host)
     case "goal": {
       const [path, search] = paths.goal(item.target.goal_id, host).split("?")
-      if (pathname === paths.attention()) {
-        const next = new URLSearchParams(current)
-        for (const key of ["goal", "task", "session", "tab", "pr", "host", "focus"])
-          next.delete(key)
-        for (const [key, value] of new URLSearchParams(search)) next.set(key, value)
-        return { search: `?${next}` }
-      }
       return { pathname: path, search: search ? `?${search}` : "" }
     }
     case "task":
@@ -471,7 +464,7 @@ function recoveryTarget(
       const [path, search] = paths
         .pullRequest(item.target.pull_request_id, current, host)
         .split("?")
-      return { pathname: pathname === paths.attention() ? pathname : path, search: `?${search}` }
+      return { pathname: path, search: `?${search}` }
     }
     case "settings":
       // The agents of a named host are read on that host's chip.

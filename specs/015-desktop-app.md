@@ -1645,7 +1645,7 @@ Out: the daemon endpoints themselves (012).
       board's table and warnings, the agents screen's chips, tooltip and flags
       dialog, the models table, a repository's checkouts, the goal dialog, the
       AI card, the logs drawer's and the Permissions screen's unreachable host
-      messages, the attention page's host filter, and the review and babysit dialogs' host select. `hostTitle`
+      messages and the review and babysit dialogs' host select. `hostTitle`
       and `RefreshWarning` take the host as a `HostLabel`. Only a key, an id,
       the palette's search value and an accessible label are plain text.
     - A `host_updated` event repaints every one of these at once.
@@ -1660,8 +1660,6 @@ Out: the daemon endpoints themselves (012).
     `ui/src/lib/host-colors.test.ts::declares every host token in both themes and in the Tailwind theme`,
     `ui/src/components/host-color.test.tsx::draws the host select of the review dialogs with each host's dot`,
     `ui/src/components/host-color.test.tsx::draws the host name of each error, warning and message in its colour, and repaints it live`,
-    `ui/src/features/goals/attention-page.test.tsx::keeps a host named __all__ apart from All in the host filter, in colour`,
-    `ui/src/features/goals/attention-page.test.tsx::draws the hosts of the host filter with their colour, and repaints it live`,
     `ui/src/features/system/daemon-logs-drawer.test.tsx::keeps the host it opened on when that host goes down, and says why`,
     `ui/src/features/system/daemon-logs-drawer.test.tsx::draws each host of the drawer's host select with its colour dot`,
     `ui/src/routes/dashboards.test.tsx::draws each host of the host select with its colour dot`,
@@ -2813,10 +2811,6 @@ through `detail-panels.test.tsx`, `pane-focus.test.tsx` and
 account of the sessions screen in particular rests on reading
 `sessions-page.tsx` rather than on a test asserting it, apart from the host
 behaviour of rule 61.
-
-## Attention workspace
-
-The [attention specification](031-needs-attention.md#attention-workspace) defines the workspace and its return navigation.
 
 ## Sources
 

@@ -64,7 +64,6 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: paths.goals(), label: "Goals", icon: TargetIcon, counts: true },
-  { to: paths.attention(), label: "Attention", icon: TargetIcon },
   { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
   { to: paths.forge(), label: "Forge", icon: GitPullRequestIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
