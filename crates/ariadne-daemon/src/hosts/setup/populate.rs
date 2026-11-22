@@ -253,6 +253,7 @@ fn runtime_error(output: &str) -> Option<String> {
         .find_map(|l| l.strip_prefix(RUNTIME_FAILED))?;
     let (runtime, cause) = line.split_once(": ").unwrap_or(("", line));
     Some(match runtime {
+        "bash" => "Bash is missing on the worker; install Bash at /bin/bash for runtime process supervision, then resume setup".into(),
         "uv" => format!(
             "uv is missing on the worker and its installation in ~/.local failed: {cause}; install uv, or provide user-owned Homebrew, and resume setup"
         ),
@@ -356,7 +357,12 @@ impl Hosts {
         let output = self
             .ssh_held(
                 request,
-                &format!("set -eu; umask 077; export PATH={}; {script}", quote(path)),
+                // Noninteractive dash cannot enable job control. Bash creates the
+                // groups that bounded() must stop, including its watchdogs.
+                &format!(
+                    "[ -x /bin/bash ] || {{ printf '%s\\n' '{RUNTIME_FAILED}bash: /bin/bash is missing on the worker'; exit 0; }}; exec /bin/bash -c {}",
+                    quote(&format!("set -eu; umask 077; export PATH={}; {script}", quote(path)))
+                ),
                 None,
                 limit,
                 true,

@@ -970,7 +970,8 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
    Missing Git and GitHub CLI use an existing user-owned Homebrew installation.
    A missing Node.js or uv uses Homebrew when it is user-owned. Otherwise setup installs it in `~/.local`, with no administrator command:
    Node.js from the current LTS archive on nodejs.org, checked against its `SHASUMS256.txt`, and uv with the installer from astral.sh.
-   The worker needs `curl`, and for Node.js `tar`, and network access to nodejs.org or astral.sh.
+   If `/bin/bash` is missing, the step tells you to install Bash there and resume setup.
+   The worker needs `/bin/bash` for runtime process supervision, `curl`, and for Node.js `tar`, and network access to nodejs.org or astral.sh.
    A failed install shows the network access and the command to run by hand.
    Otherwise, setup reports administrator prerequisites without running administrator commands.
    uv can install its required Python runtime.
@@ -1006,7 +1007,9 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
    Git clones committed history from the selected repository's remote.
    Local edits and untracked files stay on the source machine.
    Git and forge authentication must work on the worker.
-   Setup reports missing remotes, authentication failures, and inaccessible destinations in the repository steps.
+   For an SSH remote, setup copies this machine's `known_hosts` entry for the Git host to the worker, so the worker trusts the key you already trust.
+   With no such entry, the clone step names the host and the `ssh -T` command to run once on the worker.
+   Setup reports missing remotes, untrusted host keys, authentication failures, missing branches, and existing destinations in the repository steps, by repository name.
    It never replaces an unrelated directory.
    A matching registered forge checkout keeps its existing worker path.
    Matching uses forge kind, host, owner, and name, with the same base branch preferred.

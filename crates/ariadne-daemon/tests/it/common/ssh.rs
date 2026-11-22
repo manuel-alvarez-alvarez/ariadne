@@ -17,6 +17,12 @@
 //!   until it is killed.
 //! - `connect_stderr`: what a forward writes to stderr when its far end refuses.
 //! - `hold_reaping`: keep the killed forward as a zombie until this file exists.
+//! - `ssh_config`: the lines a `-G` run prints, as `ssh -G` prints the
+//!   configuration it resolves. Without it a `-G` run prints nothing.
+//!
+//! `runtime_bash` in `setup` substitutes the Bash path to model a missing runtime supervisor.
+//! `runtime_disconnect` in `setup` names a FIFO. A runtime command closes its stdin
+//! when that FIFO reaches EOF, after the test observes an active download.
 //!
 //! A `setup` script runs the command in a stub login shell. Its `path` is the PATH of
 //! `-lc`. `interactive_path` is the PATH of `-ilc`, and `interactive` is `fail`,
@@ -145,10 +151,17 @@ def end():
         os.kill(os.getpid(), script["signal"])
     os._exit(script.get("exit", 255))
 
+if "-G" in args:
+    for line in script.get("ssh_config", []):
+        print(line)
+    sys.exit(0)
+
 if "-T" in args and script.get("setup"):
     import subprocess
     setup = script["setup"]
     command = args[-1]
+    if "runtime_bash" in setup:
+        command = command.replace("/bin/bash", setup["runtime_bash"])
     if setup.get("maintenance_fixture") and "--maintenance-protocol" in command:
         if not setup.get("replacement_maintenance", True):
             sys.exit(2)
@@ -206,6 +219,13 @@ if "-T" in args and script.get("setup"):
            "ARIADNE_SETUP_OS": setup.get("os", "Linux"),
            "ARIADNE_SETUP_ARCH": setup.get("arch", "x86_64"),
            "ARIADNE_SETUP_SERVICE_FAIL": setup.get("fail_service", "")}
+    if setup.get("runtime_disconnect") and "bounded provide" in command:
+        child = subprocess.Popen(command, shell=True, env=env, stdin=subprocess.PIPE)
+        # Model remote stdin closing after the test observes an active download.
+        with open(setup["runtime_disconnect"], "rb") as gate:
+            gate.read()
+        child.stdin.close()
+        sys.exit(child.wait())
     sys.exit(subprocess.run(command, shell=True, env=env).returncode)
 
 if "-L" not in args and ("home" in script or script.get("home_hang")):

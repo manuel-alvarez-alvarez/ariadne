@@ -9,6 +9,7 @@ tests:
   - ui/scripts/host-events.test.mjs
   - crates/ariadne-client/src/endpoint.rs
   - crates/ariadne-daemon/tests/it/hosts.rs
+  - crates/ariadne-daemon/src/hosts/setup/repositories.rs
   - crates/ariadne-daemon/tests/it/ssh_forward.rs
   - crates/ariadne-daemon/tests/it/portable_config.rs
   - crates/ariadne-daemon/tests/it/host_sync.rs
@@ -347,7 +348,11 @@ picker, the Hosts screen and one stream per host — is spec
     A failed download, a missing checksum line or a checksum mismatch installs nothing, and the step error names the cause.
     For uv, setup downloads the standalone installer from `https://astral.sh/uv/install.sh` and runs it with `UV_UNMANAGED_INSTALL=~/.local/bin`.
     `Timeouts::worker_runtime_install` bounds each runtime download and install. The bound ends the SSH command. The install script runs each download in a process group of its own and ends it when the SSH connection ends, so no download outlives its step. The script also ends it 120 seconds after that bound, in case it never noticed.
-    The worker needs `curl` and, for Node.js, `tar`, and network access to nodejs.org for Node.js and to astral.sh for uv.
+    The runtime supervisor uses `/bin/bash` for noninteractive job control, including when the worker login shell is `sh`.
+    A worker without executable `/bin/bash` gets a Bash prerequisite error before any download starts.
+    The error tells the user to install Bash at that path and resume setup.
+    Completed runtime work stops and reaps its watchdogs before the step returns.
+    The worker needs `/bin/bash`, `curl` and, for Node.js, `tar`, and network access to nodejs.org for Node.js and to astral.sh for uv.
     A runtime that setup installed this way shows as installed by Ariadne; a runtime that was present shows as already present.
     Setup records it in `~/.local/share/ariadne/installed-<command>`. An update upgrades a runtime with that record, and leaves one without it.
     A failed runtime install shows a manual action that names the network access and the manual install command.
@@ -452,7 +457,15 @@ picker, the Hosts screen and one stream per host — is spec
     Setup clones Git remote history without source edits or untracked files.
     Registered checkout reuse follows rule 26, including base branch preference and preservation of worker paths.
     Each selection records `clone:<id>` and `repository:<id>` progress.
+    Their titles name the repository as Desktop does, by its forge name or its folder, not by its id.
+    Review names it the same way.
+    For an SSH remote, setup copies the `known_hosts` lines that this machine's `ssh` trusts for the Git host
+    to the worker's `~/.ssh/known_hosts`, unless the worker already knows that host.
+    Appending keys preserves existing entries, including a last line without a newline.
+    Host-key errors do not assume that this machine has no trusted key.
     Missing remotes, worker authentication failures, and inaccessible destinations leave setup incomplete.
+    A failed clone names its cause: an existing destination, missing Git, an untrusted host key with the command
+    that checks it, refused authentication, or a missing branch. It names the remote's host, never its URL or Git's output.
     Setup refuses unrelated existing destination directories.
     Completed clone and registration checkpoints survive retries.
     Registration invokes the normal host synchronization for settings and learned permissions.
@@ -671,6 +684,8 @@ picker, the Hosts screen and one stream per host — is spec
   `hosts.rs::repository_setup_preserves_an_unrelated_existing_destination` and `::repository_setup_preserves_an_empty_existing_destination` prove preservation of unrelated directories, including empty directories.
   `hosts.rs::repository_setup_reports_a_missing_source_remote` proves the missing-remote step failure.
   `hosts.rs::repository_setup_reports_worker_git_authentication_failure` proves failure after a worker receives an HTTP authentication challenge.
+  `hosts.rs::repository_setup_copies_this_machines_host_key_to_the_worker` proves the host key copy, the untrusted-key failure, the retry and the repository name in step titles.
+  `hosts/setup/repositories.rs::tests` proves which remotes are SSH, the `known_hosts` lookup name, and that a failure never shows URL credentials.
   `add-machine.test.tsx` proves selection and destination editing.
   `hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure` proves CLI selection and progress.
 
@@ -835,7 +850,9 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 47, a failed download installs nothing and names the download (criterion 3): `hosts.rs::a_failed_node_js_download_installs_nothing_and_names_the_download` and `hosts.rs::a_failed_uv_download_names_astral_sh`.
 - Rule 47, uv installs with the astral.sh installer into `~/.local/bin` (criterion 4): `hosts.rs::setup_installs_uv_with_the_standalone_installer_when_no_homebrew_exists`.
 - Rule 47, a user-owned Homebrew comes first (criterion 1): `hosts.rs::setup_uses_a_user_owned_homebrew_before_it_downloads_a_runtime`.
-- Rule 47, a download that runs past `Timeouts::worker_runtime_install` ends with its step (criterion 5): `hosts.rs::a_download_that_runs_past_its_timeout_ends_with_its_step`, which checks that the worker's download process ends with the step, long before that backstop.
+- Rule 47, a download that runs past `Timeouts::worker_runtime_install` ends with its step (criterion 5): `hosts.rs::a_runtime_install_that_runs_past_its_timeout_stops_the_step`.
+  `hosts.rs::a_disconnected_runtime_install_ends_the_download_process` verifies cleanup after observing an active download.
+- Rule 47, a missing Bash supervisor names the prerequisite before downloading: `hosts.rs::a_worker_without_bash_names_the_missing_runtime_supervisor`.
 - Rule 47, a present runtime shows as already present (criterion 6): `hosts.rs::a_runtime_that_was_present_shows_as_already_present`.
 - Rule 47, an update upgrades what setup installed and leaves the user's runtime (criterion 7, Node.js and uv, owned and user-installed): `hosts.rs::an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_user_installed`.
 - Rule 83, the manual action of a failed uv install names astral.sh and the command (criterion 8): `hosts.rs::inspection_names_who_installs_each_agent_github_and_each_sign_in`.

@@ -338,7 +338,10 @@ header, or one from the packaged Tauri app, the development server, or an
 exact serialized origin in `tcp_allowed_origins`: `scheme://host[:port]`,
 without a path or trailing slash. Other Host and Origin values receive a `403
 forbidden` envelope, including event streams and terminal WebSockets. The unix
-socket ignores these TCP checks.
+socket applies the same `Origin` check and CORS. Its `Host` can be absent,
+a loopback address, or a hex-encoded absolute socket path with an optional `:0` suffix. Thus the
+desktop app can reach a worker's socket through its SSH forward, and the CLI
+reaches it as before.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

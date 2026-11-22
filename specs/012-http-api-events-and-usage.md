@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-11-13
+updated: 2026-11-22
 areas: [api, daemon, store]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -57,7 +57,11 @@ and the ACP runtime that reports the agent events (021).
    each optionally with a port), and may carry no Origin or only an allowed
    Origin. The allowed origins are the packaged app, the development server,
    and serialized `scheme://host[:port]` values in `tcp_allowed_origins`. The
-   unix socket has none of these HTTP checks.
+   unix socket has the same Origin check and CORS. It accepts a missing Host,
+   a loopback Host, or a hex-encoded absolute socket path (optionally suffixed with `:0`): an SSH
+   forward (037) puts a worker's socket on a loopback port where the desktop
+   app calls it, and the CLI's socket client sends no Origin and a Host that
+   encodes the socket path.
 2. DTOs and the error shape live in one crate (`ariadne-api`) and are the
    single source of truth for the OpenAPI document every client generates
    from. Every API endpoint appears in that document.
@@ -88,7 +92,7 @@ and the ACP runtime that reports the agent events (021).
 5. The stream is SSE. It opens with a heartbeat, honours per-client filters,
    and signals a resync and closes when a client lags rather than silently
    dropping events.
-6. TCP CORS allows only the app's allowed origins, its HTTP methods, and its
+6. CORS, on TCP and on the socket, allows only the app's allowed origins, its HTTP methods, and its
    request headers. A refused Host or Origin answers `403` in the normal
    `forbidden` envelope and includes no CORS allow headers, for every route,
    event stream, and terminal WebSocket.
@@ -423,11 +427,13 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `::sse_stream_frames_events_and_honours_its_filters`,
   `::sse_stream_signals_resync_and_closes_when_a_client_lags`).
 - Loopback TCP configuration, Host and Origin checks, CORS, streams, terminal
-  upgrades, and unchanged unix-socket headers are covered by
+  upgrades, and the socket's Host and Origin checks and CORS are covered by
   (`config.rs::tcp_listener_requires_a_loopback_address_at_start_and_check`,
   `config.rs::tcp_allowed_origins_require_serialized_origins`,
   `socket.rs::socket_is_owner_only_when_created`, and
-  `events.rs::cors_allows_preflight_and_cross_origin_calls`).
+  `events.rs::cors_allows_preflight_and_cross_origin_calls`,
+  `events.rs::the_socket_allows_the_app_origin_and_refuses_another`,
+  `events.rs::the_real_socket_client_can_reach_the_socket_router`).
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).

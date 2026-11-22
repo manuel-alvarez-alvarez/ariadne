@@ -33,6 +33,9 @@ pub(super) struct Record {
     /// The worker's system package manager, once a source build has looked.
     #[serde(default)]
     manager: Option<String>,
+    /// The short name of each selected repository, by id, for step titles.
+    #[serde(default)]
+    repository_names: BTreeMap<String, String>,
 }
 
 fn with_binaries() -> bool {
@@ -540,6 +543,7 @@ impl Hosts {
                     target: None,
                     present: Default::default(),
                     manager: None,
+                    repository_names: BTreeMap::new(),
                     progress: SetupDto {
                         name: worker.clone(),
                         state: SetupState::Pending,
@@ -827,6 +831,7 @@ impl Hosts {
     async fn run_setup(&self, name: &str, request: &SetupRequest) -> Result<(), String> {
         let worker = self.0.setup.lock().unwrap()[name].progress.name.clone();
         let update = name.starts_with("update:");
+        self.name_repositories(name, request).await;
         self.begin(name, "probe")?;
         // The first three lines identify the platform and home. The remaining bytes
         // carry the selected PATH verbatim, without an added terminator.

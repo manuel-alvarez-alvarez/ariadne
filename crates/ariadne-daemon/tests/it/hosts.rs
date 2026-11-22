@@ -253,6 +253,7 @@ async fn repository_setup_reports_a_missing_source_remote() {
         .unwrap();
     assert_eq!(step["complete"], false, "{state}");
     assert_eq!(step["error"], "source repository has no Git remote");
+    assert_eq!(step["title"], "Clone repository source", "{state}");
     assert!(!remote.path().join("workspace/project").exists());
     assert!(!remote.path().join("worker-repositories.json").exists());
 }
@@ -303,6 +304,128 @@ async fn repository_setup_reports_worker_git_authentication_failure() {
         "Git must reach the authentication challenge"
     );
     assert!(!remote.path().join("worker-repositories.json").exists());
+}
+
+/// A worker that has never reached the Git host refuses its key under
+/// `BatchMode`. Setup copies the key this machine's `ssh` already trusts for
+/// that host, and names the host and the command to run where there is none.
+#[tokio::test]
+async fn repository_setup_copies_this_machines_host_key_to_the_worker() {
+    use common::{TIMEOUT, eventually, post_json};
+    use serde_json::{Value, json};
+    const KEY: &str =
+        "git.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+    let remote = tempfile::tempdir().unwrap();
+    let binaries = tempfile::tempdir().unwrap();
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    let cli = binaries.path().join("ariadne");
+    let daemon = binaries.path().join("ariadned");
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    // The worker's `ssh`: it refuses an unknown host as `BatchMode` does, and
+    // otherwise runs the Git command it was given here.
+    let worker_bin = binaries.path().join("worker-bin");
+    std::fs::create_dir_all(&worker_bin).unwrap();
+    std::os::unix::fs::symlink(
+        common::shared_script(
+            "#!/bin/sh\nssh-keygen -F git.test -f \"$HOME/.ssh/known_hosts\" >/dev/null 2>&1 || { echo 'Host key verification failed.' >&2; exit 255; }\nfor last; do :; done\nPATH=$(git --exec-path):$PATH exec sh -c \"$last\"\n",
+        ),
+        worker_bin.join("ssh"),
+    )
+    .unwrap();
+    let known_hosts = binaries.path().join("known_hosts");
+    std::fs::write(&known_hosts, "").unwrap();
+    let ssh = common::ssh::stub_ssh(json!({
+        "setup": {
+            "home": remote.path(),
+            "os": "Linux",
+            "repository_fixture": {},
+            "path": format!("{}:/usr/bin:/bin", worker_bin.display()),
+        },
+        "ssh_config": [format!("userknownhostsfile {}", known_hosts.display())],
+        "exit": 0,
+    }));
+    let h = harness().ssh(&ssh).await;
+    let source = h.git_repo("source");
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&source)
+            .args(["remote", "add", "origin"])
+            .arg(format!("git@git.test:{}", source.display()))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let repository: Value = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                json!({"path":source,"base_branch":"main"}),
+            ),
+            axum::http::StatusCode::CREATED,
+        )
+        .await;
+    let id = repository["id"].as_str().unwrap().to_owned();
+    let destination = remote.path().join("workspace/project");
+    let request = json!({"ssh":"ssh://box","source":{"kind":"local","cli":cli,"daemon":daemon},"repositories":{&id:destination}});
+    let clone_step = |state: &Value| {
+        state["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == format!("clone:{id}"))
+            .unwrap()
+            .clone()
+    };
+
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/setup", request.clone()),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "the unknown host key", || async {
+        h.get::<Value>("/v1/hosts/builder/setup").await["state"] == "incomplete"
+    })
+    .await;
+    let state: Value = h.get("/v1/hosts/builder/setup").await;
+    let step = clone_step(&state);
+    assert_eq!(step["complete"], false, "{state}");
+    assert_eq!(step["title"], "Clone repository source", "{state}");
+    let error = step["error"].as_str().unwrap();
+    assert!(
+        error.contains("does not trust the SSH host key of git.test")
+            && error.contains("ssh -T git@git.test"),
+        "{state}"
+    );
+    assert!(!remote.path().join("worker-repositories.json").exists());
+
+    std::fs::create_dir_all(remote.path().join(".ssh")).unwrap();
+    let existing = KEY.replace("git.test", "gitlab.com");
+    std::fs::write(remote.path().join(".ssh/known_hosts"), &existing).unwrap();
+    std::fs::write(&known_hosts, format!("{KEY}\n")).unwrap();
+    let _: Value = h
+        .json(
+            post_json("/v1/hosts/builder/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    eventually(TIMEOUT, "the clone with the copied key", || async {
+        h.get::<Value>("/v1/hosts/builder/setup").await["state"] == "complete"
+    })
+    .await;
+    let state: Value = h.get("/v1/hosts/builder/setup").await;
+    assert_eq!(clone_step(&state)["complete"], true, "{state}");
+    assert_eq!(
+        std::fs::read_to_string(remote.path().join(".ssh/known_hosts")).unwrap(),
+        format!("{existing}\n{KEY}\n")
+    );
+    assert!(destination.join("file.txt").exists());
+    h.state.hosts.shutdown().await;
 }
 
 /// Run a repository selection through the public setup routes and return its terminal result.
@@ -4230,6 +4353,29 @@ async fn setup_installs_uv_with_the_standalone_installer_when_no_homebrew_exists
 }
 
 #[tokio::test]
+async fn a_worker_without_bash_names_the_missing_runtime_supervisor() {
+    use serde_json::json;
+    let w = RuntimeWorker::new();
+    let ssh = common::ssh::stub_ssh(json!({"setup":{
+        "home":w.remote.path(),
+        "path":format!("{}:/usr/bin:/bin", w.bin.display()),
+        "runtime_bash":w.remote.path().join("missing-bash")
+    },"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "fast-agent").await;
+    let error = step(&state, "tool:fast-agent")["error"].as_str().unwrap();
+    assert!(
+        error.contains("Bash") && error.contains("/bin/bash"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("network") && !error.contains("install uv"),
+        "{error}"
+    );
+    assert_eq!(w.curl_log(), "");
+}
+
+#[tokio::test]
 async fn a_failed_uv_download_names_astral_sh() {
     let w = RuntimeWorker::new();
     let ssh = w.ssh();
@@ -4335,7 +4481,7 @@ async fn an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_us
 }
 
 #[tokio::test]
-async fn a_download_that_runs_past_its_timeout_ends_with_its_step() {
+async fn a_runtime_install_that_runs_past_its_timeout_stops_the_step() {
     use ariadne_daemon::timeouts::Timeouts;
     let w = RuntimeWorker::new();
     w.serve_node(None);
@@ -4359,8 +4505,42 @@ async fn a_download_that_runs_past_its_timeout_ends_with_its_step() {
     let state = w.setup(&h, "codex-acp").await;
     let error = step(&state, "tool:codex-acp")["error"].as_str().unwrap();
     assert!(error.contains("timed out"), "{error}");
-    // The step ended by its local bound, long before the worker's own backstop. The download
-    // process ends on the worker too, because its stdin closed with the ssh command.
+}
+
+#[tokio::test]
+async fn a_disconnected_runtime_install_ends_the_download_process() {
+    use serde_json::{Value, json};
+    let w = RuntimeWorker::new();
+    w.serve_node(None);
+    let _hold = Hold::new(w.remote.path().join("hold"));
+    let disconnect_path = w.remote.path().join("disconnect");
+    let disconnect = Hold::new(disconnect_path.clone());
+    let ssh = common::ssh::stub_ssh(json!({"setup":{
+        "home":w.remote.path(),
+        "path":format!("{}:/usr/bin:/bin", w.bin.display()),
+        "runtime_disconnect":disconnect_path
+    },"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let _: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/runtime/setup",
+                json!({
+                    "ssh":"ssh://worker@box",
+                    "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+                    "tools":{"agents":["codex-acp"],"github":false}
+                }),
+            ),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    common::eventually(common::TIMEOUT, "the download starts", || async {
+        w.remote.path().join("curl.pid").exists()
+    })
+    .await;
+    disconnect.release().await;
+    let state = setup_ends(&h, "runtime").await;
+    assert_eq!(state["state"], "incomplete", "{state}");
     let pid = std::fs::read_to_string(w.remote.path().join("curl.pid"))
         .unwrap()
         .trim()
