@@ -43,7 +43,6 @@ import {
 } from "./filters"
 import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
-import { SavedViews } from "./saved-views"
 import { GOAL_STATUS_META, GOAL_STATUSES, isTerminalGoalStatus } from "./status"
 import { useStatusFilter } from "./use-status-filter"
 
@@ -78,11 +77,10 @@ export function GoalsListPage() {
   const { statuses, filterBy } = useStatusFilter()
   const [createOpen, setCreateOpen] = useState(false)
   const query = search.get("q") ?? ""
-  const repository = search.get("repo") ?? ""
-  const compact = search.get("presentation") === "compact"
-  function changeView(key: string, value: string) {
+  function setQuery(value: string) {
     const next = new URLSearchParams(search)
-    next.set(key, value)
+    if (value) next.set("q", value)
+    else next.delete("q")
     setSearch(next, { replace: true })
   }
 
@@ -95,13 +93,7 @@ export function GoalsListPage() {
     () => [...goals.rows].sort((a, b) => b.id.localeCompare(a.id) || a.host.localeCompare(b.host)),
     [goals.rows],
   )
-  const shown = useMemo(
-    () =>
-      searchGoals(merged, query).filter(
-        (goal) => !repository || goal.repos.some((repo) => repo.path === repository),
-      ),
-    [merged, query, repository],
-  )
+  const shown = useMemo(() => searchGoals(merged, query), [merged, query])
   const showHost = useRowsShowHost()
   const failedEverywhere = goals.errors.length > 0 && goals.errors.length === hosts.length
   const empty = emptyBoardCopy(statuses)
@@ -140,7 +132,7 @@ export function GoalsListPage() {
                 placeholder="Search titles"
                 className="w-44 pl-8"
                 value={query}
-                onChange={(event) => changeView("q", event.target.value)}
+                onChange={(event) => setQuery(event.target.value)}
               />
             </div>
             <ButtonGroup aria-label="Goal status">
@@ -211,47 +203,6 @@ export function GoalsListPage() {
         }
       />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2 text-sm">
-          Repository
-          <select
-            aria-label="Repository scope"
-            className="h-9 max-w-64 rounded-md border bg-background px-2"
-            value={repository}
-            onChange={(event) => changeView("repo", event.target.value)}
-          >
-            <option value="">All repositories</option>
-            {[
-              ...new Set([
-                ...merged.flatMap((goal) => goal.repos.map((repo) => repo.path)),
-                ...(repository ? [repository] : []),
-              ]),
-            ]
-              .sort()
-              .map((path) => (
-                <option key={path}>{path}</option>
-              ))}
-          </select>
-        </label>
-        <ButtonGroup aria-label="Goal presentation">
-          <Button
-            variant={!compact ? "secondary" : "outline"}
-            aria-pressed={!compact}
-            onClick={() => changeView("presentation", "board")}
-          >
-            Board
-          </Button>
-          <Button
-            variant={compact ? "secondary" : "outline"}
-            aria-pressed={compact}
-            onClick={() => changeView("presentation", "compact")}
-          >
-            Compact
-          </Button>
-        </ButtonGroup>
-        <SavedViews search={search} apply={(next) => setSearch(next, { replace: true })} />
-      </div>
-
       <HostListErrors
         what="goals"
         errors={goals.errors}
@@ -295,13 +246,7 @@ export function GoalsListPage() {
       ) : null}
 
       {shown.length ? (
-        <GoalSwimlanes
-          hosts={hosts}
-          goals={shown}
-          activeOnly={active}
-          showHost={showHost}
-          compact={compact}
-        />
+        <GoalSwimlanes hosts={hosts} goals={shown} activeOnly={active} showHost={showHost} />
       ) : null}
 
       <CreateGoalDialog

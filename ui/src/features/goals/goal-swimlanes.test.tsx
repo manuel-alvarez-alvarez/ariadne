@@ -3,7 +3,7 @@ import { screen, within } from "@testing-library/react"
 import { expect, it } from "vitest"
 
 import { aGoal, aTask } from "@/test/fixtures"
-import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalSwimlanes } from "./goal-swimlanes"
 
 const GOAL_TITLE = "Ship the board"
@@ -79,52 +79,4 @@ it("shows the lane summary in place of the cells once folded", async () => {
 
   expect(await screen.findByText("1 task finished")).toBeTruthy()
   expect(screen.queryByRole("group", { name: `${GOAL_TITLE}: Tasks` })).toBeNull()
-})
-
-it("aligns compact goals and tasks on fixed shared columns in one focusable scrollport", async () => {
-  const goals = [aGoal({ id: "g1", title: "Short" }), aGoal({ id: "g2", title: "Long goal name" })]
-  daemonFetch.mockResolvedValue(
-    jsonResponse(
-      goals.map((goal, index) =>
-        aTask({
-          id: `t${index}`,
-          goal_id: goal.id,
-          title: index ? "A much longer task title" : "Tiny",
-        }),
-      ),
-    ),
-  )
-  renderScreen(
-    <GoalSwimlanes
-      compact
-      hosts={["local"]}
-      goals={goals.map((goal) => ({ ...goal, host: "local" }))}
-    />,
-  )
-  const tables = await screen.findAllByRole("table")
-  expect(tables).toHaveLength(2)
-  for (const table of tables) {
-    expect(table.className).toContain("table-fixed")
-    expect(within(table).getByRole("columnheader", { name: "Goal" })).toBeTruthy()
-    expect(within(table).getByRole("columnheader", { name: "Task" })).toBeTruthy()
-  }
-  expect(screen.getByRole("cell", { name: "Short" })).toBeTruthy()
-  expect(screen.getByRole("cell", { name: "Long goal name" })).toBeTruthy()
-  expect(screen.getByRole("region", { name: "Compact goals" }).tabIndex).toBe(0)
-})
-
-it("omits compact tables while tasks load", () => {
-  daemonFetch.mockImplementation(() => new Promise(() => {}))
-  renderScreen(<GoalSwimlanes compact hosts={["local"]} goals={[{ ...aGoal(), host: "local" }]} />)
-  expect(screen.getByText("Tasks are not loaded")).toBeTruthy()
-  expect(screen.queryByRole("table")).toBeNull()
-})
-
-it("keeps unavailable task hosts distinct from empty compact lanes", async () => {
-  daemonFetch.mockResolvedValue(errorResponse(503, "unavailable", "Host unavailable"))
-  renderScreen(<GoalSwimlanes compact hosts={["local"]} goals={[{ ...aGoal(), host: "local" }]} />)
-  expect(await screen.findByText(/Host unavailable/)).toBeTruthy()
-  expect(screen.getByText("Tasks are not loaded")).toBeTruthy()
-  expect(screen.queryByRole("table")).toBeNull()
-  expect(screen.queryByText("No tasks")).toBeNull()
 })

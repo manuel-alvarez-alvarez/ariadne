@@ -131,3 +131,7 @@ Dead sessions lose their questions and permission reminders.
 Recovery blockers link to the active work or settings that can address them.
 See [Needs attention](../specs/031-needs-attention.md) for the shared contract.
 
+## Search desktop goals
+
+Use Goals to search goal titles and filter by status. The URL carries the title search.
+See the [desktop specification](../specs/015-desktop-app.md) for the behavior contract.

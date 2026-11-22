@@ -14,11 +14,10 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { TaskCard, taskListQueryOptions } from "@/features/tasks"
-import { TASK_STATUS_META } from "@/features/tasks/status"
 import { stepTitle } from "@/features/tasks/steps"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { cn, formatAbsolute } from "@/lib/format"
-import { paths, useTaskPanelTo } from "@/routes/paths"
+import { paths } from "@/routes/paths"
 import {
   type BoardAttention,
   NO_BOARD_ATTENTION,
@@ -73,9 +72,7 @@ export function GoalSwimlanes({
   goals,
   activeOnly = false,
   showHost = false,
-  compact = false,
 }: {
-  compact?: boolean
   /** The hosts the board reads; each goal's tasks are read on its own host. */
   hosts: readonly Host[]
   goals: HostRow<GoalDto>[]
@@ -153,7 +150,7 @@ export function GoalSwimlanes({
           — the lanes past its edges would be mouse-only. */}
         <section
           ref={board.ref}
-          aria-label={compact ? "Compact goals" : "Goals board"}
+          aria-label="Goals board"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
           tabIndex={0}
           className={cn(
@@ -161,7 +158,7 @@ export function GoalSwimlanes({
             "overflow-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
           )}
         >
-          <div className={compact ? "min-w-[64rem]" : BOARD_WIDTH}>
+          <div className={BOARD_WIDTH}>
             <ColumnHeaders total={total} />
             {lanes.map((goal) => {
               // Finished goals open folded unless the user chose otherwise.
@@ -169,7 +166,6 @@ export function GoalSwimlanes({
               return (
                 <Lane
                   key={laneKey(goal.host, goal.id)}
-                  compact={compact}
                   goal={goal}
                   showHost={showHost}
                   unread={unread.has(goal.host)}
@@ -200,7 +196,6 @@ function ColumnHeaders({ total }: { total: number }) {
 
 function Lane({
   goal,
-  compact,
   showHost,
   unread,
   tasks,
@@ -210,7 +205,6 @@ function Lane({
   onToggle,
 }: {
   goal: HostRow<GoalDto>
-  compact: boolean
   showHost: boolean
   /** The goal's host has not given its tasks: an empty lane is not "No tasks". */
   unread: boolean
@@ -274,9 +268,7 @@ function Lane({
             reader, which would otherwise hear nothing of the goal's status. */}
         {showHost ? <HostLabel host={goal.host} /> : null}
         <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
-        <span className={compact ? "text-xs text-muted-foreground" : "sr-only"}>
-          {status.label}
-        </span>
+        <span className="sr-only">{status.label}</span>
         <span className="whitespace-nowrap text-xs text-muted-foreground">
           {counts.finished}/{counts.pipeline}
         </span>
@@ -314,53 +306,16 @@ function Lane({
                 : "No tasks"}
             </p>
           ) : null}
-          {compact ? (
-            (tasks?.all ?? []).some(visible) ? (
-              <div className="col-span-full">
-                <table className="w-full table-fixed text-left text-sm">
-                  <colgroup>
-                    {[20, 28, 12, 16, 14, 10].map((width) => (
-                      <col key={width} style={{ width: `${width}%` }} />
-                    ))}
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      {["Goal", "Task", "Status", "Workflow step", "Attention", "Host"].map(
-                        (label) => (
-                          <th className="px-2 py-1 font-medium" key={label}>
-                            {label}
-                          </th>
-                        ),
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(tasks?.all ?? []).filter(visible).map((task) => (
-                      <CompactTask
-                        key={task.id}
-                        task={task}
-                        goal={goal}
-                        attention={attention.byTask.get(task.id)}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null
-          ) : (
-            (tasks?.all ?? [])
-              .filter(visible)
-              .map((task) => (
-                <TaskCard
-                  key={task.id}
-                  host={goal.host}
-                  task={task}
-                  steps={goal.steps}
-                  attention={attention.byTask.get(task.id)}
-                  lastActivityAt={attention.lastActivity.get(task.id)}
-                />
-              ))
-          )}
+          {(tasks?.all ?? []).filter(visible).map((task) => (
+            <TaskCard
+              key={task.id}
+              host={goal.host}
+              task={task}
+              steps={goal.steps}
+              attention={attention.byTask.get(task.id)}
+              lastActivityAt={attention.lastActivity.get(task.id)}
+            />
+          ))}
         </div>
       )}
     </section>
@@ -433,38 +388,4 @@ function groupByGoal(tasks: HostRow<TaskDto>[], goals: HostRow<GoalDto>[]): Map<
     lane.all.push(task)
   }
   return lanes
-}
-
-function CompactTask({
-  task,
-  goal,
-  attention,
-}: {
-  task: TaskDto
-  goal: HostRow<GoalDto>
-  attention?: SessionAttention
-}) {
-  const to = useTaskPanelTo(task.id, goal.host)
-  return (
-    <tr className="border-t [&>td]:align-top [&>td]:break-words">
-      <td className="px-2 py-2">{goal.title}</td>
-      <td className="px-2 py-2">
-        <Link className="underline underline-offset-4" to={to}>
-          {task.title}
-        </Link>
-      </td>
-      <td className="px-2 py-2">{TASK_STATUS_META[task.status].label}</td>
-      <td className="px-2 py-2">{task.step ? stepTitle(goal.steps, task.step) : "—"}</td>
-      <td className="px-2 py-2">
-        {attention ? (
-          <SessionAttentionBadge attention={attention} />
-        ) : (
-          (taskAttentionReason(task) ?? "—")
-        )}
-      </td>
-      <td className="px-2 py-2">
-        <HostLabel host={goal.host} />
-      </td>
-    </tr>
-  )
 }
