@@ -718,15 +718,18 @@ impl Hosts {
         command: &mut Command,
         input: Option<Vec<u8>>,
     ) -> Result<String, String> {
-        self.command_within(command, input, self.0.timeouts.worker_setup_command)
+        self.command_within(command, input, self.0.timeouts.worker_setup_command, false)
             .await
     }
 
+    /// Run `command` for at most `limit`. With `hold_stdin`, its stdin stays open until it
+    /// ends, so a remote script sees end of input when this side ends or drops the command.
     async fn command_within(
         &self,
         command: &mut Command,
         input: Option<Vec<u8>>,
         limit: std::time::Duration,
+        hold_stdin: bool,
     ) -> Result<String, String> {
         command
             .kill_on_drop(true)
@@ -742,11 +745,14 @@ impl Hosts {
                 if let Some(input) = input {
                     stdin.write_all(&input).await.map_err(|e| e.to_string())?;
                 }
-                drop(stdin);
-                Ok::<_, String>(())
+                if hold_stdin {
+                    return Ok::<_, String>(Some(stdin));
+                }
+                Ok::<_, String>(None)
             };
-            let (written, output) = tokio::join!(write, child.wait_with_output());
-            written?;
+            let (held, output) = tokio::join!(write, child.wait_with_output());
+            let held = held?;
+            drop(held);
             let output = output.map_err(|e| e.to_string())?;
             // Remote stderr can contain secrets from local SSH configuration. Never return it.
             if !output.status.success() {
@@ -779,6 +785,19 @@ impl Hosts {
         input: Option<Vec<u8>>,
         limit: std::time::Duration,
     ) -> Result<String, String> {
+        self.ssh_held(request, script, input, limit, false).await
+    }
+
+    /// `ssh_within`, and with `hold_stdin` the stdin of the remote script stays open until
+    /// the command ends, as `command_within` says.
+    async fn ssh_held(
+        &self,
+        request: &SetupRequest,
+        script: &str,
+        input: Option<Vec<u8>>,
+        limit: std::time::Duration,
+        hold_stdin: bool,
+    ) -> Result<String, String> {
         let url = Url::parse(&request.ssh).map_err(|e| e.to_string())?;
         let mut command = Command::new(self.0.cfg.ssh_bin.as_deref().unwrap_or("ssh"));
         command.args([
@@ -801,7 +820,8 @@ impl Hosts {
             format!("{}@{}", url.username(), url.host_str().unwrap())
         });
         command.arg(format!("sh -c {}", quote(script)));
-        self.command_within(&mut command, input, limit).await
+        self.command_within(&mut command, input, limit, hold_stdin)
+            .await
     }
 
     async fn run_setup(&self, name: &str, request: &SetupRequest) -> Result<(), String> {

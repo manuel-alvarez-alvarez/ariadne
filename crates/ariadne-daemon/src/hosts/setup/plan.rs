@@ -5,6 +5,13 @@ use ariadne_api::hosts::{ManualAction, SetupGroup, SignIn};
 
 const GITHUB_LOGIN: &str = "gh auth login --hostname github.com";
 
+/// Install the current Node.js LTS into `~/.local`, as setup does, without its checksum check.
+const NODE_INSTALL: &str = r#"v=$(curl -fsSL https://nodejs.org/dist/index.json | grep -m1 '"lts":"' | sed 's/.*"version":"\(v[0-9.]*\)".*/\1/'); os=$(uname -s | tr A-Z a-z); arch=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/'); mkdir -p ~/.local && curl -fsSL "https://nodejs.org/dist/$v/node-$v-$os-$arch.tar.gz" | tar -xz -C ~/.local --strip-components=1"#;
+
+/// Install uv into `~/.local/bin` with the official standalone installer.
+const UV_INSTALL: &str =
+    "curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=\"$HOME/.local/bin\" sh";
+
 /// How Ariadne gets one registry or configured agent onto a worker.
 pub(super) enum Install {
     /// A command from this daemon's configuration. Nobody can infer its installer.
@@ -319,15 +326,15 @@ pub(super) fn manual_for(cfg: &Config, id: &str, os: Option<&str>) -> Option<Man
                 ),
                 Install::Npm => manual(
                     format!(
-                        "Ariadne installs {name} with npm. The new machine has no Node.js and npm, and no user-owned Homebrew to install them. Install Node.js on the new machine, then resume setup."
+                        "Ariadne installs {name} with npm. The new machine has no Node.js and npm, and Ariadne could not install them in ~/.local. That install needs access to nodejs.org, curl and tar. Install Node.js on the new machine, then resume setup."
                     ),
-                    None,
+                    Some(NODE_INSTALL),
                 ),
                 Install::Uv => manual(
                     format!(
-                        "Ariadne installs {name} with uv. The new machine has no uv, and no user-owned Homebrew to install it. Install uv on the new machine, then resume setup."
+                        "Ariadne installs {name} with uv. The new machine has no uv, and Ariadne could not install it in ~/.local. That install needs access to astral.sh and curl. Install uv on the new machine, then resume setup."
                     ),
-                    Some("curl -LsSf https://astral.sh/uv/install.sh | sh"),
+                    Some(UV_INSTALL),
                 ),
                 Install::Unsupported => manual(
                     format!("Ariadne cannot install {name}. Install it on the new machine."),

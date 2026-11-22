@@ -192,8 +192,8 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
                 let present = packages(&self.0.cfg, &id)
                     .is_some_and(|all| all.iter().all(|p| has(&format!("package:{p}"))));
                 let installs = match install(&self.0.cfg, &id) {
-                    Install::Npm => brew || (has("node") && has("npm")),
-                    Install::Uv => brew || has("uv"),
+                    Install::Npm => brew || (has("node") && has("npm")) || has("curl"),
+                    Install::Uv => brew || has("uv") || has("curl"),
                     Install::Custom | Install::Unsupported => false,
                 };
                 let key = format!("tool:{id}");

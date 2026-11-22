@@ -873,7 +873,9 @@ The operation then changes selected programs, restarts the service, and checks h
 Successful maintenance restores scheduling.
 Automatic configuration synchronization never updates worker programs.
 
-Selected tool updates require user-owned Homebrew for Git, optional GitHub CLI, and required Node or uv runtimes.
+Selected tool updates require user-owned Homebrew for Git and optional GitHub CLI.
+A required Node or uv runtime uses Homebrew, or an install in the user's home directory (see setup below).
+An update upgrades a runtime that setup installed there, and leaves one that you installed.
 npm packages use the worker user's prefix.
 Unsupported programs require manual installation.
 No update runs administrator commands.
@@ -965,7 +967,11 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
 
    Use shipped ACP registry IDs for agents. Setup installs their npm or uv packages in user-owned locations.
    It also installs Git, selected GitHub tooling, and required Node/npm or uv runtimes.
-   Missing prerequisites use an existing user-owned Homebrew installation.
+   Missing Git and GitHub CLI use an existing user-owned Homebrew installation.
+   A missing Node.js or uv uses Homebrew when it is user-owned. Otherwise setup installs it in `~/.local`, with no administrator command:
+   Node.js from the current LTS archive on nodejs.org, checked against its `SHASUMS256.txt`, and uv with the installer from astral.sh.
+   The worker needs `curl`, and for Node.js `tar`, and network access to nodejs.org or astral.sh.
+   A failed install shows the network access and the command to run by hand.
    Otherwise, setup reports administrator prerequisites without running administrator commands.
    uv can install its required Python runtime.
    Custom commands and unsupported distributions require manual installation.

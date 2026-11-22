@@ -339,6 +339,18 @@ picker, the Hosts screen and one stream per host — is spec
     After an update upgrades or installs it, the command must run on the PATH, whatever Homebrew reported; if it does not, the step names the missing runtime.
     A failed agent step names what is missing: Node.js and npm, uv, the ACP package, or the provider CLI.
     The runtime presence check is one shell function, `runtime`, in `setup/populate.rs`.
+    Setup installs a missing Node.js or uv in this order, for an agent step that needs it.
+    First, a user-owned Homebrew installs it, as before.
+    Without one, setup installs it into the worker user's home, with no administrator command.
+    For Node.js, setup downloads the current LTS archive for the worker's OS and architecture from `https://nodejs.org/dist`.
+    It checks the archive against the `SHASUMS256.txt` of that release, and extracts it under `~/.local`, so `node`, `npm` and `npx` are in `~/.local/bin`.
+    A failed download, a missing checksum line or a checksum mismatch installs nothing, and the step error names the cause.
+    For uv, setup downloads the standalone installer from `https://astral.sh/uv/install.sh` and runs it with `UV_UNMANAGED_INSTALL=~/.local/bin`.
+    `Timeouts::worker_runtime_install` bounds each runtime download and install. The bound ends the SSH command. The install script runs each download in a process group of its own and ends it when the SSH connection ends, so no download outlives its step. The script also ends it 120 seconds after that bound, in case it never noticed.
+    The worker needs `curl` and, for Node.js, `tar`, and network access to nodejs.org for Node.js and to astral.sh for uv.
+    A runtime that setup installed this way shows as installed by Ariadne; a runtime that was present shows as already present.
+    Setup records it in `~/.local/share/ariadne/installed-<command>`. An update upgrades a runtime with that record, and leaves one without it.
+    A failed runtime install shows a manual action that names the network access and the manual install command.
     macOS and Linux support ARM64 and x86_64.
     Both local binaries must have matching executable headers before either transfers.
     macOS accepts thin binaries and universal binaries with a compatible executable slice.
@@ -399,8 +411,9 @@ picker, the Hosts screen and one stream per host — is spec
     Unsupported IDs and distributions receive manual installation guidance without generated commands.
     npm uses the worker user's `.local` prefix. uv manages user tools and Python.
     Setup verifies npm packages with `npm list --global` in that prefix after installation and during retries.
-    Missing Git, gh, Node/npm, or uv use existing user-owned Homebrew without administrator commands.
-    Without that installation path, progress reports administrator prerequisites and remains incomplete.
+    Missing Git and gh use existing user-owned Homebrew without administrator commands.
+    Missing Node/npm or uv use it too, else the user-home install of rule 47.
+    Without those installation paths, progress reports the prerequisite and remains incomplete.
 54. Credential references accept `codex`, `github`, `claude`, `opencode`, and `ssh`.
     Unknown references are refused before persistence. Values are never request fields.
     Only selected `codex` and `github` transfers are supported.
@@ -583,6 +596,7 @@ picker, the Hosts screen and one stream per host — is spec
     `on_this_machine` is true when this daemon's agent registry reports the agent ready.
     An npm agent is `ariadne_installs` when the worker has Node.js and npm, or user-owned Homebrew.
     A uv agent is `ariadne_installs` when the worker has uv, or user-owned Homebrew.
+    Either agent is also `ariadne_installs` when the worker has `curl`, for the user-home install of rule 47.
     An agent is `already_present` when setup would reuse its packages without installing them, or when its registry command and its provider CLI command run on the worker PATH (rule 47).
     For npm, the `.local` prefix holds the exact registry version, and any Codex or Claude CLI that setup adds.
     For uv, `uv tool list` shows the exact registry version. The probe prints only fixed package markers.
@@ -816,6 +830,16 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 47, what a failed agent step names: `hosts.rs::a_failed_agent_step_names_what_is_missing`.
 - Rule 47, an update still upgrades what setup installed: `hosts.rs::explicit_updates_upgrade_already_installed_uv_tools`.
 - Rule 47, an update reuses runtimes without Homebrew: `hosts.rs::an_update_reuses_hand_installed_node_and_npm_without_homebrew`, `hosts.rs::an_update_reuses_a_hand_installed_uv_without_homebrew` `hosts.rs::an_update_installs_no_second_runtime_beside_a_hand_installed_one` and `hosts.rs::an_update_names_the_runtime_that_homebrew_did_not_provide`.
+- Rule 47, Node.js installs from the nodejs.org LTS archive into `~/.local` without Homebrew (criteria 2, 6): `hosts.rs::setup_installs_the_node_js_lts_archive_into_the_home_when_no_homebrew_exists`.
+- Rule 47, a bad checksum leaves no file under `~/.local` (criterion 3): `hosts.rs::a_node_js_archive_that_fails_its_checksum_installs_nothing`.
+- Rule 47, a failed download installs nothing and names the download (criterion 3): `hosts.rs::a_failed_node_js_download_installs_nothing_and_names_the_download` and `hosts.rs::a_failed_uv_download_names_astral_sh`.
+- Rule 47, uv installs with the astral.sh installer into `~/.local/bin` (criterion 4): `hosts.rs::setup_installs_uv_with_the_standalone_installer_when_no_homebrew_exists`.
+- Rule 47, a user-owned Homebrew comes first (criterion 1): `hosts.rs::setup_uses_a_user_owned_homebrew_before_it_downloads_a_runtime`.
+- Rule 47, a download that runs past `Timeouts::worker_runtime_install` ends with its step (criterion 5): `hosts.rs::a_download_that_runs_past_its_timeout_ends_with_its_step`, which checks that the worker's download process ends with the step, long before that backstop.
+- Rule 47, a present runtime shows as already present (criterion 6): `hosts.rs::a_runtime_that_was_present_shows_as_already_present`.
+- Rule 47, an update upgrades what setup installed and leaves the user's runtime (criterion 7, Node.js and uv, owned and user-installed): `hosts.rs::an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_user_installed`.
+- Rule 83, the manual action of a failed uv install names astral.sh and the command (criterion 8): `hosts.rs::inspection_names_who_installs_each_agent_github_and_each_sign_in`.
+- Rule 83, the manual action of a failed Node.js install names nodejs.org and the command (criterion 8): `hosts.rs::the_manual_action_of_a_failed_node_js_install_names_nodejs_org_and_the_command`.
 - Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
 - Rule 49, skip: `hosts.rs::skipped_failed_tool_and_sign_in_steps_let_setup_complete_and_connect_the_machine` proves
   the `409` while setup runs, each refusal, the kept error and manual action, no second sign-in check, and the connected machine.

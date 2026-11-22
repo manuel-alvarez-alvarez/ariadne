@@ -88,6 +88,85 @@ upgrade_runtime() {
 }
 "#;
 
+/// How long after `Timeouts::worker_runtime_install` the worker ends a runtime install itself,
+/// when it never noticed that the SSH connection ended.
+const BACKSTOP: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Printed by a runtime install that failed: the runtime, then the cause.
+const RUNTIME_FAILED: &str = "__ARIADNE_RUNTIME_FAILED__ ";
+
+/// Install Node.js or uv into `~/.local` when the worker has no user-owned Homebrew. Setup
+/// writes `~/.local/share/ariadne/installed-<command>` for a runtime that it installed, so
+/// that an update upgrades it and leaves one that the user installed. `provide` prints
+/// `__ARIADNE_INSTALLED__` when it installs, and a `RUNTIME_FAILED` line when it cannot.
+const LOCAL_RUNTIMES: &str = r#"
+fetch() { curl --proto '=https' --tlsv1.2 -fsSL -o "$2" "$1" </dev/null >/dev/null 2>&1; }
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+mark() { mkdir -p "$HOME/.local/share/ariadne" && printf '%s\n' "$1" > "$HOME/.local/share/ariadne/installed-$2"; }
+node_archive() {
+    dir=$1
+    case $(uname -s) in Linux) os=linux;; Darwin) os=darwin;; *) echo "there is no Node.js build for $(uname -s)"; return 1;; esac
+    case $(uname -m) in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; *) echo "there is no Node.js build for $(uname -m)"; return 1;; esac
+    base=https://nodejs.org/dist
+    fetch "$base/index.json" "$dir/index.json" || { echo "the download of $base/index.json failed"; return 1; }
+    version=$(grep -m1 '"lts":"' "$dir/index.json" | sed -n 's/.*"version":"\(v[0-9.]*\)".*/\1/p')
+    [ -n "$version" ] || { echo "$base/index.json lists no LTS release"; return 1; }
+    file=node-$version-$os-$arch.tar.gz
+    fetch "$base/$version/SHASUMS256.txt" "$dir/SHASUMS256.txt" || { echo "the download of $base/$version/SHASUMS256.txt failed"; return 1; }
+    fetch "$base/$version/$file" "$dir/$file" || { echo "the download of $base/$version/$file failed"; return 1; }
+    want=$(grep "  $file\$" "$dir/SHASUMS256.txt" | cut -d' ' -f1)
+    have=$(sha256 "$dir/$file")
+    [ -n "$want" ] && [ "$want" = "$have" ] || { echo "the checksum of $file does not match SHASUMS256.txt of $version"; return 1; }
+    mkdir -p "$HOME/.local"
+    tar -xzf "$dir/$file" -C "$HOME/.local" --strip-components=1 --exclude='*/LICENSE' --exclude='*/README.md' --exclude='*/CHANGELOG.md' >/dev/null 2>&1 || { echo "the archive $file cannot be extracted into ~/.local"; return 1; }
+    mark "$version" node
+}
+uv_installer() {
+    dir=$1
+    fetch https://astral.sh/uv/install.sh "$dir/install.sh" || { echo "the download of https://astral.sh/uv/install.sh failed"; return 1; }
+    mkdir -p "$HOME/.local/bin"
+    UV_UNMANAGED_INSTALL="$HOME/.local/bin" sh "$dir/install.sh" >/dev/null 2>&1 || { echo "the uv installer failed"; return 1; }
+    mark standalone uv
+}
+install_local() {
+    command -v curl >/dev/null 2>&1 || { echo "curl is missing on the worker"; return 1; }
+    dir=$(mktemp -d "${TMPDIR:-/tmp}/ariadne-runtime.XXXXXX") || { echo "cannot make a temporary directory"; return 1; }
+    if cause=$("$1" "$dir"); then rm -rf "$dir"; else rm -rf "$dir"; echo "$cause"; return 1; fi
+}
+present() { if [ "$1" = node ]; then runs node && runs npm; else runs "$1"; fi; }
+homebrew() {
+    command -v brew >/dev/null 2>&1 && [ "$(id -u)" != 0 ] || return 1
+    prefix=$(brew --prefix 2>/dev/null) && [ -O "$prefix" ] && [ -w "$prefix" ]
+}
+# A present runtime stays, and so does a user-owned Homebrew's job. An update upgrades one
+# that setup installed under ~/.local.
+provide() {
+    if [ -n "$update" ] && [ -f "$HOME/.local/share/ariadne/installed-$1" ]; then :
+    elif present "$1" || homebrew; then return 0
+    fi
+    case $1 in node) installer=node_archive;; *) installer=uv_installer;; esac
+    if cause=$(install_local "$installer") && present "$1"; then echo __ARIADNE_INSTALLED__
+    else echo "__ARIADNE_RUNTIME_FAILED__ $1: ${cause:-the program does not run after the install}"; return 3; fi
+}
+# Run `provide` in a process group of its own. End that group when the SSH connection ends,
+# which closes the stdin of this script, and after `limit` seconds in case that is never
+# noticed. No download or install outlives its step on the worker. A failure stops the
+# script; its line is already printed.
+bounded() {
+    set -m
+    "$@" & work=$!
+    ( cat >/dev/null 2>&1; kill -TERM -- "-$work" 2>/dev/null ) & gone=$!
+    ( sleep "$limit"; kill -TERM -- "-$work" 2>/dev/null ) & dog=$!
+    rc=0
+    wait "$work" || rc=$?
+    kill -TERM -- "-$gone" "-$dog" 2>/dev/null || true
+    wait "$gone" "$dog" 2>/dev/null || true
+    [ "$rc" != 0 ] || return 0
+    [ "$rc" = 3 ] || echo "__ARIADNE_RUNTIME_FAILED__ $2: ended after ${limit}s"
+    exit 0
+}
+"#;
+
 const MISSING_NODE: &str = "__ARIADNE_MISSING_NODE__";
 const MISSING_UV: &str = "__ARIADNE_MISSING_UV__";
 const MISSING_PACKAGE: &str = "__ARIADNE_MISSING_PACKAGE__";
@@ -133,6 +212,54 @@ fn npm_package(package: &str, command: &str, update: bool, failure: &str) -> Str
             "if {found} || {check}; then :; else\nruntime node node NODE\nruntime npm node NODE\n{install} || missing {failure}\n{check} || missing {failure}\necho {INSTALLED}\nfi"
         )
     }
+}
+
+/// The shell test that is true when `npm_package` runs its install.
+fn npm_needed(package: &str, command: &str, update: bool) -> String {
+    let command = quote(command);
+    if update {
+        let name = quote(super::plan::package_name(package));
+        format!(
+            "! runs {command} || {{ command -v npm >/dev/null 2>&1 && npm list --global --prefix \"$HOME/.local\" --depth=0 {name} >/dev/null 2>&1; }}"
+        )
+    } else {
+        let spec = quote(package);
+        format!(
+            "! {{ runs {command} || npm list --global --prefix \"$HOME/.local\" --depth=0 {spec} >/dev/null 2>&1; }}"
+        )
+    }
+}
+
+/// The shell test that is true when the uv tool `package` (`name==version`) runs its install.
+fn uv_needed(package: &str, command: &str, update: bool) -> String {
+    let (tool, version) = package.split_once("==").unwrap_or((package, ""));
+    let command = quote(command);
+    if update {
+        format!(
+            "! runs {command} || {{ command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q \"^{tool} \"; }}"
+        )
+    } else {
+        format!(
+            "! {{ runs {command} || uv tool list 2>/dev/null | grep -Fqx -- {}; }}",
+            quote(&format!("{tool} v{version}"))
+        )
+    }
+}
+
+/// What a runtime install that failed reports, in words for the user.
+fn runtime_error(output: &str) -> Option<String> {
+    let line = output
+        .lines()
+        .find_map(|l| l.strip_prefix(RUNTIME_FAILED))?;
+    let (runtime, cause) = line.split_once(": ").unwrap_or(("", line));
+    Some(match runtime {
+        "uv" => format!(
+            "uv is missing on the worker and its installation in ~/.local failed: {cause}; install uv, or provide user-owned Homebrew, and resume setup"
+        ),
+        _ => format!(
+            "Node.js and npm are missing on the worker and their installation in ~/.local failed: {cause}; install them, or provide user-owned Homebrew, and resume setup"
+        ),
+    })
 }
 
 impl Hosts {
@@ -202,6 +329,49 @@ impl Hosts {
             record.present.insert(step.into());
         } else {
             record.present.remove(step);
+        }
+    }
+
+    /// Install a missing Node.js or uv into the worker user's home, where `needs` says an
+    /// agent script would use it and the worker has no user-owned Homebrew. Returns what the
+    /// script printed.
+    async fn install_runtimes(
+        &self,
+        request: &SetupRequest,
+        path: &str,
+        update: bool,
+        needs: &[(String, &str)],
+    ) -> Result<String, String> {
+        let limit = self.0.timeouts.worker_runtime_install;
+        let mut script = format!(
+            "{PREREQUISITE}\n{LOCAL_RUNTIMES}\nupdate={}\nlimit={}\n",
+            if update { "1" } else { "" },
+            (limit + BACKSTOP).as_secs_f64().ceil()
+        );
+        for (condition, runtime) in needs {
+            script.push_str(&format!(
+                "if {condition}; then bounded provide {runtime}; fi\n"
+            ));
+        }
+        let output = self
+            .ssh_held(
+                request,
+                &format!("set -eu; umask 077; export PATH={}; {script}", quote(path)),
+                None,
+                limit,
+                true,
+            )
+            .await
+            .map_err(|e| {
+                if e.contains("timed out") {
+                    "the download or install of Node.js or uv timed out; install the runtime by hand and resume setup".to_owned()
+                } else {
+                    "the install of Node.js or uv failed on the worker; install the runtime by hand and resume setup".to_owned()
+                }
+            })?;
+        match runtime_error(&output) {
+            Some(error) => Err(error),
+            None => Ok(output),
         }
     }
 
@@ -275,13 +445,16 @@ impl Hosts {
                                 .into(),
                         );
                     };
+                    let mut needs: Vec<(String, &str)> = Vec::new();
                     let script = if let Some(package) = distribution["npx"]["package"].as_str() {
+                        needs.push((npm_needed(package, super::plan::registry_command(id), update), "node"));
                         format!(
                             "{PREREQUISITE}\n{RUNTIME}\nexport npm_config_cache=\"$HOME/.cache/ariadne/npm\"\n{}",
                             npm_package(package, super::plan::registry_command(id), update, "PACKAGE")
                         )
                     } else if let Some(package) = distribution["uvx"]["package"].as_str() {
                         let (tool, version) = package.split_once("==").unwrap_or((package, ""));
+                        needs.push((uv_needed(package, super::plan::registry_command(id), update), "uv"));
                         let command = quote(super::plan::registry_command(id));
                         let package = quote(package);
                         let body = if update {
@@ -294,17 +467,22 @@ impl Hosts {
                         return Err("unsupported distribution; manual installation and worker login are required".into());
                     };
                     let script = match super::plan::provider_cli(id) {
-                        Some(cli) => format!(
+                        Some(cli) => {
+                            needs.push((npm_needed(cli, super::plan::provider_command(id).unwrap(), update), "node"));
+                            format!(
                             "{script}\n{}",
                             npm_package(cli, super::plan::provider_command(id).unwrap(), update, "PROVIDER")
-                        ),
+                            )
+                        }
                         None => script,
                     };
+                    let installed = self.install_runtimes(request, path, update, &needs).await?;
                     let output = self.population_command(request, path, &script, None).await.map_err(|_| "agent installation or runtime check failed; provide user-owned Homebrew or ask an administrator for Node/npm or uv prerequisites".to_owned())?;
                     if let Some(error) = missing_error(&output, id) {
                         return Err(error);
                     }
-                    self.found_present(name, &step, !update && !output.contains(INSTALLED));
+                    let installed = installed.contains(INSTALLED) || output.contains(INSTALLED);
+                    self.found_present(name, &step, !update && !installed);
                     self.checkpoint(name, &step)?;
                     Ok(())
                 }.await;

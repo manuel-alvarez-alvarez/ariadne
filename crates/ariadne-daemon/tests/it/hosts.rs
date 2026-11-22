@@ -1889,6 +1889,10 @@ esac
         for tool in ["brew", "npm", "node", "codex"] {
             std::os::unix::fs::symlink(&program, bin.join(tool)).unwrap();
         }
+        // No update reaches the network: this curl serves `$HOME/downloads` only.
+        std::fs::create_dir(remote.path().join("downloads")).unwrap();
+        let curl = common::shared_script(&format!("#!/bin/sh\n{STUB_CURL}\n"));
+        std::os::unix::fs::symlink(curl, bin.join("curl")).unwrap();
         let mut header = vec![0u8; 64];
         header[..6].copy_from_slice(b"\x7fELF\x02\x01");
         header[16] = 2;
@@ -2351,7 +2355,13 @@ async fn inspection_names_who_installs_each_agent_github_and_each_sign_in() {
     assert_eq!(uv["group"], "manual");
     assert_eq!(
         uv["manual"]["command"],
-        "curl -LsSf https://astral.sh/uv/install.sh | sh"
+        "curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=\"$HOME/.local/bin\" sh"
+    );
+    assert!(
+        uv["manual"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("astral.sh")
     );
     let binary = group_of(agents, "amp-acp");
     assert_eq!(binary["group"], "manual");
@@ -3957,4 +3967,458 @@ async fn an_agent_whose_command_differs_from_its_package_name_is_found_by_its_co
         group_of(&result["agents"], "minimax-code")["group"],
         "ariadne_installs"
     );
+}
+
+/// The worker of a runtime install: no Node.js, npm, uv or Homebrew, and a `curl` that
+/// serves the files under `$HOME/downloads` and logs each URL to `$HOME/curl.log`. A download
+/// that no file answers fails, as one that the network refuses does. No test reaches the network.
+struct RuntimeWorker {
+    remote: tempfile::TempDir,
+    bin: std::path::PathBuf,
+}
+
+/// The name under which `RuntimeWorker` keeps the download of a URL.
+fn download_name(url: &str) -> String {
+    url.trim_start_matches("https://").replace('/', "_")
+}
+
+const STUB_CURL: &str = r#"for a; do [ "${prev:-}" = -o ] && out=$a; prev=$a; url=$a; done
+printf '%s\n' "$url" >> "$HOME/curl.log"
+if [ -p "$HOME/hold" ]; then echo $$ > "$HOME/curl.pid"; read held < "$HOME/hold"; fi
+name=$(printf '%s' "${url#https://}" | tr / _)
+[ -f "$HOME/downloads/$name" ] || exit 22
+cp "$HOME/downloads/$name" "$out""#;
+
+impl RuntimeWorker {
+    fn new() -> Self {
+        let remote = tempfile::tempdir().unwrap();
+        std::fs::create_dir(remote.path().join("downloads")).unwrap();
+        let bin = worker_bin(remote.path(), "bin", &[("curl", STUB_CURL)]);
+        Self { remote, bin }
+    }
+
+    fn serve(&self, url: &str, content: &[u8]) {
+        std::fs::write(
+            self.remote
+                .path()
+                .join("downloads")
+                .join(download_name(url)),
+            content,
+        )
+        .unwrap();
+    }
+
+    /// Serve the Node.js release `v99.1.0` as the LTS one, with `shasum` as the checksum of
+    /// its archive for this worker. Return the URL of the archive.
+    fn serve_node(&self, shasum: Option<&str>) -> String {
+        let os = if cfg!(target_os = "macos") {
+            "darwin"
+        } else {
+            "linux"
+        };
+        let arch = if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "x64"
+        };
+        let file = format!("node-v99.1.0-{os}-{arch}.tar.gz");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join(format!("node-v99.1.0-{os}-{arch}"));
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("LICENSE"), "licence").unwrap();
+        for (tool, body) in [
+            ("node", "exit 0"),
+            ("npx", "exit 0"),
+            (
+                "npm",
+                "case $1 in --version) exit 0;; list) [ -f \"$HOME/npm-installed\" ];; install) : > \"$HOME/npm-installed\";; esac",
+            ),
+        ] {
+            let path = root.join("bin").join(tool);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .unwrap();
+        }
+        let archive = dir.path().join(&file);
+        assert!(
+            std::process::Command::new("tar")
+                .arg("-czf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(dir.path())
+                .arg(root.file_name().unwrap())
+                .status()
+                .unwrap()
+                .success()
+        );
+        let bytes = std::fs::read(&archive).unwrap();
+        let sum = shasum.map_or_else(|| sha256_of(&archive), String::from);
+        let base = "https://nodejs.org/dist";
+        self.serve(
+            &format!("{base}/index.json"),
+            b"[{\"version\":\"v100.0.0\",\"lts\":false},\n{\"version\":\"v99.1.0\",\"lts\":\"Zed\"},\n{\"version\":\"v98.0.0\",\"lts\":\"Yak\"}]",
+        );
+        self.serve(
+            &format!("{base}/v99.1.0/SHASUMS256.txt"),
+            format!(
+                "{}  node-v99.1.0-other.tar.gz\n{sum}  {file}\n",
+                "0".repeat(64)
+            )
+            .as_bytes(),
+        );
+        let url = format!("{base}/v99.1.0/{file}");
+        self.serve(&url, &bytes);
+        url
+    }
+
+    /// Serve the uv installer. It copies a uv that works into `$UV_UNMANAGED_INSTALL`.
+    fn serve_uv(&self) {
+        self.serve(
+            "https://astral.sh/uv/install.sh",
+            b"printf '#!/bin/sh\\nexit 0\\n' > \"$UV_UNMANAGED_INSTALL/uv\"\nchmod +x \"$UV_UNMANAGED_INSTALL/uv\"\n",
+        );
+    }
+
+    fn curl_log(&self) -> String {
+        std::fs::read_to_string(self.remote.path().join("curl.log")).unwrap_or_default()
+    }
+
+    async fn setup(&self, h: &common::Harness, agent: &str) -> serde_json::Value {
+        setup_to_the_end(
+            h,
+            "runtime",
+            serde_json::json!({
+                "ssh":"ssh://worker@box", "source":{"kind":"local","cli":"/missing","daemon":"/missing"},
+                "tools":{"agents":[agent],"github":false}
+            }),
+        )
+        .await
+    }
+
+    fn ssh(&self) -> common::ssh::StubSsh {
+        common::ssh::stub_ssh(serde_json::json!({"setup":{
+            "home":self.remote.path(), "path":format!("{}:/usr/bin:/bin", self.bin.display())
+        },"exit":0}))
+    }
+}
+
+fn sha256_of(path: &std::path::Path) -> String {
+    let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        ("shasum", &["-a", "256"])
+    } else {
+        ("sha256sum", &[])
+    };
+    let out = std::process::Command::new(program)
+        .args(args)
+        .arg(path)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn setup_installs_the_node_js_lts_archive_into_the_home_when_no_homebrew_exists() {
+    let w = RuntimeWorker::new();
+    let archive = w.serve_node(None);
+    let ssh = w.ssh();
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "codex-acp").await;
+    let item = step(&state, "tool:codex-acp");
+    assert_eq!(item["complete"], true, "{state}");
+    assert_eq!(item["group"], "ariadne_installs", "{state}");
+    for tool in ["node", "npm", "npx"] {
+        assert!(
+            w.remote.path().join(".local/bin").join(tool).exists(),
+            "{tool}"
+        );
+    }
+    assert!(!w.remote.path().join(".local/LICENSE").exists());
+    let log = w.curl_log();
+    for url in [
+        "https://nodejs.org/dist/index.json",
+        "https://nodejs.org/dist/v99.1.0/SHASUMS256.txt",
+        archive.as_str(),
+    ] {
+        assert!(log.lines().any(|l| l == url), "{url} not in {log}");
+    }
+}
+
+#[tokio::test]
+async fn a_node_js_archive_that_fails_its_checksum_installs_nothing() {
+    let w = RuntimeWorker::new();
+    w.serve_node(Some(&"a".repeat(64)));
+    let ssh = w.ssh();
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "codex-acp").await;
+    let item = step(&state, "tool:codex-acp");
+    assert_ne!(item["complete"], true, "{state}");
+    let error = item["error"].as_str().unwrap();
+    assert!(
+        error.contains("checksum") && error.contains("SHASUMS256.txt"),
+        "{error}"
+    );
+    assert_eq!(
+        files_under(&w.remote.path().join(".local")),
+        Vec::<String>::new()
+    );
+}
+
+/// Every file and link under `dir`, as relative paths.
+fn files_under(dir: &std::path::Path) -> Vec<String> {
+    fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() && !path.is_symlink() {
+                walk(root, &path, out);
+            } else {
+                out.push(path.strip_prefix(root).unwrap().display().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+#[tokio::test]
+async fn a_failed_node_js_download_installs_nothing_and_names_the_download() {
+    let w = RuntimeWorker::new();
+    let archive = w.serve_node(None);
+    std::fs::remove_file(
+        w.remote
+            .path()
+            .join("downloads")
+            .join(download_name(&archive)),
+    )
+    .unwrap();
+    let ssh = w.ssh();
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "codex-acp").await;
+    let item = step(&state, "tool:codex-acp");
+    assert_ne!(item["complete"], true, "{state}");
+    let error = item["error"].as_str().unwrap();
+    assert!(
+        error.contains(&format!("download of {archive} failed")),
+        "{error}"
+    );
+    assert_eq!(
+        files_under(&w.remote.path().join(".local")),
+        Vec::<String>::new()
+    );
+}
+
+#[tokio::test]
+async fn setup_installs_uv_with_the_standalone_installer_when_no_homebrew_exists() {
+    let w = RuntimeWorker::new();
+    w.serve_uv();
+    let ssh = w.ssh();
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "fast-agent").await;
+    let item = step(&state, "tool:fast-agent");
+    assert_eq!(item["complete"], true, "{state}");
+    assert_eq!(item["group"], "ariadne_installs", "{state}");
+    assert!(w.remote.path().join(".local/bin/uv").exists());
+    assert_eq!(w.curl_log().trim(), "https://astral.sh/uv/install.sh");
+}
+
+#[tokio::test]
+async fn a_failed_uv_download_names_astral_sh() {
+    let w = RuntimeWorker::new();
+    let ssh = w.ssh();
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "fast-agent").await;
+    let error = step(&state, "tool:fast-agent")["error"].as_str().unwrap();
+    assert!(
+        error.contains("https://astral.sh/uv/install.sh failed"),
+        "{error}"
+    );
+    assert!(!w.remote.path().join(".local/bin/uv").exists());
+}
+
+#[tokio::test]
+async fn setup_uses_a_user_owned_homebrew_before_it_downloads_a_runtime() {
+    let w = RuntimeWorker::new();
+    w.serve_node(None);
+    let remote = w.remote.path();
+    let brew = common::shared_script(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/brew.log\"\ncase $1 in --prefix) printf '%s\\n' \"$HOME\";; list) exit 1;; install) for t in node npm; do printf '#!/bin/sh\\nexit 0\\n' > \"$HOME/bin/$t\"; chmod +x \"$HOME/bin/$t\"; done;; esac\nexit 0\n",
+    );
+    std::os::unix::fs::symlink(brew, w.bin.join("brew")).unwrap();
+    let ssh = w.ssh();
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "codex-acp").await;
+    let brew_log = std::fs::read_to_string(remote.join("brew.log")).unwrap();
+    assert!(brew_log.contains("install node"), "{brew_log}\n{state}");
+    assert_eq!(w.curl_log(), "", "{state}");
+    assert!(!remote.join(".local/bin/node").exists());
+}
+
+#[tokio::test]
+async fn a_runtime_that_was_present_shows_as_already_present() {
+    let w = RuntimeWorker::new();
+    w.serve_node(None);
+    for tool in ["node", "npm", "codex-acp", "codex"] {
+        let stub = common::shared_script("#!/bin/sh\nexit 0\n");
+        std::os::unix::fs::symlink(stub, w.bin.join(tool)).unwrap();
+    }
+    let ssh = w.ssh();
+    let h = harness().ssh(&ssh).await;
+    let state = w.setup(&h, "codex-acp").await;
+    assert_eq!(
+        step(&state, "tool:codex-acp")["group"],
+        "already_present",
+        "{state}"
+    );
+    assert_eq!(w.curl_log(), "");
+}
+
+#[tokio::test]
+async fn an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_user_installed() {
+    let cases = [
+        ("codex-acp", "node", true),
+        ("codex-acp", "node", false),
+        ("fast-agent", "uv", true),
+        ("fast-agent", "uv", false),
+    ];
+    // One run per case, side by side, so the test takes as long as its slowest case.
+    futures_util::future::join_all(cases.map(|(agent, runtime, owned)| async move {
+        let f = UpdateFixture::new(serde_json::json!({})).await;
+        let home = f.remote.path();
+        let probe = RuntimeWorker::new();
+        let download = if runtime == "node" {
+            probe.serve_node(None)
+        } else {
+            probe.serve_uv();
+            "https://astral.sh/uv/install.sh".to_owned()
+        };
+        for entry in std::fs::read_dir(probe.remote.path().join("downloads")).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), home.join("downloads").join(entry.file_name())).unwrap();
+        }
+        if owned {
+            std::fs::create_dir_all(home.join(".local/share/ariadne")).unwrap();
+            std::fs::write(
+                home.join(format!(".local/share/ariadne/installed-{runtime}")),
+                "old\n",
+            )
+            .unwrap();
+        }
+        let program = home.join(".local/bin").join(runtime);
+        let _ = std::fs::remove_file(&program);
+        std::fs::write(&program, "#!/bin/sh\n# hand-made\nexit 0\n").unwrap();
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        f.start(serde_json::json!({"tools":{"agents":[agent]}}))
+            .await;
+        let result = f.terminal().await;
+        let name = format!("tool:{agent}");
+        assert_eq!(step(&result, &name)["complete"], true, "{result}");
+        let log = std::fs::read_to_string(home.join("curl.log")).unwrap_or_default();
+        let case = format!("{runtime} owned={owned}");
+        assert_eq!(log.lines().any(|l| l == download), owned, "{case}: {log}");
+        let text = std::fs::read_to_string(&program).unwrap();
+        assert_eq!(text.contains("hand-made"), !owned, "{case}: {text}");
+        f.h.state.hosts.shutdown().await;
+    }))
+    .await;
+}
+
+#[tokio::test]
+async fn a_download_that_runs_past_its_timeout_ends_with_its_step() {
+    use ariadne_daemon::timeouts::Timeouts;
+    let w = RuntimeWorker::new();
+    w.serve_node(None);
+    let hold = w.remote.path().join("hold");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&hold)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let ssh = w.ssh();
+    let h = harness()
+        .ssh(&ssh)
+        .timeouts(Timeouts {
+            worker_runtime_install: common::RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .await;
+    let _release = ReleaseFifo(hold);
+    let state = w.setup(&h, "codex-acp").await;
+    let error = step(&state, "tool:codex-acp")["error"].as_str().unwrap();
+    assert!(error.contains("timed out"), "{error}");
+    // The step ended by its local bound, long before the worker's own backstop. The download
+    // process ends on the worker too, because its stdin closed with the ssh command.
+    let pid = std::fs::read_to_string(w.remote.path().join("curl.pid"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    common::eventually(
+        common::TIMEOUT,
+        "the download process ends on the worker",
+        || async {
+            std::process::Command::new("kill")
+                .args(["-0", &pid])
+                .output()
+                .map(|o| !o.status.success())
+                .unwrap_or(true)
+        },
+    )
+    .await;
+}
+
+/// Opens the fifo that holds a stub download, so the stub never outlives its test.
+struct ReleaseFifo(std::path::PathBuf);
+
+impl Drop for ReleaseFifo {
+    fn drop(&mut self) {
+        let _ = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&self.0);
+    }
+}
+
+#[tokio::test]
+async fn the_manual_action_of_a_failed_node_js_install_names_nodejs_org_and_the_command() {
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    let bin = worker_bin(remote.path(), "bin", &[]);
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path(),"path":bin},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let result: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/builder/setup/inspect",
+                json!({"ssh":"ssh://worker@box"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let codex = group_of(&result["agents"], "codex-acp");
+    assert_eq!(codex["group"], "manual", "{codex}");
+    assert!(
+        codex["manual"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nodejs.org")
+    );
+    let command = codex["manual"]["command"].as_str().unwrap();
+    assert!(
+        command.contains("https://nodejs.org/dist/index.json"),
+        "{command}"
+    );
+    assert!(command.contains("tar -xz -C ~/.local"), "{command}");
 }
