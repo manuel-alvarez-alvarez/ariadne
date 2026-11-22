@@ -338,7 +338,8 @@ header, or one from the packaged Tauri app, the development server, or an
 exact serialized origin in `tcp_allowed_origins`: `scheme://host[:port]`,
 without a path or trailing slash. Other Host and Origin values receive a `403
 forbidden` envelope, including event streams and terminal WebSockets. The unix
-socket applies the same `Origin` check and CORS but no `Host` check, so the
+socket applies the same `Origin` check and CORS. Its `Host` can be absent,
+a loopback address, or a hex-encoded absolute socket path. Thus the
 desktop app can reach a worker's socket through its SSH forward, and the CLI
 reaches it as before.
 

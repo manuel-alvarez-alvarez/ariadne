@@ -57,7 +57,8 @@ and the ACP runtime that reports the agent events (021).
    each optionally with a port), and may carry no Origin or only an allowed
    Origin. The allowed origins are the packaged app, the development server,
    and serialized `scheme://host[:port]` values in `tcp_allowed_origins`. The
-   unix socket has the same Origin check and CORS, and no Host check: an SSH
+   unix socket has the same Origin check and CORS. It accepts a missing Host,
+   a loopback Host, or a hex-encoded absolute socket path: an SSH
    forward (037) puts a worker's socket on a loopback port where the desktop
    app calls it, and the CLI's socket client sends no Origin and a Host that
    encodes the socket path.
@@ -426,7 +427,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `::sse_stream_frames_events_and_honours_its_filters`,
   `::sse_stream_signals_resync_and_closes_when_a_client_lags`).
 - Loopback TCP configuration, Host and Origin checks, CORS, streams, terminal
-  upgrades, and the socket's Origin check and CORS without a Host check are covered by
+  upgrades, and the socket's Host and Origin checks and CORS are covered by
   (`config.rs::tcp_listener_requires_a_loopback_address_at_start_and_check`,
   `config.rs::tcp_allowed_origins_require_serialized_origins`,
   `socket.rs::socket_is_owner_only_when_created`, and

@@ -512,16 +512,27 @@ pub fn tcp_router(state: AppState, configured_origins: &[String]) -> Router {
     ))
 }
 
-/// Build the unix socket router: the Origin check, then CORS, and no Host
-/// check. An SSH forward puts the socket on a loopback port of another
-/// machine, where the desktop app calls it from its own origin, while the
-/// CLI's socket client sends no Origin and a Host that names no host.
+/// Build the socket router with Host and Origin checks, then CORS.
+/// Accept the CLI's hex-encoded absolute socket path as well as loopback Hosts.
 pub fn socket_router(state: AppState, configured_origins: &[String]) -> Router {
     let allowed_origins = tcp_origins(configured_origins);
     with_cors(router(state), &allowed_origins).layer(middleware::from_fn(
         move |request: Request, next: Next| {
             let allowed_origins = allowed_origins.clone();
-            async move { guard_origin(request, next, &allowed_origins).await }
+            async move {
+                if let Some(host) = request.headers().get(header::HOST) {
+                    let socket_path = host
+                        .to_str()
+                        .ok()
+                        .and_then(|value| hex::decode(value).ok())
+                        .is_some_and(|path| path.starts_with(b"/") && !path.contains(&0));
+                    if !is_loopback_host(host) && !socket_path {
+                        return error::ApiError::forbidden("the socket refuses this Host header")
+                            .into_response();
+                    }
+                }
+                guard_origin(request, next, &allowed_origins).await
+            }
         },
     ))
 }

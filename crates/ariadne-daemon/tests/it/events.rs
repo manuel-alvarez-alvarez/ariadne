@@ -507,8 +507,8 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
 
 /// An SSH forward puts a worker's socket on a loopback port, where the
 /// desktop app calls it from its own origin: the socket answers that origin
-/// with CORS, refuses any other, and checks no Host, which the CLI's socket
-/// client sets to an encoded socket path.
+/// with CORS and refuses any other origin or a non-loopback DNS Host.
+/// The CLI's socket client uses an encoded socket path.
 #[tokio::test]
 async fn the_socket_allows_the_app_origin_and_refuses_another() {
     let h = harness().await;
@@ -581,8 +581,23 @@ async fn the_socket_allows_the_app_origin_and_refuses_another() {
         .header(header::HOST, socket_host)
         .body(Body::empty())
         .unwrap();
-    let response = tower::ServiceExt::oneshot(app, cli).await.unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), cli).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    for host in [
+        "attacker.example:57222",
+        "deadbeef",
+        "2f746d70.attacker.example",
+    ] {
+        let request = Request::builder()
+            .uri("/v1/attention")
+            .header(header::HOST, host)
+            .body(Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app.clone(), request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{host}");
+    }
 }
 
 /// The launcher writes session rows through the same store, so its spawns
