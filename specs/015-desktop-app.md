@@ -1239,9 +1239,15 @@ Out: the daemon endpoints themselves (012).
       takes a setup name. It polls `GET /v1/hosts/{name}/setup` while the setup
       is `pending` or `running`, and shows each step by its title. A step that
       needs manual work shows its reason, its command with a copy control, and
-      "Check again", which sends `POST /v1/hosts/{name}/setup/resume`. The
-      dialog closes during Install with no question, and the setup continues in
-      the daemon.
+      "Check again", which sends `POST /v1/hosts/{name}/setup/resume`. A
+      stopped setup also shows "Skip" beside the manual instructions of each
+      failed step that the daemon lets the user skip (037, rule 49). Skip sends
+      `POST /v1/hosts/{name}/setup/steps/{step}/skip`. A skipped step shows
+      "Skipped" and its manual instructions, with no "Check again" and no
+      "Skip". When no step that is not skipped needs manual work, "Continue
+      setup" (or "Continue update") resumes, and setup goes on past the skipped
+      steps. The dialog closes during Install with no question, and the setup
+      continues in the daemon.
     (`ui/src/features/hosts/add-machine.test.tsx::replaces Add host and Set up worker with one Add machine action that asks for the method`,
     `::asks Connect for the name and the SSH address alone, says why Next waits, and inspects`,
     `::shows the programs as one line and selects available agents, GitHub CLI and every repository`,
@@ -1251,7 +1257,9 @@ Out: the daemon endpoints themselves (012).
     `::closes during the installation with no question, and the setup continues in the daemon`,
     `ui/src/features/hosts/host-edit.test.tsx::shows a refusal at the field it names, and any other in the dialog`,
     `ui/src/features/hosts/setup-progress.test.tsx::shows each step by its title, and a manual action with its reason, its command and a copy control`,
-    `::resumes the setup from Check again and shows the progress it answers with`).
+    `::resumes the setup from Check again and shows the progress it answers with`,
+    `::offers Skip beside the manual work of a failed tool, shows it skipped, and continues the setup past it`,
+    `::offers no Skip for a failed step of Ariadne itself or of Git`).
 52b. Each host row can carry the actions of its machine, and no action asks
     for a typed name. The table reads `GET /v1/host-setups` every second while
     an operation is `pending` or `running`, so it stays current with no manual

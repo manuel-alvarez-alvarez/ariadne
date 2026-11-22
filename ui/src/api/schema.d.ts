@@ -1656,6 +1656,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/{name}/setup/steps/{step}/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Skip one failed step of a stopped setup or update, so that it goes on past it. */
+        post: operations["hosts_skip_setup_step"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hosts/{name}/update": {
         parameters: {
             query?: never;
@@ -4912,7 +4929,7 @@ export interface components {
          * @description Who installs one item of a setup on the new machine.
          * @enum {string}
          */
-        SetupGroup: "ariadne_installs" | "already_present" | "manual";
+        SetupGroup: "ariadne_installs" | "already_present" | "manual" | "skipped";
         /**
          * @description Which kind of saved operation a [`HostSetupDto`] is.
          * @enum {string}
@@ -4948,6 +4965,11 @@ export interface components {
             group: components["schemas"]["SetupGroup"] | null;
             manual: components["schemas"]["ManualAction"] | null;
             name: string;
+            /**
+             * @description The user skipped the step after it failed. The step keeps its error
+             *     and its manual action, and setup goes on past it.
+             */
+            skipped: boolean;
             /** @description What the step does, in plain words. */
             title: string;
         };
@@ -6634,6 +6656,50 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SetupReviewDto"];
                 };
+            };
+        };
+    };
+    hosts_skip_setup_step: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                /** @description a failed `tool:`, `credential:` or `authentication:` step; not `tool:git` */
+                step: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupDto"];
+                };
+            };
+            /** @description the step cannot be skipped, or it has not failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no saved setup has the name, or it has no such step */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the setup is pending or running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

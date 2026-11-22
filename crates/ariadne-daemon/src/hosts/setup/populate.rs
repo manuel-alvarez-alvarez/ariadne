@@ -74,12 +74,22 @@ fn npm_package(package: &str, update: bool) -> String {
 }
 
 impl Hosts {
+    /// Whether a run passes over the step: it succeeded, or the user skipped it.
     fn population_done(&self, name: &str, step: &str) -> bool {
         self.0.setup.lock().unwrap()[name]
             .progress
             .steps
             .iter()
-            .any(|s| s.name == step && s.complete)
+            .any(|s| s.name == step && (s.complete || s.skipped))
+    }
+
+    /// Whether the user skipped the step. A skipped check never runs again.
+    fn population_skipped(&self, name: &str, step: &str) -> bool {
+        self.0.setup.lock().unwrap()[name]
+            .progress
+            .steps
+            .iter()
+            .any(|s| s.name == step && s.skipped)
     }
 
     pub(super) fn population_result(
@@ -239,17 +249,12 @@ impl Hosts {
         }
         for id in &request.credentials {
             let step = format!("credential:{id}");
-            if self.0.setup.lock().unwrap()[name]
-                .progress
-                .steps
-                .iter()
-                .any(|s| s.name == step && s.complete)
-            {
+            if self.population_done(name, &step) {
                 continue;
             }
             let result: Result<(), String> = async {
                 self.begin(name, &step)?;
-                // Successful transfers are not repeated. Authentication below always runs again.
+                // Successful transfers are not repeated. Authentication below runs again unless skipped.
                 // A checkpoint is durable only after SSH confirms the write or login.
                 match id.as_str() {
                     "codex" => {
@@ -282,8 +287,9 @@ impl Hosts {
             }.await;
             self.population_result(name, &step, result)?;
         }
-        if request.tools.as_ref().is_some_and(|t| t.github)
-            || request.credentials.iter().any(|c| c == "github")
+        if (request.tools.as_ref().is_some_and(|t| t.github)
+            || request.credentials.iter().any(|c| c == "github"))
+            && !self.population_skipped(name, "authentication:github")
         {
             let result: Result<(), String> = async {
                 self.begin(name, "authentication:github")?;
@@ -298,6 +304,9 @@ impl Hosts {
         if let Some(tools) = &request.tools {
             for id in &tools.agents {
                 let step = format!("authentication:{id}");
+                if self.population_skipped(name, &step) {
+                    continue;
+                }
                 let result: Result<(), String> = async {
                     self.begin(name, &step)?;
                     let check = match id.as_str() {

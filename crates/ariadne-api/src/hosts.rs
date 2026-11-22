@@ -180,12 +180,18 @@ pub struct SetupStep {
     #[serde(default)]
     #[schema(required = true)]
     pub manual: Option<ManualAction>,
-    /// Who does the step's item: `manual` when `manual` is set, `already_present`
+    /// Who does the step's item: `skipped` when the user skipped it, else
+    /// `manual` when `manual` is set, `already_present`
     /// when the step succeeded and installed nothing, else `ariadne_installs`.
     /// Null in a response from a daemon without groups.
     #[serde(default)]
     #[schema(required = true)]
     pub group: Option<SetupGroup>,
+    /// The user skipped the step after it failed. The step keeps its error
+    /// and its manual action, and setup goes on past it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub skipped: bool,
 }
 
 /// Who installs one item of a setup on the new machine.
@@ -198,6 +204,8 @@ pub enum SetupGroup {
     AlreadyPresent,
     /// The user installs or signs in by hand on the new machine.
     Manual,
+    /// The step failed and the user skipped it. Setup goes on without the item.
+    Skipped,
 }
 
 /// Work the user does by hand on the new machine. It never holds a credential value.

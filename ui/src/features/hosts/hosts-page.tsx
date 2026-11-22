@@ -228,7 +228,7 @@ function SetupRow({
       <TableCell>{stateLabel(setup)}</TableCell>
       <TableCell className="font-mono break-all whitespace-normal">{setup.ssh}</TableCell>
       <TableCell className="break-words whitespace-normal">
-        {setup.steps.find((step) => step.error)?.error ?? "-"}
+        {setup.steps.find((step) => step.error && !step.skipped)?.error ?? "-"}
       </TableCell>
       <TableCell>-</TableCell>
       <TableCell>

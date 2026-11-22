@@ -204,32 +204,41 @@ async fn openapi_carries_the_route_the_dto_and_the_event() {
 }
 
 #[tokio::test]
-async fn repository_setup_preserves_unrelated_existing_destinations() {
-    for has_file in [true, false] {
-        let (remote, state, id) = repository_setup_result(Some("local"), Some(has_file)).await;
-        assert_eq!(state["state"], "incomplete", "{state}");
-        let step = state["steps"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|s| s["name"] == format!("clone:{id}"))
-            .unwrap();
-        assert_eq!(step["complete"], false, "{state}");
-        assert!(
-            step["error"].as_str().unwrap().contains("destination"),
-            "{state}"
+async fn repository_setup_preserves_an_unrelated_existing_destination() {
+    assert_existing_destination_preserved(true).await;
+}
+
+#[tokio::test]
+async fn repository_setup_preserves_an_empty_existing_destination() {
+    assert_existing_destination_preserved(false).await;
+}
+
+/// A clone refuses an existing destination and leaves it as it was. One
+/// harness per test: a second harness in one test process starts slowly.
+async fn assert_existing_destination_preserved(has_file: bool) {
+    let (remote, state, id) = repository_setup_result(Some("local"), Some(has_file)).await;
+    assert_eq!(state["state"], "incomplete", "{state}");
+    let step = state["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == format!("clone:{id}"))
+        .unwrap();
+    assert_eq!(step["complete"], false, "{state}");
+    assert!(
+        step["error"].as_str().unwrap().contains("destination"),
+        "{state}"
+    );
+    let destination = remote.path().join("workspace/project");
+    if has_file {
+        assert_eq!(
+            std::fs::read_to_string(destination.join("keep.txt")).unwrap(),
+            "unrelated content"
         );
-        let destination = remote.path().join("workspace/project");
-        if has_file {
-            assert_eq!(
-                std::fs::read_to_string(destination.join("keep.txt")).unwrap(),
-                "unrelated content"
-            );
-        } else {
-            assert_eq!(std::fs::read_dir(destination).unwrap().count(), 0);
-        }
-        assert!(!remote.path().join("worker-repositories.json").exists());
+    } else {
+        assert_eq!(std::fs::read_dir(destination).unwrap().count(), 0);
     }
+    assert!(!remote.path().join("worker-repositories.json").exists());
 }
 
 #[tokio::test]
@@ -3276,4 +3285,214 @@ async fn an_unusable_cargo_without_curl_needs_curl_and_a_resume_installs_rust() 
     assert!(source.remote.path().join(".cargo/bin/cargo").exists());
     assert_eq!(source.cargo_runs().len(), 1);
     source.commands(&ssh);
+}
+
+/// A worker whose `~/.local/bin` holds Node.js and npm, a Codex CLI that is not
+/// signed in, and a GitHub CLI and Homebrew that do not work. The GitHub CLI
+/// waits on the `hold` FIFO of the home while it exists. Each CLI logs its runs in the home.
+fn worker_with_broken_github_and_no_codex_sign_in(remote: &std::path::Path) {
+    let bin = remote.join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let stub = common::shared_script(
+        r#"#!/bin/sh
+case ${0##*/} in
+node) exit 0;;
+npm)
+    case $1 in
+      list) [ -e "$HOME/npm-installed" ];;
+      install) touch "$HOME/npm-installed";;
+      *) exit 0;;
+    esac;;
+codex) printf '%s\n' "$*" >> "$HOME/codex-runs"; exit 1;;
+gh)
+    printf '%s\n' "$*" >> "$HOME/gh-runs"
+    if [ -p "$HOME/hold" ]; then read -r _ < "$HOME/hold" || :; fi
+    exit 1;;
+brew) exit 1;;
+esac
+"#,
+    );
+    for tool in ["node", "npm", "codex", "gh", "brew"] {
+        std::os::unix::fs::symlink(&stub, bin.join(tool)).unwrap();
+    }
+}
+
+/// A FIFO that holds each reader until [`Hold::release`]. A drop, also on a
+/// failed test, wakes any reader that waits and removes the FIFO.
+struct Hold(std::path::PathBuf);
+
+impl Hold {
+    fn new(path: std::path::PathBuf) -> Self {
+        let made = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(made.success(), "mkfifo {}", path.display());
+        Self(path)
+    }
+
+    /// Wait for a reader, remove the FIFO, then let the reader go.
+    async fn release(self) {
+        let path = self.0.clone();
+        let writer = tokio::task::spawn_blocking(move || {
+            std::fs::OpenOptions::new().write(true).open(path).unwrap()
+        })
+        .await
+        .unwrap();
+        drop(self);
+        drop(writer);
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        use rustix::fs::{Mode, OFlags};
+        let _ = rustix::fs::open(&self.0, OFlags::WRONLY | OFlags::NONBLOCK, Mode::empty());
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+async fn skip(
+    h: &common::Harness,
+    name: &str,
+    step: &str,
+    status: axum::http::StatusCode,
+) -> serde_json::Value {
+    let (got, body) = h
+        .send(common::post_json(
+            &format!("/v1/hosts/{name}/setup/steps/{step}/skip"),
+            serde_json::json!({}),
+        ))
+        .await;
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(got, status, "skip {step}: {body}");
+    body
+}
+
+#[tokio::test]
+async fn skipped_failed_tool_and_sign_in_steps_let_setup_complete_and_connect_the_machine() {
+    use axum::http::StatusCode;
+    use serde_json::{Value, json};
+    let remote = tempfile::tempdir().unwrap();
+    worker_with_broken_github_and_no_codex_sign_in(remote.path());
+    let mut header = vec![0u8; 64];
+    header[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    header[16] = 2;
+    header[18] = 62;
+    let (cli, daemon) = (
+        remote.path().join("source-cli"),
+        remote.path().join("source-daemon"),
+    );
+    std::fs::write(&cli, &header).unwrap();
+    std::fs::write(&daemon, &header).unwrap();
+    let hold = Hold::new(remote.path().join("hold"));
+    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
+    let h = harness().ssh(&ssh).await;
+    let request = json!({
+        "ssh":"ssh://worker@box", "source":{"kind":"local","cli":cli,"daemon":daemon},
+        "tools":{"agents":["codex-acp"],"github":true}
+    });
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/skipper/setup", request),
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    let gh_runs = remote.path().join("gh-runs");
+    common::eventually(common::TIMEOUT, "the GitHub CLI check runs", || async {
+        gh_runs.exists()
+    })
+    .await;
+    let refused = skip(&h, "skipper", "tool:github", StatusCode::CONFLICT).await;
+    assert_eq!(refused["error"]["code"], "conflict", "{refused}");
+    hold.release().await;
+
+    let stopped = setup_ends(&h, "skipper").await;
+    assert_eq!(stopped["state"], "incomplete", "{stopped}");
+    let failed = [
+        "tool:github",
+        "authentication:github",
+        "authentication:codex-acp",
+    ];
+    for name in failed {
+        let step = step_of(&stopped, name);
+        assert!(step["error"].is_string(), "{step}");
+        assert_eq!(step["skipped"], false, "{step}");
+    }
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert!(!hosts.iter().any(|h| h.name == "skipper"));
+
+    for (step, status) in [
+        ("tool:codex-acp", StatusCode::BAD_REQUEST),
+        ("tool:git", StatusCode::BAD_REQUEST),
+        ("service", StatusCode::BAD_REQUEST),
+        ("tool:nothing", StatusCode::NOT_FOUND),
+    ] {
+        let refused = skip(&h, "skipper", step, status).await;
+        assert!(refused["error"]["message"].is_string(), "{refused}");
+    }
+    skip(&h, "nobody", "tool:github", StatusCode::NOT_FOUND).await;
+
+    let mut progress = Value::Null;
+    for name in failed {
+        progress = skip(&h, "skipper", name, StatusCode::OK).await;
+        let (before, after) = (step_of(&stopped, name), step_of(&progress, name));
+        assert_eq!(after["skipped"], true, "{after}");
+        assert_eq!(after["group"], "skipped", "{after}");
+        assert_eq!(after["error"], before["error"], "{after}");
+        assert_eq!(after["manual"], before["manual"], "{after}");
+    }
+    assert_eq!(progress["state"], "incomplete", "{progress}");
+    let codex_runs = || std::fs::read_to_string(remote.path().join("codex-runs")).unwrap();
+    let (codex_before, gh_before) = (codex_runs(), std::fs::read_to_string(&gh_runs).unwrap());
+
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/skipper/setup/resume", json!({})),
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    let done = setup_ends(&h, "skipper").await;
+    assert_eq!(done["state"], "complete", "{done}");
+    for name in failed {
+        let step = step_of(&done, name);
+        assert_eq!(step["skipped"], true, "{step}");
+        assert_eq!(step["group"], "skipped", "{step}");
+        assert!(step["error"].is_string(), "{step}");
+    }
+    assert_eq!(
+        codex_runs(),
+        codex_before,
+        "a skipped sign-in check ran again"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&gh_runs).unwrap(),
+        gh_before,
+        "a skipped GitHub step ran again"
+    );
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert_eq!(hosts.iter().filter(|h| h.name == "skipper").count(), 1);
+}
+
+#[tokio::test]
+async fn a_skipped_failed_step_of_an_update_lets_the_update_complete() {
+    use axum::http::StatusCode;
+    let f = UpdateFixture::new(serde_json::json!({})).await;
+    let mut request = f.request();
+    request["tools"] = serde_json::json!({"agents":["unknown-agent"]});
+    for step in ["tool:unknown-agent", "authentication:unknown-agent"] {
+        f.start(request.clone()).await;
+        let stopped = f.terminal().await;
+        assert_eq!(stopped["state"], "incomplete", "{stopped}");
+        assert!(step_of(&stopped, step)["error"].is_string(), "{stopped}");
+        let skipped = skip(&f.h, "builder", step, StatusCode::OK).await;
+        assert_eq!(step_of(&skipped, step)["skipped"], true, "{skipped}");
+        assert_eq!(step_of(&skipped, step)["group"], "skipped", "{skipped}");
+    }
+    f.start(request).await;
+    let done = f.terminal().await;
+    assert_eq!(done["state"], "complete", "{done}");
+    for step in ["tool:unknown-agent", "authentication:unknown-agent"] {
+        assert_eq!(step_of(&done, step)["skipped"], true, "{done}");
+    }
 }

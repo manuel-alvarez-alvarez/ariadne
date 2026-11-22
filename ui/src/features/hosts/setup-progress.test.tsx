@@ -2,7 +2,8 @@
 
 /**
  * The Install step of "Add machine", over the settings daemon's
- * `GET /v1/hosts/{name}/setup` and `POST /v1/hosts/{name}/setup/resume`.
+ * `GET /v1/hosts/{name}/setup`, `POST /v1/hosts/{name}/setup/resume` and
+ * `POST /v1/hosts/{name}/setup/steps/{step}/skip`.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -32,6 +33,7 @@ const STOPPED: Setup = {
       error: null,
       group: "ariadne_installs",
       manual: null,
+      skipped: false,
     },
     {
       name: "service",
@@ -43,6 +45,7 @@ const STOPPED: Setup = {
         reason: "Ask an administrator to turn on lingering for this account, then resume setup.",
         command: LINGER,
       },
+      skipped: false,
     },
   ],
 }
@@ -108,4 +111,125 @@ it("resumes the setup from Check again and shows the progress it answers with", 
     ),
   ).toHaveLength(1)
   expect(screen.queryByRole("button", { name: "Check again" })).toBeNull()
+})
+
+const GITHUB_MANUAL = {
+  reason: "Install GitHub CLI on the new machine, then resume setup.",
+  command: null,
+}
+
+type Step = Setup["steps"][number]
+
+const PROBE: Step = {
+  name: "probe",
+  title: "Check the new machine",
+  complete: true,
+  error: null,
+  group: "ariadne_installs",
+  manual: null,
+  skipped: false,
+}
+
+const GITHUB: Step = {
+  name: "tool:github",
+  title: "Install GitHub CLI",
+  complete: false,
+  error: "missing gh",
+  group: "manual",
+  manual: GITHUB_MANUAL,
+  skipped: false,
+}
+
+const TOOL_FAILED: Setup = {
+  name: "builder",
+  state: "incomplete",
+  steps: [
+    PROBE,
+    {
+      name: "tool:git",
+      title: "Install Git",
+      complete: true,
+      error: null,
+      group: "already_present",
+      manual: null,
+      skipped: false,
+    },
+    GITHUB,
+    {
+      ...PROBE,
+      name: "service",
+      title: "Start the Ariadne service",
+      complete: false,
+    },
+  ],
+}
+
+const TOOL_SKIPPED: Setup = {
+  ...TOOL_FAILED,
+  steps: TOOL_FAILED.steps.map((step) =>
+    step.name === "tool:github" ? { ...step, skipped: true, group: "skipped" } : step,
+  ),
+}
+
+it("offers Skip beside the manual work of a failed tool, shows it skipped, and continues the setup past it", async () => {
+  const seen = stubHosts(
+    {
+      local: {
+        "/v1/hosts/builder/setup": TOOL_FAILED,
+        "/v1/hosts/builder/setup/steps/tool%3Agithub/skip": () => jsonResponse(TOOL_SKIPPED),
+        "/v1/hosts/builder/setup/resume": () => jsonResponse(DONE),
+      },
+    },
+    [LOCAL],
+  )
+  renderScreen(<SetupProgress name="builder" />)
+
+  const skip = await screen.findByRole("button", { name: "Skip" })
+  expect(screen.getAllByRole("button", { name: "Skip" })).toHaveLength(1)
+  expect(document.getElementById(skip.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+    "Install GitHub CLI",
+  )
+  expect(screen.queryByRole("button", { name: "Continue setup" })).toBeNull()
+  const user = userEvent.setup()
+  await user.click(skip)
+
+  const steps = await screen.findByRole("list", { name: "Setup steps" })
+  await waitFor(() =>
+    expect(within(steps).getAllByRole("listitem")[2]?.textContent).toMatch(
+      /^Install GitHub CLI: Skipped/,
+    ),
+  )
+  expect(screen.getByText(GITHUB_MANUAL.reason)).toBeTruthy()
+  expect(screen.queryByRole("button", { name: "Skip" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "Check again" })).toBeNull()
+  await user.click(screen.getByRole("button", { name: "Continue setup" }))
+
+  await waitFor(() =>
+    expect(screen.getByRole("status").textContent).toBe(
+      "Setup is complete. The new machine is in the hosts list.",
+    ),
+  )
+  const posts = seen.filter((one) => one.method === "POST").map((one) => one.url.pathname)
+  expect(posts).toEqual([
+    "/v1/hosts/builder/setup/steps/tool%3Agithub/skip",
+    "/v1/hosts/builder/setup/resume",
+  ])
+})
+
+it("offers no Skip for a failed step of Ariadne itself or of Git", async () => {
+  stubHosts(
+    {
+      local: {
+        "/v1/hosts/builder/setup": {
+          ...STOPPED,
+          steps: [...STOPPED.steps, { ...GITHUB, name: "tool:git", title: "Install Git" }],
+        },
+      },
+    },
+    [LOCAL],
+  )
+  renderScreen(<SetupProgress name="builder" />)
+
+  expect(await screen.findAllByRole("button", { name: "Check again" })).toHaveLength(2)
+  expect(screen.queryByRole("button", { name: "Skip" })).toBeNull()
 })

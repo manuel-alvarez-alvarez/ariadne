@@ -347,6 +347,16 @@ picker, the Hosts screen and one stream per host — is spec
     Failure retains completed steps and records the failing step's error.
     No successful step means `failed`; otherwise failure means `incomplete`.
     Completion requires a successful daemon status check and local connection registration.
+    The user can skip a failed external-software step of a stopped setup or update.
+    `POST /v1/hosts/{name}/setup/steps/{step}/skip` marks the step `skipped` and returns the full `SetupDto`.
+    The route acts on an update of the machine that is not `complete`, else on its setup.
+    These steps can be skipped: `tool:github`, `tool:<agent>`, `credential:<id>`, and `authentication:<id>`.
+    Any other step, or a step that has not failed, returns `400`. An unknown setup or step returns `404`.
+    A `pending` or `running` setup returns `409`. All refusals use the daemon's error envelope.
+    A skipped step keeps its error and its manual action, and its `group` is `skipped`.
+    Resume and update retries never run a skipped step again. This includes the authentication checks.
+    Setup goes on to registration when its only failed steps are skipped, and then ends `complete`.
+    No route undoes a skip. A new setup or a later update installs the item.
 50. The settings daemon stores operations atomically in `worker-setup.json` under its home.
     Restart converts interrupted operations to `incomplete`. The register step writes the host into the database.
     Setup records hold operations only. Restart never restores connections from `worker-setup.json`.
@@ -521,7 +531,7 @@ picker, the Hosts screen and one stream per host — is spec
     Requests without tool selections check worker Git without installing it.
     Missing or unusable Git prevents initial registration; resume rechecks it after manual installation.
     Successful installation and credential checkpoints prevent repeated work.
-    Authentication checks run again on retry. Explicit worker-update policy remains unchanged.
+    Authentication checks run again on retry, except a skipped one (rule 49). Explicit worker-update policy remains unchanged.
 78. `POST /v1/hosts/{name}/setup/resume` retries the exact durable request without new selections.
     Existing setup POST and GET routes retain their request and progress formats.
     CLI provides `host inspect`, `host review`, and `host resume` through the local settings daemon.
@@ -544,7 +554,8 @@ picker, the Hosts screen and one stream per host — is spec
 
 ### Setup groups
 
-82. `SetupGroup` is `ariadne_installs`, `already_present`, or `manual`. It says who installs an item on the worker.
+82. `SetupGroup` is `ariadne_installs`, `already_present`, `manual`, or `skipped`. It says who installs an item on the worker.
+    Only a progress step is `skipped` (rule 49). A plan item never is.
     `ManualAction` is `{reason, command}`. `reason` is plain words. `command` is the exact worker command, or null.
     No manual action contains a credential value or provider command output.
 83. `InspectionDto.agents` lists each shipped registry agent, then each agent that only this daemon's configuration names.
@@ -570,7 +581,8 @@ picker, the Hosts screen and one stream per host — is spec
     Git is `prerequisite:git` without tool selections and `tool:git` with them.
     `manual` is set exactly for items in the `manual` group.
 87. `SetupStep.title` is a plain-words title for every step. `SetupStep.manual` is set when a failed step needs manual work.
-    `SetupStep.group` is `manual` when `manual` is set. It is `already_present` for a complete step that installed nothing:
+    `SetupStep.skipped` is true for a step that the user skipped (rule 49). Its `group` is then `skipped`.
+    Otherwise `SetupStep.group` is `manual` when `manual` is set. It is `already_present` for a complete step that installed nothing:
     a found Git, GitHub CLI, or agent package, and a sign-in check that no copy preceded. Otherwise it is `ariadne_installs`.
     Updates always install, so their steps are never `already_present`.
     It equals the `manual` of the plan item with the same id. `validate` uses the `install` item.
@@ -622,7 +634,7 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 63: `hosts.rs::setup_accepts_selected_repository_destinations` and
   `hosts.rs::selected_repositories_clone_only_committed_files_and_retry_registration`;
   `hosts.rs::setup_rejects_unsafe_repository_destinations_before_starting` proves request validation.
-  `hosts.rs::repository_setup_preserves_unrelated_existing_destinations` proves preservation of unrelated directories, including empty directories.
+  `hosts.rs::repository_setup_preserves_an_unrelated_existing_destination` and `::repository_setup_preserves_an_empty_existing_destination` prove preservation of unrelated directories, including empty directories.
   `hosts.rs::repository_setup_reports_a_missing_source_remote` proves the missing-remote step failure.
   `hosts.rs::repository_setup_reports_worker_git_authentication_failure` proves failure after a worker receives an HTTP authentication challenge.
   `add-machine.test.tsx` proves selection and destination editing.
@@ -775,6 +787,9 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 46, control characters: `hosts.rs::setup_rejects_control_characters_in_remote_path_before_transfer`.
 - Rule 46, shell fallback: `hosts.rs::setup_uses_the_ssh_path_when_the_login_shell_fails_or_returns_no_path`.
 - Rule 49: `crates/ariadne-cli/tests/hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure`.
+- Rule 49, skip: `hosts.rs::skipped_failed_tool_and_sign_in_steps_let_setup_complete_and_connect_the_machine` proves
+  the `409` while setup runs, each refusal, the kept error and manual action, no second sign-in check, and the connected machine.
+  `hosts.rs::a_skipped_failed_step_of_an_update_lets_the_update_complete` proves the same rules for an update.
 - Rule 50: `hosts.rs::setup_preserves_installation_after_service_failure_and_retries_safely`.
 - Rule 50: `ui/src/features/hosts/setup-progress.test.tsx::shows each step by its title, and a manual action with its reason, its command and a copy control`.
 - Rule 52: `ui/src/features/hosts/add-machine.test.tsx::sends a source only when the Advanced inputs name the programs, and says why Next waits`

@@ -1068,6 +1068,9 @@ Select **Connect to a daemon that already runs** for the same change as `host ad
 Each row has **Edit** and **Remove**, for the same changes as `host edit` and `host rm`.
 Remove does not stop the daemon on the host.
 Select **Check again** on the Install step to resume a stopped setup with its original request.
+A failed tool other than Git, a credential copy or a sign-in check also has **Skip**.
+A skipped step keeps its instructions, and **Continue setup** goes on without it, so the machine can connect.
+Install the skipped item by hand later, or select it again in an update.
 Agent installation, credential transfer, and repository cloning are separate operations.
 See [the setup contract](../specs/037-hosts.md#ssh-worker-setup).
 

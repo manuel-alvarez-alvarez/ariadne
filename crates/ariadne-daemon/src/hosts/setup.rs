@@ -63,7 +63,17 @@ fn step(name: String) -> SetupStep {
         title: String::new(),
         manual: None,
         group: None,
+        skipped: false,
     }
+}
+
+/// Whether the user can skip the step once it fails: an external tool, a
+/// credential copy or a sign-in check. Git and the steps of Ariadne itself
+/// cannot be skipped.
+fn skippable(step: &str) -> bool {
+    step.strip_prefix("tool:").is_some_and(|id| id != "git")
+        || step.starts_with("credential:")
+        || step.starts_with("authentication:")
 }
 
 fn steps(request: &SetupRequest, update: bool, binaries: bool, build: bool) -> Vec<SetupStep> {
@@ -236,6 +246,17 @@ pub(crate) enum DiscardError {
     Save(String),
 }
 
+/// Why a failed step was not skipped.
+pub(crate) enum SkipError {
+    /// No setup or update of the machine, or no such step in it.
+    Unknown(String),
+    /// The step cannot be skipped, or it has not failed.
+    Refused(String),
+    /// The setup is pending or running.
+    Running,
+    Save(String),
+}
+
 impl Hosts {
     pub(crate) fn setup_status(&self, name: &str) -> Option<SetupDto> {
         self.0
@@ -287,6 +308,55 @@ impl Hosts {
             return Err(DiscardError::Save(error));
         }
         Ok(())
+    }
+
+    /// Mark one failed step of a stopped setup skipped, so that the next run
+    /// goes on past it. An update of the machine that has not completed is
+    /// the operation that the step belongs to; else it is the setup.
+    pub(crate) fn skip_setup_step(&self, name: &str, step: &str) -> Result<SetupDto, SkipError> {
+        let mut records = self.0.setup.lock().unwrap();
+        let update = format!("update:{name}");
+        let key = if records
+            .get(&update)
+            .is_some_and(|r| r.progress.state != SetupState::Complete)
+        {
+            update
+        } else {
+            name.to_string()
+        };
+        let record = records
+            .get_mut(&key)
+            .ok_or_else(|| SkipError::Unknown(format!("unknown worker setup {name}")))?;
+        if matches!(
+            record.progress.state,
+            SetupState::Pending | SetupState::Running
+        ) {
+            return Err(SkipError::Running);
+        }
+        let found = record
+            .progress
+            .steps
+            .iter_mut()
+            .find(|s| s.name == step)
+            .ok_or_else(|| SkipError::Unknown(format!("worker setup {name} has no step {step}")))?;
+        if !skippable(step) {
+            return Err(SkipError::Refused(format!(
+                "step {step} cannot be skipped; only a failed tool, credential copy or sign-in check can be skipped"
+            )));
+        }
+        if found.complete || found.error.is_none() {
+            return Err(SkipError::Refused(format!("step {step} has not failed")));
+        }
+        let was = std::mem::replace(&mut found.skipped, true);
+        let progress = record.view(&self.0.cfg);
+        if let Err(error) = save(&self.0.cfg.root, &records) {
+            let record = records.get_mut(&key).unwrap();
+            if let Some(found) = record.progress.steps.iter_mut().find(|s| s.name == step) {
+                found.skipped = was;
+            }
+            return Err(SkipError::Save(error));
+        }
+        Ok(progress)
     }
 
     pub(crate) fn resume_setup(&self, name: String) -> Result<SetupDto, String> {
@@ -415,6 +485,10 @@ impl Hosts {
                             && let Some(old) = old_steps.iter().find(|old| old.name == step.name)
                         {
                             step.complete = old.complete;
+                            if old.skipped {
+                                step.skipped = true;
+                                step.error = old.error.clone();
+                            }
                         }
                         step
                     })
@@ -523,7 +597,8 @@ impl Hosts {
             }
         }
         record.progress.state = SetupState::Pending;
-        for step in &mut record.progress.steps {
+        // A skipped step keeps its error, so its manual action stays in view.
+        for step in record.progress.steps.iter_mut().filter(|s| !s.skipped) {
             step.error = None;
         }
         let progress = record.view(&self.0.cfg);
@@ -929,7 +1004,7 @@ fi
                 .progress
                 .steps
                 .iter()
-                .any(|s| s.error.is_some())
+                .any(|s| s.error.is_some() && !s.skipped)
         {
             let mut records = self.0.setup.lock().unwrap();
             records.get_mut(name).unwrap().progress.state = SetupState::Incomplete;

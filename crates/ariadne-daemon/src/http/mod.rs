@@ -151,7 +151,7 @@ impl AppState {
         skills::reset_document,
         workflows::create, workflows::list, workflows::get, workflows::update,
         workflows::delete, workflows::reset, workflows::parse,
-        hosts::resume_setup, hosts::list_setups, hosts::discard_setup, hosts::inspect_setup, hosts::review_setup, hosts::list, hosts::create, hosts::patch, hosts::delete, hosts::reconnect, hosts::setup, hosts::setup_status, hosts::update, hosts::update_status, config::maintenance, config::maintenance_status,
+        hosts::resume_setup, hosts::skip_setup_step, hosts::list_setups, hosts::discard_setup, hosts::inspect_setup, hosts::review_setup, hosts::list, hosts::create, hosts::patch, hosts::delete, hosts::reconnect, hosts::setup, hosts::setup_status, hosts::update, hosts::update_status, config::maintenance, config::maintenance_status,
         dashboards::create, dashboards::list, dashboards::get, dashboards::update, dashboards::delete, dashboards::reset,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
@@ -341,6 +341,10 @@ pub fn router(state: AppState) -> Router {
                 .delete(hosts::discard_setup),
         )
         .route("/v1/hosts/{name}/setup/resume", post(hosts::resume_setup))
+        .route(
+            "/v1/hosts/{name}/setup/steps/{step}/skip",
+            post(hosts::skip_setup_step),
+        )
         .route("/v1/hosts/{name}/setup/inspect", post(hosts::inspect_setup))
         .route("/v1/hosts/{name}/setup/review", post(hosts::review_setup))
         .route("/v1/hosts/{name}/reconnect", post(hosts::reconnect))

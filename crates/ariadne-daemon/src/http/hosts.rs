@@ -1,7 +1,7 @@
 //! The host list and the reconnect of one host (037).
 use super::AppState;
 use super::error::{ApiError, ApiResult, Json};
-use crate::hosts::{DiscardError, ReconnectError};
+use crate::hosts::{DiscardError, ReconnectError, SkipError};
 use ariadne_api::hosts::HostDto;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -297,4 +297,34 @@ pub(super) async fn resume_setup(
         .resume_setup(name)
         .map(|p| (StatusCode::ACCEPTED, Json(p)))
         .map_err(ApiError::bad_request)
+}
+
+/// Skip one failed step of a stopped setup or update, so that it goes on past it.
+#[utoipa::path(post, path="/v1/hosts/{name}/setup/steps/{step}/skip", tag="hosts",
+    params(("name"=String, Path), ("step"=String, Path, description="a failed `tool:`, `credential:` or `authentication:` step; not `tool:git`")),
+    responses(
+        (status=200, body=ariadne_api::hosts::SetupDto),
+        (status=400, description="the step cannot be skipped, or it has not failed"),
+        (status=404, description="no saved setup has the name, or it has no such step"),
+        (status=409, description="the setup is pending or running"),
+    ))]
+pub(super) async fn skip_setup_step(
+    State(s): State<AppState>,
+    Path((name, step)): Path<(String, String)>,
+) -> ApiResult<Json<ariadne_api::hosts::SetupDto>> {
+    match s.hosts.skip_setup_step(&name, &step) {
+        Ok(progress) => Ok(Json(progress)),
+        Err(SkipError::Unknown(message)) => {
+            Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", message))
+        }
+        Err(SkipError::Refused(message)) => Err(ApiError::bad_request(message)),
+        Err(SkipError::Running) => Err(ApiError::conflict(format!(
+            "worker setup {name} is running; skip a step after it stops"
+        ))),
+        Err(SkipError::Save(error)) => Err(ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            error,
+        )),
+    }
 }

@@ -2436,6 +2436,54 @@
         }
       }
     },
+    "/v1/hosts/{name}/setup/steps/{step}/skip": {
+      "post": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "Skip one failed step of a stopped setup or update, so that it goes on past it.",
+        "operationId": "skip_setup_step",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "step",
+            "in": "path",
+            "description": "a failed `tool:`, `credential:` or `authentication:` step; not `tool:git`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "the step cannot be skipped, or it has not failed"
+          },
+          "404": {
+            "description": "no saved setup has the name, or it has no such step"
+          },
+          "409": {
+            "description": "the setup is pending or running"
+          }
+        }
+      }
+    },
     "/v1/hosts/{name}/update": {
       "get": {
         "tags": [
@@ -10380,7 +10428,8 @@
         "enum": [
           "ariadne_installs",
           "already_present",
-          "manual"
+          "manual",
+          "skipped"
         ]
       },
       "SetupOperation": {
@@ -10499,7 +10548,8 @@
           "complete",
           "title",
           "manual",
-          "group"
+          "group",
+          "skipped"
         ],
         "properties": {
           "complete": {
@@ -10515,7 +10565,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/SetupGroup",
-                "description": "Who does the step's item: `manual` when `manual` is set, `already_present`\nwhen the step succeeded and installed nothing, else `ariadne_installs`.\nNull in a response from a daemon without groups."
+                "description": "Who does the step's item: `skipped` when the user skipped it, else\n`manual` when `manual` is set, `already_present`\nwhen the step succeeded and installed nothing, else `ariadne_installs`.\nNull in a response from a daemon without groups."
               },
               {
                 "type": "null"
@@ -10535,6 +10585,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "The user skipped the step after it failed. The step keeps its error\nand its manual action, and setup goes on past it."
           },
           "title": {
             "type": "string",

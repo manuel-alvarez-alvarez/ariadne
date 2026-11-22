@@ -1351,7 +1351,7 @@ fn step_title(step: &ariadne_api::hosts::SetupStep) -> String {
     }
 }
 
-/// Print the items under the three groups, in this order, skipping an empty group.
+/// Print the items under the groups, in this order, skipping an empty group.
 fn print_groups<'a>(items: impl Iterator<Item = Grouped<'a>>) {
     use ariadne_api::hosts::SetupGroup;
     let items: Vec<_> = items.collect();
@@ -1359,6 +1359,7 @@ fn print_groups<'a>(items: impl Iterator<Item = Grouped<'a>>) {
         (SetupGroup::AriadneInstalls, "Ariadne installs:"),
         (SetupGroup::AlreadyPresent, "Already present:"),
         (SetupGroup::Manual, "Manual:"),
+        (SetupGroup::Skipped, "Skipped:"),
     ] {
         let mut members = items.iter().filter(|i| i.group == group).peekable();
         if members.peek().is_none() {

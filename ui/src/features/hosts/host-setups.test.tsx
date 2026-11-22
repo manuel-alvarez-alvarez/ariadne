@@ -27,6 +27,7 @@ const STEP = {
   error: null,
   group: null,
   manual: null,
+  skipped: false,
 }
 
 const STOPPED: HostSetup = {

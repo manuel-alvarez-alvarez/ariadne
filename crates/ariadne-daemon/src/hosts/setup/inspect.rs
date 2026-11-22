@@ -584,7 +584,9 @@ impl Hosts {
                     SetupGroup::AriadneInstalls => {
                         "Install GitHub CLI with the user-owned Homebrew."
                     }
-                    SetupGroup::Manual => "GitHub CLI is not on the new machine.",
+                    SetupGroup::Manual | SetupGroup::Skipped => {
+                        "GitHub CLI is not on the new machine."
+                    }
                 };
                 plan.push(item(
                     "tool:github".into(),
@@ -610,7 +612,9 @@ impl Hosts {
                     SetupGroup::AlreadyPresent => {
                         format!("{name} is already on the new machine. Setup reuses it.")
                     }
-                    SetupGroup::Manual => format!("Ariadne cannot install {name}."),
+                    SetupGroup::Manual | SetupGroup::Skipped => {
+                        format!("Ariadne cannot install {name}.")
+                    }
                 };
                 plan.push(item(key, group, detail, manual));
             }

@@ -377,7 +377,9 @@ impl Record {
                     command: None,
                 });
             }
-            step.group = Some(if step.manual.is_some() {
+            step.group = Some(if step.skipped {
+                SetupGroup::Skipped
+            } else if step.manual.is_some() {
                 SetupGroup::Manual
             } else if step.complete && self.present.contains(&step.name) {
                 SetupGroup::AlreadyPresent
