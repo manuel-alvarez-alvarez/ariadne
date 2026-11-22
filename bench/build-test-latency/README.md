@@ -16,6 +16,7 @@ The follow-up measures the same source baseline from report revision `cb3a7efdca
 
 Sources:
 
+- [macOS contention follow-up](contention.md) compares identical checks across two worktrees at a separately pinned revision.
 - [CI step evidence](ci-evidence.md) records every job step and its duration.
 - [CI excerpts](ci-excerpts.md) preserve compiler, runner, cache, and test summaries.
 - [Sequential follow-up evidence](followup-evidence.md) records complete local checks with explicit repetitions and cache conditions.
