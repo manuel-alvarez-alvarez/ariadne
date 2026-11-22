@@ -1,7 +1,8 @@
 //! Read-only worker inspection and a review of explicitly selected actions.
+use super::build::BUILD_PROBE;
 use super::plan::{
-    Install, agent_name, agent_sign_in, index, install, manual_for, packages, packages_script,
-    sign_ins, title,
+    Install, agent_name, agent_sign_in, build_manual, index, install, manual_for, packages,
+    packages_script, sign_ins, title,
 };
 use super::*;
 use ariadne_api::hosts::{
@@ -41,10 +42,21 @@ impl Hosts {
         request: InspectRequest,
         local_agents: &[String],
     ) -> Result<InspectionDto, String> {
+        Ok(self.inspect(name, request, local_agents).await?.0)
+    }
+
+    /// The inspection, and the worker's system package manager where one was found.
+    async fn inspect(
+        &self,
+        name: &str,
+        request: InspectRequest,
+        local_agents: &[String],
+    ) -> Result<(InspectionDto, Option<String>), String> {
         let request = connection(request.ssh);
         validate(name, &request)?;
         // Suppress all provider output. Only fixed capability identifiers leave the worker.
         let script = r#"set -eu
+os=$(uname -s)
 uname -s
 uname -m
 marker=__ARIADNE_INSPECT_PATH__
@@ -71,7 +83,10 @@ if [ -s "${XDG_CONFIG_HOME:-$HOME/.config}/gh/hosts.yml" ]; then echo credential
 if [ -s "$HOME/.codex/auth.json" ]; then echo credential-file:codex; fi
 if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; fi
 "#;
-        let script = format!("{script}{}exit 0\n", packages_script(&self.0.cfg));
+        let script = format!(
+            "{script}{BUILD_PROBE}{}exit 0\n",
+            packages_script(&self.0.cfg)
+        );
         let output = self.ssh(&request, &script, None).await.map_err(|_| {
             "Inspection failed. Check the worker account, SSH keys, and configured host trust."
                 .to_owned()
@@ -89,12 +104,40 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
             }
         };
         let available: Vec<_> = lines.collect();
+        let manager = available
+            .iter()
+            .find_map(|line| line.strip_prefix("manager:"))
+            .map(String::from);
         let mut checks = Vec::new();
         for tool in [
             "git", "tar", "gh", "node", "npm", "uv", "codex", "claude", "brew",
         ] {
             checks.push(check(tool, available.contains(&tool), &format!("{tool} is unavailable."), "Install the program on the worker. Supported prerequisites can use existing user-owned Homebrew."));
         }
+        checks.push(check(
+            "compiler",
+            available.contains(&"compiler"),
+            "A C program does not compile and link.",
+            "Ask an administrator to install a C compiler, a linker and the C library headers. A source build needs them.",
+        ));
+        checks.push(check(
+            "cargo",
+            available.contains(&"cargo"),
+            "Rust is unavailable.",
+            "A source build installs Rust with rustup in the user's home directory.",
+        ));
+        checks.push(check(
+            "rustup",
+            available.contains(&"rustup"),
+            "rustup is unavailable.",
+            "A source build downloads rustup with curl when Rust is missing.",
+        ));
+        checks.push(check(
+            "curl",
+            available.contains(&"curl"),
+            "curl is unavailable.",
+            "Ask an administrator to install curl. A source build needs it to install Rust.",
+        ));
         checks.push(check("service", available.contains(&"service"), "The user service is unavailable.", "On Linux, ask the administrator for systemd user services and lingering. On macOS, check the launchd user session."));
         for id in ["github", "codex-acp", "claude-acp"] {
             let key = format!("authentication:{id}");
@@ -194,16 +237,19 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
                 manual: manual_for(&self.0.cfg, "tool:github", Some(os)),
             }
         };
-        Ok(InspectionDto {
-            binaries: crate::build::BUILD.binaries(),
-            target: target.into(),
-            checks,
-            supported_agents,
-            supported_credentials: vec!["codex".into(), "github".into()],
-            agents,
-            github,
-            sign_ins: sign_ins(),
-        })
+        Ok((
+            InspectionDto {
+                binaries: self.0.cfg.build.binaries(),
+                target: target.into(),
+                checks,
+                supported_agents,
+                supported_credentials: vec!["codex".into(), "github".into()],
+                agents,
+                github,
+                sign_ins: sign_ins(),
+            },
+            manager,
+        ))
     }
 
     pub(crate) async fn review_setup(
@@ -213,8 +259,8 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
         local_agents: &[String],
     ) -> Result<SetupReviewDto, String> {
         validate(name, &request)?;
-        let inspection = self
-            .inspect_setup(
+        let (inspection, manager) = self
+            .inspect(
                 name,
                 InspectRequest {
                     ssh: request.ssh.clone(),
@@ -230,25 +276,41 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
             .cloned()
             .collect();
         match &request.source {
+            BinarySource::Daemon if inspection.binaries.tag.is_some() => {
+                actions.push(format!(
+                    "Install Ariadne {} with a verified release.",
+                    inspection.binaries.version
+                ));
+            }
             BinarySource::Daemon => {
-                let info = &inspection.binaries;
-                if let Err(reason) = crate::build::BUILD.source() {
-                    prerequisites.push(check(
-                        "binaries",
-                        false,
-                        &reason,
-                        "Select an explicit local or release source.",
-                    ));
+                let build = &self.0.cfg.build;
+                let source = build.check_source().await;
+                prerequisites.push(check(
+                    "binaries",
+                    source.is_ok(),
+                    source.as_ref().err().map_or(
+                        "The checkout or the commit of this daemon is missing on this machine.",
+                        String::as_str,
+                    ),
+                    "Restore the checkout and its commit on this machine, or select an explicit local or release source.",
+                ));
+                for id in ["compiler", "cargo", "rustup", "curl"] {
+                    prerequisites.push(
+                        inspection
+                            .checks
+                            .iter()
+                            .find(|c| c.id == id)
+                            .unwrap()
+                            .clone(),
+                    );
                 }
                 actions.push(format!(
-                    "Install Ariadne {} with {}.",
-                    info.version,
-                    if info.tag.is_some() {
-                        "a verified release"
-                    } else {
-                        "a source build"
-                    }
+                    "Install Ariadne {} with a source build of commit {} on the new machine.",
+                    inspection.binaries.version, build.commit
                 ));
+                if build.uncommitted {
+                    actions.push(UNCOMMITTED.into());
+                }
             }
             BinarySource::Local { cli, daemon } => {
                 let valid = [cli, daemon]
@@ -372,7 +434,7 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
             ));
             actions.push(format!("Clone repository {id} into {destination}, or reuse its registered forge identity. Copy no local edits."));
         }
-        let plan = self.plan(&request, &inspection, &prerequisites);
+        let plan = self.plan(&request, &inspection, &prerequisites, manager.as_deref());
         Ok(SetupReviewDto {
             plan,
             inspection,
@@ -386,6 +448,8 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
         })
     }
 }
+
+const UNCOMMITTED: &str = "This daemon was built with uncommitted edits. The new machine gets the commit only, without those edits.";
 
 fn item(
     id: String,
@@ -409,6 +473,7 @@ impl Hosts {
         request: &SetupRequest,
         inspection: &InspectionDto,
         prerequisites: &[SetupCheck],
+        manager: Option<&str>,
     ) -> Vec<PlanItem> {
         let cfg = &self.0.cfg;
         let os = Some(if inspection.target.ends_with("apple-darwin") {
@@ -421,14 +486,46 @@ impl Hosts {
         let met = |id: &str| prerequisites.iter().any(|c| c.id == id && c.satisfied);
         let mut plan = Vec::new();
         plan.push(match &request.source {
+            BinarySource::Daemon if inspection.binaries.tag.is_some() => {
+                let info = &inspection.binaries;
+                item(
+                    "install".into(),
+                    SetupGroup::AriadneInstalls,
+                    format!(
+                        "Install Ariadne {} with a verified release ({}).",
+                        info.version,
+                        info.tag.as_deref().unwrap_or_default()
+                    ),
+                    None,
+                )
+            }
             BinarySource::Daemon => {
                 let info = &inspection.binaries;
-                let source = crate::build::BUILD.source();
-                item("install".into(), if source.is_ok() { SetupGroup::AriadneInstalls } else { SetupGroup::Manual },
-                    format!("Install Ariadne {} with {} ({}).", info.version,
-                        if info.tag.is_some() { "a verified release" } else { "a source build" },
-                        info.tag.as_deref().or(info.commit.as_deref()).unwrap_or("unknown")),
-                    source.err().map(|reason| ManualAction { reason, command: None }))
+                let commit = info.commit.as_deref().unwrap_or("unknown");
+                let mut detail = format!(
+                    "Install Ariadne {} with a source build: build commit {commit} on the new machine, then install it in ~/.local/bin.",
+                    info.version
+                );
+                if info.uncommitted {
+                    detail = format!("{detail} {UNCOMMITTED}");
+                }
+                let refusal = prerequisites
+                    .iter()
+                    .find(|c| c.id == "binaries" && !c.satisfied)
+                    .map(|c| ManualAction {
+                        reason: c.missing.clone(),
+                        command: None,
+                    });
+                item(
+                    "install".into(),
+                    if refusal.is_some() {
+                        SetupGroup::Manual
+                    } else {
+                        SetupGroup::AriadneInstalls
+                    },
+                    detail,
+                    refusal,
+                )
             }
             BinarySource::Local { .. } if met("binaries") => item(
                 "install".into(),
@@ -449,6 +546,9 @@ impl Hosts {
                 None,
             ),
         });
+        if self.source_build(request, true) {
+            plan.extend(self.build_plan(present, os, manager));
+        }
         let git = if request.tools.is_some() {
             "tool:git"
         } else {
@@ -637,5 +737,94 @@ impl Hosts {
             None,
         ));
         plan
+    }
+}
+
+impl Hosts {
+    /// The items of a source build on the worker, in the order setup runs them.
+    fn build_plan(
+        &self,
+        present: impl Fn(&str) -> bool,
+        os: Option<&str>,
+        manager: Option<&str>,
+    ) -> Vec<PlanItem> {
+        let build = &self.0.cfg.build;
+        let manual = |id: &str| build_manual(id, os, manager);
+        vec![
+            if present("compiler") {
+                item(
+                    "prerequisite:compiler".into(),
+                    SetupGroup::AlreadyPresent,
+                    "A C program compiles and links on the new machine.",
+                    None,
+                )
+            } else {
+                item(
+                    "prerequisite:compiler".into(),
+                    SetupGroup::Manual,
+                    "A C program does not compile and link on the new machine.",
+                    manual("prerequisite:compiler"),
+                )
+            },
+            if present("cargo") {
+                item(
+                    "prerequisite:curl".into(),
+                    SetupGroup::AlreadyPresent,
+                    "Rust is already on the new machine, so the build needs no curl.",
+                    None,
+                )
+            } else if present("rustup") {
+                item(
+                    "prerequisite:curl".into(),
+                    SetupGroup::AlreadyPresent,
+                    "rustup is already on the new machine, so the build needs no curl.",
+                    None,
+                )
+            } else if present("curl") {
+                item(
+                    "prerequisite:curl".into(),
+                    SetupGroup::AlreadyPresent,
+                    "curl is already on the new machine.",
+                    None,
+                )
+            } else {
+                item(
+                    "prerequisite:curl".into(),
+                    SetupGroup::Manual,
+                    "The new machine has no curl to install Rust with.",
+                    manual("prerequisite:curl"),
+                )
+            },
+            item(
+                "source".into(),
+                SetupGroup::AriadneInstalls,
+                format!(
+                    "Pack commit {} from {} on this machine and copy it to ~/.ariadne/worker-source on the new machine. Uncommitted edits and untracked files stay on this machine.",
+                    build.commit, build.checkout
+                ),
+                None,
+            ),
+            if present("cargo") {
+                item(
+                    "rust".into(),
+                    SetupGroup::AlreadyPresent,
+                    "Rust is already on the new machine. Setup uses it.",
+                    None,
+                )
+            } else {
+                item(
+                    "rust".into(),
+                    SetupGroup::AriadneInstalls,
+                    "Install Rust with rustup in the home directory of the user on the new machine.",
+                    None,
+                )
+            },
+            item(
+                "build".into(),
+                SetupGroup::AriadneInstalls,
+                "Build ariadne and ariadned in release mode on the new machine. A build of the same commit that completed is used again.",
+                None,
+            ),
+        ]
     }
 }

@@ -30,7 +30,7 @@ pub(super) fn selection_steps(request: &SetupRequest) -> Vec<String> {
 
 /// Printed by a selection script that installs something. Without it, the
 /// step found its item present and reused it.
-const INSTALLED: &str = "__ARIADNE_INSTALLED__";
+pub(super) const INSTALLED: &str = "__ARIADNE_INSTALLED__";
 
 // Homebrew refuses root. Require a user-owned prefix before any installation.
 // `ensure` prints INSTALLED only when it installs.
@@ -107,7 +107,7 @@ impl Hosts {
         Ok(())
     }
 
-    async fn population_command(
+    pub(super) async fn population_command(
         &self,
         request: &SetupRequest,
         path: &str,
@@ -123,7 +123,7 @@ impl Hosts {
     }
 
     /// Record whether a successful step reused an item that was already present.
-    fn found_present(&self, name: &str, step: &str, present: bool) {
+    pub(super) fn found_present(&self, name: &str, step: &str, present: bool) {
         let mut records = self.0.setup.lock().unwrap();
         let record = records.get_mut(name).unwrap();
         if present {

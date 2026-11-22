@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
+mod build;
 mod inspect;
 mod plan;
 mod populate;
@@ -29,19 +30,54 @@ pub(super) struct Record {
     /// The successful steps that found their item present and installed nothing.
     #[serde(default)]
     present: std::collections::BTreeSet<String>,
+    /// The worker's system package manager, once a source build has looked.
+    #[serde(default)]
+    manager: Option<String>,
 }
 
 fn with_binaries() -> bool {
     true
 }
 
-fn steps(request: &SetupRequest, update: bool, binaries: bool) -> Vec<SetupStep> {
+/// The steps that bring the Ariadne programs to the worker after `validate`:
+/// a copy of finished programs, or a source build on the worker.
+fn program_steps(build: bool) -> &'static [&'static str] {
+    if build {
+        &[
+            "prerequisite:compiler",
+            "prerequisite:curl",
+            "source",
+            "rust",
+            "build",
+        ]
+    } else {
+        &["transfer"]
+    }
+}
+
+fn step(name: String) -> SetupStep {
+    SetupStep {
+        name,
+        complete: false,
+        error: None,
+        title: String::new(),
+        manual: None,
+        group: None,
+    }
+}
+
+fn steps(request: &SetupRequest, update: bool, binaries: bool, build: bool) -> Vec<SetupStep> {
     ["probe"]
         .into_iter()
         .map(String::from)
         .chain((update).then_some("worker-capability".into()))
         .chain(binaries.then_some("validate".into()))
-        .chain(binaries.then_some("transfer".into()))
+        .chain(
+            program_steps(build)
+                .iter()
+                .filter(|_| binaries)
+                .map(|name| name.to_string()),
+        )
         .chain((update && binaries).then_some("replacement-capability".into()))
         .chain(update.then_some("maintenance".into()))
         .chain(binaries.then_some("install".into()))
@@ -59,14 +95,7 @@ fn steps(request: &SetupRequest, update: bool, binaries: bool) -> Vec<SetupStep>
                 .map(String::from),
         )
         .chain(update.then_some("resume".into()))
-        .map(|name| SetupStep {
-            name,
-            complete: false,
-            error: None,
-            title: String::new(),
-            manual: None,
-            group: None,
-        })
+        .map(step)
         .collect()
 }
 
@@ -313,6 +342,7 @@ impl Hosts {
         binaries: bool,
     ) -> Result<SetupDto, String> {
         validate(&worker, &request)?;
+        let build = self.source_build(&request, binaries);
         let name = if update {
             format!("update:{worker}")
         } else {
@@ -360,7 +390,7 @@ impl Hosts {
                 let connection_changed =
                     record.request.ssh != request.ssh || record.request.remote != request.remote;
                 let old_steps = &record.progress.steps;
-                let new_steps = steps(&request, true, binaries)
+                let new_steps = steps(&request, true, binaries, build)
                     .into_iter()
                     .map(|mut step| {
                         let affected = connection_changed
@@ -369,6 +399,11 @@ impl Hosts {
                                     step.name.as_str(),
                                     "validate"
                                         | "transfer"
+                                        | "prerequisite:compiler"
+                                        | "prerequisite:curl"
+                                        | "source"
+                                        | "rust"
+                                        | "build"
                                         | "replacement-capability"
                                         | "install"
                                         | "service"
@@ -400,14 +435,7 @@ impl Hosts {
                     for id in request.repositories.keys() {
                         for name in [format!("clone:{id}"), format!("repository:{id}")] {
                             if !record.progress.steps.iter().any(|s| s.name == name) {
-                                record.progress.steps.push(SetupStep {
-                                    name,
-                                    complete: false,
-                                    error: None,
-                                    title: String::new(),
-                                    manual: None,
-                                    group: None,
-                                });
+                                record.progress.steps.push(step(name));
                             }
                         }
                     }
@@ -437,10 +465,11 @@ impl Hosts {
                     active_step: None,
                     target: None,
                     present: Default::default(),
+                    manager: None,
                     progress: SetupDto {
                         name: worker.clone(),
                         state: SetupState::Pending,
-                        steps: steps(&request, update, binaries),
+                        steps: steps(&request, update, binaries, build),
                     },
                 },
             );
@@ -455,17 +484,43 @@ impl Hosts {
                 .iter()
                 .any(|step| step.name == "prerequisite:git")
         {
-            record.progress.steps.insert(
-                1,
-                SetupStep {
-                    name: "prerequisite:git".into(),
-                    complete: false,
-                    error: None,
-                    title: String::new(),
-                    manual: None,
-                    group: None,
-                },
-            );
+            record
+                .progress
+                .steps
+                .insert(1, step("prerequisite:git".into()));
+        }
+        // A saved operation can name the other way to bring the programs: one
+        // saved before source builds, or one this daemon's build changed.
+        let wanted = program_steps(build);
+        if record.binaries
+            && !wanted
+                .iter()
+                .all(|name| record.progress.steps.iter().any(|s| s.name == *name))
+        {
+            let other = program_steps(!build);
+            record.progress.steps.retain(|s| {
+                !other.contains(&s.name.as_str()) && !wanted.contains(&s.name.as_str())
+            });
+            let at = record
+                .progress
+                .steps
+                .iter()
+                .position(|s| s.name == "validate")
+                .map_or(1, |at| at + 1);
+            for (offset, name) in wanted.iter().enumerate() {
+                record
+                    .progress
+                    .steps
+                    .insert(at + offset, step(name.to_string()));
+            }
+            if let Some(install) = record
+                .progress
+                .steps
+                .iter_mut()
+                .find(|s| s.name == "install")
+            {
+                install.complete = false;
+            }
         }
         record.progress.state = SetupState::Pending;
         for step in &mut record.progress.steps {
@@ -588,6 +643,16 @@ impl Hosts {
         command: &mut Command,
         input: Option<Vec<u8>>,
     ) -> Result<String, String> {
+        self.command_within(command, input, self.0.timeouts.worker_setup_command)
+            .await
+    }
+
+    async fn command_within(
+        &self,
+        command: &mut Command,
+        input: Option<Vec<u8>>,
+        limit: std::time::Duration,
+    ) -> Result<String, String> {
         command
             .kill_on_drop(true)
             .stdin(Stdio::piped())
@@ -617,7 +682,7 @@ impl Hosts {
             }
             String::from_utf8(output.stdout).map_err(|_| "setup returned invalid text".into())
         };
-        timeout(self.0.timeouts.worker_setup_command, run)
+        timeout(limit, run)
             .await
             .map_err(|_| "setup command timed out".to_owned())?
     }
@@ -627,6 +692,17 @@ impl Hosts {
         request: &SetupRequest,
         script: &str,
         input: Option<Vec<u8>>,
+    ) -> Result<String, String> {
+        self.ssh_within(request, script, input, self.0.timeouts.worker_setup_command)
+            .await
+    }
+
+    async fn ssh_within(
+        &self,
+        request: &SetupRequest,
+        script: &str,
+        input: Option<Vec<u8>>,
+        limit: std::time::Duration,
     ) -> Result<String, String> {
         let url = Url::parse(&request.ssh).map_err(|e| e.to_string())?;
         let mut command = Command::new(self.0.cfg.ssh_bin.as_deref().unwrap_or("ssh"));
@@ -650,7 +726,7 @@ impl Hosts {
             format!("{}@{}", url.username(), url.host_str().unwrap())
         });
         command.arg(format!("sh -c {}", quote(script)));
-        self.command(&mut command, input).await
+        self.command_within(&mut command, input, limit).await
     }
 
     async fn run_setup(&self, name: &str, request: &SetupRequest) -> Result<(), String> {
@@ -739,7 +815,25 @@ fi
             .iter()
             .any(|s| s.name == "install" && s.complete);
         let stage = format!("{home}/.ariadne/worker-setup-{name}");
-        if binaries {
+        if self.source_build(request, binaries) {
+            // Refuse before any transfer when this machine cannot pack the commit.
+            self.begin(name, "validate")?;
+            self.0.cfg.build.check_source().await?;
+            self.checkpoint(name, "validate")?;
+            if !installed {
+                if !self
+                    .build_prerequisites(name, request, lines[0], &service_path)
+                    .await?
+                {
+                    self.populate(name, request, &service_path).await?;
+                    let mut records = self.0.setup.lock().unwrap();
+                    records.get_mut(name).unwrap().progress.state = SetupState::Incomplete;
+                    return save(&self.0.cfg.root, &records);
+                }
+                self.build_programs(name, request, &service_path, &stage)
+                    .await?;
+            }
+        } else if binaries {
             self.begin(name, "validate")?;
             let selected = async {
                 let source = self.binaries(name, request, target).await?;
@@ -757,12 +851,6 @@ fi
             .await;
             let (cli, daemon) = match selected {
                 Ok(selected) => selected,
-                Err(error)
-                    if matches!(request.source, BinarySource::Daemon)
-                        && crate::build::BUILD.repository.is_none() =>
-                {
-                    return Err(error);
-                }
                 Err(error) if !update => {
                     self.population_result(name, "validate", Err(error))?;
                     self.populate(name, request, &service_path).await?;
@@ -788,17 +876,17 @@ fi
                     .await?;
                 }
                 self.checkpoint(name, "transfer")?;
-                if update {
-                    self.begin(name, "replacement-capability")?;
-                    let protocol = self.ssh(request, &format!(
-                        "set -eu; chmod 755 {stage}/ariadne {stage}/ariadned; {stage}/ariadne daemon maintenance --help >/dev/null; {stage}/ariadned --maintenance-protocol",
-                        stage=quote(&stage)), None).await.map_err(|_| "replacement lacks maintenance support; select a supported release or compatible local binaries".to_owned())?;
-                    if protocol.trim() != "1" {
-                        return Err("replacement maintenance protocol is unsupported; worker binaries were preserved".into());
-                    }
-                    self.checkpoint(name, "replacement-capability")?;
-                }
             }
+        }
+        if update && binaries && !installed {
+            self.begin(name, "replacement-capability")?;
+            let protocol = self.ssh(request, &format!(
+                "set -eu; chmod 755 {stage}/ariadne {stage}/ariadned; {stage}/ariadne daemon maintenance --help >/dev/null; {stage}/ariadned --maintenance-protocol",
+                stage=quote(&stage)), None).await.map_err(|_| "replacement lacks maintenance support; select a supported release or compatible local binaries".to_owned())?;
+            if protocol.trim() != "1" {
+                return Err("replacement maintenance protocol is unsupported; worker binaries were preserved".into());
+            }
+            self.checkpoint(name, "replacement-capability")?;
         }
         if update {
             self.begin(name, "maintenance")?;
@@ -898,12 +986,16 @@ fi
         request: &SetupRequest,
         target: &str,
     ) -> Result<(PathBuf, PathBuf), String> {
-        let source = match &request.source {
-            BinarySource::Daemon => crate::build::BUILD.source()?,
-            source => source.clone(),
+        let build = &self.0.cfg.build;
+        let source = match (&request.source, &build.repository, build.tag()) {
+            (BinarySource::Daemon, Some(repository), Some(tag)) => BinarySource::Release {
+                repository: repository.clone(),
+                tag,
+            },
+            (source, ..) => source.clone(),
         };
         match &source {
-            BinarySource::Daemon => unreachable!("resolved daemon source"),
+            BinarySource::Daemon => unreachable!("a source build builds on the worker"),
             BinarySource::Local { cli, daemon } => Ok((cli.into(), daemon.into())),
             BinarySource::Release { repository, tag } => {
                 let dir = self.0.cfg.root.join("worker-downloads").join(name);

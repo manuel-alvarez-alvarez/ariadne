@@ -271,7 +271,7 @@ picker, the Hosts screen and one stream per host — is spec
 46. A request contains `ssh`, optional absolute socket `remote`, and optional `source`.
     An omitted source defaults to `{ "kind": "daemon" }`, the version of the settings daemon.
     A release daemon resolves this kind to its recorded repository and its own version tag.
-    A source daemon refuses this kind before transfer and names the explicit `local` and `release` sources.
+    A source daemon builds its recorded commit on the worker, as rule 46a states.
     Inspection includes `binaries: {method, version, tag, commit, uncommitted}` for the inspected machine.
     The method is `release` or `source_build`; tag and commit can be null.
     Review has one Ariadne programs item that names the method and version.
@@ -283,6 +283,34 @@ picker, the Hosts screen and one stream per host — is spec
     A release source contains `kind: release`, `repository`, and an explicit `tag`.
     Optional `tools` selects shipped registry agent IDs and GitHub tooling.
     Optional `credentials` contains source references only. Repository installation remains outside this operation.
+46a. A source build packs its build commit with `git archive` from the recorded checkout on this machine.
+    It sends the archive through SSH stdin to `~/.ariadne/worker-source` on the worker.
+    Uncommitted edits and untracked files are never sent. No Git remote is cloned on the worker.
+    Setup and update refuse in `validate`, before any transfer, when the checkout or the commit is missing.
+    The reason names the missing checkout or commit. Its manual action carries that reason.
+    When the daemon's build had uncommitted edits, review says that the worker gets the commit only.
+    The steps after `validate` are `prerequisite:compiler`, `prerequisite:curl`, `source`, `rust`, and `build`.
+    They replace `transfer`. Each step has a title.
+    `prerequisite:compiler` compiles and links a small C program with `cc` and the standard C headers.
+    The program uses a temporary directory, which the check removes. On macOS it also needs the Xcode developer directory.
+    A missing compiler, linker, C library headers, or startup files make this check fail.
+    `prerequisite:curl` needs `curl`, a `rustup`, or a Cargo that runs.
+    A missing prerequisite is manual work. Setup records it, continues its independent selections, and stays `incomplete`.
+    Resume checks the prerequisite again and continues. Setup runs no administrator command.
+    The manual command is `xcode-select --install` on macOS.
+    On Linux it uses the first of `apt-get`, `dnf`, `yum`, `zypper`, `pacman`, and `apk` on the worker, else null.
+    The Linux compiler packages include the C library headers: `build-essential`, `gcc glibc-devel`, `base-devel`, or `build-base`.
+    Inspection, the prerequisite check, and `rust` treat Cargo as present only when `cargo --version` succeeds.
+    They use the build PATH, with `~/.cargo/bin` first.
+    `rust` reuses a Cargo that runs. A `rustup` without a toolchain installs and selects the stable toolchain.
+    Otherwise, `rust` runs the rustup installer with `-y --no-modify-path --profile minimal` in the user's home.
+    `build` runs `cargo build --release --locked --bin ariadne --bin ariadned` in the source.
+    `CARGO_TARGET_DIR` is `~/.ariadne/worker-build`, and `ARIADNE_SOURCE_COMMIT` names the commit.
+    The build writes its output to `build.log` in that directory.
+    A completed build of the same commit is reused on retry, and is not built again.
+    `install` installs the built programs as it installs transferred programs.
+    `Timeouts::worker_source_build` bounds the source transfer, the Rust installation, and the build.
+    The worker needs network access to crates.io, and to rustup when Rust is missing.
 47. Setup probes the remote OS, architecture, and home before transfer.
     macOS and Linux support ARM64 and x86_64.
     Both local binaries must have matching executable headers before either transfers.
@@ -304,6 +332,7 @@ picker, the Hosts screen and one stream per host — is spec
     An existing custom socket must be supplied through `remote`.
 49. Progress states are `pending`, `running`, `incomplete`, `failed`, and `complete`.
     Base steps are probe, validate, transfer, install, service, health, and register.
+    A source build replaces transfer with the steps of rule 46a.
     Selected tools, credential transfers, and authentication checks have individual results.
     Failure retains completed steps and records the failing step's error.
     No successful step means `failed`; otherwise failure means `incomplete`.
@@ -432,6 +461,7 @@ picker, the Hosts screen and one stream per host — is spec
     Removed tool steps disappear. New tool steps start incomplete.
     A new request after completion starts another update.
 71. Updates reuse binary compatibility checks, release verification, installation, service restart, and health checks from setup.
+    An explicit `daemon` source on a source daemon uses the build of rule 46a, before maintenance.
     Before installation, the worker closes admission and waits for admitted tasks and active sessions.
     New tasks stay queued. Existing tasks can finish every column.
     GET /v1/maintenance reports the explicit hold and drain status.
@@ -522,8 +552,11 @@ picker, the Hosts screen and one stream per host — is spec
 85. `InspectionDto.sign_ins` lists `codex`, `github`, `claude`, `opencode`, and `ssh` with `name`, `copy_supported`, and `command`.
     Only `codex` and `github` support copying (rule 54). `command` signs in on the worker, or is null for `ssh`.
 86. `SetupReviewDto.plan` has one `{id, title, group, detail, manual}` item for each thing that the request causes.
-    The order is the setup order: `install`, Git, GitHub CLI, agents, credentials, authentication checks,
-    repositories, `service`, and `register`. Each `id` is the name of the progress step that does the item.
+    The order is the setup order: `install`, the source build items, Git, GitHub CLI, agents, credentials,
+    authentication checks, repositories, `service`, and `register`. Each `id` is the name of the progress step that does the item.
+    The source build items are `prerequisite:compiler`, `prerequisite:curl`, `source`, `rust`, and `build` (rule 46a).
+    Rust is `already_present` when the worker has `cargo`, else `ariadne_installs`.
+    A missing compiler, linker, or curl is `manual`, with the command of rule 46a.
     Git is `prerequisite:git` without tool selections and `tool:git` with them.
     `manual` is set exactly for items in the `manual` group.
 87. `SetupStep.title` is a plain-words title for every step. `SetupStep.manual` is set when a failed step needs manual work.
@@ -540,10 +573,19 @@ picker, the Hosts screen and one stream per host — is spec
 
 ## Acceptance criteria
 
-- Rule 46: `hosts.rs::daemon_version_uses_the_recorded_release_or_refuses_a_source_build` proves SSH-only review and setup.
-  Source builds refuse transfer. Release builds verify their own repository and version tag before installation.
+- Rule 46: `hosts.rs::daemon_version_installs_the_recorded_release_of_a_release_daemon` proves SSH-only review and setup.
+  Release builds verify their own repository and version tag before installation.
   `hosts.rs::release_setup_requires_workflow_and_tag_verification_before_transfer` preserves explicit release checks.
   `hosts.rs::tools_only_updates_preserve_worker_binaries` proves that omitted update sources preserve programs.
+- Rule 46a: `hosts.rs::a_source_build_daemon_builds_its_commit_on_the_new_machine` proves the packed commit,
+  the plan groups, rustup in the home, the release build, the titled steps, and no administrator command.
+  `hosts.rs::a_source_build_is_refused_before_transfer_without_its_checkout_or_commit` proves both refusals.
+  `hosts.rs::a_missing_compiler_is_manual_and_a_retry_does_not_build_the_same_commit_again` proves
+  the manual compiler, the `incomplete` state, the resume, and the reused build.
+  `hosts.rs::an_update_from_a_source_build_daemon_builds_before_it_holds_maintenance` proves rule 71's build path.
+  `hosts.rs::a_compiler_that_cannot_build_with_the_c_headers_is_a_manual_item` proves the compile and link check.
+  `hosts.rs::an_unusable_cargo_without_curl_needs_curl_and_a_resume_installs_rust` proves the Cargo check,
+  the manual curl item, and the resume.
 
 
 - Rules 79 and 80: hosts.rs::saved_setups_are_listed_without_credentials_and_only_a_stopped_one_is_discarded proves the list, the refusals, the untouched worker and the fresh restart.

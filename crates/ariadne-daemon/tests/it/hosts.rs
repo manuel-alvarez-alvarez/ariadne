@@ -850,12 +850,8 @@ async fn release_setup_requires_workflow_and_tag_verification_before_transfer() 
 }
 
 #[tokio::test]
-async fn daemon_version_uses_the_recorded_release_or_refuses_a_source_build() {
-    if option_env!("ARIADNE_RELEASE_REPOSITORY").is_some_and(|s| !s.is_empty()) {
-        verify_release_setup(true).await;
-    } else {
-        daemon_source_is_default_and_source_builds_refuse_before_transfer().await;
-    }
+async fn daemon_version_installs_the_recorded_release_of_a_release_daemon() {
+    verify_release_setup(true).await;
 }
 
 async fn verify_release_setup(daemon: bool) {
@@ -870,7 +866,18 @@ async fn verify_release_setup(daemon: bool) {
     let ssh = common::ssh::stub_ssh(
         json!({"setup":{"home":remote.path(), "maintenance_fixture":true}, "exit":0}),
     );
-    let h = harness().ssh(&ssh).forge_cli(&gh).await;
+    let builder = harness().ssh(&ssh).forge_cli(&gh);
+    let h = if daemon {
+        builder.daemon_build(ariadne_daemon::build::Build {
+            repository: Some("acme/ariadne".into()),
+            checkout: "/no-release-checkout".into(),
+            commit: "0".repeat(40),
+            uncommitted: false,
+        })
+    } else {
+        builder
+    }
+    .await;
     let downloads = h.launcher.cfg.root.join("worker-downloads/released");
     std::fs::create_dir_all(&downloads).unwrap();
     let source = tempfile::tempdir().unwrap();
@@ -892,11 +899,7 @@ async fn verify_release_setup(daemon: bool) {
             .unwrap()
             .success()
     );
-    let repository = if daemon {
-        env!("ARIADNE_RELEASE_REPOSITORY")
-    } else {
-        "acme/ariadne"
-    };
+    let repository = "acme/ariadne";
     let tag = if daemon {
         format!("v{}", env!("CARGO_PKG_VERSION"))
     } else {
@@ -2747,11 +2750,159 @@ async fn saved_setups_are_listed_without_credentials_and_only_a_stopped_one_is_d
     );
 }
 
-async fn daemon_source_is_default_and_source_builds_refuse_before_transfer() {
+/// A daemon that is a source build: a checkout of a commit, with an
+/// uncommitted edit and an untracked file, and a worker whose PATH has the
+/// programs setup runs. Stand-ins answer for the C compiler, the linker,
+/// curl, rustup and cargo, so nothing is downloaded or built.
+struct SourceBuild {
+    remote: tempfile::TempDir,
+    bin: std::path::PathBuf,
+    /// A stand-in curl that answers with a stand-in rustup installer.
+    installer: std::path::PathBuf,
+    build: ariadne_daemon::build::Build,
+    _checkout: tempfile::TempDir,
+}
+
+impl SourceBuild {
+    async fn new(compiler: bool, curl: bool) -> Self {
+        let checkout_dir = tempfile::tempdir().unwrap();
+        let checkout = common::git_repo_copy(checkout_dir.path(), "checkout").await;
+        let head = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&checkout)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let commit = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+        std::fs::write(checkout.join("file.txt"), "uncommitted edit\n").unwrap();
+        std::fs::write(checkout.join("untracked.txt"), "untracked\n").unwrap();
+        let remote = tempfile::tempdir().unwrap();
+        let bin = remote.path().join("worker-bin");
+        std::fs::create_dir(&bin).unwrap();
+        for tool in [
+            "sh", "mkdir", "cat", "chmod", "mv", "rmdir", "id", "rm", "cp", "ln", "mktemp", "tar",
+            "gzip", "git",
+        ] {
+            let source = ["/bin", "/usr/bin"]
+                .into_iter()
+                .map(|dir| std::path::Path::new(dir).join(tool))
+                .find(|path| path.exists())
+                .unwrap();
+            std::os::unix::fs::symlink(source, bin.join(tool)).unwrap();
+        }
+        // The stand-in builds each program from the file.txt of the source it runs in.
+        let cargo = common::shared_script(
+            r#"#!/bin/sh
+case $1 in --version) echo 'cargo 1.0.0'; exit 0;; esac
+printf '%s %s\n' "$ARIADNE_SOURCE_COMMIT" "$*" >> "$HOME/cargo-runs"
+mkdir -p "$CARGO_TARGET_DIR/release"
+for program in ariadne ariadned; do
+    cp file.txt "$CARGO_TARGET_DIR/release/$program"
+    chmod 755 "$CARGO_TARGET_DIR/release/$program"
+done
+"#,
+        );
+        let installer = common::shared_script(&format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" > "$HOME/curl-args"
+cat <<'INSTALLER'
+printf '%s\n' "$*" > "$HOME/rustup-args"
+mkdir -p "$HOME/.cargo/bin"
+ln -s '{}' "$HOME/.cargo/bin/cargo"
+INSTALLER
+"#,
+            cargo.display()
+        ));
+        let administrator =
+            common::shared_script("#!/bin/sh\n: > \"$HOME/administrator-command\"\nexit 1\n");
+        for tool in ["sudo", "apt-get"] {
+            std::os::unix::fs::symlink(&administrator, bin.join(tool)).unwrap();
+        }
+        let source = Self {
+            remote,
+            bin,
+            installer,
+            build: ariadne_daemon::build::Build {
+                repository: None,
+                checkout: checkout.display().to_string(),
+                commit,
+                uncommitted: true,
+            },
+            _checkout: checkout_dir,
+        };
+        if compiler {
+            source.add_compiler();
+        }
+        if curl {
+            source.add_curl();
+        }
+        source
+    }
+
+    fn add_curl(&self) {
+        std::os::unix::fs::symlink(&self.installer, self.bin.join("curl")).unwrap();
+    }
+
+    fn add_compiler(&self) {
+        let present = common::shared_script("#!/bin/sh\nexit 0\n");
+        for tool in ["cc", "ld"] {
+            std::os::unix::fs::symlink(&present, self.bin.join(tool)).unwrap();
+        }
+    }
+
+    fn ssh(&self, mut setup: serde_json::Value) -> common::ssh::StubSsh {
+        setup["home"] = serde_json::json!(self.remote.path());
+        setup["path"] = serde_json::json!(self.bin);
+        setup["inherited_path"] = serde_json::json!(self.bin);
+        common::ssh::stub_ssh(serde_json::json!({"setup":setup,"exit":0}))
+    }
+
+    fn cargo_runs(&self) -> Vec<String> {
+        std::fs::read_to_string(self.remote.path().join("cargo-runs"))
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
+    /// Each worker command, and that none of them runs an administrator command.
+    fn commands(&self, ssh: &common::ssh::StubSsh) -> Vec<String> {
+        assert!(!self.remote.path().join("administrator-command").exists());
+        let commands: Vec<String> = ssh
+            .runs()
+            .iter()
+            .map(|run| run.args.last().unwrap().clone())
+            .collect();
+        assert!(commands.iter().all(|c| !c.contains("sudo")));
+        commands
+    }
+}
+
+async fn setup_ends(h: &common::Harness, name: &str) -> serde_json::Value {
+    let path = format!("/v1/hosts/{name}/setup");
+    common::eventually(common::TIMEOUT, "setup ends", || async {
+        let state: serde_json::Value = h.get(&path).await;
+        !matches!(state["state"].as_str(), Some("pending" | "running"))
+    })
+    .await;
+    h.get(&path).await
+}
+
+fn step_of<'v>(state: &'v serde_json::Value, name: &str) -> &'v serde_json::Value {
+    state["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == name)
+        .unwrap_or_else(|| panic!("no step {name} in {state}"))
+}
+
+#[tokio::test]
+async fn a_source_build_daemon_builds_its_commit_on_the_new_machine() {
     use serde_json::{Value, json};
-    let remote = tempfile::tempdir().unwrap();
-    let ssh = common::ssh::stub_ssh(json!({"setup":{"home":remote.path()},"exit":0}));
-    let h = harness().ssh(&ssh).await;
+    let source = SourceBuild::new(true, true).await;
+    let ssh = source.ssh(json!({}));
+    let h = harness().ssh(&ssh).daemon_build(source.build.clone()).await;
     let request = json!({"ssh":"ssh://worker@box"});
     let review: Value = h
         .json(
@@ -2759,81 +2910,370 @@ async fn daemon_source_is_default_and_source_builds_refuse_before_transfer() {
             axum::http::StatusCode::OK,
         )
         .await;
-    assert_eq!(review["inspection"]["binaries"]["method"], "source_build");
-    assert_eq!(
-        review["inspection"]["binaries"]["version"],
-        env!("CARGO_PKG_VERSION")
-    );
-    assert!(
-        review["inspection"]["binaries"]["commit"]
-            .as_str()
-            .is_some_and(|s| s.len() == 40)
-    );
-    assert!(review["inspection"]["binaries"]["uncommitted"].is_boolean());
-    assert_eq!(review["inspection"]["binaries"]["tag"], Value::Null);
+    let binaries = &review["inspection"]["binaries"];
+    assert_eq!(binaries["method"], "source_build");
+    assert_eq!(binaries["commit"], source.build.commit.as_str());
+    assert_eq!(binaries["uncommitted"], true);
     let install = group_of(&review["plan"], "install");
-    assert!(
-        install["detail"]
-            .as_str()
-            .unwrap()
-            .contains(env!("CARGO_PKG_VERSION"))
-    );
-    assert!(install["detail"].as_str().unwrap().contains("source build"));
+    assert_eq!(install["group"], "ariadne_installs", "{install}");
+    let detail = install["detail"].as_str().unwrap();
+    assert!(detail.contains(&source.build.commit), "{detail}");
+    assert!(detail.contains("commit only"), "{detail}");
+    for (id, group) in [
+        ("prerequisite:compiler", "already_present"),
+        ("prerequisite:curl", "already_present"),
+        ("source", "ariadne_installs"),
+        ("rust", "ariadne_installs"),
+        ("build", "ariadne_installs"),
+    ] {
+        assert_eq!(group_of(&review["plan"], id)["group"], group, "{id}");
+    }
     let _: Value = h
         .json(
             common::post_json("/v1/hosts/builder/setup", request),
             axum::http::StatusCode::ACCEPTED,
         )
         .await;
-    common::eventually(common::TIMEOUT, "source build refusal", || async {
-        let status: Value = h.get("/v1/hosts/builder/setup").await;
-        status["steps"].as_array().unwrap().iter().any(|step| {
-            step["name"] == "validate"
-                && step["error"]
-                    .as_str()
-                    .is_some_and(|e| e.contains("local") && e.contains("release"))
-        })
-    })
-    .await;
-    assert!(!remote.path().join(".local/bin/ariadne").exists());
-    let credential = h.launcher.cfg.native_home.join(".codex/auth.json");
-    std::fs::create_dir_all(credential.parent().unwrap()).unwrap();
-    std::fs::write(credential, r#"{"token":"source-build-secret"}"#).unwrap();
+    let state = setup_ends(&h, "builder").await;
+    assert_eq!(state["state"], "complete", "{state}");
+    for (name, title) in [
+        ("source", "Copy the Ariadne source"),
+        ("rust", "Install Rust"),
+        ("build", "Build the Ariadne programs"),
+    ] {
+        let step = step_of(&state, name);
+        assert_eq!(step["title"], title);
+        assert_eq!(step["complete"], true);
+        assert_eq!(step["group"], "ariadne_installs");
+    }
+    let remote = source.remote.path();
+    // The programs come from the commit, without the uncommitted edit or the untracked file.
+    for program in ["ariadne", "ariadned"] {
+        assert_eq!(
+            std::fs::read_to_string(remote.join(".local/bin").join(program)).unwrap(),
+            "v1\n"
+        );
+    }
+    assert!(remote.join(".ariadne/worker-source/file.txt").exists());
+    assert!(!remote.join(".ariadne/worker-source/untracked.txt").exists());
+    assert_eq!(
+        source.cargo_runs(),
+        [format!(
+            "{} build --release --locked --bin ariadne --bin ariadned",
+            source.build.commit
+        )]
+    );
+    // Rust came from rustup, in the user's home, without a change to the shell profile.
+    assert!(remote.join(".cargo/bin/cargo").exists());
+    let rustup = std::fs::read_to_string(remote.join("rustup-args")).unwrap();
+    assert!(rustup.contains("-y") && rustup.contains("--no-modify-path"));
+    assert!(
+        std::fs::read_to_string(remote.join("curl-args"))
+            .unwrap()
+            .contains("https://sh.rustup.rs")
+    );
+    source.commands(&ssh);
+    let hosts: Vec<HostDto> = h.get("/v1/hosts").await;
+    assert!(hosts.iter().any(|h| h.name == "builder"));
+    let review: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/other/setup/review",
+                json!({"ssh":"ssh://worker@box"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        group_of(&review["plan"], "rust")["group"],
+        "already_present"
+    );
+}
+
+#[tokio::test]
+async fn a_source_build_is_refused_before_transfer_without_its_checkout_or_commit() {
+    use serde_json::{Value, json};
+    let source = SourceBuild::new(true, true).await;
+    let missing_checkout = ariadne_daemon::build::Build {
+        checkout: "/no/such/ariadne-checkout".into(),
+        ..source.build.clone()
+    };
+    let missing_commit = ariadne_daemon::build::Build {
+        commit: "f".repeat(40),
+        ..source.build.clone()
+    };
+    for (build, missing) in [
+        (missing_checkout, "/no/such/ariadne-checkout".to_owned()),
+        (missing_commit, "f".repeat(40)),
+    ] {
+        let ssh = source.ssh(json!({}));
+        let h = harness().ssh(&ssh).daemon_build(build).await;
+        let request = json!({"ssh":"ssh://worker@box", "credentials":["codex"]});
+        let credential = h.launcher.cfg.native_home.join(".codex/auth.json");
+        std::fs::create_dir_all(credential.parent().unwrap()).unwrap();
+        std::fs::write(credential, r#"{"token":"source-build-secret"}"#).unwrap();
+        let review: Value = h
+            .json(
+                common::post_json("/v1/hosts/builder/setup/review", request.clone()),
+                axum::http::StatusCode::OK,
+            )
+            .await;
+        let install = group_of(&review["plan"], "install");
+        assert_eq!(install["group"], "manual", "{install}");
+        assert!(
+            install["manual"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains(&missing)
+        );
+        let _: Value = h
+            .json(
+                common::post_json("/v1/hosts/builder/setup", request),
+                axum::http::StatusCode::ACCEPTED,
+            )
+            .await;
+        let state = setup_ends(&h, "builder").await;
+        let validate = step_of(&state, "validate");
+        let error = validate["error"].as_str().unwrap();
+        assert!(
+            error.contains(&missing) && error.contains("missing"),
+            "{error}"
+        );
+        assert_eq!(validate["manual"]["reason"], error);
+        assert_eq!(validate["group"], "manual");
+        assert!(
+            source
+                .commands(&ssh)
+                .iter()
+                .all(|c| !c.contains("tar -xzf"))
+        );
+        assert!(!source.remote.path().join(".ariadne/worker-source").exists());
+        assert!(!source.remote.path().join(".codex/auth.json").exists());
+        assert!(source.cargo_runs().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_missing_compiler_is_manual_and_a_retry_does_not_build_the_same_commit_again() {
+    use serde_json::{Value, json};
+    let source = SourceBuild::new(false, true).await;
+    let ssh = source.ssh(json!({}));
+    let h = harness().ssh(&ssh).daemon_build(source.build.clone()).await;
+    let request = json!({"ssh":"ssh://worker@box"});
+    let review: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup/review", request.clone()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let compiler = group_of(&review["plan"], "prerequisite:compiler");
+    assert_eq!(compiler["group"], "manual", "{compiler}");
+    assert_eq!(
+        compiler["manual"]["command"],
+        "sudo apt-get install -y build-essential"
+    );
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    let state = setup_ends(&h, "builder").await;
+    assert_eq!(state["state"], "incomplete", "{state}");
+    let step = step_of(&state, "prerequisite:compiler");
+    assert_eq!(step["group"], "manual");
+    assert_eq!(step["manual"], compiler["manual"]);
+    assert_eq!(step_of(&state, "source")["complete"], false);
+    assert!(source.cargo_runs().is_empty());
+    // The compiler arrives, and the first retry fails after the build, at the installation.
+    source.add_compiler();
+    let local = source.remote.path().join(".local");
+    std::fs::write(&local, "").unwrap();
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup/resume", json!({})),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    let state = setup_ends(&h, "builder").await;
+    assert_eq!(state["state"], "incomplete", "{state}");
+    assert_eq!(step_of(&state, "prerequisite:compiler")["complete"], true);
+    assert_eq!(step_of(&state, "build")["complete"], true);
+    assert!(step_of(&state, "install")["error"].is_string(), "{state}");
+    assert_eq!(source.cargo_runs().len(), 1);
+    std::fs::remove_file(&local).unwrap();
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup/resume", json!({})),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    let state = setup_ends(&h, "builder").await;
+    assert_eq!(state["state"], "complete", "{state}");
+    assert_eq!(source.cargo_runs().len(), 1);
+    assert_eq!(step_of(&state, "build")["group"], "already_present");
+    assert_eq!(
+        source
+            .commands(&ssh)
+            .iter()
+            .filter(|c| c.contains("tar -xzf"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(source.remote.path().join(".local/bin/ariadned")).unwrap(),
+        "v1\n"
+    );
+}
+
+#[tokio::test]
+async fn an_update_from_a_source_build_daemon_builds_before_it_holds_maintenance() {
+    use serde_json::{Value, json};
+    let source = SourceBuild::new(true, true).await;
+    std::fs::write(source.remote.path().join("idle"), "").unwrap();
+    let ssh = source.ssh(json!({"maintenance_fixture":true}));
+    let h = harness().ssh(&ssh).daemon_build(source.build.clone()).await;
     let _: Value = h
         .json(
             common::post_json(
-                "/v1/hosts/credentials/setup",
-                json!({"ssh":"ssh://worker@box", "credentials":["codex"]}),
+                "/v1/hosts",
+                json!({"name":"builder","endpoint":"ssh://saved@box:2222"}),
+            ),
+            axum::http::StatusCode::CREATED,
+        )
+        .await;
+    let _: Value = h
+        .json(
+            common::post_json(
+                "/v1/hosts/builder/update",
+                json!({"source":{"kind":"daemon"}}),
             ),
             axum::http::StatusCode::ACCEPTED,
         )
         .await;
-    common::eventually(common::TIMEOUT, "credential setup stops", || async {
-        h.get::<Value>("/v1/hosts/credentials/setup").await["state"] == "incomplete"
+    common::eventually(common::TIMEOUT, "update ends", || async {
+        let state: Value = h.get("/v1/hosts/builder/update").await;
+        !matches!(state["state"].as_str(), Some("pending" | "running"))
     })
     .await;
-    assert!(!remote.path().join(".codex/auth.json").exists());
-    assert!(
-        ssh.runs()
-            .iter()
-            .all(|run| !run.args.last().unwrap().contains("cat >"))
+    let state: Value = h.get("/v1/hosts/builder/update").await;
+    assert_eq!(state["state"], "complete", "{state}");
+    let names: Vec<&str> = state["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    let at = |name: &str| names.iter().position(|n| *n == name).unwrap();
+    assert!(at("validate") < at("source") && at("source") < at("rust"));
+    assert!(at("rust") < at("build") && at("build") < at("replacement-capability"));
+    assert!(at("replacement-capability") < at("maintenance") && at("maintenance") < at("install"));
+    assert!(!names.contains(&"transfer"));
+    assert!(source.remote.path().join("maintenance-held").exists());
+    assert!(source.remote.path().join("maintenance-resumed").exists());
+    assert_eq!(source.cargo_runs().len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(source.remote.path().join(".local/bin/ariadned")).unwrap(),
+        "v1\n"
     );
-    let f = UpdateFixture::new(json!({})).await;
-    f.start(json!({"source":{"kind":"daemon"}})).await;
-    common::eventually(common::TIMEOUT, "source update refusal", || async {
-        let status: Value = f.h.get("/v1/hosts/builder/update").await;
-        status["steps"].as_array().unwrap().iter().any(|step| {
-            step["name"] == "validate"
-                && step["error"]
-                    .as_str()
-                    .is_some_and(|e| e.contains("local") && e.contains("release"))
-        })
-    })
-    .await;
-    assert!(
-        f._ssh
-            .runs()
-            .iter()
-            .all(|run| !run.args.last().unwrap().contains("cat >"))
+    source.commands(&ssh);
+}
+
+#[tokio::test]
+async fn a_compiler_that_cannot_build_with_the_c_headers_is_a_manual_item() {
+    use serde_json::{Value, json};
+    let source = SourceBuild::new(false, true).await;
+    // cc and ld answer for their versions, but no C program compiles or links.
+    let headless = common::shared_script("#!/bin/sh\n[ \"$1\" = --version ] || [ \"$1\" = -v ]\n");
+    for tool in ["cc", "ld"] {
+        std::os::unix::fs::symlink(&headless, source.bin.join(tool)).unwrap();
+    }
+    let ssh = source.ssh(json!({}));
+    let h = harness().ssh(&ssh).daemon_build(source.build.clone()).await;
+    let request = json!({"ssh":"ssh://worker@box"});
+    let review: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup/review", request.clone()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let compiler = group_of(&review["plan"], "prerequisite:compiler");
+    assert_eq!(compiler["group"], "manual", "{compiler}");
+    assert_eq!(
+        compiler["manual"]["command"],
+        "sudo apt-get install -y build-essential"
     );
+    assert!(
+        compiler["manual"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("C library headers")
+    );
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    let state = setup_ends(&h, "builder").await;
+    assert_eq!(state["state"], "incomplete", "{state}");
+    assert_eq!(
+        step_of(&state, "prerequisite:compiler")["manual"],
+        compiler["manual"]
+    );
+    assert!(source.cargo_runs().is_empty());
+    source.commands(&ssh);
+}
+
+#[tokio::test]
+async fn an_unusable_cargo_without_curl_needs_curl_and_a_resume_installs_rust() {
+    use serde_json::{Value, json};
+    let source = SourceBuild::new(true, false).await;
+    // A rustup shim without a toolchain: cargo is on the PATH, but does not run.
+    std::os::unix::fs::symlink(
+        common::shared_script("#!/bin/sh\nexit 1\n"),
+        source.bin.join("cargo"),
+    )
+    .unwrap();
+    let ssh = source.ssh(json!({}));
+    let h = harness().ssh(&ssh).daemon_build(source.build.clone()).await;
+    let request = json!({"ssh":"ssh://worker@box"});
+    let review: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup/review", request.clone()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        group_of(&review["plan"], "rust")["group"],
+        "ariadne_installs"
+    );
+    let curl = group_of(&review["plan"], "prerequisite:curl");
+    assert_eq!(curl["group"], "manual", "{curl}");
+    assert_eq!(curl["manual"]["command"], "sudo apt-get install -y curl");
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup", request),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    let state = setup_ends(&h, "builder").await;
+    assert_eq!(state["state"], "incomplete", "{state}");
+    assert_eq!(
+        step_of(&state, "prerequisite:curl")["manual"],
+        curl["manual"]
+    );
+    assert_eq!(step_of(&state, "rust")["complete"], false);
+    source.add_curl();
+    let _: Value = h
+        .json(
+            common::post_json("/v1/hosts/builder/setup/resume", json!({})),
+            axum::http::StatusCode::ACCEPTED,
+        )
+        .await;
+    let state = setup_ends(&h, "builder").await;
+    assert_eq!(state["state"], "complete", "{state}");
+    assert!(source.remote.path().join(".cargo/bin/cargo").exists());
+    assert_eq!(source.cargo_runs().len(), 1);
+    source.commands(&ssh);
 }

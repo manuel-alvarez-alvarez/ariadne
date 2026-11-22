@@ -92,6 +92,10 @@ pub struct Config {
     /// The whole hardware probe, in place of the real machine. Set by the
     /// test harness alone, for the same reason.
     pub ai_permissions_hardware: Option<HardwareOverride>,
+    /// How this daemon was built, as Cargo recorded it. Worker setup installs
+    /// this daemon's version from it (037, rule 46). The test harness alone
+    /// replaces it: it is not a key of `config.toml`.
+    pub build: crate::build::Build,
 }
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
@@ -178,6 +182,7 @@ impl Config {
             ai_permissions_serve_command: None,
             ai_permissions_endpoint: None,
             ai_permissions_hardware: None,
+            build: crate::build::Build::recorded(),
             root,
         };
 

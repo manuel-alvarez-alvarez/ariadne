@@ -851,6 +851,7 @@ A binary-only request leaves agent programs in place:
 ```
 
 This selects the settings daemon’s own version.
+A source daemon builds its commit on the worker before maintenance starts, as setup does.
 Omitting `source` updates no Ariadne programs.
 Combine both sections to update binaries and tools together.
 The source also accepts an explicit verified release, as described under [worker setup](#install-an-ssh-worker).
@@ -864,7 +865,8 @@ The current worker and selected replacements must support maintenance.
 Ariadne checks the current worker before transfer.
 It checks staged replacements before changing installed binaries.
 Unsupported versions produce guidance and preserve installed worker binaries.
-Updates use Ariadne's own CLI and do not require curl.
+Updates use Ariadne's own CLI for maintenance requests.
+Only a source build on a worker without Rust needs curl.
 
 Maintenance prevents new task starts and lets running tasks finish.
 The operation then changes selected programs, restarts the service, and checks health.
@@ -926,9 +928,24 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
    You can also use a request that contains only `ssh`.
    Omission of `source` selects `{"kind":"daemon"}`.
    A release daemon downloads and verifies its own version for the worker’s platform.
-   A source daemon refuses this selection before transfer.
-   Select an explicit `local` or `release` source when the daemon runs a source build.
+   A source daemon builds its own commit on the worker:
+
+   - It packs the commit from the checkout that built it, and sends it through SSH.
+   - The worker gets the commit only. Uncommitted edits and untracked files stay on this machine.
+   - Setup refuses before any transfer when the checkout or the commit is missing on this machine.
+   - The worker needs a C compiler, a linker, the C library headers, and network access to crates.io.
+     Setup compiles and links a small C program to check them.
+   - When the worker has no Rust that runs, setup installs it with rustup in the user's home directory.
+     This needs `curl` on the worker, unless `rustup` is already there.
+   - Setup runs no administrator command. Review shows a missing compiler, linker, header, or `curl` under "Manual".
+     Each manual item has the install command for the worker's OS.
+     Setup stays incomplete until you install the item and run `ariadne host resume`.
+   - The worker builds both programs in release mode, in `~/.ariadne/worker-build`.
+     A first build takes several minutes. When the build fails, read `build.log` in that directory.
+   - A retry uses a completed build of the same commit again.
+
    Inspection reports the method, version, tag, commit, and uncommitted status in `binaries`.
+   See [the host specification](../specs/037-hosts.md#ssh-worker-setup) for the full rules.
 
    The source daemon machine runs the settings daemon.
    Both `cli` and `daemon` paths refer to files on that machine.

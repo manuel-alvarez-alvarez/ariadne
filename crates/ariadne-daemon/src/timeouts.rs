@@ -32,6 +32,9 @@ pub struct Timeouts {
     pub ssh_forward_poll: Duration,
     /// Bound each SSH setup command, including release verification.
     pub worker_setup_command: Duration,
+    /// Bound the Rust installation and the release build of a source build
+    /// on a worker (037, rule 46).
+    pub worker_source_build: Duration,
     /// The wait between two probes of a forward that has not answered yet
     /// (037).
     pub ssh_probe_interval: Duration,
@@ -180,6 +183,7 @@ impl Default for Timeouts {
             ssh_forward_end: Duration::from_secs(5),
             ssh_forward_poll: Duration::from_millis(10),
             worker_setup_command: Duration::from_secs(120),
+            worker_source_build: Duration::from_secs(3600),
             ssh_probe_interval: Duration::from_millis(200),
             host_check: Duration::from_secs(5),
             host_unanswered: Duration::from_secs(15),

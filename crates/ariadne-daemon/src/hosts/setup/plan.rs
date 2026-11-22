@@ -180,6 +180,11 @@ pub(super) fn title(id: &str) -> String {
         ("replacement-capability", _) => "Check that the new Ariadne programs can update".into(),
         ("maintenance", _) => "Wait for running work to finish".into(),
         ("install", _) => "Install the Ariadne programs".into(),
+        ("prerequisite", "compiler") => "Check for a C compiler, a linker and the C headers".into(),
+        ("prerequisite", "curl") => "Check for curl".into(),
+        ("source", _) => "Copy the Ariadne source".into(),
+        ("rust", _) => "Install Rust".into(),
+        ("build", _) => "Build the Ariadne programs".into(),
         ("prerequisite", "git") => "Check for Git".into(),
         ("tool", "git") => "Install Git".into(),
         ("tool", "github") => "Install GitHub CLI".into(),
@@ -299,6 +304,47 @@ pub(super) fn manual_for(cfg: &Config, id: &str, os: Option<&str>) -> Option<Man
     }
 }
 
+/// The work by hand for a missing build prerequisite of a source build, with
+/// the command for the worker's OS and system package manager, where known.
+pub(super) fn build_manual(
+    id: &str,
+    os: Option<&str>,
+    manager: Option<&str>,
+) -> Option<ManualAction> {
+    let compiler = match id {
+        "prerequisite:compiler" => true,
+        "prerequisite:curl" => false,
+        _ => return None,
+    };
+    let command = if os == Some("Darwin") {
+        compiler.then(|| "xcode-select --install".to_owned())
+    } else {
+        let (install, tools) = match manager {
+            Some("apt-get") => ("sudo apt-get install -y", "build-essential"),
+            Some("dnf") => ("sudo dnf install -y", "gcc glibc-devel"),
+            Some("yum") => ("sudo yum install -y", "gcc glibc-devel"),
+            Some("zypper") => ("sudo zypper install -y", "gcc glibc-devel"),
+            Some("pacman") => ("sudo pacman -S --needed --noconfirm", "base-devel"),
+            Some("apk") => ("sudo apk add", "build-base"),
+            _ => ("", ""),
+        };
+        (!install.is_empty())
+            .then(|| format!("{install} {}", if compiler { tools } else { "curl" }))
+    };
+    let reason = match (compiler, os) {
+        (true, Some("Darwin")) => {
+            "The new machine cannot compile and link a C program. The Ariadne build needs a C compiler, a linker and the C library headers. Install the Xcode Command Line Tools on the new machine, then resume setup."
+        }
+        (true, _) => {
+            "The new machine cannot compile and link a C program. The Ariadne build needs a C compiler, a linker and the C library headers. Ask an administrator to install them, then resume setup."
+        }
+        (false, _) => {
+            "The new machine has no Rust and no curl to install Rust with rustup. Ask an administrator to install curl, then resume setup."
+        }
+    };
+    manual(reason, command.as_deref())
+}
+
 impl Record {
     /// Progress with a title for each step, and the work by hand for each step
     /// that failed where only the user can continue.
@@ -312,24 +358,24 @@ impl Record {
             }
         });
         let local = matches!(self.request.source, BinarySource::Local { .. });
+        // A source build refuses in `validate` only when the checkout or the commit is missing.
+        let build =
+            matches!(self.request.source, BinarySource::Daemon) && cfg.build.repository.is_none();
         for step in &mut progress.steps {
             step.title = title(&step.name);
             step.manual = step
                 .error
                 .as_ref()
                 .filter(|_| step.name != "validate" || local)
-                .and_then(|_| manual_for(cfg, &step.name, os));
-            if step.name == "validate"
-                && step.error.is_some()
-                && matches!(self.request.source, BinarySource::Daemon)
-            {
-                step.manual = crate::build::BUILD
-                    .source()
-                    .err()
-                    .map(|reason| ManualAction {
-                        reason,
-                        command: None,
-                    });
+                .and_then(|_| {
+                    manual_for(cfg, &step.name, os)
+                        .or_else(|| build_manual(&step.name, os, self.manager.as_deref()))
+                });
+            if step.name == "validate" && build {
+                step.manual = step.error.clone().map(|reason| ManualAction {
+                    reason,
+                    command: None,
+                });
             }
             step.group = Some(if step.manual.is_some() {
                 SetupGroup::Manual

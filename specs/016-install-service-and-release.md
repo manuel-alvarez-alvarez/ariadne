@@ -79,7 +79,10 @@ Out: what the daemon does once running (009, 012).
    Release workflow builds set `ARIADNE_RELEASE_REPOSITORY` to the release repository.
    All other builds record their source checkout path and use the source build method.
    Worker setup defaults to this daemon's version (037, rule 46).
-   `hosts.rs::daemon_version_uses_the_recorded_release_or_refuses_a_source_build` proves both methods.
+   A build with `ARIADNE_SOURCE_COMMIT` records that commit, no uncommitted edits, and its own tree as the checkout.
+   Worker setup sets it when it builds a packed commit, which has no Git directory (037, rule 46a).
+   `hosts.rs::daemon_version_installs_the_recorded_release_of_a_release_daemon` and
+   `hosts.rs::a_source_build_daemon_builds_its_commit_on_the_new_machine` prove both methods.
    Binaries come from a GitHub release by default, and from a local build with
    `--build-from-source`. A local build is taken from the directory cargo
    wrote it to, `CARGO_TARGET_DIR` included: a checkout that builds elsewhere

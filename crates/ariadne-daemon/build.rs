@@ -11,6 +11,26 @@ fn git(args: &[&str]) -> String {
 
 fn main() {
     println!("cargo:rerun-if-env-changed=ARIADNE_RELEASE_REPOSITORY");
+    println!("cargo:rerun-if-env-changed=ARIADNE_SOURCE_COMMIT");
+    println!(
+        "cargo:rustc-env=ARIADNE_RELEASE_REPOSITORY={}",
+        std::env::var("ARIADNE_RELEASE_REPOSITORY").unwrap_or_default()
+    );
+    // A worker builds a packed commit, which has no Git directory. Worker
+    // setup names that commit (037, rule 46a).
+    if let Ok(commit) = std::env::var("ARIADNE_SOURCE_COMMIT")
+        && !commit.is_empty()
+    {
+        let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let checkout = manifest.parent().and_then(|p| p.parent()).unwrap();
+        println!("cargo:rustc-env=ARIADNE_BUILD_COMMIT={commit}");
+        println!("cargo:rustc-env=ARIADNE_BUILD_UNCOMMITTED=false");
+        println!(
+            "cargo:rustc-env=ARIADNE_BUILD_CHECKOUT={}",
+            checkout.display()
+        );
+        return;
+    }
     let checkout = git(&["rev-parse", "--show-toplevel"]);
     for path in git(&[
         "-C",
@@ -38,8 +58,4 @@ fn main() {
         !git(&["status", "--porcelain", "--untracked-files=normal"]).is_empty()
     );
     println!("cargo:rustc-env=ARIADNE_BUILD_CHECKOUT={checkout}");
-    println!(
-        "cargo:rustc-env=ARIADNE_RELEASE_REPOSITORY={}",
-        std::env::var("ARIADNE_RELEASE_REPOSITORY").unwrap_or_default()
-    );
 }

@@ -157,6 +157,7 @@ pub(crate) struct HarnessBuilder {
     nvidia_smi_bin: Option<String>,
     gh_bin: Option<String>,
     ssh_bin: Option<String>,
+    daemon_build: Option<ariadne_daemon::build::Build>,
     index_fetch: Option<Arc<dyn IndexFetch>>,
 }
 
@@ -222,6 +223,7 @@ pub(crate) fn harness() -> HarnessBuilder {
         nvidia_smi_bin: None,
         gh_bin: None,
         ssh_bin: None,
+        daemon_build: None,
         index_fetch: None,
     }
 }
@@ -386,6 +388,13 @@ impl HarnessBuilder {
         self
     }
 
+    /// Record `build` as how the daemon was built, in place of what Cargo
+    /// recorded for the test binary (037, rule 46).
+    pub(crate) fn daemon_build(mut self, build: ariadne_daemon::build::Build) -> Self {
+        self.daemon_build = Some(build);
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -470,6 +479,9 @@ impl HarnessBuilder {
         }
         if let Some(ssh_bin) = self.ssh_bin {
             config.ssh_bin = Some(ssh_bin);
+        }
+        if let Some(build) = self.daemon_build {
+            config.build = build;
         }
         let manager_homes = self.manager_homes.unwrap_or_else(|| ManagerHomes {
             volta: dir.path().join("no-volta-home"),
