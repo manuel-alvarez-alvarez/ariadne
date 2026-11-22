@@ -505,6 +505,20 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn the_real_socket_client_can_reach_the_socket_router() {
+    let h = harness().await;
+    let dir = tempfile::tempdir_in("/tmp").unwrap();
+    let path = dir.path().join("daemon.sock");
+    let listener = tokio::net::UnixListener::bind(&path).unwrap();
+    let app = http::socket_router(h.state.clone(), &[]);
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let result = ariadne_client::Client::unix(&path).health().await;
+    tasks.shutdown().await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
 /// An SSH forward puts a worker's socket on a loopback port, where the
 /// desktop app calls it from its own origin: the socket answers that origin
 /// with CORS and refuses any other origin or a non-loopback DNS Host.
@@ -513,7 +527,7 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
 async fn the_socket_allows_the_app_origin_and_refuses_another() {
     let h = harness().await;
     let app = http::socket_router(h.state.clone(), &[]);
-    let socket_host = "2f746d702f61726961646e652e736f636b";
+    let socket_host = "2f746d702f61726961646e652e736f636b:0";
 
     let request = Request::builder()
         .uri("/v1/attention")

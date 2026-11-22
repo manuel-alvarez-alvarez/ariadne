@@ -513,7 +513,7 @@ pub fn tcp_router(state: AppState, configured_origins: &[String]) -> Router {
 }
 
 /// Build the socket router with Host and Origin checks, then CORS.
-/// Accept the CLI's hex-encoded absolute socket path as well as loopback Hosts.
+/// Accept the CLI's encoded socket path, including hyperlocal's port zero suffix.
 pub fn socket_router(state: AppState, configured_origins: &[String]) -> Router {
     let allowed_origins = tcp_origins(configured_origins);
     with_cors(router(state), &allowed_origins).layer(middleware::from_fn(
@@ -524,7 +524,9 @@ pub fn socket_router(state: AppState, configured_origins: &[String]) -> Router {
                     let socket_path = host
                         .to_str()
                         .ok()
-                        .and_then(|value| hex::decode(value).ok())
+                        .and_then(|value| {
+                            hex::decode(value.strip_suffix(":0").unwrap_or(value)).ok()
+                        })
                         .is_some_and(|path| path.starts_with(b"/") && !path.contains(&0));
                     if !is_loopback_host(host) && !socket_path {
                         return error::ApiError::forbidden("the socket refuses this Host header")

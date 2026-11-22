@@ -58,7 +58,7 @@ and the ACP runtime that reports the agent events (021).
    Origin. The allowed origins are the packaged app, the development server,
    and serialized `scheme://host[:port]` values in `tcp_allowed_origins`. The
    unix socket has the same Origin check and CORS. It accepts a missing Host,
-   a loopback Host, or a hex-encoded absolute socket path: an SSH
+   a loopback Host, or a hex-encoded absolute socket path (optionally suffixed with `:0`): an SSH
    forward (037) puts a worker's socket on a loopback port where the desktop
    app calls it, and the CLI's socket client sends no Origin and a Host that
    encodes the socket path.
@@ -432,7 +432,8 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `config.rs::tcp_allowed_origins_require_serialized_origins`,
   `socket.rs::socket_is_owner_only_when_created`, and
   `events.rs::cors_allows_preflight_and_cross_origin_calls`,
-  `events.rs::the_socket_allows_the_app_origin_and_refuses_another`).
+  `events.rs::the_socket_allows_the_app_origin_and_refuses_another`,
+  `events.rs::the_real_socket_client_can_reach_the_socket_router`).
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).
