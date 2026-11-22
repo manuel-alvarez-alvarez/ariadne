@@ -343,12 +343,16 @@ function PullRequestHeader({
   const canStartReview = settled && !reviewer
   const canStartBabysit = settled && !keeper
   // A host that reports the work closes a dialog opened before it answered.
+  // A host that is read again, or fails and retries, only disables Start
+  // until it answers: the dialog stays open.
+  const reviewed = reviewer !== undefined
+  const kept = keeper !== undefined
   useEffect(() => {
-    if (!canStartReview) setStarting(false)
-  }, [canStartReview])
+    if (reviewed) setStarting(false)
+  }, [reviewed])
   useEffect(() => {
-    if (!canStartBabysit) setBabysitting(false)
-  }, [canStartBabysit])
+    if (kept) setBabysitting(false)
+  }, [kept])
   // The review and the babysit are goals of their own, on the Goals board
   // like any other (029, 032), each on the host that runs it.
   const reviewGoal = operationOf(copies, "review")
@@ -483,7 +487,7 @@ function PullRequestHeader({
       <StartReviewDialog
         pull={pull}
         host={host}
-        open={starting && canStartReview}
+        open={starting && !reviewed}
         canStart={canStartReview}
         onOpenChange={setStarting}
         onStarted={(startedOn, started) => onSessionStarted("reviewer", startedOn, started)}
@@ -491,7 +495,7 @@ function PullRequestHeader({
       <StartBabysitDialog
         pull={pull}
         host={host}
-        open={babysitting && canStartBabysit}
+        open={babysitting && !kept}
         canStart={canStartBabysit}
         onOpenChange={setBabysitting}
         onStarted={(startedOn, started) => onSessionStarted("keeper", startedOn, started)}
