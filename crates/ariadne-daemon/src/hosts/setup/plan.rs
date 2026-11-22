@@ -446,7 +446,14 @@ impl Record {
         let build =
             matches!(self.request.source, BinarySource::Daemon) && cfg.build.repository.is_none();
         for step in &mut progress.steps {
-            step.title = title(&step.name);
+            // A repository step names its repository where setup has looked it up.
+            let named = step.name.split_once(':').and_then(|(kind, id)| {
+                matches!(kind, "clone" | "repository")
+                    .then(|| self.repository_names.get(id))
+                    .flatten()
+                    .map(|name| format!("{kind}:{name}"))
+            });
+            step.title = title(named.as_deref().unwrap_or(&step.name));
             step.manual = step
                 .error
                 .as_ref()

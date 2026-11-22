@@ -17,6 +17,8 @@
 //!   until it is killed.
 //! - `connect_stderr`: what a forward writes to stderr when its far end refuses.
 //! - `hold_reaping`: keep the killed forward as a zombie until this file exists.
+//! - `ssh_config`: the lines a `-G` run prints, as `ssh -G` prints the
+//!   configuration it resolves. Without it a `-G` run prints nothing.
 //!
 //! A `setup` script runs the command in a stub login shell. Its `path` is the PATH of
 //! `-lc`. `interactive_path` is the PATH of `-ilc`, and `interactive` is `fail`,
@@ -144,6 +146,11 @@ def end():
     if script.get("signal"):
         os.kill(os.getpid(), script["signal"])
     os._exit(script.get("exit", 255))
+
+if "-G" in args:
+    for line in script.get("ssh_config", []):
+        print(line)
+    sys.exit(0)
 
 if "-T" in args and script.get("setup"):
     import subprocess

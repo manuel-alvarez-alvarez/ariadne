@@ -9,6 +9,7 @@ tests:
   - ui/scripts/host-events.test.mjs
   - crates/ariadne-client/src/endpoint.rs
   - crates/ariadne-daemon/tests/it/hosts.rs
+  - crates/ariadne-daemon/src/hosts/setup/repositories.rs
   - crates/ariadne-daemon/tests/it/ssh_forward.rs
   - crates/ariadne-daemon/tests/it/portable_config.rs
   - crates/ariadne-daemon/tests/it/host_sync.rs
@@ -452,7 +453,13 @@ picker, the Hosts screen and one stream per host — is spec
     Setup clones Git remote history without source edits or untracked files.
     Registered checkout reuse follows rule 26, including base branch preference and preservation of worker paths.
     Each selection records `clone:<id>` and `repository:<id>` progress.
+    Their titles name the repository as Desktop does, by its forge name or its folder, not by its id.
+    Review names it the same way.
+    For an SSH remote, setup copies the `known_hosts` lines that this machine's `ssh` trusts for the Git host
+    to the worker's `~/.ssh/known_hosts`, unless the worker already knows that host.
     Missing remotes, worker authentication failures, and inaccessible destinations leave setup incomplete.
+    A failed clone names its cause: an existing destination, missing Git, an untrusted host key with the command
+    that checks it, refused authentication, or a missing branch. It names the remote's host, never its URL or Git's output.
     Setup refuses unrelated existing destination directories.
     Completed clone and registration checkpoints survive retries.
     Registration invokes the normal host synchronization for settings and learned permissions.
@@ -671,6 +678,8 @@ picker, the Hosts screen and one stream per host — is spec
   `hosts.rs::repository_setup_preserves_an_unrelated_existing_destination` and `::repository_setup_preserves_an_empty_existing_destination` prove preservation of unrelated directories, including empty directories.
   `hosts.rs::repository_setup_reports_a_missing_source_remote` proves the missing-remote step failure.
   `hosts.rs::repository_setup_reports_worker_git_authentication_failure` proves failure after a worker receives an HTTP authentication challenge.
+  `hosts.rs::repository_setup_copies_this_machines_host_key_to_the_worker` proves the host key copy, the untrusted-key failure, the retry and the repository name in step titles.
+  `hosts/setup/repositories.rs::tests` proves which remotes are SSH, the `known_hosts` lookup name, and that a failure never shows URL credentials.
   `add-machine.test.tsx` proves selection and destination editing.
   `hosts.rs::worker_setup_and_status_show_each_completed_step_and_failure` proves CLI selection and progress.
 

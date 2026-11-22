@@ -1006,7 +1006,9 @@ See [the host specification](../specs/037-hosts.md#explicit-worker-updates) for 
    Git clones committed history from the selected repository's remote.
    Local edits and untracked files stay on the source machine.
    Git and forge authentication must work on the worker.
-   Setup reports missing remotes, authentication failures, and inaccessible destinations in the repository steps.
+   For an SSH remote, setup copies this machine's `known_hosts` entry for the Git host to the worker, so the worker trusts the key you already trust.
+   With no such entry, the clone step names the host and the `ssh -T` command to run once on the worker.
+   Setup reports missing remotes, untrusted host keys, authentication failures, missing branches, and existing destinations in the repository steps, by repository name.
    It never replaces an unrelated directory.
    A matching registered forge checkout keeps its existing worker path.
    Matching uses forge kind, host, owner, and name, with the same base branch preferred.

@@ -419,17 +419,34 @@ if [ -s "$HOME/.claude/.credentials.json" ]; then echo credential-file:claude; f
             }
             actions.push(match id.as_str() { "codex" => "Copy selected Codex .codex/auth.json through SSH stdin with mode 0600.".into(), "github" => "Copy the selected GitHub token through SSH stdin and configure Git authentication.".into(), _ => format!("Credential {id} requires a separate worker login. No credential will be copied.") });
         }
+        let mut names = BTreeMap::new();
         for (id, destination) in &request.repositories {
-            let exists = self.0.store.get_repository(id).await.is_ok();
+            let found = self.0.store.get_repository(id).await.ok();
+            let exists = found.is_some();
+            let shown = found.map_or_else(
+                || id.clone(),
+                |repository| {
+                    super::repositories::repository_name(&crate::http::convert::repository_dto(
+                        repository,
+                    ))
+                },
+            );
             prerequisites.push(check(
                 &format!("repository:{id}"),
                 exists,
                 "The selected source repository is missing.",
                 "Select a registered source repository with an accessible Git remote.",
             ));
-            actions.push(format!("Clone repository {id} into {destination}, or reuse its registered forge identity. Copy no local edits."));
+            actions.push(format!("Clone repository {shown} into {destination}, or reuse its registered forge identity. Copy no local edits."));
+            names.insert(id.clone(), shown);
         }
-        let plan = self.plan(&request, &inspection, &prerequisites, manager.as_deref());
+        let plan = self.plan(
+            &request,
+            &inspection,
+            &prerequisites,
+            manager.as_deref(),
+            &names,
+        );
         Ok(SetupReviewDto {
             plan,
             inspection,
@@ -469,6 +486,7 @@ impl Hosts {
         inspection: &InspectionDto,
         prerequisites: &[SetupCheck],
         manager: Option<&str>,
+        names: &BTreeMap<String, String>,
     ) -> Vec<PlanItem> {
         let cfg = &self.0.cfg;
         let os = Some(if inspection.target.ends_with("apple-darwin") {
@@ -694,16 +712,17 @@ impl Hosts {
             });
         }
         for (id, destination) in &request.repositories {
+            let shown = names.get(id).unwrap_or(id);
             plan.push(if met(&format!("repository:{id}")) {
                 PlanItem {
-                    title: format!("Clone and register repository {id}"),
-                    ..item(format!("repository:{id}"), SetupGroup::AriadneInstalls, format!("Clone {id} from its Git remote into {destination}, then register it. Local edits stay on this machine."), None)
+                    title: format!("Clone and register repository {shown}"),
+                    ..item(format!("repository:{id}"), SetupGroup::AriadneInstalls, format!("Clone {shown} from its Git remote into {destination}, then register it. Local edits stay on this machine."), None)
                 }
             } else {
                 PlanItem {
-                    title: format!("Clone and register repository {id}"),
-                    ..item(format!("repository:{id}"), SetupGroup::Manual, format!("Repository {id} is not registered on this machine."), Some(ManualAction {
-                        reason: format!("Repository {id} is not registered on this machine. Select a registered repository, then review again."),
+                    title: format!("Clone and register repository {shown}"),
+                    ..item(format!("repository:{id}"), SetupGroup::Manual, format!("Repository {shown} is not registered on this machine."), Some(ManualAction {
+                        reason: format!("Repository {shown} is not registered on this machine. Select a registered repository, then review again."),
                         command: None,
                     }))
                 }
