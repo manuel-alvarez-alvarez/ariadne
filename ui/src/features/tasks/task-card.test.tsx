@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 
-import { screen, within } from "@testing-library/react"
+import { useQuery } from "@tanstack/react-query"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
 import type { TaskDto } from "@/api"
+import { qk } from "@/api"
+import { dispatchDomainEvent } from "@/events/dispatch"
 import { aTask } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
+import { BOX, LOCAL } from "@/test/hosts"
 import { TaskCard } from "./task-card"
 
 const STEPS = [
@@ -23,6 +27,14 @@ function states() {
 
 function card(overrides: Partial<TaskDto>) {
   renderScreen(<TaskCard host="local" task={aTask(overrides)} steps={STEPS} />)
+}
+
+function CachedTaskCard({ taskId }: { taskId: string }) {
+  const task = useQuery({
+    queryKey: qk.tasks.detail("local", taskId),
+    queryFn: async () => aTask(),
+  }).data
+  return task ? <TaskCard host="local" task={task} steps={STEPS} /> : null
 }
 
 it.each([
@@ -50,13 +62,42 @@ it("shows no state badge for a task under way", () => {
 })
 
 it("shows the colored remote host and its unreachable state", () => {
-  card({ host: "box", host_unreachable: true })
-  expect(screen.getByText("box").getAttribute("title")).toBe("Host box cannot be reached")
+  renderScreen(
+    <TaskCard host="local" task={aTask({ host: "box", host_unreachable: true })} steps={STEPS} />,
+    {
+      seed: (client) => client.setQueryData(qk.hosts.list(), [LOCAL, { ...BOX, color: "blue" }]),
+    },
+  )
+  const label = screen.getByText("box")
+  expect(label.getAttribute("data-host-color")).toBe("blue")
+  expect(label.getAttribute("title")).toBe("Host box cannot be reached")
 })
 
 it("does not show a label for the local host", () => {
   card({ host: "local" })
   expect(screen.queryByText("local")).toBeNull()
+})
+
+it("updates the task host label from task_updated without a reload", async () => {
+  const task = aTask({ host: "box", host_unreachable: false })
+  const { queryClient } = renderScreen(<CachedTaskCard taskId={task.id} />, {
+    seed: (client) => {
+      client.setQueryData(qk.tasks.detail("local", task.id), task)
+      client.setQueryData(qk.hosts.list(), [LOCAL, { ...BOX, color: "blue" }])
+    },
+  })
+  expect(screen.getByText("box").getAttribute("data-host-color")).toBe("blue")
+
+  dispatchDomainEvent(queryClient, "local", {
+    event: "task_updated",
+    data: { task: { ...task, host: "elsewhere", host_unreachable: true }, transition: null },
+  })
+  await waitFor(() => {
+    expect(screen.queryByText("box")).toBeNull()
+    expect(screen.getByText("elsewhere").getAttribute("title")).toBe(
+      "Host elsewhere cannot be reached",
+    )
+  })
 })
 
 it("shows the current staffed model and compact task token totals", () => {
