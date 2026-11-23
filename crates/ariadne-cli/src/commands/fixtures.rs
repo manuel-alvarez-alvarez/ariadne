@@ -37,6 +37,7 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
         description: String::new(),
         status: GoalStatus::Active,
         orchestrated: true,
+        linked: None,
         pull_request: None,
         model: "stub:test-model".into(),
         effort: None,

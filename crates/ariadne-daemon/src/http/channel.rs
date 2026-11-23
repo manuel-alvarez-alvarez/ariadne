@@ -325,7 +325,8 @@ pub(super) async fn send(
                     "the orchestrator is staffed on no task, so it has no agent id",
                 ));
             }
-            if !state.store.get_goal(goal_id).await?.orchestrated {
+            let goal = state.store.get_goal(goal_id).await?;
+            if !goal.orchestrated && goal.origin_goal_id.is_none() {
                 return Err(ApiError::conflict(
                     "this goal has no orchestrator; the user answers in the console",
                 ));
@@ -373,6 +374,33 @@ pub(super) async fn send(
     Ok(message)
 }
 
+/// The ref a task's work is compared against. A linked task starts at the
+/// fetched remote base, which can be ahead of the local base branch: compare
+/// against that tracking ref, so work that merged on other hosts is neither a
+/// task commit nor part of the task's diff. Any other task, and a linked task
+/// whose tracking ref is missing, uses the local base branch.
+pub(super) async fn task_base(
+    state: &AppState,
+    repo: &ariadne_store::Repository,
+    task: &Task,
+) -> ApiResult<String> {
+    let goal = state.store.get_goal(&task.goal_id).await?;
+    if goal.origin_goal_id.is_some() {
+        let remote = repo.forge.as_ref().map_or("origin", |f| f.remote.as_str());
+        let tracking = format!("refs/remotes/{remote}/{}", repo.base_branch);
+        if state
+            .launcher
+            .git
+            .has_commit(std::path::Path::new(&repo.path), &tracking)
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(tracking);
+        }
+    }
+    Ok(repo.base_branch.clone())
+}
+
 /// Diff of the task branch against its base (`git diff base...branch`), or,
 /// once the task is merged, the diff its merge commit brought into the base —
 /// after the merge the branch is contained in the base, so the three-dot diff
@@ -411,10 +439,11 @@ pub(super) async fn diff(
             task.branch
         )));
     }
+    let base = task_base(&state, &repo, &task).await?;
     state
         .launcher
         .git
-        .diff(&repo_path, &repo.base_branch, &task.branch)
+        .diff(&repo_path, &base, &task.branch)
         .await
         .map_err(unresolved)
 }

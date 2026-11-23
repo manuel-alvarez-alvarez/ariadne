@@ -427,6 +427,8 @@ pub struct Goal {
     pub status: String,
     /// Whether this goal has an orchestrator for its lifetime.
     pub orchestrated: bool,
+    /// The goal on the daemon that supplies tasks to this linked goal.
+    pub origin_goal_id: Option<String>,
     /// Model this goal's orchestrator runs on, `<agent>:<model>`.
     pub model: String,
     /// Effort that model is run at. None = whatever the agent runs it at.

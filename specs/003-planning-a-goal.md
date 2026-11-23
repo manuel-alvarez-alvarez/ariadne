@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-11-15
+updated: 2026-11-23
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/it/plan_finalize.rs
   - crates/ariadne-daemon/tests/it/goal_completion.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
+  - crates/ariadne-daemon/tests/it/linked_goals.rs
 ---
 
 # Planning a goal
@@ -33,8 +34,8 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 
 ## Behavior
 
-1. A goal opens with one orchestrator session, started in the primary
-   checkout of the goal's first repository and briefed with the goal, its
+1. A goal with a local orchestrator opens with one session in its first
+   repository's primary checkout. The briefing describes the goal, its
    workflow — the name, then one line per column with its id, title, skills,
    capability band, and description — and its repositories. The workflow is chosen when the
    goal is created, or taken from the default of its first repository (030);
@@ -161,6 +162,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     while any task is not terminal, which is the part it can see. The user may
     make the same call, so a goal whose orchestrator will not start is still
     one they can close.
+17. A linked goal starts `active` without an orchestrator session.
+    It accepts `POST /v1/goals/{id}/tasks` without a session header.
+    The daemon schedules each new task immediately, as after `finalize_plan`.
 
 ## Acceptance criteria
 
@@ -240,6 +244,10 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   (`::a_goal_with_a_task_still_going_is_refused_by_name`), a cancelled task is
   no bar (`::a_cancelled_task_is_no_bar_to_completing_the_goal`), and it
   happens once (`::a_goal_is_completed_only_out_of_active`).
+- A linked goal starts active without an orchestrator session
+  (`linked_goals.rs::a_linked_goal_starts_active_without_an_orchestrator`).
+- A task posted without a session header starts immediately on a linked goal
+  (`linked_goals.rs::a_task_post_without_a_session_starts_on_a_linked_goal`).
 
 ## Sources
 

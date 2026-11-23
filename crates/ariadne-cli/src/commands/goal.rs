@@ -230,6 +230,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                 .post_json(
                     "/v1/goals",
                     &CreateGoalRequest {
+                        linked: None,
                         workflow,
                         title,
                         description,

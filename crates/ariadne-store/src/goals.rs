@@ -49,24 +49,26 @@ fn goal_workflow(requested: Option<String>, repositories: &[Repository]) -> Resu
 
 impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
-        self.create_goal_as(new, GoalStatus::Planning, true, None)
-            .await
+        self.create_goal_as(new, None, None).await
+    }
+
+    /// Create an active goal that receives tasks from another daemon.
+    pub async fn create_linked_goal(&self, new: NewGoal, origin_goal_id: &str) -> Result<Goal> {
+        self.create_goal_as(new, None, Some(origin_goal_id)).await
     }
 
     /// Create the goal of one pull request operation: active at once, with
     /// no orchestrator, on the workflow that operation reads. A conflict
     /// means the request already has an open goal for the operation.
     pub(crate) async fn create_pr_goal(&self, new: NewGoal, pr: NewPrGoal) -> Result<Goal> {
-        self.create_goal_as(new, GoalStatus::Active, false, Some(pr))
-            .await
+        self.create_goal_as(new, Some(pr), None).await
     }
 
     async fn create_goal_as(
         &self,
         new: NewGoal,
-        status: GoalStatus,
-        orchestrated: bool,
         pr: Option<NewPrGoal>,
+        origin_goal_id: Option<&str>,
     ) -> Result<Goal> {
         if new.repository_ids.is_empty() {
             return Err(StoreError::Invalid("a goal needs at least one repo".into()));
@@ -118,11 +120,17 @@ impl Store {
             .map_err(|e| StoreError::Invalid(e.to_string()))?
             .steps;
         let (model, effort) = AgentPin::columns(&new.pin);
+        let orchestrated = pr.is_none() && origin_goal_id.is_none();
+        let status = if orchestrated {
+            GoalStatus::Planning
+        } else {
+            GoalStatus::Active
+        };
         sqlx::query(
             "INSERT INTO goals (id, title, description, issue_url, status,
                                 orchestrated, model, effort, workflow, created_at, updated_at,
-                                pr_operation, pr_repository_id, pr_number, pr_url)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                pr_operation, pr_repository_id, pr_number, pr_url, origin_goal_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
@@ -139,6 +147,7 @@ impl Store {
         .bind(pr.as_ref().map(|p| p.repository_id.clone()))
         .bind(pr.as_ref().map(|p| p.number))
         .bind(pr.as_ref().map(|p| p.url.clone()))
+        .bind(origin_goal_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| match e {
