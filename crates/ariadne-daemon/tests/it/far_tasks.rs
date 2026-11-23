@@ -41,8 +41,12 @@ struct Front {
     /// The kinds of request whose next answer is lost, once each, and the
     /// kind to hold from then on.
     lose: Arc<Mutex<Vec<Loss>>>,
-    /// The kinds of request that wait until they are no longer held.
+    /// The kinds of request whose answer's body waits until they are no
+    /// longer held.
     held: Arc<watch::Sender<Vec<&'static str>>>,
+    /// The kinds of request that wait, headers and all, until they are no
+    /// longer held: the far daemon gets them only then.
+    held_before: Arc<watch::Sender<Vec<&'static str>>>,
     waiting: Arc<AtomicUsize>,
     seen: Arc<Mutex<Vec<&'static str>>>,
     answered: Arc<Mutex<Vec<&'static str>>>,
@@ -71,6 +75,7 @@ impl Default for Front {
             health_off: Arc::default(),
             lose: Arc::default(),
             held: Arc::new(watch::Sender::new(Vec::new())),
+            held_before: Arc::new(watch::Sender::new(Vec::new())),
             waiting: Arc::default(),
             seen: Arc::default(),
             answered: Arc::default(),
@@ -109,8 +114,14 @@ impl Front {
         self.held.send_modify(|held| held.push(kind));
     }
 
+    /// Hold each request of `kind` before the far daemon gets it.
+    fn hold_before(&self, kind: &'static str) {
+        self.held_before.send_modify(|held| held.push(kind));
+    }
+
     fn release(&self) {
         self.held.send_modify(Vec::clear);
+        self.held_before.send_modify(Vec::clear);
     }
 
     /// `far`'s router behind this front, on a loopback TCP port.
@@ -124,6 +135,11 @@ impl Front {
                     front.seen.lock().unwrap().push(kind);
                     if kind == "health" && front.health_off.load(Ordering::SeqCst) {
                         return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                    let mut before = front.held_before.subscribe();
+                    if before.borrow().contains(&kind) {
+                        let _waiting = Waiting::new(&front.waiting);
+                        let _ = before.wait_for(|held| !held.contains(&kind)).await;
                     }
                     let mut held = front.held.subscribe();
                     if held.borrow().contains(&kind) {
@@ -236,6 +252,9 @@ async fn pair_on(scheduler: bool) -> Pair {
     // A send that the host did not answer is tried again soon.
     let local = harness().home(home).timeouts(Timeouts {
         far_retry: RUNS_OUT / 10,
+        // A call to the host that nothing ends outlasts each wait of a test:
+        // only the readiness fence ends it.
+        far_call: TIMEOUT * 4,
         ..Timeouts::default()
     });
     let local = if scheduler { local.scheduler() } else { local }.await;
@@ -1356,4 +1375,124 @@ async fn a_send_under_way_when_the_host_leaves_writes_nothing() {
     back(&p).await;
     let sent = far_task(&p.far, &goal, "Held send").await;
     until_sent(&p.local, &held, &sent).await;
+}
+
+#[tokio::test]
+async fn a_stream_that_opens_when_the_host_leaves_does_not_hold_the_flag() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    activate(&p.local, &goal).await;
+
+    // The host comes back, and its event stream waits to open.
+    go_away(&p).await;
+    p.front.hold_before("stream");
+    back(&p).await;
+    eventually(TIMEOUT, "the stream waits to open", || async {
+        p.front.waiting() > 0
+    })
+    .await;
+    // A task the host takes meanwhile is reachable.
+    let taken = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Taken", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    assert!(!taken.host_unreachable);
+
+    // The host leaves before the stream opens: the flag does not wait on it.
+    go_away(&p).await;
+    eventually(TIMEOUT, "the far task marked unreachable", || async {
+        task(&p.local, &taken.id).await.host_unreachable
+    })
+    .await;
+
+    p.front.release();
+    back(&p).await;
+    let sent = far_task(&p.far, &goal, "Taken").await;
+    until_sent(&p.local, &taken, &sent).await;
+}
+
+#[tokio::test]
+async fn a_linked_goal_that_ended_takes_no_new_task_and_keeps_its_own() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let goal: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                linked_body(&repo, "01arz3ndektsv4rrffq69g5fav"),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let model = test_pin().model;
+    let body = |origin: &str| task_body(&goal, "Held", &model, json!({"origin_task_id": origin}));
+    let first = create_task(&h, &goal, body("01arz3ndektsv4rrffq69g5fa1")).await;
+    h.store
+        .end_goal(&goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
+
+    // The task the goal holds answers a repeated create; a new one is refused.
+    let again: TaskDto = h
+        .json(
+            post_json(
+                &format!("/v1/goals/{}/tasks", goal.id),
+                body("01arz3ndektsv4rrffq69g5fa1"),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(again.id, first.id);
+    let message = refusal(
+        &h,
+        &goal,
+        body("01arz3ndektsv4rrffq69g5fa2"),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    assert!(message.contains("takes no more tasks"), "{message}");
+}
+
+#[tokio::test]
+async fn a_linked_goal_that_ends_between_the_two_creates_fails_the_far_task() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let between = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Between", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    // The goal create goes through, and the task create waits.
+    p.front.hold_before("create task");
+    activate(&p.local, &goal).await;
+    eventually(TIMEOUT, "the task create waits", || async {
+        p.front.waiting() > 0
+    })
+    .await;
+    let made = linked_goals(&p.far, &goal).await;
+    assert_eq!(made.len(), 1);
+    p.far
+        .store
+        .end_goal(&made[0].id, GoalStatus::Completed)
+        .await
+        .unwrap();
+    p.front.release();
+
+    let failed = eventually_some(TIMEOUT, "the far task failed", async || {
+        let here = task(&p.local, &between.id).await;
+        (here.status == TaskStatus::Failed).then_some(here)
+    })
+    .await;
+    let reason = failed.reason.unwrap_or_default();
+    assert!(reason.contains("host far refused the task"), "{reason}");
+    assert!(reason.contains("takes no more tasks"), "{reason}");
+    assert!(far_tasks(&p.far, &goal).await.is_empty());
+    assert_eq!(p.front.count("create task"), 1);
 }

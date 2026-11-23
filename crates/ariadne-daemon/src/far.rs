@@ -208,7 +208,7 @@ async fn work(
         let follower = Follower {
             ctx: &ctx,
             host: &host,
-            client: client_for(&endpoint),
+            client: client_for(&endpoint).with_request_timeout(ctx.timeouts.far_call),
             epoch,
             link: ready.clone(),
         };
@@ -298,9 +298,12 @@ impl Follower<'_> {
     ) -> Lost {
         // The stream opens before the far tasks are read again, so no change
         // of the host falls between the read and the stream.
-        let mut stream = match self.client.stream("/v1/events/stream").await {
-            Ok(stream) => stream,
-            Err(error) => {
+        // Fenced as each call is: a host that leaves `ready` while the stream
+        // opens does not hold back its far tasks' `host_unreachable`.
+        let mut stream = match self.fenced(self.client.stream("/v1/events/stream")).await {
+            None => return Lost::Left,
+            Some(Ok(stream)) => stream,
+            Some(Err(error)) => {
                 warn!(host = self.host, %error, "cannot open the event stream of the host");
                 return Lost::Stream;
             }

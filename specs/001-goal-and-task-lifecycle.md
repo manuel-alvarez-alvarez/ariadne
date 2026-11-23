@@ -109,7 +109,8 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     `CreateTaskRequest.origin_task_id` names the far task on the origin daemon that the
     task runs, and only a linked goal takes it. A daemon holds one task for each origin
     task, in whatever goal and status: a repeated create answers `200` with the task it
-    holds, and starts nothing. `GET /v1/tasks?origin_task_id=<id>` lists that task alone.
+    holds, and starts nothing. A linked goal that is not `active` takes no new task: the
+    create answers `409`. The check is in the write transaction of the insert. `GET /v1/tasks?origin_task_id=<id>` lists that task alone.
     A create with `origin_task_id` and a `host` other than `local` answers `400`.
 16. A new task branch for a linked goal starts at the fetched remote base.
     The daemon fetches from the repository's forge remote, with `origin` as the default.
@@ -203,7 +204,9 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
   beside an origin task is refused
   (`far_tasks.rs::a_linked_task_takes_no_host_beside_its_origin_task`). Creates that overlap
   make one goal (`far_tasks.rs::linked_goal_creates_at_once_make_one_goal`). An ended linked
-  goal is not replaced (`far_tasks.rs::a_linked_goal_that_ended_takes_no_more_tasks`). An
+  goal is not replaced (`far_tasks.rs::a_linked_goal_that_ended_takes_no_more_tasks`), and takes
+  no new task while it keeps its own
+  (`far_tasks.rs::a_linked_goal_that_ended_takes_no_new_task_and_keeps_its_own`). An
   upgrade keeps two active linked goals of one origin goal, and a create answers the oldest
   (`crates/ariadne-store/tests/far_task_migration.rs::an_upgrade_keeps_two_active_linked_goals_of_one_origin`).
 

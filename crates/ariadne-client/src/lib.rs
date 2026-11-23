@@ -191,6 +191,8 @@ pub struct Client {
     /// When set, sent as `X-Ariadne-Session` so the daemon can derive the
     /// caller's seat/task scope (agent-originated calls).
     session_id: Option<String>,
+    /// How long one request waits for its answer's headers.
+    request_timeout: Duration,
 }
 
 impl Client {
@@ -204,6 +206,7 @@ impl Client {
                 socket,
             },
             session_id: None,
+            request_timeout: REQUEST_TIMEOUT,
         }
     }
 
@@ -217,7 +220,15 @@ impl Client {
                 base,
             },
             session_id: None,
+            request_timeout: REQUEST_TIMEOUT,
         }
+    }
+
+    /// Wait `timeout` for the headers of each answer, in place of the
+    /// default 30 seconds.
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
     }
 
     /// Attach an agent-session identity to every request.
@@ -656,7 +667,7 @@ impl Client {
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        tokio::time::timeout(REQUEST_TIMEOUT, call)
+        tokio::time::timeout(self.request_timeout, call)
             .await
             .map_err(|_| ClientError::Timeout)?
             .map_err(|e| self.unreachable(e))

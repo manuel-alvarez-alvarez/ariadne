@@ -59,6 +59,9 @@ pub struct Timeouts {
     /// `ready` host again, or sends again a far task that the host did not
     /// answer (037).
     pub far_retry: Duration,
+    /// How long one call of the goal's daemon to a host waits for the headers
+    /// of its answer, for far tasks (037).
+    pub far_call: Duration,
     /// Check whether worker maintenance has drained its admitted tasks.
     pub worker_maintenance: Duration,
     /// How long one detail fetch of a pull request may take: its comments,
@@ -201,6 +204,7 @@ impl Default for Timeouts {
             host_unanswered: Duration::from_secs(15),
             host_sync_retry: Duration::from_secs(1),
             far_retry: Duration::from_secs(1),
+            far_call: Duration::from_secs(30),
             worker_maintenance: Duration::from_millis(100),
             forge_details: Duration::from_secs(30),
             forge_rate_limit_pause: Duration::from_secs(900),

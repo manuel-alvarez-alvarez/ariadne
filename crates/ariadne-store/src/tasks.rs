@@ -388,7 +388,8 @@ impl Store {
     /// Create the task of a linked goal that runs the far task
     /// `origin_task_id` of the goal's daemon (037). The daemon holds one task
     /// for each origin task, in whatever goal and status: a repeated create
-    /// answers the task it already holds, and `false`.
+    /// answers the task it already holds, and `false`. A linked goal that is
+    /// not `active` takes no new task: the create is a conflict.
     pub async fn create_linked_task(
         &self,
         new: NewTask,
@@ -446,6 +447,21 @@ impl Store {
         let branch = branch_name(&new.title, &id);
 
         let mut tx = self.w().begin().await?;
+        // A linked goal that ended takes no new task: checked in the write
+        // transaction, so a goal that ends at the same time cannot let one in.
+        // A repeated create of a task it holds is answered before this.
+        if origin_task_id.is_some() {
+            let status: String = sqlx::query_scalar("SELECT status FROM goals WHERE id = ?")
+                .bind(&goal.id)
+                .fetch_one(&mut *tx)
+                .await?;
+            if status != GoalStatus::Active.as_str() {
+                return Err(StoreError::Conflict(format!(
+                    "the linked goal {} is {status}; it takes no more tasks",
+                    goal.id
+                )));
+            }
+        }
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
                                 created_at, updated_at, host, origin_task_id)
