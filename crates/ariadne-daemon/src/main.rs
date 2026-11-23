@@ -302,6 +302,8 @@ async fn main() -> Result<()> {
         hosts: hosts.clone(),
         reply_locks: Default::default(),
     };
+    // Far tasks follow the hosts' status from the event bus (037).
+    let far = ariadne_daemon::far::start(&state, ariadne_daemon::timeouts::Timeouts::default());
     let acp_shutdown = state.launcher.acp.clone();
     let ai_permissions_shutdown = state.ai_permissions.clone();
     let unix_app = http::socket_router(state.clone(), &config.tcp_allowed_origins);
@@ -312,6 +314,7 @@ async fn main() -> Result<()> {
         shutdown_signal().await;
         tunnel.shutdown().await;
         hosts.shutdown().await;
+        far.shutdown().await;
         drop(webhook_listen);
         info!("webhook ingress stopped");
     });

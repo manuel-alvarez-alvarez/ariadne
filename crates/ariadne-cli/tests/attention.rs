@@ -53,6 +53,8 @@ async fn listed(args: &[&str], attention: AttentionListDto) -> Output {
         usage: Default::default(),
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
+        host: "local".into(),
+        host_unreachable: false,
     };
     let mut sessions: Vec<SessionEntryDto> = [
         ("dismissed-permission", "running"),

@@ -27,6 +27,11 @@ impl super::Scheduler {
         if goal.pull_request_operation().is_some() {
             return Ok(());
         }
+        // A far task runs on its host (037): the far task worker sends it
+        // there and mirrors it. What is left here is its dependencies.
+        if task.is_far() {
+            return Box::pin(self.reconcile_far(task)).await;
+        }
         // The branch is only followed while somebody is working on it.
         // Finished and cancelled tasks are let go by the cleanup below, but a
         // failed one keeps its worktree — a user can retry it — and until one
@@ -94,18 +99,7 @@ impl super::Scheduler {
                 // still wait for. A goal being cancelled never reaches here:
                 // its tasks are cancelled by `reconcile_goal`, and this pass
                 // returns above as soon as the goal is no longer active.
-                if let Some(blocker) = self.store.task_dependencies_blocked(&task.id).await? {
-                    let reason = blocked_reason(&blocker);
-                    warn!(task = %task.id, dependency = %blocker.id, "dependency ended unfinished, failing task");
-                    self.store
-                        .transition_task(
-                            &task.id,
-                            TaskStatus::Failed,
-                            Actor::Daemon,
-                            Some(&reason),
-                            None,
-                        )
-                        .await?;
+                if self.fail_blocked(&task).await? {
                     return Ok(());
                 }
                 if !self.store.task_dependencies_merged(&task.id).await? {
@@ -442,6 +436,43 @@ impl super::Scheduler {
         Ok(true)
     }
 
+    /// One pass over a far task (037). A merged one lets its dependents
+    /// start. A pending one fails when a task it depends on ended unmerged.
+    async fn reconcile_far(&mut self, task: Task) -> anyhow::Result<()> {
+        match task.status() {
+            TaskStatus::Finished => {
+                for dependent in self.dependents_of(&task).await? {
+                    Box::pin(self.reconcile_task(&dependent)).await?;
+                }
+            }
+            TaskStatus::Pending => {
+                self.fail_blocked(&task).await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Fail a pending task whose dependency ended without finishing, naming
+    /// what stopped it. Answers whether it did.
+    async fn fail_blocked(&self, task: &Task) -> anyhow::Result<bool> {
+        let Some(blocker) = self.store.task_dependencies_blocked(&task.id).await? else {
+            return Ok(false);
+        };
+        let reason = blocked_reason(&blocker);
+        warn!(task = %task.id, dependency = %blocker.id, "dependency ended unfinished, failing task");
+        self.store
+            .transition_task(
+                &task.id,
+                TaskStatus::Failed,
+                Actor::Daemon,
+                Some(&reason),
+                None,
+            )
+            .await?;
+        Ok(true)
+    }
+
     async fn dependents_of(&self, task: &Task) -> anyhow::Result<Vec<String>> {
         let all = self
             .store
@@ -655,6 +686,10 @@ mod tests {
             pr_url: None,
             created_at: String::new(),
             updated_at: String::new(),
+            host: None,
+            far_goal_id: None,
+            far_task_id: None,
+            host_unreachable: 0,
         }
     }
 

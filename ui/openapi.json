@@ -766,7 +766,10 @@
             }
           },
           "400": {},
-          "409": {}
+          "409": {},
+          "502": {
+            "description": "the host of a far task did not answer"
+          }
         }
       }
     },
@@ -6962,6 +6965,14 @@
           "description": {
             "type": "string"
           },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The host to run the task on, a `ready` host of `GET /v1/hosts`.\nOmitted or `local` = this daemon. A far task waits here until every\ntask it depends on has merged, then goes to the host.",
+            "example": "worker"
+          },
           "repo_id": {
             "type": [
               "string",
@@ -10950,6 +10961,15 @@
           },
           "goal_id": {
             "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "The host the task runs on: `local` for a task on the goal's own\ndaemon, else the name of a host (`GET /v1/hosts`).",
+            "example": "local"
+          },
+          "host_unreachable": {
+            "type": "boolean",
+            "description": "True while the host of a far task is not `ready`. The task then keeps\nits last known state. Always false for a `local` task."
           },
           "id": {
             "type": "string"

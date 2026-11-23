@@ -374,7 +374,18 @@ impl Store {
     /// what the orchestrator settles with the user before it writes any of
     /// them (003), and a number the store enforced afterwards could only
     /// refuse a plan they had already agreed.
-    pub async fn create_task(&self, mut new: NewTask) -> Result<Task> {
+    pub async fn create_task(&self, new: NewTask) -> Result<Task> {
+        self.create_task_on(new, None).await
+    }
+
+    /// Create a far task: a task that runs on `host`, not on this daemon
+    /// (037). It is stored as [`Store::create_task`] stores a task, with the
+    /// name of its host.
+    pub async fn create_far_task(&self, new: NewTask, host: &str) -> Result<Task> {
+        self.create_task_on(new, Some(host)).await
+    }
+
+    async fn create_task_on(&self, mut new: NewTask, host: Option<&str>) -> Result<Task> {
         let goal = self.get_goal(&new.goal_id).await?;
         self.check_workflow_staffing(&goal, &mut new.agents).await?;
         let repo = self.get_repository(&new.repo_id).await?;
@@ -397,8 +408,8 @@ impl Store {
         let mut tx = self.w().begin().await?;
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
-                                created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+                                created_at, updated_at, host)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -408,6 +419,7 @@ impl Store {
         .bind(&branch)
         .bind(&ts)
         .bind(&ts)
+        .bind(host)
         .execute(&mut *tx)
         .await?;
 

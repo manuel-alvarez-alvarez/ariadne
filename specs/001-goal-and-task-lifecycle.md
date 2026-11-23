@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-daemon/tests/it/goal_delete.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/linked_goals.rs
+  - crates/ariadne-daemon/tests/it/far_tasks.rs
 ---
 
 # Goal and task lifecycle
@@ -100,6 +101,16 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
 16. A new task branch for a linked goal starts at the fetched remote base.
     The daemon fetches from the repository's forge remote, with `origin` as the default.
     The commit gate and the task diff compare against that fetched base, not the local base branch.
+17. `CreateTaskRequest` takes an optional string `host`. An omitted host or `local` creates
+    a task on the goal's own daemon, as before. Any other name creates a far task on that
+    host (037, rules 92 to 97).
+18. `TaskDto.host` is `local` for a task on the goal's own daemon, else the name of its host.
+    `TaskDto.host_unreachable` is true while the host of a far task is not `ready` (037 rule 96).
+    It is always false for a `local` task. OpenAPI carries both fields and `CreateTaskRequest.host`.
+19. A far task stays `pending` until every task in its `depends_on` has merged, on any host.
+    A far task merges when its host reports it `finished` (037 rule 95). A task that
+    depends on a far task then starts as for any other dependency. A dependency that ends
+    without a merge fails a pending far task, as rule 8 fails any pending task.
 
 ## Acceptance criteria
 
@@ -155,6 +166,14 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
   (`linked_goals.rs::a_linked_task_starts_at_the_fetched_remote_base`).
 - A linked task's diff holds only its own commits after another host advances the base
   (`linked_goals.rs::a_linked_task_compares_its_work_against_the_fetched_remote_base`).
+- Rule 17: a task with no host or with `local` runs on the goal's own daemon
+  (`far_tasks.rs::a_task_without_a_host_runs_on_the_goals_own_daemon`).
+- Rule 18: a far task carries its host and clears `host_unreachable` while its host is
+  `ready` (`far_tasks.rs::a_far_task_mirrors_the_state_its_host_reports`). OpenAPI carries
+  both fields and the request's `host`
+  (`far_tasks.rs::the_openapi_document_carries_the_host_of_a_task`).
+- Rule 19: a far task waits for a far dependency and a local one, and goes to its host
+  once both merged (`far_tasks.rs::a_far_task_waits_until_its_dependencies_merge_on_any_host`).
 
 ## Sources
 

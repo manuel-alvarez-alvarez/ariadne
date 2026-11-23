@@ -1,0 +1,543 @@
+//! Far tasks (037): tasks that the orchestrator creates on another host.
+//!
+//! The goal's daemon keeps each far task in its own task list. A far task
+//! stays `pending` here until every task it depends on has merged, on any
+//! host. Then the daemon sends it to its host: it creates one linked goal on
+//! that host for the goal, if none exists, and the task in it. From then on
+//! the daemon mirrors the far task's status, step, branch, request URL and
+//! merge commit from the host's event stream.
+//!
+//! One worker per host does all of this. It follows the host's status from
+//! the `host_updated` events of this daemon. While the host is not `ready`,
+//! each far task on it keeps its last known state and is `host_unreachable`.
+//! On the next `ready`, the worker opens the host's event stream, reads each
+//! far task again, and clears `host_unreachable`.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use ariadne_api::goals::{CreateGoalRequest, GoalDto, LinkedGoalDto};
+use ariadne_api::hosts::HostDto;
+use ariadne_api::stream::{DomainEvent, TaskUpdatedDto};
+use ariadne_api::tasks::{AgentAssignment, CreateTaskRequest, LOCAL_HOST, TaskDto};
+use ariadne_client::{Client, ClientError, SseEvent};
+use ariadne_core::{Actor, GoalStatus, TaskStatus};
+use ariadne_store::{FarTaskState, Repository, Store, Task};
+use axum::http::StatusCode;
+use tokio::sync::broadcast::{self, error::RecvError};
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
+use tokio::time::{Instant, sleep_until};
+use tracing::{info, warn};
+
+use crate::bus::BusEvent;
+use crate::hosts::{Hosts, client_for, host_repositories, ready_endpoint};
+use crate::http::AppState;
+use crate::http::convert::{repository_dto, task_dto_of};
+use crate::scheduler::SchedEvent;
+use crate::timeouts::Timeouts;
+
+/// The far task workers of this daemon. Cheap to clone: every clone is the
+/// same.
+#[derive(Clone)]
+pub struct FarTasks(Arc<Mutex<Option<JoinHandle<()>>>>);
+
+impl FarTasks {
+    /// Stop every worker: the daemon is stopping.
+    pub async fn shutdown(&self) {
+        let task = self.0.lock().unwrap().take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+}
+
+/// Start a worker for each host of `state`, and one for each host added
+/// later, until [`FarTasks::shutdown`].
+pub fn start(state: &AppState, timeouts: Timeouts) -> FarTasks {
+    // Subscribed here, not in the task: a change made after `start` returns
+    // is on the receiver, however late the task runs.
+    let events = state.events.subscribe();
+    let ctx = Ctx {
+        store: state.store.clone(),
+        sched: state.sched_tx.clone(),
+        timeouts,
+    };
+    let hosts = state.hosts.clone();
+    FarTasks(Arc::new(Mutex::new(Some(tokio::spawn(supervise(
+        ctx, hosts, events,
+    ))))))
+}
+
+/// What every worker shares.
+#[derive(Clone)]
+struct Ctx {
+    store: Store,
+    sched: Option<mpsc::UnboundedSender<SchedEvent>>,
+    timeouts: Timeouts,
+}
+
+impl Ctx {
+    fn wake(&self, task_id: &str) {
+        if let Some(sched) = &self.sched {
+            let _ = sched.send(SchedEvent::TaskChanged(task_id.into()));
+        }
+    }
+
+    async fn unreachable(&self, host: &str, unreachable: bool) {
+        if let Err(error) = self.store.set_host_unreachable(host, unreachable).await {
+            warn!(host, %error, "cannot record whether the host of far tasks is reachable");
+        }
+    }
+}
+
+/// One host's worker: the endpoint of the host while it is `ready`, and a
+/// nudge to look for far tasks that are free to start.
+struct Worker {
+    ready: watch::Sender<Option<String>>,
+    kick: mpsc::Sender<()>,
+    task: JoinHandle<()>,
+}
+
+impl Worker {
+    fn kick(&self) {
+        // One nudge waiting is enough: the worker reads every far task.
+        let _ = self.kick.try_send(());
+    }
+}
+
+async fn supervise(ctx: Ctx, hosts: Hosts, mut events: broadcast::Receiver<BusEvent>) {
+    let mut workers: HashMap<String, Worker> = HashMap::new();
+    for host in hosts.list() {
+        see(&ctx, &mut workers, &host);
+    }
+    loop {
+        match events.recv().await {
+            Ok(event) => match event.event {
+                DomainEvent::HostUpdated(host) => see(&ctx, &mut workers, &host),
+                // The worker sees its endpoint go, marks its tasks and ends.
+                DomainEvent::HostDeleted(host) => drop(workers.remove(&host.name)),
+                DomainEvent::TaskCreated(_)
+                | DomainEvent::TaskUpdated(_)
+                | DomainEvent::GoalUpdated(_) => workers.values().for_each(Worker::kick),
+                _ => {}
+            },
+            Err(RecvError::Lagged(_)) => {
+                for host in hosts.list() {
+                    see(&ctx, &mut workers, &host);
+                }
+                workers.values().for_each(Worker::kick);
+            }
+            Err(RecvError::Closed) => break,
+        }
+    }
+    for (_, worker) in workers {
+        worker.task.abort();
+    }
+}
+
+/// Give a host's worker the host as it stands now, and start the worker of
+/// a host seen for the first time.
+fn see(ctx: &Ctx, workers: &mut HashMap<String, Worker>, host: &HostDto) {
+    if host.name == LOCAL_HOST {
+        return;
+    }
+    let endpoint = ready_endpoint(host);
+    if let Some(worker) = workers.get(&host.name) {
+        worker.ready.send_if_modified(|current| {
+            let changed = *current != endpoint;
+            *current = endpoint;
+            changed
+        });
+        return;
+    }
+    let (ready, ready_rx) = watch::channel(endpoint);
+    let (kick, kicks) = mpsc::channel(1);
+    let task = tokio::spawn(work(ctx.clone(), host.name.clone(), ready_rx, kicks));
+    workers.insert(host.name.clone(), Worker { ready, kick, task });
+}
+
+/// Why a worker stopped following a host.
+enum Lost {
+    /// The host is gone, or the daemon stops.
+    Closed,
+    /// The host left `ready`, or changed its endpoint.
+    Left,
+    /// The host's event stream ended, or the host did not answer.
+    Stream,
+}
+
+async fn work(
+    ctx: Ctx,
+    host: String,
+    mut ready: watch::Receiver<Option<String>>,
+    mut kicks: mpsc::Receiver<()>,
+) {
+    loop {
+        let endpoint = ready.borrow_and_update().clone();
+        let Some(endpoint) = endpoint else {
+            ctx.unreachable(&host, true).await;
+            tokio::select! {
+                changed = ready.changed() => if changed.is_err() { return },
+                kick = kicks.recv() => if kick.is_none() { return },
+            }
+            continue;
+        };
+        let follower = Follower {
+            ctx: &ctx,
+            host: &host,
+            client: client_for(&endpoint),
+        };
+        let lost = follower.follow(&endpoint, &mut ready, &mut kicks).await;
+        ctx.unreachable(&host, true).await;
+        match lost {
+            Lost::Closed => return,
+            Lost::Left => {}
+            Lost::Stream => {
+                // The host may still be `ready`: open its stream again after
+                // a wait, unless it changes first.
+                let again = Instant::now() + ctx.timeouts.far_retry;
+                tokio::select! {
+                    changed = ready.changed() => if changed.is_err() { return },
+                    _ = sleep_until(again) => {}
+                }
+            }
+        }
+    }
+}
+
+/// Why a far task did not reach its host.
+enum Unsent {
+    /// The host refused it. The far task fails with the reason.
+    Refused(String),
+    /// The host did not answer. The far task is sent again later.
+    Unanswered(String),
+}
+
+impl From<ClientError> for Unsent {
+    fn from(error: ClientError) -> Self {
+        match &error {
+            ClientError::Api {
+                status, message, ..
+            } if status.is_client_error() => Self::Refused(message.clone()),
+            _ => Self::Unanswered(error.to_string()),
+        }
+    }
+}
+
+impl From<ariadne_store::StoreError> for Unsent {
+    fn from(error: ariadne_store::StoreError) -> Self {
+        Self::Unanswered(format!("the local store: {error}"))
+    }
+}
+
+/// A worker while its host is `ready`.
+struct Follower<'a> {
+    ctx: &'a Ctx,
+    host: &'a str,
+    client: Client,
+}
+
+impl Follower<'_> {
+    async fn follow(
+        &self,
+        endpoint: &str,
+        ready: &mut watch::Receiver<Option<String>>,
+        kicks: &mut mpsc::Receiver<()>,
+    ) -> Lost {
+        // The stream opens before the far tasks are read again, so no change
+        // of the host falls between the read and the stream.
+        let mut stream = match self.client.stream("/v1/events/stream").await {
+            Ok(stream) => stream,
+            Err(error) => {
+                warn!(host = self.host, %error, "cannot open the event stream of the host");
+                return Lost::Stream;
+            }
+        };
+        if let Err(error) = self.refresh().await {
+            warn!(host = self.host, %error, "cannot read the far tasks of the host");
+            return Lost::Stream;
+        }
+        let mut retry = self.dispatch_all().await;
+        loop {
+            tokio::select! {
+                changed = ready.changed() => {
+                    if changed.is_err() {
+                        return Lost::Closed;
+                    }
+                    if ready.borrow_and_update().as_deref() != Some(endpoint) {
+                        return Lost::Left;
+                    }
+                }
+                kick = kicks.recv() => {
+                    if kick.is_none() {
+                        return Lost::Closed;
+                    }
+                    retry = self.dispatch_all().await;
+                }
+                _ = sleep_until(retry.unwrap_or_else(Instant::now)), if retry.is_some() => {
+                    retry = self.dispatch_all().await;
+                }
+                frame = stream.next() => match frame {
+                    Some(Ok(frame)) => {
+                        if let Err(error) = self.on_frame(frame).await {
+                            warn!(host = self.host, %error, "cannot read the far tasks of the host");
+                            return Lost::Stream;
+                        }
+                    }
+                    Some(Err(error)) => {
+                        warn!(host = self.host, %error, "the event stream of the host broke");
+                        return Lost::Stream;
+                    }
+                    None => return Lost::Stream,
+                },
+            }
+        }
+    }
+
+    /// Read each far task on the host again, then clear `host_unreachable`.
+    async fn refresh(&self) -> Result<(), ClientError> {
+        let tasks = self
+            .ctx
+            .store
+            .list_far_tasks(self.host)
+            .await
+            .map_err(|e| ClientError::Unreachable {
+                endpoint: "the local store".into(),
+                source: Box::new(e),
+            })?;
+        for task in tasks {
+            let Some(far_id) = &task.far_task_id else {
+                continue;
+            };
+            match self
+                .client
+                .get_json::<TaskDto>(&format!("/v1/tasks/{far_id}"))
+                .await
+            {
+                Ok(far) => self.mirror(&task.id, &far).await,
+                Err(ClientError::Api { status, .. }) if status == StatusCode::NOT_FOUND => {
+                    warn!(host = self.host, task = %task.id, far_task = %far_id, "the host has no such task any more");
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        self.ctx.unreachable(self.host, false).await;
+        Ok(())
+    }
+
+    async fn on_frame(&self, frame: SseEvent) -> Result<(), ClientError> {
+        match frame.event.as_str() {
+            "task_updated" => {
+                let update: TaskUpdatedDto = serde_json::from_str(&frame.data)?;
+                match self
+                    .ctx
+                    .store
+                    .far_task_by_far_id(self.host, &update.task.id)
+                    .await
+                {
+                    Ok(Some(task)) => self.mirror(&task.id, &update.task).await,
+                    Ok(None) => {}
+                    Err(error) => warn!(host = self.host, %error, "cannot find a far task"),
+                }
+                Ok(())
+            }
+            // The stream lost events: read every far task again.
+            "resync" => self.refresh().await,
+            _ => Ok(()),
+        }
+    }
+
+    /// Write what the host reports of a far task, and wake the scheduler
+    /// when its status moved: a task that depends on it may start now.
+    async fn mirror(&self, task_id: &str, far: &TaskDto) {
+        let state = FarTaskState {
+            status: far.status,
+            step: far.step.clone(),
+            branch: far.branch.clone(),
+            pr_url: far.pr_url.clone(),
+            merge_commit: far.merge_commit.clone(),
+            reason: far.reason.clone(),
+        };
+        match self.ctx.store.mirror_far_task(task_id, &state).await {
+            Ok(true) => self.ctx.wake(task_id),
+            Ok(false) => {}
+            Err(error) => {
+                warn!(host = self.host, task = task_id, %error, "cannot mirror a far task")
+            }
+        }
+    }
+
+    /// Send each far task that is free to start to the host. Answers when to
+    /// try again, where the host did not answer.
+    async fn dispatch_all(&self) -> Option<Instant> {
+        let tasks = match self.ctx.store.list_far_tasks(self.host).await {
+            Ok(tasks) => tasks,
+            Err(error) => {
+                warn!(host = self.host, %error, "cannot list the far tasks of the host");
+                return Some(Instant::now() + self.ctx.timeouts.far_retry);
+            }
+        };
+        let mut retry = None;
+        for task in tasks {
+            match self.free(&task).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    warn!(task = %task.id, %error, "cannot read the dependencies of a far task");
+                    continue;
+                }
+            }
+            match self.dispatch(&task).await {
+                Ok(()) => info!(host = self.host, task = %task.id, "sent a far task to its host"),
+                Err(Unsent::Refused(reason)) => self.refused(&task, &reason).await,
+                Err(Unsent::Unanswered(error)) => {
+                    warn!(host = self.host, task = %task.id, %error, "the host did not take a far task");
+                    retry = Some(Instant::now() + self.ctx.timeouts.far_retry);
+                }
+            }
+        }
+        retry
+    }
+
+    /// Whether a far task is free to start: not yet sent, `pending` in an
+    /// `active` goal, and every task it depends on merged, on any host.
+    async fn free(&self, task: &Task) -> ariadne_store::Result<bool> {
+        if task.far_task_id.is_some() || task.status() != TaskStatus::Pending {
+            return Ok(false);
+        }
+        let goal = self.ctx.store.get_goal(&task.goal_id).await?;
+        Ok(goal.status() == GoalStatus::Active
+            && self.ctx.store.task_dependencies_merged(&task.id).await?)
+    }
+
+    async fn refused(&self, task: &Task, reason: &str) {
+        let reason = format!("host {} refused the task: {reason}", self.host);
+        warn!(task = %task.id, %reason, "a far task failed");
+        match self
+            .ctx
+            .store
+            .transition_task(
+                &task.id,
+                TaskStatus::Failed,
+                Actor::Daemon,
+                Some(&reason),
+                None,
+            )
+            .await
+        {
+            Ok(_) => self.ctx.wake(&task.id),
+            Err(error) => warn!(task = %task.id, %error, "cannot fail a far task"),
+        }
+    }
+
+    /// Create the task on the host, in the linked goal of its goal there.
+    async fn dispatch(&self, task: &Task) -> Result<(), Unsent> {
+        let store = &self.ctx.store;
+        let goal = store.get_goal(&task.goal_id).await?;
+        let local = store
+            .list_repositories()
+            .await?
+            .into_iter()
+            .map(repository_dto)
+            .collect();
+        let paired = host_repositories(local, &self.client).await?;
+        let Some(far_repo) = paired.get(&task.repo_id).cloned() else {
+            let repo = store.get_repository(&task.repo_id).await?;
+            return Err(Unsent::Refused(lacks_repository(self.host, &repo)));
+        };
+        let dto = task_dto_of(store, task.clone()).await?;
+        let agents: Vec<AgentAssignment> = dto
+            .agents
+            .iter()
+            .map(|agent| AgentAssignment {
+                step: agent.step.clone(),
+                skills: agent.skills.clone(),
+                model: agent.model.clone(),
+                effort: agent.effort.clone(),
+                brief: agent.brief.clone(),
+            })
+            .collect();
+        let far_goal = match store.far_goal_of(&goal.id, self.host).await? {
+            Some(id) => id,
+            None => {
+                let goal_repos = store.list_goal_repositories(&goal.id).await?;
+                // The task's own repository first: the linked goal takes
+                // every repository of the goal that the host has.
+                let repository_ids = std::iter::once(far_repo.clone())
+                    .chain(
+                        goal_repos
+                            .iter()
+                            .filter(|repo| repo.id != task.repo_id)
+                            .filter_map(|repo| paired.get(&repo.id).cloned()),
+                    )
+                    .collect();
+                let model = agents
+                    .first()
+                    .map(|agent| agent.model.clone())
+                    .unwrap_or_else(|| goal.model.clone());
+                let created: GoalDto = self
+                    .client
+                    .post_json(
+                        "/v1/goals",
+                        &CreateGoalRequest {
+                            linked: Some(LinkedGoalDto {
+                                origin_goal_id: goal.id.clone(),
+                            }),
+                            workflow: Some(goal.workflow.clone()),
+                            title: goal.title.clone(),
+                            description: goal.description.clone(),
+                            issue_url: goal.issue_url.clone(),
+                            repository_ids,
+                            model,
+                            effort: None,
+                        },
+                    )
+                    .await?;
+                // Kept before the task is created, so a task that the host
+                // then refuses leaves no second linked goal behind.
+                store.set_far_goal(&task.id, &created.id).await?;
+                created.id
+            }
+        };
+        let far: TaskDto = self
+            .client
+            .post_json(
+                &format!("/v1/goals/{far_goal}/tasks"),
+                &CreateTaskRequest {
+                    title: task.title.clone(),
+                    description: task.description.clone(),
+                    repo_id: Some(far_repo),
+                    agents,
+                    depends_on: Vec::new(),
+                    host: None,
+                },
+            )
+            .await?;
+        store.set_far_task(&task.id, &far_goal, &far.id).await?;
+        self.mirror(&task.id, &far).await;
+        Ok(())
+    }
+}
+
+/// The refusal for a repository that the host has no checkout of. It names
+/// the repository, the host, and the setup step that adds it (037, rule 63).
+pub(crate) fn lacks_repository(host: &str, repo: &Repository) -> String {
+    let name = repository_name(repo);
+    format!(
+        "host {host} lacks repository {name} ({id}); add it with the `repository:{id}` step of \
+         the host's setup: `ariadne host setup {host}` with `{id}` in `repositories`",
+        id = repo.id,
+    )
+}
+
+/// A repository as a user knows it: its forge name, else its folder.
+fn repository_name(repo: &Repository) -> String {
+    match &repo.forge {
+        Some(forge) => format!("{}/{}", forge.owner, forge.name),
+        None => std::path::Path::new(&repo.path)
+            .file_name()
+            .map_or_else(|| repo.path.clone(), |name| name.to_string_lossy().into()),
+    }
+}

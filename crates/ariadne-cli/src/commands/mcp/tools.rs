@@ -72,6 +72,9 @@ pub(super) struct CreateTaskReq {
     pub depends_on: Option<Vec<String>>,
     /// Repository id. Pass it only where the goal works in several.
     pub repo_id: Option<String>,
+    /// The `name` of a `ready` host to run the task on. Omit it, or pass
+    /// `local`, to run the task on this machine.
+    pub host: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -577,6 +580,7 @@ impl AriadneMcp {
                     repo_id: req.repo_id,
                     agents,
                     depends_on: req.depends_on.unwrap_or_default(),
+                    host: req.host,
                 },
             )
             .await?;
@@ -1553,6 +1557,7 @@ mod tests {
                 agents: vec![],
                 depends_on: None,
                 repo_id: None,
+                host: None,
             }))
             .await
             .expect_err("a task with no agents");
@@ -1572,6 +1577,7 @@ mod tests {
                 }],
                 depends_on: None,
                 repo_id: None,
+                host: None,
             }))
             .await
             .expect_err("default is no model for a column");
@@ -2207,6 +2213,7 @@ mod tests {
                 ],
                 depends_on: None,
                 repo_id: None,
+                host: None,
             }))
             .await
             .expect("create the task");
@@ -2237,6 +2244,45 @@ mod tests {
         );
     }
 
+    /// A host named on `create_task` is the host the daemon is asked for,
+    /// and a task that names none sends no host, so it runs on the goal's
+    /// own daemon (037).
+    #[tokio::test]
+    async fn a_created_task_passes_its_host_to_the_daemon() {
+        assert!(
+            tool_schema("create_task")["properties"]
+                .get("host")
+                .is_some(),
+            "create_task takes no host"
+        );
+        for (host, sent) in [
+            (Some("worker"), Some(serde_json::json!("worker"))),
+            (None, None),
+        ] {
+            let (endpoint, seen) = recording_daemon().await;
+            orchestrator_at(&endpoint)
+                .create_task(Parameters(CreateTaskReq {
+                    title: "Run it far".into(),
+                    description: String::new(),
+                    agents: vec![AgentReq {
+                        step: "develop".into(),
+                        model: "codex-acp:gpt-5.6-sol".into(),
+                        effort: None,
+                        skills: None,
+                        brief: None,
+                    }],
+                    depends_on: None,
+                    repo_id: None,
+                    host: host.map(Into::into),
+                }))
+                .await
+                .expect("create the task");
+            let seen = seen.lock().expect("lock").clone();
+            let body: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+            assert_eq!(body.get("host").cloned(), sent, "{body}");
+        }
+    }
+
     /// One staffing object per column: skills left out travel as an empty
     /// list, which tells the daemon to use the column's own, and an empty
     /// staffing is refused before anything is sent.
@@ -2265,6 +2311,7 @@ mod tests {
                 ],
                 depends_on: None,
                 repo_id: None,
+                host: None,
             }))
             .await
             .expect("create the task");
@@ -2292,6 +2339,7 @@ mod tests {
                 agents: vec![],
                 depends_on: None,
                 repo_id: None,
+                host: None,
             }))
             .await
             .expect_err("an empty staffing is refused");
@@ -2813,6 +2861,7 @@ mod tests {
                     brief: None,
                 }],
                 depends_on: None,
+                host: None,
             }))
             .await
             .expect("create");

@@ -3591,6 +3591,13 @@ export interface components {
             depends_on?: string[];
             description?: string;
             /**
+             * @description The host to run the task on, a `ready` host of `GET /v1/hosts`.
+             *     Omitted or `local` = this daemon. A far task waits here until every
+             *     task it depends on has merged, then goes to the host.
+             * @example worker
+             */
+            host?: string | null;
+            /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
              */
@@ -5146,6 +5153,17 @@ export interface components {
             depends_on: string[];
             description: string;
             goal_id: string;
+            /**
+             * @description The host the task runs on: `local` for a task on the goal's own
+             *     daemon, else the name of a host (`GET /v1/hosts`).
+             * @example local
+             */
+            host?: string;
+            /**
+             * @description True while the host of a far task is not `ready`. The task then keeps
+             *     its last known state. Always false for a `local` task.
+             */
+            host_unreachable?: boolean;
             id: string;
             /** @description The commit the task landed as, where its last column reported one. */
             merge_commit?: string | null;
@@ -6060,6 +6078,13 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the host of a far task did not answer */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

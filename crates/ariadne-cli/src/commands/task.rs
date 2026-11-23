@@ -299,6 +299,7 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                         repo_id,
                         agents,
                         depends_on,
+                        host: None,
                     },
                 )
                 .await?;

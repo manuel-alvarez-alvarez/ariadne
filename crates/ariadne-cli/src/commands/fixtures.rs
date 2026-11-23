@@ -71,6 +71,8 @@ pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
         usage: Default::default(),
         created_at: NOW.into(),
         updated_at: NOW.into(),
+        host: "local".into(),
+        host_unreachable: false,
     }
 }
 

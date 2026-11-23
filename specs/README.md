@@ -13,7 +13,7 @@ test that proves it. Conventions for writing and changing one are in
 
 | # | Spec | What it settles |
 | --- | --- | --- |
-| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, transitions, dependencies, failure, retry, and linked goals |
+| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, transitions, dependencies, failure, retry, linked goals, and the host of a task |
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
 | 003 | [Planning a goal](003-planning-a-goal.md) | planning, the orchestrator's lifetime, and linked goal task admission |
 | 004 | [Authoring and review](004-authoring-and-review.md) | superseded by 030: the author, the reviewers and the verdicts are the develop and review columns |
@@ -46,6 +46,6 @@ test that proves it. Conventions for writing and changing one are in
 | 034 | [Telemetry query APIs](034-telemetry-query.md) | the Prometheus and Loki routes over the telemetry store, the name translation, the supported PromQL and LogQL, and `ariadne query` |
 | 035 | [Metrics](035-metrics.md) | the metric catalog the daemon records: every instrument, its unit, attributes and where it is recorded |
 | 036 | [Dashboards](036-dashboards.md) | editable Perses dashboard documents, their catalog routes, events and CLI |
-| 037 | [Hosts](037-hosts.md) | database hosts and colours, CRUD routes and events, SSH worker inspection and review in three setup groups, resumable setup, explicit idle updates and repository population, catalog and portable configuration synchronization, idle maintenance restarts, and host query routes |
+| 037 | [Hosts](037-hosts.md) | database hosts and colours, CRUD routes and events, SSH worker inspection and review in three setup groups, resumable setup, explicit idle updates and repository population, catalog and portable configuration synchronization, idle maintenance restarts, host query routes, and far tasks that a goal's daemon sends to a host and mirrors |
 | 038 | [Agent relay](038-agent-relay.md) | `ariadned relay`, session paths, versioned durable replay, acknowledgments, stop, exit reporting, upgrades, and terminal status |
 | 039 | [Isolated Linux latency measurements](039-isolated-linux-latency.md) | dispatch-only bounded Linux cohorts, private caches, evidence and image comparability |

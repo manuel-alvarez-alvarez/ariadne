@@ -488,11 +488,29 @@ pub struct Task {
     pub pr_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// The host a far task runs on (037). None for a task on this daemon.
+    pub host: Option<String>,
+    /// The linked goal on the host, once the far task is sent there.
+    pub far_goal_id: Option<String>,
+    /// The task on the host, once the far task is sent there.
+    pub far_task_id: Option<String>,
+    /// 1 while the host of a far task is not `ready`.
+    pub host_unreachable: i64,
 }
 
 impl Task {
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
+    }
+
+    /// Whether the task runs on another host.
+    pub fn is_far(&self) -> bool {
+        self.host.is_some()
+    }
+
+    /// Whether the host of a far task is not `ready`.
+    pub fn is_host_unreachable(&self) -> bool {
+        self.host_unreachable != 0
     }
 }
 

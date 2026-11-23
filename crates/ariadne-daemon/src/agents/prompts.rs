@@ -519,6 +519,10 @@ mod tests {
             pr_url: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
+            host: None,
+            far_goal_id: None,
+            far_task_id: None,
+            host_unreachable: 0,
         }
     }
 

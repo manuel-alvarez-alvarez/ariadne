@@ -55,6 +55,10 @@ pub struct Timeouts {
     /// Each failure doubles it, up to 60 seconds; a push that succeeds
     /// resets it.
     pub host_sync_retry: Duration,
+    /// The wait before the goal's daemon opens a lost event stream of a
+    /// `ready` host again, or sends again a far task that the host did not
+    /// answer (037).
+    pub far_retry: Duration,
     /// Check whether worker maintenance has drained its admitted tasks.
     pub worker_maintenance: Duration,
     /// How long one detail fetch of a pull request may take: its comments,
@@ -196,6 +200,7 @@ impl Default for Timeouts {
             host_check: Duration::from_secs(5),
             host_unanswered: Duration::from_secs(15),
             host_sync_retry: Duration::from_secs(1),
+            far_retry: Duration::from_secs(1),
             worker_maintenance: Duration::from_millis(100),
             forge_details: Duration::from_secs(30),
             forge_rate_limit_pause: Duration::from_secs(900),

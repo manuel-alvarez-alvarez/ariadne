@@ -337,16 +337,30 @@ fn initial(name: &str, host: &HostConfig) -> HostDto {
 }
 
 /// The endpoint a sync pushes to, where the host is `ready`.
-fn ready_endpoint(host: &HostDto) -> Option<String> {
+pub(crate) fn ready_endpoint(host: &HostDto) -> Option<String> {
     match host.status {
         HostStatus::Ready => host.endpoint.clone(),
         HostStatus::Connecting | HostStatus::Down => None,
     }
 }
 
+/// The host's id for each of the `local` repositories that has a checkout
+/// on the host, by the pairing of rule 26 (037). A local repository with
+/// none is not in the map.
+pub(crate) async fn host_repositories(
+    local: Vec<ariadne_api::repositories::RepositoryDto>,
+    client: &Client,
+) -> Result<std::collections::HashMap<String, String>, ariadne_client::ClientError> {
+    let remote = client.get_json("/v1/repositories").await?;
+    Ok(sync::pair(local, remote)
+        .into_iter()
+        .filter_map(|pair| Some((pair.local.id, pair.remote?.id)))
+        .collect())
+}
+
 /// A client for the endpoint of a host: an `http://` address, else a
 /// socket path.
-fn client_for(endpoint: &str) -> Client {
+pub(crate) fn client_for(endpoint: &str) -> Client {
     if endpoint.starts_with("http://") {
         Client::tcp(endpoint)
     } else {

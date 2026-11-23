@@ -28,6 +28,89 @@ fn check_dependencies(goal: &Goal, depends_on: &[String]) -> ApiResult<()> {
     Ok(())
 }
 
+/// Refuse a far task that its host cannot run (037): a host that is unknown
+/// or not `ready`, a repository that the host lacks, or a model that the
+/// host's `GET /v1/models` does not list.
+async fn check_host(
+    state: &AppState,
+    host: &str,
+    repo: &ariadne_store::Repository,
+    agents: &[AgentAssignment],
+) -> ApiResult<()> {
+    let Some(dto) = state.hosts.list().into_iter().find(|h| h.name == host) else {
+        return Err(ApiError::bad_request(format!(
+            "unknown host {host}; `GET /v1/hosts` lists the hosts"
+        )));
+    };
+    let endpoint = match (dto.status, crate::hosts::ready_endpoint(&dto)) {
+        (ariadne_api::hosts::HostStatus::Ready, Some(endpoint)) => endpoint,
+        (status, _) => {
+            return Err(ApiError::conflict(format!(
+                "host {host} is {}; a far task needs a ready host",
+                format!("{status:?}").to_lowercase()
+            )));
+        }
+    };
+    let client = crate::hosts::client_for(&endpoint);
+    let unanswered = |error: ariadne_client::ClientError| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "host_unreachable",
+            format!("host {host} did not answer: {error}"),
+        )
+    };
+    let local = state
+        .store
+        .list_repositories()
+        .await?
+        .into_iter()
+        .map(super::convert::repository_dto)
+        .collect();
+    let paired = crate::hosts::host_repositories(local, &client)
+        .await
+        .map_err(unanswered)?;
+    if !paired.contains_key(&repo.id) {
+        return Err(ApiError::conflict(crate::far::lacks_repository(host, repo)));
+    }
+    let models: Vec<ariadne_api::models::ModelDto> =
+        client.get_json("/v1/models").await.map_err(unanswered)?;
+    for agent in agents {
+        if !models.iter().any(|model| model.id == agent.model) {
+            return Err(ApiError::bad_request(format!(
+                "host {host} does not list the model {}; staff the task on a model of \
+                 `GET /v1/models` on that host",
+                agent.model
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The agents of a far task, pinned as the request names them. The host's
+/// catalog, not this daemon's, decides which models a far task can run on
+/// ([`check_host`]), and the host checks each pin again when it gets the task.
+fn far_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
+    assignments
+        .iter()
+        .map(|assignment| {
+            let model: ariadne_core::models::ModelRef =
+                assignment.model.parse().map_err(ApiError::bad_request)?;
+            Ok(NewTaskAgent {
+                step: assignment.step.clone(),
+                skills: assignment.skills.clone(),
+                pin: ariadne_store::AgentPin {
+                    model: model.to_string(),
+                    effort: assignment
+                        .effort
+                        .clone()
+                        .filter(|effort| !["", "default"].contains(&effort.as_str())),
+                },
+                brief: assignment.brief.clone(),
+            })
+        })
+        .collect()
+}
+
 /// The agents an assignment list asks for, in the order it names them.
 ///
 /// An agent has nothing behind it to fall back to: every assignment names its
@@ -69,7 +152,8 @@ pub(super) async fn resolve_agents(
 #[utoipa::path(post, path = "/v1/goals/{goal_id}/tasks", tag = "tasks",
     request_body = CreateTaskRequest,
     params(("goal_id" = String, Path, description = "goal id")),
-    responses((status = 201, body = TaskDto), (status = 400), (status = 409)))]
+    responses((status = 201, body = TaskDto), (status = 400), (status = 409),
+        (status = 502, description = "the host of a far task did not answer")))]
 pub(super) async fn create(
     State(state): State<AppState>,
     Path(goal_id): Path<String>,
@@ -108,19 +192,31 @@ pub(super) async fn create(
         }
     };
 
-    let agents = resolve_agents(&state, &req.agents, ctx.actor == Actor::User).await?;
+    // `local` names the goal's own daemon, as an omitted host does.
+    let host = req
+        .host
+        .filter(|host| host != ariadne_api::tasks::LOCAL_HOST);
+    let agents = match &host {
+        Some(host) => {
+            let repo = state.store.get_repository(&repo_id).await?;
+            check_host(&state, host, &repo, &req.agents).await?;
+            far_agents(&req.agents)?
+        }
+        None => resolve_agents(&state, &req.agents, ctx.actor == Actor::User).await?,
+    };
 
-    let task = state
-        .store
-        .create_task(NewTask {
-            goal_id: goal.id,
-            repo_id,
-            title: req.title,
-            description: req.description,
-            agents,
-            depends_on: req.depends_on,
-        })
-        .await?;
+    let new = NewTask {
+        goal_id: goal.id,
+        repo_id,
+        title: req.title,
+        description: req.description,
+        agents,
+        depends_on: req.depends_on,
+    };
+    let task = match &host {
+        Some(host) => state.store.create_far_task(new, host).await?,
+        None => state.store.create_task(new).await?,
+    };
     if goal.origin_goal_id.is_some() {
         state.notify_scheduler(&task.id);
     }

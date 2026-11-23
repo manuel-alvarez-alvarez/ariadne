@@ -147,6 +147,8 @@ dto! {
         status: t.status(),
         operation: operation,
         stalled: t.is_stalled(),
+        host_unreachable: t.is_host_unreachable(),
+        host: t.host.clone().unwrap_or_else(|| ariadne_api::tasks::LOCAL_HOST.into()),
         agents: agents
             .into_iter()
             .map(|(a, skills)| {
