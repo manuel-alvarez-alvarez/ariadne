@@ -43,8 +43,8 @@ impl GoalListQuery {
     }
 }
 
-/// Create a goal on registered repositories; the orchestrator session is
-/// spawned by the scheduler once agent execution lands.
+/// Create a goal on registered repositories. The scheduler starts its
+/// orchestrator unless the goal is linked.
 ///
 /// The repos are referenced, not copied: whatever `POST /v1/repositories`
 /// validated about a checkout holds for every goal that names it, and an edit
@@ -82,19 +82,27 @@ pub(super) async fn create(
     )
     .await?;
 
-    let goal = state
-        .store
-        .create_goal(NewGoal {
-            workflow: req.workflow,
-            title: req.title,
-            description: req.description,
-            issue_url: req.issue_url,
-            repository_ids: req.repository_ids,
-            pin,
-        })
-        .await?;
-    // The scheduler spawns the orchestrator session for goals in planning.
-    state.notify_scheduler_goal(&goal.id);
+    let new = NewGoal {
+        workflow: req.workflow,
+        title: req.title,
+        description: req.description,
+        issue_url: req.issue_url,
+        repository_ids: req.repository_ids,
+        pin,
+    };
+    let goal = match req.linked {
+        Some(link) => {
+            state
+                .store
+                .create_linked_goal(new, &link.origin_goal_id)
+                .await?
+        }
+        None => {
+            let goal = state.store.create_goal(new).await?;
+            state.notify_scheduler_goal(&goal.id);
+            goal
+        }
+    };
     Ok((StatusCode::CREATED, to_dto(&state, goal).await?))
 }
 

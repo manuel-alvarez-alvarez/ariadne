@@ -50,6 +50,22 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
 [`RELEASING.md`](RELEASING.md) is the human explanation of the loop these two
 release workflows drive, the release token, and what to do when it expires.
 
+## Manual Linux latency experiment
+
+[`workflows/linux-latency-experiment.yml`](workflows/linux-latency-experiment.yml)
+is dispatch-only and separate from ordinary CI and hooks. Its nine serial matrix
+jobs use a fixed measured source SHA, immutable action pins, private runner-local
+caches and a 315-minute job-timeout ceiling. It requests only `contents: read`.
+The public, unauthenticated API guard rejects overlapping experiment IDs and
+fails closed on API errors. Never export cache-service tokens or add shared
+cache actions. Record actual assigned image versions; compare only matching
+cohorts. Dispatch still requires separate user approval.
+
+Implementation conventions, checks and live gaps are in
+[`experiments/linux-latency/README.md`](experiments/linux-latency/README.md).
+These bounded fixture checks are local experiment checks, not new `ci.yml`
+checks, so they do not alter the main-push hook command set.
+
 ## GitHub settings
 
 [`settings/repository.json`](settings/repository.json) and

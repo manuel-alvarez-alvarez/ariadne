@@ -63,6 +63,7 @@ and the integration with it (025).
    empty tree once it has landed too: that commit is the one the repository
    starts from, so it has no first parent either. Cutting orphan needs
    git 2.42, which is the floor `ariadne doctor` warns below (014). A
+   linked goal branches from the fetched remote base (001 rule 16). A
    worktree's own path reaches every `git worktree` call as data, whatever
    shape it takes: a `worktree_root` that gives it a leading `-` is still
    created and still removed, rather than read as an unrecognized option.

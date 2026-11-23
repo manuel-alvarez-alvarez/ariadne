@@ -42,6 +42,7 @@ mod host_sync;
 mod hosts;
 mod issues;
 mod learned_permissions;
+mod linked_goals;
 mod logs;
 mod managers;
 mod metrics;

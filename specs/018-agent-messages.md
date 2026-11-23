@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-11-17
+updated: 2026-11-23
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/src/acp_transport.rs
+  - crates/ariadne-daemon/tests/it/linked_goals.rs
 ---
 
 # Agent messages
@@ -112,6 +113,10 @@ moves a task through (001), and the wording of the text a message arrives in
     step reason; where it is a question, it is a message.
 12. The MCP surface is two tools every seat has: `send_message` and
     `read_messages` (013).
+13. An agent can address the orchestrator of a linked goal (001 rule 14).
+    The daemon stores the message on its usual channel and publishes `message_sent`.
+    A goal event subscription includes these messages, including those about a task.
+    The daemon starts no local orchestrator session and leaves `delivered_at` null.
 
 ## Acceptance criteria
 
@@ -177,6 +182,9 @@ moves a task through (001), and the wording of the text a message arrives in
   (`::the_orchestrator_is_addressed_by_name_and_needs_no_agent_id`), and a
   message to nobody is refused with the addresses that would work
   (`::a_message_to_nobody_is_refused_with_the_addresses_that_would_work`).
+- An agent's message to the orchestrator of a linked goal is stored and published.
+  The linked goal keeps only the task's agent session
+  (`linked_goals.rs::a_linked_agents_message_to_its_orchestrator_is_stored_and_published`).
 
 ## Sources
 

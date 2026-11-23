@@ -320,8 +320,8 @@ export interface paths {
         get: operations["goals_list"];
         put?: never;
         /**
-         * Create a goal on registered repositories; the orchestrator session is
-         *     spawned by the scheduler once agent execution lands.
+         * Create a goal on registered repositories. The scheduler starts its
+         *     orchestrator unless the goal is linked.
          * @description The repos are referenced, not copied: whatever `POST /v1/repositories`
          *     validated about a checkout holds for every goal that names it, and an edit
          *     there moves this goal too. The workflow is the one the request names, or
@@ -3524,6 +3524,7 @@ export interface components {
              */
             effort?: string | null;
             issue_url?: string | null;
+            linked?: components["schemas"]["LinkedGoalDto"] | null;
             /**
              * @description What the orchestrator runs on, `<agent>:<model>` — the id of an agent
              *     in the ACP registry and, after the `:`, the model of it:
@@ -3974,6 +3975,7 @@ export interface components {
             effort?: string | null;
             id: string;
             issue_url?: string | null;
+            linked?: components["schemas"]["LinkedGoalDto"] | null;
             /**
              * @description What the orchestrator runs on, `<agent>:<model>`: the registry agent
              *     and, after the `:`, the model of it.
@@ -4246,6 +4248,10 @@ export interface components {
         LearnedPermissionTarget: "auto" | "ask" | "learn" | "ai";
         LearnedPermissionsResponse: {
             items: components["schemas"]["LearnedPermissionDto"][];
+        };
+        /** @description The origin of a goal that receives tasks from another daemon. */
+        LinkedGoalDto: {
+            origin_goal_id: string;
         };
         /** @description One captured daemon log line. */
         LogLineDto: {

@@ -1,7 +1,7 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-11-13
+updated: 2026-11-23
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/it/task_failure.rs
   - crates/ariadne-daemon/tests/it/goal_delete.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
+  - crates/ariadne-daemon/tests/it/linked_goals.rs
 ---
 
 # Goal and task lifecycle
@@ -34,9 +35,9 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
 
 1. A goal is `planning`, `active`, `completed` or `cancelled`. `completed`
    and `cancelled` are terminal.
-2. A goal opens in `planning` with one orchestrator session and nothing else
-   running. `finalize_plan` moves it to `active` and starts every task at
-   once (003).
+2. A goal with a local orchestrator opens in `planning` with only that
+   orchestrator session running. `finalize_plan` moves it to `active` and
+   starts every task at once (003).
 3. A goal is `completed` when its orchestrator or the user says so
    (`complete_goal`, 003) — refused while any task is not terminal — and
    `cancelled` when the user cancels it. Cancelling records the reason on
@@ -89,6 +90,16 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     starts, naming the column the same way.
 13. A terminal goal can be deleted, and deleting it takes its tasks,
     sessions, events and usage rows with it.
+14. `POST /v1/goals` accepts an optional `linked` object with a string
+    `origin_goal_id`. This names the goal on the daemon that supplies the tasks.
+    `GoalDto.linked` carries the same object, or null for other goals.
+    OpenAPI describes the object on the request and the response.
+    A linked goal skips planning (003 rule 17).
+15. The origin daemon holds each task until its dependencies merge.
+    A linked goal refuses a nonempty `depends_on` list on task creation or edit.
+16. A new task branch for a linked goal starts at the fetched remote base.
+    The daemon fetches from the repository's forge remote, with `origin` as the default.
+    The commit gate and the task diff compare against that fetched base, not the local base branch.
 
 ## Acceptance criteria
 
@@ -133,6 +144,17 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
   (`goal_delete.rs::an_unfinished_goal_is_refused_and_keeps_everything`); a
   finished one takes its children and reaches the event stream
   (`::deleting_a_finished_goal_takes_its_children_and_reaches_the_stream`).
+- A linked goal keeps its origin ID in the goal API. An ordinary goal carries null
+  (`linked_goals.rs::a_linked_goal_keeps_its_origin_id_in_the_goal_api`).
+  OpenAPI describes the link on creation and inspection
+  (`::the_openapi_schema_describes_linked_goals`).
+- A linked goal refuses task dependencies on creation and edit
+  (`linked_goals.rs::a_linked_goal_refuses_task_dependencies`,
+  `::a_linked_task_refuses_dependencies_on_edit`).
+- A linked task starts at the remote base after another host advances it
+  (`linked_goals.rs::a_linked_task_starts_at_the_fetched_remote_base`).
+- A linked task's diff holds only its own commits after another host advances the base
+  (`linked_goals.rs::a_linked_task_compares_its_work_against_the_fetched_remote_base`).
 
 ## Sources
 

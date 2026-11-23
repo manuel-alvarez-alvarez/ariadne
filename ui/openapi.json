@@ -697,7 +697,7 @@
         "tags": [
           "goals"
         ],
-        "summary": "Create a goal on registered repositories; the orchestrator session is\nspawned by the scheduler once agent execution lands.",
+        "summary": "Create a goal on registered repositories. The scheduler starts its\norchestrator unless the goal is linked.",
         "description": "The repos are referenced, not copied: whatever `POST /v1/repositories`\nvalidated about a checkout holds for every goal that names it, and an edit\nthere moves this goal too. The workflow is the one the request names, or\nthe first repository's default, and its columns are copied onto the goal.",
         "operationId": "create",
         "requestBody": {
@@ -6796,6 +6796,17 @@
               "null"
             ]
           },
+          "linked": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkedGoalDto",
+                "description": "Start an active goal that receives tasks and has no local orchestrator."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "model": {
             "type": "string",
             "description": "What the orchestrator runs on, `<agent>:<model>` — the id of an agent\nin the ACP registry and, after the `:`, the model of it:\n`codex-acp:gpt-5.3-codex`, `opencode:ollama/llama3:8b`. Required —\na model is required, and no agent default stands in for one. The model\nhalf is free text, handed to that agent as typed; a string naming no\nregistry agent is refused, and so are the empty string and the word\n\"default\".",
@@ -8046,6 +8057,17 @@
               "null"
             ]
           },
+          "linked": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkedGoalDto",
+                "description": "The goal on the daemon that supplies tasks, or null for a local goal."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "model": {
             "type": "string",
             "description": "What the orchestrator runs on, `<agent>:<model>`: the registry agent\nand, after the `:`, the model of it.",
@@ -8730,6 +8752,19 @@
             }
           }
         }
+      },
+      "LinkedGoalDto": {
+        "type": "object",
+        "description": "The origin of a goal that receives tasks from another daemon.",
+        "required": [
+          "origin_goal_id"
+        ],
+        "properties": {
+          "origin_goal_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "LogLineDto": {
         "type": "object",

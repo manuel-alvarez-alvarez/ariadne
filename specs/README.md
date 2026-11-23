@@ -13,9 +13,9 @@ test that proves it. Conventions for writing and changing one are in
 
 | # | Spec | What it settles |
 | --- | --- | --- |
-| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | the six statuses, the transition table, dependencies, failure and retry |
+| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, transitions, dependencies, failure, retry, and linked goals |
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
-| 003 | [Planning a goal](003-planning-a-goal.md) | the conversation, cohesive tasks, and the orchestrator's whole life |
+| 003 | [Planning a goal](003-planning-a-goal.md) | planning, the orchestrator's lifetime, and linked goal task admission |
 | 004 | [Authoring and review](004-authoring-and-review.md) | superseded by 030: the author, the reviewers and the verdicts are the develop and review columns |
 | 005 | [How a task ends](005-how-a-task-ends.md) | superseded by 030: the landings are the gate of a workflow's last column |
 | 006 | [Prompts and Simplified Technical English](006-prompts-and-simplified-technical-english.md) | the layers of text, who owns each, the English all of it is in |
@@ -29,7 +29,7 @@ test that proves it. Conventions for writing and changing one are in
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, reusable workload views, its conversation workspace, and CLI parity |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, Dependabot, CI build caches, the migration policy |
 | 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and the agent of each column; eleven skills and one document template |
-| 018 | [Agent messages](018-agent-messages.md) | the one channel the agents talk on, one kind, and how a message reaches its recipient |
+| 018 | [Agent messages](018-agent-messages.md) | agent messages, local delivery, and publication on linked goals |
 | 021 | [ACP runtime](021-acp-runtime.md) | ACP agents in direct children or relay panes: selection, protocol, events, kill |
 | 022 | [The `ai` permission mode](022-ai-permission-mode.md) | the fourth mode, the AI permission model's settings and prompts, the Python check and the install |
 | 023 | [Stats](023-stats.md) | superseded by 035 |
@@ -48,3 +48,4 @@ test that proves it. Conventions for writing and changing one are in
 | 036 | [Dashboards](036-dashboards.md) | editable Perses dashboard documents, their catalog routes, events and CLI |
 | 037 | [Hosts](037-hosts.md) | database hosts and colours, CRUD routes and events, SSH worker inspection and review in three setup groups, resumable setup, explicit idle updates and repository population, catalog and portable configuration synchronization, idle maintenance restarts, and host query routes |
 | 038 | [Agent relay](038-agent-relay.md) | `ariadned relay`, session paths, versioned durable replay, acknowledgments, stop, exit reporting, upgrades, and terminal status |
+| 039 | [Isolated Linux latency measurements](039-isolated-linux-latency.md) | dispatch-only bounded Linux cohorts, private caches, evidence and image comparability |

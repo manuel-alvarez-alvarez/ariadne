@@ -710,15 +710,25 @@ impl Launcher {
                 .join(format!("{}-eng", tail(&task.id))),
         };
         if !worktree.exists() {
+            let goal = self.store.get_goal(&task.goal_id).await?;
+            let repo_path = Path::new(&repo.path);
             std::fs::create_dir_all(worktree.parent().unwrap())?;
-            self.git
-                .add_worktree(
-                    &PathBuf::from(&repo.path),
-                    &worktree,
-                    &task.branch,
-                    &repo.base_branch,
-                )
-                .await?;
+            if goal.origin_goal_id.is_some() {
+                let remote = repo.forge.as_ref().map_or("origin", |f| f.remote.as_str());
+                self.git
+                    .add_linked_worktree(
+                        repo_path,
+                        &worktree,
+                        &task.branch,
+                        &repo.base_branch,
+                        remote,
+                    )
+                    .await?;
+            } else {
+                self.git
+                    .add_worktree(repo_path, &worktree, &task.branch, &repo.base_branch)
+                    .await?;
+            }
         }
         self.store
             .set_task_worktree(&task.id, Some(&worktree.display().to_string()))

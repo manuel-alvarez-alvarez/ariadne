@@ -25,6 +25,9 @@ pub struct GoalDto {
     pub status: GoalStatus,
     /// Whether this goal has an orchestrator for its lifetime.
     pub orchestrated: bool,
+    /// The goal on the daemon that supplies tasks, or null for a local goal.
+    #[serde(default)]
+    pub linked: Option<LinkedGoalDto>,
     /// The pull request and operation this goal runs (029), or null for an
     /// ordinary goal. One open goal exists per request and operation.
     #[serde(default)]
@@ -44,6 +47,13 @@ pub struct GoalDto {
     pub usage: GoalUsageDto,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// The origin of a goal that receives tasks from another daemon.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LinkedGoalDto {
+    pub origin_goal_id: String,
 }
 
 /// The pull request an operation goal works on, named by value: the request's
@@ -89,6 +99,9 @@ pub struct CompleteGoalRequest {}
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateGoalRequest {
+    /// Start an active goal that receives tasks and has no local orchestrator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked: Option<LinkedGoalDto>,
     /// The workflow every task of the goal runs on, a name of the catalog
     /// (`GET /v1/workflows`). Omitted = the default of the first repository.
     /// It cannot change once the goal is created.

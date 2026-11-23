@@ -94,6 +94,59 @@ impl GitManager {
         Ok(())
     }
 
+    /// Create a linked task's branch at the remote base. When the task
+    /// already has a branch, attach it without changing the branch tip.
+    pub(crate) async fn add_linked_worktree(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+        branch: &str,
+        base: &str,
+        remote: &str,
+    ) -> Result<()> {
+        let wt = worktree.display().to_string();
+        if self.branch_exists(repo, branch).await? {
+            self.git(repo, &["worktree", "add", "--", &wt, branch])
+                .await?;
+        } else {
+            let start = self.fetch_task_base(repo, remote, base).await?;
+            self.git(repo, &["worktree", "add", "-b", branch, "--", &wt, &start])
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Pin the fetched base by commit. Use its own tracking ref so another
+    /// fetch on the same checkout cannot replace the result in `FETCH_HEAD`.
+    async fn fetch_task_base(&self, repo: &Path, remote: &str, base: &str) -> Result<String> {
+        if !self.is_valid_branch_name(repo, base).await? {
+            bail!("not a valid branch name: {base}");
+        }
+        let tracking_ref = format!("refs/remotes/{remote}/{base}");
+        self.git(
+            repo,
+            &[
+                "fetch",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "--refmap=",
+                "--end-of-options",
+                remote,
+                &format!("+refs/heads/{base}:{tracking_ref}"),
+            ],
+        )
+        .await?;
+        self.git(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                &format!("{tracking_ref}^{{commit}}"),
+            ],
+        )
+        .await
+    }
+
     /// Create a detached worktree at `reference`, for a session that reviews
     /// a request (029): two worktrees cannot share a branch.
     pub async fn add_detached_worktree(
