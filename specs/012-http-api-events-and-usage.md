@@ -1,10 +1,11 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-11-22
+updated: 2026-11-23
 areas: [api, daemon, store]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
+  - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-daemon/tests/it/docs.rs
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
@@ -394,7 +395,32 @@ The daemon publishes it when a host's `status`, `endpoint` or `error` changes. I
 Issues are not stored, so the event carries no issue: a client reads them again. It has no goal or task routing scope.
 See [028](028-issues-and-goals.md) for the rule and the event tests.
 
+## Remote worker task protocol
+
+1. `GET /v1/remote-tasks/protocol` returns `{protocol: "remote-tasks-v1", daemon_id}` (037 rule 101).
+2. `PUT /v1/remote-tasks/{id}` accepts `CreateRemoteTaskRequest` from `ariadne-api/src/tasks.rs`.
+   The source supplies the stable task ID and the worker repository ID.
+   `source_goal` contains `daemon_id`, `goal_id`, `title`, and `description`.
+   `workflow` contains `name` and ordered `WorkflowStepDto` columns. `agents` uses `AgentAssignment`.
+   `title` and `description` describe the task.
+   New drafts return 201. An identical repeated request returns 200 with the existing task.
+   A different request for that ID returns 409. Use the existing task PATCH route for draft edits.
+3. `POST /v1/remote-tasks/{id}/authorize` accepts `{revision}` and returns the task.
+   Stale or cancelled authorization returns 409 (001 rule 22).
+   Agent sessions cannot create or authorize remote drafts.
+4. `TaskDto.execution_context` is additive and nullable. Local and legacy tasks return null.
+   Remote tasks return `source_goal`, `execution_owner`, `workflow`, `revision`, `authorized`, and `authorized_revision`.
+   `execution_owner` is the durable worker daemon ID.
+   `revision` describes draft freshness. `authorized_revision` retains the exact source authorization through retries.
+   Existing task fields retain their meanings. Remote `goal_id` names the source goal.
+   Existing task timestamps and events expose subsequent execution changes.
+   Reads, transitions, messages, usage, sessions, and diffs require no worker goal.
+
 ## Acceptance criteria
+
+- `remote_tasks.rs::the_remote_protocol_and_context_are_in_the_published_schema` proves the additive API contract.
+  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves task reads, history, messages, usage, and diffs.
+
 
 - `POST /v1/sessions/{id}/switch` is in the OpenAPI document with
   `SwitchSessionRequest`, and answers a `SessionDto` that carries

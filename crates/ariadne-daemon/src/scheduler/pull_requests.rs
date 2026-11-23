@@ -504,7 +504,7 @@ impl super::Scheduler {
         let Some(step) = task.step.as_deref() else {
             return Ok(());
         };
-        let columns = self.store.goal_steps(&task.goal_id).await?;
+        let columns = self.store.task_steps(task).await?;
         let Some(at) = columns.iter().position(|column| column.id == step) else {
             return Ok(());
         };

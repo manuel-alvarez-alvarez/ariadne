@@ -17,7 +17,7 @@ use super::SPAWN_RETRY_BUDGET;
 impl super::Scheduler {
     pub(super) async fn reconcile_task(&mut self, task_id: &str) -> anyhow::Result<()> {
         let task = self.store.get_task(task_id).await?;
-        let goal = self.store.get_goal(&task.goal_id).await?;
+        let goal = self.store.task_goal(&task).await?;
         if goal.status() != GoalStatus::Active {
             return Ok(());
         }
@@ -162,7 +162,7 @@ impl super::Scheduler {
         if task.status() != TaskStatus::InProgress {
             return Ok(());
         }
-        let steps = self.store.goal_steps(&task.goal_id).await?;
+        let steps = self.store.task_steps(&task).await?;
         let step = steps
             .iter()
             .find(|s| Some(&s.id) == task.step.as_ref())

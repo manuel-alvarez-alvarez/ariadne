@@ -320,8 +320,11 @@ pub(super) async fn relay_task_message(
         return Err(ApiError::forbidden("a session cannot relay a message"));
     }
     let task = state.store.get_task(&id).await?;
-    let goal = state.store.get_goal(&task.goal_id).await?;
-    if goal.origin_goal_id.is_none() || task.origin_task_id.as_deref() != Some(&req.origin_task_id)
+    let goal = state.store.task_goal(&task).await?;
+    if goal.origin_goal_id.is_none()
+        || (task.origin_task_id.as_deref() != Some(&req.origin_task_id)
+            && !(state.store.remote_task_context(&task.id).await?.is_some()
+                && req.origin_task_id == task.id))
     {
         return Err(ApiError::forbidden(
             "the task is not linked to the sender's task",
@@ -383,7 +386,10 @@ pub(super) async fn send(
                     "the orchestrator is staffed on no task, so it has no agent id",
                 ));
             }
-            let goal = state.store.get_goal(goal_id).await?;
+            let goal = match task {
+                Some(task) => state.store.task_goal(task).await?,
+                None => state.store.get_goal(goal_id).await?,
+            };
             if !goal.orchestrated && goal.origin_goal_id.is_none() {
                 return Err(ApiError::conflict(
                     "this goal has no orchestrator; the user answers in the console",
@@ -442,7 +448,7 @@ pub(super) async fn task_base(
     repo: &ariadne_store::Repository,
     task: &Task,
 ) -> ApiResult<String> {
-    let goal = state.store.get_goal(&task.goal_id).await?;
+    let goal = state.store.task_goal(task).await?;
     if goal.origin_goal_id.is_some() {
         let remote = repo.forge.as_ref().map_or("origin", |f| f.remote.as_str());
         let tracking = format!("refs/remotes/{remote}/{}", repo.base_branch);

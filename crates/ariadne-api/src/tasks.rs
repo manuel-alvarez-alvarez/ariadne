@@ -8,6 +8,9 @@ use crate::usage::TokenUsageDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskDto {
+    /// Present for worker-owned remote tasks. Null for local and legacy tasks.
+    #[serde(default)]
+    pub execution_context: Option<TaskExecutionContext>,
     /// The column of its goal's workflow the task is in while it is
     /// `in_progress`; null before its first column and once it has ended.
     pub step: Option<String>,
@@ -290,4 +293,62 @@ pub struct CompleteStepRequest {
 pub struct FailStepRequest {
     /// What the previous column's agent is told to fix.
     pub reason: String,
+}
+
+/// Durable source identity. Connection aliases and tunnel addresses are not identities.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SourceGoalReference {
+    pub daemon_id: String,
+    pub goal_id: String,
+    pub title: String,
+    pub description: String,
+}
+
+/// Saved workflow columns; catalog edits do not change these columns.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWorkflowContext {
+    pub name: String,
+    pub steps: Vec<crate::workflows::WorkflowStepDto>,
+}
+
+/// Worker context sufficient for task inspection without a local goal.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TaskExecutionContext {
+    pub source_goal: SourceGoalReference,
+    /// Persistent daemon ID of the worker that owns execution.
+    pub execution_owner: String,
+    pub workflow: TaskWorkflowContext,
+    /// Draft edits advance this revision. Authorization must name this revision.
+    pub revision: i64,
+    pub authorized: bool,
+    /// The source-authorized revision. It remains stable through task retries.
+    pub authorized_revision: Option<i64>,
+}
+
+/// Repeatable creation of a blocked worker draft. Use PATCH /v1/tasks/{id} to edit it.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateRemoteTaskRequest {
+    pub repo_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub source_goal: SourceGoalReference,
+    pub workflow: TaskWorkflowContext,
+    pub agents: Vec<AgentAssignment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizeRemoteTaskRequest {
+    pub revision: i64,
+}
+
+/// Explicit protocol negotiation, independent of application version.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RemoteTaskProtocol {
+    pub protocol: String,
+    pub daemon_id: String,
 }

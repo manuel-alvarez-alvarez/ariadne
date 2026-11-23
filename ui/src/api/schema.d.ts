@@ -344,7 +344,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Create a task in a goal (orchestrator via MCP, or the user). */
-        post: operations["tasks_create"];
+        post: operations["goals_tasks_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1555,6 +1555,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/{host}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The model catalog of one host: this daemon's own for `local`, the far
+         *     daemon's `GET /v1/models` for a `ready` host.
+         */
+        get: operations["hosts_models"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hosts/{name}": {
         parameters: {
             query?: never;
@@ -2129,6 +2149,54 @@ export interface paths {
          *     gives every approval. What it posted is marked as the review's.
          */
         post: operations["pull-requests_submit_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/remote-tasks/protocol": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["tasks_protocol"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/remote-tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["remote-tasks_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/remote-tasks/{id}/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["tasks_authorize"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3409,6 +3477,10 @@ export interface components {
             kind: "settings";
             section: string;
         };
+        AuthorizeRemoteTaskRequest: {
+            /** Format: int64 */
+            revision: number;
+        };
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             /**
@@ -3551,6 +3623,15 @@ export interface components {
             endpoint: string;
             name: string;
             remote?: string | null;
+        };
+        /** @description Repeatable creation of a blocked worker draft. Use PATCH /v1/tasks/{id} to edit it. */
+        CreateRemoteTaskRequest: {
+            agents: components["schemas"]["AgentAssignment"][];
+            description?: string;
+            repo_id: string;
+            source_goal: components["schemas"]["SourceGoalReference"];
+            title: string;
+            workflow: components["schemas"]["TaskWorkflowContext"];
         };
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
@@ -4706,6 +4787,11 @@ export interface components {
             tool_call: unknown;
             tool_name: string;
         };
+        /** @description Explicit protocol negotiation, independent of application version. */
+        RemoteTaskProtocol: {
+            daemon_id: string;
+            protocol: string;
+        };
         /** @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`. */
         ReplyCommentRequest: {
             body: string;
@@ -5051,6 +5137,13 @@ export interface components {
          * @enum {string}
          */
         SkillSeat: "orchestrator" | "task" | "pull_request";
+        /** @description Durable source identity. Connection aliases and tunnel addresses are not identities. */
+        SourceGoalReference: {
+            daemon_id: string;
+            description: string;
+            goal_id: string;
+            title: string;
+        };
         /**
          * @description What a step waits for before the next one may start: the author's commit,
          *     a push, a merge onto the base, or a request merged by a human.
@@ -5158,6 +5251,7 @@ export interface components {
             /** @description Ids of tasks that must finish before this one starts. */
             depends_on: string[];
             description: string;
+            execution_context?: components["schemas"]["TaskExecutionContext"] | null;
             goal_id: string;
             /**
              * @description The host the task runs on: `local` for a task on the goal's own
@@ -5203,6 +5297,24 @@ export interface components {
             usage: components["schemas"]["TaskUsageDto"];
             worktree_path?: string | null;
         };
+        /** @description Worker context sufficient for task inspection without a local goal. */
+        TaskExecutionContext: {
+            authorized: boolean;
+            /**
+             * Format: int64
+             * @description The source-authorized revision. It remains stable through task retries.
+             */
+            authorized_revision?: number | null;
+            /** @description Persistent daemon ID of the worker that owns execution. */
+            execution_owner: string;
+            /**
+             * Format: int64
+             * @description Draft edits advance this revision. Authorization must name this revision.
+             */
+            revision: number;
+            source_goal: components["schemas"]["SourceGoalReference"];
+            workflow: components["schemas"]["TaskWorkflowContext"];
+        };
         /**
          * @description Task lifecycle status.
          * @enum {string}
@@ -5242,6 +5354,11 @@ export interface components {
             agents: components["schemas"]["AgentUsageDto"][];
             /** @description Every session on the task summed, whatever its column. */
             total: components["schemas"]["TokenUsageDto"];
+        };
+        /** @description Saved workflow columns; catalog edits do not change these columns. */
+        TaskWorkflowContext: {
+            name: string;
+            steps: components["schemas"]["WorkflowStepDto"][];
         };
         /**
          * @description One permission request to score with the AI permission model, without
@@ -6069,7 +6186,7 @@ export interface operations {
             };
         };
     };
-    tasks_create: {
+    goals_tasks_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -6454,6 +6571,42 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    hosts_models: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description host name, or `local` */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDto"][];
+                };
+            };
+            /** @description no host has the name */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the host is not ready; the message names its status */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7717,6 +7870,107 @@ export interface operations {
                 content?: never;
             };
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_protocol: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoteTaskProtocol"];
+                };
+            };
+        };
+    };
+    "remote-tasks_put": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRemoteTaskRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_authorize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthorizeRemoteTaskRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -2163,6 +2163,46 @@
         }
       }
     },
+    "/v1/hosts/{host}/models": {
+      "get": {
+        "tags": [
+          "hosts"
+        ],
+        "summary": "The model catalog of one host: this daemon's own for `local`, the far\ndaemon's `GET /v1/models` for a `ready` host.",
+        "operationId": "models",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "description": "host name, or `local`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ModelDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no host has the name"
+          },
+          "503": {
+            "description": "the host is not ready; the message names its status"
+          }
+        }
+      }
+    },
     "/v1/hosts/{name}": {
       "delete": {
         "tags": [
@@ -3613,6 +3653,116 @@
           "404": {},
           "409": {},
           "502": {}
+        }
+      }
+    },
+    "/v1/remote-tasks/protocol": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "protocol",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteTaskProtocol"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/remote-tasks/{id}": {
+      "put": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRemoteTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "409": {}
+        }
+      }
+    },
+    "/v1/remote-tasks/{id}/authorize": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "authorize",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizeRemoteTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "409": {}
         }
       }
     },
@@ -6591,6 +6741,19 @@
         ],
         "description": "Where opening an item takes a client. Opening a target never resolves\nthe item on its own — only the thing the item names doing so does."
       },
+      "AuthorizeRemoteTaskRequest": {
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
       "BinaryDto": {
         "type": "object",
         "description": "A binary as the daemon can — or cannot — find it.",
@@ -6900,6 +7063,41 @@
             ]
           }
         }
+      },
+      "CreateRemoteTaskRequest": {
+        "type": "object",
+        "description": "Repeatable creation of a blocked worker draft. Use PATCH /v1/tasks/{id} to edit it.",
+        "required": [
+          "repo_id",
+          "title",
+          "source_goal",
+          "workflow",
+          "agents"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentAssignment"
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "repo_id": {
+            "type": "string"
+          },
+          "source_goal": {
+            "$ref": "#/components/schemas/SourceGoalReference"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/TaskWorkflowContext"
+          }
+        },
+        "additionalProperties": false
       },
       "CreateRepositoryRequest": {
         "type": "object",
@@ -9901,6 +10099,22 @@
         },
         "additionalProperties": false
       },
+      "RemoteTaskProtocol": {
+        "type": "object",
+        "description": "Explicit protocol negotiation, independent of application version.",
+        "required": [
+          "protocol",
+          "daemon_id"
+        ],
+        "properties": {
+          "daemon_id": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          }
+        }
+      },
       "ReplyCommentRequest": {
         "type": "object",
         "description": "Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`.",
@@ -10810,6 +11024,31 @@
           "pull_request"
         ]
       },
+      "SourceGoalReference": {
+        "type": "object",
+        "description": "Durable source identity. Connection aliases and tunnel addresses are not identities.",
+        "required": [
+          "daemon_id",
+          "goal_id",
+          "title",
+          "description"
+        ],
+        "properties": {
+          "daemon_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "goal_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "StepGate": {
         "type": "string",
         "description": "What a step waits for before the next one may start: the author's commit,\na push, a merge onto the base, or a request merged by a human.",
@@ -11001,6 +11240,17 @@
           "description": {
             "type": "string"
           },
+          "execution_context": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TaskExecutionContext",
+                "description": "Present for worker-owned remote tasks. Null for local and legacy tasks."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "goal_id": {
             "type": "string"
           },
@@ -11081,6 +11331,45 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TaskExecutionContext": {
+        "type": "object",
+        "description": "Worker context sufficient for task inspection without a local goal.",
+        "required": [
+          "source_goal",
+          "execution_owner",
+          "workflow",
+          "revision",
+          "authorized"
+        ],
+        "properties": {
+          "authorized": {
+            "type": "boolean"
+          },
+          "authorized_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The source-authorized revision. It remains stable through task retries."
+          },
+          "execution_owner": {
+            "type": "string",
+            "description": "Persistent daemon ID of the worker that owns execution."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Draft edits advance this revision. Authorization must name this revision."
+          },
+          "source_goal": {
+            "$ref": "#/components/schemas/SourceGoalReference"
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/TaskWorkflowContext"
           }
         }
       },
@@ -11186,6 +11475,26 @@
             "description": "Every session on the task summed, whatever its column."
           }
         }
+      },
+      "TaskWorkflowContext": {
+        "type": "object",
+        "description": "Saved workflow columns; catalog edits do not change these columns.",
+        "required": [
+          "name",
+          "steps"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "TestAiPermissionRequest": {
         "type": "object",

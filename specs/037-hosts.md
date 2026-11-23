@@ -5,6 +5,7 @@ updated: 2026-11-23
 areas: [api, daemon, client, cli, store, docs, ui]
 commits: []
 tests:
+  - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-store/tests/store.rs
   - ui/scripts/host-events.test.mjs
   - crates/ariadne-client/src/endpoint.rs
@@ -703,7 +704,18 @@ picker, the Hosts screen and one stream per host — is spec
     answer of it counts as a next `ready` too. An answer that arrives after the host left
     `ready` writes nothing, and clears no `host_unreachable`.
 
+101. `GET /v1/remote-tasks/protocol` explicitly publishes `remote-tasks-v1` support and the worker's durable daemon ID.
+     Connection aliases and tunnel addresses do not identify execution ownership.
+     A database retains its daemon ID across restarts.
+     New remote execution uses the worker draft protocol (012), independently of legacy linked goals.
+     Authorized execution requires no source connection.
+     Agent messages remain stored for source reads after reconnection, including messages to the source orchestrator.
+
 ## Acceptance criteria
+
+- Rule 101: `remote_tasks.rs::a_remote_draft_has_context_without_a_worker_goal` proves durable worker identity.
+  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves execution and retained source messages.
+
 
 - Rule 95: `far_tasks.rs::a_far_task_is_refused_on_a_host_that_is_unknown_or_not_ready`,
   `::a_far_task_is_refused_on_a_host_that_lacks_its_repository`,

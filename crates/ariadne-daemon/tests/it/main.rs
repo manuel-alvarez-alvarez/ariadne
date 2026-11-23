@@ -53,6 +53,7 @@ mod plan_finalize;
 mod portable_config;
 mod prompts;
 mod relay;
+mod remote_tasks;
 mod repositories;
 mod resume;
 mod scheduler_attention;

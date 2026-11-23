@@ -5,6 +5,8 @@ updated: 2026-11-23
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
+  - crates/ariadne-store/tests/remote_task_migration.rs
+  - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-core/src/state_machine.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/it/scheduler_dependencies.rs
@@ -139,7 +141,26 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     to its linked goals. If a host is down, its worker closes the linked
     goals when that host next becomes `ready`.
 
+22. A remote worker draft stores its source reference and execution context without a worker goal.
+    Its task ID remains stable. Its `goal_id` names the source goal.
+    The worker returns 404 for that goal unless it independently has that local goal.
+    A draft remains pending across restarts until explicit source authorization.
+    Draft edits advance its revision. Authorization must match the current draft revision.
+    Repeated creation preserves edits. Repeated authorization never starts another execution.
+    Cancellation permanently rejects authorization. Authorized failed tasks retain the normal retry path.
+    Dependencies belong to source coordination. Workers accept no task dependencies for remote execution.
+    Existing local tasks and linked goals retain their records and behavior.
+
 ## Acceptance criteria
+
+- Rule 22: `remote_tasks.rs::a_remote_draft_has_context_without_a_worker_goal`,
+  `::draft_edits_invalidate_old_authorization_and_cancellation_is_final`,
+  `::simultaneous_creation_and_authorization_keep_one_task_and_one_start`, and
+  `::an_incomplete_draft_can_be_staffed_and_authorized_after_restart` prove remote admission.
+  `::saved_columns_keep_their_gates_and_a_failed_task_can_retry` proves retries.
+  `crates/ariadne-store/tests/remote_task_migration.rs::remote_execution_migration_keeps_existing_tasks_and_their_children`
+  proves migration preservation and legacy deletion.
+
 
 - Rule 20: editing, retrying and cancelling a sent task reach its host
   (`far_tasks.rs::editing_a_sent_far_task_edits_it_on_its_host`,

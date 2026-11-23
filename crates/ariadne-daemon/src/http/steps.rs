@@ -52,7 +52,7 @@ pub(super) async fn complete(
     {
         return Err(invalid_merge_commit(sha));
     }
-    let steps = state.store.goal_steps(&task.goal_id).await?;
+    let steps = state.store.task_steps(&task).await?;
     let at = steps
         .iter()
         .position(|s| Some(&s.id) == task.step.as_ref())
@@ -201,7 +201,7 @@ pub(super) async fn fail(
     let task = state.store.get_task(&id).await?;
     current_agent(&state, &ctx, &task).await?;
     working(&task, &req.reason)?;
-    let steps = state.store.goal_steps(&task.goal_id).await?;
+    let steps = state.store.task_steps(&task).await?;
     let at = steps
         .iter()
         .position(|s| Some(&s.id) == task.step.as_ref())

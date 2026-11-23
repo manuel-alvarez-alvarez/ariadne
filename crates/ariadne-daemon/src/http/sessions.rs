@@ -176,8 +176,8 @@ pub(super) async fn switch(
         )
         .await?
     };
-    if let Some(goal_id) = session.goal_id.as_deref()
-        && state.store.get_goal(goal_id).await?.status() == ariadne_core::GoalStatus::Cancelled
+    if session.goal_id.is_some()
+        && state.store.session_goal(&session).await?.status() == ariadne_core::GoalStatus::Cancelled
     {
         return Err(ApiError::conflict(
             "cannot switch a session of a cancelled goal",

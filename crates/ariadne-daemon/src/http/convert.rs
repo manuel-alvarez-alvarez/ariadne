@@ -144,6 +144,7 @@ dto! {
         reason: Option<String>,
         operation: Option<ariadne_core::workflow::PrOperation>,
     ) -> TaskDto {
+        execution_context: None,
         status: t.status(),
         operation: operation,
         stalled: t.is_stalled(),
@@ -297,7 +298,7 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
     let depends_on = store.list_task_dependencies(&task.id).await?;
     let usage = task_usage(store, &task.id, &agents).await?;
     let reason = store.ended_reason(&task).await?;
-    let goal = store.get_goal(&task.goal_id).await?;
+    let goal = store.task_goal(&task).await?;
     let operation = goal.pull_request_operation();
     // A review or babysit task works on its goal's request without opening
     // one, so the response names that request; the stored `pr_url` stays as
@@ -306,9 +307,30 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
     if operation.is_some() && task.pr_url.is_none() {
         task.pr_url = goal.pr_url;
     }
-    Ok(task_dto(
-        task, agents, sessions, depends_on, usage, reason, operation,
-    ))
+    let remote = store.remote_task_context(&task.id).await?;
+    let mut dto = task_dto(task, agents, sessions, depends_on, usage, reason, operation);
+    if let Some(remote) = remote {
+        let request: ariadne_api::tasks::CreateRemoteTaskRequest =
+            serde_json::from_str(&remote.request)
+                .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        dto.execution_context = Some(ariadne_api::tasks::TaskExecutionContext {
+            source_goal: ariadne_api::tasks::SourceGoalReference {
+                daemon_id: remote.source_daemon_id,
+                goal_id: remote.source_goal_id,
+                title: remote.source_title,
+                description: remote.source_description,
+            },
+            execution_owner: store.daemon_id().await?,
+            workflow: ariadne_api::tasks::TaskWorkflowContext {
+                name: remote.workflow,
+                steps: request.workflow.steps,
+            },
+            revision: remote.revision,
+            authorized: remote.authorized_revision.is_some(),
+            authorized_revision: remote.authorized_revision,
+        });
+    }
+    Ok(dto)
 }
 
 /// [`session_dto`] with what the session has spent, and the column its
