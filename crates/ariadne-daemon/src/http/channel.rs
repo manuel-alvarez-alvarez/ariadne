@@ -325,7 +325,8 @@ pub(super) async fn send(
                     "the orchestrator is staffed on no task, so it has no agent id",
                 ));
             }
-            if !state.store.get_goal(goal_id).await?.orchestrated {
+            let goal = state.store.get_goal(goal_id).await?;
+            if !goal.orchestrated && goal.origin_goal_id.is_none() {
                 return Err(ApiError::conflict(
                     "this goal has no orchestrator; the user answers in the console",
                 ));

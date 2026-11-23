@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use ariadne_api::dashboards::DashboardDto;
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::goals::{GoalDto, GoalUsageDto, PullRequestOperationDto};
+use ariadne_api::goals::{GoalDto, GoalUsageDto, LinkedGoalDto, PullRequestOperationDto};
 use ariadne_api::messages::MessageDto;
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
@@ -110,6 +110,7 @@ dto! {
     ) -> GoalDto {
         status: g.status(),
         pull_request: pull_request_operation_dto(&g),
+        linked: g.origin_goal_id.map(|origin_goal_id| LinkedGoalDto { origin_goal_id }),
         steps: steps,
         repos: repos,
         usage: usage,

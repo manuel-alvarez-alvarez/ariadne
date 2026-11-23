@@ -456,6 +456,7 @@ mod tests {
             description: "The board needs swimlanes.".into(),
             status: "planning".into(),
             orchestrated: true,
+            origin_goal_id: None,
             model: "stub:test-model".into(),
             effort: None,
             created_at: "2026-01-01T00:00:00Z".into(),

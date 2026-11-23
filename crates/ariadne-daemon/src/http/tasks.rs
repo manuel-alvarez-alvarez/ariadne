@@ -11,13 +11,22 @@ use ariadne_api::tasks::{
     TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, TaskStatus};
-use ariadne_store::{NewTask, NewTaskAgent, Task, TaskFilter, TaskUpdate};
+use ariadne_store::{Goal, NewTask, NewTaskAgent, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult, Json};
 use super::pins;
+
+fn check_dependencies(goal: &Goal, depends_on: &[String]) -> ApiResult<()> {
+    if goal.origin_goal_id.is_some() && !depends_on.is_empty() {
+        return Err(ApiError::bad_request(
+            "a linked goal receives tasks after their dependencies merge",
+        ));
+    }
+    Ok(())
+}
 
 /// The agents an assignment list asks for, in the order it names them.
 ///
@@ -80,6 +89,7 @@ pub(super) async fn create(
     }
 
     let goal = state.store.get_goal(&goal_id).await?;
+    check_dependencies(&goal, &req.depends_on)?;
     let repos = state.store.list_goal_repositories(&goal.id).await?;
     let repo_id = match &req.repo_id {
         Some(id) => {
@@ -111,6 +121,9 @@ pub(super) async fn create(
             depends_on: req.depends_on,
         })
         .await?;
+    if goal.origin_goal_id.is_some() {
+        state.notify_scheduler(&task.id);
+    }
     let dto = task_dto_of(&state.store, task).await?;
     Ok((StatusCode::CREATED, Json(dto)))
 }
@@ -166,6 +179,13 @@ pub(super) async fn update(
         return Err(ApiError::forbidden(
             "only the orchestrator or the user may edit tasks",
         ));
+    }
+    if let Some(deps) = &req.depends_on
+        && !deps.is_empty()
+    {
+        let task = state.store.get_task(&id).await?;
+        let goal = state.store.get_goal(&task.goal_id).await?;
+        check_dependencies(&goal, deps)?;
     }
     let agents = match &req.agents {
         Some(a) => Some(resolve_agents(&state, a, ctx.actor == Actor::User).await?),
