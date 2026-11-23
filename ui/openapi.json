@@ -733,6 +733,9 @@
           "400": {},
           "404": {
             "description": "no such repository or workflow"
+          },
+          "409": {
+            "description": "every goal linked to the same origin goal has ended"
           }
         }
       }

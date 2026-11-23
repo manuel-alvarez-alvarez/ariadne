@@ -49,61 +49,32 @@ fn goal_workflow(requested: Option<String>, repositories: &[Repository]) -> Resu
 
 impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
-        self.create_goal_as(new, None, None).await
+        Ok(self.create_goal_as(new, None, None).await?.0)
     }
 
-    /// Create an active goal that receives tasks from another daemon.
-    pub async fn create_linked_goal(&self, new: NewGoal, origin_goal_id: &str) -> Result<Goal> {
-        self.create_goal_as(new, None, Some(origin_goal_id)).await
-    }
-
-    /// The oldest `active` linked goal that the goal `origin_goal_id` of
-    /// another daemon feeds, if there is one (037). A database from before
-    /// may hold two of them: the oldest one takes the new tasks.
-    pub async fn open_linked_goal(&self, origin_goal_id: &str) -> Result<Option<Goal>> {
-        Ok(sqlx::query_as::<_, Goal>(
-            "SELECT * FROM goals WHERE origin_goal_id = ? AND status = 'active'
-             ORDER BY id LIMIT 1",
-        )
-        .bind(origin_goal_id)
-        .fetch_optional(self.r())
-        .await?)
-    }
-
-    /// Add repositories to a goal. A repository the goal has stays as it is.
-    /// An unknown id adds nothing.
-    pub async fn add_goal_repositories(
+    /// The linked goal of `origin_goal_id`, a goal of another daemon (037),
+    /// made where none exists. Answers whether it was made. The lookup and
+    /// the insert are one write transaction on the one writer, so two creates
+    /// for one origin goal make one goal.
+    ///
+    /// The oldest `active` linked goal of the origin goal answers, with each
+    /// of `new.repository_ids` it lacks added: a database from before may
+    /// hold two of them. A linked goal that has ended is not replaced: where
+    /// every linked goal of the origin goal has ended, the create is a
+    /// conflict that names the last one.
+    pub async fn create_linked_goal(
         &self,
-        goal_id: &str,
-        repository_ids: &[String],
-    ) -> Result<()> {
-        for id in repository_ids {
-            self.get_repository(id).await?;
-        }
-        let mut tx = self.w().begin().await?;
-        let mut added = 0;
-        for id in repository_ids {
-            added += sqlx::query(
-                "INSERT OR IGNORE INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)",
-            )
-            .bind(goal_id)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        }
-        tx.commit().await?;
-        if added > 0 {
-            self.publish_goal_update(goal_id).await?;
-        }
-        Ok(())
+        new: NewGoal,
+        origin_goal_id: &str,
+    ) -> Result<(Goal, bool)> {
+        self.create_goal_as(new, None, Some(origin_goal_id)).await
     }
 
     /// Create the goal of one pull request operation: active at once, with
     /// no orchestrator, on the workflow that operation reads. A conflict
     /// means the request already has an open goal for the operation.
     pub(crate) async fn create_pr_goal(&self, new: NewGoal, pr: NewPrGoal) -> Result<Goal> {
-        self.create_goal_as(new, Some(pr), None).await
+        Ok(self.create_goal_as(new, Some(pr), None).await?.0)
     }
 
     async fn create_goal_as(
@@ -111,7 +82,7 @@ impl Store {
         new: NewGoal,
         pr: Option<NewPrGoal>,
         origin_goal_id: Option<&str>,
-    ) -> Result<Goal> {
+    ) -> Result<(Goal, bool)> {
         if new.repository_ids.is_empty() {
             return Err(StoreError::Invalid("a goal needs at least one repo".into()));
         }
@@ -158,6 +129,41 @@ impl Store {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| not_found("workflow", &workflow_name))?;
+        if let Some(origin) = origin_goal_id {
+            let linked: Vec<Goal> =
+                sqlx::query_as("SELECT * FROM goals WHERE origin_goal_id = ? ORDER BY id")
+                    .bind(origin)
+                    .fetch_all(&mut *tx)
+                    .await?;
+            if let Some(open) = linked
+                .iter()
+                .find(|goal| goal.status() == GoalStatus::Active)
+            {
+                let mut added = 0;
+                for repository_id in &repository_ids {
+                    added += sqlx::query(
+                        "INSERT OR IGNORE INTO goal_repositories (goal_id, repository_id)
+                         VALUES (?, ?)",
+                    )
+                    .bind(&open.id)
+                    .bind(repository_id)
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+                }
+                tx.commit().await?;
+                if added > 0 {
+                    self.publish_goal_update(&open.id).await?;
+                }
+                return Ok((self.get_goal(&open.id).await?, false));
+            }
+            if let Some(ended) = linked.last() {
+                return Err(StoreError::Conflict(format!(
+                    "the linked goal {} of origin goal {origin} is {}; it takes no more tasks",
+                    ended.id, ended.status
+                )));
+            }
+        }
         let steps = ariadne_core::workflow::parse(workflow.document_text())
             .map_err(|e| StoreError::Invalid(e.to_string()))?
             .steps;
@@ -216,7 +222,7 @@ impl Store {
         tx.commit().await?;
         let goal = self.get_goal(&id).await?;
         self.publish(Change::GoalCreated(goal.clone()));
-        Ok(goal)
+        Ok((goal, true))
     }
 
     /// The columns of a goal's workflow as they were when the goal was

@@ -676,8 +676,13 @@ picker, the Hosts screen and one stream per host — is spec
       task's own id as `origin_task_id`. The goal's daemon records the task the host
       answers, with the goal it is in.
     - A refusal of the host fails the far task with the reason
-      `host <name> refused the task: <message>`. A host that does not answer gets the task
-      again after `far_retry`.
+      `host <name> refused the task: <message>`. A linked goal that ended on the host is
+      such a refusal (001 rule 14). A host that does not answer gets the task again after
+      `far_retry`.
+    - Each of these requests runs only while the host stays in the `ready` the send started
+      in. A host that leaves it ends the send at once: the request is dropped, nothing that
+      it answers is written, and the far task is not failed. The send starts again on the
+      host's next `ready`.
 95. The goal's daemon follows `GET /v1/events/stream` of each `ready` host. Each
     `task_updated` of a far task writes its status, step, branch, request URL and merge
     commit on the far task. A changed status writes a transition by the daemon, with the
@@ -685,7 +690,8 @@ picker, the Hosts screen and one stream per host — is spec
     state is final here is never written: one that is `finished` or `cancelled`, and one whose
     goal is over (001 rules 3 and 4).
 96. When the host leaves `ready`, each far task on it keeps its last known state, and
-    `host_unreachable` is true, whatever the status of its goal. A lost event stream of a
+    `host_unreachable` is true, whatever the status of its goal. A send or a read under way
+    does not hold this back (rules 94 and 97). A lost event stream of a
     `ready` host is the same, and the goal's daemon opens the stream again after `far_retry`.
 97. On the next `ready`, the goal's daemon opens the event stream of the host. Then it reads
     again each far task that went to the host, whatever its state and its goal
@@ -708,7 +714,9 @@ picker, the Hosts screen and one stream per host — is spec
   `::a_lost_answer_of_the_host_makes_no_second_goal_or_task` proves the repeated send,
   `::a_task_the_host_made_is_found_again_after_its_linked_goal_ended` proves the question
   first, and `::a_repository_set_up_later_joins_the_same_linked_goal` proves the repository
-  that joins.
+  that joins. `::a_lost_goal_answer_after_its_goal_ended_fails_the_far_task` proves the refusal
+  of an ended linked goal, and `::a_send_under_way_when_the_host_leaves_writes_nothing` proves
+  the send that the host leaves, and the flag that does not wait for it.
 - Rule 95: `far_tasks.rs::a_far_task_mirrors_the_state_its_host_reports` proves the column,
   branch, request URL, merge commit and status.
   `::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports` proves the final state,

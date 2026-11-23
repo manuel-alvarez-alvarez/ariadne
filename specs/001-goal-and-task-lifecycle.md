@@ -98,7 +98,10 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     OpenAPI describes the object on the request and the response.
     A linked goal skips planning (003 rule 17).
     A create whose origin goal has an `active` linked goal answers `200` with the
-    oldest such goal, and adds to it each of `repository_ids` that it lacks. An
+    oldest such goal, and adds to it each of `repository_ids` that it lacks. A create
+    whose origin goal has only linked goals that ended answers `409`, names the last
+    one, and makes no goal: an ended linked goal is not replaced. The lookup and the
+    insert are one write transaction, so creates that overlap make one goal. An
     upgrade keeps every linked goal that an older daemon made, two active ones of
     one origin goal too.
 15. The origin daemon holds each task until its dependencies merge.
@@ -198,8 +201,10 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
   again after its linked goal ended
   (`far_tasks.rs::a_task_the_host_made_is_found_again_after_its_linked_goal_ended`). A host
   beside an origin task is refused
-  (`far_tasks.rs::a_linked_task_takes_no_host_beside_its_origin_task`). An upgrade keeps two
-  active linked goals of one origin goal
+  (`far_tasks.rs::a_linked_task_takes_no_host_beside_its_origin_task`). Creates that overlap
+  make one goal (`far_tasks.rs::linked_goal_creates_at_once_make_one_goal`). An ended linked
+  goal is not replaced (`far_tasks.rs::a_linked_goal_that_ended_takes_no_more_tasks`). An
+  upgrade keeps two active linked goals of one origin goal, and a create answers the oldest
   (`crates/ariadne-store/tests/far_task_migration.rs::an_upgrade_keeps_two_active_linked_goals_of_one_origin`).
 
 ## Sources

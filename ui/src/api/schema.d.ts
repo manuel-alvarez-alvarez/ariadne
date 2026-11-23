@@ -6060,6 +6060,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description every goal linked to the same origin goal has ended */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     tasks_create: {

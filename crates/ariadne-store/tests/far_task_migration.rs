@@ -56,7 +56,36 @@ async fn an_upgrade_keeps_two_active_linked_goals_of_one_origin() {
         assert_eq!(goal.origin_goal_id.as_deref(), Some("origin"));
         assert_eq!(goal.status, "active");
     }
-    // The oldest one takes the new tasks of the origin goal.
-    let open = store.open_linked_goal("origin").await.unwrap().unwrap();
-    assert_eq!(open.id, "01first");
+    // The oldest one answers a create for the origin goal, and makes none.
+    let repo = store
+        .create_repository(ariadne_store::NewRepository {
+            default_workflow: None,
+            path: dir.path().join("repo").display().to_string(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: None,
+        })
+        .await
+        .unwrap();
+    let (answered, created) = store
+        .create_linked_goal(
+            ariadne_store::NewGoal {
+                workflow: None,
+                title: "Fed once more".into(),
+                description: String::new(),
+                issue_url: None,
+                repository_ids: vec![repo.id.clone()],
+                pin: ariadne_store::AgentPin {
+                    model: "stub:model".into(),
+                    effort: None,
+                },
+            },
+            "origin",
+        )
+        .await
+        .unwrap();
+    assert_eq!(answered.id, "01first");
+    assert!(!created);
+    let repos = store.list_goal_repositories("01first").await.unwrap();
+    assert!(repos.iter().any(|r| r.id == repo.id));
 }

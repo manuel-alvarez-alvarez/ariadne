@@ -236,6 +236,9 @@ enum Unsent {
     Refused(String),
     /// The host did not answer. The far task is sent again later.
     Unanswered(String),
+    /// The host left `ready` during the send. Nothing it answered is
+    /// written, and the send starts again on its next `ready`.
+    Left,
 }
 
 impl From<ClientError> for Unsent {
@@ -271,6 +274,20 @@ impl Follower<'_> {
     /// task keeps its last known state while the host is away.
     fn current(&self) -> bool {
         self.link.borrow().epoch == self.epoch
+    }
+
+    /// Run one call to the host, unless the host leaves this `ready` first.
+    /// `None` where it left: the call is dropped, and nothing it answers is
+    /// written. So the follower sees the host leave while a call is under
+    /// way, and marks its far tasks unreachable without waiting on it.
+    async fn fenced<T>(&self, call: impl Future<Output = T>) -> Option<T> {
+        let mut link = self.link.clone();
+        let epoch = self.epoch;
+        let answer = tokio::select! {
+            answer = call => answer,
+            _ = link.wait_for(|link| link.epoch != epoch) => return None,
+        };
+        self.current().then_some(answer)
     }
 
     async fn follow(
@@ -349,12 +366,14 @@ impl Follower<'_> {
                 continue;
             };
             let read = self
-                .client
-                .get_json::<TaskDto>(&format!("/v1/tasks/{far_id}"))
+                .fenced(
+                    self.client
+                        .get_json::<TaskDto>(&format!("/v1/tasks/{far_id}")),
+                )
                 .await;
-            if !self.current() {
+            let Some(read) = read else {
                 return Ok(());
-            }
+            };
             match read {
                 Ok(far) => self.mirror(&task.id, &far).await,
                 Err(ClientError::Api { status, .. }) if status == StatusCode::NOT_FOUND => {
@@ -441,6 +460,7 @@ impl Follower<'_> {
             match self.dispatch(&task).await {
                 Ok(()) => info!(host = self.host, task = %task.id, "sent a far task to its host"),
                 Err(Unsent::Refused(reason)) => self.refused(&task, &reason).await,
+                Err(Unsent::Left) => return None,
                 Err(Unsent::Unanswered(error)) => {
                     warn!(host = self.host, task = %task.id, %error, "the host did not take a far task");
                     retry = Some(Instant::now() + self.ctx.timeouts.far_retry);
@@ -462,6 +482,9 @@ impl Follower<'_> {
     }
 
     async fn refused(&self, task: &Task, reason: &str) {
+        if !self.current() {
+            return;
+        }
         let reason = format!("host {} refused the task: {reason}", self.host);
         warn!(task = %task.id, %reason, "a far task failed");
         match self
@@ -495,15 +518,21 @@ impl Follower<'_> {
         // status: a send whose answer was lost, even where the linked goal
         // ended since, finds it and makes nothing again.
         let made: Vec<TaskDto> = self
-            .client
-            .get_json(&format!("/v1/tasks?origin_task_id={}", task.id))
-            .await?;
+            .fenced(
+                self.client
+                    .get_json(&format!("/v1/tasks?origin_task_id={}", task.id)),
+            )
+            .await
+            .ok_or(Unsent::Left)??;
         if let Some(far) = made.into_iter().next() {
             store.set_far_task(&task.id, &far.goal_id, &far.id).await?;
             self.mirror(&task.id, &far).await;
             return Ok(());
         }
-        let paired = host_repositories(local, &self.client).await?;
+        let paired = self
+            .fenced(host_repositories(local, &self.client))
+            .await
+            .ok_or(Unsent::Left)??;
         let Some(far_repo) = paired.get(&task.repo_id).cloned() else {
             let repo = store.get_repository(&task.repo_id).await?;
             return Err(Unsent::Refused(lacks_repository(self.host, &repo)));
@@ -537,40 +566,38 @@ impl Follower<'_> {
             .first()
             .map(|agent| agent.model.clone())
             .unwrap_or_else(|| goal.model.clone());
+        let goal_request = CreateGoalRequest {
+            linked: Some(LinkedGoalDto {
+                origin_goal_id: goal.id.clone(),
+            }),
+            workflow: Some(goal.workflow.clone()),
+            title: goal.title.clone(),
+            description: goal.description.clone(),
+            issue_url: goal.issue_url.clone(),
+            repository_ids,
+            model,
+            effort: None,
+        };
         let linked: GoalDto = self
-            .client
-            .post_json(
-                "/v1/goals",
-                &CreateGoalRequest {
-                    linked: Some(LinkedGoalDto {
-                        origin_goal_id: goal.id.clone(),
-                    }),
-                    workflow: Some(goal.workflow.clone()),
-                    title: goal.title.clone(),
-                    description: goal.description.clone(),
-                    issue_url: goal.issue_url.clone(),
-                    repository_ids,
-                    model,
-                    effort: None,
-                },
-            )
-            .await?;
-        let far_goal = linked.id;
+            .fenced(self.client.post_json("/v1/goals", &goal_request))
+            .await
+            .ok_or(Unsent::Left)??;
+        let task_request = CreateTaskRequest {
+            title: task.title.clone(),
+            description: task.description.clone(),
+            repo_id: Some(far_repo),
+            agents,
+            depends_on: Vec::new(),
+            host: None,
+            origin_task_id: Some(task.id.clone()),
+        };
         let far: TaskDto = self
-            .client
-            .post_json(
-                &format!("/v1/goals/{far_goal}/tasks"),
-                &CreateTaskRequest {
-                    title: task.title.clone(),
-                    description: task.description.clone(),
-                    repo_id: Some(far_repo),
-                    agents,
-                    depends_on: Vec::new(),
-                    host: None,
-                    origin_task_id: Some(task.id.clone()),
-                },
+            .fenced(
+                self.client
+                    .post_json(&format!("/v1/goals/{}/tasks", linked.id), &task_request),
             )
-            .await?;
+            .await
+            .ok_or(Unsent::Left)??;
         // The goal of the task the host answers: a repeated create answers
         // the task it already holds, in the goal it is in.
         store.set_far_task(&task.id, &far.goal_id, &far.id).await?;

@@ -127,9 +127,27 @@ impl Front {
                     }
                     let mut held = front.held.subscribe();
                     if held.borrow().contains(&kind) {
-                        front.waiting.fetch_add(1, Ordering::SeqCst);
-                        let _ = held.wait_for(|held| !held.contains(&kind)).await;
-                        front.waiting.fetch_sub(1, Ordering::SeqCst);
+                        // The headers go at once and the body waits: a
+                        // client bounds its wait for the headers, not for the
+                        // body, so the request waits for as long as it is
+                        // held. The count goes down when the wait ends, and
+                        // when the caller drops the request while it waits.
+                        // A held request answers `200`, as the ones the tests
+                        // hold do.
+                        let waiting = Waiting::new(&front.waiting);
+                        let answered = front.answered.clone();
+                        let body = futures_util::stream::once(async move {
+                            let _waiting = waiting;
+                            let _ = held.wait_for(|held| !held.contains(&kind)).await;
+                            let answer = next.run(request).await;
+                            answered.lock().unwrap().push(kind);
+                            axum::body::to_bytes(answer.into_body(), usize::MAX).await
+                        });
+                        return (
+                            [(axum::http::header::CONTENT_TYPE, "application/json")],
+                            axum::body::Body::from_stream(body),
+                        )
+                            .into_response();
                     }
                     let lost = {
                         let mut lose = front.lose.lock().unwrap();
@@ -154,6 +172,22 @@ impl Front {
         let address = listener.local_addr().unwrap().to_string();
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         address
+    }
+}
+
+/// One request that waits while it is held, for as long as it waits.
+struct Waiting(Arc<AtomicUsize>);
+
+impl Waiting {
+    fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count.clone())
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -1099,13 +1133,13 @@ async fn a_read_that_answers_after_the_host_left_writes_nothing() {
     })
     .await;
 
-    // The host leaves again, and only then does the read answer.
+    // The host leaves again while the read waits. The read then ends, as
+    // an answer or as a dropped call, and writes nothing.
     go_away(&p).await;
-    let reads = p.front.answers("read task");
     let mut local_events = p.local.bus.subscribe();
     p.front.release();
-    eventually(TIMEOUT, "the late read answered", || async {
-        p.front.answers("read task") > reads
+    eventually(TIMEOUT, "the late read ended", || async {
+        p.front.waiting() == 0
     })
     .await;
     let quiet = tokio::time::Instant::now() + QUIET;
@@ -1168,4 +1202,158 @@ async fn a_linked_task_takes_no_host_beside_its_origin_task() {
         message.contains("origin_task_id and a host other than local"),
         "{message}"
     );
+}
+
+/// The body of a linked goal create for the origin goal `origin`.
+fn linked_body(repo: &ariadne_store::Repository, origin: &str) -> Value {
+    json!({
+        "title": "Fed",
+        "repository_ids": [repo.id],
+        "model": test_pin().model,
+        "linked": {"origin_goal_id": origin},
+    })
+}
+
+#[tokio::test]
+async fn linked_goal_creates_at_once_make_one_goal() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let body = linked_body(&repo, "01arz3ndektsv4rrffq69g5fav");
+    let answers = futures_util::future::join_all(
+        (0..8).map(|_| h.send(post_json("/v1/goals", body.clone()))),
+    )
+    .await;
+    let mut ids = Vec::new();
+    let mut made = 0;
+    for (status, body) in answers {
+        assert!(
+            status == StatusCode::CREATED || status == StatusCode::OK,
+            "{status}: {}",
+            String::from_utf8_lossy(&body)
+        );
+        made += usize::from(status == StatusCode::CREATED);
+        let goal: GoalDto = serde_json::from_slice(&body).unwrap();
+        ids.push(goal.id);
+    }
+    assert_eq!(made, 1);
+    ids.dedup();
+    assert_eq!(ids.len(), 1, "{ids:?}");
+}
+
+#[tokio::test]
+async fn a_linked_goal_that_ended_takes_no_more_tasks() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let body = linked_body(&repo, "01arz3ndektsv4rrffq69g5fav");
+    let goal: GoalDto = h
+        .json(post_json("/v1/goals", body.clone()), StatusCode::CREATED)
+        .await;
+    h.store
+        .end_goal(&goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
+    let message = h
+        .error(post_json("/v1/goals", body), StatusCode::CONFLICT)
+        .await
+        .error
+        .message;
+    assert!(message.contains(&goal.id), "{message}");
+    assert!(message.contains("takes no more tasks"), "{message}");
+}
+
+#[tokio::test]
+async fn a_lost_goal_answer_after_its_goal_ended_fails_the_far_task() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let lost = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Goal lost", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    // The host makes the linked goal, its answer is lost, and the next send
+    // waits.
+    p.front.lose_next_then_hold("create goal", "find task");
+    activate(&p.local, &goal).await;
+    eventually(TIMEOUT, "the next send waits", || async {
+        p.front.waiting() > 0
+    })
+    .await;
+    let made = linked_goals(&p.far, &goal).await;
+    assert_eq!(made.len(), 1);
+    p.far
+        .store
+        .end_goal(&made[0].id, GoalStatus::Cancelled)
+        .await
+        .unwrap();
+    p.front.release();
+
+    let failed = eventually_some(TIMEOUT, "the far task failed", async || {
+        let here = task(&p.local, &lost.id).await;
+        (here.status == TaskStatus::Failed).then_some(here)
+    })
+    .await;
+    let reason = failed.reason.unwrap_or_default();
+    assert!(reason.contains("host far refused the task"), "{reason}");
+    assert!(reason.contains("takes no more tasks"), "{reason}");
+    assert_eq!(linked_goals(&p.far, &goal).await.len(), 1);
+    assert!(far_tasks(&p.far, &goal).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_send_under_way_when_the_host_leaves_writes_nothing() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let held = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Held send", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    p.front.hold("find task");
+    activate(&p.local, &goal).await;
+    eventually(TIMEOUT, "the send waits", || async {
+        p.front.waiting() > 0
+    })
+    .await;
+
+    // The host leaves while the send waits: the flag does not wait on it.
+    go_away(&p).await;
+    eventually(TIMEOUT, "the far task marked unreachable", || async {
+        task(&p.local, &held.id).await.host_unreachable
+    })
+    .await;
+
+    // The question ends late, as an empty answer or as a dropped call, and
+    // the send goes no further.
+    let mut far_events = p.far.bus.subscribe();
+    p.front.release();
+    eventually(TIMEOUT, "the late question ended", || async {
+        p.front.waiting() == 0
+    })
+    .await;
+    let quiet = tokio::time::Instant::now() + QUIET;
+    while let Ok(Ok(event)) = tokio::time::timeout_at(quiet, far_events.recv()).await {
+        assert!(
+            !matches!(
+                event.event,
+                DomainEvent::GoalCreated(_) | DomainEvent::TaskCreated(_)
+            ),
+            "the send went on after the host left: {:?}",
+            event.event
+        );
+    }
+    assert_eq!(p.front.count("create goal"), 0);
+    let kept = task(&p.local, &held.id).await;
+    assert_eq!(kept.status, TaskStatus::Pending);
+    assert_eq!(kept.branch, held.branch);
+
+    // The next `ready` sends it.
+    back(&p).await;
+    let sent = far_task(&p.far, &goal, "Held send").await;
+    until_sent(&p.local, &held, &sent).await;
 }

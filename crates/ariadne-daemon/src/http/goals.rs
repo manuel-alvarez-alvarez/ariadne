@@ -57,7 +57,8 @@ impl GoalListQuery {
         (status = 200, body = GoalDto,
             description = "the oldest active goal linked to the same origin goal, with the repositories added"),
         (status = 400),
-        (status = 404, description = "no such repository or workflow")
+        (status = 404, description = "no such repository or workflow"),
+        (status = 409, description = "every goal linked to the same origin goal has ended")
     ))]
 pub(super) async fn create(
     State(state): State<AppState>,
@@ -84,15 +85,6 @@ pub(super) async fn create(
     )
     .await?;
 
-    // A repeated create finds the oldest active linked goal of its origin
-    // goal (037), so a lost answer makes no second goal, and the
-    // repositories it lacks join it. The origin daemon sends one request at
-    // a time to a host, so two creates do not race.
-    if let Some(link) = &req.linked
-        && let Some(goal) = state.store.open_linked_goal(&link.origin_goal_id).await?
-    {
-        return linked_again(&state, goal, &req.repository_ids).await;
-    }
     let new = NewGoal {
         workflow: req.workflow,
         title: req.title,
@@ -101,7 +93,11 @@ pub(super) async fn create(
         repository_ids: req.repository_ids,
         pin,
     };
-    let goal = match req.linked {
+    // A repeated create answers the oldest active linked goal of its origin
+    // goal (037), with the repositories it lacks added, so neither a lost
+    // answer nor two creates at once make a second goal. A linked goal that
+    // ended is not replaced: the create is a conflict.
+    let (goal, created) = match req.linked {
         Some(link) => {
             state
                 .store
@@ -111,24 +107,15 @@ pub(super) async fn create(
         None => {
             let goal = state.store.create_goal(new).await?;
             state.notify_scheduler_goal(&goal.id);
-            goal
+            (goal, true)
         }
     };
-    Ok((StatusCode::CREATED, to_dto(&state, goal).await?))
-}
-
-/// Answer the linked goal that already exists, with `repository_ids` added.
-async fn linked_again(
-    state: &AppState,
-    goal: Goal,
-    repository_ids: &[String],
-) -> ApiResult<(StatusCode, Json<GoalDto>)> {
-    state
-        .store
-        .add_goal_repositories(&goal.id, repository_ids)
-        .await?;
-    let goal = state.store.get_goal(&goal.id).await?;
-    Ok((StatusCode::OK, to_dto(state, goal).await?))
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, to_dto(&state, goal).await?))
 }
 
 /// List goals.
