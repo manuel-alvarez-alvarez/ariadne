@@ -646,21 +646,27 @@ impl AriadneMcp {
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
         let hosts: Vec<serde_json::Value> = self.get("/v1/hosts").await?;
-        json_result(serde_json::Value::Array(
-            hosts
-                .into_iter()
-                .map(|host| {
-                    serde_json::json!({
-                        "name": host["name"],
-                        "status": host["status"],
-                        "sync": {
-                            "state": host["sync"]["state"],
-                            "missing_repositories": host["sync"]["missing_repositories"],
-                        },
-                    })
+        // Not `json_result`: it drops an empty array, and a host with none
+        // missing must still say so.
+        let hosts: Vec<serde_json::Value> = hosts
+            .into_iter()
+            .map(|host| {
+                serde_json::json!({
+                    "name": host["name"],
+                    "status": host["status"],
+                    "sync": {
+                        "state": host["sync"]["state"],
+                        "missing_repositories": host["sync"]["missing_repositories"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default(),
+                    },
                 })
-                .collect(),
-        ))
+            })
+            .collect();
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            serde_json::Value::Array(hosts).to_string(),
+        )]))
     }
 
     #[tool(
@@ -2610,6 +2616,10 @@ mod tests {
         };
         let hosts: serde_json::Value = serde_json::from_str(&text.text).expect("json");
         assert_eq!(hosts[0]["name"], "local");
+        assert_eq!(
+            hosts[0]["sync"]["missing_repositories"],
+            serde_json::json!([])
+        );
         assert_eq!(hosts[1]["name"], "far");
         assert_eq!(hosts[1]["status"], "down");
         assert_eq!(hosts[1]["sync"]["state"], "pending");

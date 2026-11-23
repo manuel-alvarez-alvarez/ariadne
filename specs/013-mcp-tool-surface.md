@@ -98,8 +98,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      011; with a `host`, the models of that host, 037 rule 91), `list_hosts`
      (the orchestrator's alone: each host's `name`, `status`, `sync.state`
      and `sync.missing_repositories`, in the order of `GET /v1/hosts`, and
-     no other field; an empty `missing_repositories` is left out by rule
-     14), `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
+     no other field; an empty `missing_repositories` stays, as `[]`, an
+     exception to rule 14), `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
      `cancel_task`, `switch_session` (which moves a session, named by the
      `session_id` `get_task` carries beside its agent, to the model or agent
      it is given, refusing `default` as a model the way `update_task` does —
