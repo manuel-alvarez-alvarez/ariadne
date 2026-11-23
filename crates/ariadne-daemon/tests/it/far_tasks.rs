@@ -1496,3 +1496,42 @@ async fn a_linked_goal_that_ends_between_the_two_creates_fails_the_far_task() {
     assert!(far_tasks(&p.far, &goal).await.is_empty());
     assert_eq!(p.front.count("create task"), 1);
 }
+
+#[tokio::test]
+async fn a_linked_goal_with_an_admitted_task_cannot_complete() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let goal: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                linked_body(&repo, "01arz3ndektsv4rrffq69g5fav"),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let model = test_pin().model;
+    create_task(
+        &h,
+        &goal,
+        task_body(
+            &goal,
+            "Admitted",
+            &model,
+            json!({"origin_task_id": "01arz3ndektsv4rrffq69g5fa1"}),
+        ),
+    )
+    .await;
+
+    let message = h
+        .error(
+            post_json(&format!("/v1/goals/{}/complete", goal.id), json!({})),
+            StatusCode::CONFLICT,
+        )
+        .await
+        .error
+        .message;
+    assert!(message.contains("Admitted (pending)"), "{message}");
+    let kept: GoalDto = h.get(&format!("/v1/goals/{}", goal.id)).await;
+    assert_eq!(kept.status, GoalStatus::Active);
+}

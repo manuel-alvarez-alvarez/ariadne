@@ -7,7 +7,7 @@ use utoipa::IntoParams;
 
 use ariadne_api::goals::{CompleteGoalRequest, CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
-use ariadne_core::{GoalStatus, TaskStatus};
+use ariadne_core::GoalStatus;
 use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, TaskFilter};
 
 use super::AppState;
@@ -348,24 +348,9 @@ pub(super) async fn complete(
             "the request must merge before the operation completes",
         ));
     }
-    let unfinished: Vec<String> = state
-        .store
-        .list_tasks(TaskFilter {
-            goal_id: Some(id.clone()),
-            status: None,
-        })
-        .await?
-        .into_iter()
-        .filter(|t| !matches!(t.status(), TaskStatus::Finished | TaskStatus::Cancelled))
-        .map(|t| format!("{} ({})", t.title, t.status))
-        .collect();
-    if !unfinished.is_empty() {
-        return Err(ApiError::conflict(format!(
-            "the goal still has unfinished tasks: {}",
-            unfinished.join(", ")
-        )));
-    }
-    let goal = state.store.end_goal(&id, GoalStatus::Completed).await?;
+    // The tasks are checked in the write that completes the goal, so a task
+    // that a linked goal admits at the same time cannot be left behind it.
+    let goal = state.store.complete_goal(&id).await?;
     // Only the ending that landed gets here: a racing one is a conflict.
     crate::metrics::record_goal_ended(&state.store, &goal).await;
     state.notify_scheduler_goal(&id);

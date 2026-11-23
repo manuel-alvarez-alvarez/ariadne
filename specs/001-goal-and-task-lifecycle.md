@@ -45,6 +45,9 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
    `cancelled` when the user cancels it. Cancelling records the reason on
    every task it takes with it. Whether the goal is *met* is a judgement
    about the work, so the daemon never makes it on anybody's behalf.
+   The check of the tasks and the write of `completed` are one write
+   transaction. So a task that a linked goal admits at the same time (rule 15)
+   either comes first and refuses the completion, or comes after and is refused.
 4. A task is `pending`, `ready`, `in_progress`, `finished`, `cancelled` or
    `failed`. `finished` and `cancelled` are terminal; `failed` is retryable.
    A task is `in_progress` from its first column to its last: the column it
@@ -206,7 +209,10 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
   make one goal (`far_tasks.rs::linked_goal_creates_at_once_make_one_goal`). An ended linked
   goal is not replaced (`far_tasks.rs::a_linked_goal_that_ended_takes_no_more_tasks`), and takes
   no new task while it keeps its own
-  (`far_tasks.rs::a_linked_goal_that_ended_takes_no_new_task_and_keeps_its_own`). An
+  (`far_tasks.rs::a_linked_goal_that_ended_takes_no_new_task_and_keeps_its_own`).
+- Rules 3 and 15, the two orders: a task admitted first refuses the completion and names the
+  task (`far_tasks.rs::a_linked_goal_with_an_admitted_task_cannot_complete`), and a completion
+  first refuses the task (`::a_linked_goal_that_ended_takes_no_new_task_and_keeps_its_own`). An
   upgrade keeps two active linked goals of one origin goal, and a create answers the oldest
   (`crates/ariadne-store/tests/far_task_migration.rs::an_upgrade_keeps_two_active_linked_goals_of_one_origin`).
 

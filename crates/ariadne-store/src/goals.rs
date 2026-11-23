@@ -278,6 +278,50 @@ impl Store {
         Ok(goal)
     }
 
+    /// Complete an `active` goal whose every task is `finished` or
+    /// `cancelled` (001 rule 3). The check of the tasks and the write are one
+    /// write transaction on the one writer, so a task that a linked goal
+    /// admits at the same time (037) either comes first and refuses the
+    /// completion, or comes after and is refused itself.
+    pub async fn complete_goal(&self, id: &str) -> Result<Goal> {
+        let mut tx = self.w().begin().await?;
+        let goal: Goal = Self::fetch_by_in_tx(&mut tx, "goal", "goals", id).await?;
+        if goal.status() != GoalStatus::Active {
+            return Err(StoreError::Conflict(format!(
+                "goal is {}, expected active",
+                goal.status
+            )));
+        }
+        let unfinished: Vec<(String, String)> = sqlx::query_as(
+            "SELECT title, status FROM tasks
+             WHERE goal_id = ? AND status NOT IN ('finished', 'cancelled')
+             ORDER BY id",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !unfinished.is_empty() {
+            let named: Vec<String> = unfinished
+                .iter()
+                .map(|(title, status)| format!("{title} ({status})"))
+                .collect();
+            return Err(StoreError::Conflict(format!(
+                "the goal still has unfinished tasks: {}",
+                named.join(", ")
+            )));
+        }
+        sqlx::query("UPDATE goals SET status = ?, updated_at = ? WHERE id = ?")
+            .bind(GoalStatus::Completed.as_str())
+            .bind(now())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let goal = self.get_goal(id).await?;
+        self.publish(Change::GoalUpdated(goal.clone()));
+        Ok(goal)
+    }
+
     /// End a goal as `status`, `completed` or `cancelled`, only where it has
     /// not ended already: the check and the write are one transaction, so of
     /// two endings racing for one goal exactly one lands, and the other is a
