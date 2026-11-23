@@ -7,6 +7,7 @@
 //! host's name.
 
 use anyhow::Result;
+use ariadne_api::tasks::LOCAL_HOST;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -15,6 +16,12 @@ use super::{Format, note, view};
 
 /// The column a list of every host leads with.
 const HOST: Column = col("host", UNCAPPED);
+
+/// The header of the column that names each task's host, in a list of every
+/// host. `HOST` is the daemon that answered, so the task's host reads `TASK
+/// HOST`. A task list names its own column `host`, and this is its renamed
+/// header.
+const TASK_HOST: &str = "task host";
 
 /// One list, as one host answered it.
 pub(crate) struct Listing {
@@ -333,19 +340,38 @@ fn on_host(host: Option<&str>, text: &str) -> String {
 /// One table over every part, fitted one time. The list of every host leads
 /// each row with the host, and keeps `HOST` first whatever `--columns` names.
 fn table(parts: &[(Option<&str>, &Listing)], hosted: bool, view: &View) -> Result<String> {
-    let columns = parts[0].1.columns;
     if !hosted {
-        return render_table(columns, &parts[0].1.rows, view);
+        return render_table(parts[0].1.columns, &parts[0].1.rows, view);
     }
+    // A host with no far task has no task-host column. The table takes the
+    // widest set of columns, and that host's rows get an empty cell there.
+    let widest = parts
+        .iter()
+        .map(|(_, listing)| listing.columns)
+        .max_by_key(|columns| columns.len())
+        .unwrap_or_default();
+    let task_host = widest.iter().position(|c| c.header == HOST.header);
     let columns: Vec<Column> = std::iter::once(HOST)
-        .chain(columns.iter().copied())
+        .chain(widest.iter().map(|c| match c.header == HOST.header {
+            true => Column {
+                header: TASK_HOST,
+                ..*c
+            },
+            false => *c,
+        }))
         .collect();
     let rows: Vec<Vec<String>> = parts
         .iter()
         .flat_map(|(host, listing)| {
+            let narrow = listing.columns.len() < widest.len();
             listing.rows.iter().map(move |row| {
+                let mut row = row.clone();
+                // A list with no far task runs every task on its own daemon.
+                if let (true, Some(at)) = (narrow, task_host) {
+                    row.insert(at, LOCAL_HOST.into());
+                }
                 std::iter::once(host.unwrap_or_default().to_owned())
-                    .chain(row.iter().cloned())
+                    .chain(row)
                     .collect()
             })
         })
