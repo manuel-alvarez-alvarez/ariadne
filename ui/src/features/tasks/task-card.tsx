@@ -48,6 +48,7 @@ import {
 } from "@/features/sessions/session-display"
 import { cn, formatTokens, plural } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
+import { useSourceHost } from "./source-host"
 import { STALLED_META } from "./stalled"
 import { TASK_STATUS_META } from "./status"
 import { StepTrack } from "./step-track"
@@ -153,6 +154,10 @@ export function TaskCard({
    */
   lastActivityAt?: string | null
 }) {
+  const executionHost = useSourceHost(task.execution_context?.execution_owner)
+  const displayedHost = task.execution_context
+    ? (executionHost ?? "Unconfigured worker")
+    : task.host
   const activity =
     lastActivityAt && Date.parse(lastActivityAt) > Date.parse(task.updated_at)
       ? lastActivityAt
@@ -171,7 +176,10 @@ export function TaskCard({
   const currentAgent = currentStep
     ? task.agents.find((agent) => agent.step === currentStep.id)
     : undefined
-  const hints = cardHints(task, { state, flagged, currentStep, currentAgent, activity, steps })
+  const hints = cardHints(
+    { ...task, host: displayedHost },
+    { state, flagged, currentStep, currentAgent, activity, steps },
+  )
 
   return (
     <div
@@ -215,17 +223,19 @@ export function TaskCard({
               compact
             />
           )}
-          {task.host && task.host !== "local" && (
+          {task.execution_context && !executionHost ? (
+            <span>Unconfigured worker</span>
+          ) : displayedHost && (displayedHost !== "local" || task.execution_context) ? (
             <HostLabel
-              host={task.host as Host}
+              host={displayedHost}
               className={HOST_LABEL_SIZING}
               title={
                 task.host_unreachable
-                  ? `Host ${task.host} cannot be reached; progress may be stale`
-                  : task.host
+                  ? `Host ${displayedHost} cannot be reached; progress may be stale`
+                  : displayedHost
               }
             />
-          )}
+          ) : null}
         </div>
 
         <div className="mt-1.5 flex min-w-0 items-center text-xs text-muted-foreground">

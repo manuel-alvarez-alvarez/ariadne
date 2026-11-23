@@ -257,3 +257,30 @@ it("edits a worker draft using its saved workflow without a goal", async () => {
   expect(screen.getAllByText("Saved build").length).toBeGreaterThan(0)
   expect(onBox(seen, "GET", `/v1/goals/${GOAL.id}`)).toHaveLength(0)
 })
+
+it("labels a named source task with the client's worker alias", async () => {
+  const remote = aTask({
+    ...TASK,
+    host: "gpu",
+    execution_context: {
+      source_goal: { daemon_id: "source-id", goal_id: GOAL.id, title: "Source", description: "" },
+      execution_owner: "worker-id",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  stubHosts({
+    local: { "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "worker-id" } },
+    box: {
+      [`/v1/tasks/${TASK.id}`]: remote,
+      "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "source-id" },
+      "/v1/sessions": aSessionPage([]),
+      [`/v1/tasks/${TASK.id}/messages`]: [],
+    },
+  })
+  renderScreen(<DetailPanels />, { route: `/goals?task=${TASK.id}&host=box` })
+  expect(await screen.findByText("local")).toBeTruthy()
+  expect(screen.queryByText("gpu")).toBeNull()
+})

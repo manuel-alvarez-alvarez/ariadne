@@ -31,7 +31,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { describeError } from "@/lib/format"
 import { usePanelHost } from "@/routes/paths"
 import { useCancelTask, useRetryTask } from "./queries"
-import { canCancel, canEdit, canRetry } from "./status"
+import { canCancel, canEdit, canRetry, TASK_STATUS_META } from "./status"
 import { EditTaskDialog } from "./task-form-dialog"
 
 /**
@@ -40,7 +40,7 @@ import { EditTaskDialog } from "./task-form-dialog"
  * places it is ever said. The dialog that used to say it is gone: retry keeps
  * everything, so there is nothing to confirm.
  */
-const RETRY_HINT = "Back to ready, same branch and worktree, at the first column"
+const RETRY_HINT = "Retry with the same branch and worktree"
 
 export function TaskActions({ task }: { task: TaskDto }) {
   const host = usePanelHost()
@@ -52,7 +52,7 @@ export function TaskActions({ task }: { task: TaskDto }) {
   const showCancel = canCancel(task.status)
   const showRetry = canRetry(task.status)
   const retryHint = RETRY_HINT
-  // Cancelling is optimistic, so by the time the request is in flight the task
+  // Local cancellation is optimistic, so by the time the request is in flight the task
   // is already `cancelled` and neither button applies any more. Returning null
   // here would take the open dialog — its spinner, and the refusal it may be
   // about to show — down with them. The edit form is kept the same way: if the
@@ -89,7 +89,17 @@ export function TaskActions({ task }: { task: TaskDto }) {
                 pending={retry.isPending}
                 onClick={() => {
                   retry.mutate(undefined, {
-                    onSuccess: () => toast.success("Task retried", { description: retryHint }),
+                    onSuccess: (result) =>
+                      toast.success("Task retried", {
+                        description:
+                          result.status === "pending"
+                            ? "Pending: waiting for dependencies or authorization."
+                            : result.status === "ready"
+                              ? "Ready to start, with the same branch and worktree."
+                              : result.status === "in_progress"
+                                ? "In progress, with the same branch and worktree."
+                                : `Status: ${TASK_STATUS_META[result.status].label}`,
+                      }),
                     onError: (error) =>
                       toast.error("Could not retry", { description: describeError(error) }),
                   })
@@ -140,9 +150,18 @@ export function TaskActions({ task }: { task: TaskDto }) {
         error={cancel.error}
         onConfirm={() =>
           cancel.mutate(undefined, {
-            onSuccess: () => {
+            onSuccess: (result) => {
               close()
-              toast.success("Task cancelled")
+              if (result.status === "cancelled")
+                toast.success("Task cancelled", { description: "Cancellation confirmed." })
+              else if (result.status === "finished")
+                toast.success("Task finished before cancellation", {
+                  description: "The task completed.",
+                })
+              else
+                toast.success("Cancellation requested", {
+                  description: `Status: ${TASK_STATUS_META[result.status].label}`,
+                })
             },
           })
         }

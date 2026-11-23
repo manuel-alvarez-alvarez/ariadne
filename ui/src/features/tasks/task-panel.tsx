@@ -147,7 +147,7 @@ export function TaskPanel({
               />
             ) : null}
             {task.data.host_unreachable ? (
-              <p role="status">Host {task.data.host} cannot be reached; progress may be stale.</p>
+              <p role="status">The worker cannot be reached; progress may be stale.</p>
             ) : null}
             <TaskSummary task={task.data} steps={steps} sessions={sessions.data} />
             <TaskFacts task={task.data} steps={steps} />
@@ -208,6 +208,7 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
     enabled: !task.execution_context,
   })
   const sourceHost = useSourceHost(task.execution_context?.source_goal.daemon_id)
+  const executionHost = useSourceHost(task.execution_context?.execution_owner)
   const navigate = useNavigate()
   const status = TASK_STATUS_META[task.status]
   const showHost = usePanelShowsHost()
@@ -237,7 +238,15 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
           ) : null}
           {task.stalled && <StalledBadge />}
           {showHost ? <HostLabel host={host} /> : null}
-          {task.host && task.host !== "local" ? <HostLabel host={task.host} /> : null}
+          {task.execution_context ? (
+            executionHost ? (
+              <HostLabel host={executionHost} />
+            ) : (
+              <span>Unconfigured worker</span>
+            )
+          ) : task.host && task.host !== "local" ? (
+            <HostLabel host={task.host} />
+          ) : null}
         </>
       }
       id={
