@@ -521,7 +521,8 @@ same binary also serves (013).
     task.
 61. With `--host all`, the `HOST` column is the daemon that answered, as rule
     46a says. The task's own host is a second column, `TASK HOST`. A host with
-    no far task shows `local` in that column.
+    no far task shows `local` in that column. In `--format json`, `host` is
+    the daemon that answered and `task_host` the task's own host.
 
 ## Known gap
 
@@ -940,6 +941,8 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - With `--host all`, `HOST` is the answering daemon and `TASK HOST` the task's
   own host, rule 61
   (`crates/ariadne-cli/tests/task_hosts.rs::all_hosts_keep_the_daemon_host_first_and_name_each_task_host_second`).
+- With `--host all`, JSON keeps the task's own host as `task_host`, rule 61
+  (`crates/ariadne-cli/src/output/listing.rs::tests::json_keeps_the_host_an_item_already_names`).
 
 ## Sources
 

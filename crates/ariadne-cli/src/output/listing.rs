@@ -455,7 +455,8 @@ fn merge_json(parts: &[(&str, &Value)]) -> Value {
     }
 }
 
-/// Every host's items in order, each object with the `host` it came from.
+/// Every host's items in order, each object with the `host` it came from. An
+/// item that already names a `host`, as a task does, keeps it as `task_host`.
 fn hosted_items<'a>(parts: impl Iterator<Item = (&'a str, &'a Value)>) -> Vec<Value> {
     parts
         .flat_map(|(host, value)| {
@@ -466,6 +467,9 @@ fn hosted_items<'a>(parts: impl Iterator<Item = (&'a str, &'a Value)>) -> Vec<Va
                 .map(move |item| match item {
                     Value::Object(object) => {
                         let mut object = object.clone();
+                        if let Some(own) = object.remove("host") {
+                            object.insert("task_host".into(), own);
+                        }
                         object.insert("host".into(), host.into());
                         Value::Object(object)
                     }
@@ -666,6 +670,18 @@ mod tests {
         let rendered = render(&[(None, &local)], &View::plain()).unwrap();
         assert_eq!(stdout(&rendered), ["ID   TITLE", "a1   one"]);
         assert_eq!(stderr(&rendered), ["Next: ariadne x --cursor c"]);
+    }
+
+    #[test]
+    fn json_keeps_the_host_an_item_already_names() {
+        let merged = merge_json(&[(
+            "local",
+            &json!([{"id": "a1", "host": "build", "host_unreachable": true}]),
+        )]);
+        assert_eq!(
+            merged,
+            json!([{"id": "a1", "host": "local", "task_host": "build", "host_unreachable": true}])
+        );
     }
 
     #[test]
