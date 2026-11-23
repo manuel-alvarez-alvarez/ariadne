@@ -12,14 +12,22 @@ import { useHostColor } from "@/hooks/use-host-color"
 import { cn } from "@/lib/format"
 import { HOST_HUE_CLASSES } from "@/lib/host-colors"
 
-export function HostLabel({ host, className }: { host: Host; className?: string }) {
+export function HostLabel({
+  host,
+  className,
+  title = "Host",
+}: {
+  host: Host
+  className?: string
+  title?: string
+}) {
   const hue = useHostColor(host)
   return (
     <Badge
       variant="outline"
       data-host-color={hue}
       className={cn("shrink-0 border-transparent font-mono", HOST_HUE_CLASSES[hue].pill, className)}
-      title="Host"
+      title={title}
     >
       {host}
     </Badge>
