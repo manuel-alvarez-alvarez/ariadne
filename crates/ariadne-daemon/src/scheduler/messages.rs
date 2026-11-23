@@ -106,6 +106,18 @@ impl super::Scheduler {
     /// agent is the lifecycle's business, and a message is not a reason to put
     /// one back on a task nobody is working on.
     async fn recipient_session(&self, message: &Message) -> Option<AgentSession> {
+        if message.to_actor() == Some(Actor::Orchestrator)
+            && let Some(task_id) = &message.task_id
+            && self
+                .store
+                .remote_task_context(task_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+        {
+            return None;
+        }
         let filter = match (message.to_actor()?, &message.task_id) {
             (Actor::Orchestrator, _) => SessionFilter {
                 goal_id: Some(message.goal_id.clone()),

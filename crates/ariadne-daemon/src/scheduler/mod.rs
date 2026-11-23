@@ -505,6 +505,14 @@ impl Scheduler {
 
     /// Every goal, and every task of the active ones, reconciled in turn.
     async fn reconcile_entities(&mut self) {
+        match self.store.remote_tasks().await {
+            Ok(tasks) => {
+                for task in tasks {
+                    self.reconcile(Target::Task(&task.id)).await;
+                }
+            }
+            Err(error) => warn!(%error, "reconcile: listing remote tasks failed"),
+        }
         let goals = match self.store.list_goals(&[]).await {
             Ok(goals) => goals,
             Err(e) => {

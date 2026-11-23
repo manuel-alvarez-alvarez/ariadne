@@ -25,6 +25,7 @@ mod pins;
 mod pull_requests;
 mod query;
 use query::QueryRoutes;
+mod remote_tasks;
 mod repositories;
 mod sessions;
 mod skills;
@@ -170,6 +171,7 @@ impl AppState {
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
+        remote_tasks::protocol, remote_tasks::create, remote_tasks::authorize,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         channel::list_task_messages, channel::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, channel::diff,
@@ -409,6 +411,12 @@ pub fn router(state: AppState) -> Router {
         // tasks
         .route("/v1/tasks", get(tasks::list))
         .route("/v1/tasks/{id}", get(tasks::get).patch(tasks::update))
+        .route("/v1/remote-tasks/protocol", get(remote_tasks::protocol))
+        .route("/v1/remote-tasks/{id}", put(remote_tasks::create))
+        .route(
+            "/v1/remote-tasks/{id}/authorize",
+            post(remote_tasks::authorize),
+        )
         .route(
             "/v1/tasks/{id}/transitions",
             post(tasks::transition).get(tasks::list_transitions),

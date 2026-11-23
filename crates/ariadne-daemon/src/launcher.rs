@@ -710,7 +710,7 @@ impl Launcher {
                 .join(format!("{}-eng", tail(&task.id))),
         };
         if !worktree.exists() {
-            let goal = self.store.get_goal(&task.goal_id).await?;
+            let goal = self.store.task_goal(task).await?;
             let repo_path = Path::new(&repo.path);
             std::fs::create_dir_all(worktree.parent().unwrap())?;
             if goal.origin_goal_id.is_some() {
@@ -788,7 +788,7 @@ impl Launcher {
             .as_deref()
             .context("session has no internal agent id to resume from")?;
         let goal = match previous.goal_id.as_deref() {
-            Some(id) => Some(self.store.get_goal(id).await?),
+            Some(_) => Some(self.store.session_goal(&previous).await?),
             None => None,
         };
         if goal
@@ -871,8 +871,8 @@ impl Launcher {
             self.cfg.portable.allows_session(&old),
             "worker maintenance blocks new work"
         );
-        if let Some(goal_id) = old.goal_id.as_deref()
-            && self.store.get_goal(goal_id).await?.status() == GoalStatus::Cancelled
+        if old.goal_id.is_some()
+            && self.store.session_goal(&old).await?.status() == GoalStatus::Cancelled
         {
             anyhow::bail!("cannot switch a session of a cancelled goal");
         }
@@ -1046,7 +1046,7 @@ impl Launcher {
             .as_deref()
             .context("session has no staffed agent")?;
         let agent = self.store.get_task_agent(agent_id).await?;
-        let steps = self.store.goal_steps(&task.goal_id).await?;
+        let steps = self.store.task_steps(&task).await?;
         let step = steps
             .iter()
             .find(|s| s.id == agent.step)

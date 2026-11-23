@@ -52,6 +52,7 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
 /// its `develop` column.
 pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
     TaskDto {
+        execution_context: None,
         step: None,
         operation: None,
         id: id.into(),

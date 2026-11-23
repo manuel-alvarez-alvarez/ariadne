@@ -164,6 +164,18 @@ impl Store {
         agents: &mut [NewTaskAgent],
     ) -> Result<()> {
         let steps = self.goal_steps(&goal.id).await?;
+        Self::check_step_staffing(
+            &steps,
+            agents,
+            (goal.status() != GoalStatus::Planning).then_some(goal.status.as_str()),
+        )
+    }
+
+    pub(crate) fn check_step_staffing(
+        steps: &[GoalStep],
+        agents: &mut [NewTaskAgent],
+        status: Option<&str>,
+    ) -> Result<()> {
         let mut staffed = HashSet::new();
         for agent in agents.iter_mut() {
             let step = steps.iter().find(|s| s.id == agent.step).ok_or_else(|| {
@@ -189,13 +201,13 @@ impl Store {
                 })?;
             }
         }
-        if goal.status() != GoalStatus::Planning {
+        if let Some(status) = status {
             let staffed: Vec<String> = staffed.into_iter().collect();
-            let missing = unstaffed_columns(&steps, &staffed);
+            let missing = unstaffed_columns(steps, &staffed);
             if !missing.is_empty() {
                 return Err(StoreError::Invalid(format!(
                     "the goal is {}, so every column needs an agent; none staffs {}",
-                    goal.status,
+                    status,
                     missing.join(", ")
                 )));
             }
@@ -206,7 +218,7 @@ impl Store {
     /// The columns of a task's workflow that no agent of the task works, in
     /// column order. Empty for a task that can start.
     pub async fn unstaffed_columns(&self, task: &Task) -> Result<Vec<String>> {
-        let steps = self.goal_steps(&task.goal_id).await?;
+        let steps = self.task_steps(task).await?;
         let staffed: Vec<String> = self
             .list_task_agents(&task.id)
             .await?
@@ -314,11 +326,11 @@ impl Store {
                 "only a working agent or the daemon can move a step with a reason".into(),
             ));
         }
-        let steps: Vec<String> =
-            sqlx::query_scalar("SELECT id FROM goal_steps WHERE goal_id = ? ORDER BY ordinal")
-                .bind(&task.goal_id)
-                .fetch_all(&mut *tx)
-                .await?;
+        let steps: Vec<String> = Self::task_steps_in_tx(&mut tx, &task)
+            .await?
+            .into_iter()
+            .map(|step| step.id)
+            .collect();
         let from = steps.iter().position(|s| Some(s) == task.step.as_ref());
         let to = steps.iter().position(|s| s == to_step);
         match (from, to) {
@@ -498,6 +510,18 @@ impl Store {
         // Status is validated on the row inside the write transaction: a check
         // against the read pool could be stale by the time we hold the lock.
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
+        if !depends_on.is_empty()
+            && sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM remote_task_contexts WHERE task_id = ?)",
+            )
+            .bind(task_id)
+            .fetch_one(&mut *tx)
+            .await?
+        {
+            return Err(StoreError::Invalid(
+                "remote task dependencies belong to the source daemon".into(),
+            ));
+        }
         if !matches!(task.status(), TaskStatus::Pending | TaskStatus::Ready) {
             return Err(StoreError::Conflict(format!(
                 "dependencies can only change while pending/ready, task is {}",
@@ -636,10 +660,15 @@ impl Store {
             // agent. The task is not running, so no live agent session is
             // replaced by this; a failed task's next run starts on the new
             // staffing.
-            let goal = Self::fetch_by_in_tx(&mut tx, "goal", "goals", &task.goal_id).await?;
-            self.check_workflow_staffing(&goal, agents).await?;
+            let steps = Self::task_steps_in_tx(&mut tx, &task).await?;
+            let draft: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM remote_task_contexts WHERE task_id = ? AND authorized_revision IS NULL)").bind(id).fetch_one(&mut *tx).await?;
+            let goal = self.task_goal(&task).await?;
+            let status =
+                (!draft && goal.status() != GoalStatus::Planning).then_some(goal.status.as_str());
+            Self::check_step_staffing(&steps, agents, status)?;
             Self::restaff_agents_in_tx(&mut tx, id, agents).await?;
         }
+        sqlx::query("UPDATE remote_task_contexts SET revision = revision + 1 WHERE task_id = ? AND authorized_revision IS NULL").bind(id).execute(&mut *tx).await?;
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
         sqlx::query(
@@ -735,6 +764,9 @@ impl Store {
         merge_commit: Option<&str>,
         at: Option<&str>,
     ) -> Result<TaskTransition> {
+        if matches!(to, TaskStatus::Ready | TaskStatus::InProgress) && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM remote_task_contexts WHERE task_id = ? AND authorized_revision IS NULL)").bind(&task.id).fetch_one(&mut **tx).await? {
+            return Err(StoreError::Conflict("the source has not authorized this draft".into()));
+        }
         let from = task.status();
         check_transition(from, to, actor)?;
         let timestamp = at.map(str::to_string).unwrap_or_else(now);
@@ -744,12 +776,10 @@ impl Store {
         // the column it is in.
         let first_step: Option<String> =
             if to == TaskStatus::InProgress && from == TaskStatus::Ready {
-                sqlx::query_scalar(
-                    "SELECT id FROM goal_steps WHERE goal_id = ? ORDER BY ordinal LIMIT 1",
-                )
-                .bind(&task.goal_id)
-                .fetch_optional(&mut **tx)
-                .await?
+                Self::task_steps_in_tx(tx, task)
+                    .await?
+                    .first()
+                    .map(|step| step.id.clone())
             } else {
                 None
             };

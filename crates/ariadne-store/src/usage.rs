@@ -106,7 +106,12 @@ impl Store {
         if let Some(task_id) = &session.task_id {
             self.publish_task_update(task_id, 1).await?;
         }
-        if let Some(goal_id) = &session.goal_id {
+        if let Some(goal_id) = &session.goal_id
+            && match &session.task_id {
+                Some(id) => self.remote_task_context(id).await?.is_none(),
+                None => true,
+            }
+        {
             self.publish_goal_update(goal_id).await?;
         }
         Ok(Some(moved))

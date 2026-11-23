@@ -334,15 +334,11 @@ pub async fn record_task_transition(store: &Store, task: &Task, transition: &Tas
     // first with `gate: committed`, so a task that finishes further on still
     // credits the model that wrote the change. A workflow with no such
     // column (030) falls back to the agent of the task's last column.
-    let committed = store
-        .goal_steps(&task.goal_id)
-        .await
-        .ok()
-        .and_then(|steps| {
-            steps.into_iter().find(|s| {
-                s.gate.as_deref() == Some(ariadne_core::workflow::StepGate::Committed.as_str())
-            })
-        });
+    let committed = store.task_steps(task).await.ok().and_then(|steps| {
+        steps.into_iter().find(|s| {
+            s.gate.as_deref() == Some(ariadne_core::workflow::StepGate::Committed.as_str())
+        })
+    });
     // A task that never reached a column names no model, whatever the
     // workflow's committed-gate column is staffed with.
     let model = task.step.as_ref().and_then(|last| {
@@ -361,7 +357,7 @@ pub async fn record_task_transition(store: &Store, task: &Task, transition: &Tas
             })
     });
     let workflow = store
-        .get_goal(&task.goal_id)
+        .task_goal(task)
         .await
         .map(|goal| goal.workflow)
         .unwrap_or_else(|_| NONE.into());

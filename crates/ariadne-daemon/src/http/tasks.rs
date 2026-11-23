@@ -354,7 +354,7 @@ pub(super) async fn update(
         && !deps.is_empty()
     {
         let task = state.store.get_task(&id).await?;
-        let goal = state.store.get_goal(&task.goal_id).await?;
+        let goal = state.store.task_goal(&task).await?;
         check_dependencies(&goal, deps)?;
     }
     let current = state.store.get_task(&id).await?;

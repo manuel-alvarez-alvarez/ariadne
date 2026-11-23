@@ -1,10 +1,11 @@
 ---
 id: workflows
 status: current
-updated: 2026-11-17
+updated: 2026-11-23
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
+  - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-core/src/workflow.rs
   - crates/ariadne-core/src/state_machine.rs
   - crates/ariadne-store/tests/store.rs
@@ -421,7 +422,19 @@ every other kebab-case word in it; the wire spells the same gate
     workflows and active goal snapshots, preserving completed snapshots
     (`store.rs::operation_gate_upgrade_preserves_custom_settings_and_history`).
 
+12. A remote worker task saves its source workflow name and all workflow columns per task.
+    It saves staffing independently of a local goal. Local workflow catalog edits do not replace these columns.
+    Incomplete drafts can receive staffing before authorization (001 rule 22).
+    Authorized tasks use the saved column order and gates through the normal lifecycle.
+    They use worker prompt templates and worker repository permissions at launch, as local tasks do.
+    Every column shares the task worktree. Remote branches start at the fetched remote base (001 rule 16).
+
 ## Acceptance criteria
+
+- Rule 12: `remote_tasks.rs::saved_columns_keep_their_gates_and_a_failed_task_can_retry`
+  proves saved columns, the commit gate, column returns, and retries.
+  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves worker execution without a local goal.
+
 
 - The parser accepts the two shipped documents and refuses a document with
   no `workflow` line, a duplicate column id, a repeated key, a blank,

@@ -13,7 +13,7 @@ test that proves it. Conventions for writing and changing one are in
 
 | # | Spec | What it settles |
 | --- | --- | --- |
-| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, dependencies, far task writes, and linked goal endings |
+| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, dependencies, remote worker authorization, far task writes, and linked goal endings |
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
 | 003 | [Planning a goal](003-planning-a-goal.md) | planning, the orchestrator's lifetime, and linked goal task admission |
 | 004 | [Authoring and review](004-authoring-and-review.md) | superseded by 030: the author, the reviewers and the verdicts are the develop and review columns |
@@ -23,8 +23,8 @@ test that proves it. Conventions for writing and changing one are in
 | 008 | [Sessions and the console](008-sessions-terminals-and-logs.md) | session rows, the console, kill and resume |
 | 009 | [Scheduler, attention and watchdogs](009-scheduler-attention-and-watchdogs.md) | the reconciliation loop, the quiet clock, what needs a human |
 | 011 | [Models, effort and pins](011-models-effort-and-pins.md) | the catalog, `<agent>:<model>`, effort, and where a pin is set |
-| 012 | [HTTP API, event stream and usage](012-http-api-events-and-usage.md) | transports, the envelope, SSE, token accounting |
-| 013 | [MCP tool surface](013-mcp-tool-surface.md) | the tools each seat sees, including writes to far tasks |
+| 012 | [HTTP API, event stream and usage](012-http-api-events-and-usage.md) | transports, the envelope, SSE, token accounting, and remote task contracts |
+| 013 | [MCP tool surface](013-mcp-tool-surface.md) | the tools each seat sees, remote task context, and writes to far tasks |
 | 014 | [Command-line interface](014-command-line-interface.md) | the command tree, flags, failures, completions, `doctor` |
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, reusable workload views, its conversation workspace, and CLI parity |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, Dependabot, CI build caches, the migration policy |
@@ -39,13 +39,13 @@ test that proves it. Conventions for writing and changing one are in
 | 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, and the tunnel with its switch |
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
 | 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on any explicitly requested PR, its detached worktree, its news, one review by priority, asking by hand regardless of authorship or review assignment, no Ariadne approval of its own, and no forge approval |
-| 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, and the `pr` column |
+| 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, and the `pr` column; saved remote task workflows |
 | 031 | [Needs attention](031-needs-attention.md) | persistent individual dismissal with independent cause revisions, daemon-only partial reads, valid recovery targets, the shared item shape, `GET /v1/attention`, the producer registry, the recovery producer, the agent-request producer (a turn-scoped `wait_for_user` hint, its structured question and the answer route), and the pull-request producer: an unassigned review request, a confirmed-ready request to merge and each escalated review thread |
 | 032 | [Babysitting a request by hand](032-babysitting-a-request-by-hand.md) | the `keeper` seat, its goal and task, its worktree and branch, asking by hand on any open request, ending it on the merge or the close, and the desktop panel |
 | 033 | [Telemetry](033-telemetry.md) | operational log and metric sources, their OpenTelemetry pipeline, retention, and log routes |
 | 034 | [Telemetry query APIs](034-telemetry-query.md) | the Prometheus and Loki routes over the telemetry store, the name translation, the supported PromQL and LogQL, and `ariadne query` |
 | 035 | [Metrics](035-metrics.md) | the metric catalog the daemon records: every instrument, its unit, attributes and where it is recorded |
 | 036 | [Dashboards](036-dashboards.md) | editable Perses dashboard documents, their catalog routes, events and CLI |
-| 037 | [Hosts](037-hosts.md) | database hosts and colours, CRUD routes and events, SSH worker inspection and review in three setup groups, resumable setup, explicit idle updates and repository population, catalog and portable configuration synchronization, idle maintenance restarts, host query routes, and far tasks that a goal's daemon sends to a host and mirrors |
+| 037 | [Hosts](037-hosts.md) | database hosts and colours, CRUD routes and events, SSH worker inspection and review in three setup groups, resumable setup, explicit idle updates and repository population, catalog and portable configuration synchronization, idle maintenance restarts, host query routes, and far tasks that a goal's daemon sends to a host and mirrors; durable worker identity and remote execution |
 | 038 | [Agent relay](038-agent-relay.md) | `ariadned relay`, session paths, versioned durable replay, acknowledgments, stop, exit reporting, upgrades, and terminal status |
 | 039 | [Isolated Linux latency measurements](039-isolated-linux-latency.md) | dispatch-only bounded Linux cohorts, private caches, evidence and image comparability |

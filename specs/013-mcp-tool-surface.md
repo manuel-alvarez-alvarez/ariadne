@@ -265,6 +265,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     dependencies is changed on the goal's daemon. Linked goals close with
     their origin goal, including after a host returns (001 rules 20 and 21).
 
+19. A remote task's `get_task` reads its saved workflow columns from the task context (012).
+    It requires no worker goal. Local and legacy tasks continue to read their goal columns.
+
 ## Acceptance criteria
 
 - Rule 18: far writes, session switches, held tasks, host refusals and linked
@@ -444,6 +447,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   `created_at` and `updated_at`. A `null` `pr_url`, `reason` or
   `merge_commit` is no field, by the result format above
   (`tools.rs::reading_a_task_drops_usage_and_timestamps`).
+  A remote task uses `execution_context.workflow.steps` for `goal_steps` without fetching a worker goal
+  (`tools.rs::reading_a_remote_task_uses_its_saved_columns_without_reading_a_goal`).
 - `list_hosts` gives `name`, `status`, `sync.state` and
   `sync.missing_repositories` of each host in the order of `GET /v1/hosts`,
   and nothing else; `list_models` with a `host` reads that host's models

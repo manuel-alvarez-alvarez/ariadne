@@ -34,6 +34,7 @@ fn attention(complete: bool) -> AttentionListDto {
 
 async fn listed(args: &[&str], attention: AttentionListDto) -> Output {
     let failed = TaskDto {
+        execution_context: None,
         id: "dismissed-task".into(),
         goal_id: "goal".into(),
         repo_id: "repo".into(),
