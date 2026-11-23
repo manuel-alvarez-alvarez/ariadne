@@ -57,12 +57,17 @@ async fn post_task(h: &Harness, goal: &Value) -> TaskDto {
 }
 
 async fn running_task(h: &Harness, task: &TaskDto) -> TaskDto {
-    eventually_some(TIMEOUT, "the first column's session to start", async || {
-        let task: TaskDto = h.get(&format!("/v1/tasks/{}", task.id)).await;
-        (task.status == TaskStatus::InProgress
-            && task.agents.iter().any(|a| a.session_id.is_some()))
-        .then_some(task)
-    })
+    eventually_some(
+        TIMEOUT,
+        "the first column's session and worktree",
+        async || {
+            let task: TaskDto = h.get(&format!("/v1/tasks/{}", task.id)).await;
+            (task.status == TaskStatus::InProgress
+                && task.worktree_path.is_some()
+                && task.agents.iter().any(|a| a.session_id.is_some()))
+            .then_some(task)
+        },
+    )
     .await
 }
 
