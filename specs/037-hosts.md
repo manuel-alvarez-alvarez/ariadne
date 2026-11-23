@@ -643,7 +643,7 @@ picker, the Hosts screen and one stream per host — is spec
 
 ### Far tasks
 
-92. `POST /v1/goals/{id}/tasks` with a `host` other than `local` (001 rule 17) checks the host
+95. `POST /v1/goals/{id}/tasks` with a `host` other than `local` (001 rule 17) checks the host
     before it creates the far task:
     - An unknown host answers `400`, and the message names it as unknown.
     - A host that is not `ready` answers `409`, and the message names the host status.
@@ -656,10 +656,10 @@ picker, the Hosts screen and one stream per host — is spec
       and the message names the model and the host. It stays the user's choice (011 rule 19):
       a request with no session header takes it.
     - A host that does not answer these reads answers `502`.
-93. The goal's daemon keeps each far task in its own task list. The store keeps its host, the
+96. The goal's daemon keeps each far task in its own task list. The store keeps its host, the
     id of the linked goal on the host and the id of the task on the host. The goal's daemon
     never starts an agent for a far task.
-94. A far task is free to start when it is `pending`, it has not gone to its host, its goal is
+97. A far task is free to start when it is `pending`, it has not gone to its host, its goal is
     `active`, and every task in its `depends_on` has merged (001 rule 19). Then the goal's
     daemon sends it to its host. A send whose answer was lost makes no second goal or task
     when it is sent again (001 rules 14 and 15):
@@ -683,33 +683,33 @@ picker, the Hosts screen and one stream per host — is spec
       in. A host that leaves it ends the send at once: the request is dropped, nothing that
       it answers is written, and the far task is not failed. The send starts again on the
       host's next `ready`.
-95. The goal's daemon follows `GET /v1/events/stream` of each `ready` host. Each
+98. The goal's daemon follows `GET /v1/events/stream` of each `ready` host. Each
     `task_updated` of a far task writes its status, step, branch, request URL and merge
     commit on the far task. A changed status writes a transition by the daemon, with the
     host's reason. A far task that the host reports `finished` has merged. A far task whose
     state is final here is never written: one that is `finished` or `cancelled`, and one whose
     goal is over (001 rules 3 and 4).
-96. When the host leaves `ready`, each far task on it keeps its last known state, and
+99. When the host leaves `ready`, each far task on it keeps its last known state, and
     `host_unreachable` is true, whatever the status of its goal. A send, a read or the open
     of the event stream under way does not hold this back: each call to the host runs only
-    while the host stays in its `ready` (rules 94 and 97). Each call waits `far_call` at most
+    while the host stays in its `ready` (rules 97 and 100). Each call waits `far_call` at most
     for the headers of its answer. A lost event stream of a
     `ready` host is the same, and the goal's daemon opens the stream again after `far_retry`.
-97. On the next `ready`, the goal's daemon opens the event stream of the host. Then it reads
+100. On the next `ready`, the goal's daemon opens the event stream of the host. Then it reads
     again each far task that went to the host, whatever its state and its goal
     (`GET /v1/tasks/{id}` on the host), and sets `host_unreachable` to false on each far task
-    of the host. A far task whose state is final keeps it (rule 95). A host that leaves
+    of the host. A far task whose state is final keeps it (rule 98). A host that leaves
     `ready` and comes back at the same endpoint while the daemon still works on an earlier
     answer of it counts as a next `ready` too. An answer that arrives after the host left
     `ready` writes nothing, and clears no `host_unreachable`.
 
 ## Acceptance criteria
 
-- Rule 92: `far_tasks.rs::a_far_task_is_refused_on_a_host_that_is_unknown_or_not_ready`,
+- Rule 95: `far_tasks.rs::a_far_task_is_refused_on_a_host_that_is_unknown_or_not_ready`,
   `::a_far_task_is_refused_on_a_host_that_lacks_its_repository`,
   `::a_far_task_is_refused_a_model_its_host_does_not_list` and
   `::a_model_its_host_turned_off_is_the_users_choice_alone`.
-- Rules 93 and 94: `far_tasks.rs::one_linked_goal_on_a_host_takes_every_far_task_of_a_goal`
+- Rules 96 and 97: `far_tasks.rs::one_linked_goal_on_a_host_takes_every_far_task_of_a_goal`
   proves that nothing goes to the host while the goal plans, and that two far tasks share one
   linked goal on the host's repository. `::a_far_task_waits_until_its_dependencies_merge_on_any_host`
   proves the wait for a far and a local dependency.
@@ -722,11 +722,11 @@ picker, the Hosts screen and one stream per host — is spec
   proves the send that the host leaves, and the flag that does not wait for it.
   `::a_stream_that_opens_when_the_host_leaves_does_not_hold_the_flag` proves the same for the open
   of the event stream.
-- Rule 95: `far_tasks.rs::a_far_task_mirrors_the_state_its_host_reports` proves the column,
+- Rule 98: `far_tasks.rs::a_far_task_mirrors_the_state_its_host_reports` proves the column,
   branch, request URL, merge commit and status.
   `::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports` proves the final state,
   live and on the read after a return.
-- Rules 96 and 97: `far_tasks.rs::a_far_task_keeps_its_state_while_its_host_is_away` proves the
+- Rules 99 and 100: `far_tasks.rs::a_far_task_keeps_its_state_while_its_host_is_away` proves the
   kept state, `host_unreachable`, and the read on the next `ready`.
   `::a_far_task_of_a_completed_goal_is_unreachable_while_its_host_is_away` proves the flag on a
   goal that is over, the read of its final task and the kept state.
@@ -734,6 +734,28 @@ picker, the Hosts screen and one stream per host — is spec
   cancelled task. `::a_host_back_at_the_same_endpoint_is_read_again_while_its_worker_is_busy`
   proves the return at the same endpoint, and
   `::a_read_that_answers_after_the_host_left_writes_nothing` proves the late answer.
+
+### Discovery by the orchestrator
+
+90. The orchestrator seat has the MCP tool `list_hosts`. It takes no parameter and gives, for each host in
+    the order of `GET /v1/hosts`, its `name`, `status`, `sync.state` and `sync.missing_repositories` (013).
+    No other seat has it. The shipped orchestration skill tells the orchestrator to call it once for the goal,
+    and to run every task on this host until `create_task` takes a `host`.
+91. `GET /v1/hosts/{host}/models` answers the model catalog of that host, as `GET /v1/models` does.
+    `local` answers this daemon's catalog. A `ready` host answers its own daemon's catalog.
+    An unknown name answers `404`. A host that is not `ready` answers `503`, and the message names its status.
+    The MCP tool `list_models` with `host` reads this route, and the orchestration skill tells the orchestrator
+    to call it with no `host` and to staff a task only on a model of this host.
+92. [The manual](../docs/hosts.md) tells users how a goal sends tasks to other hosts.
+
+## Acceptance criteria
+
+- Rule 90: `crates/ariadne-cli/src/commands/mcp/tools.rs::the_hosts_and_the_models_of_a_host_reach_the_orchestrator`
+  proves the fields and the order, and `mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others` proves the seat.
+  `crates/ariadne-store/src/skill_tests/operate.rs::the_orchestration_skill_picks_a_host_for_each_task_and_staffs_its_models` proves the skill text.
+- Rule 91: `host_queries.rs::a_host_serves_its_models_and_an_unknown_or_unready_one_is_refused` proves the three answers.
+  `tools.rs::the_hosts_and_the_models_of_a_host_reach_the_orchestrator` proves the tool reads the route.
+- Rule 92: `docs/hosts.md` is the page.
 
 - Rule 46: `hosts.rs::daemon_version_installs_the_recorded_release_of_a_release_daemon` proves SSH-only review and setup.
   Release builds verify their own repository and version tag before installation.

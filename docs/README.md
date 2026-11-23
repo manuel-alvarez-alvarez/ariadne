@@ -18,5 +18,6 @@ reads.
 | [Dashboards](dashboards.md) | the Dashboards screen's Perses dashboard: editing a panel, saving, resetting, and `ariadne dashboard` |
 | [Resuming a session](resuming-sessions.md) | listing Ariadne sessions and continuing a live or ended session |
 | [How Ariadne works](how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |
+| [Sending tasks to other hosts](hosts.md) | how the orchestrator picks a host and its models for each task |
 | [The forge integration](forge.md) | enabling GitHub, the pull request and review sessions, webhooks and the tunnel, issues |
 | [Ariadne Desktop](../ui/README.md) | running the desktop app |

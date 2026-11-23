@@ -218,6 +218,7 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 | [Dashboards](docs/dashboards.md) | the Dashboards screen's Perses dashboard: editing a panel, saving, resetting, and `ariadne dashboard` |
 | [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](docs/how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |
+| [Sending tasks to other hosts](docs/hosts.md) | how the orchestrator picks a host and its models for each task |
 | [The forge integration](docs/forge.md) | enabling GitHub, the pull request and review sessions, webhooks and the tunnel, issues |
 | [Ariadne Desktop](ui/README.md) | running the desktop app |
 

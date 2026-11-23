@@ -95,7 +95,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      only the models it can staff an agent on, each with its `agent_id`, its
      efforts and the user-set `rank` the staffing ladder reads — no `rank`
      field where the user set none — and narrows to one `agent_id` on request:
-     011), `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
+     011; with a `host`, the models of that host, 037 rule 91), `list_hosts`
+     (the orchestrator's alone: each host's `name`, `status`, `sync.state`
+     and `sync.missing_repositories`, in the order of `GET /v1/hosts`, and
+     no other field; an empty `missing_repositories` stays, as `[]`, an
+     exception to rule 14), `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
      `cancel_task`, `switch_session` (which moves a session, named by the
      `session_id` `get_task` carries beside its agent, to the model or agent
      it is given, refusing `default` as a model the way `update_task` does —
@@ -250,7 +254,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 17. `create_task` takes an optional `host`: the `name` of a `ready` host. The tool
     sends it as `CreateTaskRequest.host` (001 rule 17). A call with no `host` sends
     none, so the task runs on the goal's own daemon. The daemon refuses a host that
-    cannot run the task (037 rule 92), and the tool gives that refusal.
+    cannot run the task (037 rule 95), and the tool gives that refusal.
 
 ## Acceptance criteria
 
@@ -418,6 +422,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   `created_at` and `updated_at`. A `null` `pr_url`, `reason` or
   `merge_commit` is no field, by the result format above
   (`tools.rs::reading_a_task_drops_usage_and_timestamps`).
+- `list_hosts` gives `name`, `status`, `sync.state` and
+  `sync.missing_repositories` of each host in the order of `GET /v1/hosts`,
+  and nothing else; `list_models` with a `host` reads that host's models
+  (`tools.rs::the_hosts_and_the_models_of_a_host_reach_the_orchestrator`).
+- `list_hosts` is in the orchestrator seat alone
+  (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`).
 - Seat lists include readiness for agents and keepers alone:
   `mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`.
 - Rule 17: `create_task` offers `host`, sends the host it is given, and sends none

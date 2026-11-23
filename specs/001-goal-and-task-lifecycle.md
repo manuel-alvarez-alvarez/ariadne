@@ -120,16 +120,16 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     The commit gate and the task diff compare against that fetched base, not the local base branch.
 17. `CreateTaskRequest` takes an optional string `host`. An omitted host or `local` creates
     a task on the goal's own daemon, as before. Any other name creates a far task on that
-    host (037, rules 92 to 97).
+    host (037, rules 95 to 100).
 18. `TaskDto.host` is `local` for a task on the goal's own daemon, else the name of its host.
-    `TaskDto.host_unreachable` is true while the host of a far task is not `ready` (037 rule 96).
+    `TaskDto.host_unreachable` is true while the host of a far task is not `ready` (037 rule 99).
     It is always false for a `local` task. OpenAPI carries both fields and `CreateTaskRequest.host`.
 19. A far task stays `pending` until every task in its `depends_on` has merged, on any host.
-    A far task merges when its host reports it `finished` (037 rule 95). A task that
+    A far task merges when its host reports it `finished` (037 rule 98). A task that
     depends on a far task then starts as for any other dependency. A dependency that failed
     or was cancelled fails a pending far task before it goes to its host, as rule 10 fails
     any waiting task. A far task cancelled here, or in a goal that rules 3 and 4 ended,
-    keeps that state whatever its host reports (037 rule 95).
+    keeps that state whatever its host reports (037 rule 98).
 
 ## Acceptance criteria
 
