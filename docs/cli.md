@@ -790,7 +790,10 @@ Leaving the `:SKILLS` half out stages the column's own skills. `task update
 --agent` replaces the whole staffing.
 
 `task ls` shows each task's current column in a `step` column, and `--step
-<id>` narrows the list to it. `task inspect` prints the workflow, the current
+<id>` narrows the list to it. A task that runs on another host adds a `HOST`
+column after the title, which names that host. A host that cannot be reached
+shows `(unreachable)` after its name. A list with no such task has no `HOST`
+column. `task inspect` prints the workflow, the current
 column, and one line per column — its skills, its pin, and its session.
 `task history` paints the column a move left and the one it entered beside
 the statuses. `goal inspect` prints the workflow and its columns, each with
@@ -1106,6 +1109,7 @@ Use `--host NAME` to run a command on a ready host from the local daemon's regis
 Use `--host all` for reads only.
 A list across hosts is one list, read from every ready host at the same time.
 It looks like the same list without `--host`, with a leading `HOST` column.
+A task list also shows the host of each task in a `TASK HOST` column, when one of its tasks runs on another host.
 The columns line up across hosts, and `--columns`, `--no-trunc` and `-q` work as usual.
 Rows follow registry order. A summary line, such as `3 of 12 sessions`, counts every host.
 `attention --host all` keeps its bullets and names the host of each item.
