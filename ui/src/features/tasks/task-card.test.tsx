@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 
-import { screen, within } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
 import type { TaskDto } from "@/api"
+import { qk } from "@/api"
+import { dispatchDomainEvent } from "@/events/dispatch"
+import { GoalTasks } from "@/features/goals/goal-tasks"
 import { aTask } from "@/test/fixtures"
-import { renderScreen } from "@/test/harness"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { BOX, LOCAL } from "@/test/hosts"
+import { taskListQueryOptions } from "./queries"
 import { TaskCard } from "./task-card"
 
 const STEPS = [
@@ -47,6 +52,60 @@ it("shows no state badge for a task under way", () => {
     document.getElementById(screen.getByRole("link").getAttribute("aria-describedby") ?? "")
       ?.textContent,
   ).toContain("Current step Test")
+})
+
+it("shows the colored remote host and its unreachable state", () => {
+  renderScreen(
+    <TaskCard host="local" task={aTask({ host: "box", host_unreachable: true })} steps={STEPS} />,
+    {
+      seed: (client) => client.setQueryData(qk.hosts.list(), [LOCAL, { ...BOX, color: "blue" }]),
+    },
+  )
+  const label = screen.getByText("box")
+  expect(label.getAttribute("data-host-color")).toBe("blue")
+  expect(label.getAttribute("title")).toBe("Host box cannot be reached")
+  expect(label.className).toContain("truncate")
+  const described = screen.getByRole("link").getAttribute("aria-describedby") ?? ""
+  expect(document.getElementById(described)?.textContent).toContain("Host box cannot be reached")
+})
+
+it("does not show a label for the local host", () => {
+  card({ host: "local" })
+  expect(screen.queryByText("local")).toBeNull()
+})
+
+it("updates the goal task host label from task_updated without a reload", async () => {
+  const task = aTask({ host: "box", host_unreachable: false })
+  const options = taskListQueryOptions("local", { goal: task.goal_id })
+  const { queryClient } = renderScreen(
+    <GoalTasks host="local" goalId={task.goal_id} steps={STEPS} />,
+    {
+      seed: (client) => {
+        client.setQueryData(options.queryKey, [task])
+        client.setQueryData(qk.hosts.list(), [LOCAL, { ...BOX, color: "blue" }])
+      },
+    },
+  )
+  expect(screen.getByText("box").getAttribute("data-host-color")).toBe("blue")
+
+  const moved = { ...task, host: "elsewhere", host_unreachable: true }
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" || input instanceof URL ? input : input.url,
+      "http://x",
+    )
+    return Promise.resolve(jsonResponse(url.pathname === "/v1/tasks" ? [moved] : []))
+  })
+  dispatchDomainEvent(queryClient, "local", {
+    event: "task_updated",
+    data: { task: moved, transition: null },
+  })
+  await waitFor(() => {
+    expect(screen.queryByText("box")).toBeNull()
+    expect(screen.getByText("elsewhere").getAttribute("title")).toBe(
+      "Host elsewhere cannot be reached",
+    )
+  })
 })
 
 it("shows the current staffed model and compact task token totals", () => {

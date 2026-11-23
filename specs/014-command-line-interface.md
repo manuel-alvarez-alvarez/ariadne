@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-11-21
+updated: 2026-11-23
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -13,6 +13,7 @@ tests:
   - crates/ariadne-client/src/lib.rs
   - crates/ariadne-cli/src/commands/session.rs
   - crates/ariadne-cli/src/commands/task.rs
+  - crates/ariadne-cli/tests/task_hosts.rs
   - crates/ariadne-cli/src/error.rs
   - crates/ariadne-cli/src/telemetry.rs
   - crates/ariadne-cli/src/complete.rs
@@ -511,6 +512,17 @@ same binary also serves (013).
     `HostDto` of `add` and `edit`, and `{"name": NAME}` for `rm`.
 57. The three commands run on the local daemon of `--endpoint`.
     `--host all` is a usage error for them.
+58. `task ls` carries a `HOST` column after `title` when one task of the
+    list has a `host` other than `local`. Without such a task the table keeps
+    the columns it has without `HOST`.
+59. A task with `host_unreachable` true shows its host followed by
+    `(unreachable)` in the `HOST` column.
+60. `task ls --format json` carries `host` and `host_unreachable` on each
+    task.
+61. With `--host all`, the `HOST` column is the daemon that answered, as rule
+    46a says. The task's own host is a second column, `TASK HOST`. A host with
+    no far task shows `local` in that column. In `--format json`, `host` is
+    the daemon that answered and `task_host` the task's own host.
 
 ## Known gap
 
@@ -915,6 +927,22 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `tests/hosts.rs::query_on_an_unknown_or_unready_host_is_a_usage_error`,
   `commands/query.rs::tests::host_all_puts_the_host_column_first`,
   `commands/query.rs::tests::a_host_moves_the_route_under_the_hosts_prefix`).
+
+- `task ls` carries a `HOST` column after `title` when one task of the list
+  runs on another host, and keeps its columns without one, rule 58
+  (`crates/ariadne-cli/tests/task_hosts.rs::a_far_task_adds_a_host_column_after_the_title`,
+  `::a_list_without_a_far_task_keeps_its_columns`).
+- A task with `host_unreachable` true shows `(unreachable)` after its host,
+  rule 59
+  (`crates/ariadne-cli/tests/task_hosts.rs::a_far_task_on_an_unreachable_host_is_marked`).
+- `task ls --format json` carries `host` and `host_unreachable` on each task,
+  rule 60
+  (`crates/ariadne-cli/tests/task_hosts.rs::json_carries_the_host_and_the_unreachable_flag_of_each_task`).
+- With `--host all`, `HOST` is the answering daemon and `TASK HOST` the task's
+  own host, rule 61
+  (`crates/ariadne-cli/tests/task_hosts.rs::all_hosts_keep_the_daemon_host_first_and_name_each_task_host_second`).
+- With `--host all`, JSON keeps the task's own host as `task_host`, rule 61
+  (`crates/ariadne-cli/src/output/listing.rs::tests::json_keeps_the_host_an_item_already_names`).
 
 ## Sources
 

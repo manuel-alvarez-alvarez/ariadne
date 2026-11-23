@@ -5,6 +5,7 @@ updated: 2026-11-23
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
+  - crates/ariadne-daemon/tests/it/far_tasks.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/tests/it/adapters.rs
@@ -194,6 +195,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     delivery of what is addressed to this session's own agent, and `all`
     reads the whole thread instead (018). The channel is the session's task,
     or its goal where it has no task. The tool's description says both ways.
+    On the origin daemon, `all` for a far task includes the messages in both
+    directions (018 rules 14–16).
 11. `send_message` takes the address an agent writes rather than the one
     address it could have written. `to` takes `orchestrator`, or the id of
     a column of the task's workflow, which names the agent that staffs it;
@@ -203,7 +206,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     names a column reads the task to find its agent. A message is a question, an answer, or a blocker report — the
     stop rule's own call (006) — and nothing else. After a question, end
     your turn. Do not poll `read_messages`. Ariadne delivers the answer as
-    a new turn.
+    a new turn. The same addresses work between the orchestrator and a far
+    task's agents. See 018 rules 14–17 for relay, reconnect, and user questions.
 12. A value the schema offers is a value the tool takes. The schema an agent
     reads is derived from the parameter types, and the value it sends back is
     deserialized from them, so a spelling set on one of the two alone offers
@@ -265,6 +269,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 - Rule 18: far writes, session switches, held tasks, host refusals and linked
   goal endings are checked by the tests for 001 rules 20 and 21.
+- The task message routes used by the tools carry far agent messages,
+  orchestrator replies, and both directions of the thread
+  (`far_tasks.rs::a_far_agent_message_reaches_the_orchestrator_as_a_task_turn`,
+  `::an_orchestrator_message_reaches_the_far_agent_as_a_turn`,
+  `::a_far_task_thread_shows_both_directions`).
+- The tools' message channel survives a host outage without duplicate turns
+  (`far_tasks.rs::messages_wait_for_the_far_host_and_arrive_in_order_even_after_a_lost_answer`,
+  `::a_far_message_made_while_away_is_delivered_once_after_reconnect`).
+- The far agent's user question stays in its host's attention list
+  (`far_tasks.rs::a_far_agents_user_question_stays_in_the_hosts_attention_list`).
 
 - Every launch hands the agent the `ariadne mcp serve` server and the
   session context it reads

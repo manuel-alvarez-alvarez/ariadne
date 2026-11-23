@@ -1657,7 +1657,19 @@ Out: the daemon endpoints themselves (012).
 
 81. Settings shows the configured daemon address and the event stream connection state together. Saving the address starts a connection attempt and does not confirm success. Retry requests a stream reconnection. Settings gives daemon startup and TCP listener guidance, and identifies settings that apply immediately. Settings keeps the daemon URL, connection recovery, app diagnostics and the webhook tunnel. (`ui/src/components/settings-dialog.test.tsx::has no Hosts section`) Setup help expands with the keyboard. The live status announces changes without moving focus. The sidebar connection status keeps daemon logs reachable; host errors remain in Hosts.
 
+83. Each goal task card shows its host in that host's colour when `host` is
+    not `local`. If `host_unreachable` is true, its label says the host
+    cannot be reached, and the card's accessible description says the same. A
+    long host name is truncated in the label, so the task title keeps its
+    room, and the description holds the full name. The label follows
+    `task_updated` through the goal task list without a reload.
+
 ## Acceptance criteria
+
+- Goal task cards show a remote host in its host colour and explain when it
+  cannot be reached, in the label and in the card description (`ui/src/features/tasks/task-card.test.tsx::shows the colored remote host and its unreachable state`).
+- A goal task list follows a `task_updated` change to its host and reachability
+  without a reload (`ui/src/features/tasks/task-card.test.tsx::updates the goal task host label from task_updated without a reload`).
 
 - Settings shows the configured address, stream state and recovery guidance: `ui/src/components/settings-dialog.test.tsx::shows the saved address and live connection state with recovery guidance`; `::announces stream changes without moving focus and gives neutral failure guidance`.
 - Pinning reserves space without a scrim, and mode changes preserve content

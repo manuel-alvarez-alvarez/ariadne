@@ -16,17 +16,18 @@
 use tracing::{debug, info};
 
 use ariadne_core::{Actor, PromptKind, Seat};
-use ariadne_store::{AgentSession, Message, MessageFilter, SessionFilter};
+use ariadne_store::{AgentSession, Message, MessageFilter, SessionFilter, Task};
 
 use crate::agents::prompts;
 
 impl super::Scheduler {
     /// Deliver everything still waiting for an agent on this task.
-    pub(super) async fn deliver_task_messages(&mut self, task_id: &str) {
+    pub(super) async fn deliver_task_messages(&mut self, task: &Task) {
         let waiting = self
             .store
             .list_messages(MessageFilter {
-                task_id: Some(task_id.to_string()),
+                task_id: Some(task.id.clone()),
+                to_actor: task.is_far().then_some(Actor::Orchestrator),
                 undelivered_only: true,
                 ..Default::default()
             })

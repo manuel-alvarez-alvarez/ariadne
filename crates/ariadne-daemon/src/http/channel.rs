@@ -13,6 +13,7 @@ use super::AppState;
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{message_dto, task_dto_of};
 use super::error::{ApiError, ApiResult, Json};
+use crate::far::RelayMessage;
 use crate::forge::ForgeClient;
 use crate::forge::pulls;
 
@@ -296,9 +297,66 @@ pub(super) async fn post_task_message(
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
     let task = state.store.get_task(&id).await?;
+    if task.is_far()
+        && ctx.actor == Actor::Orchestrator
+        && ctx.session.as_ref().and_then(|s| s.goal_id.as_deref()) != Some(&task.goal_id)
+    {
+        return Err(ApiError::forbidden("the far task belongs to another goal"));
+    }
     let message = send(&state, &ctx, &task.goal_id, Some(&task), req).await?;
     state.notify_scheduler(&id);
     Ok((StatusCode::CREATED, Json(message_dto(message))))
+}
+
+/// Internal host-to-host write on a task of a linked goal. The origin
+/// daemon supplies the original message ID so retrying a lost answer is safe.
+pub(super) async fn relay_task_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<RelayMessage>,
+) -> ApiResult<Json<()>> {
+    if headers.contains_key(ariadne_api::SESSION_HEADER) {
+        return Err(ApiError::forbidden("a session cannot relay a message"));
+    }
+    let task = state.store.get_task(&id).await?;
+    let goal = state.store.get_goal(&task.goal_id).await?;
+    if goal.origin_goal_id.is_none() || task.origin_task_id.as_deref() != Some(&req.origin_task_id)
+    {
+        return Err(ApiError::forbidden(
+            "the task is not linked to the sender's task",
+        ));
+    }
+    let body = req.body.trim();
+    if req.id.is_empty() || body.is_empty() {
+        return Err(ApiError::bad_request("a relay needs a message id and body"));
+    }
+    let recipient = state
+        .store
+        .list_task_agents(&id)
+        .await?
+        .into_iter()
+        .find(|agent| agent.step == req.column)
+        .ok_or_else(|| ApiError::bad_request("the recipient column is not staffed on the task"))?;
+    state
+        .store
+        .receive_far_message(
+            NewMessage {
+                goal_id: task.goal_id,
+                task_id: Some(id.clone()),
+                kind: MessageKind::Message,
+                from_actor: Actor::Orchestrator,
+                from_agent_id: None,
+                from_session: None,
+                to_actor: Actor::Agent,
+                to_agent_id: Some(recipient.id),
+                body: body.to_string(),
+            },
+            &req.id,
+        )
+        .await?;
+    state.notify_scheduler(&id);
+    Ok(Json(()))
 }
 
 /// One message written, whoever wrote it and whatever it is about.

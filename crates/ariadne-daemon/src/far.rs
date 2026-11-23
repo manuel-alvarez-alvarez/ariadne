@@ -15,6 +15,10 @@
 //! far task again, and clears `host_unreachable`. A [`Link`] epoch makes a
 //! return at the same endpoint a next `ready` too.
 
+mod messages;
+
+pub(crate) use messages::RelayMessage;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -134,6 +138,12 @@ async fn supervise(ctx: Ctx, hosts: Hosts, mut events: broadcast::Receiver<BusEv
                 DomainEvent::TaskCreated(_)
                 | DomainEvent::TaskUpdated(_)
                 | DomainEvent::GoalUpdated(_) => workers.values().for_each(Worker::kick),
+                DomainEvent::MessageSent(message)
+                    if message.from_actor == Actor::Orchestrator
+                        && message.to_actor == Actor::Agent =>
+                {
+                    workers.values().for_each(Worker::kick);
+                }
                 _ => {}
             },
             Err(RecvError::Lagged(_)) => {
@@ -378,7 +388,10 @@ impl Follower<'_> {
                 return Ok(());
             };
             match read {
-                Ok(far) => self.mirror(&task.id, &far).await,
+                Ok(far) => {
+                    self.read_messages(&task, &far).await?;
+                    self.mirror(&task.id, &far).await;
+                }
                 Err(ClientError::Api { status, .. }) if status == StatusCode::NOT_FOUND => {
                     warn!(host = self.host, task = %task.id, far_task = %far_id, "the host has no such task any more");
                 }
@@ -407,7 +420,8 @@ impl Follower<'_> {
                 }
                 Ok(())
             }
-            // The stream lost events: read every far task again.
+            "message_sent" => self.on_message(serde_json::from_str(&frame.data)?).await,
+            // The stream lost events: read every far task and its messages again.
             "resync" => self.refresh().await,
             _ => Ok(()),
         }
@@ -474,7 +488,14 @@ impl Follower<'_> {
                 }
             }
         }
-        retry
+        match self.send_messages().await {
+            Ok(()) => retry,
+            Err(Unsent::Left) => None,
+            Err(Unsent::Unanswered(error) | Unsent::Refused(error)) => {
+                warn!(host = self.host, %error, "the host did not take a far task message");
+                Some(Instant::now() + self.ctx.timeouts.far_retry)
+            }
+        }
     }
 
     async fn close_goals(&self) -> bool {
@@ -566,9 +587,7 @@ impl Follower<'_> {
             .await
             .ok_or(Unsent::Left)??;
         if let Some(far) = made.into_iter().next() {
-            store.set_far_task(&task.id, &far.goal_id, &far.id).await?;
-            self.mirror(&task.id, &far).await;
-            return Ok(());
+            return self.remember(task, &far).await;
         }
         let paired = self
             .fenced(host_repositories(local, &self.client))
@@ -641,8 +660,21 @@ impl Follower<'_> {
             .ok_or(Unsent::Left)??;
         // The goal of the task the host answers: a repeated create answers
         // the task it already holds, in the goal it is in.
-        store.set_far_task(&task.id, &far.goal_id, &far.id).await?;
-        self.mirror(&task.id, &far).await;
+        self.remember(task, &far).await
+    }
+
+    async fn remember(&self, task: &Task, far: &TaskDto) -> Result<(), Unsent> {
+        // A retried dispatch can find a task whose agent already wrote while
+        // the origin daemon had no task ID to match against the stream.
+        self.read_messages(task, far).await?;
+        if !self.current() {
+            return Err(Unsent::Left);
+        }
+        self.ctx
+            .store
+            .set_far_task(&task.id, &far.goal_id, &far.id)
+            .await?;
+        self.mirror(&task.id, far).await;
         Ok(())
     }
 }

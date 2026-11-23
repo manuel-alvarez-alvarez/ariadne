@@ -10,7 +10,7 @@ use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::MessageDto;
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::{
-    AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
+    AgentAssignment, CreateTaskRequest, LOCAL_HOST, TaskDto, TaskListQuery, TaskTransitionDto,
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_api::workflows::WorkflowStepDto;
@@ -43,6 +43,21 @@ use edit::{Edits, parse_agent_slot, resolve_repo, update_request};
 const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 48).title(),
+    col("status", UNCAPPED).status(),
+    col("step", UNCAPPED).rank(5),
+    col("age", UNCAPPED).rank(4),
+    col("stalled", UNCAPPED).rank(3),
+    col("pr", UNCAPPED).rank(2),
+    col("tokens", UNCAPPED).rank(1),
+    col("branch", 40).rank(0),
+];
+
+/// The columns of `task ls` when one task of the list runs on another host:
+/// [`LS`] with `HOST` after the title, which names the host of each task.
+const LS_FAR: &[Column] = &[
+    col("id", UNCAPPED).id(),
+    col("title", 48).title(),
+    col("host", UNCAPPED).rank(5),
     col("status", UNCAPPED).status(),
     col("step", UNCAPPED).rank(5),
     col("age", UNCAPPED).rank(4),
@@ -576,10 +591,19 @@ async fn listing(
     let tasks: Vec<TaskDto> = client.get_json(&path).await?;
     let tasks = visible(tasks, all, statuses, step);
     let now = chrono::Utc::now();
+    // A list with no far task keeps its columns: `HOST` appears only when a
+    // task of the list runs somewhere other than the daemon that answered.
+    let far = tasks.iter().any(|t| t.host != LOCAL_HOST);
     Listing::of(
         &tasks,
-        LS,
-        |t| ls_row(t, now),
+        if far { LS_FAR } else { LS },
+        |t| {
+            let mut row = ls_row(t, now);
+            if far {
+                row.insert(2, host_cell(t));
+            }
+            row
+        },
         // An empty list under a filter is not an empty system, and saying so
         // would send the reader looking for tasks that are right there.
         match (filtered, all) {
@@ -588,6 +612,15 @@ async fn listing(
             (false, false) => empty_state("No tasks are under way.", Some("ariadne task ls --all")),
         },
     )
+}
+
+/// The host of a task in `task ls`. A host that cannot be reached is marked,
+/// so the row says why its state may be old.
+fn host_cell(t: &TaskDto) -> String {
+    match t.host_unreachable {
+        true => format!("{} (unreachable)", t.host),
+        false => t.host.clone(),
+    }
 }
 
 /// One row of `task ls`, in [`LS`]'s order.
