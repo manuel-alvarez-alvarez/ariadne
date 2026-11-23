@@ -108,6 +108,55 @@ pub(super) async fn switch(
     headers: HeaderMap,
     Json(req): Json<SwitchSessionRequest>,
 ) -> ApiResult<Json<SessionDto>> {
+    if let Some(rest) = id.strip_prefix("far~")
+        && let Some((task_id, session_id)) = rest.split_once('~')
+    {
+        let ctx = call_ctx(&state.store, &headers).await?;
+        let task = state.store.get_task(task_id).await?;
+        let host = task
+            .host
+            .as_deref()
+            .ok_or_else(|| ApiError::bad_request("not a far task"))?;
+        let far_id = task
+            .far_task_id
+            .as_deref()
+            .ok_or_else(|| ApiError::bad_request("task has not been sent"))?;
+        let client = super::tasks::far_client(&state, host)?;
+        if ctx.session.is_some() {
+            let models: Vec<ariadne_api::models::ModelDto> = client
+                .get_json("/v1/models")
+                .await
+                .map_err(|error| super::tasks::far_error(host, error))?;
+            if !models
+                .iter()
+                .any(|model| model.id == req.model && model.enabled)
+            {
+                return Err(ApiError::bad_request(format!(
+                    "host {host} does not offer an enabled model {}",
+                    req.model
+                )));
+            }
+        }
+        let far: ariadne_api::tasks::TaskDto = client
+            .get_json(&format!("/v1/tasks/{far_id}"))
+            .await
+            .map_err(|error| super::tasks::far_error(host, error))?;
+        if !far
+            .agents
+            .iter()
+            .any(|agent| agent.session_id.as_deref() == Some(session_id))
+        {
+            return Err(ApiError::bad_request(
+                "session is not an agent of this task",
+            ));
+        }
+        let mut switched: SessionDto = client
+            .post_json(&format!("/v1/sessions/{session_id}/switch"), &req)
+            .await
+            .map_err(|error| super::tasks::far_error(host, error))?;
+        switched.id = format!("far~{task_id}~{}", switched.id);
+        return Ok(Json(switched));
+    }
     let session = state.store.get_session(&id).await?;
     let ctx = call_ctx(&state.store, &headers).await?;
     let pin = if ctx.session.is_none() {

@@ -13,7 +13,7 @@ test that proves it. Conventions for writing and changing one are in
 
 | # | Spec | What it settles |
 | --- | --- | --- |
-| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, transitions, dependencies, failure, retry, linked goals, and the host of a task |
+| 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, dependencies, far task writes, and linked goal endings |
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
 | 003 | [Planning a goal](003-planning-a-goal.md) | planning, the orchestrator's lifetime, and linked goal task admission |
 | 004 | [Authoring and review](004-authoring-and-review.md) | superseded by 030: the author, the reviewers and the verdicts are the develop and review columns |
@@ -24,7 +24,7 @@ test that proves it. Conventions for writing and changing one are in
 | 009 | [Scheduler, attention and watchdogs](009-scheduler-attention-and-watchdogs.md) | the reconciliation loop, the quiet clock, what needs a human |
 | 011 | [Models, effort and pins](011-models-effort-and-pins.md) | the catalog, `<agent>:<model>`, effort, and where a pin is set |
 | 012 | [HTTP API, event stream and usage](012-http-api-events-and-usage.md) | transports, the envelope, SSE, token accounting |
-| 013 | [MCP tool surface](013-mcp-tool-surface.md) | the tools each seat sees, and the rules every session is given |
+| 013 | [MCP tool surface](013-mcp-tool-surface.md) | the tools each seat sees, including writes to far tasks |
 | 014 | [Command-line interface](014-command-line-interface.md) | the command tree, flags, failures, completions, `doctor` |
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, reusable workload views, its conversation workspace, and CLI parity |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, Dependabot, CI build caches, the migration policy |

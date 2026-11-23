@@ -255,8 +255,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     sends it as `CreateTaskRequest.host` (001 rule 17). A call with no `host` sends
     none, so the task runs on the goal's own daemon. The daemon refuses a host that
     cannot run the task (037 rule 95), and the tool gives that refusal.
+18. The daemon routes `update_task`, `retry_task`, `cancel_task` and
+    `switch_session` for a sent far task to its host. A host that is not
+    `ready` refuses the write by name and status. A task still held by its
+    dependencies is changed on the goal's daemon. Linked goals close with
+    their origin goal, including after a host returns (001 rules 20 and 21).
 
 ## Acceptance criteria
+
+- Rule 18: far writes, session switches, held tasks, host refusals and linked
+  goal endings are checked by the tests for 001 rules 20 and 21.
 
 - Every launch hands the agent the `ariadne mcp serve` server and the
   session context it reads

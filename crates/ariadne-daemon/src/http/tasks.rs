@@ -311,7 +311,25 @@ pub(super) async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Json<TaskDto>> {
     let task = state.store.get_task(&id).await?;
-    Ok(Json(task_dto_of(&state.store, task).await?))
+    let mut dto = task_dto_of(&state.store, task.clone()).await?;
+    if let (Some(host), Some(far_id)) = (&task.host, &task.far_task_id)
+        && let Ok(client) = far_client(&state, host)
+        && let Ok(far) = client
+            .get_json::<TaskDto>(&format!("/v1/tasks/{far_id}"))
+            .await
+    {
+        for agent in &mut dto.agents {
+            if let Some(other) = far.agents.iter().find(|other| other.step == agent.step) {
+                agent.model.clone_from(&other.model);
+                agent.effort.clone_from(&other.effort);
+                agent.session_id = other
+                    .session_id
+                    .as_ref()
+                    .map(|session| format!("far~{id}~{session}"));
+            }
+        }
+    }
+    Ok(Json(dto))
 }
 
 /// Edit a task that is not running (orchestrator or user): pending, ready,
@@ -339,10 +357,26 @@ pub(super) async fn update(
         let goal = state.store.get_goal(&task.goal_id).await?;
         check_dependencies(&goal, deps)?;
     }
+    let current = state.store.get_task(&id).await?;
+    check_unsent_host(&state, &current).await?;
     let agents = match &req.agents {
+        Some(a) if current.host.is_some() => Some(far_agents(a)?),
         Some(a) => Some(resolve_agents(&state, a, ctx.actor == Actor::User).await?),
         None => None,
     };
+    if let (Some(host), Some(far_id)) = (&current.host, &current.far_task_id) {
+        if let Some(assignments) = &req.agents {
+            let repo = state.store.get_repository(&current.repo_id).await?;
+            check_host(&state, host, &repo, assignments, ctx.actor != Actor::User).await?;
+        }
+        let client = far_client(&state, host)?;
+        let mut remote = req.clone();
+        remote.depends_on = None;
+        let _: TaskDto = client
+            .patch_json(&format!("/v1/tasks/{far_id}"), &remote)
+            .await
+            .map_err(|error| far_error(host, error))?;
+    }
     let task = state
         .store
         .update_task(
@@ -359,6 +393,73 @@ pub(super) async fn update(
     }
     let task = state.store.get_task(&task.id).await?;
     Ok(Json(task_dto_of(&state.store, task).await?))
+}
+
+pub(super) fn far_client(state: &AppState, host: &str) -> ApiResult<ariadne_client::Client> {
+    let dto = state
+        .hosts
+        .list()
+        .into_iter()
+        .find(|item| item.name == host)
+        .ok_or_else(|| ApiError::conflict(format!("host {host} is unknown")))?;
+    let endpoint = crate::hosts::ready_endpoint(&dto).ok_or_else(|| {
+        ApiError::conflict(format!(
+            "host {host} is {}",
+            format!("{:?}", dto.status).to_lowercase()
+        ))
+    })?;
+    Ok(crate::hosts::client_for(&endpoint))
+}
+
+async fn check_unsent_host(state: &AppState, task: &Task) -> ApiResult<()> {
+    if let Some(host) = &task.host
+        && task.far_task_id.is_none()
+        && state.store.task_dependencies_merged(&task.id).await?
+    {
+        far_client(state, host)?;
+    }
+    Ok(())
+}
+
+pub(super) fn far_error(host: &str, error: ariadne_client::ClientError) -> ApiError {
+    match error {
+        ariadne_client::ClientError::Api {
+            status,
+            code,
+            message,
+            ..
+        } => ApiError::new(status, &code, message),
+        error => ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "host_unreachable",
+            format!("host {host} did not answer: {error}"),
+        ),
+    }
+}
+
+async fn far_transition(state: &AppState, task: &Task, action: &str) -> ApiResult<Task> {
+    let host = task.host.as_deref().expect("far task has a host");
+    let far_id = task.far_task_id.as_deref().expect("sent task has an id");
+    let far: TaskDto = far_client(state, host)?
+        .post_empty(&format!("/v1/tasks/{far_id}/{action}"))
+        .await
+        .map_err(|error| far_error(host, error))?;
+    state
+        .store
+        .mirror_far_task(
+            &task.id,
+            &ariadne_store::FarTaskState {
+                status: far.status,
+                step: far.step,
+                branch: far.branch,
+                pr_url: far.pr_url,
+                merge_commit: far.merge_commit,
+                reason: far.reason,
+            },
+        )
+        .await?;
+    state.notify_scheduler(&task.id);
+    Ok(state.store.get_task(&task.id).await?)
 }
 
 /// Request a status transition. The actor is derived from the call context.
@@ -468,6 +569,14 @@ pub(super) async fn cancel(
     headers: HeaderMap,
 ) -> ApiResult<Json<TaskDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
+    if matches!(ctx.actor, Actor::Orchestrator | Actor::User) {
+        let task = state.store.get_task(&id).await?;
+        check_unsent_host(&state, &task).await?;
+        if task.far_task_id.is_some() {
+            let task = far_transition(&state, &task, "cancel").await?;
+            return Ok(Json(task_dto_of(&state.store, task).await?));
+        }
+    }
     let reason = format!("cancelled by {}", ctx.actor.as_str());
     let task = apply_transition(
         &state,
@@ -496,6 +605,14 @@ pub(super) async fn retry(
     headers: HeaderMap,
 ) -> ApiResult<Json<TaskDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
+    if matches!(ctx.actor, Actor::Orchestrator | Actor::User) {
+        let task = state.store.get_task(&id).await?;
+        check_unsent_host(&state, &task).await?;
+        if task.far_task_id.is_some() {
+            let task = far_transition(&state, &task, "retry").await?;
+            return Ok(Json(task_dto_of(&state.store, task).await?));
+        }
+    }
     let reason = format!("retried by {}", ctx.actor.as_str());
     let task = apply_transition(
         &state,

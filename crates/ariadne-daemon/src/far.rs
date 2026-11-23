@@ -450,7 +450,11 @@ impl Follower<'_> {
                 return Some(Instant::now() + self.ctx.timeouts.far_retry);
             }
         };
-        let mut retry = None;
+        let mut retry = if self.close_goals().await {
+            None
+        } else {
+            Some(Instant::now() + self.ctx.timeouts.far_retry)
+        };
         for task in tasks {
             match self.free(&task).await {
                 Ok(true) => {}
@@ -471,6 +475,40 @@ impl Follower<'_> {
             }
         }
         retry
+    }
+
+    async fn close_goals(&self) -> bool {
+        let goals: Vec<GoalDto> = match self.fenced(self.client.get_json("/v1/goals")).await {
+            Some(Ok(goals)) => goals,
+            _ => return false,
+        };
+        for far in goals {
+            let Some(link) = &far.linked else { continue };
+            let goal = match self.ctx.store.get_goal(&link.origin_goal_id).await {
+                Ok(goal) => goal,
+                Err(ariadne_store::StoreError::NotFound { .. }) => continue,
+                Err(_) => return false,
+            };
+            let action = match goal.status() {
+                GoalStatus::Completed => "complete",
+                GoalStatus::Cancelled => "cancel",
+                _ => continue,
+            };
+            if far.status.is_terminal() {
+                continue;
+            }
+            let path = format!("/v1/goals/{}", far.id);
+            let result: Option<Result<GoalDto, ClientError>> = self
+                .fenced(
+                    self.client
+                        .post_json(&format!("{path}/{action}"), &serde_json::json!({})),
+                )
+                .await;
+            if !matches!(result, Some(Ok(_))) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Whether a far task is free to start: not yet sent, `pending` in an

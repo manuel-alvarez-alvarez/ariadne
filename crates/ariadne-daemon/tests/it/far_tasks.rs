@@ -28,8 +28,8 @@ use ariadne_daemon::timeouts::Timeouts;
 
 use crate::common::acp::{registry_home, script, stub_acp_agent};
 use crate::common::{
-    Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, eventually_some, harness, post,
-    post_json, sh, test_pin,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, eventually_some, harness,
+    patch_json, post, post_json, sh, test_pin,
 };
 
 /// What the far daemon's answers go through: its `GET /v1/health` turned
@@ -424,6 +424,382 @@ async fn far_task(far: &Harness, goal: &GoalDto, title: &str) -> TaskDto {
 
 async fn task(h: &Harness, id: &str) -> TaskDto {
     h.get(&format!("/v1/tasks/{id}")).await
+}
+
+#[tokio::test]
+async fn cancelling_a_sent_far_task_cancels_it_on_its_host() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let local = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Cancel", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let far = far_task(&p.far, &goal, "Cancel").await;
+    until_sent(&p.local, &local, &far).await;
+    let cancelled: TaskDto = p
+        .local
+        .json(
+            post(&format!("/v1/tasks/{}/cancel", local.id)),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(cancelled.status, TaskStatus::Cancelled);
+    eventually(TIMEOUT, "the host cancels the task", || async {
+        task(&p.far, &far.id).await.status == TaskStatus::Cancelled
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn editing_a_sent_far_task_edits_it_on_its_host() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let local = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Edit", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let far = far_task(&p.far, &goal, "Edit").await;
+    until_sent(&p.local, &local, &far).await;
+    let edited: TaskDto = p
+        .local
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", local.id),
+                json!({"title": "Changed"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(edited.title, "Changed");
+    assert_eq!(task(&p.far, &far.id).await.title, "Changed");
+}
+
+#[tokio::test]
+async fn retrying_a_sent_far_task_retries_it_on_its_host() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let local = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Retry", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let far = far_task(&p.far, &goal, "Retry").await;
+    until_sent(&p.local, &local, &far).await;
+    start_on_far(&p.far, &far.id).await;
+    p.far
+        .store
+        .transition_task(
+            &far.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("failed"),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "failure mirrored", || async {
+        task(&p.local, &local.id).await.status == TaskStatus::Failed
+    })
+    .await;
+    let retried: TaskDto = p
+        .local
+        .json(
+            post(&format!("/v1/tasks/{}/retry", local.id)),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(retried.status, TaskStatus::Ready);
+    assert_eq!(task(&p.far, &far.id).await.status, TaskStatus::Ready);
+}
+
+#[tokio::test]
+async fn cancelling_a_goal_cancels_its_linked_goal() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let local = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Close", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let far = far_task(&p.far, &goal, "Close").await;
+    until_sent(&p.local, &local, &far).await;
+    let _: GoalDto = p
+        .local
+        .json(
+            post(&format!("/v1/goals/{}/cancel", goal.id)),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the linked goal is cancelled", || async {
+        linked_goals(&p.far, &goal).await[0].status == GoalStatus::Cancelled
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn completing_a_goal_completes_its_linked_goal() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let local = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Complete", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let far = far_task(&p.far, &goal, "Complete").await;
+    until_sent(&p.local, &local, &far).await;
+    start_on_far(&p.far, &far.id).await;
+    merge_on_far(&p.far, &far.id, "c0ffee").await;
+    eventually(TIMEOUT, "the task is finished", || async {
+        task(&p.local, &local.id).await.status == TaskStatus::Finished
+    })
+    .await;
+    let _: GoalDto = p
+        .local
+        .json(
+            post_json(&format!("/v1/goals/{}/complete", goal.id), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the linked goal is completed", || async {
+        linked_goals(&p.far, &goal).await[0].status == GoalStatus::Completed
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_cancelled_goal_closes_its_linked_goal_when_the_host_returns() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let local = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Away", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let far = far_task(&p.far, &goal, "Away").await;
+    until_sent(&p.local, &local, &far).await;
+    go_away(&p).await;
+    let _: GoalDto = p
+        .local
+        .json(
+            post(&format!("/v1/goals/{}/cancel", goal.id)),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        linked_goals(&p.far, &goal).await[0].status,
+        GoalStatus::Active
+    );
+    back(&p).await;
+    eventually(TIMEOUT, "the linked goal is cancelled", || async {
+        linked_goals(&p.far, &goal).await[0].status == GoalStatus::Cancelled
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_goal_closes_a_link_whose_create_answer_was_lost() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Lost", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    p.front.lose_next_then_hold("create goal", "find task");
+    activate(&p.local, &goal).await;
+    eventually(TIMEOUT, "the next send waits", || async {
+        p.front.waiting() > 0
+    })
+    .await;
+    let _: GoalDto = p
+        .local
+        .json(
+            post(&format!("/v1/goals/{}/cancel", goal.id)),
+            StatusCode::OK,
+        )
+        .await;
+    p.front.release();
+    eventually(TIMEOUT, "the linked goal is cancelled", || async {
+        linked_goals(&p.far, &goal).await[0].status == GoalStatus::Cancelled
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_write_to_a_sent_far_task_refuses_a_down_host() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let local = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Away", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let far = far_task(&p.far, &goal, "Away").await;
+    until_sent(&p.local, &local, &far).await;
+    go_away(&p).await;
+    let error = p
+        .local
+        .error(
+            post(&format!("/v1/tasks/{}/cancel", local.id)),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(error.error.message.contains("far"));
+    assert!(error.error.message.contains("down"));
+    assert_eq!(task(&p.far, &far.id).await.status, far.status);
+}
+
+#[tokio::test]
+async fn a_dependency_held_far_task_can_be_cancelled_while_its_host_is_down() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let dependency = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "First", &test_pin().model, json!({})),
+    )
+    .await;
+    let held = create_task(
+        &p.local,
+        &goal,
+        task_body(
+            &goal,
+            "Held",
+            &p.model,
+            json!({"host": "far", "depends_on": [dependency.id]}),
+        ),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    go_away(&p).await;
+    let cancelled: TaskDto = p
+        .local
+        .json(
+            post(&format!("/v1/tasks/{}/cancel", held.id)),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(cancelled.status, TaskStatus::Cancelled);
+    assert!(far_tasks(&p.far, &goal).await.is_empty());
+}
+
+#[tokio::test]
+async fn an_unsent_unheld_far_task_refuses_a_write_while_its_host_is_down() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let task = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Unsent", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    go_away(&p).await;
+    let error = p
+        .local
+        .error(
+            post(&format!("/v1/tasks/{}/cancel", task.id)),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(error.error.message.contains("far"));
+    assert!(error.error.message.contains("down"));
+}
+
+#[tokio::test]
+async fn a_far_agent_session_can_be_switched_on_its_host() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    let theirs = forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let local = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Switch", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let far = far_task(&p.far, &goal, "Switch").await;
+    until_sent(&p.local, &local, &far).await;
+    sh(
+        std::path::Path::new(&theirs.path),
+        &format!("git remote set-url origin {}", theirs.path),
+    );
+    start_on_far(&p.far, &far.id).await;
+    let far_task = p.far.store.get_task(&far.id).await.unwrap();
+    let agent = p
+        .far
+        .store
+        .list_task_agents(&far.id)
+        .await
+        .unwrap()
+        .remove(0);
+    let session = p
+        .far
+        .launcher
+        .start_step_agent(&far_task, &agent)
+        .await
+        .unwrap();
+    let here = task(&p.local, &local.id).await;
+    let id = here
+        .agents
+        .iter()
+        .find(|a| a.step == agent.step)
+        .unwrap()
+        .session_id
+        .as_ref()
+        .unwrap();
+    let _: ariadne_api::sessions::SessionDto = p
+        .local
+        .json(
+            post_json(
+                &format!("/v1/sessions/{id}/switch"),
+                json!({"model": "stub:b"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        p.far.store.get_session(&session.id).await.unwrap().model,
+        "stub:b"
+    );
+    assert_eq!(task(&p.local, &local.id).await.agents[0].model, "stub:b");
 }
 
 /// Listen for `QUIET`: no task titled `title` reaches the far daemon in that
@@ -908,7 +1284,7 @@ async fn a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports() {
     until_sent(&p.local, &cancelled, &far_cancelled).await;
     until_sent(&p.local, &going, &far_going).await;
 
-    // The user cancels the goal here, and its task with it.
+    // The task is cancelled here before the host reports its next state.
     p.local
         .store
         .transition_task(
@@ -920,12 +1296,6 @@ async fn a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports() {
         )
         .await
         .unwrap();
-    p.local
-        .store
-        .end_goal(&cancelled_goal.id, GoalStatus::Cancelled)
-        .await
-        .unwrap();
-
     // The host goes on with it. Its update comes before the other task's,
     // on the one stream.
     start_on_far(&p.far, &far_cancelled.id).await;
@@ -946,6 +1316,11 @@ async fn a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports() {
         task(&p.local, &going.id).await.host_unreachable
     })
     .await;
+    p.local
+        .store
+        .end_goal(&cancelled_goal.id, GoalStatus::Cancelled)
+        .await
+        .unwrap();
     merge_on_far(&p.far, &far_cancelled.id, "dead").await;
     let reads = p.front.answers("read task");
     back(&p).await;
