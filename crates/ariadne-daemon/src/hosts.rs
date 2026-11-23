@@ -346,7 +346,7 @@ fn ready_endpoint(host: &HostDto) -> Option<String> {
 
 /// A client for the endpoint of a host: an `http://` address, else a
 /// socket path.
-fn client_for(endpoint: &str) -> Client {
+pub(crate) fn client_for(endpoint: &str) -> Client {
     if endpoint.starts_with("http://") {
         Client::tcp(endpoint)
     } else {

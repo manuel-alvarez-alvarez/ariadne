@@ -117,6 +117,9 @@ pub(super) struct SwitchSessionReq {
 pub(super) struct ListModelsReq {
     /// Filter: an `agent_id` as `list_models` gives it.
     pub agent_id: Option<String>,
+    /// A host `name` from `list_hosts`. Omit it for the models of this
+    /// daemon's own host.
+    pub host: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -382,6 +385,18 @@ fn staffing(agents: Vec<AgentReq>) -> Result<Vec<AgentAssignment>, McpError> {
 /// catalog is what an orchestrator sizes from, and an entry it is told about
 /// is one it will pin sooner or later — which the daemon then refuses, in the
 /// middle of a plan, over a choice nobody could have made differently.
+/// One URL path segment: every byte but an unreserved one is escaped.
+fn path_segment(raw: &str) -> String {
+    raw.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 fn of_agent(models: Vec<serde_json::Value>, agent_id: Option<String>) -> Vec<serde_json::Value> {
     models
         .into_iter()
@@ -615,8 +630,37 @@ impl AriadneMcp {
     ) -> Result<CallToolResult, McpError> {
         // The catalog is the union and takes no filter, so an agent narrows
         // what it answered rather than what was asked for.
-        let models: Vec<serde_json::Value> = self.get("/v1/models").await?;
+        let path = match &req.host {
+            Some(host) => format!("/v1/hosts/{}/models", path_segment(host)),
+            None => "/v1/models".to_string(),
+        };
+        let models: Vec<serde_json::Value> = self.get(&path).await?;
         json_result(serde_json::Value::Array(of_agent(models, req.agent_id)))
+    }
+
+    #[tool(
+        description = "List the hosts a task can run on, in order. Each entry gives:\n- its `name`\n- its `status`: `ready`, `connecting` or `down`; only a `ready` host runs a task\n- `sync.state`: `in_sync`, `pending` or `failed`\n- `sync.missing_repositories`: the repositories the host lacks"
+    )]
+    async fn list_hosts(
+        &self,
+        Parameters(_): Parameters<Empty>,
+    ) -> Result<CallToolResult, McpError> {
+        let hosts: Vec<serde_json::Value> = self.get("/v1/hosts").await?;
+        json_result(serde_json::Value::Array(
+            hosts
+                .into_iter()
+                .map(|host| {
+                    serde_json::json!({
+                        "name": host["name"],
+                        "status": host["status"],
+                        "sync": {
+                            "state": host["sync"]["state"],
+                            "missing_repositories": host["sync"]["missing_repositories"],
+                        },
+                    })
+                })
+                .collect(),
+        ))
     }
 
     #[tool(
@@ -2498,6 +2542,7 @@ mod tests {
             let (endpoint, seen) = recording_daemon_answering(CATALOG).await;
             let answered = orchestrator_at(&endpoint)
                 .list_models(Parameters(ListModelsReq {
+                    host: None,
                     agent_id: filter.map(str::to_string),
                 }))
                 .await
@@ -2541,6 +2586,50 @@ mod tests {
         }
     }
 
+    /// A host reaches the orchestrator as its name, status and sync, in the
+    /// order the daemon lists them, and `list_models` with a host asks for
+    /// that host's models.
+    #[tokio::test]
+    async fn the_hosts_and_the_models_of_a_host_reach_the_orchestrator() {
+        const HOSTS: &str = r#"[
+            {"name": "local", "kind": "local", "endpoint": "/run/a.sock", "status": "ready",
+             "sync": {"state": "in_sync", "error": null, "missing_repositories": [], "skipped_permissions": 0}},
+            {"name": "far", "kind": "direct", "endpoint": "http://10.0.0.2:7676", "status": "down",
+             "error": "no route",
+             "sync": {"state": "pending", "error": null,
+                      "missing_repositories": [{"name": "ariadne"}], "skipped_permissions": 0}}
+        ]"#;
+        let (endpoint, seen) = recording_daemon_answering(HOSTS).await;
+        let answered = orchestrator_at(&endpoint)
+            .list_hosts(Parameters(Empty {}))
+            .await
+            .expect("list the hosts");
+        assert_eq!(seen.lock().expect("lock")[0].path, "/v1/hosts");
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the hosts came back as something other than text");
+        };
+        let hosts: serde_json::Value = serde_json::from_str(&text.text).expect("json");
+        assert_eq!(hosts[0]["name"], "local");
+        assert_eq!(hosts[1]["name"], "far");
+        assert_eq!(hosts[1]["status"], "down");
+        assert_eq!(hosts[1]["sync"]["state"], "pending");
+        assert_eq!(
+            hosts[1]["sync"]["missing_repositories"],
+            serde_json::json!([{"name": "ariadne"}])
+        );
+        assert!(hosts[1].get("endpoint").is_none());
+
+        let (endpoint, seen) = recording_daemon_answering("[]").await;
+        orchestrator_at(&endpoint)
+            .list_models(Parameters(ListModelsReq {
+                agent_id: None,
+                host: Some("far".into()),
+            }))
+            .await
+            .expect("list the models of a host");
+        assert_eq!(seen.lock().expect("lock")[0].path, "/v1/hosts/far/models");
+    }
+
     /// The rank the user gave a model reaches the orchestrator, and the tool
     /// says what a rank is.
     ///
@@ -2563,7 +2652,10 @@ mod tests {
         ]"#;
         let (endpoint, _) = recording_daemon_answering(CATALOG).await;
         let answered = orchestrator_at(&endpoint)
-            .list_models(Parameters(ListModelsReq { agent_id: None }))
+            .list_models(Parameters(ListModelsReq {
+                agent_id: None,
+                host: None,
+            }))
             .await
             .expect("list the models");
 

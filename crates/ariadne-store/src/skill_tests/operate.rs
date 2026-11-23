@@ -720,6 +720,24 @@ fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_
     }
 }
 
+/// The orchestrator sees the hosts before it staffs. It picks one host for
+/// each task, and only a model of that host can staff the task, since a far
+/// host runs what it has itself.
+#[test]
+fn the_orchestration_skill_picks_a_host_for_each_task_and_staffs_its_models() {
+    let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+    for sentence in [
+        "Call `list_hosts` once for the goal.",
+        "Pick one `ready` host for each task, and give its `name` as `host` on `create_task`.",
+        "Call `list_models` with the `host` of the task. Staff only models of that host.",
+    ] {
+        assert!(
+            prompt.contains(sentence),
+            "the skill and the host rule \"{sentence}\""
+        );
+    }
+}
+
 /// The orchestrator assesses each task's scope and complexity before
 /// staffing within its column's capability band. Routine or uncertain
 /// work gets the smallest capable model and effort; a more powerful

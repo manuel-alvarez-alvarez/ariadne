@@ -12,6 +12,61 @@ pub(super) async fn list(State(s): State<AppState>) -> ApiResult<Json<Vec<HostDt
     Ok(Json(s.hosts.list()))
 }
 
+/// The model catalog of one host: this daemon's own for `local`, the far
+/// daemon's `GET /v1/models` for a `ready` host.
+#[utoipa::path(get, path = "/v1/hosts/{host}/models", tag = "hosts",
+    params(("host" = String, Path, description = "host name, or `local`")),
+    responses(
+        (status = 200, body = [ariadne_api::models::ModelDto]),
+        (status = 404, description = "no host has the name"),
+        (status = 503, description = "the host is not ready; the message names its status"),
+    ))]
+pub(super) async fn models(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<Vec<ariadne_api::models::ModelDto>>> {
+    let host = s
+        .hosts
+        .list()
+        .into_iter()
+        .find(|host| host.name == name)
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                format!("unknown host {name}"),
+            )
+        })?;
+    if host.name == "local" {
+        return super::catalog::models::list(State(s)).await;
+    }
+    let endpoint = match (host.status, host.endpoint.as_deref()) {
+        (ariadne_api::hosts::HostStatus::Ready, Some(endpoint)) => endpoint,
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "host_unavailable",
+                format!(
+                    "host {} is {}",
+                    host.name,
+                    format!("{:?}", host.status).to_lowercase()
+                ),
+            ));
+        }
+    };
+    let models = crate::hosts::client_for(endpoint)
+        .get_json("/v1/models")
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "host_unreachable",
+                format!("host {} did not answer: {error}", host.name),
+            )
+        })?;
+    Ok(Json(models))
+}
+
 /// Make one configured host reconnect at once, and answer the host once it
 /// has acted on it.
 #[utoipa::path(post, path = "/v1/hosts/{name}/reconnect", tag = "hosts",

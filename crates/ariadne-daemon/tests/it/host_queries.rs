@@ -305,3 +305,27 @@ async fn openapi_carries_the_host_query_routes() {
     }
     assert!(doc["paths"]["/v1/hosts/{host}/api/v1/query"]["post"].is_object());
 }
+
+#[tokio::test]
+async fn a_host_serves_its_models_and_an_unknown_or_unready_one_is_refused() {
+    let (local, far, _dir) = pair().await;
+    let want: Vec<ariadne_api::models::ModelDto> = far.get("/v1/models").await;
+    let answer: Vec<ariadne_api::models::ModelDto> = local.get("/v1/hosts/far/models").await;
+    assert_eq!(answer.len(), want.len());
+    let own: Vec<ariadne_api::models::ModelDto> = local.get("/v1/hosts/local/models").await;
+    let local_want: Vec<ariadne_api::models::ModelDto> = local.get("/v1/models").await;
+    assert_eq!(own.len(), local_want.len());
+    local
+        .error(get("/v1/hosts/nowhere/models"), StatusCode::NOT_FOUND)
+        .await;
+    let error = local
+        .error(
+            get("/v1/hosts/dead/models"),
+            StatusCode::SERVICE_UNAVAILABLE,
+        )
+        .await;
+    assert!(
+        error.error.message.contains("connecting") || error.error.message.contains("down"),
+        "{error:?}"
+    );
+}

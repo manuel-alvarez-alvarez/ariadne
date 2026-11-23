@@ -60,6 +60,9 @@ Use `research` when the user asks a question and wants no plan.
 
    Done when each ticket has the four sections.
 5. List skills and models once for the goal, not once per task.
+   Call `list_hosts` once for the goal. Pick one `ready` host for each
+   task, and give its `name` as `host` on `create_task`. Pick no host
+   whose `sync.missing_repositories` holds the task's repository.
    Staff one agent on every column with `create_task`. Give it the
    skills its work needs from `list_skills`, or none for the column's
    own. Give an agent a `brief` for what it alone needs and the ticket
@@ -68,6 +71,7 @@ Use `research` when the user asks a question and wants no plan.
 
    Done when each column has an agent.
 6. Give each agent one model from `list_models`, at one of the column's ranks.
+   Call `list_models` with the `host` of the task. Staff only models of that host.
 
    Done when every agent has one model.
 7. Show the user the tasks and the models. Ask about the plan one question at
