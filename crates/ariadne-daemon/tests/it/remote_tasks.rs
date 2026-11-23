@@ -296,7 +296,7 @@ async fn saved_columns_keep_their_gates_and_a_failed_task_can_retry() {
     crate::common::sh(worktree, "git add remote.txt");
     crate::common::sh(
         worktree,
-        "git commit -m 'feat(core): add the remote change'",
+        "git -c user.name=Test -c user.email=test@test commit -m 'feat(core): add the remote change'",
     );
     h.json::<Value>(
         as_session(
