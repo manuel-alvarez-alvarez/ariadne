@@ -62,6 +62,9 @@ const NOT_A_STOP = -1
 /** How the PR link and its slot give way on a narrow card: both shrink, and neither takes more than 40% of the row. */
 const PR_LINK_SIZING = "min-w-0 max-w-[40%] shrink"
 
+/** A long host name is cut with an ellipsis, so the title keeps its room; the full name is in the card description. */
+const HOST_LABEL_SIZING = "block min-w-0 max-w-[40%] shrink truncate"
+
 /** The last activity time, short on a narrow card and in full on a wide one. */
 function ActivityTime({ at, hintTabIndex }: { at: string; hintTabIndex: number }) {
   return (
@@ -215,7 +218,8 @@ export function TaskCard({
           {task.host && task.host !== "local" && (
             <HostLabel
               host={task.host as Host}
-              title={task.host_unreachable ? `Host ${task.host} cannot be reached` : "Host"}
+              className={HOST_LABEL_SIZING}
+              title={task.host_unreachable ? `Host ${task.host} cannot be reached` : task.host}
             />
           )}
         </div>
@@ -387,6 +391,8 @@ function cardHints(
   hints.push(
     `Task tokens: ${formatTokens(task.usage.total.input_tokens)} input, ${formatTokens(task.usage.total.output_tokens)} output`,
   )
+  if (task.host && task.host !== "local")
+    hints.push(task.host_unreachable ? `Host ${task.host} cannot be reached` : `Host ${task.host}`)
   if (task.pr_url) hints.push("Has a pull request")
   hints.push(whenHint(activity, "last activity"))
   return hints
