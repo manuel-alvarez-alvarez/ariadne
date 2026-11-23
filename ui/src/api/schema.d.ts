@@ -3598,6 +3598,12 @@ export interface components {
              */
             host?: string | null;
             /**
+             * @description On a linked goal only: the id of the far task on the goal's daemon
+             *     that this task runs. The goal holds one task for each. A repeated
+             *     create answers `200` with the task the goal already holds.
+             */
+            origin_task_id?: string | null;
+            /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
              */
@@ -6024,6 +6030,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description the active goal linked to the same origin goal, with the repositories added */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalDto"];
+                };
+            };
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -6063,6 +6078,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description the task the linked goal already holds for `origin_task_id` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
             201: {
                 headers: {
                     [name: string]: unknown;

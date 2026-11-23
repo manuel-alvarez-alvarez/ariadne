@@ -711,6 +711,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "the active goal linked to the same origin goal, with the repositories added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDto"
+                }
+              }
+            }
+          },
           "201": {
             "content": {
               "application/json": {
@@ -756,6 +766,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "the task the linked goal already holds for `origin_task_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
           "201": {
             "content": {
               "application/json": {
@@ -6803,7 +6823,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/LinkedGoalDto",
-                "description": "Start an active goal that receives tasks and has no local orchestrator."
+                "description": "Start an active goal that receives tasks and has no local orchestrator.\nWhere an `active` goal linked to the same origin goal exists, the\nanswer is `200` with that goal, and `repository_ids` it lacks are\nadded to it."
               },
               {
                 "type": "null"
@@ -6972,6 +6992,13 @@
             ],
             "description": "The host to run the task on, a `ready` host of `GET /v1/hosts`.\nOmitted or `local` = this daemon. A far task waits here until every\ntask it depends on has merged, then goes to the host.",
             "example": "worker"
+          },
+          "origin_task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "On a linked goal only: the id of the far task on the goal's daemon\nthat this task runs. The goal holds one task for each. A repeated\ncreate answers `200` with the task the goal already holds."
           },
           "repo_id": {
             "type": [

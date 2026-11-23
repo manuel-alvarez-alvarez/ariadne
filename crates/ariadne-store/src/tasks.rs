@@ -375,17 +375,57 @@ impl Store {
     /// them (003), and a number the store enforced afterwards could only
     /// refuse a plan they had already agreed.
     pub async fn create_task(&self, new: NewTask) -> Result<Task> {
-        self.create_task_on(new, None).await
+        self.create_task_on(new, None, None).await
     }
 
     /// Create a far task: a task that runs on `host`, not on this daemon
     /// (037). It is stored as [`Store::create_task`] stores a task, with the
     /// name of its host.
     pub async fn create_far_task(&self, new: NewTask, host: &str) -> Result<Task> {
-        self.create_task_on(new, Some(host)).await
+        self.create_task_on(new, Some(host), None).await
     }
 
-    async fn create_task_on(&self, mut new: NewTask, host: Option<&str>) -> Result<Task> {
+    /// Create the task of a linked goal that runs the far task
+    /// `origin_task_id` of the goal's daemon (037). The goal holds one task
+    /// for each origin task: a repeated create answers the task it already
+    /// holds, and `false`.
+    pub async fn create_linked_task(
+        &self,
+        new: NewTask,
+        origin_task_id: &str,
+    ) -> Result<(Task, bool)> {
+        let goal_id = new.goal_id.clone();
+        if let Some(task) = self.linked_task_of(&goal_id, origin_task_id).await? {
+            return Ok((task, false));
+        }
+        match self.create_task_on(new, None, Some(origin_task_id)).await {
+            Ok(task) => Ok((task, true)),
+            // Two creates raced: the other one holds the task.
+            Err(StoreError::Db(sqlx::Error::Database(db))) if db.is_unique_violation() => self
+                .linked_task_of(&goal_id, origin_task_id)
+                .await?
+                .map(|task| (task, false))
+                .ok_or_else(|| not_found("task", origin_task_id)),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn linked_task_of(&self, goal_id: &str, origin_task_id: &str) -> Result<Option<Task>> {
+        Ok(sqlx::query_as::<_, Task>(
+            "SELECT * FROM tasks WHERE goal_id = ? AND origin_task_id = ?",
+        )
+        .bind(goal_id)
+        .bind(origin_task_id)
+        .fetch_optional(self.r())
+        .await?)
+    }
+
+    async fn create_task_on(
+        &self,
+        mut new: NewTask,
+        host: Option<&str>,
+        origin_task_id: Option<&str>,
+    ) -> Result<Task> {
         let goal = self.get_goal(&new.goal_id).await?;
         self.check_workflow_staffing(&goal, &mut new.agents).await?;
         let repo = self.get_repository(&new.repo_id).await?;
@@ -408,8 +448,8 @@ impl Store {
         let mut tx = self.w().begin().await?;
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
-                                created_at, updated_at, host)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+                                created_at, updated_at, host, origin_task_id)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -420,6 +460,7 @@ impl Store {
         .bind(&ts)
         .bind(&ts)
         .bind(host)
+        .bind(origin_task_id)
         .execute(&mut *tx)
         .await?;
 

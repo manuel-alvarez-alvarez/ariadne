@@ -690,6 +690,7 @@ mod tests {
             far_goal_id: None,
             far_task_id: None,
             host_unreachable: 0,
+            origin_task_id: None,
         }
     }
 

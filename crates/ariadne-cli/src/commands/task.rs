@@ -300,6 +300,7 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                         agents,
                         depends_on,
                         host: None,
+                        origin_task_id: None,
                     },
                 )
                 .await?;

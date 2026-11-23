@@ -96,8 +96,14 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     `GoalDto.linked` carries the same object, or null for other goals.
     OpenAPI describes the object on the request and the response.
     A linked goal skips planning (003 rule 17).
+    A daemon holds one `active` linked goal for each origin goal. A create whose
+    origin goal has one answers `200` with that goal, and adds to it each of
+    `repository_ids` that it lacks.
 15. The origin daemon holds each task until its dependencies merge.
     A linked goal refuses a nonempty `depends_on` list on task creation or edit.
+    `CreateTaskRequest.origin_task_id` names the far task on the origin daemon that the
+    task runs, and only a linked goal takes it. A linked goal holds one task for each
+    origin task: a repeated create answers `200` with the task it holds, and starts nothing.
 16. A new task branch for a linked goal starts at the fetched remote base.
     The daemon fetches from the repository's forge remote, with `origin` as the default.
     The commit gate and the task diff compare against that fetched base, not the local base branch.
@@ -109,8 +115,10 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     It is always false for a `local` task. OpenAPI carries both fields and `CreateTaskRequest.host`.
 19. A far task stays `pending` until every task in its `depends_on` has merged, on any host.
     A far task merges when its host reports it `finished` (037 rule 95). A task that
-    depends on a far task then starts as for any other dependency. A dependency that ends
-    without a merge fails a pending far task, as rule 8 fails any pending task.
+    depends on a far task then starts as for any other dependency. A dependency that failed
+    or was cancelled fails a pending far task before it goes to its host, as rule 10 fails
+    any waiting task. A far task cancelled here, or in a goal that rules 3 and 4 ended,
+    keeps that state whatever its host reports (037 rule 95).
 
 ## Acceptance criteria
 
@@ -174,6 +182,15 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
   (`far_tasks.rs::the_openapi_document_carries_the_host_of_a_task`).
 - Rule 19: a far task waits for a far dependency and a local one, and goes to its host
   once both merged (`far_tasks.rs::a_far_task_waits_until_its_dependencies_merge_on_any_host`).
+  A dependency that failed fails it, and it never goes to its host
+  (`far_tasks.rs::a_far_task_fails_when_a_dependency_ends_unmerged`). A cancellation here holds
+  against the host's updates and its read on return
+  (`far_tasks.rs::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports`).
+- Rules 14 and 15: a repeated create of the linked goal and of its task, after a lost
+  answer, makes no second goal or task
+  (`far_tasks.rs::a_lost_answer_of_the_host_makes_no_second_goal_or_task`), and a repeated
+  create of the goal adds the repository it lacks
+  (`far_tasks.rs::a_repository_set_up_later_joins_the_same_linked_goal`).
 
 ## Sources
 

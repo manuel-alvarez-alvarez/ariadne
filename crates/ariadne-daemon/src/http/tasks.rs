@@ -30,12 +30,14 @@ fn check_dependencies(goal: &Goal, depends_on: &[String]) -> ApiResult<()> {
 
 /// Refuse a far task that its host cannot run (037): a host that is unknown
 /// or not `ready`, a repository that the host lacks, or a model that the
-/// host's `GET /v1/models` does not list.
+/// host's `GET /v1/models` does not list. Where `staffed`, the orchestrator
+/// staffs the task, and a model that the host turned off is refused too.
 async fn check_host(
     state: &AppState,
     host: &str,
     repo: &ariadne_store::Repository,
     agents: &[AgentAssignment],
+    staffed: bool,
 ) -> ApiResult<()> {
     let Some(dto) = state.hosts.list().into_iter().find(|h| h.name == host) else {
         return Err(ApiError::bad_request(format!(
@@ -75,12 +77,24 @@ async fn check_host(
     let models: Vec<ariadne_api::models::ModelDto> =
         client.get_json("/v1/models").await.map_err(unanswered)?;
     for agent in agents {
-        if !models.iter().any(|model| model.id == agent.model) {
-            return Err(ApiError::bad_request(format!(
-                "host {host} does not list the model {}; staff the task on a model of \
-                 `GET /v1/models` on that host",
-                agent.model
-            )));
+        match models.iter().find(|model| model.id == agent.model) {
+            None => {
+                return Err(ApiError::bad_request(format!(
+                    "host {host} does not list the model {}; staff the task on a model of \
+                     `GET /v1/models` on that host",
+                    agent.model
+                )));
+            }
+            // A model the host turned off is the user's choice alone (011
+            // rule 19): automatic staffing applies the host's switch.
+            Some(model) if staffed && !model.enabled => {
+                return Err(ApiError::bad_request(format!(
+                    "host {host} has the model {} turned off; staff the task on a model that \
+                     is on there, or turn it back on first",
+                    agent.model
+                )));
+            }
+            Some(_) => {}
         }
     }
     Ok(())
@@ -152,7 +166,10 @@ pub(super) async fn resolve_agents(
 #[utoipa::path(post, path = "/v1/goals/{goal_id}/tasks", tag = "tasks",
     request_body = CreateTaskRequest,
     params(("goal_id" = String, Path, description = "goal id")),
-    responses((status = 201, body = TaskDto), (status = 400), (status = 409),
+    responses((status = 201, body = TaskDto),
+        (status = 200, body = TaskDto,
+            description = "the task the linked goal already holds for `origin_task_id`"),
+        (status = 400), (status = 409),
         (status = 502, description = "the host of a far task did not answer")))]
 pub(super) async fn create(
     State(state): State<AppState>,
@@ -174,6 +191,11 @@ pub(super) async fn create(
 
     let goal = state.store.get_goal(&goal_id).await?;
     check_dependencies(&goal, &req.depends_on)?;
+    if req.origin_task_id.is_some() && goal.origin_goal_id.is_none() {
+        return Err(ApiError::bad_request(
+            "origin_task_id names the task of a linked goal; this goal is not linked",
+        ));
+    }
     let repos = state.store.list_goal_repositories(&goal.id).await?;
     let repo_id = match &req.repo_id {
         Some(id) => {
@@ -199,7 +221,7 @@ pub(super) async fn create(
     let agents = match &host {
         Some(host) => {
             let repo = state.store.get_repository(&repo_id).await?;
-            check_host(&state, host, &repo, &req.agents).await?;
+            check_host(&state, host, &repo, &req.agents, ctx.actor != Actor::User).await?;
             far_agents(&req.agents)?
         }
         None => resolve_agents(&state, &req.agents, ctx.actor == Actor::User).await?,
@@ -213,15 +235,23 @@ pub(super) async fn create(
         agents,
         depends_on: req.depends_on,
     };
-    let task = match &host {
-        Some(host) => state.store.create_far_task(new, host).await?,
-        None => state.store.create_task(new).await?,
+    let (task, created) = match (&host, &req.origin_task_id) {
+        (Some(host), _) => (state.store.create_far_task(new, host).await?, true),
+        // The task the goal holds for the origin task answers a repeated
+        // create, so a lost answer makes no second task (037).
+        (None, Some(origin)) => state.store.create_linked_task(new, origin).await?,
+        (None, None) => (state.store.create_task(new).await?, true),
     };
-    if goal.origin_goal_id.is_some() {
+    if created && goal.origin_goal_id.is_some() {
         state.notify_scheduler(&task.id);
     }
     let dto = task_dto_of(&state.store, task).await?;
-    Ok((StatusCode::CREATED, Json(dto)))
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(dto)))
 }
 
 /// List tasks.

@@ -496,6 +496,9 @@ pub struct Task {
     pub far_task_id: Option<String>,
     /// 1 while the host of a far task is not `ready`.
     pub host_unreachable: i64,
+    /// On a linked goal, the id of the far task on the goal's daemon that
+    /// this task runs.
+    pub origin_task_id: Option<String>,
 }
 
 impl Task {

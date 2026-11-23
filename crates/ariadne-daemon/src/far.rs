@@ -2,16 +2,18 @@
 //!
 //! The goal's daemon keeps each far task in its own task list. A far task
 //! stays `pending` here until every task it depends on has merged, on any
-//! host. Then the daemon sends it to its host: it creates one linked goal on
-//! that host for the goal, if none exists, and the task in it. From then on
-//! the daemon mirrors the far task's status, step, branch, request URL and
-//! merge commit from the host's event stream.
+//! host. Then the daemon sends it to its host: the linked goal of the goal on
+//! that host, and the task in it. The host answers both requests again with
+//! what it made, so a send whose answer was lost is safe to repeat. From then
+//! on the daemon mirrors the far task's status, step, branch, request URL and
+//! merge commit from the host's event stream, until its state is final here.
 //!
 //! One worker per host does all of this. It follows the host's status from
 //! the `host_updated` events of this daemon. While the host is not `ready`,
 //! each far task on it keeps its last known state and is `host_unreachable`.
 //! On the next `ready`, the worker opens the host's event stream, reads each
-//! far task again, and clears `host_unreachable`.
+//! far task again, and clears `host_unreachable`. A [`Link`] epoch makes a
+//! return at the same endpoint a next `ready` too.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -92,10 +94,21 @@ impl Ctx {
     }
 }
 
-/// One host's worker: the endpoint of the host while it is `ready`, and a
-/// nudge to look for far tasks that are free to start.
+/// What a worker knows of its host: the endpoint while the host is `ready`,
+/// and an epoch that each change of the endpoint moves. A worker that was
+/// busy when the host left `ready` and came back at the same endpoint sees
+/// the same endpoint, but a later epoch: it opens the stream again and reads
+/// each far task again.
+#[derive(Debug, Clone, Default)]
+struct Link {
+    epoch: u64,
+    endpoint: Option<String>,
+}
+
+/// One host's worker: its [`Link`], and a nudge to look for far tasks that
+/// are free to start.
 struct Worker {
-    ready: watch::Sender<Option<String>>,
+    ready: watch::Sender<Link>,
     kick: mpsc::Sender<()>,
     task: JoinHandle<()>,
 }
@@ -124,6 +137,11 @@ async fn supervise(ctx: Ctx, hosts: Hosts, mut events: broadcast::Receiver<BusEv
                 _ => {}
             },
             Err(RecvError::Lagged(_)) => {
+                // A host may have left `ready` and come back among the lost
+                // events: every worker follows its host again.
+                for worker in workers.values() {
+                    worker.ready.send_modify(|link| link.epoch += 1);
+                }
                 for host in hosts.list() {
                     see(&ctx, &mut workers, &host);
                 }
@@ -145,14 +163,17 @@ fn see(ctx: &Ctx, workers: &mut HashMap<String, Worker>, host: &HostDto) {
     }
     let endpoint = ready_endpoint(host);
     if let Some(worker) = workers.get(&host.name) {
-        worker.ready.send_if_modified(|current| {
-            let changed = *current != endpoint;
-            *current = endpoint;
-            changed
+        worker.ready.send_if_modified(|link| {
+            if link.endpoint == endpoint {
+                return false;
+            }
+            link.epoch += 1;
+            link.endpoint = endpoint;
+            true
         });
         return;
     }
-    let (ready, ready_rx) = watch::channel(endpoint);
+    let (ready, ready_rx) = watch::channel(Link { epoch: 0, endpoint });
     let (kick, kicks) = mpsc::channel(1);
     let task = tokio::spawn(work(ctx.clone(), host.name.clone(), ready_rx, kicks));
     workers.insert(host.name.clone(), Worker { ready, kick, task });
@@ -171,11 +192,11 @@ enum Lost {
 async fn work(
     ctx: Ctx,
     host: String,
-    mut ready: watch::Receiver<Option<String>>,
+    mut ready: watch::Receiver<Link>,
     mut kicks: mpsc::Receiver<()>,
 ) {
     loop {
-        let endpoint = ready.borrow_and_update().clone();
+        let Link { epoch, endpoint } = ready.borrow_and_update().clone();
         let Some(endpoint) = endpoint else {
             ctx.unreachable(&host, true).await;
             tokio::select! {
@@ -189,7 +210,7 @@ async fn work(
             host: &host,
             client: client_for(&endpoint),
         };
-        let lost = follower.follow(&endpoint, &mut ready, &mut kicks).await;
+        let lost = follower.follow(epoch, &mut ready, &mut kicks).await;
         ctx.unreachable(&host, true).await;
         match lost {
             Lost::Closed => return,
@@ -242,8 +263,8 @@ struct Follower<'a> {
 impl Follower<'_> {
     async fn follow(
         &self,
-        endpoint: &str,
-        ready: &mut watch::Receiver<Option<String>>,
+        epoch: u64,
+        ready: &mut watch::Receiver<Link>,
         kicks: &mut mpsc::Receiver<()>,
     ) -> Lost {
         // The stream opens before the far tasks are read again, so no change
@@ -266,7 +287,7 @@ impl Follower<'_> {
                     if changed.is_err() {
                         return Lost::Closed;
                     }
-                    if ready.borrow_and_update().as_deref() != Some(endpoint) {
+                    if ready.borrow_and_update().epoch != epoch {
                         return Lost::Left;
                     }
                 }
@@ -296,7 +317,10 @@ impl Follower<'_> {
         }
     }
 
-    /// Read each far task on the host again, then clear `host_unreachable`.
+    /// Read each far task on the host again whose state can still move here,
+    /// then clear `host_unreachable` on every far task of the host. A far
+    /// task whose state is final here is not read: nothing the host says can
+    /// change it ([`ariadne_store::is_final`]).
     async fn refresh(&self) -> Result<(), ClientError> {
         let tasks = self
             .ctx
@@ -311,6 +335,9 @@ impl Follower<'_> {
             let Some(far_id) = &task.far_task_id else {
                 continue;
             };
+            if matches!(task.status(), TaskStatus::Finished | TaskStatus::Cancelled) {
+                continue;
+            }
             match self
                 .client
                 .get_json::<TaskDto>(&format!("/v1/tasks/{far_id}"))
@@ -459,48 +486,42 @@ impl Follower<'_> {
                 brief: agent.brief.clone(),
             })
             .collect();
-        let far_goal = match store.far_goal_of(&goal.id, self.host).await? {
-            Some(id) => id,
-            None => {
-                let goal_repos = store.list_goal_repositories(&goal.id).await?;
-                // The task's own repository first: the linked goal takes
-                // every repository of the goal that the host has.
-                let repository_ids = std::iter::once(far_repo.clone())
-                    .chain(
-                        goal_repos
-                            .iter()
-                            .filter(|repo| repo.id != task.repo_id)
-                            .filter_map(|repo| paired.get(&repo.id).cloned()),
-                    )
-                    .collect();
-                let model = agents
-                    .first()
-                    .map(|agent| agent.model.clone())
-                    .unwrap_or_else(|| goal.model.clone());
-                let created: GoalDto = self
-                    .client
-                    .post_json(
-                        "/v1/goals",
-                        &CreateGoalRequest {
-                            linked: Some(LinkedGoalDto {
-                                origin_goal_id: goal.id.clone(),
-                            }),
-                            workflow: Some(goal.workflow.clone()),
-                            title: goal.title.clone(),
-                            description: goal.description.clone(),
-                            issue_url: goal.issue_url.clone(),
-                            repository_ids,
-                            model,
-                            effort: None,
-                        },
-                    )
-                    .await?;
-                // Kept before the task is created, so a task that the host
-                // then refuses leaves no second linked goal behind.
-                store.set_far_goal(&task.id, &created.id).await?;
-                created.id
-            }
-        };
+        // Every send makes the same two requests, and both are idempotent on
+        // the host: the goal for the origin goal, the task for the origin
+        // task. A send whose answer was lost finds what the host made, and a
+        // repository set up on the host since joins the goal.
+        let goal_repos = store.list_goal_repositories(&goal.id).await?;
+        let repository_ids = std::iter::once(far_repo.clone())
+            .chain(
+                goal_repos
+                    .iter()
+                    .filter(|repo| repo.id != task.repo_id)
+                    .filter_map(|repo| paired.get(&repo.id).cloned()),
+            )
+            .collect();
+        let model = agents
+            .first()
+            .map(|agent| agent.model.clone())
+            .unwrap_or_else(|| goal.model.clone());
+        let linked: GoalDto = self
+            .client
+            .post_json(
+                "/v1/goals",
+                &CreateGoalRequest {
+                    linked: Some(LinkedGoalDto {
+                        origin_goal_id: goal.id.clone(),
+                    }),
+                    workflow: Some(goal.workflow.clone()),
+                    title: goal.title.clone(),
+                    description: goal.description.clone(),
+                    issue_url: goal.issue_url.clone(),
+                    repository_ids,
+                    model,
+                    effort: None,
+                },
+            )
+            .await?;
+        let far_goal = linked.id;
         let far: TaskDto = self
             .client
             .post_json(
@@ -512,6 +533,7 @@ impl Follower<'_> {
                     agents,
                     depends_on: Vec::new(),
                     host: None,
+                    origin_task_id: Some(task.id.clone()),
                 },
             )
             .await?;

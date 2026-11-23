@@ -202,6 +202,11 @@ pub struct CreateTaskRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(example = "worker")]
     pub host: Option<String>,
+    /// On a linked goal only: the id of the far task on the goal's daemon
+    /// that this task runs. The goal holds one task for each. A repeated
+    /// create answers `200` with the task the goal already holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_task_id: Option<String>,
 }
 
 /// Partial update; only allowed while the task is pending, ready or failed.

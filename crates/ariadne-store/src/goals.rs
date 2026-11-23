@@ -57,6 +57,47 @@ impl Store {
         self.create_goal_as(new, None, Some(origin_goal_id)).await
     }
 
+    /// The `active` linked goal that the goal `origin_goal_id` of another
+    /// daemon feeds, if there is one (037).
+    pub async fn open_linked_goal(&self, origin_goal_id: &str) -> Result<Option<Goal>> {
+        Ok(sqlx::query_as::<_, Goal>(
+            "SELECT * FROM goals WHERE origin_goal_id = ? AND status = 'active'
+             ORDER BY id LIMIT 1",
+        )
+        .bind(origin_goal_id)
+        .fetch_optional(self.r())
+        .await?)
+    }
+
+    /// Add repositories to a goal. A repository the goal has stays as it is.
+    /// An unknown id adds nothing.
+    pub async fn add_goal_repositories(
+        &self,
+        goal_id: &str,
+        repository_ids: &[String],
+    ) -> Result<()> {
+        for id in repository_ids {
+            self.get_repository(id).await?;
+        }
+        let mut tx = self.w().begin().await?;
+        let mut added = 0;
+        for id in repository_ids {
+            added += sqlx::query(
+                "INSERT OR IGNORE INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)",
+            )
+            .bind(goal_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        }
+        tx.commit().await?;
+        if added > 0 {
+            self.publish_goal_update(goal_id).await?;
+        }
+        Ok(())
+    }
+
     /// Create the goal of one pull request operation: active at once, with
     /// no orchestrator, on the workflow that operation reads. A conflict
     /// means the request already has an open goal for the operation.

@@ -8,7 +8,7 @@ use utoipa::IntoParams;
 use ariadne_api::goals::{CompleteGoalRequest, CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
 use ariadne_core::{GoalStatus, TaskStatus};
-use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, TaskFilter};
+use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, StoreError, TaskFilter};
 
 use super::AppState;
 use super::caller::call_ctx;
@@ -54,6 +54,8 @@ impl GoalListQuery {
     request_body = CreateGoalRequest,
     responses(
         (status = 201, body = GoalDto),
+        (status = 200, body = GoalDto,
+            description = "the active goal linked to the same origin goal, with the repositories added"),
         (status = 400),
         (status = 404, description = "no such repository or workflow")
     ))]
@@ -82,6 +84,15 @@ pub(super) async fn create(
     )
     .await?;
 
+    // One active linked goal for each origin goal (037): a repeated create
+    // finds it, so a lost answer makes no second goal, and the repositories
+    // it lacks join it.
+    if let Some(link) = &req.linked
+        && let Some(goal) = state.store.open_linked_goal(&link.origin_goal_id).await?
+    {
+        return linked_again(&state, goal, &req.repository_ids).await;
+    }
+    let repository_ids = req.repository_ids.clone();
     let new = NewGoal {
         workflow: req.workflow,
         title: req.title,
@@ -91,12 +102,23 @@ pub(super) async fn create(
         pin,
     };
     let goal = match req.linked {
-        Some(link) => {
-            state
-                .store
-                .create_linked_goal(new, &link.origin_goal_id)
-                .await?
-        }
+        Some(link) => match state
+            .store
+            .create_linked_goal(new, &link.origin_goal_id)
+            .await
+        {
+            Ok(goal) => goal,
+            // Another create of the same origin goal won the race.
+            Err(StoreError::Conflict(_)) => {
+                let goal = state
+                    .store
+                    .open_linked_goal(&link.origin_goal_id)
+                    .await?
+                    .ok_or_else(|| ApiError::conflict("the linked goal ended while it was made"))?;
+                return linked_again(&state, goal, &repository_ids).await;
+            }
+            Err(error) => return Err(error.into()),
+        },
         None => {
             let goal = state.store.create_goal(new).await?;
             state.notify_scheduler_goal(&goal.id);
@@ -104,6 +126,20 @@ pub(super) async fn create(
         }
     };
     Ok((StatusCode::CREATED, to_dto(&state, goal).await?))
+}
+
+/// Answer the linked goal that already exists, with `repository_ids` added.
+async fn linked_again(
+    state: &AppState,
+    goal: Goal,
+    repository_ids: &[String],
+) -> ApiResult<(StatusCode, Json<GoalDto>)> {
+    state
+        .store
+        .add_goal_repositories(&goal.id, repository_ids)
+        .await?;
+    let goal = state.store.get_goal(&goal.id).await?;
+    Ok((StatusCode::OK, to_dto(state, goal).await?))
 }
 
 /// List goals.

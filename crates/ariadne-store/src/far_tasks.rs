@@ -3,7 +3,7 @@
 //! on that host and the task there, and mirrors what the host reports of it.
 
 use ariadne_core::id::new_id;
-use ariadne_core::{Actor, TaskStatus};
+use ariadne_core::{Actor, GoalStatus, TaskStatus};
 
 use crate::{Change, Result, Store, Task, TaskTransition, now};
 
@@ -44,32 +44,6 @@ impl Store {
         )
     }
 
-    /// The linked goal on `host` that the far tasks of `goal_id` go to, once
-    /// one of them is sent there.
-    pub async fn far_goal_of(&self, goal_id: &str, host: &str) -> Result<Option<String>> {
-        Ok(sqlx::query_scalar(
-            "SELECT far_goal_id FROM tasks
-             WHERE goal_id = ? AND host = ? AND far_goal_id IS NOT NULL
-             ORDER BY id LIMIT 1",
-        )
-        .bind(goal_id)
-        .bind(host)
-        .fetch_optional(self.r())
-        .await?)
-    }
-
-    /// Record the linked goal on the host that a far task goes to.
-    pub async fn set_far_goal(&self, task_id: &str, far_goal_id: &str) -> Result<()> {
-        let n = sqlx::query("UPDATE tasks SET far_goal_id = ?, updated_at = ? WHERE id = ?")
-            .bind(far_goal_id)
-            .bind(now())
-            .bind(task_id)
-            .execute(self.w())
-            .await?
-            .rows_affected();
-        self.publish_task_update(task_id, n).await
-    }
-
     /// Record the linked goal and the task that the host made of a far task.
     pub async fn set_far_task(
         &self,
@@ -90,14 +64,13 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
-    /// Set `host_unreachable` on each far task of `host` in a goal that is
-    /// not over. Only a task that changes is written and announced.
+    /// Set `host_unreachable` on each far task of `host`, whatever its goal.
+    /// Only a task that changes is written and announced.
     pub async fn set_host_unreachable(&self, host: &str, unreachable: bool) -> Result<()> {
         let flag = i64::from(unreachable);
         let changed: Vec<String> = sqlx::query_scalar(
             "UPDATE tasks SET host_unreachable = ?, updated_at = ?
              WHERE host = ? AND host_unreachable <> ?
-               AND goal_id IN (SELECT id FROM goals WHERE status IN ('planning', 'active'))
              RETURNING id",
         )
         .bind(flag)
@@ -117,9 +90,18 @@ impl Store {
     /// daemon with the host's reason. The host's own state machine has
     /// checked the move, so this one checks nothing. Answers whether the
     /// status changed. Nothing is written or announced when nothing changed.
+    ///
+    /// A far task whose state is final here is never written: one that is
+    /// `finished` or `cancelled`, and one whose goal is over. So a host that
+    /// goes on with a task cancelled here cannot undo the cancellation.
     pub async fn mirror_far_task(&self, task_id: &str, state: &FarTaskState) -> Result<bool> {
         let mut tx = self.w().begin().await?;
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
+        let goal: crate::Goal =
+            Self::fetch_by_in_tx(&mut tx, "goal", "goals", &task.goal_id).await?;
+        if is_final(&task, &goal) {
+            return Ok(false);
+        }
         let moved = task.status() != state.status;
         if !moved
             && task.step == state.step
@@ -181,4 +163,11 @@ impl Store {
         self.publish(Change::TaskUpdated { task, transition });
         Ok(moved)
     }
+}
+
+/// Whether the state of a far task is final on the goal's daemon: the task
+/// is `finished` or `cancelled`, or its goal is over.
+pub fn is_final(task: &Task, goal: &crate::Goal) -> bool {
+    matches!(task.status(), TaskStatus::Finished | TaskStatus::Cancelled)
+        || matches!(goal.status(), GoalStatus::Completed | GoalStatus::Cancelled)
 }

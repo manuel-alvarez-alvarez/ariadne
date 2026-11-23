@@ -652,47 +652,65 @@ picker, the Hosts screen and one stream per host — is spec
       adds the repository: `repository:<id>` of `ariadne host setup <host>` (rule 63).
     - A model that the host's `GET /v1/models` does not list answers `400`. The message
       names the model and the host. The local catalog does not decide the models of a far task.
+    - A model that the host lists with `enabled` false answers `400` for the orchestrator,
+      and the message names the model and the host. It stays the user's choice (011 rule 19):
+      a request with no session header takes it.
     - A host that does not answer these reads answers `502`.
 93. The goal's daemon keeps each far task in its own task list. The store keeps its host, the
     id of the linked goal on the host and the id of the task on the host. The goal's daemon
     never starts an agent for a far task.
 94. A far task is free to start when it is `pending`, it has not gone to its host, its goal is
     `active`, and every task in its `depends_on` has merged (001 rule 19). Then the goal's
-    daemon sends it to its host:
-    - It creates one linked goal on the host for the goal, if none exists:
-      `POST /v1/goals` with `linked: { origin_goal_id }` (001 rule 14), the goal's workflow,
-      title, description and issue URL, and the host's id of each goal repository that the
-      host has, the task's own first. The model is the one of the task's first agent.
-    - It creates the task in that linked goal: `POST /v1/goals/{id}/tasks` with no session
-      header, the host's repository id, the same title, description and agents, and no
-      `depends_on`.
+    daemon sends it to its host. Each send makes the same two requests, and the host answers
+    both again with what it made (001 rules 14 and 15). So a send whose answer was lost
+    makes no second goal or task when it is sent again:
+    - `POST /v1/goals` with `linked: { origin_goal_id }`, the goal's workflow, title,
+      description and issue URL, and the host's id of each goal repository that the host has,
+      the task's own first. The model is the one of the task's first agent. The host has one
+      linked goal for the goal, and a repository set up on the host since the first send
+      joins it.
+    - `POST /v1/goals/{id}/tasks` in that linked goal, with no session header, the host's
+      repository id, the same title, description and agents, no `depends_on`, and the far
+      task's own id as `origin_task_id`.
     - A refusal of the host fails the far task with the reason
       `host <name> refused the task: <message>`. A host that does not answer gets the task
       again after `far_retry`.
 95. The goal's daemon follows `GET /v1/events/stream` of each `ready` host. Each
     `task_updated` of a far task writes its status, step, branch, request URL and merge
     commit on the far task. A changed status writes a transition by the daemon, with the
-    host's reason. A far task that the host reports `finished` has merged.
-96. When the host leaves `ready`, each far task on it in a goal that is not over keeps its
-    last known state, and `host_unreachable` is true. A lost event stream of a `ready` host
-    is the same, and the goal's daemon opens the stream again after `far_retry`.
-97. On the next `ready`, the goal's daemon opens the event stream of the host, then reads
-    each far task again (`GET /v1/tasks/{id}` on the host), and sets `host_unreachable` to
-    false.
+    host's reason. A far task that the host reports `finished` has merged. A far task whose
+    state is final here is never written: one that is `finished` or `cancelled`, and one whose
+    goal is over (001 rules 3 and 4).
+96. When the host leaves `ready`, each far task on it keeps its last known state, and
+    `host_unreachable` is true, whatever the status of its goal. A lost event stream of a
+    `ready` host is the same, and the goal's daemon opens the stream again after `far_retry`.
+97. On the next `ready`, the goal's daemon opens the event stream of the host. Then it reads
+    again each far task whose state is not final (`GET /v1/tasks/{id}` on the host), and sets
+    `host_unreachable` to false on each far task of the host. A host that leaves `ready` and
+    comes back at the same endpoint while the daemon still works on an earlier answer of it
+    counts as a next `ready` too.
 
 ## Acceptance criteria
 
 - Rule 92: `far_tasks.rs::a_far_task_is_refused_on_a_host_that_is_unknown_or_not_ready`,
-  `::a_far_task_is_refused_on_a_host_that_lacks_its_repository` and
-  `::a_far_task_is_refused_a_model_its_host_does_not_list`.
+  `::a_far_task_is_refused_on_a_host_that_lacks_its_repository`,
+  `::a_far_task_is_refused_a_model_its_host_does_not_list` and
+  `::a_model_its_host_turned_off_is_the_users_choice_alone`.
 - Rules 93 and 94: `far_tasks.rs::one_linked_goal_on_a_host_takes_every_far_task_of_a_goal`
   proves that nothing goes to the host while the goal plans, and that two far tasks share one
   linked goal on the host's repository. `::a_far_task_waits_until_its_dependencies_merge_on_any_host`
   proves the wait for a far and a local dependency.
+  `::a_lost_answer_of_the_host_makes_no_second_goal_or_task` proves the repeated send, and
+  `::a_repository_set_up_later_joins_the_same_linked_goal` proves the repository that joins.
 - Rule 95: `far_tasks.rs::a_far_task_mirrors_the_state_its_host_reports` proves the column,
   branch, request URL, merge commit and status.
+  `::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports` proves the final state,
+  live and on the read after a return.
 - Rules 96 and 97: `far_tasks.rs::a_far_task_keeps_its_state_while_its_host_is_away` proves the
   kept state, `host_unreachable`, and the read on the next `ready`.
+  `::a_far_task_of_a_completed_goal_is_unreachable_while_its_host_is_away` proves the flag on a
+  goal that is over. `::a_host_back_at_the_same_endpoint_is_read_again_while_its_worker_is_busy`
+  proves the return at the same endpoint.
 
 - Rule 46: `hosts.rs::daemon_version_installs_the_recorded_release_of_a_release_daemon` proves SSH-only review and setup.
   Release builds verify their own repository and version tag before installation.

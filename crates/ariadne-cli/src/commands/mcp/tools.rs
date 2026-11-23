@@ -581,6 +581,7 @@ impl AriadneMcp {
                     agents,
                     depends_on: req.depends_on.unwrap_or_default(),
                     host: req.host,
+                    origin_task_id: None,
                 },
             )
             .await?;
