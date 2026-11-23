@@ -728,8 +728,8 @@ fn the_orchestration_skill_picks_a_host_for_each_task_and_staffs_its_models() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
     for sentence in [
         "Call `list_hosts` once for the goal.",
-        "Pick one `ready` host for each task.",
-        "Call `list_models` with the `host` of the task. Staff only models of that host.",
+        "Every task runs on this host until `create_task` takes a `host`.",
+        "Call `list_models` with no `host`. Staff only models of this host.",
     ] {
         assert!(
             prompt.contains(sentence),

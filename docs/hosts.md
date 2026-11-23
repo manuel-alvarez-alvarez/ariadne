@@ -13,12 +13,11 @@ While it plans, the orchestrator does these steps:
 
 1. It calls `list_hosts`. Each host has a `name`, a `status`, a `sync.state`
    and the `sync.missing_repositories` of the host.
-2. It picks one `ready` host for each task. It does not pick a host that lacks
-   the repository of the task.
-3. It calls `list_models` with the `host` of the task. It staffs the task only
-   on models of that host.
+2. It calls `list_models` with no `host`. It staffs each task only on models
+   of this machine.
 
-The `create_task` tool has no `host` parameter yet. A task runs on this machine.
+The `create_task` tool has no `host` parameter yet. Every task runs on this
+machine, so the orchestrator picks no host for a task.
 
 ## Why the models are those of the host
 
