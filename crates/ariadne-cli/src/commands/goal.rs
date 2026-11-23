@@ -262,6 +262,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                     &TaskListQuery {
                         goal: Some(id.clone()),
                         status: None,
+                        origin_task_id: None,
                     },
                 )?)
                 .await?;
@@ -538,6 +539,7 @@ async fn goal_tasks(client: &Client, goal_id: &str) -> Vec<TaskDto> {
     let query = TaskListQuery {
         goal: Some(goal_id.to_string()),
         status: None,
+        origin_task_id: None,
     };
     match query_path("/v1/tasks", &query) {
         Ok(path) => client.get_json(&path).await.unwrap_or_default(),

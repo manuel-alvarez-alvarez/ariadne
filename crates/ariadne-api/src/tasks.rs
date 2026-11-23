@@ -48,7 +48,24 @@ pub struct TaskDto {
     pub usage: TaskUsageDto,
     pub created_at: String,
     pub updated_at: String,
+    /// The host the task runs on: `local` for a task on the goal's own
+    /// daemon, else the name of a host (`GET /v1/hosts`).
+    #[serde(default = "local_host")]
+    #[schema(example = "local")]
+    pub host: String,
+    /// True while the host of a far task is not `ready`. The task then keeps
+    /// its last known state. Always false for a `local` task.
+    #[serde(default)]
+    pub host_unreachable: bool,
 }
+
+/// The host of a task that names none: the goal's own daemon.
+fn local_host() -> String {
+    LOCAL_HOST.into()
+}
+
+/// The name of the goal's own daemon as a task's host.
+pub const LOCAL_HOST: &str = "local";
 
 /// What a task cost, by who spent it: one entry per agent that has a session
 /// on the task, and the total of every session on it.
@@ -179,6 +196,17 @@ pub struct CreateTaskRequest {
     /// Task ids this task depends on.
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// The host to run the task on, a `ready` host of `GET /v1/hosts`.
+    /// Omitted or `local` = this daemon. A far task waits here until every
+    /// task it depends on has merged, then goes to the host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "worker")]
+    pub host: Option<String>,
+    /// On a linked goal only: the id of the far task on the goal's daemon
+    /// that this task runs. The goal holds one task for each. A repeated
+    /// create answers `200` with the task the goal already holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_task_id: Option<String>,
 }
 
 /// Partial update; only allowed while the task is pending, ready or failed.
@@ -238,6 +266,10 @@ pub struct TaskListQuery {
     pub goal: Option<String>,
     /// Filter by status.
     pub status: Option<TaskStatus>,
+    /// The task that runs this far task of another daemon (037), in whatever
+    /// goal and status: one task at most.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_task_id: Option<String>,
 }
 
 /// Body of `POST /v1/tasks/{id}/step/complete`: the current column's agent

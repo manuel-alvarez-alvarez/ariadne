@@ -100,6 +100,9 @@ pub struct CompleteGoalRequest {}
 #[serde(deny_unknown_fields)]
 pub struct CreateGoalRequest {
     /// Start an active goal that receives tasks and has no local orchestrator.
+    /// Where an `active` goal linked to the same origin goal exists, the
+    /// answer is `200` with that goal, and `repository_ids` it lacks are
+    /// added to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked: Option<LinkedGoalDto>,
     /// The workflow every task of the goal runs on, a name of the catalog

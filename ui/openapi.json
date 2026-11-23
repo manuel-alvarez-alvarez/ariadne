@@ -711,6 +711,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "the oldest active goal linked to the same origin goal, with the repositories added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDto"
+                }
+              }
+            }
+          },
           "201": {
             "content": {
               "application/json": {
@@ -723,6 +733,9 @@
           "400": {},
           "404": {
             "description": "no such repository or workflow"
+          },
+          "409": {
+            "description": "every goal linked to the same origin goal has ended"
           }
         }
       }
@@ -756,6 +769,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "the task the linked goal already holds for `origin_task_id`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
           "201": {
             "content": {
               "application/json": {
@@ -766,7 +789,10 @@
             }
           },
           "400": {},
-          "409": {}
+          "409": {},
+          "502": {
+            "description": "the host of a far task did not answer"
+          }
         }
       }
     },
@@ -4964,6 +4990,18 @@
                 }
               ]
             }
+          },
+          {
+            "name": "origin_task_id",
+            "in": "query",
+            "description": "The task that runs this far task of another daemon (037), in whatever\ngoal and status: one task at most.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -6800,7 +6838,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/LinkedGoalDto",
-                "description": "Start an active goal that receives tasks and has no local orchestrator."
+                "description": "Start an active goal that receives tasks and has no local orchestrator.\nWhere an `active` goal linked to the same origin goal exists, the\nanswer is `200` with that goal, and `repository_ids` it lacks are\nadded to it."
               },
               {
                 "type": "null"
@@ -6961,6 +6999,21 @@
           },
           "description": {
             "type": "string"
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The host to run the task on, a `ready` host of `GET /v1/hosts`.\nOmitted or `local` = this daemon. A far task waits here until every\ntask it depends on has merged, then goes to the host.",
+            "example": "worker"
+          },
+          "origin_task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "On a linked goal only: the id of the far task on the goal's daemon\nthat this task runs. The goal holds one task for each. A repeated\ncreate answers `200` with the task the goal already holds."
           },
           "repo_id": {
             "type": [
@@ -10950,6 +11003,15 @@
           },
           "goal_id": {
             "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "The host the task runs on: `local` for a task on the goal's own\ndaemon, else the name of a host (`GET /v1/hosts`).",
+            "example": "local"
+          },
+          "host_unreachable": {
+            "type": "boolean",
+            "description": "True while the host of a far task is not `ready`. The task then keeps\nits last known state. Always false for a `local` task."
           },
           "id": {
             "type": "string"

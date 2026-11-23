@@ -3591,6 +3591,19 @@ export interface components {
             depends_on?: string[];
             description?: string;
             /**
+             * @description The host to run the task on, a `ready` host of `GET /v1/hosts`.
+             *     Omitted or `local` = this daemon. A far task waits here until every
+             *     task it depends on has merged, then goes to the host.
+             * @example worker
+             */
+            host?: string | null;
+            /**
+             * @description On a linked goal only: the id of the far task on the goal's daemon
+             *     that this task runs. The goal holds one task for each. A repeated
+             *     create answers `200` with the task the goal already holds.
+             */
+            origin_task_id?: string | null;
+            /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
              */
@@ -5146,6 +5159,17 @@ export interface components {
             depends_on: string[];
             description: string;
             goal_id: string;
+            /**
+             * @description The host the task runs on: `local` for a task on the goal's own
+             *     daemon, else the name of a host (`GET /v1/hosts`).
+             * @example local
+             */
+            host?: string;
+            /**
+             * @description True while the host of a far task is not `ready`. The task then keeps
+             *     its last known state. Always false for a `local` task.
+             */
+            host_unreachable?: boolean;
             id: string;
             /** @description The commit the task landed as, where its last column reported one. */
             merge_commit?: string | null;
@@ -6006,6 +6030,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description the oldest active goal linked to the same origin goal, with the repositories added */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalDto"];
+                };
+            };
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -6022,6 +6055,13 @@ export interface operations {
             };
             /** @description no such repository or workflow */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description every goal linked to the same origin goal has ended */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6045,6 +6085,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description the task the linked goal already holds for `origin_task_id` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -6060,6 +6109,13 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the host of a far task did not answer */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8755,6 +8811,11 @@ export interface operations {
                 goal?: string | null;
                 /** @description Filter by status. */
                 status?: components["schemas"]["TaskStatus"] | null;
+                /**
+                 * @description The task that runs this far task of another daemon (037), in whatever
+                 *     goal and status: one task at most.
+                 */
+                origin_task_id?: string | null;
             };
             header?: never;
             path?: never;

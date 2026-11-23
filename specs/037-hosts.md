@@ -17,6 +17,7 @@ tests:
   - crates/ariadne-daemon/tests/it/host_reconnect.rs
   - crates/ariadne-daemon/tests/it/learned_permissions.rs
   - crates/ariadne-daemon/tests/it/host_queries.rs
+  - crates/ariadne-daemon/tests/it/far_tasks.rs
   - crates/ariadne-cli/tests/hosts.rs
   - crates/ariadne-cli/src/commands/events.rs
   - crates/ariadne-cli/src/commands/query.rs
@@ -639,6 +640,100 @@ picker, the Hosts screen and one stream per host — is spec
     Stored operations without the new fields gain titles and groups when read.
 89. `host inspect`, `host review`, and `host setup-status` print items under "Ariadne installs", "Already present", and "Manual".
     Each manual item prints its reason and its command. `--format json` prints the DTO.
+
+### Far tasks
+
+95. `POST /v1/goals/{id}/tasks` with a `host` other than `local` (001 rule 17) checks the host
+    before it creates the far task:
+    - An unknown host answers `400`, and the message names it as unknown.
+    - A host that is not `ready` answers `409`, and the message names the host status.
+    - A host with no checkout of the task's repository by rule 26 answers `409`. The message
+      names the repository by its forge name or folder, the host, and the setup step that
+      adds the repository: `repository:<id>` of `ariadne host setup <host>` (rule 63).
+    - A model that the host's `GET /v1/models` does not list answers `400`. The message
+      names the model and the host. The local catalog does not decide the models of a far task.
+    - A model that the host lists with `enabled` false answers `400` for the orchestrator,
+      and the message names the model and the host. It stays the user's choice (011 rule 19):
+      a request with no session header takes it.
+    - A host that does not answer these reads answers `502`.
+96. The goal's daemon keeps each far task in its own task list. The store keeps its host, the
+    id of the linked goal on the host and the id of the task on the host. The goal's daemon
+    never starts an agent for a far task.
+97. A far task is free to start when it is `pending`, it has not gone to its host, its goal is
+    `active`, and every task in its `depends_on` has merged (001 rule 19). Then the goal's
+    daemon sends it to its host. A send whose answer was lost makes no second goal or task
+    when it is sent again (001 rules 14 and 15):
+    - `GET /v1/tasks?origin_task_id=<id>` asks first what the host made of the far task, in
+      whatever goal and status. A task found is recorded, with the goal it is in, and the
+      send ends.
+    - `POST /v1/goals` with `linked: { origin_goal_id }`, the goal's workflow, title,
+      description and issue URL, and the host's id of each goal repository that the host has,
+      the task's own first. The model is the one of the task's first agent. The host has one
+      linked goal for the goal, and a repository set up on the host since the first send
+      joins it.
+    - `POST /v1/goals/{id}/tasks` in that linked goal, with no session header, the host's
+      repository id, the same title, description and agents, no `depends_on`, and the far
+      task's own id as `origin_task_id`. The goal's daemon records the task the host
+      answers, with the goal it is in.
+    - A refusal of the host fails the far task with the reason
+      `host <name> refused the task: <message>`. A linked goal that ended on the host is
+      such a refusal, also when it ends between the two creates (001 rules 14 and 15). A host that does not answer gets the task again after
+      `far_retry`.
+    - Each of these requests runs only while the host stays in the `ready` the send started
+      in. A host that leaves it ends the send at once: the request is dropped, nothing that
+      it answers is written, and the far task is not failed. The send starts again on the
+      host's next `ready`.
+98. The goal's daemon follows `GET /v1/events/stream` of each `ready` host. Each
+    `task_updated` of a far task writes its status, step, branch, request URL and merge
+    commit on the far task. A changed status writes a transition by the daemon, with the
+    host's reason. A far task that the host reports `finished` has merged. A far task whose
+    state is final here is never written: one that is `finished` or `cancelled`, and one whose
+    goal is over (001 rules 3 and 4).
+99. When the host leaves `ready`, each far task on it keeps its last known state, and
+    `host_unreachable` is true, whatever the status of its goal. A send, a read or the open
+    of the event stream under way does not hold this back: each call to the host runs only
+    while the host stays in its `ready` (rules 97 and 100). Each call waits `far_call` at most
+    for the headers of its answer. A lost event stream of a
+    `ready` host is the same, and the goal's daemon opens the stream again after `far_retry`.
+100. On the next `ready`, the goal's daemon opens the event stream of the host. Then it reads
+    again each far task that went to the host, whatever its state and its goal
+    (`GET /v1/tasks/{id}` on the host), and sets `host_unreachable` to false on each far task
+    of the host. A far task whose state is final keeps it (rule 98). A host that leaves
+    `ready` and comes back at the same endpoint while the daemon still works on an earlier
+    answer of it counts as a next `ready` too. An answer that arrives after the host left
+    `ready` writes nothing, and clears no `host_unreachable`.
+
+## Acceptance criteria
+
+- Rule 95: `far_tasks.rs::a_far_task_is_refused_on_a_host_that_is_unknown_or_not_ready`,
+  `::a_far_task_is_refused_on_a_host_that_lacks_its_repository`,
+  `::a_far_task_is_refused_a_model_its_host_does_not_list` and
+  `::a_model_its_host_turned_off_is_the_users_choice_alone`.
+- Rules 96 and 97: `far_tasks.rs::one_linked_goal_on_a_host_takes_every_far_task_of_a_goal`
+  proves that nothing goes to the host while the goal plans, and that two far tasks share one
+  linked goal on the host's repository. `::a_far_task_waits_until_its_dependencies_merge_on_any_host`
+  proves the wait for a far and a local dependency.
+  `::a_lost_answer_of_the_host_makes_no_second_goal_or_task` proves the repeated send,
+  `::a_task_the_host_made_is_found_again_after_its_linked_goal_ended` proves the question
+  first, and `::a_repository_set_up_later_joins_the_same_linked_goal` proves the repository
+  that joins. `::a_lost_goal_answer_after_its_goal_ended_fails_the_far_task` proves the refusal
+  of an ended linked goal, and `::a_linked_goal_that_ends_between_the_two_creates_fails_the_far_task`
+  proves the goal that ends between the creates. `::a_send_under_way_when_the_host_leaves_writes_nothing`
+  proves the send that the host leaves, and the flag that does not wait for it.
+  `::a_stream_that_opens_when_the_host_leaves_does_not_hold_the_flag` proves the same for the open
+  of the event stream.
+- Rule 98: `far_tasks.rs::a_far_task_mirrors_the_state_its_host_reports` proves the column,
+  branch, request URL, merge commit and status.
+  `::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports` proves the final state,
+  live and on the read after a return.
+- Rules 99 and 100: `far_tasks.rs::a_far_task_keeps_its_state_while_its_host_is_away` proves the
+  kept state, `host_unreachable`, and the read on the next `ready`.
+  `::a_far_task_of_a_completed_goal_is_unreachable_while_its_host_is_away` proves the flag on a
+  goal that is over, the read of its final task and the kept state.
+  `::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports` proves the read of a
+  cancelled task. `::a_host_back_at_the_same_endpoint_is_read_again_while_its_worker_is_busy`
+  proves the return at the same endpoint, and
+  `::a_read_that_answers_after_the_host_left_writes_nothing` proves the late answer.
 
 ### Discovery by the orchestrator
 

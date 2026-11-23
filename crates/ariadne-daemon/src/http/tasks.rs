@@ -28,6 +28,103 @@ fn check_dependencies(goal: &Goal, depends_on: &[String]) -> ApiResult<()> {
     Ok(())
 }
 
+/// Refuse a far task that its host cannot run (037): a host that is unknown
+/// or not `ready`, a repository that the host lacks, or a model that the
+/// host's `GET /v1/models` does not list. Where `staffed`, the orchestrator
+/// staffs the task, and a model that the host turned off is refused too.
+async fn check_host(
+    state: &AppState,
+    host: &str,
+    repo: &ariadne_store::Repository,
+    agents: &[AgentAssignment],
+    staffed: bool,
+) -> ApiResult<()> {
+    let Some(dto) = state.hosts.list().into_iter().find(|h| h.name == host) else {
+        return Err(ApiError::bad_request(format!(
+            "unknown host {host}; `GET /v1/hosts` lists the hosts"
+        )));
+    };
+    let endpoint = match (dto.status, crate::hosts::ready_endpoint(&dto)) {
+        (ariadne_api::hosts::HostStatus::Ready, Some(endpoint)) => endpoint,
+        (status, _) => {
+            return Err(ApiError::conflict(format!(
+                "host {host} is {}; a far task needs a ready host",
+                format!("{status:?}").to_lowercase()
+            )));
+        }
+    };
+    let client = crate::hosts::client_for(&endpoint);
+    let unanswered = |error: ariadne_client::ClientError| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "host_unreachable",
+            format!("host {host} did not answer: {error}"),
+        )
+    };
+    let local = state
+        .store
+        .list_repositories()
+        .await?
+        .into_iter()
+        .map(super::convert::repository_dto)
+        .collect();
+    let paired = crate::hosts::host_repositories(local, &client)
+        .await
+        .map_err(unanswered)?;
+    if !paired.contains_key(&repo.id) {
+        return Err(ApiError::conflict(crate::far::lacks_repository(host, repo)));
+    }
+    let models: Vec<ariadne_api::models::ModelDto> =
+        client.get_json("/v1/models").await.map_err(unanswered)?;
+    for agent in agents {
+        match models.iter().find(|model| model.id == agent.model) {
+            None => {
+                return Err(ApiError::bad_request(format!(
+                    "host {host} does not list the model {}; staff the task on a model of \
+                     `GET /v1/models` on that host",
+                    agent.model
+                )));
+            }
+            // A model the host turned off is the user's choice alone (011
+            // rule 19): automatic staffing applies the host's switch.
+            Some(model) if staffed && !model.enabled => {
+                return Err(ApiError::bad_request(format!(
+                    "host {host} has the model {} turned off; staff the task on a model that \
+                     is on there, or turn it back on first",
+                    agent.model
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// The agents of a far task, pinned as the request names them. The host's
+/// catalog, not this daemon's, decides which models a far task can run on
+/// ([`check_host`]), and the host checks each pin again when it gets the task.
+fn far_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
+    assignments
+        .iter()
+        .map(|assignment| {
+            let model: ariadne_core::models::ModelRef =
+                assignment.model.parse().map_err(ApiError::bad_request)?;
+            Ok(NewTaskAgent {
+                step: assignment.step.clone(),
+                skills: assignment.skills.clone(),
+                pin: ariadne_store::AgentPin {
+                    model: model.to_string(),
+                    effort: assignment
+                        .effort
+                        .clone()
+                        .filter(|effort| !["", "default"].contains(&effort.as_str())),
+                },
+                brief: assignment.brief.clone(),
+            })
+        })
+        .collect()
+}
+
 /// The agents an assignment list asks for, in the order it names them.
 ///
 /// An agent has nothing behind it to fall back to: every assignment names its
@@ -69,7 +166,11 @@ pub(super) async fn resolve_agents(
 #[utoipa::path(post, path = "/v1/goals/{goal_id}/tasks", tag = "tasks",
     request_body = CreateTaskRequest,
     params(("goal_id" = String, Path, description = "goal id")),
-    responses((status = 201, body = TaskDto), (status = 400), (status = 409)))]
+    responses((status = 201, body = TaskDto),
+        (status = 200, body = TaskDto,
+            description = "the task the linked goal already holds for `origin_task_id`"),
+        (status = 400), (status = 409),
+        (status = 502, description = "the host of a far task did not answer")))]
 pub(super) async fn create(
     State(state): State<AppState>,
     Path(goal_id): Path<String>,
@@ -90,6 +191,23 @@ pub(super) async fn create(
 
     let goal = state.store.get_goal(&goal_id).await?;
     check_dependencies(&goal, &req.depends_on)?;
+    if req.origin_task_id.is_some() && goal.origin_goal_id.is_none() {
+        return Err(ApiError::bad_request(
+            "origin_task_id names the task of a linked goal; this goal is not linked",
+        ));
+    }
+    // A far task of a linked goal would lose its replay key (037).
+    if req.origin_task_id.is_some()
+        && req
+            .host
+            .as_deref()
+            .is_some_and(|host| host != ariadne_api::tasks::LOCAL_HOST)
+    {
+        return Err(ApiError::bad_request(
+            "origin_task_id and a host other than local cannot go together: the task of a \
+             linked goal runs on this daemon",
+        ));
+    }
     let repos = state.store.list_goal_repositories(&goal.id).await?;
     let repo_id = match &req.repo_id {
         Some(id) => {
@@ -108,24 +226,44 @@ pub(super) async fn create(
         }
     };
 
-    let agents = resolve_agents(&state, &req.agents, ctx.actor == Actor::User).await?;
+    // `local` names the goal's own daemon, as an omitted host does.
+    let host = req
+        .host
+        .filter(|host| host != ariadne_api::tasks::LOCAL_HOST);
+    let agents = match &host {
+        Some(host) => {
+            let repo = state.store.get_repository(&repo_id).await?;
+            check_host(&state, host, &repo, &req.agents, ctx.actor != Actor::User).await?;
+            far_agents(&req.agents)?
+        }
+        None => resolve_agents(&state, &req.agents, ctx.actor == Actor::User).await?,
+    };
 
-    let task = state
-        .store
-        .create_task(NewTask {
-            goal_id: goal.id,
-            repo_id,
-            title: req.title,
-            description: req.description,
-            agents,
-            depends_on: req.depends_on,
-        })
-        .await?;
-    if goal.origin_goal_id.is_some() {
+    let new = NewTask {
+        goal_id: goal.id,
+        repo_id,
+        title: req.title,
+        description: req.description,
+        agents,
+        depends_on: req.depends_on,
+    };
+    let (task, created) = match (&host, &req.origin_task_id) {
+        (Some(host), _) => (state.store.create_far_task(new, host).await?, true),
+        // The task the goal holds for the origin task answers a repeated
+        // create, so a lost answer makes no second task (037).
+        (None, Some(origin)) => state.store.create_linked_task(new, origin).await?,
+        (None, None) => (state.store.create_task(new).await?, true),
+    };
+    if created && goal.origin_goal_id.is_some() {
         state.notify_scheduler(&task.id);
     }
     let dto = task_dto_of(&state.store, task).await?;
-    Ok((StatusCode::CREATED, Json(dto)))
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(dto)))
 }
 
 /// List tasks.
@@ -136,13 +274,27 @@ pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<TaskListQuery>,
 ) -> ApiResult<Json<Vec<TaskDto>>> {
-    let tasks = state
-        .store
-        .list_tasks(TaskFilter {
-            goal_id: q.goal,
-            status: q.status,
-        })
-        .await?;
+    let mut tasks = match &q.origin_task_id {
+        Some(origin) => state
+            .store
+            .linked_task_of(origin)
+            .await?
+            .into_iter()
+            .collect(),
+        None => {
+            state
+                .store
+                .list_tasks(TaskFilter {
+                    goal_id: q.goal.clone(),
+                    status: q.status,
+                })
+                .await?
+        }
+    };
+    tasks.retain(|task| {
+        q.goal.as_ref().is_none_or(|goal| &task.goal_id == goal)
+            && q.status.is_none_or(|status| task.status() == status)
+    });
     let mut out = Vec::with_capacity(tasks.len());
     for task in tasks {
         out.push(task_dto_of(&state.store, task).await?);

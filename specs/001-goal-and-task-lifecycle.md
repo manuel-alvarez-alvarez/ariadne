@@ -12,6 +12,8 @@ tests:
   - crates/ariadne-daemon/tests/it/goal_delete.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/linked_goals.rs
+  - crates/ariadne-daemon/tests/it/far_tasks.rs
+  - crates/ariadne-store/tests/far_task_migration.rs
 ---
 
 # Goal and task lifecycle
@@ -43,6 +45,9 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
    `cancelled` when the user cancels it. Cancelling records the reason on
    every task it takes with it. Whether the goal is *met* is a judgement
    about the work, so the daemon never makes it on anybody's behalf.
+   The check of the tasks and the write of `completed` are one write
+   transaction. So a task that a linked goal admits at the same time (rule 15)
+   either comes first and refuses the completion, or comes after and is refused.
 4. A task is `pending`, `ready`, `in_progress`, `finished`, `cancelled` or
    `failed`. `finished` and `cancelled` are terminal; `failed` is retryable.
    A task is `in_progress` from its first column to its last: the column it
@@ -95,11 +100,36 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     `GoalDto.linked` carries the same object, or null for other goals.
     OpenAPI describes the object on the request and the response.
     A linked goal skips planning (003 rule 17).
+    A create whose origin goal has an `active` linked goal answers `200` with the
+    oldest such goal, and adds to it each of `repository_ids` that it lacks. A create
+    whose origin goal has only linked goals that ended answers `409`, names the last
+    one, and makes no goal: an ended linked goal is not replaced. The lookup and the
+    insert are one write transaction, so creates that overlap make one goal. An
+    upgrade keeps every linked goal that an older daemon made, two active ones of
+    one origin goal too.
 15. The origin daemon holds each task until its dependencies merge.
     A linked goal refuses a nonempty `depends_on` list on task creation or edit.
+    `CreateTaskRequest.origin_task_id` names the far task on the origin daemon that the
+    task runs, and only a linked goal takes it. A daemon holds one task for each origin
+    task, in whatever goal and status: a repeated create answers `200` with the task it
+    holds, and starts nothing. A linked goal that is not `active` takes no new task: the
+    create answers `409`. The check is in the write transaction of the insert. `GET /v1/tasks?origin_task_id=<id>` lists that task alone.
+    A create with `origin_task_id` and a `host` other than `local` answers `400`.
 16. A new task branch for a linked goal starts at the fetched remote base.
     The daemon fetches from the repository's forge remote, with `origin` as the default.
     The commit gate and the task diff compare against that fetched base, not the local base branch.
+17. `CreateTaskRequest` takes an optional string `host`. An omitted host or `local` creates
+    a task on the goal's own daemon, as before. Any other name creates a far task on that
+    host (037, rules 95 to 100).
+18. `TaskDto.host` is `local` for a task on the goal's own daemon, else the name of its host.
+    `TaskDto.host_unreachable` is true while the host of a far task is not `ready` (037 rule 99).
+    It is always false for a `local` task. OpenAPI carries both fields and `CreateTaskRequest.host`.
+19. A far task stays `pending` until every task in its `depends_on` has merged, on any host.
+    A far task merges when its host reports it `finished` (037 rule 98). A task that
+    depends on a far task then starts as for any other dependency. A dependency that failed
+    or was cancelled fails a pending far task before it goes to its host, as rule 10 fails
+    any waiting task. A far task cancelled here, or in a goal that rules 3 and 4 ended,
+    keeps that state whatever its host reports (037 rule 98).
 
 ## Acceptance criteria
 
@@ -155,6 +185,36 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
   (`linked_goals.rs::a_linked_task_starts_at_the_fetched_remote_base`).
 - A linked task's diff holds only its own commits after another host advances the base
   (`linked_goals.rs::a_linked_task_compares_its_work_against_the_fetched_remote_base`).
+- Rule 17: a task with no host or with `local` runs on the goal's own daemon
+  (`far_tasks.rs::a_task_without_a_host_runs_on_the_goals_own_daemon`).
+- Rule 18: a far task carries its host and clears `host_unreachable` while its host is
+  `ready` (`far_tasks.rs::a_far_task_mirrors_the_state_its_host_reports`). OpenAPI carries
+  both fields and the request's `host`
+  (`far_tasks.rs::the_openapi_document_carries_the_host_of_a_task`).
+- Rule 19: a far task waits for a far dependency and a local one, and goes to its host
+  once both merged (`far_tasks.rs::a_far_task_waits_until_its_dependencies_merge_on_any_host`).
+  A dependency that failed fails it, and it never goes to its host
+  (`far_tasks.rs::a_far_task_fails_when_a_dependency_ends_unmerged`). A cancellation here holds
+  against the host's updates and its read on return
+  (`far_tasks.rs::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports`).
+- Rules 14 and 15: a repeated create of the linked goal and of its task, after a lost
+  answer, makes no second goal or task
+  (`far_tasks.rs::a_lost_answer_of_the_host_makes_no_second_goal_or_task`), and a repeated
+  create of the goal adds the repository it lacks
+  (`far_tasks.rs::a_repository_set_up_later_joins_the_same_linked_goal`). The task is found
+  again after its linked goal ended
+  (`far_tasks.rs::a_task_the_host_made_is_found_again_after_its_linked_goal_ended`). A host
+  beside an origin task is refused
+  (`far_tasks.rs::a_linked_task_takes_no_host_beside_its_origin_task`). Creates that overlap
+  make one goal (`far_tasks.rs::linked_goal_creates_at_once_make_one_goal`). An ended linked
+  goal is not replaced (`far_tasks.rs::a_linked_goal_that_ended_takes_no_more_tasks`), and takes
+  no new task while it keeps its own
+  (`far_tasks.rs::a_linked_goal_that_ended_takes_no_new_task_and_keeps_its_own`).
+- Rules 3 and 15, the two orders: a task admitted first refuses the completion and names the
+  task (`far_tasks.rs::a_linked_goal_with_an_admitted_task_cannot_complete`), and a completion
+  first refuses the task (`::a_linked_goal_that_ended_takes_no_new_task_and_keeps_its_own`). An
+  upgrade keeps two active linked goals of one origin goal, and a create answers the oldest
+  (`crates/ariadne-store/tests/far_task_migration.rs::an_upgrade_keeps_two_active_linked_goals_of_one_origin`).
 
 ## Sources
 

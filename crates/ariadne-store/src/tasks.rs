@@ -374,7 +374,59 @@ impl Store {
     /// what the orchestrator settles with the user before it writes any of
     /// them (003), and a number the store enforced afterwards could only
     /// refuse a plan they had already agreed.
-    pub async fn create_task(&self, mut new: NewTask) -> Result<Task> {
+    pub async fn create_task(&self, new: NewTask) -> Result<Task> {
+        self.create_task_on(new, None, None).await
+    }
+
+    /// Create a far task: a task that runs on `host`, not on this daemon
+    /// (037). It is stored as [`Store::create_task`] stores a task, with the
+    /// name of its host.
+    pub async fn create_far_task(&self, new: NewTask, host: &str) -> Result<Task> {
+        self.create_task_on(new, Some(host), None).await
+    }
+
+    /// Create the task of a linked goal that runs the far task
+    /// `origin_task_id` of the goal's daemon (037). The daemon holds one task
+    /// for each origin task, in whatever goal and status: a repeated create
+    /// answers the task it already holds, and `false`. A linked goal that is
+    /// not `active` takes no new task: the create is a conflict.
+    pub async fn create_linked_task(
+        &self,
+        new: NewTask,
+        origin_task_id: &str,
+    ) -> Result<(Task, bool)> {
+        if let Some(task) = self.linked_task_of(origin_task_id).await? {
+            return Ok((task, false));
+        }
+        match self.create_task_on(new, None, Some(origin_task_id)).await {
+            Ok(task) => Ok((task, true)),
+            // Two creates raced: the other one holds the task.
+            Err(StoreError::Db(sqlx::Error::Database(db))) if db.is_unique_violation() => self
+                .linked_task_of(origin_task_id)
+                .await?
+                .map(|task| (task, false))
+                .ok_or_else(|| not_found("task", origin_task_id)),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The task that runs the far task `origin_task_id` of another daemon,
+    /// in whatever goal and status (037).
+    pub async fn linked_task_of(&self, origin_task_id: &str) -> Result<Option<Task>> {
+        Ok(
+            sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE origin_task_id = ?")
+                .bind(origin_task_id)
+                .fetch_optional(self.r())
+                .await?,
+        )
+    }
+
+    async fn create_task_on(
+        &self,
+        mut new: NewTask,
+        host: Option<&str>,
+        origin_task_id: Option<&str>,
+    ) -> Result<Task> {
         let goal = self.get_goal(&new.goal_id).await?;
         self.check_workflow_staffing(&goal, &mut new.agents).await?;
         let repo = self.get_repository(&new.repo_id).await?;
@@ -395,10 +447,25 @@ impl Store {
         let branch = branch_name(&new.title, &id);
 
         let mut tx = self.w().begin().await?;
+        // A linked goal that ended takes no new task: checked in the write
+        // transaction, so a goal that ends at the same time cannot let one in.
+        // A repeated create of a task it holds is answered before this.
+        if origin_task_id.is_some() {
+            let status: String = sqlx::query_scalar("SELECT status FROM goals WHERE id = ?")
+                .bind(&goal.id)
+                .fetch_one(&mut *tx)
+                .await?;
+            if status != GoalStatus::Active.as_str() {
+                return Err(StoreError::Conflict(format!(
+                    "the linked goal {} is {status}; it takes no more tasks",
+                    goal.id
+                )));
+            }
+        }
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
-                                created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+                                created_at, updated_at, host, origin_task_id)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -408,6 +475,8 @@ impl Store {
         .bind(&branch)
         .bind(&ts)
         .bind(&ts)
+        .bind(host)
+        .bind(origin_task_id)
         .execute(&mut *tx)
         .await?;
 

@@ -578,6 +578,11 @@ mod tests {
             pr_url: None,
             created_at: String::new(),
             updated_at: String::new(),
+            host: None,
+            far_goal_id: None,
+            far_task_id: None,
+            host_unreachable: 0,
+            origin_task_id: None,
         }
     }
 

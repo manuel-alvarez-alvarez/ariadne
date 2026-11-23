@@ -251,6 +251,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     does not list it. The reviewer seat calls it on a thread its own review
     opened, and the daemon refuses any other comment (026 rule 15, 029
     rule 11). The user sees the thread in Needs attention (031 rule 17).
+17. `create_task` takes an optional `host`: the `name` of a `ready` host. The tool
+    sends it as `CreateTaskRequest.host` (001 rule 17). A call with no `host` sends
+    none, so the task runs on the goal's own daemon. The daemon refuses a host that
+    cannot run the task (037 rule 95), and the tool gives that refusal.
 
 ## Acceptance criteria
 
@@ -426,6 +430,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`).
 - Seat lists include readiness for agents and keepers alone:
   `mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`.
+- Rule 17: `create_task` offers `host`, sends the host it is given, and sends none
+  where it is given none
+  (`tools.rs::a_created_task_passes_its_host_to_the_daemon`).
 
 ## Sources
 

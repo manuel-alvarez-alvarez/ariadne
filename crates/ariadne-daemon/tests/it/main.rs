@@ -28,6 +28,7 @@ mod docs;
 mod doctor;
 mod events;
 mod failure_diagnosis;
+mod far_tasks;
 mod forge_host_limit;
 mod forge_integration;
 mod forge_rate_limit;

@@ -49,11 +49,24 @@ fn goal_workflow(requested: Option<String>, repositories: &[Repository]) -> Resu
 
 impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
-        self.create_goal_as(new, None, None).await
+        Ok(self.create_goal_as(new, None, None).await?.0)
     }
 
-    /// Create an active goal that receives tasks from another daemon.
-    pub async fn create_linked_goal(&self, new: NewGoal, origin_goal_id: &str) -> Result<Goal> {
+    /// The linked goal of `origin_goal_id`, a goal of another daemon (037),
+    /// made where none exists. Answers whether it was made. The lookup and
+    /// the insert are one write transaction on the one writer, so two creates
+    /// for one origin goal make one goal.
+    ///
+    /// The oldest `active` linked goal of the origin goal answers, with each
+    /// of `new.repository_ids` it lacks added: a database from before may
+    /// hold two of them. A linked goal that has ended is not replaced: where
+    /// every linked goal of the origin goal has ended, the create is a
+    /// conflict that names the last one.
+    pub async fn create_linked_goal(
+        &self,
+        new: NewGoal,
+        origin_goal_id: &str,
+    ) -> Result<(Goal, bool)> {
         self.create_goal_as(new, None, Some(origin_goal_id)).await
     }
 
@@ -61,7 +74,7 @@ impl Store {
     /// no orchestrator, on the workflow that operation reads. A conflict
     /// means the request already has an open goal for the operation.
     pub(crate) async fn create_pr_goal(&self, new: NewGoal, pr: NewPrGoal) -> Result<Goal> {
-        self.create_goal_as(new, Some(pr), None).await
+        Ok(self.create_goal_as(new, Some(pr), None).await?.0)
     }
 
     async fn create_goal_as(
@@ -69,7 +82,7 @@ impl Store {
         new: NewGoal,
         pr: Option<NewPrGoal>,
         origin_goal_id: Option<&str>,
-    ) -> Result<Goal> {
+    ) -> Result<(Goal, bool)> {
         if new.repository_ids.is_empty() {
             return Err(StoreError::Invalid("a goal needs at least one repo".into()));
         }
@@ -116,6 +129,41 @@ impl Store {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| not_found("workflow", &workflow_name))?;
+        if let Some(origin) = origin_goal_id {
+            let linked: Vec<Goal> =
+                sqlx::query_as("SELECT * FROM goals WHERE origin_goal_id = ? ORDER BY id")
+                    .bind(origin)
+                    .fetch_all(&mut *tx)
+                    .await?;
+            if let Some(open) = linked
+                .iter()
+                .find(|goal| goal.status() == GoalStatus::Active)
+            {
+                let mut added = 0;
+                for repository_id in &repository_ids {
+                    added += sqlx::query(
+                        "INSERT OR IGNORE INTO goal_repositories (goal_id, repository_id)
+                         VALUES (?, ?)",
+                    )
+                    .bind(&open.id)
+                    .bind(repository_id)
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+                }
+                tx.commit().await?;
+                if added > 0 {
+                    self.publish_goal_update(&open.id).await?;
+                }
+                return Ok((self.get_goal(&open.id).await?, false));
+            }
+            if let Some(ended) = linked.last() {
+                return Err(StoreError::Conflict(format!(
+                    "the linked goal {} of origin goal {origin} is {}; it takes no more tasks",
+                    ended.id, ended.status
+                )));
+            }
+        }
         let steps = ariadne_core::workflow::parse(workflow.document_text())
             .map_err(|e| StoreError::Invalid(e.to_string()))?
             .steps;
@@ -174,7 +222,7 @@ impl Store {
         tx.commit().await?;
         let goal = self.get_goal(&id).await?;
         self.publish(Change::GoalCreated(goal.clone()));
-        Ok(goal)
+        Ok((goal, true))
     }
 
     /// The columns of a goal's workflow as they were when the goal was
@@ -220,6 +268,50 @@ impl Store {
         let _goal: Goal = Self::fetch_by_in_tx(&mut tx, "goal", "goals", id).await?;
         sqlx::query("UPDATE goals SET status = ?, updated_at = ? WHERE id = ?")
             .bind(status.as_str())
+            .bind(now())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let goal = self.get_goal(id).await?;
+        self.publish(Change::GoalUpdated(goal.clone()));
+        Ok(goal)
+    }
+
+    /// Complete an `active` goal whose every task is `finished` or
+    /// `cancelled` (001 rule 3). The check of the tasks and the write are one
+    /// write transaction on the one writer, so a task that a linked goal
+    /// admits at the same time (037) either comes first and refuses the
+    /// completion, or comes after and is refused itself.
+    pub async fn complete_goal(&self, id: &str) -> Result<Goal> {
+        let mut tx = self.w().begin().await?;
+        let goal: Goal = Self::fetch_by_in_tx(&mut tx, "goal", "goals", id).await?;
+        if goal.status() != GoalStatus::Active {
+            return Err(StoreError::Conflict(format!(
+                "goal is {}, expected active",
+                goal.status
+            )));
+        }
+        let unfinished: Vec<(String, String)> = sqlx::query_as(
+            "SELECT title, status FROM tasks
+             WHERE goal_id = ? AND status NOT IN ('finished', 'cancelled')
+             ORDER BY id",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !unfinished.is_empty() {
+            let named: Vec<String> = unfinished
+                .iter()
+                .map(|(title, status)| format!("{title} ({status})"))
+                .collect();
+            return Err(StoreError::Conflict(format!(
+                "the goal still has unfinished tasks: {}",
+                named.join(", ")
+            )));
+        }
+        sqlx::query("UPDATE goals SET status = ?, updated_at = ? WHERE id = ?")
+            .bind(GoalStatus::Completed.as_str())
             .bind(now())
             .bind(id)
             .execute(&mut *tx)
