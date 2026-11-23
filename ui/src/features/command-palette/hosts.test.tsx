@@ -172,3 +172,43 @@ it("copies the attach command of a local task with no host flag", async () => {
   await waitFor(() => expect(copied).toHaveBeenCalled())
   expect(copied.mock.calls[0]?.[0].text).toBe(`ariadne attach ${MINE.id}`)
 })
+
+it("shows a source projection and worker response as one task", async () => {
+  const user = userEvent.setup()
+  const task = aTask({
+    id: "remote-task",
+    goal_id: GOAL.id,
+    title: "Unique remote task",
+    execution_context: {
+      source_goal: { daemon_id: "source", goal_id: GOAL.id, title: GOAL.title, description: "" },
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  stubHosts({
+    local: {
+      ...EMPTY,
+      "/v1/goals": [GOAL],
+      "/v1/tasks": [task],
+      "/v1/sessions": aSessionPage([]),
+      "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "source" },
+    },
+    box: {
+      ...EMPTY,
+      "/v1/goals": [],
+      "/v1/tasks": [task],
+      "/v1/sessions": aSessionPage([]),
+      "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "worker" },
+    },
+  })
+  const { location } = renderScreen(<CommandPalette open {...handlers} />, { route: "/goals" })
+  await user.type(screen.getByRole("combobox"), "Unique remote task")
+  await waitFor(() =>
+    expect(screen.getAllByRole("option", { name: /^Unique remote task/ })).toHaveLength(1),
+  )
+  await user.click(screen.getByRole("option", { name: /^Unique remote task/ }))
+  expect(location.url).toBe(`/goals?task=${task.id}`)
+})

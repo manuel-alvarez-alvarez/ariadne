@@ -65,6 +65,7 @@ import { SeatSummary } from "@/features/models/agent-summary"
 import { ModelPin } from "@/features/models/model-pin"
 import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskQueryOptions } from "@/features/tasks/queries"
+import { useSourceHost } from "@/features/tasks/source-host"
 import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
@@ -106,9 +107,16 @@ export function SessionPanelHeader({
   /** Where to go once a switch creates a successor session. */
   onSwitched?: (session: SessionDto) => void
 }) {
+  const task = useQuery({
+    ...taskQueryOptions(host, session.task_id ?? ""),
+    enabled: Boolean(session.task_id),
+  })
   const goal = useQuery({
     ...goalQueryOptions(host, session.goal_id ?? ""),
-    enabled: Boolean(session.goal_id),
+    enabled:
+      Boolean(session.goal_id) &&
+      (!session.task_id || !!task.data || task.isError) &&
+      !task.data?.execution_context,
   })
   const attention = shownAttention(session)
   const showHost = usePanelShowsHost()
@@ -186,14 +194,18 @@ export function SessionDetailView({
    */
   context?: "goal" | "task"
 }) {
-  const goal = useQuery({
-    ...goalQueryOptions(host, session.goal_id ?? ""),
-    enabled: Boolean(session.goal_id),
-  })
   const task = useQuery({
     ...taskQueryOptions(host, session.task_id ?? ""),
     enabled: Boolean(session.task_id),
   })
+  const goal = useQuery({
+    ...goalQueryOptions(host, session.goal_id ?? ""),
+    enabled:
+      Boolean(session.goal_id) &&
+      (!session.task_id || !!task.data || task.isError) &&
+      !task.data?.execution_context,
+  })
+  const sourceHost = useSourceHost(task.data?.execution_context?.source_goal.daemon_id)
   const taskTo = useTaskPanelTo(session.task_id ?? "", host)
   const switchedFromTo = usePanelSessionTo(session.switched_from ?? "")
   const [search, setSearch] = useSearchParams()
@@ -250,12 +262,21 @@ export function SessionDetailView({
           <FactList dense>
             {context === "goal" || !session.goal_id ? null : (
               <Fact label="Goal">
-                <Link
-                  to={paths.goal(session.goal_id, host)}
-                  className="block truncate hover:underline"
-                >
-                  {goal.data?.title ?? <Mono>{session.goal_id}</Mono>}
-                </Link>
+                {task.data?.execution_context && !sourceHost ? (
+                  <span>
+                    {task.data.execution_context.source_goal.title} (source{" "}
+                    {task.data.execution_context.source_goal.daemon_id} unavailable)
+                  </span>
+                ) : (
+                  <Link
+                    to={paths.goal(session.goal_id, sourceHost ?? host)}
+                    className="block truncate hover:underline"
+                  >
+                    {task.data?.execution_context?.source_goal.title ?? goal.data?.title ?? (
+                      <Mono>{session.goal_id}</Mono>
+                    )}
+                  </Link>
+                )}
               </Fact>
             )}
             {context === "task" || !session.task_id ? null : (

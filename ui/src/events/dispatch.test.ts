@@ -617,3 +617,21 @@ describe("hosts", () => {
     expect(queryClient.getQueryData(qk.hosts.list())).toEqual([LOCAL, BOX])
   })
 })
+
+it("refreshes the source goal usage when a remote task changes", () => {
+  const client = new QueryClient()
+  client.setQueryData(qk.goals.detail("local", GOAL.id), GOAL)
+  const task = aTask({
+    goal_id: GOAL.id,
+    execution_context: {
+      source_goal: { daemon_id: "source", goal_id: GOAL.id, title: GOAL.title, description: "" },
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  dispatch(client, { event: "task_updated", data: { task, transition: null } })
+  expect(stale(client, qk.goals.detail("local", GOAL.id))).toBe(true)
+})

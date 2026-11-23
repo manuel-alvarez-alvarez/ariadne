@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-22
+updated: 2026-11-23
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1059,6 +1059,20 @@ Out: the daemon endpoints themselves (012).
     read to assistive technology), never colour alone, and the current node
     carries `aria-current="step"`. There is no author or reviewer fact. The
     history names a step move by its `from_step` and `to_step` columns.
+40a. A remote task panel uses its saved source title and workflow when no
+    worker goal exists. A host that cannot be reached marks progress as
+    potentially stale (`ui/src/features/tasks/task-panel.test.tsx::shows the saved source and workflow when the worker has no goal`,
+    `ui/src/features/tasks/task-card.test.tsx::shows the colored remote host and its unreachable state`,
+    `ui/src/features/goals/goal-swimlanes.test.tsx::shows the execution host of a projected task in its source lane`,
+    `ui/src/features/command-palette/hosts.test.tsx::shows a source projection and worker response as one task`).
+    Source navigation matches daemon identities to configured hosts. Worker
+    drafts use their saved workflow. Remote cancellation waits for the daemon
+    (`ui/src/features/tasks/hosts.test.tsx::opens the source goal from a worker task through the matching daemon identity`,
+    `::edits a worker draft using its saved workflow without a goal`,
+    `ui/src/features/sessions/hosts.test.tsx::links a worker session to its source goal without reading a worker goal`,
+    `ui/src/features/tasks/task-panel.test.tsx::keeps remote task progress while cancellation is pending`,
+    `ui/src/features/sessions/hosts.test.tsx::names a worker session by the task's saved workflow`,
+    `ui/src/events/dispatch.test.ts::refreshes the source goal usage when a remote task changes`).
 41. The task form shows one row per column of the goal's workflow, prefilled
     with the column's skills, with the column's preferred rank beside the pin
     picker, and sends `agents`, seat `agent` and the column's `step` each, on

@@ -42,6 +42,7 @@ import { taskCopyEntries } from "@/lib/clipboard"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
 import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
+import { useSourceHost } from "./source-host"
 import { StalledBadge } from "./stalled"
 import { TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
@@ -87,9 +88,9 @@ export function TaskPanel({
   // the same detail entry the header's breadcrumb reads.
   const goal = useQuery({
     ...goalQueryOptions(host, task.data?.goal_id ?? ""),
-    enabled: task.data !== undefined,
+    enabled: task.data !== undefined && !task.data.execution_context,
   })
-  const steps = goal.data?.steps ?? []
+  const steps = task.data?.execution_context?.workflow.steps ?? goal.data?.steps ?? []
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -145,6 +146,9 @@ export function TaskPanel({
                 onRetry={() => void task.refetch()}
               />
             ) : null}
+            {task.data.host_unreachable ? (
+              <p role="status">Host {task.data.host} cannot be reached; progress may be stale.</p>
+            ) : null}
             <TaskSummary task={task.data} steps={steps} sessions={sessions.data} />
             <TaskFacts task={task.data} steps={steps} />
             {steps.length > 0 ? <WorkflowSteps task={task.data} steps={steps} /> : null}
@@ -199,25 +203,41 @@ export function TaskPanel({
  * replaces this panel with the goal's in the same pane.
  */
 function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
-  const goal = useQuery(goalQueryOptions(host, task.goal_id))
+  const goal = useQuery({
+    ...goalQueryOptions(host, task.goal_id),
+    enabled: !task.execution_context,
+  })
+  const sourceHost = useSourceHost(task.execution_context?.source_goal.daemon_id)
   const navigate = useNavigate()
   const status = TASK_STATUS_META[task.status]
   const showHost = usePanelShowsHost()
   return (
     <PanelHeader
-      breadcrumb={{
-        label: goal.data?.title ?? "Goal",
-        // Replaces rather than pushes: the goal panel takes this one's place
-        // in the pane, not a step stacked over it.
-        onClick: () => navigate(paths.goal(task.goal_id, host), { replace: true }),
-      }}
+      breadcrumb={
+        task.execution_context && !sourceHost
+          ? undefined
+          : {
+              label: task.execution_context?.source_goal.title ?? goal.data?.title ?? "Goal",
+              // Replaces rather than pushes: the goal panel takes this one's place
+              // in the pane, not a step stacked over it.
+              onClick: () =>
+                navigate(paths.goal(task.goal_id, sourceHost ?? host), { replace: true }),
+            }
+      }
       title={task.title}
       actions={<TaskActions task={task} />}
       status={
         <>
           <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
+          {task.execution_context && !sourceHost ? (
+            <span>
+              {task.execution_context.source_goal.title} (source{" "}
+              {task.execution_context.source_goal.daemon_id} unavailable)
+            </span>
+          ) : null}
           {task.stalled && <StalledBadge />}
           {showHost ? <HostLabel host={host} /> : null}
+          {task.host && task.host !== "local" ? <HostLabel host={task.host} /> : null}
         </>
       }
       id={

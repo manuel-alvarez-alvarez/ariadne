@@ -30,10 +30,10 @@ export function stepTitle(steps: readonly WorkflowStepDto[] | undefined, id: str
  */
 export function sessionColumn(
   session: Pick<SessionDto, "seat" | "task_agent_id">,
-  task: Pick<TaskDto, "agents"> | undefined,
+  task: Pick<TaskDto, "agents" | "execution_context"> | undefined,
   goal: Pick<GoalDto, "steps"> | undefined,
 ): string | undefined {
   if (session.seat !== "agent") return undefined
   const step = task?.agents.find((agent) => agent.id === session.task_agent_id)?.step
-  return step ? stepTitle(goal?.steps, step) : undefined
+  return step ? stepTitle(task?.execution_context?.workflow.steps ?? goal?.steps, step) : undefined
 }

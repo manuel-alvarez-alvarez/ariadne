@@ -219,7 +219,11 @@ export function TaskCard({
             <HostLabel
               host={task.host as Host}
               className={HOST_LABEL_SIZING}
-              title={task.host_unreachable ? `Host ${task.host} cannot be reached` : task.host}
+              title={
+                task.host_unreachable
+                  ? `Host ${task.host} cannot be reached; progress may be stale`
+                  : task.host
+              }
             />
           )}
         </div>
@@ -392,7 +396,11 @@ function cardHints(
     `Task tokens: ${formatTokens(task.usage.total.input_tokens)} input, ${formatTokens(task.usage.total.output_tokens)} output`,
   )
   if (task.host && task.host !== "local")
-    hints.push(task.host_unreachable ? `Host ${task.host} cannot be reached` : `Host ${task.host}`)
+    hints.push(
+      task.host_unreachable
+        ? `Host ${task.host} cannot be reached; progress may be stale`
+        : `Host ${task.host}`,
+    )
   if (task.pr_url) hints.push("Has a pull request")
   hints.push(whenHint(activity, "last activity"))
   return hints

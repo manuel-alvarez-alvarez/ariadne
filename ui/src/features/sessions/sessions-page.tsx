@@ -339,7 +339,9 @@ function SessionsTable({
               title={ariadneTitle(session, goalsById, tasksById)}
               goalTitle={
                 session.goal_id
-                  ? goalsById.get(hostKey(session.host, session.goal_id))?.title
+                  ? (goalsById.get(hostKey(session.host, session.goal_id))?.title ??
+                    tasksById.get(hostKey(session.host, session.task_id ?? ""))?.execution_context
+                      ?.source_goal.title)
                   : undefined
               }
               taskTitle={

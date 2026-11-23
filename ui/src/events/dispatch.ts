@@ -101,6 +101,10 @@ export function dispatchDomainEvent(
       const { task, transition } = event.data
       queryClient.setQueryData(qk.tasks.detail(host, task.id), task)
       void queryClient.invalidateQueries({ queryKey: qk.tasks.lists(host) })
+      if (task.execution_context) {
+        void queryClient.invalidateQueries({ queryKey: qk.goals.detail(host, task.goal_id) })
+        void queryClient.invalidateQueries({ queryKey: qk.goals.lists(host) })
+      }
       if (transition) {
         void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(host, task.id) })
         // Landing the task is a transition too, and the diff endpoint answers

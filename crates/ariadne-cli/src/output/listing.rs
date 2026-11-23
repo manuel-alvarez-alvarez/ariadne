@@ -155,6 +155,23 @@ impl Listing {
         })
     }
 
+    /// Keep task rows selected by their JSON payload when merging hosts.
+    pub(crate) fn retain_tasks(&mut self, mut keep: impl FnMut(&Value) -> bool) {
+        if let Value::Array(items) = &mut self.json {
+            let mut index = 0;
+            self.rows.retain(|_| {
+                let retain = keep(&items[index]);
+                index += 1;
+                retain
+            });
+            items.retain(|item| keep(item));
+        }
+    }
+
+    pub(crate) fn task_values(&self) -> &[Value] {
+        self.json.as_array().map_or(&[], Vec::as_slice)
+    }
+
     pub(crate) fn count(mut self, count: Count) -> Self {
         self.count = Some(count);
         self

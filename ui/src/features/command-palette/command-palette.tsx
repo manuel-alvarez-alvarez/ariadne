@@ -70,6 +70,7 @@ import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
 import { taskListQueryOptions } from "@/features/tasks"
+import { useDaemonIdentities } from "@/features/tasks/source-host"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { workflowsQueryOptions } from "@/features/workflows/queries"
 import { useConnection } from "@/hooks/use-connection"
@@ -566,6 +567,22 @@ function usePaletteEntries(open: boolean): PaletteEntries {
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host))
+  const daemonIds = useDaemonIdentities(open)
+  const sourceTasks = new Set(
+    tasks.rows
+      .filter(
+        (task) =>
+          task.execution_context &&
+          daemonIds.get(task.host) === task.execution_context.source_goal.daemon_id,
+      )
+      .map((task) => `${task.execution_context?.execution_owner}:${task.id}`),
+  )
+  const visibleTasks = tasks.rows.filter(
+    (task) =>
+      !task.execution_context ||
+      daemonIds.get(task.host) === task.execution_context.source_goal.daemon_id ||
+      !sourceTasks.has(`${task.execution_context.execution_owner}:${task.id}`),
+  )
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const workflows = useQuery({ ...workflowsQueryOptions("local"), enabled: open })
   const repositories = useQuery({ ...repositoriesQueryOptions("local"), enabled: open })
@@ -574,13 +591,13 @@ function usePaletteEntries(open: boolean): PaletteEntries {
     () =>
       buildPaletteEntries({
         goals: goals.rows,
-        tasks: tasks.rows,
+        tasks: visibleTasks,
         sessions: sessions.rows,
         skills: skills.data,
         workflows: workflows.data,
         repositories: repositories.data,
       }),
-    [goals.rows, tasks.rows, sessions.rows, skills.data, repositories.data, workflows.data],
+    [goals.rows, visibleTasks, sessions.rows, skills.data, repositories.data, workflows.data],
   )
 
   return entries

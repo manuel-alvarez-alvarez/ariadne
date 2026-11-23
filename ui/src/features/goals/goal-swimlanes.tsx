@@ -80,7 +80,11 @@ export function GoalSwimlanes({
   /** Name each lane's host: the board shows goals of more than one. */
   showHost?: boolean
 }) {
-  const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host, {}))
+  const tasks = useHostLists(hosts, (host) => ({
+    ...taskListQueryOptions(host, {}),
+    select: (rows: TaskDto[]) =>
+      rows.map((row) => ({ ...row, executionHost: row.host ?? "local" })),
+  }))
   const byGoal = useMemo(() => groupByGoal(tasks.rows, goals), [tasks.rows, goals])
   // Which cards — and which lanes — are asking for a person, off the sessions
   // query the attention strip above the board already holds. The board is
@@ -373,7 +377,10 @@ function laneKey(host: Host, goalId: string): string {
 }
 
 /** Group the listed goals’ tasks for their lanes, each on its goal's host. */
-function groupByGoal(tasks: HostRow<TaskDto>[], goals: HostRow<GoalDto>[]): Map<string, GoalTasks> {
+function groupByGoal(
+  tasks: HostRow<TaskDto & { executionHost: string }>[],
+  goals: HostRow<GoalDto>[],
+): Map<string, GoalTasks> {
   const lanes = new Map<string, GoalTasks>()
   const shown = new Set(goals.map((goal) => laneKey(goal.host, goal.id)))
   for (const task of tasks) {
@@ -385,7 +392,7 @@ function groupByGoal(tasks: HostRow<TaskDto>[], goals: HostRow<GoalDto>[]): Map<
       lane = { all: [] }
       lanes.set(key, lane)
     }
-    lane.all.push(task)
+    lane.all.push({ ...task, host: task.executionHost })
   }
   return lanes
 }

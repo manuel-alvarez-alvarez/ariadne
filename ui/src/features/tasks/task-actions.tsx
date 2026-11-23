@@ -44,7 +44,7 @@ const RETRY_HINT = "Back to ready, same branch and worktree, at the first column
 
 export function TaskActions({ task }: { task: TaskDto }) {
   const host = usePanelHost()
-  const cancel = useCancelTask(host, task.id)
+  const cancel = useCancelTask(host, task.id, !!task.execution_context)
   const retry = useRetryTask(host, task.id)
   const [open, setOpen] = useState<"edit" | "cancel" | null>(null)
 

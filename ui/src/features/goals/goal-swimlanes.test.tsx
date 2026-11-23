@@ -80,3 +80,13 @@ it("shows the lane summary in place of the cells once folded", async () => {
   expect(await screen.findByText("1 task finished")).toBeTruthy()
   expect(screen.queryByRole("group", { name: `${GOAL_TITLE}: Tasks` })).toBeNull()
 })
+
+it("shows the execution host of a projected task in its source lane", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  daemonFetch.mockResolvedValue(
+    jsonResponse([aTask({ id: "remote", goal_id: goal.id, title: "Remote work", host: "worker" })]),
+  )
+  renderScreen(<GoalSwimlanes hosts={["local"]} goals={[{ ...goal, host: "local" }]} />)
+  expect(await screen.findByText("Remote work")).toBeTruthy()
+  expect(screen.getByText("worker")).toBeTruthy()
+})
