@@ -531,7 +531,8 @@ impl Scheduler {
                 };
                 // Tasks with live sessions are reconciled even when
                 // terminal, so a crash between merge/cancel and cleanup
-                // still converges on the next tick.
+                // still converges on the next tick. A far task can still
+                // have messages for the orchestrator after it ends.
                 let live_task_ids: std::collections::HashSet<String> = self
                     .store
                     .list_sessions(SessionFilter {
@@ -547,6 +548,8 @@ impl Scheduler {
                 for task in tasks {
                     if !task.status().is_terminal() || live_task_ids.contains(&task.id) {
                         self.reconcile(Target::Task(&task.id)).await;
+                    } else if task.is_far() {
+                        self.deliver_task_messages(&task).await;
                     }
                 }
             }

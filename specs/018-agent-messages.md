@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/src/acp_transport.rs
   - crates/ariadne-daemon/tests/it/linked_goals.rs
+  - crates/ariadne-daemon/tests/it/far_tasks.rs
 ---
 
 # Agent messages
@@ -118,7 +119,38 @@ moves a task through (001), and the wording of the text a message arrives in
     A goal event subscription includes these messages, including those about a task.
     The daemon starts no local orchestrator session and leaves `delivered_at` null.
 
+14. The goal's daemon reads a far agent's messages to the orchestrator from
+    the host's stream. It stores them on the origin task and identifies the
+    sender by the same workflow column. It delivers them by rule 8.
+15. The goal's daemon stores the orchestrator's outgoing messages on the
+    origin task. It holds them while the host is away. On the next `ready`,
+    it sends them in order to the host, which resolves the staffed column
+    and stores the messages for normal delivery. The daemon retries a send
+    whose answer was lost. The host stores each original message once.
+    Acceptance by the host does not stamp delivery to the agent.
+16. The goal's daemon opens the host's stream before reading the stored
+    messages of each linked task on reconnect. The stream and that read can
+    carry the same message. The goal's daemon stores each original message
+    once, and rule 8 governs its delivery.
+17. A far agent's questions to the user stay in its host's Needs attention
+    list. They do not travel on the agent message channel.
+
 ## Acceptance criteria
+
+- A far agent's message reaches the orchestrator as a turn about the origin
+  task (`far_tasks.rs::a_far_agent_message_reaches_the_orchestrator_as_a_task_turn`).
+- The host stores the orchestrator's message and delivers it to the staffed
+  agent as a turn (`far_tasks.rs::an_orchestrator_message_reaches_the_far_agent_as_a_turn`).
+- The daemon holds messages through an outage and sends them in order when
+  the host returns, even if the first answer is lost
+  (`far_tasks.rs::messages_wait_for_the_far_host_and_arrive_in_order_even_after_a_lost_answer`).
+- A message made during the outage reaches the orchestrator once, through
+  successive reconnects
+  (`far_tasks.rs::a_far_message_made_while_away_is_delivered_once_after_reconnect`).
+- The origin task thread carries messages in both directions
+  (`far_tasks.rs::a_far_task_thread_shows_both_directions`).
+- A far agent's question to the user appears only in the host's Needs attention list
+  (`far_tasks.rs::a_far_agents_user_question_stays_in_the_hosts_attention_list`).
 
 - Agents write to each other without leaving the task and without the step
   moving (`agent_messages.rs::agents_write_to_each_other_without_leaving_the_task`).
