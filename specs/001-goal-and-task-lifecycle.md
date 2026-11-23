@@ -99,6 +99,7 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     A linked goal refuses a nonempty `depends_on` list on task creation or edit.
 16. A new task branch for a linked goal starts at the fetched remote base.
     The daemon fetches from the repository's forge remote, with `origin` as the default.
+    The commit gate and the task diff compare against that fetched base, not the local base branch.
 
 ## Acceptance criteria
 
@@ -152,6 +153,8 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
   `::a_linked_task_refuses_dependencies_on_edit`).
 - A linked task starts at the remote base after another host advances it
   (`linked_goals.rs::a_linked_task_starts_at_the_fetched_remote_base`).
+- A linked task's diff holds only its own commits after another host advances the base
+  (`linked_goals.rs::a_linked_task_compares_its_work_against_the_fetched_remote_base`).
 
 ## Sources
 

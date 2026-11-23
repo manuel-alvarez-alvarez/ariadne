@@ -78,13 +78,9 @@ pub(super) async fn complete(
                 .worktree_path
                 .as_deref()
                 .ok_or_else(|| gate_failed("the task has no worktree"))?;
+            let base = channel::task_base(&state, &repo, &task).await?;
             if !git
-                .committed_clean(
-                    path,
-                    std::path::Path::new(worktree),
-                    &repo.base_branch,
-                    &task.branch,
-                )
+                .committed_clean(path, std::path::Path::new(worktree), &base, &task.branch)
                 .await
                 .map_err(|_| gate_failed("the commit gate could not inspect the task branch"))?
             {

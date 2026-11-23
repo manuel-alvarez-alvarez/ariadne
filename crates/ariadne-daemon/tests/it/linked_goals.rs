@@ -183,6 +183,35 @@ async fn a_linked_task_starts_at_the_fetched_remote_base() {
 }
 
 #[tokio::test]
+async fn a_linked_task_compares_its_work_against_the_fetched_remote_base() {
+    let h = harness().scheduler().await;
+    let checkout = h.git_repo("repo");
+    let repo = h.repository(&checkout).await;
+    with_forge_enabled(&h, &repo, false).await;
+    let other_host = h.git_repo("other");
+    sh(
+        &other_host,
+        &format!("git push '{}' next:main", h.at("remote.git").display()),
+    );
+    let goal = create_goal(&h, &repo.id, true).await;
+    let task = running_task(&h, &post_task(&h, &goal).await).await;
+    let worktree = Path::new(task.worktree_path.as_deref().unwrap());
+
+    // No task commit exists: the upstream commit is neither a task commit nor in the diff.
+    let (status, body) = h.send(get(&format!("/v1/tasks/{}/diff", task.id))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_empty(), "{}", String::from_utf8_lossy(&body));
+    sh(
+        worktree,
+        "echo mine > mine.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm mine",
+    );
+    let (_, body) = h.send(get(&format!("/v1/tasks/{}/diff", task.id))).await;
+    let diff = String::from_utf8(body).unwrap();
+    assert!(diff.contains("+++ b/mine.txt"), "{diff}");
+    assert_eq!(diff.matches("+++ b/").count(), 1, "{diff}");
+}
+
+#[tokio::test]
 async fn a_linked_agents_message_to_its_orchestrator_is_stored_and_published() {
     let h = harness().scheduler().await;
     let repo = h.repository(&h.git_repo("repo")).await;
