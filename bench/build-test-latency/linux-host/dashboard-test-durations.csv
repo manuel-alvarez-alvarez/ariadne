@@ -1,0 +1,57 @@
+rank,binary_or_file,test,min_s,median_s,max_s,dashboard-test-cold-1-a,dashboard-test-cold-2-a,dashboard-test-cold-3-a,dashboard-test-warm-1-a,dashboard-test-warm-2-a,dashboard-test-warm-3-a
+1,src/page.test.tsx,Page > remounts ViewDashboard with the fresh document on a reload message,0.063,0.064,0.064,0.064,0.063,0.064,0.064,0.064,0.064
+2,src/page.test.tsx,"Page > opens the dashboard in view mode, not Perses's own editing mode",0.051,0.055,0.056,0.054,0.055,0.051,0.055,0.056,0.053
+3,src/dashboard-client.test.ts,getDashboard > reads the document off GET /v1/dashboards/{name},0.029,0.031,0.036,0.036,0.031,0.030,0.031,0.029,0.032
+4,src/use-host-messages.test.ts,useHostMessages > calls onTheme for a same-origin theme message,0.015,0.018,0.021,0.016,0.015,0.019,0.019,0.021,0.016
+5,src/format-value.test.ts,formatValue > still formats a real value,0.015,0.016,0.018,0.016,0.017,0.016,0.015,0.018,0.017
+6,src/page.test.tsx,Page > still shows the loaded dashboard under StrictMode's development double-invoke,0.014,0.015,0.016,0.015,0.015,0.014,0.015,0.016,0.014
+7,src/datasource-api.test.ts,createDatasourceApi > answers a global Prometheus datasource with the daemon's local host as its direct URL,0.003,0.004,0.007,0.004,0.007,0.003,0.003,0.005,0.003
+8,src/plugins.test.ts,pluginLoader > hands back each plugin under the compound key the registry reads,0.003,0.003,0.006,0.005,0.006,0.003,0.003,0.003,0.003
+9,src/page-params.test.ts,"readPageParams > reads the daemon, the dashboard and the theme off the query string",0.003,0.003,0.005,0.003,0.003,0.004,0.003,0.005,0.003
+10,src/format-value.test.ts,"formatValue > shows No data for a NaN value, formatted or not",0.002,0.003,0.004,0.003,0.003,0.004,0.002,0.003,0.003
+11,src/shipped-dashboard.test.ts,the shipped default dashboard > shows every service and level in its operational log table,0.002,0.003,0.004,0.003,0.003,0.003,0.004,0.002,0.002
+12,scripts/check-audit.test.mjs,decide > passes a report with no high or critical finding,0.002,0.003,0.003,0.003,0.003,0.003,0.003,0.002,0.003
+13,src/use-host-messages.test.ts,useHostMessages > ignores a message from another origin,0.003,0.003,0.003,0.003,0.003,0.003,0.003,0.003,0.003
+14,src/use-host-messages.test.ts,useHostMessages > calls onReload for a same-origin reload message,0.002,0.003,0.003,0.003,0.003,0.002,0.003,0.003,0.002
+15,src/use-host-messages.test.ts,useHostMessages > stops listening once unmounted,0.002,0.002,0.003,0.003,0.002,0.002,0.003,0.003,0.002
+16,src/dashboard-client.test.ts,getDashboard > throws the daemon's own message on a refusal,0.002,0.002,0.003,0.003,0.003,0.002,0.002,0.002,0.002
+17,src/use-host-messages.test.ts,useHostMessages > ignores a message with no recognized type,0.002,0.002,0.003,0.002,0.002,0.002,0.002,0.003,0.002
+18,src/shipped-dashboard.test.ts,the shipped default dashboard > opens through the installed Perses layout converter,0.001,0.002,0.002,0.002,0.002,0.002,0.002,0.001,0.001
+19,src/dashboard-client.test.ts,saveDashboard > PUTs the document as JSON and returns what the daemon kept,0.001,0.001,0.003,0.003,0.002,0.001,0.001,0.001,0.001
+20,src/shipped-dashboard.test.ts,"the shipped default dashboard > lays out every panel once, and refers to no panel it lacks",0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001
+21,src/shipped-dashboard.test.ts,the shipped default dashboard > task-outcomes shows a table legend with the value and percent of each slice,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001
+22,src/shipped-dashboard.test.ts,the shipped default dashboard > names only the variables it declares or Perses builds in,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001
+23,src/page-params.test.ts,readPageParams > defaults the theme to light on anything but exactly dark,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001
+24,src/plugins.test.ts,"pluginLoader > loads every installed plugin, the logs table included",0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001
+25,src/datasource-api.test.ts,createDatasourceApi > answers a global Loki datasource with the daemon's local host as its direct URL,0.000,0.001,0.001,0.001,0.001,0.001,0.000,0.001,0.000
+26,src/datasource-api.test.ts,"createDatasourceApi > lists both global datasources unfiltered, and one kind filtered",0.000,0.001,0.001,0.001,0.001,0.000,0.000,0.001,0.000
+27,scripts/check-audit.test.mjs,decide > passes exactly the documented picomatch chain,0.000,0.000,0.001,0.000,0.001,0.000,0.001,0.000,0.001
+28,src/shipped-dashboard.test.ts,the shipped default dashboard > uses Default as its display name while retaining default as its metadata name,0.000,0.000,0.001,0.000,0.000,0.001,0.001,0.000,0.000
+29,src/datasource-api.test.ts,createDatasourceApi > has no project-scoped datasource of its own,0.000,0.000,0.001,0.001,0.001,0.000,0.000,0.001,0.000
+30,src/datasource-api.test.ts,createDatasourceApi > answers nothing for a kind it was not given,0.000,0.000,0.001,0.000,0.001,0.000,0.000,0.001,0.000
+31,scripts/check-audit.test.mjs,decide > fails a new high finding in a package outside the allowlist,0.000,0.000,0.001,0.000,0.000,0.000,0.001,0.000,0.000
+32,src/page-params.test.ts,readPageParams > defaults the daemon and the dashboard name to the empty string when absent,0.000,0.000,0.001,0.000,0.000,0.000,0.000,0.001,0.000
+33,src/datasource-api.test.ts,"createDatasourceApi > points both datasources at the named host, or at all of them",0.000,0.000,0.001,0.000,0.001,0.000,0.000,0.001,0.000
+34,scripts/check-audit.test.mjs,decide > fails a different advisory on the allowlisted package,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+35,scripts/check-audit.test.mjs,decide > fails a critical finding the same way,0.000,0.000,0.001,0.000,0.001,0.000,0.000,0.000,0.000
+36,src/shipped-dashboard.test.ts,the shipped default dashboard > runs-by-seat shows a table legend with the value and percent of each slice,0.000,0.000,0.001,0.000,0.000,0.000,0.001,0.000,0.000
+37,src/shipped-dashboard.test.ts,the shipped default dashboard > goal-outcomes shows a table legend with the value and percent of each slice,0.000,0.000,0.001,0.000,0.000,0.000,0.001,0.000,0.000
+38,src/shipped-dashboard.test.ts,the shipped default dashboard > tokens-by-seat shows a table legend with the value and percent of each slice,0.000,0.000,0.001,0.000,0.000,0.000,0.001,0.000,0.000
+39,src/shipped-dashboard.test.ts,the shipped default dashboard > tokens-share shows a table legend with the value and percent of each slice,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+40,src/shipped-dashboard.test.ts,the shipped default dashboard > permissions-by-decider shows a table legend with the value and percent of each slice,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+41,src/shipped-dashboard.test.ts,the shipped default dashboard > http-latency keeps a plain list legend with no values,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+42,scripts/check-audit.test.mjs,"decide > fails an error report with no vulnerabilities object, such as a registry outage",0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+43,src/shipped-dashboard.test.ts,the shipped default dashboard > lead-time-trend shows a table legend with the mean and the max of each series,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+44,scripts/check-audit.test.mjs,decide > fails a high chain whose root advisory is missing from the report,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+45,src/shipped-dashboard.test.ts,the shipped default dashboard > tasks-over-time shows a table legend with the sum of each series,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+46,src/shipped-dashboard.test.ts,the shipped default dashboard > permissions-by-answer shows a table legend with the value and percent of each slice,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+47,src/shipped-dashboard.test.ts,the shipped default dashboard > db-size keeps a plain list legend with no values,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+48,src/shipped-dashboard.test.ts,the shipped default dashboard > memory keeps a plain list legend with no values,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+49,src/shipped-dashboard.test.ts,the shipped default dashboard > scheduler-tick keeps a plain list legend with no values,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+50,src/shipped-dashboard.test.ts,the shipped default dashboard > turns-over-time shows a table legend with the sum of each series,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+51,src/shipped-dashboard.test.ts,the shipped default dashboard > tokens-over-time shows a table legend with the sum of each series,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+52,src/shipped-dashboard.test.ts,the shipped default dashboard > stream-clients keeps a plain list legend with no values,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+53,src/shipped-dashboard.test.ts,the shipped default dashboard > attention-over-time shows a table legend with the sum of each series,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+54,src/shipped-dashboard.test.ts,the shipped default dashboard > http-requests keeps a plain list legend with no values,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+55,src/shipped-dashboard.test.ts,the shipped default dashboard > cpu keeps a plain list legend with no values,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
+56,src/shipped-dashboard.test.ts,the shipped default dashboard > launches keeps a plain list legend with no values,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000
