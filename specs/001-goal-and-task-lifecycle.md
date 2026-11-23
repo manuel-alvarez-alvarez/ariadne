@@ -130,8 +130,29 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     or was cancelled fails a pending far task before it goes to its host, as rule 10 fails
     any waiting task. A far task cancelled here, or in a goal that rules 3 and 4 ended,
     keeps that state whatever its host reports (037 rule 98).
+20. A write to a sent far task goes to its host. The goal's daemon mirrors the
+    result. The host of an unheld far task must be `ready`, even before dispatch;
+    a refusal names the host and its status.
+    A task still held by dependencies is changed only on the goal's daemon.
+    A far agent's session can be switched on its host.
+21. When a goal completes or is cancelled, its daemon sends the same ending
+    to its linked goals. If a host is down, its worker closes the linked
+    goals when that host next becomes `ready`.
 
 ## Acceptance criteria
+
+- Rule 20: editing, retrying and cancelling a sent task reach its host
+  (`far_tasks.rs::editing_a_sent_far_task_edits_it_on_its_host`,
+  `::retrying_a_sent_far_task_retries_it_on_its_host`,
+  `::cancelling_a_sent_far_task_cancels_it_on_its_host`). A down host is named
+  (`::a_write_to_a_sent_far_task_refuses_a_down_host`,
+  `::an_unsent_unheld_far_task_refuses_a_write_while_its_host_is_down`), while a task held by
+  dependencies can be cancelled locally (`::a_dependency_held_far_task_can_be_cancelled_while_its_host_is_down`).
+  The host switches its agent (`::a_far_agent_session_can_be_switched_on_its_host`).
+- Rule 21: completion and cancellation close the linked goal
+  (`far_tasks.rs::completing_a_goal_completes_its_linked_goal`,
+  `::cancelling_a_goal_cancels_its_linked_goal`); a host that returns closes it
+  then (`::a_cancelled_goal_closes_its_linked_goal_when_the_host_returns`).
 
 - Every `(from, to, actor)` triple of the six statuses and four actors is
   legal or refused exactly as the table says — checked against a second
