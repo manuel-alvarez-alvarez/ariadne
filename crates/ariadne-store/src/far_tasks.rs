@@ -33,6 +33,18 @@ impl Store {
         .await?)
     }
 
+    /// The far tasks that went to `host`, whatever their goal and status,
+    /// oldest first: what the goal's daemon reads again on the host's next
+    /// `ready`.
+    pub async fn list_sent_far_tasks(&self, host: &str) -> Result<Vec<Task>> {
+        Ok(sqlx::query_as::<_, Task>(
+            "SELECT * FROM tasks WHERE host = ? AND far_task_id IS NOT NULL ORDER BY id",
+        )
+        .bind(host)
+        .fetch_all(self.r())
+        .await?)
+    }
+
     /// The far task that `host` knows as `far_task_id`, if there is one.
     pub async fn far_task_by_far_id(&self, host: &str, far_task_id: &str) -> Result<Option<Task>> {
         Ok(

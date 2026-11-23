@@ -196,6 +196,18 @@ pub(super) async fn create(
             "origin_task_id names the task of a linked goal; this goal is not linked",
         ));
     }
+    // A far task of a linked goal would lose its replay key (037).
+    if req.origin_task_id.is_some()
+        && req
+            .host
+            .as_deref()
+            .is_some_and(|host| host != ariadne_api::tasks::LOCAL_HOST)
+    {
+        return Err(ApiError::bad_request(
+            "origin_task_id and a host other than local cannot go together: the task of a \
+             linked goal runs on this daemon",
+        ));
+    }
     let repos = state.store.list_goal_repositories(&goal.id).await?;
     let repo_id = match &req.repo_id {
         Some(id) => {
@@ -262,13 +274,27 @@ pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<TaskListQuery>,
 ) -> ApiResult<Json<Vec<TaskDto>>> {
-    let tasks = state
-        .store
-        .list_tasks(TaskFilter {
-            goal_id: q.goal,
-            status: q.status,
-        })
-        .await?;
+    let mut tasks = match &q.origin_task_id {
+        Some(origin) => state
+            .store
+            .linked_task_of(origin)
+            .await?
+            .into_iter()
+            .collect(),
+        None => {
+            state
+                .store
+                .list_tasks(TaskFilter {
+                    goal_id: q.goal.clone(),
+                    status: q.status,
+                })
+                .await?
+        }
+    };
+    tasks.retain(|task| {
+        q.goal.as_ref().is_none_or(|goal| &task.goal_id == goal)
+            && q.status.is_none_or(|status| task.status() == status)
+    });
     let mut out = Vec::with_capacity(tasks.len());
     for task in tasks {
         out.push(task_dto_of(&state.store, task).await?);

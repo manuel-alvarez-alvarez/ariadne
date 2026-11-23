@@ -712,7 +712,7 @@
         },
         "responses": {
           "200": {
-            "description": "the active goal linked to the same origin goal, with the repositories added",
+            "description": "the oldest active goal linked to the same origin goal, with the repositories added",
             "content": {
               "application/json": {
                 "schema": {
@@ -4985,6 +4985,18 @@
                 {
                   "type": "null"
                 }
+              ]
+            }
+          },
+          {
+            "name": "origin_task_id",
+            "in": "query",
+            "description": "The task that runs this far task of another daemon (037), in whatever\ngoal and status: one task at most.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
               ]
             }
           }

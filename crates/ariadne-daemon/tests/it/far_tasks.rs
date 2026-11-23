@@ -6,15 +6,15 @@
 //! daemon) and `dead` (nothing listens).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::response::IntoResponse;
-use tokio::sync::Semaphore;
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 use tokio::sync::broadcast::Receiver;
+use tokio::sync::watch;
 
 use ariadne_api::goals::GoalDto;
 use ariadne_api::hosts::{HostDto, HostStatus};
@@ -33,17 +33,24 @@ use crate::common::{
 };
 
 /// What the far daemon's answers go through: its `GET /v1/health` turned
-/// off, answers lost after the far daemon made them, and task reads held.
-/// It records each request it passes, by its [`kind`].
+/// off, answers lost after the far daemon made them, and requests held. It
+/// records each request it passes, and each it answers, by its [`kind`].
 #[derive(Clone)]
 struct Front {
     health_off: Arc<AtomicBool>,
-    /// The kinds of request whose next answer is lost, once each.
-    lose: Arc<Mutex<Vec<&'static str>>>,
-    hold_reads: Arc<AtomicBool>,
-    released: Arc<Semaphore>,
+    /// The kinds of request whose next answer is lost, once each, and the
+    /// kind to hold from then on.
+    lose: Arc<Mutex<Vec<Loss>>>,
+    /// The kinds of request that wait until they are no longer held.
+    held: Arc<watch::Sender<Vec<&'static str>>>,
+    waiting: Arc<AtomicUsize>,
     seen: Arc<Mutex<Vec<&'static str>>>,
+    answered: Arc<Mutex<Vec<&'static str>>>,
 }
+
+/// The kind of request whose next answer is lost, and the kind to hold
+/// from then on.
+type Loss = (&'static str, Option<&'static str>);
 
 /// The kind of a request to the far daemon, as [`Front`] records it.
 fn kind(method: &axum::http::Method, path: &str) -> &'static str {
@@ -51,6 +58,7 @@ fn kind(method: &axum::http::Method, path: &str) -> &'static str {
         ("POST", "/v1/goals") => "create goal",
         ("POST", path) if path.ends_with("/tasks") => "create task",
         ("GET", "/v1/events/stream") => "stream",
+        ("GET", "/v1/tasks") => "find task",
         ("GET", path) if path.starts_with("/v1/tasks/") => "read task",
         ("GET", "/v1/health") => "health",
         _ => "other",
@@ -62,9 +70,10 @@ impl Default for Front {
         Self {
             health_off: Arc::default(),
             lose: Arc::default(),
-            hold_reads: Arc::default(),
-            released: Arc::new(Semaphore::new(0)),
+            held: Arc::new(watch::Sender::new(Vec::new())),
+            waiting: Arc::default(),
             seen: Arc::default(),
+            answered: Arc::default(),
         }
     }
 }
@@ -75,25 +84,33 @@ impl Front {
     }
 
     fn lose_next(&self, kind: &'static str) {
-        self.lose.lock().unwrap().push(kind);
+        self.lose.lock().unwrap().push((kind, None));
+    }
+
+    /// Lose the next answer of `kind`, then hold each request of `then`.
+    fn lose_next_then_hold(&self, kind: &'static str, then: &'static str) {
+        self.lose.lock().unwrap().push((kind, Some(then)));
     }
 
     fn count(&self, kind: &str) -> usize {
-        self.seen
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|k| **k == kind)
-            .count()
+        count_of(&self.seen, kind)
     }
 
-    fn hold_reads(&self) {
-        self.hold_reads.store(true, Ordering::SeqCst);
+    fn answers(&self, kind: &str) -> usize {
+        count_of(&self.answered, kind)
     }
 
-    fn release_reads(&self) {
-        self.hold_reads.store(false, Ordering::SeqCst);
-        self.released.add_permits(Semaphore::MAX_PERMITS / 2);
+    /// How many requests wait while they are held.
+    fn waiting(&self) -> usize {
+        self.waiting.load(Ordering::SeqCst)
+    }
+
+    fn hold(&self, kind: &'static str) {
+        self.held.send_modify(|held| held.push(kind));
+    }
+
+    fn release(&self) {
+        self.held.send_modify(Vec::clear);
     }
 
     /// `far`'s router behind this front, on a loopback TCP port.
@@ -108,18 +125,24 @@ impl Front {
                     if kind == "health" && front.health_off.load(Ordering::SeqCst) {
                         return StatusCode::SERVICE_UNAVAILABLE.into_response();
                     }
-                    if kind == "read task" && front.hold_reads.load(Ordering::SeqCst) {
-                        front.released.acquire().await.unwrap().forget();
+                    let mut held = front.held.subscribe();
+                    if held.borrow().contains(&kind) {
+                        front.waiting.fetch_add(1, Ordering::SeqCst);
+                        let _ = held.wait_for(|held| !held.contains(&kind)).await;
+                        front.waiting.fetch_sub(1, Ordering::SeqCst);
                     }
                     let lost = {
                         let mut lose = front.lose.lock().unwrap();
                         lose.iter()
-                            .position(|k| *k == kind)
+                            .position(|(k, _)| *k == kind)
                             .map(|at| lose.remove(at))
-                            .is_some()
                     };
                     let answer = next.run(request).await;
-                    if lost {
+                    front.answered.lock().unwrap().push(kind);
+                    if let Some((_, then)) = lost {
+                        if let Some(then) = then {
+                            front.hold(then);
+                        }
                         // The far daemon made it; its answer never arrives.
                         return StatusCode::BAD_GATEWAY.into_response();
                     }
@@ -132,6 +155,10 @@ impl Front {
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         address
     }
+}
+
+fn count_of(kinds: &Mutex<Vec<&'static str>>, kind: &str) -> usize {
+    kinds.lock().unwrap().iter().filter(|k| **k == kind).count()
 }
 
 /// The goal's daemon, the far daemon, and what keeps them up.
@@ -649,8 +676,14 @@ async fn a_far_task_keeps_its_state_while_its_host_is_away() {
     let started = start_on_far(&p.far, &sent.id).await;
     let quiet = tokio::time::Instant::now() + QUIET;
     while let Ok(Ok(event)) = tokio::time::timeout_at(quiet, local_events.recv()).await {
+        // The flag's own update may come late; nothing else may.
         if let DomainEvent::TaskUpdated(update) = event.event {
-            assert_ne!(update.task.id, away.id, "the far task moved while away");
+            assert!(
+                update.task.id != away.id
+                    || (update.task.host_unreachable && update.task.status == TaskStatus::Pending),
+                "the far task moved while away: {:?}",
+                update.task
+            );
         }
     }
     let kept = task(&p.local, &away.id).await;
@@ -738,8 +771,10 @@ async fn a_lost_answer_of_the_host_makes_no_second_goal_or_task() {
 
     let sent = far_task(&p.far, &goal, "Once").await;
     until_sent(&p.local, &once, &sent).await;
+    // Each send asks first what the host made: the third finds the task.
     assert!(p.front.count("create goal") >= 2);
-    assert!(p.front.count("create task") >= 2);
+    assert_eq!(p.front.count("create task"), 1);
+    assert!(p.front.count("find task") >= 3);
     assert_eq!(linked_goals(&p.far, &goal).await.len(), 1);
     assert_eq!(far_tasks(&p.far, &goal).await.len(), 1);
 }
@@ -859,10 +894,13 @@ async fn a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports() {
     })
     .await;
     merge_on_far(&p.far, &far_cancelled.id, "dead").await;
+    let reads = p.front.answers("read task");
     back(&p).await;
     let kept = eventually_some(TIMEOUT, "the host read again", async || {
         let kept = task(&p.local, &cancelled.id).await;
-        (!kept.host_unreachable && !task(&p.local, &going.id).await.host_unreachable)
+        (p.front.answers("read task") >= reads + 2
+            && !kept.host_unreachable
+            && !task(&p.local, &going.id).await.host_unreachable)
             .then_some(kept)
     })
     .await;
@@ -901,11 +939,15 @@ async fn a_far_task_of_a_completed_goal_is_unreachable_while_its_host_is_away() 
         task(&p.local, &done.id).await.host_unreachable
     })
     .await;
+    let reads = p.front.answers("read task");
     back(&p).await;
-    eventually(TIMEOUT, "the far task reachable again", || async {
-        !task(&p.local, &done.id).await.host_unreachable
+    eventually(TIMEOUT, "the far task read again", || async {
+        p.front.answers("read task") > reads && !task(&p.local, &done.id).await.host_unreachable
     })
     .await;
+    let kept = task(&p.local, &done.id).await;
+    assert_eq!(kept.status, TaskStatus::Finished);
+    assert_eq!(kept.merge_commit.as_deref(), Some("d0ne"));
 }
 
 #[tokio::test]
@@ -925,12 +967,12 @@ async fn a_host_back_at_the_same_endpoint_is_read_again_while_its_worker_is_busy
     until_sent(&p.local, &busy, &sent).await;
 
     // The worker comes back to the host and waits on its read of the task.
-    p.front.hold_reads();
+    p.front.hold("read task");
     let reads = p.front.count("read task");
     go_away(&p).await;
     back(&p).await;
     eventually(TIMEOUT, "the worker waits on its read", || async {
-        p.front.count("read task") > reads
+        p.front.count("read task") > reads && p.front.waiting() > 0
     })
     .await;
 
@@ -938,7 +980,7 @@ async fn a_host_back_at_the_same_endpoint_is_read_again_while_its_worker_is_busy
     let streams = p.front.count("stream");
     go_away(&p).await;
     back(&p).await;
-    p.front.release_reads();
+    p.front.release();
     eventually(TIMEOUT, "the stream opened again", || async {
         p.front.count("stream") > streams
     })
@@ -993,4 +1035,137 @@ async fn a_far_task_fails_when_a_dependency_ends_unmerged() {
     assert!(reason.contains("\"Fails first\""), "{reason}");
     assert!(reason.contains("failed"), "{reason}");
     assert!(far_tasks(&p.far, &goal).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_task_the_host_made_is_found_again_after_its_linked_goal_ended() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let once = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Made once", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    // The host makes the task, its answer is lost, and the next send waits.
+    p.front.lose_next_then_hold("create task", "find task");
+    activate(&p.local, &goal).await;
+    eventually(TIMEOUT, "the next send waits", || async {
+        p.front.waiting() > 0
+    })
+    .await;
+
+    // The linked goal ends on the host before the task is sent again.
+    let made = far_task(&p.far, &goal, "Made once").await;
+    p.far
+        .store
+        .end_goal(&made.goal_id, GoalStatus::Completed)
+        .await
+        .unwrap();
+    p.front.release();
+
+    until_sent(&p.local, &once, &made).await;
+    let goals = linked_goals(&p.far, &goal).await;
+    assert_eq!(goals.len(), 1, "{goals:?}");
+    assert_eq!(goals[0].status, GoalStatus::Completed);
+    assert_eq!(far_tasks(&p.far, &goal).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_read_that_answers_after_the_host_left_writes_nothing() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "mine", "acme/widgets").await;
+    forge_repository(&p.far, "theirs", "acme/widgets").await;
+    let goal = goal_on(&p.local, &repo).await;
+    let late = create_task(
+        &p.local,
+        &goal,
+        task_body(&goal, "Late", &p.model, json!({"host": "far"})),
+    )
+    .await;
+    activate(&p.local, &goal).await;
+    let sent = far_task(&p.far, &goal, "Late").await;
+    until_sent(&p.local, &late, &sent).await;
+
+    // The host comes back, and the read of the task waits.
+    p.front.hold("read task");
+    go_away(&p).await;
+    let started = start_on_far(&p.far, &sent.id).await;
+    back(&p).await;
+    eventually(TIMEOUT, "the read waits", || async {
+        p.front.waiting() > 0
+    })
+    .await;
+
+    // The host leaves again, and only then does the read answer.
+    go_away(&p).await;
+    let reads = p.front.answers("read task");
+    let mut local_events = p.local.bus.subscribe();
+    p.front.release();
+    eventually(TIMEOUT, "the late read answered", || async {
+        p.front.answers("read task") > reads
+    })
+    .await;
+    let quiet = tokio::time::Instant::now() + QUIET;
+    while let Ok(Ok(event)) = tokio::time::timeout_at(quiet, local_events.recv()).await {
+        if let DomainEvent::TaskUpdated(update) = event.event {
+            assert!(
+                update.task.id != late.id || update.task.host_unreachable,
+                "the late read reached the far task: {:?}",
+                update.task
+            );
+        }
+    }
+    let kept = task(&p.local, &late.id).await;
+    assert_eq!(kept.status, TaskStatus::Pending);
+    assert!(kept.host_unreachable);
+
+    // The next `ready` reads it.
+    back(&p).await;
+    let read = eventually_some(TIMEOUT, "the far task read again", async || {
+        let here = task(&p.local, &late.id).await;
+        (!here.host_unreachable).then_some(here)
+    })
+    .await;
+    assert_eq!(read.status, TaskStatus::InProgress);
+    assert_eq!(read.step, started.step);
+}
+
+#[tokio::test]
+async fn a_linked_task_takes_no_host_beside_its_origin_task() {
+    let h = harness().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let linked: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                json!({
+                    "title": "Fed",
+                    "repository_ids": [repo.id],
+                    "model": test_pin().model,
+                    "linked": {"origin_goal_id": "01arz3ndektsv4rrffq69g5fav"},
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let model = test_pin().model;
+    let message = refusal(
+        &h,
+        &linked,
+        task_body(
+            &linked,
+            "Both",
+            &model,
+            json!({"host": "far", "origin_task_id": "01arz3ndektsv4rrffq69g5fat"}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert!(
+        message.contains("origin_task_id and a host other than local"),
+        "{message}"
+    );
 }

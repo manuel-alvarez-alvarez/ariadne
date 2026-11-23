@@ -209,6 +209,8 @@ async fn work(
             ctx: &ctx,
             host: &host,
             client: client_for(&endpoint),
+            epoch,
+            link: ready.clone(),
         };
         let lost = follower.follow(epoch, &mut ready, &mut kicks).await;
         ctx.unreachable(&host, true).await;
@@ -258,9 +260,19 @@ struct Follower<'a> {
     ctx: &'a Ctx,
     host: &'a str,
     client: Client,
+    /// The epoch this follower follows, and the host's link as it is now.
+    epoch: u64,
+    link: watch::Receiver<Link>,
 }
 
 impl Follower<'_> {
+    /// Whether the host is still in the `ready` this follower follows. An
+    /// answer that arrives after the host left it writes nothing: the far
+    /// task keeps its last known state while the host is away.
+    fn current(&self) -> bool {
+        self.link.borrow().epoch == self.epoch
+    }
+
     async fn follow(
         &self,
         epoch: u64,
@@ -317,15 +329,16 @@ impl Follower<'_> {
         }
     }
 
-    /// Read each far task on the host again whose state can still move here,
+    /// Read each far task that went to the host again, whatever its state,
     /// then clear `host_unreachable` on every far task of the host. A far
-    /// task whose state is final here is not read: nothing the host says can
-    /// change it ([`ariadne_store::is_final`]).
+    /// task whose state is final here keeps it ([`ariadne_store::is_final`]).
+    /// A host that left `ready` meanwhile stops the reads, and nothing is
+    /// cleared.
     async fn refresh(&self) -> Result<(), ClientError> {
         let tasks = self
             .ctx
             .store
-            .list_far_tasks(self.host)
+            .list_sent_far_tasks(self.host)
             .await
             .map_err(|e| ClientError::Unreachable {
                 endpoint: "the local store".into(),
@@ -335,14 +348,14 @@ impl Follower<'_> {
             let Some(far_id) = &task.far_task_id else {
                 continue;
             };
-            if matches!(task.status(), TaskStatus::Finished | TaskStatus::Cancelled) {
-                continue;
-            }
-            match self
+            let read = self
                 .client
                 .get_json::<TaskDto>(&format!("/v1/tasks/{far_id}"))
-                .await
-            {
+                .await;
+            if !self.current() {
+                return Ok(());
+            }
+            match read {
                 Ok(far) => self.mirror(&task.id, &far).await,
                 Err(ClientError::Api { status, .. }) if status == StatusCode::NOT_FOUND => {
                     warn!(host = self.host, task = %task.id, far_task = %far_id, "the host has no such task any more");
@@ -350,7 +363,9 @@ impl Follower<'_> {
                 Err(error) => return Err(error),
             }
         }
-        self.ctx.unreachable(self.host, false).await;
+        if self.current() {
+            self.ctx.unreachable(self.host, false).await;
+        }
         Ok(())
     }
 
@@ -379,6 +394,9 @@ impl Follower<'_> {
     /// Write what the host reports of a far task, and wake the scheduler
     /// when its status moved: a task that depends on it may start now.
     async fn mirror(&self, task_id: &str, far: &TaskDto) {
+        if !self.current() {
+            return;
+        }
         let state = FarTaskState {
             status: far.status,
             step: far.step.clone(),
@@ -399,6 +417,10 @@ impl Follower<'_> {
     /// Send each far task that is free to start to the host. Answers when to
     /// try again, where the host did not answer.
     async fn dispatch_all(&self) -> Option<Instant> {
+        // A host that left `ready` gets nothing until it is back.
+        if !self.current() {
+            return None;
+        }
         let tasks = match self.ctx.store.list_far_tasks(self.host).await {
             Ok(tasks) => tasks,
             Err(error) => {
@@ -469,6 +491,18 @@ impl Follower<'_> {
             .into_iter()
             .map(repository_dto)
             .collect();
+        // What the host already made of this task, in whatever goal and
+        // status: a send whose answer was lost, even where the linked goal
+        // ended since, finds it and makes nothing again.
+        let made: Vec<TaskDto> = self
+            .client
+            .get_json(&format!("/v1/tasks?origin_task_id={}", task.id))
+            .await?;
+        if let Some(far) = made.into_iter().next() {
+            store.set_far_task(&task.id, &far.goal_id, &far.id).await?;
+            self.mirror(&task.id, &far).await;
+            return Ok(());
+        }
         let paired = host_repositories(local, &self.client).await?;
         let Some(far_repo) = paired.get(&task.repo_id).cloned() else {
             let repo = store.get_repository(&task.repo_id).await?;
@@ -537,7 +571,9 @@ impl Follower<'_> {
                 },
             )
             .await?;
-        store.set_far_task(&task.id, &far_goal, &far.id).await?;
+        // The goal of the task the host answers: a repeated create answers
+        // the task it already holds, in the goal it is in.
+        store.set_far_task(&task.id, &far.goal_id, &far.id).await?;
         self.mirror(&task.id, &far).await;
         Ok(())
     }

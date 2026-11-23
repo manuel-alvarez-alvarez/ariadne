@@ -477,6 +477,7 @@ mod tests {
                 &TaskListQuery {
                     goal: Some("a b&c".into()),
                     status: Some(TaskStatus::InProgress),
+                    origin_task_id: None,
                 }
             )
             .unwrap(),

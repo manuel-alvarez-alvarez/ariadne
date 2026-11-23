@@ -661,9 +661,11 @@ picker, the Hosts screen and one stream per host — is spec
     never starts an agent for a far task.
 94. A far task is free to start when it is `pending`, it has not gone to its host, its goal is
     `active`, and every task in its `depends_on` has merged (001 rule 19). Then the goal's
-    daemon sends it to its host. Each send makes the same two requests, and the host answers
-    both again with what it made (001 rules 14 and 15). So a send whose answer was lost
-    makes no second goal or task when it is sent again:
+    daemon sends it to its host. A send whose answer was lost makes no second goal or task
+    when it is sent again (001 rules 14 and 15):
+    - `GET /v1/tasks?origin_task_id=<id>` asks first what the host made of the far task, in
+      whatever goal and status. A task found is recorded, with the goal it is in, and the
+      send ends.
     - `POST /v1/goals` with `linked: { origin_goal_id }`, the goal's workflow, title,
       description and issue URL, and the host's id of each goal repository that the host has,
       the task's own first. The model is the one of the task's first agent. The host has one
@@ -671,7 +673,8 @@ picker, the Hosts screen and one stream per host — is spec
       joins it.
     - `POST /v1/goals/{id}/tasks` in that linked goal, with no session header, the host's
       repository id, the same title, description and agents, no `depends_on`, and the far
-      task's own id as `origin_task_id`.
+      task's own id as `origin_task_id`. The goal's daemon records the task the host
+      answers, with the goal it is in.
     - A refusal of the host fails the far task with the reason
       `host <name> refused the task: <message>`. A host that does not answer gets the task
       again after `far_retry`.
@@ -685,10 +688,12 @@ picker, the Hosts screen and one stream per host — is spec
     `host_unreachable` is true, whatever the status of its goal. A lost event stream of a
     `ready` host is the same, and the goal's daemon opens the stream again after `far_retry`.
 97. On the next `ready`, the goal's daemon opens the event stream of the host. Then it reads
-    again each far task whose state is not final (`GET /v1/tasks/{id}` on the host), and sets
-    `host_unreachable` to false on each far task of the host. A host that leaves `ready` and
-    comes back at the same endpoint while the daemon still works on an earlier answer of it
-    counts as a next `ready` too.
+    again each far task that went to the host, whatever its state and its goal
+    (`GET /v1/tasks/{id}` on the host), and sets `host_unreachable` to false on each far task
+    of the host. A far task whose state is final keeps it (rule 95). A host that leaves
+    `ready` and comes back at the same endpoint while the daemon still works on an earlier
+    answer of it counts as a next `ready` too. An answer that arrives after the host left
+    `ready` writes nothing, and clears no `host_unreachable`.
 
 ## Acceptance criteria
 
@@ -700,8 +705,10 @@ picker, the Hosts screen and one stream per host — is spec
   proves that nothing goes to the host while the goal plans, and that two far tasks share one
   linked goal on the host's repository. `::a_far_task_waits_until_its_dependencies_merge_on_any_host`
   proves the wait for a far and a local dependency.
-  `::a_lost_answer_of_the_host_makes_no_second_goal_or_task` proves the repeated send, and
-  `::a_repository_set_up_later_joins_the_same_linked_goal` proves the repository that joins.
+  `::a_lost_answer_of_the_host_makes_no_second_goal_or_task` proves the repeated send,
+  `::a_task_the_host_made_is_found_again_after_its_linked_goal_ended` proves the question
+  first, and `::a_repository_set_up_later_joins_the_same_linked_goal` proves the repository
+  that joins.
 - Rule 95: `far_tasks.rs::a_far_task_mirrors_the_state_its_host_reports` proves the column,
   branch, request URL, merge commit and status.
   `::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports` proves the final state,
@@ -709,8 +716,11 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 96 and 97: `far_tasks.rs::a_far_task_keeps_its_state_while_its_host_is_away` proves the
   kept state, `host_unreachable`, and the read on the next `ready`.
   `::a_far_task_of_a_completed_goal_is_unreachable_while_its_host_is_away` proves the flag on a
-  goal that is over. `::a_host_back_at_the_same_endpoint_is_read_again_while_its_worker_is_busy`
-  proves the return at the same endpoint.
+  goal that is over, the read of its final task and the kept state.
+  `::a_far_task_cancelled_here_stays_cancelled_whatever_its_host_reports` proves the read of a
+  cancelled task. `::a_host_back_at_the_same_endpoint_is_read_again_while_its_worker_is_busy`
+  proves the return at the same endpoint, and
+  `::a_read_that_answers_after_the_host_left_writes_nothing` proves the late answer.
 
 - Rule 46: `hosts.rs::daemon_version_installs_the_recorded_release_of_a_release_daemon` proves SSH-only review and setup.
   Release builds verify their own repository and version tag before installation.

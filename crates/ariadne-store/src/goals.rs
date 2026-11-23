@@ -57,8 +57,9 @@ impl Store {
         self.create_goal_as(new, None, Some(origin_goal_id)).await
     }
 
-    /// The `active` linked goal that the goal `origin_goal_id` of another
-    /// daemon feeds, if there is one (037).
+    /// The oldest `active` linked goal that the goal `origin_goal_id` of
+    /// another daemon feeds, if there is one (037). A database from before
+    /// may hold two of them: the oldest one takes the new tasks.
     pub async fn open_linked_goal(&self, origin_goal_id: &str) -> Result<Option<Goal>> {
         Ok(sqlx::query_as::<_, Goal>(
             "SELECT * FROM goals WHERE origin_goal_id = ? AND status = 'active'

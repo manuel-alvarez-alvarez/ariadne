@@ -565,7 +565,14 @@ async fn listing(
     // `GET /v1/tasks` takes one status, so one is asked for and the rest is
     // narrowed on the answer — with the live/finished split.
     let status = one_of(statuses);
-    let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
+    let path = query_path(
+        "/v1/tasks",
+        &TaskListQuery {
+            goal,
+            status,
+            origin_task_id: None,
+        },
+    )?;
     let tasks: Vec<TaskDto> = client.get_json(&path).await?;
     let tasks = visible(tasks, all, statuses, step);
     let now = chrono::Utc::now();

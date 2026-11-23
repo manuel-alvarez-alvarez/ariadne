@@ -266,6 +266,10 @@ pub struct TaskListQuery {
     pub goal: Option<String>,
     /// Filter by status.
     pub status: Option<TaskStatus>,
+    /// The task that runs this far task of another daemon (037), in whatever
+    /// goal and status: one task at most.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_task_id: Option<String>,
 }
 
 /// Body of `POST /v1/tasks/{id}/step/complete`: the current column's agent

@@ -6030,7 +6030,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description the active goal linked to the same origin goal, with the repositories added */
+            /** @description the oldest active goal linked to the same origin goal, with the repositories added */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8804,6 +8804,11 @@ export interface operations {
                 goal?: string | null;
                 /** @description Filter by status. */
                 status?: components["schemas"]["TaskStatus"] | null;
+                /**
+                 * @description The task that runs this far task of another daemon (037), in whatever
+                 *     goal and status: one task at most.
+                 */
+                origin_task_id?: string | null;
             };
             header?: never;
             path?: never;

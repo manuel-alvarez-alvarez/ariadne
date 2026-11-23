@@ -386,23 +386,22 @@ impl Store {
     }
 
     /// Create the task of a linked goal that runs the far task
-    /// `origin_task_id` of the goal's daemon (037). The goal holds one task
-    /// for each origin task: a repeated create answers the task it already
-    /// holds, and `false`.
+    /// `origin_task_id` of the goal's daemon (037). The daemon holds one task
+    /// for each origin task, in whatever goal and status: a repeated create
+    /// answers the task it already holds, and `false`.
     pub async fn create_linked_task(
         &self,
         new: NewTask,
         origin_task_id: &str,
     ) -> Result<(Task, bool)> {
-        let goal_id = new.goal_id.clone();
-        if let Some(task) = self.linked_task_of(&goal_id, origin_task_id).await? {
+        if let Some(task) = self.linked_task_of(origin_task_id).await? {
             return Ok((task, false));
         }
         match self.create_task_on(new, None, Some(origin_task_id)).await {
             Ok(task) => Ok((task, true)),
             // Two creates raced: the other one holds the task.
             Err(StoreError::Db(sqlx::Error::Database(db))) if db.is_unique_violation() => self
-                .linked_task_of(&goal_id, origin_task_id)
+                .linked_task_of(origin_task_id)
                 .await?
                 .map(|task| (task, false))
                 .ok_or_else(|| not_found("task", origin_task_id)),
@@ -410,14 +409,15 @@ impl Store {
         }
     }
 
-    async fn linked_task_of(&self, goal_id: &str, origin_task_id: &str) -> Result<Option<Task>> {
-        Ok(sqlx::query_as::<_, Task>(
-            "SELECT * FROM tasks WHERE goal_id = ? AND origin_task_id = ?",
+    /// The task that runs the far task `origin_task_id` of another daemon,
+    /// in whatever goal and status (037).
+    pub async fn linked_task_of(&self, origin_task_id: &str) -> Result<Option<Task>> {
+        Ok(
+            sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE origin_task_id = ?")
+                .bind(origin_task_id)
+                .fetch_optional(self.r())
+                .await?,
         )
-        .bind(goal_id)
-        .bind(origin_task_id)
-        .fetch_optional(self.r())
-        .await?)
     }
 
     async fn create_task_on(
