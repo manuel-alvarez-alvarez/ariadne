@@ -41,7 +41,8 @@ In: the installer and what it installs, the user service, release
 verification, the release-please loop, CI build caches, and the database
 migration policy. SSH worker setup follows spec 037, rules 43–50.
 
-Out: what the daemon does once running (009, 012).
+Out: what the daemon does once running (009, 012). The isolated manual Linux
+latency experiment belongs to spec 039; its local caches do not change rule 19.
 
 ## Behavior
 

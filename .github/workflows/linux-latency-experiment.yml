@@ -1,0 +1,159 @@
+name: Isolated Linux latency experiment
+run-name: linux-latency-${{ inputs.experiment_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment_id:
+        description: Approved cohort ID (1–32 lowercase letters, digits or hyphens)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# An API guard below rejects overlapping earlier dispatches. This group also
+# serializes a same-ID race without touching ordinary CI concurrency groups.
+concurrency:
+  group: linux-latency-experiment-${{ inputs.experiment_id }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  measure:
+    name: ${{ matrix.lane }} repetition ${{ matrix.repetition }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: ${{ matrix.minutes }}
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - {lane: rust, repetition: 1, minutes: 50, measure_minutes: 45}
+          - {lane: rust, repetition: 2, minutes: 50, measure_minutes: 45}
+          - {lane: rust, repetition: 3, minutes: 50, measure_minutes: 45}
+          - {lane: tauri, repetition: 1, minutes: 30, measure_minutes: 25}
+          - {lane: tauri, repetition: 2, minutes: 30, measure_minutes: 25}
+          - {lane: tauri, repetition: 3, minutes: 30, measure_minutes: 25}
+          - {lane: frontend, repetition: 1, minutes: 25, measure_minutes: 20}
+          - {lane: frontend, repetition: 2, minutes: 25, measure_minutes: 20}
+          - {lane: frontend, repetition: 3, minutes: 25, measure_minutes: 20}
+    env:
+      EXPERIMENT_ID: ${{ inputs.experiment_id }}
+      RUSTUP_TOOLCHAIN: '1.100.0'
+    steps:
+      - name: Start the job budget and bootstrap evidence
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, time
+          value = os.environ['EXPERIMENT_ID']
+          if not re.fullmatch('[a-z0-9-]{1,32}', value):
+              raise SystemExit('Invalid experiment ID')
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          (root / 'latency-started').write_text(str(time.monotonic()))
+          evidence = root / 'latency-bootstrap-evidence'
+          evidence.mkdir()
+          fields = ('ImageOS', 'ImageVersion', 'RUNNER_NAME', 'RUNNER_OS', 'RUNNER_ARCH',
+                    'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')
+          (evidence / 'bootstrap.json').write_text(json.dumps({k: os.environ.get(k) for k in fields}, indent=2))
+          PY
+
+      - name: Check out the workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: experiment
+          persist-credentials: false
+
+      - name: Reject overlapping public-repository dispatches
+        timeout-minutes: 2
+        run: python3 experiment/.github/experiments/linux-latency/run.py guard "$EXPERIMENT_ID"
+
+      - name: Check out the fixed measured source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 4f71da2465954107f113d639b5d7bf666c8446a9
+          path: measured
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the source before setup and fetch main
+        timeout-minutes: 2
+        working-directory: measured
+        run: |
+          test "$(git rev-parse HEAD)" = 4f71da2465954107f113d639b5d7bf666c8446a9
+          git fetch "https://github.com/$GITHUB_REPOSITORY.git" main:refs/remotes/origin/main
+
+      - name: Install pinned Rust and components outside private caches
+        timeout-minutes: 5
+        run: rustup toolchain install 1.100.0 --profile minimal --component clippy,rustfmt
+
+      - name: Install pinned standalone tools outside private caches
+        timeout-minutes: 5
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2, resolved 2026-11-23
+        with:
+          tool: cargo-nextest@0.9.146,sccache@0.16.0,cargo-machete@0.9.2,cargo-audit@0.22.0
+          fallback: none
+          checksum: true
+
+      - name: Install pinned Node without a cache service
+        timeout-minutes: 3
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26.12.0'
+          package-manager-cache: false
+
+      - name: Install pinned npm outside the measured cache
+        timeout-minutes: 2
+        run: npm install --global npm@11.20.0
+
+      - name: Install the same Linux prerequisites in every lane
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libssl-dev build-essential file
+
+      - name: Measure the bounded cold and warm chains
+        timeout-minutes: ${{ matrix.measure_minutes }}
+        env:
+          LANE: ${{ matrix.lane }}
+          REPETITION: ${{ matrix.repetition }}
+        run: |
+          python3 experiment/.github/experiments/linux-latency/run.py run \
+            --source "$GITHUB_WORKSPACE/measured" \
+            --private-root "$RUNNER_TEMP" --experiment-id "$EXPERIMENT_ID" \
+            --lane "$LANE" --repetition "$REPETITION" \
+            --started "$RUNNER_TEMP/latency-started"
+
+      - name: Stop any private compiler-cache server
+        if: always()
+        timeout-minutes: 1
+        run: |
+          if [ -f experiment/.github/experiments/linux-latency/run.py ]; then
+            python3 experiment/.github/experiments/linux-latency/run.py cleanup "$RUNNER_TEMP"
+          fi
+
+      - name: Upload bounded evidence even after failure
+        id: upload
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: latency-${{ inputs.experiment_id }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.lane }}-${{ matrix.repetition }}-evidence
+          path: ${{ runner.temp }}/*-evidence/
+          retention-days: 14
+          if-no-files-found: error
+          include-hidden-files: false
+
+      - name: Record upload outcome in the job summary
+        if: always()
+        env:
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          echo "Linux latency evidence upload: $UPLOAD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          test "$UPLOAD_OUTCOME" = success

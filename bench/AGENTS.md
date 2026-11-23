@@ -11,7 +11,7 @@ between a benchmark and the daemon is at run time, through what the daemon
 installs (model weights, environments) or reads (its own database,
 read-only) — never a shared source file.
 
-None of this runs in CI.
+Experiments do not run in ordinary CI. The build-test-latency experiment has an isolated, explicitly approved manual-dispatch workflow; it is never a required check.
 
 - [`ai-permissions/`](ai-permissions/README.md) — how well a local model
   tells a safe coding-agent tool call from one that needs a person, for the
@@ -23,7 +23,7 @@ None of this runs in CI.
   exports aggregate evidence only; source databases and raw transcripts never
   enter Git.
 
-- [`build-test-latency/`](build-test-latency/README.md) — report-only build and check latency measurements.
+- [`build-test-latency/`](build-test-latency/README.md) — historical reports and an isolated manual Linux latency experiment.
 
 ## Checks
 
@@ -36,7 +36,7 @@ one. Today:
 - `ai-opportunities/progress/` — `python3 -m pytest tests/ -q`.
 - `ai-opportunities/handoff/` — `python3 -m pytest
   bench/ai-opportunities/handoff/tests -q`.
-- `build-test-latency/` — `git diff --check` and relative Markdown link validation.
+- `build-test-latency/` — `git diff --check`, relative Markdown link validation and the fixture/action/shell checks in [its README](build-test-latency/README.md#report-checks).
 - `token-usage/` — `python3 bench/token-usage/test_followup.py`.
 
 Read the experiment's own README before changing it: a benchmark's cases,
