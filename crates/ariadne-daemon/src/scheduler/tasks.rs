@@ -28,8 +28,10 @@ impl super::Scheduler {
             return Ok(());
         }
         // A far task runs on its host (037): the far task worker sends it
-        // there and mirrors it. What is left here is its dependencies.
+        // there and mirrors it. This daemon delivers to the orchestrator
+        // and manages dependencies.
         if task.is_far() {
+            self.deliver_task_messages(&task).await;
             return Box::pin(self.reconcile_far(task)).await;
         }
         // The branch is only followed while somebody is working on it.
@@ -156,7 +158,7 @@ impl super::Scheduler {
         // no use to it a pass later than it could have had it. A task in no
         // column has no agent to tell, but what its agents said to the
         // orchestrator still reaches it (018).
-        self.deliver_task_messages(&task.id).await;
+        self.deliver_task_messages(&task).await;
         if task.status() != TaskStatus::InProgress {
             return Ok(());
         }

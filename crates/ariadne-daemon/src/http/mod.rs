@@ -419,6 +419,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/tasks/{id}/messages",
             get(channel::list_task_messages).post(channel::post_task_message),
         )
+        .route(
+            "/v1/tasks/{id}/relay-message",
+            post(channel::relay_task_message),
+        )
         .route("/v1/tasks/{id}/diff", get(channel::diff))
         .route("/v1/tasks/{id}/step/complete", post(steps::complete))
         .route("/v1/tasks/{id}/step/fail", post(steps::fail))

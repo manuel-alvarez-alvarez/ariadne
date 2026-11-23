@@ -76,13 +76,39 @@ impl Store {
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         new: &NewMessage,
     ) -> Result<Message> {
-        let id = new_id();
-        sqlx::query(
+        Ok(Self::insert_relayable_message(tx, new, None)
+            .await?
+            .expect("a message with no relay id cannot conflict"))
+    }
+
+    /// Store a copy of a message once per task and original message ID.
+    pub async fn receive_far_message(
+        &self,
+        new: NewMessage,
+        relay_id: &str,
+    ) -> Result<Option<Message>> {
+        let mut tx = self.w().begin().await?;
+        let inserted = Self::insert_relayable_message(&mut tx, &new, Some(relay_id)).await?;
+        tx.commit().await?;
+        if let Some(message) = &inserted {
+            self.publish(Change::MessageSent(message.clone()));
+        }
+        Ok(inserted)
+    }
+
+    async fn insert_relayable_message(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        new: &NewMessage,
+        relay_id: Option<&str>,
+    ) -> Result<Option<Message>> {
+        Ok(sqlx::query_as(
             "INSERT INTO messages (id, goal_id, task_id, kind, from_actor, from_agent_id,
-                                   from_session, to_actor, to_agent_id, body, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   from_session, to_actor, to_agent_id, body, created_at, relay_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (task_id, relay_id) DO NOTHING
+             RETURNING *",
         )
-        .bind(&id)
+        .bind(new_id())
         .bind(&new.goal_id)
         .bind(&new.task_id)
         .bind(new.kind.as_str())
@@ -93,14 +119,32 @@ impl Store {
         .bind(&new.to_agent_id)
         .bind(&new.body)
         .bind(now())
-        .execute(&mut **tx)
-        .await?;
-        Ok(
-            sqlx::query_as::<_, Message>("SELECT * FROM messages WHERE id = ?")
-                .bind(&id)
-                .fetch_one(&mut **tx)
-                .await?,
+        .bind(relay_id)
+        .fetch_optional(&mut **tx)
+        .await?)
+    }
+
+    /// Outbound messages of tasks already sent to this host, in write order.
+    pub async fn pending_far_messages(&self, host: &str) -> Result<Vec<Message>> {
+        Ok(sqlx::query_as(
+            "SELECT m.* FROM messages m JOIN tasks t ON t.id = m.task_id
+             WHERE t.host = ? AND t.far_task_id IS NOT NULL
+               AND m.from_actor = 'orchestrator' AND m.to_actor = 'agent'
+               AND m.relayed_at IS NULL
+             ORDER BY m.id",
         )
+        .bind(host)
+        .fetch_all(self.r())
+        .await?)
+    }
+
+    pub async fn mark_message_relayed(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE messages SET relayed_at = ? WHERE id = ?")
+            .bind(now())
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
     }
 
     pub async fn get_message(&self, id: &str) -> Result<Message> {
