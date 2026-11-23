@@ -645,7 +645,7 @@ picker, the Hosts screen and one stream per host — is spec
 90. The orchestrator seat has the MCP tool `list_hosts`. It takes no parameter and gives, for each host in
     the order of `GET /v1/hosts`, its `name`, `status`, `sync.state` and `sync.missing_repositories` (013).
     No other seat has it. The shipped orchestration skill tells the orchestrator to call it once for the goal,
-    to pick a `ready` host for each task, and to give it as `host` on `create_task`.
+    to pick a `ready` host for each task.
 91. `GET /v1/hosts/{host}/models` answers the model catalog of that host, as `GET /v1/models` does.
     `local` answers this daemon's catalog. A `ready` host answers its own daemon's catalog.
     An unknown name answers `404`. A host that is not `ready` answers `503`, and the message names its status.

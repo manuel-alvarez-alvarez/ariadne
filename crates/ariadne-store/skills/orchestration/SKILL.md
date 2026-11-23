@@ -61,7 +61,7 @@ Use `research` when the user asks a question and wants no plan.
    Done when each ticket has the four sections.
 5. List skills and models once for the goal, not once per task.
    Call `list_hosts` once for the goal. Pick one `ready` host for each
-   task, and give its `name` as `host` on `create_task`. Pick no host
+   task. Pick no host
    whose `sync.missing_repositories` holds the task's repository.
    Staff one agent on every column with `create_task`. Give it the
    skills its work needs from `list_skills`, or none for the column's

@@ -17,9 +17,8 @@ While it plans, the orchestrator does these steps:
    the repository of the task.
 3. It calls `list_models` with the `host` of the task. It staffs the task only
    on models of that host.
-4. It gives the `name` of the host as `host` on `create_task`.
 
-A task with no host runs on this machine.
+The `create_task` tool has no `host` parameter yet. A task runs on this machine.
 
 ## Why the models are those of the host
 
