@@ -2771,6 +2771,17 @@ Out: the daemon endpoints themselves (012).
 
 ## Known gap
 
+### Task host labels
+
+Each task card in a goal shows its host when `TaskDto.host` is not `local`,
+using the shared host colour. When `host_unreachable` is true, the label says
+that the host cannot be reached. Task labels follow `task_updated` through
+the existing task list cache update without a reload.
+
+Acceptance: `ui/src/features/tasks/task-card.test.tsx` proves remote host
+visibility and the unreachable message; `ui/src/events/dispatch.test.ts`
+proves updated task DTOs reach the task list cache.
+
 The goal panel, the session panel, the session detail view, the sessions
 screen, the task card, the goal actions and the attention list
 (`goal-panel.tsx`, `session-panel.tsx`, `session-detail-view.tsx`,

@@ -49,6 +49,16 @@ it("shows no state badge for a task under way", () => {
   ).toContain("Current step Test")
 })
 
+it("shows the colored remote host and its unreachable state", () => {
+  card({ host: "box", host_unreachable: true })
+  expect(screen.getByText("box").getAttribute("title")).toBe("Host box cannot be reached")
+})
+
+it("does not show a label for the local host", () => {
+  card({ host: "local" })
+  expect(screen.queryByText("local")).toBeNull()
+})
+
 it("shows the current staffed model and compact task token totals", () => {
   card({
     status: "in_progress",

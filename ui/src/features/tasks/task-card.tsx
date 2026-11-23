@@ -36,6 +36,7 @@ import { type ReactNode, useId } from "react"
 import { Link } from "react-router-dom"
 
 import type { Host, TaskDto, WorkflowStepDto } from "@/api"
+import { HostLabel } from "@/components/host-label"
 import { PrLink, pullRequestNumber, pullRequestText } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
@@ -209,6 +210,12 @@ export function TaskCard({
               hint={state.hint}
               hintTabIndex={NOT_A_STOP}
               compact
+            />
+          )}
+          {task.host && task.host !== "local" && (
+            <HostLabel
+              host={task.host as Host}
+              title={task.host_unreachable ? `Host ${task.host} cannot be reached` : "Host"}
             />
           )}
         </div>
