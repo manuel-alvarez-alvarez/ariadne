@@ -1,7 +1,7 @@
 ---
 id: 037
 status: current
-updated: 2026-11-22
+updated: 2026-11-23
 areas: [api, daemon, client, cli, store, docs, ui]
 commits: []
 tests:
@@ -640,7 +640,27 @@ picker, the Hosts screen and one stream per host — is spec
 89. `host inspect`, `host review`, and `host setup-status` print items under "Ariadne installs", "Already present", and "Manual".
     Each manual item prints its reason and its command. `--format json` prints the DTO.
 
+### Discovery by the orchestrator
+
+90. The orchestrator seat has the MCP tool `list_hosts`. It takes no parameter and gives, for each host in
+    the order of `GET /v1/hosts`, its `name`, `status`, `sync.state` and `sync.missing_repositories` (013).
+    No other seat has it. The shipped orchestration skill tells the orchestrator to call it once for the goal,
+    and to run every task on this host until `create_task` takes a `host`.
+91. `GET /v1/hosts/{host}/models` answers the model catalog of that host, as `GET /v1/models` does.
+    `local` answers this daemon's catalog. A `ready` host answers its own daemon's catalog.
+    An unknown name answers `404`. A host that is not `ready` answers `503`, and the message names its status.
+    The MCP tool `list_models` with `host` reads this route, and the orchestration skill tells the orchestrator
+    to call it with no `host` and to staff a task only on a model of this host.
+92. [The manual](../docs/hosts.md) tells users how a goal sends tasks to other hosts.
+
 ## Acceptance criteria
+
+- Rule 90: `crates/ariadne-cli/src/commands/mcp/tools.rs::the_hosts_and_the_models_of_a_host_reach_the_orchestrator`
+  proves the fields and the order, and `mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others` proves the seat.
+  `crates/ariadne-store/src/skill_tests/operate.rs::the_orchestration_skill_picks_a_host_for_each_task_and_staffs_its_models` proves the skill text.
+- Rule 91: `host_queries.rs::a_host_serves_its_models_and_an_unknown_or_unready_one_is_refused` proves the three answers.
+  `tools.rs::the_hosts_and_the_models_of_a_host_reach_the_orchestrator` proves the tool reads the route.
+- Rule 92: `docs/hosts.md` is the page.
 
 - Rule 46: `hosts.rs::daemon_version_installs_the_recorded_release_of_a_release_daemon` proves SSH-only review and setup.
   Release builds verify their own repository and version tag before installation.

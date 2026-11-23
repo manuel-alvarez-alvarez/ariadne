@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use ariadne_api::hosts::{HostDto, HostStatus};
 use ariadne_store::telemetry::{MetricKind, MetricPoint, NewLogRecord};
 
+use common::acp::{discovery_settled, registry_home, script, stub_acp_agent};
 use common::{Harness, TIMEOUT, eventually, get, harness};
 
 /// 2026-01-01T10:00:00Z, in Unix seconds.
@@ -57,7 +58,11 @@ async fn seed(h: &Harness, tokens: f64, line: &str) {
 /// A local daemon with the hosts `far` (the second daemon), `dead` (nothing
 /// listens) and `box` (an ssh forward that is not up), and the far daemon.
 async fn pair() -> (Harness, Harness, tempfile::TempDir) {
-    let far = harness().await;
+    pair_with(harness().await).await
+}
+
+/// [`pair`] with `far` as the far daemon.
+async fn pair_with(far: Harness) -> (Harness, Harness, tempfile::TempDir) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let router = far.router.clone();
@@ -304,4 +309,50 @@ async fn openapi_carries_the_host_query_routes() {
         assert!(doc["paths"][path]["get"].is_object(), "{path}");
     }
     assert!(doc["paths"]["/v1/hosts/{host}/api/v1/query"]["post"].is_object());
+}
+
+#[tokio::test]
+async fn a_host_serves_its_models_and_an_unknown_or_unready_one_is_refused() {
+    // The far daemon discovers two models from its own agent. The local one
+    // has none, so only the far daemon's catalog can answer with them.
+    let stub_dir = tempfile::tempdir().unwrap();
+    let mut offer = script();
+    offer["config_options"] = json!([{
+        "id": "model-id", "name": "Model", "category": "model", "type": "select",
+        "currentValue": "old-model",
+        "options": [
+            {"value": "old-model", "name": "The old one"},
+            {"value": "new-model", "name": "The new one"},
+        ],
+    }]);
+    let stub = stub_acp_agent(stub_dir.path(), offer);
+    let far = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&far, &stub).await;
+    let (local, far, _dir) = pair_with(far).await;
+
+    let answer: Vec<Value> = local.get("/v1/hosts/far/models").await;
+    let want: Vec<Value> = far.get("/v1/models").await;
+    let ids: Vec<&str> = answer.iter().map(|m| m["id"].as_str().unwrap()).collect();
+    assert!(ids.iter().any(|id| id.ends_with(":old-model")), "{ids:?}");
+    assert!(ids.iter().any(|id| id.ends_with(":new-model")), "{ids:?}");
+    assert_eq!(answer, want);
+
+    let own: Vec<Value> = local.get("/v1/hosts/local/models").await;
+    let local_want: Vec<Value> = local.get("/v1/models").await;
+    assert_eq!(own, local_want);
+    assert_ne!(own, answer);
+
+    local
+        .error(get("/v1/hosts/nowhere/models"), StatusCode::NOT_FOUND)
+        .await;
+    let error = local
+        .error(
+            get("/v1/hosts/dead/models"),
+            StatusCode::SERVICE_UNAVAILABLE,
+        )
+        .await;
+    assert!(
+        error.error.message.contains("connecting") || error.error.message.contains("down"),
+        "{error:?}"
+    );
 }
