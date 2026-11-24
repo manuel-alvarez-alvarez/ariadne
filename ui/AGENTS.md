@@ -779,7 +779,11 @@ once a release ships the file.
 The 0.55 Perses packages are ESM that import CommonJS and extensionless paths
 (`lodash`, `mdi-material-ui/Circle`) that Node's own loader rejects, so
 `vite.config.ts` sets `test.server.deps.inline` for `@perses-dev/`: Vitest then
-resolves them through Vite.
+resolves them through Vite. The same packages are `"type": "module"`, so Vite
+reads their default import of a CommonJS `mdi-material-ui/<Icon>` file
+Node-style: the icon arrives as an object and React fails with error 130 in
+the browser. `resolve.alias` in `vite.config.ts` points those imports at the
+package's own `esm/` copy. Tests do not see this failure; only a browser does.
 
 `@perses-dev/components@0.55.1`'s `formatValue` — the one function every
 panel kind (stat, gauge, pie, bar, table, time series) formats its numbers
