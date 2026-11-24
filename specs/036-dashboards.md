@@ -8,6 +8,8 @@ tests:
   - crates/ariadne-daemon/tests/it/dashboards.rs
   - ui/dashboard/src/format-value.test.ts
   - ui/dashboard/src/shipped-dashboard.test.ts
+  - ui/dashboard/src/theme.test.ts
+  - ui/dashboard/src/page.test.tsx
 ---
 
 # Dashboards
@@ -16,7 +18,7 @@ tests:
 
 Dashboard documents are editable Perses resources. In: the renderer's view
 and edit mode, since it decides whether an edit reaches the daemon at all
-(rule 10). Out: the rest of the desktop renderer — its layout, wiring and
+(rule 10) and its look (rule 14). Out: the rest of the desktop renderer — its layout, wiring and
 message protocol are spec 015's.
 
 ## Behavior
@@ -69,6 +71,18 @@ message protocol are spec 015's.
 13. The Logs section's shipped table selects every available app service
     and level. A saved override keeps its existing table until reset restores
     the current shipped document.
+14. The desktop renderer wears the app's look, in light and dark mode. Its
+    theme module, `ui/dashboard/src/theme-tokens.ts`, holds the app's tokens as sRGB:
+    background, card, popover, foreground, muted, muted foreground, border,
+    input, primary, primary foreground, destructive and the radius. The dark
+    border and input keep the app's alpha, and each token's `oklch()` source
+    is kept beside it so a drift too small to move the sRGB value still fails. `page.tsx`, through `theme.ts`, extends Perses's own
+    `getTheme` and `generateChartsTheme` with them, so panels, menus, dialogs,
+    the time picker and buttons use the app's surfaces, text, borders, primary
+    colour and radius, and the charts' axes, grid lines, tooltips and legends
+    use the same tokens. The font is Geist, from the package's own bundle. The
+    chart series colours stay the default Perses palette. A `theme` message
+    from the host switches the mode and, with it, the tokens.
 
 ## Acceptance criteria
 
@@ -101,6 +115,26 @@ message protocol are spec 015's.
 6. `ui/dashboard/src/shipped-dashboard.test.ts::shows every service and level in its operational log table`
    proves rule 13's shipped query. `dashboards.rs::resetting_a_built_in_dashboard_restores_its_shipped_document`
    proves reset restores the shipped document.
+7. `ui/dashboard/src/theme.test.ts::match the app's light tokens in
+   ui/src/index.css`, `::match the app's dark tokens in ui/src/index.css`
+   and `::match the app's radius` read `ui/src/index.css` and fail when a
+   token there differs from the module (rule 14's tokens), by its
+   `oklch()` source text as well as its converted sRGB value;
+   `::keep the dark border and input alpha` proves the alpha.
+8. `theme.test.ts::uses the light surfaces, text, borders, primary and radius`,
+   `::uses the dark surfaces, text, borders, primary and radius` and `::styles
+   panels, menus, dialogs and buttons from the tokens` prove the MUI theme;
+   `::extends Perses's theme: its alert override and small fields survive`
+   proves it extends and does not replace.
+9. `theme.test.ts::comes from the package's own bundle, imported at the entry`
+   and `::sets the Geist font on the root and on the variants that carry a
+   family` prove the font.
+10. `theme.test.ts::draws light axes, grid lines, tooltips and legends from the
+    tokens` and `::draws dark axes, grid lines, tooltips and legends from the
+    tokens` prove the charts; `::keeps the default Perses series palette`
+    proves the series colours.
+11. `page.test.tsx::switches to the matching theme tokens on a theme message`
+    proves the mode switch of rule 14.
 
 ## Sources
 

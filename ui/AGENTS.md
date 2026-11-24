@@ -725,6 +725,13 @@ dashboard/
     page.tsx            the provider tree (query client, MUI theme, Perses
                          charts theme, snackbar host, query-param provider,
                          plugin registry) and ViewDashboard itself
+    theme-tokens.ts      the app's light and dark tokens as sRGB, and the font
+    theme.ts             the MUI and charts themes built from them over
+                         Perses's own `getTheme` and `generateChartsTheme`;
+                         `main.tsx` bundles the Geist font
+    theme.test.ts        the drift test: reads `ui/src/index.css` and fails
+                         when a `:root` or `.dark` token there differs from
+                         `theme-tokens.ts`
     page-params.ts       reads `daemon`, `host`, `dashboard` and `theme` off this
                          page's own query string
     use-host-messages.ts listens for the host's `postMessage`s
@@ -739,6 +746,12 @@ dashboard/
   scripts/                its own copies of `check-unused.mjs` and
                          `check-audit.mjs`, scoped to this tree
 ```
+
+**The theme.** `src/theme.ts` extends Perses's theme and does not replace it,
+and leaves the chart series colours to the Perses palette. When a colour or the
+radius in `ui/src/index.css` changes, change the same value in `theme-tokens.ts` as
+sRGB: the drift test names the token that differs. Keep the alpha of the dark
+border and input.
 
 **Build and dev wiring.** `vite.config.ts` sets `base: "/dashboard/"` and
 builds into `../dist/dashboard` — under the app's own `dist/`, so the
