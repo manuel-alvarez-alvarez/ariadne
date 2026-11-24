@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-23
+updated: 2026-11-24
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1067,11 +1067,13 @@ Out: the daemon endpoints themselves (012).
     `ui/src/features/command-palette/hosts.test.tsx::shows a source projection and worker response as one task`).
     Source navigation and worker labels match daemon identities to configured
     hosts; an unmatched worker is labelled unconfigured. Cancellation and
-    retry feedback names the returned status
+    retry feedback names the returned status; a failed retry response says the request
+    awaits worker acknowledgment rather than claiming recovery
     (`ui/src/features/tasks/task-card.test.tsx::labels a projected task by worker identity and keeps the source route`,
     `::labels an unresolved execution owner as unconfigured`,
     `ui/src/features/tasks/task-action-feedback.test.tsx::reports cancellation response %s`,
-    `::reports retry response %s`). Worker
+    `::reports retry response %s`,
+    `::reports a retry request awaiting worker acknowledgment`). Worker
     drafts use their saved workflow. Remote cancellation waits for the daemon
     (`ui/src/features/tasks/hosts.test.tsx::opens the source goal from a worker task through the matching daemon identity`,
     `::edits a worker draft using its saved workflow without a goal`,

@@ -90,16 +90,21 @@ export function TaskActions({ task }: { task: TaskDto }) {
                 onClick={() => {
                   retry.mutate(undefined, {
                     onSuccess: (result) =>
-                      toast.success("Task retried", {
-                        description:
-                          result.status === "pending"
-                            ? "Pending: waiting for dependencies or authorization."
-                            : result.status === "ready"
-                              ? "Ready to start, with the same branch and worktree."
-                              : result.status === "in_progress"
-                                ? "In progress, with the same branch and worktree."
-                                : `Status: ${TASK_STATUS_META[result.status].label}`,
-                      }),
+                      toast.success(
+                        result.status === "failed" ? "Retry requested" : "Task retried",
+                        {
+                          description:
+                            result.status === "failed"
+                              ? "The task remains failed until the worker acknowledges recovery."
+                              : result.status === "pending"
+                                ? "Pending: waiting for dependencies or authorization."
+                                : result.status === "ready"
+                                  ? "Ready to start, with the same branch and worktree."
+                                  : result.status === "in_progress"
+                                    ? "In progress, with the same branch and worktree."
+                                    : `Status: ${TASK_STATUS_META[result.status].label}`,
+                        },
+                      ),
                     onError: (error) =>
                       toast.error("Could not retry", { description: describeError(error) }),
                   })
