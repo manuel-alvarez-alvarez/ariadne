@@ -10,7 +10,8 @@
  * internally. What a host still supplies is everything `ViewDashboard` reads
  * out of context rather than props: a `@tanstack/react-query` v4 client (a
  * second one from the host app's own v5, since this is a separate React
- * tree entirely), the MUI theme and the matching Perses charts theme, a
+ * tree entirely), the MUI theme and the matching Perses charts theme (both the app's own
+ * look, from `theme.ts`), a
  * snackbar host for its own toasts, the `use-query-params` provider its
  * internal `*WithQueryParams` hooks read and write the URL through — the
  * window adapter, since there is no router here to hand it instead — the
@@ -25,12 +26,7 @@
 import { CssBaseline } from "@mui/material"
 import { ThemeProvider } from "@mui/material/styles"
 import type { DashboardResource } from "@perses-dev/client"
-import {
-  ChartsProvider,
-  generateChartsTheme,
-  getTheme,
-  SnackbarProvider,
-} from "@perses-dev/components"
+import { ChartsProvider, SnackbarProvider } from "@perses-dev/components"
 import { ViewDashboard } from "@perses-dev/dashboards"
 import { PluginRegistry, ValidationProvider } from "@perses-dev/plugin-system"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -42,6 +38,7 @@ import { getDashboard, saveDashboard } from "./dashboard-client"
 import { createDatasourceApi } from "./datasource-api"
 import { readPageParams } from "./page-params"
 import { pluginLoader } from "./plugins"
+import { buildChartsTheme, buildMuiTheme } from "./theme"
 import { useHostMessages } from "./use-host-messages"
 
 const queryClient = new QueryClient()
@@ -86,8 +83,8 @@ export function Page() {
     () => createDatasourceApi(params.daemonUrl, params.host),
     [params.daemonUrl, params.host],
   )
-  const muiTheme = useMemo(() => getTheme(theme, undefined, true), [theme])
-  const chartsTheme = useMemo(() => generateChartsTheme(muiTheme, {}), [muiTheme])
+  const muiTheme = useMemo(() => buildMuiTheme(theme), [theme])
+  const chartsTheme = useMemo(() => buildChartsTheme(muiTheme), [muiTheme])
 
   const load = useCallback(() => {
     setError(null)

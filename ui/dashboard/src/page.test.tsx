@@ -17,6 +17,7 @@
  *   alone never reaches it.
  */
 
+import { useTheme } from "@mui/material/styles"
 import { act, render, screen } from "@testing-library/react"
 import { StrictMode, useEffect } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -26,6 +27,8 @@ import { daemonFetch } from "./test/setup"
 let mounts = 0
 let lastSpec = ""
 let lastIsEditing: boolean | undefined
+let lastMode = ""
+let lastBackground = ""
 
 // `vi.mock` hoists above every import in the file, regardless of where it is
 // written, so `Page` below reads these in place of the real modules.
@@ -40,6 +43,9 @@ vi.mock("@perses-dev/dashboards", () => ({
     }, [])
     lastSpec = JSON.stringify(props.dashboardResource.spec)
     lastIsEditing = props.isEditing
+    const muiTheme = useTheme()
+    lastMode = muiTheme.palette.mode
+    lastBackground = muiTheme.palette.background.default
     return <div data-testid="view-dashboard">{lastSpec}</div>
   },
 }))
@@ -52,6 +58,7 @@ vi.mock("./plugins", () => ({
 }))
 
 import { Page } from "./page"
+import { TOKENS } from "./theme-tokens"
 
 function document(spec: Record<string, unknown>): unknown {
   return { kind: "Dashboard", metadata: { name: "default" }, spec }
@@ -115,5 +122,28 @@ describe("Page", () => {
     })
     expect(lastSpec).toBe('{"changed":true}')
     expect(lastIsEditing).toBeFalsy()
+  })
+
+  it("switches to the matching theme tokens on a theme message", async () => {
+    daemonFetch.mockImplementation(async () => jsonResponse({ document: document({}) }))
+
+    render(<Page />)
+    await screen.findByTestId("view-dashboard")
+    expect(lastMode).toBe("light")
+    expect(lastBackground).toBe(TOKENS.light.background)
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "theme", theme: "dark" },
+          origin: window.location.origin,
+        }),
+      )
+    })
+
+    await vi.waitFor(() => {
+      expect(lastMode).toBe("dark")
+    })
+    expect(lastBackground).toBe(TOKENS.dark.background)
   })
 })
