@@ -20,6 +20,7 @@ Sources:
 - [Host malvarez Linux measurement](linux-host.md) times every check stage at `226a47eb`, cold and warm, three times each, and ranks the slowest tests. Its results are for host malvarez only; do not pool them with the CI or macOS data.
 - [Daemon fixed waits removed](daemon-fixed-waits.md) records three daemon tests before and after their fixed waits were removed.
 - [Shell fake forge on macOS](fake-forge-macos.md) runs the fake `gh` tests three times at `3050fabd` and at its merge base on this Mac.
+- [Shell fake ssh on macOS](fake-ssh.md) measures where the time of the five slowest `hosts` tests goes, and times the fake `ssh` tests and the full run before and after a POSIX `sh` fake.
 
 - [macOS contention follow-up](contention.md) compares identical checks across two worktrees at a separately pinned revision.
 - [CI step evidence](ci-evidence.md) records every job step and its duration.

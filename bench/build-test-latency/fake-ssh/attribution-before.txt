@@ -1,0 +1,147 @@
+test=hosts::selected_repositories_clone_only_committed_files_and_retry_registration rc=0 wall=2.367s
+  ssh            n=  22 union=  1.243s sum=  1.243s mean=   56.5ms
+  git            n=  19 union=  0.106s sum=  0.106s mean=    5.6ms
+  acp            n=   2 union=  0.059s sum=  0.059s mean=   29.3ms
+  systemctl      n=   9 union=  0.036s sum=  0.036s mean=    4.0ms
+  uname          n=   6 union=  0.026s sum=  0.026s mean=    4.4ms
+  login-shell    n=   3 union=  0.026s sum=  0.026s mean=    8.6ms
+  loginctl       n=   3 union=  0.013s sum=  0.013s mean=    4.3ms
+  phases: fixture=0.459s ssh=1.243s other_children=0.024s rest=0.640s ssh_share=53%
+test=hosts::selected_repositories_clone_only_committed_files_and_retry_registration rc=0 wall=2.318s
+  ssh            n=  22 union=  1.240s sum=  1.240s mean=   56.4ms
+  git            n=  19 union=  0.110s sum=  0.110s mean=    5.8ms
+  acp            n=   2 union=  0.058s sum=  0.058s mean=   28.9ms
+  systemctl      n=   9 union=  0.035s sum=  0.035s mean=    3.8ms
+  uname          n=   6 union=  0.026s sum=  0.026s mean=    4.3ms
+  login-shell    n=   3 union=  0.025s sum=  0.025s mean=    8.4ms
+  loginctl       n=   3 union=  0.013s sum=  0.013s mean=    4.4ms
+  phases: fixture=0.426s ssh=1.240s other_children=0.027s rest=0.625s ssh_share=53%
+test=hosts::selected_repositories_clone_only_committed_files_and_retry_registration rc=0 wall=2.381s
+  ssh            n=  22 union=  1.243s sum=  1.243s mean=   56.5ms
+  git            n=  19 union=  0.108s sum=  0.108s mean=    5.7ms
+  acp            n=   2 union=  0.059s sum=  0.059s mean=   29.6ms
+  systemctl      n=   9 union=  0.037s sum=  0.037s mean=    4.1ms
+  uname          n=   6 union=  0.025s sum=  0.025s mean=    4.2ms
+  login-shell    n=   3 union=  0.025s sum=  0.025s mean=    8.3ms
+  loginctl       n=   3 union=  0.013s sum=  0.013s mean=    4.4ms
+  phases: fixture=0.511s ssh=1.243s other_children=0.026s rest=0.602s ssh_share=52%
+test=hosts::an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_user_installed rc=0 wall=1.706s
+  ssh            n=  44 union=  1.294s sum=  3.511s mean=   79.8ms
+  brew           n=  40 union=  0.087s sum=  0.169s mean=    4.2ms
+  npm            n=  10 union=  0.042s sum=  0.042s mean=    4.2ms
+  acp            n=   4 union=  0.033s sum=  0.130s mean=   32.6ms
+  curl           n=   4 union=  0.031s sum=  0.042s mean=   10.5ms
+  systemctl      n=   6 union=  0.028s sum=  0.028s mean=    4.7ms
+  codex          n=   6 union=  0.025s sum=  0.026s mean=    4.3ms
+  uname          n=   8 union=  0.014s sum=  0.034s mean=    4.2ms
+  login-shell    n=   4 union=  0.010s sum=  0.036s mean=    8.9ms
+  loginctl       n=   2 union=  0.008s sum=  0.008s mean=    3.8ms
+  phases: fixture=0.270s ssh=1.294s other_children=0.000s rest=0.142s ssh_share=76%
+test=hosts::an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_user_installed rc=0 wall=1.822s
+  ssh            n=  45 union=  1.323s sum=  3.804s mean=   84.5ms
+  brew           n=  40 union=  0.096s sum=  0.170s mean=    4.2ms
+  npm            n=  10 union=  0.042s sum=  0.042s mean=    4.2ms
+  acp            n=   4 union=  0.032s sum=  0.126s mean=   31.6ms
+  systemctl      n=   6 union=  0.030s sum=  0.030s mean=    5.0ms
+  curl           n=   4 union=  0.029s sum=  0.040s mean=   10.0ms
+  codex          n=   6 union=  0.027s sum=  0.027s mean=    4.4ms
+  login-shell    n=   4 union=  0.010s sum=  0.036s mean=    9.1ms
+  uname          n=   8 union=  0.010s sum=  0.036s mean=    4.5ms
+  loginctl       n=   2 union=  0.009s sum=  0.009s mean=    4.7ms
+  phases: fixture=0.354s ssh=1.323s other_children=0.000s rest=0.145s ssh_share=73%
+test=hosts::an_update_upgrades_a_runtime_that_setup_installed_and_leaves_one_the_user_installed rc=0 wall=1.781s
+  ssh            n=  45 union=  1.329s sum=  3.770s mean=   83.8ms
+  brew           n=  40 union=  0.107s sum=  0.175s mean=    4.4ms
+  npm            n=  10 union=  0.043s sum=  0.043s mean=    4.3ms
+  acp            n=   4 union=  0.032s sum=  0.127s mean=   31.8ms
+  curl           n=   4 union=  0.031s sum=  0.042s mean=   10.5ms
+  codex          n=   6 union=  0.031s sum=  0.031s mean=    5.2ms
+  systemctl      n=   6 union=  0.031s sum=  0.031s mean=    5.1ms
+  login-shell    n=   4 union=  0.010s sum=  0.039s mean=    9.8ms
+  uname          n=   8 union=  0.010s sum=  0.036s mean=    4.5ms
+  loginctl       n=   2 union=  0.009s sum=  0.009s mean=    4.5ms
+  phases: fixture=0.297s ssh=1.329s other_children=0.000s rest=0.156s ssh_share=75%
+test=hosts::selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy rc=0 wall=2.405s
+  ssh            n=  26 union=  1.610s sum=  1.610s mean=   61.9ms
+  npm            n=  13 union=  0.057s sum=  0.057s mean=    4.4ms
+  systemctl      n=   9 union=  0.035s sum=  0.035s mean=    3.9ms
+  acp            n=   1 union=  0.031s sum=  0.031s mean=   31.0ms
+  codex          n=   7 union=  0.030s sum=  0.030s mean=    4.2ms
+  login-shell    n=   3 union=  0.025s sum=  0.025s mean=    8.5ms
+  uname          n=   6 union=  0.025s sum=  0.025s mean=    4.2ms
+  node           n=   3 union=  0.013s sum=  0.013s mean=    4.4ms
+  loginctl       n=   3 union=  0.013s sum=  0.013s mean=    4.3ms
+  phases: fixture=0.220s ssh=1.610s other_children=0.000s rest=0.575s ssh_share=67%
+test=hosts::selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy rc=0 wall=2.428s
+  ssh            n=  26 union=  1.640s sum=  1.640s mean=   63.1ms
+  npm            n=  13 union=  0.058s sum=  0.058s mean=    4.5ms
+  systemctl      n=   9 union=  0.039s sum=  0.039s mean=    4.3ms
+  acp            n=   1 union=  0.031s sum=  0.031s mean=   30.6ms
+  codex          n=   7 union=  0.030s sum=  0.030s mean=    4.4ms
+  login-shell    n=   3 union=  0.026s sum=  0.026s mean=    8.8ms
+  uname          n=   6 union=  0.026s sum=  0.026s mean=    4.3ms
+  loginctl       n=   3 union=  0.013s sum=  0.013s mean=    4.4ms
+  node           n=   3 union=  0.012s sum=  0.012s mean=    3.9ms
+  phases: fixture=0.222s ssh=1.640s other_children=0.000s rest=0.566s ssh_share=68%
+test=hosts::selected_credentials_cross_ssh_without_entering_progress_and_retry_skips_the_copy rc=0 wall=2.397s
+  ssh            n=  26 union=  1.616s sum=  1.616s mean=   62.2ms
+  npm            n=  13 union=  0.056s sum=  0.056s mean=    4.3ms
+  systemctl      n=   9 union=  0.036s sum=  0.036s mean=    4.0ms
+  acp            n=   1 union=  0.031s sum=  0.031s mean=   31.1ms
+  codex          n=   7 union=  0.029s sum=  0.029s mean=    4.1ms
+  uname          n=   6 union=  0.026s sum=  0.026s mean=    4.3ms
+  login-shell    n=   3 union=  0.025s sum=  0.025s mean=    8.3ms
+  loginctl       n=   3 union=  0.013s sum=  0.013s mean=    4.4ms
+  node           n=   3 union=  0.013s sum=  0.013s mean=    4.2ms
+  phases: fixture=0.219s ssh=1.616s other_children=0.000s rest=0.562s ssh_share=67%
+test=hosts::setup_reads_the_interactive_shell_path_first_and_falls_back_in_order rc=0 wall=1.431s
+  ssh            n=  39 union=  0.996s sum=  3.183s mean=   81.6ms
+  systemctl      n=  15 union=  0.062s sum=  0.066s mean=    4.4ms
+  acp            n=   5 union=  0.034s sum=  0.169s mean=   33.8ms
+  loginctl       n=   5 union=  0.022s sum=  0.022s mean=    4.4ms
+  login-shell    n=   9 union=  0.022s sum=  0.064s mean=    7.1ms
+  uname          n=  10 union=  0.010s sum=  0.047s mean=    4.7ms
+  phases: fixture=0.275s ssh=0.996s other_children=0.000s rest=0.159s ssh_share=70%
+test=hosts::setup_reads_the_interactive_shell_path_first_and_falls_back_in_order rc=0 wall=1.449s
+  ssh            n=  39 union=  0.961s sum=  3.094s mean=   79.3ms
+  systemctl      n=  15 union=  0.062s sum=  0.062s mean=    4.1ms
+  acp            n=   5 union=  0.035s sum=  0.174s mean=   34.8ms
+  loginctl       n=   5 union=  0.021s sum=  0.021s mean=    4.2ms
+  login-shell    n=   9 union=  0.021s sum=  0.063s mean=    7.0ms
+  uname          n=  10 union=  0.010s sum=  0.045s mean=    4.5ms
+  phases: fixture=0.312s ssh=0.961s other_children=0.000s rest=0.176s ssh_share=66%
+test=hosts::setup_reads_the_interactive_shell_path_first_and_falls_back_in_order rc=0 wall=1.420s
+  ssh            n=  39 union=  1.004s sum=  3.128s mean=   80.2ms
+  systemctl      n=  15 union=  0.064s sum=  0.064s mean=    4.3ms
+  acp            n=   5 union=  0.034s sum=  0.170s mean=   34.0ms
+  loginctl       n=   5 union=  0.022s sum=  0.022s mean=    4.3ms
+  login-shell    n=   9 union=  0.021s sum=  0.066s mean=    7.4ms
+  uname          n=  10 union=  0.010s sum=  0.048s mean=    4.8ms
+  phases: fixture=0.258s ssh=1.004s other_children=0.000s rest=0.158s ssh_share=71%
+test=hosts::repository_setup_copies_this_machines_host_key_to_the_worker rc=0 wall=2.003s
+  ssh            n=  20 union=  1.181s sum=  1.223s mean=   61.1ms
+  git            n=  10 union=  0.059s sum=  0.059s mean=    5.9ms
+  acp            n=   1 union=  0.031s sum=  0.031s mean=   30.7ms
+  systemctl      n=   6 union=  0.024s sum=  0.024s mean=    4.0ms
+  uname          n=   4 union=  0.018s sum=  0.018s mean=    4.4ms
+  login-shell    n=   2 union=  0.017s sum=  0.017s mean=    8.6ms
+  loginctl       n=   2 union=  0.009s sum=  0.009s mean=    4.3ms
+  phases: fixture=0.354s ssh=1.181s other_children=0.023s rest=0.445s ssh_share=59%
+test=hosts::repository_setup_copies_this_machines_host_key_to_the_worker rc=0 wall=1.966s
+  ssh            n=  20 union=  1.174s sum=  1.215s mean=   60.8ms
+  git            n=  10 union=  0.056s sum=  0.056s mean=    5.6ms
+  acp            n=   1 union=  0.031s sum=  0.031s mean=   30.6ms
+  systemctl      n=   6 union=  0.024s sum=  0.024s mean=    4.0ms
+  login-shell    n=   2 union=  0.018s sum=  0.018s mean=    9.2ms
+  uname          n=   4 union=  0.017s sum=  0.017s mean=    4.2ms
+  loginctl       n=   2 union=  0.009s sum=  0.009s mean=    4.4ms
+  phases: fixture=0.351s ssh=1.174s other_children=0.021s rest=0.420s ssh_share=60%
+test=hosts::repository_setup_copies_this_machines_host_key_to_the_worker rc=0 wall=1.950s
+  ssh            n=  20 union=  1.171s sum=  1.211s mean=   60.5ms
+  git            n=  10 union=  0.063s sum=  0.063s mean=    6.3ms
+  acp            n=   1 union=  0.032s sum=  0.032s mean=   31.5ms
+  systemctl      n=   6 union=  0.023s sum=  0.023s mean=    3.9ms
+  uname          n=   4 union=  0.017s sum=  0.017s mean=    4.3ms
+  login-shell    n=   2 union=  0.017s sum=  0.017s mean=    8.6ms
+  loginctl       n=   2 union=  0.008s sum=  0.008s mean=    4.2ms
+  phases: fixture=0.348s ssh=1.171s other_children=0.024s rest=0.407s ssh_share=60%
