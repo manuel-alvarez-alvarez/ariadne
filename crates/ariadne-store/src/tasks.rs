@@ -218,6 +218,26 @@ impl Store {
     /// The columns of a task's workflow that no agent of the task works, in
     /// column order. Empty for a task that can start.
     pub async fn unstaffed_columns(&self, task: &Task) -> Result<Vec<String>> {
+        if let Some(reference) = self.source_task_reference(&task.id).await? {
+            let cached: serde_json::Value = serde_json::from_str(&reference.cache)
+                .map_err(|e| StoreError::Invalid(e.to_string()))?;
+            if reference.request.is_some() {
+                return Err(StoreError::Conflict(
+                    "worker creation is not acknowledged".into(),
+                ));
+            }
+            let staffed: Vec<String> = cached["agents"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|a| a["step"].as_str().map(str::to_owned))
+                .collect();
+            let steps = self.goal_steps(&task.goal_id).await?;
+            return Ok(unstaffed_columns(&steps, &staffed)
+                .into_iter()
+                .map(str::to_owned)
+                .collect());
+        }
         let steps = self.task_steps(task).await?;
         let staffed: Vec<String> = self
             .list_task_agents(&task.id)
@@ -509,7 +529,13 @@ impl Store {
         let mut tx = self.w().begin().await?;
         // Status is validated on the row inside the write transaction: a check
         // against the read pool could be stale by the time we hold the lock.
-        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "task_index", task_id).await?;
+        let authorizing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r WHERE r.id=? AND (r.authorization_revision IS NOT NULL OR r.cancel_requested<>0 OR NOT EXISTS(SELECT 1 FROM goals g WHERE g.id=r.goal_id AND g.status IN ('planning','active'))))").bind(task_id).fetch_one(&mut *tx).await?;
+        if authorizing {
+            return Err(StoreError::Conflict(
+                "dependencies cannot change after authorization or source cancellation".into(),
+            ));
+        }
         if !depends_on.is_empty()
             && sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM remote_task_contexts WHERE task_id = ?)",
@@ -534,7 +560,10 @@ impl Store {
             .await?;
         Self::insert_dependencies(&mut tx, &task.goal_id, task_id, depends_on).await?;
         // A task that was already ready may need to wait again.
-        let transition = if task.status() == TaskStatus::Ready && !depends_on.is_empty() {
+        let transition = if task.status() == TaskStatus::Ready
+            && !depends_on.is_empty()
+            && task.host.is_none()
+        {
             Some(
                 Self::transition_in_tx(
                     &mut tx,
@@ -557,7 +586,7 @@ impl Store {
 
     /// Validate deps exist, belong to `goal_id`, and introduce no cycle;
     /// insert them.
-    async fn insert_dependencies(
+    pub(crate) async fn insert_dependencies(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         goal_id: &str,
         task_id: &str,
@@ -568,7 +597,7 @@ impl Store {
                 return Err(StoreError::Invalid("a task cannot depend on itself".into()));
             }
             let dep_goal: Option<String> =
-                sqlx::query_scalar("SELECT goal_id FROM tasks WHERE id = ?")
+                sqlx::query_scalar("SELECT goal_id FROM task_index WHERE id = ?")
                     .bind(dep)
                     .fetch_optional(&mut **tx)
                     .await?;
@@ -586,7 +615,7 @@ impl Store {
         // Cycle check over existing edges plus the new ones.
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT td.task_id, td.depends_on_task_id FROM task_dependencies td
-             JOIN tasks t ON t.id = td.task_id WHERE t.goal_id = ?",
+             JOIN task_index t ON t.id = td.task_id WHERE t.goal_id = ?",
         )
         .bind(goal_id)
         .fetch_all(&mut **tx)
@@ -623,11 +652,11 @@ impl Store {
     }
 
     pub async fn get_task(&self, id: &str) -> Result<Task> {
-        self.fetch_by("task", "tasks", "id", id).await
+        self.fetch_by("task", "task_index", "id", id).await
     }
 
     pub async fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>> {
-        Filtered::new("tasks")
+        Filtered::new("task_index")
             .maybe(" AND goal_id = ?", filter.goal_id)
             .maybe(" AND status = ?", filter.status.map(|s| s.as_str()))
             .fetch(self, " ORDER BY id", &[])
@@ -702,6 +731,14 @@ impl Store {
         reason: Option<&str>,
         merge_commit: Option<&str>,
     ) -> Result<Task> {
+        if self.source_task_reference(id).await?.is_some() {
+            if to == TaskStatus::Cancelled && matches!(actor, Actor::User | Actor::Orchestrator) {
+                return self.request_source_cancel(id).await;
+            }
+            return Err(StoreError::Conflict(
+                "remote transitions require the worker acknowledgment".into(),
+            ));
+        }
         let mut tx = self.w().begin().await?;
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", id).await?;
         let transition =
@@ -897,6 +934,17 @@ impl Store {
         task_id: &str,
         status: TaskStatus,
     ) -> Result<Option<(String, String)>> {
+        if let Some(reference) = self.source_task_reference(task_id).await? {
+            let cached: serde_json::Value = serde_json::from_str(&reference.cache)
+                .map_err(|e| StoreError::Invalid(e.to_string()))?;
+            return Ok((if reference.dependency_failure.is_some() {
+                status == TaskStatus::Failed
+            } else {
+                cached["status"].as_str() == Some(status.as_str())
+            })
+            .then(|| reference.progress_id.zip(reference.progress_at))
+            .flatten());
+        }
         Ok(sqlx::query_as(
             "SELECT id, created_at FROM task_transitions
               WHERE task_id = ? AND to_status = ?
@@ -921,7 +969,7 @@ impl Store {
     pub async fn task_dependencies_merged(&self, task_id: &str) -> Result<bool> {
         let unmerged: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM task_dependencies td
-             JOIN tasks dep ON dep.id = td.depends_on_task_id
+             JOIN task_index dep ON dep.id = td.depends_on_task_id
              WHERE td.task_id = ? AND dep.status <> 'finished'",
         )
         .bind(task_id)
@@ -940,7 +988,7 @@ impl Store {
     pub async fn task_dependencies_blocked(&self, task_id: &str) -> Result<Option<Task>> {
         Ok(sqlx::query_as::<_, Task>(
             "SELECT dep.* FROM task_dependencies td
-             JOIN tasks dep ON dep.id = td.depends_on_task_id
+             JOIN task_index dep ON dep.id = td.depends_on_task_id
              WHERE td.task_id = ? AND dep.status IN ('failed', 'cancelled')
              ORDER BY dep.id
              LIMIT 1",

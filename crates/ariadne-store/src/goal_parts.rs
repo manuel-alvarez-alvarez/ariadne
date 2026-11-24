@@ -190,6 +190,86 @@ impl Store {
                 unstaffed_skills,
             });
         }
+        let references: Vec<crate::SourceTaskReference> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT * FROM source_task_references WHERE goal_id IN ({GOAL_IDS}) ORDER BY id"
+            )))
+            .bind(&ids)
+            .fetch_all(self.r())
+            .await?;
+        for reference in references {
+            let cache: serde_json::Value = serde_json::from_str(&reference.cache)
+                .map_err(|e| crate::StoreError::Invalid(e.to_string()))?;
+            let token_usage = |value: &serde_json::Value| ariadne_core::TokenUsage {
+                input_tokens: value["input_tokens"].as_u64().unwrap_or_default(),
+                cached_input_tokens: value["cached_input_tokens"].as_u64().unwrap_or_default(),
+                output_tokens: value["output_tokens"].as_u64().unwrap_or_default(),
+            };
+            parts
+                .seats
+                .entry(reference.goal_id.clone())
+                .or_default()
+                .push(SeatUsage {
+                    seat: Seat::Agent,
+                    usage: token_usage(&cache["usage"]["total"]),
+                });
+            let agents = reference
+                .cached_agents()?
+                .into_iter()
+                .map(|agent| {
+                    let skills = cache["agents"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|a| a["id"].as_str() == Some(&agent.id))
+                        .and_then(|a| a["skills"].as_array())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|s| s.as_str().map(str::to_owned))
+                        .collect();
+                    (agent, skills)
+                })
+                .collect();
+            let usage = cache["usage"]["agents"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|a| {
+                    a["agent_id"].as_str().map(|id| AgentUsage {
+                        agent_id: id.into(),
+                        usage: token_usage(&a["usage"]),
+                    })
+                })
+                .collect();
+            let unstaffed_skills = cache["usage"]["agents"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|a| {
+                    a["agent_id"].as_str().map(|id| {
+                        (
+                            id.to_owned(),
+                            a["skills"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|s| s.as_str().map(str::to_owned))
+                                .collect(),
+                        )
+                    })
+                })
+                .collect();
+            parts
+                .tasks
+                .entry(reference.goal_id)
+                .or_default()
+                .push(TaskParts {
+                    task_id: reference.id,
+                    agents,
+                    usage,
+                    unstaffed_skills,
+                });
+        }
         Ok(parts)
     }
 }

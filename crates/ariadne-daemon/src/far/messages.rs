@@ -27,9 +27,20 @@ impl Follower<'_> {
             let task = store
                 .get_task(message.task_id.as_deref().unwrap_or_default())
                 .await?;
-            let agent = store
-                .get_task_agent(message.to_agent_id.as_deref().unwrap_or_default())
-                .await?;
+            let agent = if store.source_task_reference(&task.id).await?.is_some() {
+                store
+                    .source_task_agents(&task.id)
+                    .await?
+                    .into_iter()
+                    .find(|a| Some(&a.id) == message.to_agent_id.as_ref())
+                    .ok_or_else(|| {
+                        Unsent::Refused("message recipient is no longer staffed".into())
+                    })?
+            } else {
+                store
+                    .get_task_agent(message.to_agent_id.as_deref().unwrap_or_default())
+                    .await?
+            };
             let Some(far_id) = task.far_task_id else {
                 continue;
             };
@@ -126,6 +137,14 @@ impl Follower<'_> {
                 .find(|agent| agent.step == sender.step)
                 .map(|agent| agent.id);
         }
+        if store
+            .source_task_reference(&task.id)
+            .await
+            .map_err(local_store)?
+            .is_some()
+        {
+            from_agent_id = message.from_agent_id.clone();
+        }
         if !self.current() {
             return Ok(());
         }
@@ -157,7 +176,7 @@ fn from_far_agent(message: &MessageDto) -> bool {
     message.from_actor == Actor::Agent && message.to_actor == Actor::Orchestrator
 }
 
-fn local_store(error: StoreError) -> ClientError {
+pub(super) fn local_store(error: StoreError) -> ClientError {
     ClientError::Unreachable {
         endpoint: "the local store".into(),
         source: Box::new(error),

@@ -29,6 +29,8 @@ mod remote_tasks;
 mod repositories;
 mod sessions;
 mod skills;
+mod source_sessions;
+mod source_tasks;
 mod sse;
 mod steps;
 mod stream;
@@ -482,6 +484,10 @@ pub fn router(state: AppState) -> Router {
         .route("/internal/spawn", post(sessions::debug_spawn))
         // docs (SwaggerUi also serves the spec at /api-docs/openapi.json)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", api_doc()))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            source_tasks::forward,
+        ))
         .with_state(state)
         .layer(middleware::from_fn(record_request_duration))
 }

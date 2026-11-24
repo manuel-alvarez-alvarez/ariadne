@@ -67,6 +67,7 @@ pub fn start(state: &AppState, timeouts: Timeouts) -> FarTasks {
     let events = state.events.subscribe();
     let ctx = Ctx {
         store: state.store.clone(),
+        events: state.events.clone(),
         sched: state.sched_tx.clone(),
         timeouts,
     };
@@ -80,6 +81,7 @@ pub fn start(state: &AppState, timeouts: Timeouts) -> FarTasks {
 #[derive(Clone)]
 struct Ctx {
     store: Store,
+    events: crate::bus::EventBus,
     sched: Option<mpsc::UnboundedSender<SchedEvent>>,
     timeouts: Timeouts,
 }
@@ -137,7 +139,8 @@ async fn supervise(ctx: Ctx, hosts: Hosts, mut events: broadcast::Receiver<BusEv
                 DomainEvent::HostDeleted(host) => drop(workers.remove(&host.name)),
                 DomainEvent::TaskCreated(_)
                 | DomainEvent::TaskUpdated(_)
-                | DomainEvent::GoalUpdated(_) => workers.values().for_each(Worker::kick),
+                | DomainEvent::GoalUpdated(_)
+                | DomainEvent::GoalDeleted(_) => workers.values().for_each(Worker::kick),
                 DomainEvent::MessageSent(message)
                     if message.from_actor == Actor::Orchestrator
                         && message.to_actor == Actor::Agent =>
@@ -398,6 +401,12 @@ impl Follower<'_> {
                 Err(error) => return Err(error),
             }
         }
+        if self.source_references().await.is_err() {
+            return Err(ClientError::Unreachable {
+                endpoint: self.host.into(),
+                source: Box::new(std::io::Error::other("source reference refresh failed")),
+            });
+        }
         if self.current() {
             self.ctx.unreachable(self.host, false).await;
         }
@@ -408,6 +417,27 @@ impl Follower<'_> {
         match frame.event.as_str() {
             "task_updated" => {
                 let update: TaskUpdatedDto = serde_json::from_str(&frame.data)?;
+                if let Some(reference) = self
+                    .ctx
+                    .store
+                    .source_task_reference(&update.task.id)
+                    .await
+                    .map_err(messages::local_store)?
+                {
+                    if reference.host == self.host {
+                        let Some(task) = self
+                            .fenced(
+                                self.client
+                                    .get_json::<TaskDto>(&format!("/v1/tasks/{}", reference.id)),
+                            )
+                            .await
+                        else {
+                            return Ok(());
+                        };
+                        self.mirror(&reference.id, &task?).await;
+                    }
+                    return Ok(());
+                }
                 match self
                     .ctx
                     .store
@@ -417,6 +447,69 @@ impl Follower<'_> {
                     Ok(Some(task)) => self.mirror(&task.id, &update.task).await,
                     Ok(None) => {}
                     Err(error) => warn!(host = self.host, %error, "cannot find a far task"),
+                }
+                Ok(())
+            }
+            "session_created" | "session_updated" => {
+                let mut session: ariadne_api::sessions::SessionDto =
+                    serde_json::from_str(&frame.data)?;
+                if let Some(task_id) = &session.task_id
+                    && let Some(reference) = self
+                        .ctx
+                        .store
+                        .source_task_reference(task_id)
+                        .await
+                        .map_err(messages::local_store)?
+                    && reference.host == self.host
+                {
+                    let Some(task) = self
+                        .fenced(
+                            self.client
+                                .get_json::<TaskDto>(&format!("/v1/tasks/{task_id}")),
+                        )
+                        .await
+                    else {
+                        return Ok(());
+                    };
+                    self.mirror(task_id, &task?).await;
+                    if !self.current() {
+                        return Ok(());
+                    }
+                    session.id = format!("far~{task_id}~{}", session.id);
+                    session.switched_from = session
+                        .switched_from
+                        .map(|id| format!("far~{task_id}~{id}"));
+                    let event = if frame.event == "session_created" {
+                        DomainEvent::SessionCreated(session)
+                    } else {
+                        DomainEvent::SessionUpdated(session)
+                    };
+                    self.ctx.events.publish(BusEvent {
+                        goal_id: Some(reference.goal_id),
+                        task_id: Some(reference.id),
+                        recorded: None,
+                        event,
+                    });
+                }
+                Ok(())
+            }
+            "task_branch_updated" => {
+                let branch: ariadne_api::stream::TaskBranchDto = serde_json::from_str(&frame.data)?;
+                if let Some(reference) = self
+                    .ctx
+                    .store
+                    .source_task_reference(&branch.task_id)
+                    .await
+                    .map_err(messages::local_store)?
+                    && reference.host == self.host
+                    && self.current()
+                {
+                    self.ctx.events.publish(BusEvent {
+                        goal_id: Some(reference.goal_id),
+                        task_id: Some(reference.id),
+                        recorded: None,
+                        event: DomainEvent::TaskBranchUpdated(branch),
+                    });
                 }
                 Ok(())
             }
@@ -430,6 +523,13 @@ impl Follower<'_> {
     /// Write what the host reports of a far task, and wake the scheduler
     /// when its status moved: a task that depends on it may start now.
     async fn mirror(&self, task_id: &str, far: &TaskDto) {
+        if let Ok(Some(reference)) = self.ctx.store.source_task_reference(task_id).await {
+            if let Err(error) = self.cache_reference(&reference, far).await {
+                let _ = error;
+                self.ctx.unreachable(self.host, true).await;
+            }
+            return;
+        }
         if !self.current() {
             return;
         }
@@ -464,7 +564,8 @@ impl Follower<'_> {
                 return Some(Instant::now() + self.ctx.timeouts.far_retry);
             }
         };
-        let mut retry = if self.close_goals().await {
+        let source_retry = self.source_references().await.is_err();
+        let mut retry = if self.close_goals().await && !source_retry {
             None
         } else {
             Some(Instant::now() + self.ctx.timeouts.far_retry)
@@ -697,5 +798,142 @@ fn repository_name(repo: &Repository) -> String {
         None => std::path::Path::new(&repo.path)
             .file_name()
             .map_or_else(|| repo.path.clone(), |name| name.to_string_lossy().into()),
+    }
+}
+
+impl Follower<'_> {
+    /// Reconcile source references, including reservations whose create response was lost.
+    async fn source_references(&self) -> Result<(), Unsent> {
+        let store = &self.ctx.store;
+        let references = store.source_task_references(self.host).await?;
+        if references.is_empty() {
+            return Ok(());
+        }
+        let protocol: ariadne_api::tasks::RemoteTaskProtocol = self
+            .fenced(self.client.get_json("/v1/remote-tasks/protocol"))
+            .await
+            .ok_or(Unsent::Left)??;
+        for reference in references {
+            if reference.worker_id != protocol.daemon_id || protocol.protocol != "remote-tasks-v1" {
+                store.source_tasks_unreachable(self.host, true).await?;
+                return Err(Unsent::Refused(
+                    "worker identity changed; restore the original worker or upgrade Ariadne"
+                        .into(),
+                ));
+            }
+            let mut far: TaskDto = if let Some(request) = &reference.request {
+                let request: serde_json::Value =
+                    serde_json::from_str(request).map_err(|e| Unsent::Refused(e.to_string()))?;
+                self.fenced(
+                    self.client
+                        .put_json(&format!("/v1/remote-tasks/{}", reference.id), &request),
+                )
+                .await
+                .ok_or(Unsent::Left)??
+            } else {
+                self.fenced(self.client.get_json(&format!("/v1/tasks/{}", reference.id)))
+                    .await
+                    .ok_or(Unsent::Left)??
+            };
+            self.cache_reference(&reference, &far).await?;
+            let Some(current_reference) = store.source_task_reference(&reference.id).await? else {
+                continue;
+            };
+            let goal = store.get_goal(&reference.goal_id).await;
+            let cancel = goal.is_err()
+                || current_reference.cancel_requested != 0
+                || goal
+                    .as_ref()
+                    .is_ok_and(|g| g.status() == GoalStatus::Cancelled);
+            if cancel && !far.status.is_terminal() {
+                // Completion can win this race. Read the authoritative outcome after a conflict.
+                match self
+                    .fenced(
+                        self.client
+                            .post_empty::<TaskDto>(&format!("/v1/tasks/{}/cancel", reference.id)),
+                    )
+                    .await
+                    .ok_or(Unsent::Left)?
+                {
+                    Ok(task) => far = task,
+                    Err(ClientError::Api { status, .. }) if status == StatusCode::CONFLICT => {
+                        far = self
+                            .fenced(self.client.get_json(&format!("/v1/tasks/{}", reference.id)))
+                            .await
+                            .ok_or(Unsent::Left)??;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            } else if !cancel
+                && current_reference.retry_requested != 0
+                && far.status == TaskStatus::Failed
+                && store.task_dependencies_merged(&reference.id).await?
+            {
+                far = self
+                    .fenced(
+                        self.client
+                            .post_empty(&format!("/v1/tasks/{}/retry", reference.id)),
+                    )
+                    .await
+                    .ok_or(Unsent::Left)??;
+            } else if !cancel
+                && goal
+                    .as_ref()
+                    .is_ok_and(|g| g.status() == GoalStatus::Active)
+                && current_reference.dependency_failure.is_none()
+                && !far.execution_context.as_ref().is_some_and(|c| c.authorized)
+                && far.status == TaskStatus::Pending
+                && store.task_dependencies_merged(&reference.id).await?
+            {
+                let revision = far
+                    .execution_context
+                    .as_ref()
+                    .ok_or_else(|| {
+                        Unsent::Refused("worker omitted execution context; upgrade Ariadne".into())
+                    })?
+                    .revision;
+                if !store.source_authorization(&reference.id, revision).await? {
+                    continue;
+                }
+                far = self
+                    .fenced(self.client.post_json(
+                        &format!("/v1/remote-tasks/{}/authorize", reference.id),
+                        &ariadne_api::tasks::AuthorizeRemoteTaskRequest { revision },
+                    ))
+                    .await
+                    .ok_or(Unsent::Left)??;
+            }
+            self.cache_reference(&reference, &far).await?;
+            let task = store.get_task(&reference.id).await?;
+            if goal.is_ok() {
+                self.read_messages(&task, &far).await?;
+            } else if far.status.is_terminal() {
+                store.remove_source_task_reference(&reference.id).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn cache_reference(
+        &self,
+        reference: &ariadne_store::SourceTaskReference,
+        far: &TaskDto,
+    ) -> Result<(), Unsent> {
+        if !self.current() {
+            return Err(Unsent::Left);
+        }
+        self.ctx
+            .store
+            .cache_source_task(
+                &reference.id,
+                &reference.worker_id,
+                &serde_json::to_value(far).map_err(|e| Unsent::Refused(e.to_string()))?,
+            )
+            .await?;
+        self.ctx.wake(&reference.id);
+        if let Some(sched) = &self.ctx.sched {
+            let _ = sched.send(SchedEvent::GoalChanged(reference.goal_id.clone()));
+        }
+        Ok(())
     }
 }

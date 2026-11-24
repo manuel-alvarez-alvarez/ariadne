@@ -284,6 +284,9 @@ fn live_session_id(agent_id: &str, sessions: &[store::AgentSession]) -> Option<S
 /// The skills beside every agent are what a task is read for: an agent is its
 /// skills, and no prompt can teach a reader to read an id.
 pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, StoreError> {
+    if store.source_task_reference(&task.id).await?.is_some() {
+        return super::source_tasks::project(store, &task).await;
+    }
     let mut agents = Vec::new();
     for agent in store.list_task_agents(&task.id).await? {
         let skills = agent_skills(store, &agent.id).await;
@@ -428,7 +431,7 @@ pub(crate) async fn goal_dtos_of(
 }
 
 /// A column a goal snapshotted, as the API answers it.
-fn step_dto(s: store::GoalStep) -> Result<WorkflowStepDto, StoreError> {
+pub(super) fn step_dto(s: store::GoalStep) -> Result<WorkflowStepDto, StoreError> {
     let invalid = |field| StoreError::Invalid(format!("column {} has invalid {field}", s.id));
     Ok(WorkflowStepDto {
         skills: serde_json::from_str(&s.skills).map_err(|_| invalid("skills"))?,

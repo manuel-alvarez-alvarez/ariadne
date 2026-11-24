@@ -404,7 +404,11 @@ pub(super) async fn send(
             };
             let task = task
                 .ok_or_else(|| ApiError::bad_request("a message to a task's agent needs a task"))?;
-            let staffed = state.store.list_task_agents(&task.id).await?;
+            let staffed = if state.store.source_task_reference(&task.id).await?.is_some() {
+                state.store.source_task_agents(&task.id).await?
+            } else {
+                state.store.list_task_agents(&task.id).await?
+            };
             if !staffed.iter().any(|a| a.id == *agent_id) {
                 return Err(ApiError::bad_request(format!(
                     "agent {agent_id} is not staffed on task {}",

@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-11-23
+updated: 2026-11-24
 areas: [api, daemon, store]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -415,6 +415,11 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
    Existing task fields retain their meanings. Remote `goal_id` names the source goal.
    Existing task timestamps and events expose subsequent execution changes.
    Reads, transitions, messages, usage, sessions, and diffs require no worker goal.
+
+5. Source routes project new remote tasks through references (037 rules 102 through 110).
+   Existing task routes retain their established shapes. Source projections include the worker execution context.
+   Source aliases scope session routes to the recorded worker and task.
+   `host_unreachable` marks stale source snapshots. Direct worker task reads retain their existing meanings.
 
 ## Acceptance criteria
 

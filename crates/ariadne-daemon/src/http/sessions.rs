@@ -113,6 +113,22 @@ pub(super) async fn switch(
     {
         let ctx = call_ctx(&state.store, &headers).await?;
         let task = state.store.get_task(task_id).await?;
+        if state.store.source_task_reference(task_id).await?.is_some() {
+            if ctx
+                .session
+                .as_ref()
+                .is_some_and(|s| s.goal_id.as_deref() != Some(&task.goal_id))
+            {
+                return Err(ApiError::forbidden(
+                    "session belongs to another source goal",
+                ));
+            }
+            if state.store.get_goal(&task.goal_id).await?.status()
+                == ariadne_core::GoalStatus::Cancelled
+            {
+                return Err(ApiError::conflict("the source goal is cancelled"));
+            }
+        }
         let host = task
             .host
             .as_deref()
@@ -141,6 +157,14 @@ pub(super) async fn switch(
             .get_json(&format!("/v1/tasks/{far_id}"))
             .await
             .map_err(|error| super::tasks::far_error(host, error))?;
+        if let Some(reference) = state.store.source_task_reference(task_id).await?
+            && far.execution_context.as_ref().map(|c| &c.execution_owner)
+                != Some(&reference.worker_id)
+        {
+            return Err(ApiError::conflict(
+                "host names a different worker; restore the original worker",
+            ));
+        }
         if !far
             .agents
             .iter()

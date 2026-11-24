@@ -154,6 +154,24 @@ impl super::Scheduler {
     /// message with no sending agent, such as the orchestrator's.
     async fn sender_column(&self, message: &Message) -> Option<String> {
         let agent_id = message.from_agent_id.as_ref()?;
+        if let Some(task_id) = &message.task_id
+            && self
+                .store
+                .source_task_reference(task_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+        {
+            return self
+                .store
+                .source_task_agents(task_id)
+                .await
+                .ok()?
+                .into_iter()
+                .find(|a| &a.id == agent_id)
+                .map(|a| a.step);
+        }
         self.store
             .get_task_agent(agent_id)
             .await

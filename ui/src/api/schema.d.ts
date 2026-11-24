@@ -3673,8 +3673,8 @@ export interface components {
             description?: string;
             /**
              * @description The host to run the task on, a `ready` host of `GET /v1/hosts`.
-             *     Omitted or `local` = this daemon. A far task waits here until every
-             *     task it depends on has merged, then goes to the host.
+             *     Omitted or `local` = this daemon. New remote tasks become worker drafts
+             *     during planning. The source authorizes execution after finalization and dependencies.
              * @example worker
              */
             host?: string | null;
@@ -5260,8 +5260,9 @@ export interface components {
              */
             host?: string;
             /**
-             * @description True while the host of a far task is not `ready`. The task then keeps
-             *     its last known state. Always false for a `local` task.
+             * @description True while source progress is stale after host or event-stream loss.
+             *     The source keeps the last acknowledged worker state.
+             *     Direct local and worker reads retain their established semantics.
              */
             host_unreachable?: boolean;
             id: string;

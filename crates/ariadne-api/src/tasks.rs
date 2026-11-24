@@ -56,8 +56,9 @@ pub struct TaskDto {
     #[serde(default = "local_host")]
     #[schema(example = "local")]
     pub host: String,
-    /// True while the host of a far task is not `ready`. The task then keeps
-    /// its last known state. Always false for a `local` task.
+    /// True while source progress is stale after host or event-stream loss.
+    /// The source keeps the last acknowledged worker state.
+    /// Direct local and worker reads retain their established semantics.
     #[serde(default)]
     pub host_unreachable: bool,
 }
@@ -200,8 +201,8 @@ pub struct CreateTaskRequest {
     #[serde(default)]
     pub depends_on: Vec<String>,
     /// The host to run the task on, a `ready` host of `GET /v1/hosts`.
-    /// Omitted or `local` = this daemon. A far task waits here until every
-    /// task it depends on has merged, then goes to the host.
+    /// Omitted or `local` = this daemon. New remote tasks become worker drafts
+    /// during planning. The source authorizes execution after finalization and dependencies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(example = "worker")]
     pub host: Option<String>,

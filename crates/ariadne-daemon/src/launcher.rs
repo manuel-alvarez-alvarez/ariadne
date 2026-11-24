@@ -1159,6 +1159,9 @@ impl Launcher {
         delete_branch: bool,
         let_turn_end: bool,
     ) -> Result<()> {
+        if self.store.source_task_reference(task_id).await?.is_some() {
+            return Ok(());
+        }
         let task = self.store.get_task(task_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
         let repo_path = PathBuf::from(&repo.path);

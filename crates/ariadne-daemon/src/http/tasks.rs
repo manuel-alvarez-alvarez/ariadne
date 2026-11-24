@@ -32,7 +32,7 @@ fn check_dependencies(goal: &Goal, depends_on: &[String]) -> ApiResult<()> {
 /// or not `ready`, a repository that the host lacks, or a model that the
 /// host's `GET /v1/models` does not list. Where `staffed`, the orchestrator
 /// staffs the task, and a model that the host turned off is refused too.
-async fn check_host(
+pub(super) async fn check_host(
     state: &AppState,
     host: &str,
     repo: &ariadne_store::Repository,
@@ -229,6 +229,7 @@ pub(super) async fn create(
     // `local` names the goal's own daemon, as an omitted host does.
     let host = req
         .host
+        .clone()
         .filter(|host| host != ariadne_api::tasks::LOCAL_HOST);
     let agents = match &host {
         Some(host) => {
@@ -239,6 +240,9 @@ pub(super) async fn create(
         None => resolve_agents(&state, &req.agents, ctx.actor == Actor::User).await?,
     };
 
+    if let Some(host) = &host {
+        return super::source_tasks::create(&state, &goal, &repo_id, host, req).await;
+    }
     let new = NewTask {
         goal_id: goal.id,
         repo_id,
@@ -311,6 +315,9 @@ pub(super) async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Json<TaskDto>> {
     let task = state.store.get_task(&id).await?;
+    if state.store.source_task_reference(&id).await?.is_some() {
+        return Ok(Json(task_dto_of(&state.store, task).await?));
+    }
     let mut dto = task_dto_of(&state.store, task.clone()).await?;
     if let (Some(host), Some(far_id)) = (&task.host, &task.far_task_id)
         && let Ok(client) = far_client(&state, host)

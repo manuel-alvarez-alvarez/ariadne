@@ -7203,7 +7203,7 @@
               "string",
               "null"
             ],
-            "description": "The host to run the task on, a `ready` host of `GET /v1/hosts`.\nOmitted or `local` = this daemon. A far task waits here until every\ntask it depends on has merged, then goes to the host.",
+            "description": "The host to run the task on, a `ready` host of `GET /v1/hosts`.\nOmitted or `local` = this daemon. New remote tasks become worker drafts\nduring planning. The source authorizes execution after finalization and dependencies.",
             "example": "worker"
           },
           "origin_task_id": {
@@ -11261,7 +11261,7 @@
           },
           "host_unreachable": {
             "type": "boolean",
-            "description": "True while the host of a far task is not `ready`. The task then keeps\nits last known state. Always false for a `local` task."
+            "description": "True while source progress is stale after host or event-stream loss.\nThe source keeps the last acknowledged worker state.\nDirect local and worker reads retain their established semantics."
           },
           "id": {
             "type": "string"

@@ -1,7 +1,7 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-11-23
+updated: 2026-11-24
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
@@ -126,13 +126,13 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
 18. `TaskDto.host` is `local` for a task on the goal's own daemon, else the name of its host.
     `TaskDto.host_unreachable` is true while the host of a far task is not `ready` (037 rule 99).
     It is always false for a `local` task. OpenAPI carries both fields and `CreateTaskRequest.host`.
-19. A far task stays `pending` until every task in its `depends_on` has merged, on any host.
+19. A legacy far task stays `pending` until every task in its `depends_on` has merged, on any host.
     A far task merges when its host reports it `finished` (037 rule 98). A task that
     depends on a far task then starts as for any other dependency. A dependency that failed
     or was cancelled fails a pending far task before it goes to its host, as rule 10 fails
     any waiting task. A far task cancelled here, or in a goal that rules 3 and 4 ended,
     keeps that state whatever its host reports (037 rule 98).
-20. A write to a sent far task goes to its host. The goal's daemon mirrors the
+20. A write to a sent legacy far task goes to its host. The goal's daemon mirrors the
     result. The host of an unheld far task must be `ready`, even before dispatch;
     a refusal names the host and its status.
     A task still held by dependencies is changed only on the goal's daemon.
@@ -151,7 +151,13 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     Dependencies belong to source coordination. Workers accept no task dependencies for remote execution.
     Existing local tasks and linked goals retain their records and behavior.
 
+23. New remote tasks use source references under 037 rules 102 through 110.
+    Source control outcomes coexist with worker execution ownership. Existing mirrors keep rules 19 through 21.
+
 ## Acceptance criteria
+
+- Rule 23: `far_tasks::source_references::dependency_failure_and_retry_are_source_controls_on_one_blocked_worker_draft`
+  and `::source_cancellation_waits_for_worker_acknowledgment_after_reconnection`.
 
 - Rule 22: `remote_tasks.rs::a_remote_draft_has_context_without_a_worker_goal`,
   `::draft_edits_invalidate_old_authorization_and_cancellation_is_final`,
