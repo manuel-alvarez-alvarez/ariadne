@@ -275,9 +275,8 @@ async fn saved_columns_keep_their_gates_and_a_failed_task_can_retry() {
     .await;
     let running = eventually_some(TIMEOUT, "first saved column", async || {
         let task: Value = h.get(&format!("/v1/tasks/{TASK}")).await;
-        task["agents"][0]["session_id"]
-            .as_str()
-            .map(|_| task.clone())
+        (task["agents"][0]["session_id"].is_string() && task["worktree_path"].is_string())
+            .then_some(task)
     })
     .await;
     let session = running["agents"][0]["session_id"].as_str().unwrap();

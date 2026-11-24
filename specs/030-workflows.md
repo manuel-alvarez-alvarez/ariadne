@@ -432,7 +432,8 @@ every other kebab-case word in it; the wire spells the same gate
 ## Acceptance criteria
 
 - Rule 12: `remote_tasks.rs::saved_columns_keep_their_gates_and_a_failed_task_can_retry`
-  proves saved columns, the commit gate, column returns, and retries.
+  proves saved columns, the commit gate, column returns, and retries. It waits for both
+  the session and the worktree in the task response before using them.
   `::authorization_starts_one_saved_workflow_without_a_source_connection` proves worker execution without a local goal.
 
 
