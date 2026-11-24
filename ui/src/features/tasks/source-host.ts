@@ -1,12 +1,12 @@
 import { useQueries } from "@tanstack/react-query"
-import { api, type Host, unwrap, useHosts } from "@/api"
+import { api, type Host, qk, unwrap, useHosts } from "@/api"
 
 /** Discover identities for configured connections and retain them through outages. */
 export function useDaemonIdentities(enabled: boolean): Map<Host, string | undefined> {
   const { hosts } = useHosts()
   const identities = useQueries({
     queries: hosts.map((host) => ({
-      queryKey: ["remote-task-protocol", host.name, host.endpoint ?? ""],
+      queryKey: qk.remoteTaskProtocol(host.name, host.endpoint ?? ""),
       queryFn: () => unwrap(api(host.name).GET("/v1/remote-tasks/protocol")),
       enabled: enabled && host.url !== null,
       retry: false,

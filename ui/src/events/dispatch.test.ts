@@ -245,6 +245,28 @@ describe("invalidateEverything", () => {
     unsubscribe()
   })
 
+  it("retries a daemon identity lookup that failed while the host was down", async () => {
+    const queryClient = createQueryClient()
+    const lookup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValue({ protocol: "remote-tasks-v1", daemon_id: "d1" })
+    const key = qk.remoteTaskProtocol("box", "")
+    const observer = new QueryObserver(queryClient, {
+      queryKey: key,
+      queryFn: lookup,
+      retry: false,
+    })
+    const unsubscribe = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(observer.getCurrentResult().isError).toBe(true))
+
+    invalidateEverything(queryClient, "box")
+
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toBeDefined())
+    expect(lookup).toHaveBeenCalledTimes(2)
+    unsubscribe()
+  })
+
   it("marks what is off screen stale, so it is read again when it is next shown", () => {
     const queryClient = createQueryClient()
     queryClient.setQueryData(qk.goals.list("local"), [GOAL])
