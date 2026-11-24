@@ -22,5 +22,9 @@ export default defineConfig({
     reporters: process.env.CI ? ["default", "junit"] : ["default"],
     outputFile: process.env.CI ? { junit: "./junit.xml" } : undefined,
     maxWorkers: 4,
+    // The Perses packages are ESM that import CommonJS and extensionless
+    // paths (`lodash`, `mdi-material-ui/Circle`) that Node's own loader
+    // rejects; Vite's resolver reads them.
+    server: { deps: { inline: [/@perses-dev\//] } },
   },
 })

@@ -1,0 +1,14 @@
+diff --git a/node_modules/@perses-dev/components/dist/model/units.js b/node_modules/@perses-dev/components/dist/model/units.js
+index 417c780..3e0cb54 100644
+--- a/node_modules/@perses-dev/components/dist/model/units.js
++++ b/node_modules/@perses-dev/components/dist/model/units.js
+@@ -49,6 +49,9 @@ export const UNIT_CONFIG = {
+     ...DATE_UNIT_CONFIG
+ };
+ export function formatValue(value, formatOptions) {
++    if (typeof value === 'number' && Number.isNaN(value)) {
++        return 'No data';
++    }
+     if (!formatOptions) {
+         return value.toString();
+     }
