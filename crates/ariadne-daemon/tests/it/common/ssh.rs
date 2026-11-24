@@ -335,9 +335,11 @@ fn records(dir: &Path) -> Vec<Vec<String>> {
 /// with `set -C` (`O_EXCL`), so concurrent runs never share one.
 ///
 /// A run that waits ends once the test process has ended, as the Python
-/// stub did: a hung home call checks it every 0.2 s, and so does the watch
-/// beside a read of the `runtime_disconnect` FIFO. Each `sleep` writes to
-/// `/dev/null`, so it holds no pipe of the daemon open.
+/// stub did: a hung home call checks it every 0.2 s, and so do the watch
+/// beside each setup command and the watch beside a read of the
+/// `runtime_disconnect` FIFO. Like the Python stub, the run leaves its setup
+/// command running. Each `sleep` writes to `/dev/null`, so it holds no pipe
+/// of the daemon open.
 ///
 /// A `setup` command is parsed as `sh` words with `eval` only where it is a
 /// maintenance or a `repo` call, whose words the daemon single-quotes. The
@@ -511,6 +513,12 @@ if [ -n "$T" ] && [ -n "$s_setup" ]; then
         ARIADNE_SETUP_OS="$u_os" \
         ARIADNE_SETUP_ARCH="$u_arch" \
         ARIADNE_SETUP_SERVICE_FAIL="$u_fail_service"
+    # The command runs in the background, so a watch can end this run with
+    # the test process, as the Python stub's thread did; the command goes on.
+    # A background list reads /dev/null unless its input is named, so name
+    # the run's own input through fd 3.
+    exec 3<&0
+    running=
     case $command in
         *"bounded provide"*) [ -z "$u_runtime_disconnect" ] || {
             # Model remote stdin closing after the test observes an active
@@ -524,12 +532,25 @@ if [ -n "$T" ] && [ -n "$s_setup" ]; then
                     [ $((polls % 10)) -ne 0 ] || alive || kill "$reader" 2>/dev/null
                     pause 0.02
                 done
-            } < /dev/null | /bin/sh -c "$command"
-            exit
+            } < /dev/null | /bin/sh -c "$command" 3<&- &
+            running=$!
         };;
     esac
-    /bin/sh -c "$command"
-    exit
+    if [ -z "$running" ]; then
+        /bin/sh -c "$command" <&3 3<&- &
+        running=$!
+    fi
+    exec 3<&-
+    (
+        while pause 0.2 && kill -0 $$ 2>/dev/null; do
+            alive || kill $$ 2>/dev/null
+        done
+    ) < /dev/null > /dev/null 2>&1 &
+    watch=$!
+    wait "$running"
+    result=$?
+    kill "$watch" 2>/dev/null
+    exit "$result"
 fi
 
 if [ -z "$L" ] && [ -n "$s_has_home$s_home_hang" ]; then

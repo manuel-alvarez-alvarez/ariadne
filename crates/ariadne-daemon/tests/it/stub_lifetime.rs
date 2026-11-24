@@ -129,3 +129,13 @@ async fn an_ssh_stub_waiting_for_its_disconnect_exits_when_its_parent_is_killed(
     }, "exit": 0}));
     ssh_run_exits_with_its_parent(&ssh, &["-T", "box", "sh -c 'bounded provide node'"]).await;
 }
+
+/// A setup command that blocks ends its run with the parent too: the
+/// command reads its input, which the test holds open, so the command alone
+/// would never end. The command then ends when the test drops that input.
+#[tokio::test]
+async fn an_ssh_stub_whose_setup_command_blocks_exits_when_its_parent_is_killed() {
+    let home = tempfile::tempdir().unwrap();
+    let ssh = stub_ssh(json!({"setup": {"home": home.path()}, "exit": 0}));
+    ssh_run_exits_with_its_parent(&ssh, &["-T", "box", "sh -c 'read line'"]).await;
+}
