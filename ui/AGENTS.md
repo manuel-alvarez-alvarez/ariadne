@@ -702,14 +702,11 @@ not only the scaffolding CLI.
 
 ### The dashboard package overrides
 
-`ui/dashboard/package.json` has nested overrides to fix high-severity advisories in transitive dependencies:
+`ui/dashboard/package.json` has one nested override to fix a high-severity advisory in a transitive dependency. The top-level `zod` override (`^4.6.7`) stays; the `@perses-dev/*` 0.55.1 set no longer needs nested `zod` overrides:
 
 | Package | Override | Advisory IDs | Reason |
 | --- | --- | --- | --- |
 | `@module-federation/dts-plugin` | `undici` → `^7.30.1` | GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472 | `dts-plugin` pins undici to 7.29.1; override forces 7.30.1 in that chain only; `jsdom`'s undici stays on 8.x |
-| `@perses-dev/client` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | client depends on zod 3.x, which is vulnerable to memory exhaustion; override upgrades to 4.6.6+ |
-| `@perses-dev/plugin-system` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | same as client |
-| `@perses-dev/spec` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | same as client |
 
 ## The dashboard package
 
@@ -770,23 +767,31 @@ package's `page.tsx` — see its own docstring for the fuller rationale:
 **The peer dependency override.** None needed for any `@perses-dev/*`
 package itself: every plugin's `peerDependencies` (checked against the
 published packages, not assumed) resolves cleanly against `dashboards`,
-`plugin-system`, `components` and `client` all at `^0.54.0` and `spec` at
-`^0.2.0`. Two *patches* were needed instead, not an override:
-`@perses-dev/logs-table-plugin@0.3.0`'s `LogRow.js` imports
-`./ansiColors.css`, a file missing from the published tarball (fixed
-upstream, but only in an 0.4.0 prerelease that would drag every other
-`@perses-dev/*` package here to its own 0.55.0-rc line). `patches/` adds the
-missing file back — the standard 16-colour ANSI palette `ansi_up` (this
-plugin's own dependency) defines its class names from — as a
+`plugin-system`, `components` and `client` all at `^0.55.1` and `spec` at
+`^0.3.0`; the plugins also need `@hookform/resolvers` `^5.9.1`. Two
+*patches* are needed instead, not an override:
+`@perses-dev/logs-table-plugin@0.4.1`'s `LogRow.js` and `LogDetailsTable.js`
+import `./ansiColors.css`, a file still missing from the published tarball.
+`patches/` adds the missing file back — the standard 16-colour ANSI palette
+`ansi_up` (this plugin's own dependency) defines its class names from — as a
 `postinstall: patch-package` script reapplies on every `npm ci`. Drop it
-once a stable 0.4.0 ships.
+once a release ships the file.
 
-`@perses-dev/components@0.54.0`'s `formatValue` — the one function every
+The 0.55 Perses packages are ESM that import CommonJS and extensionless paths
+(`lodash`, `mdi-material-ui/Circle`) that Node's own loader rejects, so
+`vite.config.ts` sets `test.server.deps.inline` for `@perses-dev/`: Vitest then
+resolves them through Vite. The same packages are `"type": "module"`, so Vite
+reads their default import of a CommonJS `mdi-material-ui/<Icon>` file
+Node-style: the icon arrives as an object and React fails with error 130 in
+the browser. `resolve.alias` in `vite.config.ts` points those imports at the
+package's own `esm/` copy. Tests do not see this failure; only a browser does.
+
+`@perses-dev/components@0.55.1`'s `formatValue` — the one function every
 panel kind (stat, gauge, pie, bar, table, time series) formats its numbers
 through — stringifies a `NaN` query result as the literal `"NaN"`, straight
 off `Intl.NumberFormat`. Every panel's number, including one a user wrote
 their own dashboard's query to produce, must show Perses's own "No data"
-state instead (036). The second patch makes `formatValue` answer `"No data"`
+state instead (036). The components patch makes `formatValue` answer `"No data"`
 for a `NaN` value before it reaches a unit formatter, so this holds for
 every dashboard the app opens, not only the shipped one.
 `src/format-value.test.ts` proves it through a deep import

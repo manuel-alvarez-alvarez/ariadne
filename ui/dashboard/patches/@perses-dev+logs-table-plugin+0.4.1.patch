@@ -1,16 +1,16 @@
 diff --git a/node_modules/@perses-dev/logs-table-plugin/lib/components/LogRow/ansiColors.css b/node_modules/@perses-dev/logs-table-plugin/lib/components/LogRow/ansiColors.css
 new file mode 100644
-index 0000000..a80ae33
+index 0000000..7878c3f
 --- /dev/null
 +++ b/node_modules/@perses-dev/logs-table-plugin/lib/components/LogRow/ansiColors.css
 @@ -0,0 +1,41 @@
 +/*
-+ * Missing from the published 0.3.0 tarball (LogRow.js imports it, but it was
-+ * never included in the package) — fixed upstream in 0.4.0, still a
-+ * prerelease. Standard 16-colour ANSI palette, the same values `ansi_up`
-+ * itself (this plugin's own dependency) defines its class names from, so log
-+ * lines with ANSI colour codes still render them rather than plain text
-+ * until a stable 0.4.0 lands and this patch (`patches/`) is dropped.
++ * Missing from the published 0.4.1 tarball (LogRow.js and LogDetailsTable.js
++ * import it, but it was never included in the package). Standard 16-colour
++ * ANSI palette, the same values `ansi_up` itself (this plugin's own
++ * dependency) defines its class names from, so log lines with ANSI colour
++ * codes still render them rather than plain text. Drop this patch
++ * (`patches/`) once a release ships the file.
 + */
 +.ansi-black-fg { color: #000000; }
 +.ansi-red-fg { color: #bb0000; }
