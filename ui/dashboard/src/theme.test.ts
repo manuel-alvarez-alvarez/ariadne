@@ -106,7 +106,9 @@ describe("theme tokens", () => {
     it(`match the app's ${mode} tokens in ui/src/index.css`, () => {
       const body = block(selector)
       for (const [key, name] of Object.entries(NAMES)) {
-        const want = fromOklch(declared(body, name))
+        const source = declared(body, name)
+        expect(TOKENS.source[mode][key as keyof ModeTokens], `${mode} ${name} source`).toBe(source)
+        const want = fromOklch(source)
         const got = fromSrgb(TOKENS[mode][key as keyof ModeTokens])
         expect(got.slice(0, 3), `${mode} ${name}`).toEqual(want.slice(0, 3))
         expect(got[3], `${mode} ${name} alpha`).toBeCloseTo(want[3], 5)

@@ -75,7 +75,8 @@ message protocol are spec 015's.
     theme module, `ui/dashboard/src/theme-tokens.ts`, holds the app's tokens as sRGB:
     background, card, popover, foreground, muted, muted foreground, border,
     input, primary, primary foreground, destructive and the radius. The dark
-    border and input keep the app's alpha. `page.tsx`, through `theme.ts`, extends Perses's own
+    border and input keep the app's alpha, and each token's `oklch()` source
+    is kept beside it so a drift too small to move the sRGB value still fails. `page.tsx`, through `theme.ts`, extends Perses's own
     `getTheme` and `generateChartsTheme` with them, so panels, menus, dialogs,
     the time picker and buttons use the app's surfaces, text, borders, primary
     colour and radius, and the charts' axes, grid lines, tooltips and legends
@@ -117,7 +118,8 @@ message protocol are spec 015's.
 7. `ui/dashboard/src/theme.test.ts::match the app's light tokens in
    ui/src/index.css`, `::match the app's dark tokens in ui/src/index.css`
    and `::match the app's radius` read `ui/src/index.css` and fail when a
-   token there differs from the module (rule 14's tokens);
+   token there differs from the module (rule 14's tokens), by its
+   `oklch()` source text as well as its converted sRGB value;
    `::keep the dark border and input alpha` proves the alpha.
 8. `theme.test.ts::uses the light surfaces, text, borders, primary and radius`,
    `::uses the dark surfaces, text, borders, primary and radius` and `::styles

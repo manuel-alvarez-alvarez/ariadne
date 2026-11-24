@@ -26,6 +26,11 @@ interface Tokens {
   dark: ModeTokens
   /** The app's `--radius`, in rem, as it is written in `ui/src/index.css`. */
   radius: string
+  /**
+   * Each token as `ui/src/index.css` writes it (`--brand` resolved), so the
+   * drift test also catches a change too small to move a rounded sRGB value.
+   */
+  source: { light: ModeTokens; dark: ModeTokens }
 }
 
 export const TOKENS: Tokens = {
@@ -56,6 +61,34 @@ export const TOKENS: Tokens = {
     destructive: "#ff6568",
   },
   radius: "0.5rem",
+  source: {
+    light: {
+      background: "oklch(1 0.008 265)",
+      card: "oklch(1 0.008 265)",
+      popover: "oklch(1 0.008 265)",
+      foreground: "oklch(0.145 0.008 265)",
+      muted: "oklch(0.97 0.008 265)",
+      mutedForeground: "oklch(0.556 0.008 265)",
+      border: "oklch(0.922 0.008 265)",
+      input: "oklch(0.922 0.008 265)",
+      primary: "oklch(0.48 0.13 265)",
+      primaryForeground: "oklch(0.985 0 0)",
+      destructive: "oklch(0.577 0.245 27.325)",
+    },
+    dark: {
+      background: "oklch(0.145 0.008 265)",
+      card: "oklch(0.205 0.008 265)",
+      popover: "oklch(0.205 0.008 265)",
+      foreground: "oklch(0.985 0.008 265)",
+      muted: "oklch(0.269 0.008 265)",
+      mutedForeground: "oklch(0.708 0.008 265)",
+      border: "oklch(1 0.008 265 / 10%)",
+      input: "oklch(1 0.008 265 / 15%)",
+      primary: "oklch(0.72 0.12 265)",
+      primaryForeground: "oklch(0.205 0 0)",
+      destructive: "oklch(0.704 0.191 22.216)",
+    },
+  },
 }
 
 /** The font the app ships; `main.tsx` bundles its files, so no request leaves the page. */
