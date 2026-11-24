@@ -361,6 +361,8 @@ async fn the_remote_protocol_and_context_are_in_the_published_schema() {
         "/v1/remote-tasks/protocol",
         "/v1/remote-tasks/{id}",
         "/v1/remote-tasks/{id}/authorize",
+        "/v1/remote-tasks/{id}/dependency-failure",
+        "/v1/remote-tasks/{id}/retry-dependency",
     ] {
         assert_eq!(doc["paths"][path], snapshot["paths"][path]);
     }
@@ -369,6 +371,8 @@ async fn the_remote_protocol_and_context_are_in_the_published_schema() {
         "CreateRemoteTaskRequest",
         "AuthorizeRemoteTaskRequest",
         "RemoteTaskProtocol",
+        "FailRemoteDependencyRequest",
+        "RetryRemoteDependencyRequest",
         "SourceGoalReference",
         "TaskExecutionContext",
         "TaskWorkflowContext",
@@ -378,4 +382,233 @@ async fn the_remote_protocol_and_context_are_in_the_published_schema() {
             snapshot["components"]["schemas"][name]
         );
     }
+}
+
+#[tokio::test]
+async fn source_dependency_controls_are_audited_repeatable_and_fenced_by_draft_revision() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("repo")).await;
+    let path = format!("/v1/remote-tasks/{TASK}");
+    h.json::<Value>(put_json(&path, draft(&repo.id)), StatusCode::CREATED)
+        .await;
+    let failure =
+        json!({"revision":1,"operation_id":"dependency-attempt-1","reason":"dependency failed"});
+    let failed: Value = h
+        .json(
+            post_json(&format!("{path}/dependency-failure"), failure.clone()),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(failed["status"], "failed");
+    assert_eq!(failed["reason"], "dependency failed");
+    assert_eq!(failed["execution_context"]["revision"], 2);
+    h.json::<Value>(
+        post_json(&format!("{path}/dependency-failure"), failure.clone()),
+        StatusCode::OK,
+    )
+    .await;
+    let history: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/transitions")).await;
+    assert_eq!(history.len(), 1);
+    h.json::<Value>(
+        post_json(&format!("{path}/authorize"), json!({"revision":1})),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    let retry = json!({"revision":2,"operation_id":"dependency-attempt-1"});
+    let pending: Value = h
+        .json(
+            post_json(&format!("{path}/retry-dependency"), retry.clone()),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(pending["status"], "pending");
+    assert_eq!(pending["execution_context"]["revision"], 3);
+    assert_eq!(pending["execution_context"]["authorized"], false);
+    h.json::<Value>(
+        post_json(&format!("{path}/retry-dependency"), retry.clone()),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(
+            &format!("{path}/dependency-failure"),
+            json!({"revision":1,"operation_id":"stale-operation","reason":"stale"}),
+        ),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(&format!("{path}/authorize"), json!({"revision":3})),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(&format!("{path}/dependency-failure"), failure),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(&format!("{path}/retry-dependency"), retry),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(
+            &format!("{path}/dependency-failure"),
+            json!({"revision":3,"operation_id":"after-authorization","reason":"late"}),
+        ),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    let history: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/transitions")).await;
+    assert_eq!(history.len(), 3);
+    assert_eq!(history[1]["from_status"], "failed");
+    assert_eq!(history[1]["to_status"], "pending");
+}
+
+#[tokio::test]
+async fn dependency_controls_keep_agent_restrictions_and_generic_user_permissions() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("repo")).await;
+    let path = format!("/v1/remote-tasks/{TASK}");
+    h.json::<Value>(put_json(&path, draft(&repo.id)), StatusCode::CREATED)
+        .await;
+    let failure = json!({"revision":1,"operation_id":"failure","reason":"dependency failed"});
+    h.json::<Value>(
+        as_session(
+            &format!("{path}/dependency-failure"),
+            "agent-session",
+            failure.clone(),
+        ),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(
+            &format!("/v1/tasks/{TASK}/transitions"),
+            json!({"to":"failed"}),
+        ),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(&format!("{path}/dependency-failure"), failure),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(&format!("/v1/tasks/{TASK}/retry"), json!({})),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    h.json::<Value>(
+        as_session(
+            &format!("{path}/retry-dependency"),
+            "agent-session",
+            json!({"revision":2,"operation_id":"failure"}),
+        ),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn failure_racing_authorization_admits_exactly_one_draft_outcome() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("repo")).await;
+    let path = format!("/v1/remote-tasks/{TASK}");
+    h.json::<Value>(put_json(&path, draft(&repo.id)), StatusCode::CREATED)
+        .await;
+    let (failure, authorization) = tokio::join!(
+        h.send(post_json(
+            &format!("{path}/dependency-failure"),
+            json!({"revision":1,"operation_id":"failure","reason":"dependency failed"})
+        )),
+        h.send(post_json(
+            &format!("{path}/authorize"),
+            json!({"revision":1})
+        ))
+    );
+    let mut statuses = [failure.0.as_u16(), authorization.0.as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [200, 409]);
+    let history: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/transitions")).await;
+    assert_eq!(history.len(), 1);
+}
+
+#[tokio::test]
+async fn old_dependency_operation_replays_cannot_reset_a_newer_failure() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("repo")).await;
+    let path = format!("/v1/remote-tasks/{TASK}");
+    h.json::<Value>(put_json(&path, draft(&repo.id)), StatusCode::CREATED)
+        .await;
+    let first = json!({"revision":1,"operation_id":"first","reason":"first dependency failed"});
+    let retry = json!({"revision":2,"operation_id":"first"});
+    h.json::<Value>(
+        post_json(&format!("{path}/dependency-failure"), first.clone()),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(&format!("{path}/retry-dependency"), retry.clone()),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(
+            &format!("{path}/dependency-failure"),
+            json!({"revision":3,"operation_id":"second","reason":"second dependency failed"}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(&format!("{path}/dependency-failure"), first),
+        StatusCode::OK,
+    )
+    .await;
+    let replayed: Value = h
+        .json(
+            post_json(&format!("{path}/retry-dependency"), retry),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(replayed["status"], "failed");
+    assert_eq!(replayed["reason"], "second dependency failed");
+    assert_eq!(replayed["execution_context"]["revision"], 4);
+    let history: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/transitions")).await;
+    assert_eq!(history.len(), 3);
+}
+
+#[tokio::test]
+async fn a_dependency_retry_remains_blocked_without_new_source_authorization() {
+    let h = harness().scheduler().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    with_forge_enabled(&h, &repo, false).await;
+    let path = format!("/v1/remote-tasks/{TASK}");
+    h.json::<Value>(put_json(&path, draft(&repo.id)), StatusCode::CREATED)
+        .await;
+    h.json::<Value>(
+        post_json(
+            &format!("{path}/dependency-failure"),
+            json!({"revision":1,"operation_id":"failure","reason":"dependency failed"}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+    h.json::<Value>(
+        post_json(
+            &format!("{path}/retry-dependency"),
+            json!({"revision":2,"operation_id":"failure"}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+    h.flush_scheduler().await;
+    let task: Value = h.get(&format!("/v1/tasks/{TASK}")).await;
+    assert_eq!(task["status"], "pending");
+    assert_eq!(task["execution_context"]["authorized"], false);
+    assert!(task["worktree_path"].is_null());
+    assert!(task["agents"][0]["session_id"].is_null());
 }

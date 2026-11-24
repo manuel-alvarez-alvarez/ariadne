@@ -789,6 +789,21 @@ ariadne task update <task-id> --agent develop=codex-acp:<other-model-id>
 Leaving the `:SKILLS` half out stages the column's own skills. `task update
 --agent` replaces the whole staffing.
 
+New tasks assigned to a remote host become blocked worker drafts during planning.
+The source goal keeps their references and cached progress. The worker owns their execution and staffing.
+Execution starts after plan finalization and dependency completion across hosts.
+Both daemons use the same task ID. The worker needs no corresponding goal.
+Older remote mirrors and linked goals keep their existing lifecycle.
+
+Use the source goal's task commands to inspect and control this work.
+Disconnected tasks retain acknowledged progress and show `(unreachable)`.
+Cancellation remains pending until the worker confirms its outcome. A completion that wins cancellation stays finished.
+The worker records dependency failures. An explicit source retry restores a blocked draft on the same task ID.
+Execution still waits for source approval and completed dependencies.
+The source retains cancellation coordination after goal deletion until the worker answers.
+Workers need `remote-tasks-v1` and the `source-dependency-controls-v1` capability.
+An incompatible worker produces an upgrade instruction before task creation.
+
 `task ls` shows each task's current column in a `step` column, and `--step
 <id>` narrows the list to it. A task that runs on another host adds a `HOST`
 column after the title, which names that host. A host that cannot be reached

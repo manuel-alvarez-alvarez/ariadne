@@ -56,8 +56,9 @@ pub struct TaskDto {
     #[serde(default = "local_host")]
     #[schema(example = "local")]
     pub host: String,
-    /// True while the host of a far task is not `ready`. The task then keeps
-    /// its last known state. Always false for a `local` task.
+    /// True while source progress is stale after host or event-stream loss.
+    /// The source keeps the last acknowledged worker state.
+    /// Direct local and worker reads retain their established semantics.
     #[serde(default)]
     pub host_unreachable: bool,
 }
@@ -200,8 +201,8 @@ pub struct CreateTaskRequest {
     #[serde(default)]
     pub depends_on: Vec<String>,
     /// The host to run the task on, a `ready` host of `GET /v1/hosts`.
-    /// Omitted or `local` = this daemon. A far task waits here until every
-    /// task it depends on has merged, then goes to the host.
+    /// Omitted or `local` = this daemon. New remote tasks become worker drafts
+    /// during planning. The source authorizes execution after finalization and dependencies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(example = "worker")]
     pub host: Option<String>,
@@ -349,6 +350,29 @@ pub struct AuthorizeRemoteTaskRequest {
 /// Explicit protocol negotiation, independent of application version.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RemoteTaskProtocol {
+    /// Negotiated optional operations. New source references require source-dependency-controls-v1.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     pub protocol: String,
     pub daemon_id: String,
 }
+
+/// Fail one unauthorized draft revision after a source dependency failure.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FailRemoteDependencyRequest {
+    pub revision: i64,
+    pub operation_id: String,
+    pub reason: String,
+}
+
+/// Retry the identified dependency failure into a newer blocked draft revision.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RetryRemoteDependencyRequest {
+    pub revision: i64,
+    pub operation_id: String,
+}
+
+/// Both fenced source dependency operations are required for new source references.
+pub const SOURCE_DEPENDENCY_CONTROLS: &str = "source-dependency-controls-v1";

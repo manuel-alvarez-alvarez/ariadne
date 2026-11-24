@@ -1,10 +1,11 @@
 ---
 id: 037
 status: current
-updated: 2026-11-23
+updated: 2026-11-24
 areas: [api, daemon, client, cli, store, docs, ui]
 commits: []
 tests:
+  - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
   - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-store/tests/store.rs
   - ui/scripts/host-events.test.mjs
@@ -657,10 +658,11 @@ picker, the Hosts screen and one stream per host — is spec
       and the message names the model and the host. It stays the user's choice (011 rule 19):
       a request with no session header takes it.
     - A host that does not answer these reads answers `502`.
-96. The goal's daemon keeps each far task in its own task list. The store keeps its host, the
+96. Existing legacy mirrors retain their local execution records and linked goals.
+    The goal's daemon keeps each legacy far task in its own task list. The store keeps its host, the
     id of the linked goal on the host and the id of the task on the host. The goal's daemon
     never starts an agent for a far task.
-97. A far task is free to start when it is `pending`, it has not gone to its host, its goal is
+97. A legacy far task is free to start when it is `pending`, it has not gone to its host, its goal is
     `active`, and every task in its `depends_on` has merged (001 rule 19). Then the goal's
     daemon sends it to its host. A send whose answer was lost makes no second goal or task
     when it is sent again (001 rules 14 and 15):
@@ -684,7 +686,7 @@ picker, the Hosts screen and one stream per host — is spec
       in. A host that leaves it ends the send at once: the request is dropped, nothing that
       it answers is written, and the far task is not failed. The send starts again on the
       host's next `ready`.
-98. The goal's daemon follows `GET /v1/events/stream` of each `ready` host. Each
+98. For legacy mirrors, the goal's daemon follows `GET /v1/events/stream` of each `ready` host. Each
     `task_updated` of a far task writes its status, step, branch, request URL and merge
     commit on the far task. A changed status writes a transition by the daemon, with the
     host's reason. A far task that the host reports `finished` has merged. A far task whose
@@ -711,7 +713,73 @@ picker, the Hosts screen and one stream per host — is spec
      Authorized execution requires no source connection.
      Agent messages remain stored for source reads after reconnection, including messages to the source orchestrator.
 
+### Source references for new tasks
+
+102. New remote creation uses the worker protocol from rule 101 during source planning.
+     The source requires the source-dependency-controls-v1 capability before reserving a stable task ID.
+     Incompatible workers receive an explicit upgrade instruction. No legacy fallback creates duplicate records.
+     The source reserves its reference and creation request before the first worker write.
+     A lost response replays the same ID and request. Acknowledgment removes the creation request.
+     The worker owns the task and staffing. The source creates no task or staffing rows.
+     The source retains a disposable worker snapshot and source dependency and control records.
+103. Source authorization requires an active source goal and completed dependencies on every host.
+     Dependency validation and cycle detection include local tasks and source references.
+     A durable authorization claim prevents dependency changes after admission begins.
+     Authorization names the worker's current draft revision. Repeated authorization never restarts execution.
+104. A failed dependency queues a repeatable failure request for an unauthorized worker draft revision.
+     The worker owns the failure, reason, and audit under the dependency control contract in 012.
+     Source status remains the last acknowledged worker status until that operation resolves.
+     Explicit source retry uses the worker dependency retry operation on the same task identity.
+     Worker execution failures retain their existing retry path. Queued retries wait for completed dependencies.
+105. Source task lists, details, and events include referenced worker tasks with their stable task IDs.
+     Projections retain worker execution context, staffing IDs, usage, and acknowledged execution progress.
+     They replace host aliases, repository IDs, and dependencies with source values.
+     Session IDs use `far~TASK_ID~WORKER_SESSION_ID` at the source. Worker reads retain worker session IDs.
+106. Source task controls, worker history, and diffs resolve the worker by its persistent daemon ID.
+     Worker history includes authoritative dependency failure and recovery audits.
+     Session aliases route session controls, console reads, streams, input, and terminal connections to the worker.
+     A session must belong to its referenced task. Source sessions cannot control another source goal.
+     Worker endpoints can change without changing task ownership. Another worker cannot replace the recorded owner.
+107. Rules 99 and 100 also govern reference freshness. Stream loss marks cached source progress stale.
+     Reconnection reads the worker before clearing `host_unreachable` in the current connection.
+     Delayed responses from previous connections cannot refresh the source snapshot.
+     Older worker snapshots cannot overwrite newer acknowledged progress.
+108. Source messages address cached worker staffing without creating local staffing records.
+     Undelivered orchestrator messages remain queued through disconnection. Relay IDs prevent duplicate delivery.
+     Worker messages retain worker agent IDs at the source and reach the source orchestrator.
+109. Source cancellation records intent until the worker acknowledges its authoritative outcome.
+     A worker completion that wins cancellation remains finished at the source.
+     Source goal cancellation requests worker cancellation. Goal completion requires terminal referenced tasks.
+     Source deletion retains references and pending cancellation until worker actions resolve.
+     Worker worktrees and branches receive no source cleanup operations.
+110. Goal usage adds each referenced worker task's cached usage once.
+     Worker sessions create no source session rows. Existing local and legacy usage remains unchanged.
+
 ## Acceptance criteria
+
+- Rules 102 and 105: `far_tasks::source_references::new_remote_tasks_are_worker_drafts_during_source_planning`.
+- Rule 102 restart: `far_tasks::source_references::reopening_the_source_store_recovers_an_unacknowledged_creation_without_a_second_worker_task`.
+- Rule 102 recovery: `far_tasks::source_references::a_lost_worker_creation_response_replays_one_task_identity`.
+- Rule 102 capability negotiation: `far_tasks::source_references::a_worker_with_creation_only_v1_requires_a_dependency_control_upgrade`.
+- Rule 102 compatibility: `far_tasks::source_references::incompatible_workers_require_an_upgrade_without_creating_records`.
+- Rule 103: `far_tasks::source_references::source_dependencies_hold_worker_authorization_until_the_plan_and_dependencies_finish`.
+- Rule 103 source edits: `far_tasks::source_references::source_dependency_edits_need_no_worker_connection_or_local_staffing`.
+- Rule 103 revisions and cycles: `far_tasks::source_references::source_draft_edits_advance_worker_revision_and_reject_dependency_cycles`.
+- Rule 104: `far_tasks::source_references::dependency_failure_and_retry_preserve_one_authoritative_worker_draft`.
+- Rules 105, 106, and 110: `far_tasks::source_references::source_sessions_history_diffs_and_usage_resolve_the_worker_identity`.
+- Rule 106 endpoint changes: `far_tasks::source_references::an_endpoint_change_preserves_the_worker_identity_and_task_reference`.
+- Rule 106 ownership: `far_tasks::source_references::changing_the_host_endpoint_cannot_replace_the_recorded_execution_owner`.
+- Rule 106 console routing: `far_tasks::source_references::source_console_stream_and_terminal_connections_reach_the_worker_session`.
+- Rule 107 session updates: `far_tasks::source_references::worker_session_creation_refreshes_source_progress_without_a_usage_report`.
+- Rule 107: `far_tasks::source_references::stream_loss_marks_progress_stale_until_the_current_worker_is_reconciled`.
+- Rule 108: `far_tasks::source_references::source_messages_survive_disconnection_without_local_staffing`
+  and `::worker_messages_reach_the_source_orchestrator_with_the_worker_column_address`.
+- Rule 109 completion: `far_tasks::source_references::goal_completion_includes_referenced_remote_work`.
+- Rule 109 cleanup: `far_tasks::source_references::source_cleanup_preserves_local_branches_that_share_a_worker_task_name`.
+- Rule 109: `far_tasks::source_references::source_cancellation_waits_for_worker_acknowledgment_after_reconnection`,
+  `::a_finished_worker_outcome_wins_a_source_cancellation_race`, and
+  `::deleting_a_source_goal_keeps_coordination_until_worker_cancellation_is_acknowledged`.
+
 
 - Rule 101: `remote_tasks.rs::a_remote_draft_has_context_without_a_worker_goal` proves durable worker identity.
   `::authorization_starts_one_saved_workflow_without_a_source_connection` proves execution and retained source messages.

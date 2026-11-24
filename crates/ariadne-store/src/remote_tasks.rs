@@ -242,3 +242,151 @@ impl Store {
         Ok(task)
     }
 }
+
+impl Store {
+    /// Fail exactly one source-observed draft revision. Replays never change a later attempt.
+    pub async fn fail_remote_dependency(
+        &self,
+        id: &str,
+        revision: i64,
+        operation: &str,
+        reason: &str,
+    ) -> Result<Task> {
+        if revision < 1
+            || operation.trim().is_empty()
+            || operation.len() > 128
+            || reason.trim().is_empty()
+        {
+            return Err(StoreError::Invalid(
+                "provide revision, operation_id, and dependency reason".into(),
+            ));
+        }
+        let mut tx = self.w().begin().await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", id).await?;
+        let ctx: RemoteTaskContext =
+            sqlx::query_as("SELECT * FROM remote_task_contexts WHERE task_id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| crate::not_found("remote task", id))?;
+        let prior: Option<(i64,String)> = sqlx::query_as("SELECT request_revision,reason FROM remote_dependency_controls WHERE task_id=? AND operation_id=?")
+            .bind(id).bind(operation).fetch_optional(&mut *tx).await?;
+        if let Some((prior_revision, prior_reason)) = prior {
+            if prior_revision != revision || prior_reason != reason {
+                return Err(StoreError::Conflict(
+                    "operation_id already identifies another dependency failure".into(),
+                ));
+            }
+            return Ok(task);
+        }
+        if ctx.authorized_revision.is_some()
+            || ctx.revision != revision
+            || task.status() != TaskStatus::Pending
+        {
+            return Err(StoreError::Conflict(
+                "dependency failure does not match an unauthorized pending draft revision".into(),
+            ));
+        }
+        sqlx::query("INSERT INTO remote_dependency_controls (task_id,operation_id,request_revision,reason) VALUES (?,?,?,?)")
+            .bind(id).bind(operation).bind(revision).bind(reason).execute(&mut *tx).await?;
+        sqlx::query("UPDATE remote_task_contexts SET revision=revision+1 WHERE task_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        let transition = Self::transition_in_tx(
+            &mut tx,
+            &task,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some(reason),
+            None,
+        )
+        .await?;
+        tx.commit().await?;
+        let task = self.get_task(id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: Some(transition),
+        });
+        Ok(task)
+    }
+
+    /// Return a source-failed draft to pending without admitting execution.
+    pub async fn retry_remote_dependency(
+        &self,
+        id: &str,
+        revision: i64,
+        operation: &str,
+    ) -> Result<Task> {
+        if revision < 1 || operation.trim().is_empty() || operation.len() > 128 {
+            return Err(StoreError::Invalid(
+                "provide revision and dependency operation_id".into(),
+            ));
+        }
+        let mut tx = self.w().begin().await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", id).await?;
+        let ctx: RemoteTaskContext =
+            sqlx::query_as("SELECT * FROM remote_task_contexts WHERE task_id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| crate::not_found("remote task", id))?;
+        let prior: Option<(i64,Option<i64>)> = sqlx::query_as("SELECT request_revision,retry_request_revision FROM remote_dependency_controls WHERE task_id=? AND operation_id=?")
+            .bind(id).bind(operation).fetch_optional(&mut *tx).await?;
+        let Some((failure_revision, retried)) = prior else {
+            return Err(StoreError::Conflict(
+                "operation_id does not identify a source dependency failure".into(),
+            ));
+        };
+        if let Some(retried) = retried {
+            if retried != revision {
+                return Err(StoreError::Conflict(
+                    "retry does not match the original request revision".into(),
+                ));
+            }
+            return Ok(task);
+        }
+        if ctx.authorized_revision.is_some()
+            || ctx.revision != revision
+            || revision <= failure_revision
+            || task.status() != TaskStatus::Failed
+        {
+            return Err(StoreError::Conflict(
+                "retry does not match the current unauthorized dependency failure".into(),
+            ));
+        }
+        // This source-only recovery is deliberately outside generic User transition permissions.
+        let timestamp = now();
+        let transition = crate::TaskTransition {
+            id: new_id(),
+            task_id: id.into(),
+            from_status: "failed".into(),
+            to_status: "pending".into(),
+            actor: Actor::Daemon.as_str().into(),
+            reason: Some("source retried dependency failure".into()),
+            created_at: timestamp.clone(),
+            from_step: task.step.clone(),
+            to_step: None,
+        };
+        sqlx::query("UPDATE tasks SET status='pending',step=NULL,updated_at=? WHERE id=?")
+            .bind(timestamp)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE remote_task_contexts SET revision=revision+1 WHERE task_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE remote_dependency_controls SET retry_request_revision=?,retry_revision=? WHERE task_id=? AND operation_id=?")
+            .bind(revision).bind(revision+1).bind(id).bind(operation).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO task_transitions (id,task_id,from_status,to_status,actor,reason,created_at,from_step,to_step) VALUES (?,?,'failed','pending','daemon',?,?,?,NULL)")
+            .bind(&transition.id).bind(id).bind(&transition.reason).bind(&transition.created_at).bind(&transition.from_step).execute(&mut *tx).await?;
+        tx.commit().await?;
+        let task = self.get_task(id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: Some(transition),
+        });
+        Ok(task)
+    }
+}

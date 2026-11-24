@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-11-23
+updated: 2026-11-24
 areas: [api, daemon, store]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -416,7 +416,34 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
    Existing task timestamps and events expose subsequent execution changes.
    Reads, transitions, messages, usage, sessions, and diffs require no worker goal.
 
+5. `RemoteTaskProtocol.capabilities` advertises `source-dependency-controls-v1` for both source dependency operations.
+   New source creation requires this capability. Older `remote-tasks-v1` workers without it require an upgrade.
+6. `POST /v1/remote-tasks/{id}/dependency-failure` takes `{revision, operation_id, reason}`.
+   It fails only the matching pending, unauthorized draft revision and records a daemon failure audit.
+   Success advances the draft revision. The worker returns the existing TaskDto failure and reason fields.
+   Each operation ID binds the original revision and reason. Identical replays return current state without another transition.
+   Reusing that ID with different arguments returns 409. New operations with stale revisions return 409.
+   Authorized, cancelled, and newer attempts reject new failure delivery.
+7. `POST /v1/remote-tasks/{id}/retry-dependency` takes `{revision, operation_id}` for the recorded dependency failure.
+   It requires the current failed, unauthorized draft revision and the original failure operation ID.
+   It records `failed -> pending`, advances revision, and leaves execution unauthorized.
+   The source still requires approval and completed dependencies before authorizing that new revision.
+   Identical retries return current state without another transition, including after a newer failure or authorization.
+   Stale retry revisions return 409. Both operations reject every agent session header, as creation and authorization do.
+   Generic User transition permissions and ordinary local and legacy retries remain unchanged.
+8. Source routes project new remote tasks through references (037 rules 102 through 110).
+   Existing task routes retain their established shapes. Source projections include the worker execution context.
+   Source aliases scope session routes to the recorded worker and task.
+   `host_unreachable` marks stale source snapshots. Direct worker task reads retain their existing meanings.
+
 ## Acceptance criteria
+
+- Dependency controls: `remote_tasks.rs::source_dependency_controls_are_audited_repeatable_and_fenced_by_draft_revision`,
+  `::dependency_controls_keep_agent_restrictions_and_generic_user_permissions`,
+  `::failure_racing_authorization_admits_exactly_one_draft_outcome`, and
+  `::old_dependency_operation_replays_cannot_reset_a_newer_failure`, and
+  `::a_dependency_retry_remains_blocked_without_new_source_authorization`.
+
 
 - `remote_tasks.rs::the_remote_protocol_and_context_are_in_the_published_schema` proves the additive API contract.
   `::authorization_starts_one_saved_workflow_without_a_source_connection` proves task reads, history, messages, usage, and diffs.

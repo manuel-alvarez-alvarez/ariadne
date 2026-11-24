@@ -3766,6 +3766,90 @@
         }
       }
     },
+    "/v1/remote-tasks/{id}/dependency-failure": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "dependency_failure",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FailRemoteDependencyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "409": {}
+        }
+      }
+    },
+    "/v1/remote-tasks/{id}/retry-dependency": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "retry_dependency",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryRemoteDependencyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "409": {}
+        }
+      }
+    },
     "/v1/repositories": {
       "get": {
         "tags": [
@@ -7203,7 +7287,7 @@
               "string",
               "null"
             ],
-            "description": "The host to run the task on, a `ready` host of `GET /v1/hosts`.\nOmitted or `local` = this daemon. A far task waits here until every\ntask it depends on has merged, then goes to the host.",
+            "description": "The host to run the task on, a `ready` host of `GET /v1/hosts`.\nOmitted or `local` = this daemon. New remote tasks become worker drafts\nduring planning. The source authorizes execution after finalization and dependencies.",
             "example": "worker"
           },
           "origin_task_id": {
@@ -8056,6 +8140,28 @@
           "asc",
           "desc"
         ]
+      },
+      "FailRemoteDependencyRequest": {
+        "type": "object",
+        "description": "Fail one unauthorized draft revision after a source dependency failure.",
+        "required": [
+          "revision",
+          "operation_id",
+          "reason"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
       },
       "FailStepRequest": {
         "type": "object",
@@ -10107,6 +10213,13 @@
           "daemon_id"
         ],
         "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Negotiated optional operations. New source references require source-dependency-controls-v1."
+          },
           "daemon_id": {
             "type": "string"
           },
@@ -10198,6 +10311,24 @@
             "minimum": 0
           }
         }
+      },
+      "RetryRemoteDependencyRequest": {
+        "type": "object",
+        "description": "Retry the identified dependency failure into a newer blocked draft revision.",
+        "required": [
+          "revision",
+          "operation_id"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
       },
       "ReviewCommentRequest": {
         "type": "object",
@@ -11261,7 +11392,7 @@
           },
           "host_unreachable": {
             "type": "boolean",
-            "description": "True while the host of a far task is not `ready`. The task then keeps\nits last known state. Always false for a `local` task."
+            "description": "True while source progress is stale after host or event-stream loss.\nThe source keeps the last acknowledged worker state.\nDirect local and worker reads retain their established semantics."
           },
           "id": {
             "type": "string"

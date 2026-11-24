@@ -127,7 +127,7 @@ impl Store {
     /// Outbound messages of tasks already sent to this host, in write order.
     pub async fn pending_far_messages(&self, host: &str) -> Result<Vec<Message>> {
         Ok(sqlx::query_as(
-            "SELECT m.* FROM messages m JOIN tasks t ON t.id = m.task_id
+            "SELECT m.* FROM messages m JOIN task_index t ON t.id = m.task_id
              WHERE t.host = ? AND t.far_task_id IS NOT NULL
                AND m.from_actor = 'orchestrator' AND m.to_actor = 'agent'
                AND m.relayed_at IS NULL

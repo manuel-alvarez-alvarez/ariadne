@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-11-23
+updated: 2026-11-24
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -259,7 +259,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     sends it as `CreateTaskRequest.host` (001 rule 17). A call with no `host` sends
     none, so the task runs on the goal's own daemon. The daemon refuses a host that
     cannot run the task (037 rule 95), and the tool gives that refusal.
-18. The daemon routes `update_task`, `retry_task`, `cancel_task` and
+18. For legacy mirrors, the daemon routes `update_task`, `retry_task`, `cancel_task` and
     `switch_session` for a sent far task to its host. A host that is not
     `ready` refuses the write by name and status. A task still held by its
     dependencies is changed on the goal's daemon. Linked goals close with
@@ -267,6 +267,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 19. A remote task's `get_task` reads its saved workflow columns from the task context (012).
     It requires no worker goal. Local and legacy tasks continue to read their goal columns.
+
+20. Existing source MCP task tools also operate through references for new remote tasks (037 rules 102 through 110).
+    Tool addresses retain the task ID and worker staffing IDs. Source dependency control failures remain visible through source reads.
 
 ## Acceptance criteria
 

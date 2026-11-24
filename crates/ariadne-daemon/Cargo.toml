@@ -65,6 +65,8 @@ pulldown-cmark = { workspace = true }
 promql-parser = { workspace = true, features = ["ser"] }
 sqlx = { workspace = true }
 tokio = { workspace = true }
+# Relay remote terminal consoles, and connect terminal tests.
+tokio-tungstenite = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 tracing = { workspace = true }
@@ -88,9 +90,7 @@ http-body-util = { workspace = true }
 # Tests that need a clock the store does not offer: `last_activity_at` is
 # only ever stamped "now", and an idle threshold is many minutes away.
 sqlx = { workspace = true }
-# The WebSocket client the terminal console tests connect with, and the
-# terminal emulator they read its bytes back through.
-tokio-tungstenite = { workspace = true }
+# The terminal emulator that tests read console bytes through.
 vt100 = { workspace = true }
 
 [lints]

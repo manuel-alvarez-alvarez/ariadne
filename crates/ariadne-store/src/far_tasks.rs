@@ -48,11 +48,13 @@ impl Store {
     /// The far task that `host` knows as `far_task_id`, if there is one.
     pub async fn far_task_by_far_id(&self, host: &str, far_task_id: &str) -> Result<Option<Task>> {
         Ok(
-            sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE host = ? AND far_task_id = ?")
-                .bind(host)
-                .bind(far_task_id)
-                .fetch_optional(self.r())
-                .await?,
+            sqlx::query_as::<_, Task>(
+                "SELECT * FROM task_index WHERE host = ? AND far_task_id = ?",
+            )
+            .bind(host)
+            .bind(far_task_id)
+            .fetch_optional(self.r())
+            .await?,
         )
     }
 
@@ -79,6 +81,7 @@ impl Store {
     /// Set `host_unreachable` on each far task of `host`, whatever its goal.
     /// Only a task that changes is written and announced.
     pub async fn set_host_unreachable(&self, host: &str, unreachable: bool) -> Result<()> {
+        self.source_tasks_unreachable(host, unreachable).await?;
         let flag = i64::from(unreachable);
         let changed: Vec<String> = sqlx::query_scalar(
             "UPDATE tasks SET host_unreachable = ?, updated_at = ?

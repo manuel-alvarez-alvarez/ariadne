@@ -38,6 +38,8 @@ use crate::common::{
 #[derive(Clone)]
 struct Front {
     health_off: Arc<AtomicBool>,
+    protocol_override: Arc<Mutex<Option<Value>>>,
+    stream_cut: Arc<watch::Sender<bool>>,
     /// The kinds of request whose next answer is lost, once each, and the
     /// kind to hold from then on.
     lose: Arc<Mutex<Vec<Loss>>>,
@@ -60,9 +62,13 @@ type Loss = (&'static str, Option<&'static str>);
 fn kind(method: &axum::http::Method, path: &str) -> &'static str {
     match (method.as_str(), path) {
         ("POST", "/v1/goals") => "create goal",
+        ("PUT", path) if path.starts_with("/v1/remote-tasks/") => "create remote task",
         ("POST", path) if path.ends_with("/relay-message") => "relay message",
+        ("POST", path) if path.ends_with("/dependency-failure") => "dependency failure",
+        ("POST", path) if path.ends_with("/retry-dependency") => "dependency retry",
         ("POST", path) if path.ends_with("/tasks") => "create task",
         ("GET", "/v1/events/stream") => "stream",
+        ("GET", "/v1/remote-tasks/protocol") => "protocol",
         ("GET", "/v1/tasks") => "find task",
         ("GET", path) if path.ends_with("/messages") => "read messages",
         ("GET", path) if path.starts_with("/v1/tasks/") => "read task",
@@ -75,6 +81,8 @@ impl Default for Front {
     fn default() -> Self {
         Self {
             health_off: Arc::default(),
+            protocol_override: Arc::default(),
+            stream_cut: Arc::new(watch::Sender::new(false)),
             lose: Arc::default(),
             held: Arc::new(watch::Sender::new(Vec::new())),
             held_before: Arc::new(watch::Sender::new(Vec::new())),
@@ -138,6 +146,14 @@ impl Front {
                     if kind == "health" && front.health_off.load(Ordering::SeqCst) {
                         return StatusCode::SERVICE_UNAVAILABLE.into_response();
                     }
+                    if kind == "protocol"
+                        && let Some(value) = front.protocol_override.lock().unwrap().clone()
+                    {
+                        return axum::Json(value).into_response();
+                    }
+                    if kind == "stream" && *front.stream_cut.borrow() {
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
                     let mut before = front.held_before.subscribe();
                     if before.borrow().contains(&kind) {
                         let _waiting = Waiting::new(&front.waiting);
@@ -181,6 +197,25 @@ impl Front {
                         }
                         // The far daemon made it; its answer never arrives.
                         return StatusCode::BAD_GATEWAY.into_response();
+                    }
+                    if kind == "stream" {
+                        use futures_util::StreamExt;
+                        let cut = front.stream_cut.subscribe();
+                        let (parts, body) = answer.into_parts();
+                        let stream = futures_util::stream::unfold(
+                            (body.into_data_stream(), cut),
+                            |(mut body, mut cut)| async move {
+                                let frame = tokio::select! {
+                                    frame = body.next() => frame,
+                                    _ = cut.wait_for(|cut| *cut) => None,
+                                };
+                                frame.map(|frame| (frame, (body, cut)))
+                            },
+                        );
+                        return axum::response::Response::from_parts(
+                            parts,
+                            axum::body::Body::from_stream(stream),
+                        );
                     }
                     answer
                 }
@@ -370,7 +405,44 @@ fn task_body(goal: &GoalDto, title: &str, model: &str, extra: Value) -> Value {
     body
 }
 
+/// Seed an existing mirror. New HTTP creation uses source references instead.
 async fn create_task(h: &Harness, goal: &GoalDto, body: Value) -> TaskDto {
+    if let Some(host) = body["host"].as_str().filter(|h| *h != "local") {
+        let agents: Vec<ariadne_api::tasks::AgentAssignment> =
+            serde_json::from_value(body["agents"].clone()).unwrap();
+        let task = h
+            .store
+            .create_far_task(
+                ariadne_store::NewTask {
+                    goal_id: goal.id.clone(),
+                    repo_id: body["repo_id"].as_str().unwrap_or(&goal.repos[0].id).into(),
+                    title: body["title"].as_str().unwrap().into(),
+                    description: body["description"].as_str().unwrap_or_default().into(),
+                    agents: agents
+                        .into_iter()
+                        .map(|a| ariadne_store::NewTaskAgent {
+                            step: a.step,
+                            skills: a.skills,
+                            pin: ariadne_store::AgentPin {
+                                model: a.model,
+                                effort: a.effort,
+                            },
+                            brief: a.brief,
+                        })
+                        .collect(),
+                    depends_on: body["depends_on"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|v| v.as_str().unwrap().into())
+                        .collect(),
+                },
+                host,
+            )
+            .await
+            .unwrap();
+        return h.get(&format!("/v1/tasks/{}", task.id)).await;
+    }
     h.json(
         post_json(&format!("/v1/goals/{}/tasks", goal.id), body),
         StatusCode::CREATED,
@@ -2201,3 +2273,5 @@ async fn an_orchestrator_message_reaches_the_far_agent_as_a_turn() {
     })
     .await;
 }
+
+mod source_references;

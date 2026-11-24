@@ -442,7 +442,7 @@ impl super::Scheduler {
     /// start. A pending one fails when a task it depends on ended unmerged.
     async fn reconcile_far(&mut self, task: Task) -> anyhow::Result<()> {
         match task.status() {
-            TaskStatus::Finished => {
+            TaskStatus::Finished | TaskStatus::Failed | TaskStatus::Cancelled => {
                 for dependent in self.dependents_of(&task).await? {
                     Box::pin(self.reconcile_task(&dependent)).await?;
                 }
@@ -463,15 +463,19 @@ impl super::Scheduler {
         };
         let reason = blocked_reason(&blocker);
         warn!(task = %task.id, dependency = %blocker.id, "dependency ended unfinished, failing task");
-        self.store
-            .transition_task(
-                &task.id,
-                TaskStatus::Failed,
-                Actor::Daemon,
-                Some(&reason),
-                None,
-            )
-            .await?;
+        if self.store.source_task_reference(&task.id).await?.is_some() {
+            self.store.fail_source_dependency(&task.id, &reason).await?;
+        } else {
+            self.store
+                .transition_task(
+                    &task.id,
+                    TaskStatus::Failed,
+                    Actor::Daemon,
+                    Some(&reason),
+                    None,
+                )
+                .await?;
+        }
         Ok(true)
     }
 

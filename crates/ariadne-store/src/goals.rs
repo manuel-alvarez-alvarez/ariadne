@@ -293,7 +293,7 @@ impl Store {
             )));
         }
         let unfinished: Vec<(String, String)> = sqlx::query_as(
-            "SELECT title, status FROM tasks
+            "SELECT title, status FROM task_index
              WHERE goal_id = ? AND status NOT IN ('finished', 'cancelled')
              ORDER BY id",
         )
@@ -454,6 +454,10 @@ impl Store {
     /// normal lifecycle uses cancel; deleting drops a finished goal for good,
     /// so nothing is left to refetch and the event carries the id alone.
     pub async fn delete_goal(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE source_task_references SET cancel_requested = 1 WHERE goal_id = ?")
+            .bind(id)
+            .execute(self.w())
+            .await?;
         let n = sqlx::query("DELETE FROM goals WHERE id = ?")
             .bind(id)
             .execute(self.w())

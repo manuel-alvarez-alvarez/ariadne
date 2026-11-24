@@ -178,7 +178,7 @@ impl Store {
         self.get_repository(id).await?;
         let (goals, tasks): (i64, i64) = sqlx::query_as(
             "SELECT (SELECT COUNT(*) FROM goal_repositories WHERE repository_id = ?1),
-                    (SELECT COUNT(*) FROM tasks WHERE repo_id = ?1)",
+                    (SELECT COUNT(*) FROM task_index WHERE repo_id = ?1)",
         )
         .bind(id)
         .fetch_one(self.r())
