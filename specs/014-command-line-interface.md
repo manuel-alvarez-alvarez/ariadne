@@ -522,7 +522,9 @@ same binary also serves (013).
 61. With `--host all`, the `HOST` column is the daemon that answered, as rule
     46a says. The task's own host is a second column, `TASK HOST`. A host with
     no far task shows `local` in that column. In `--format json`, `host` is
-    the daemon that answered and `task_host` the task's own host.
+    the daemon that answered and `task_host` the task's own host. A source
+    projection and its worker response appear once, under the source host
+    (`tests/task_hosts.rs::all_hosts_show_a_projected_task_once`).
 
 ## Known gap
 
@@ -738,6 +740,9 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`commands/task.rs::step_narrows_the_list_to_the_named_column`,
   `::a_task_lists_its_workflow_and_every_columns_agent`,
   `::a_history_row_paints_the_columns_a_move_crossed`).
+- Worker task inspection uses its saved workflow without a worker goal
+  (`tests/task_hosts.rs::inspect_remote_task_without_a_worker_goal`,
+  `::worker_task_list_resolves_a_saved_source_goal_prefix`).
 - `goal ls` prints non-cancelled task progress and failed and stalled marks;
   `goal inspect` prints the lane task summary and aligns continuation lines
   under its value column (`commands/goal.rs::a_mixed_goals_task_counts_match_its_lane`,

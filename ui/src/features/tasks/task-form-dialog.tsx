@@ -76,9 +76,12 @@ function TaskFormDialog({
   onCreated?: (task: TaskDto) => void
 }) {
   const goalId = goal?.id ?? editing?.goal_id ?? ""
-  const detail = useQuery({ ...goalQueryOptions(host, goalId), enabled: open && !goal })
+  const detail = useQuery({
+    ...goalQueryOptions(host, goalId),
+    enabled: open && !goal && !editing?.execution_context,
+  })
   const actualGoal = goal ?? detail.data
-  const steps = actualGoal?.steps ?? []
+  const steps = editing?.execution_context?.workflow.steps ?? actualGoal?.steps ?? []
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const models = useQuery({ ...modelsQueryOptions(host), enabled: open })
   const tasks = useQuery({ ...taskListQueryOptions(host, { goal: goalId }), enabled: open })
@@ -117,7 +120,7 @@ function TaskFormDialog({
     }
   }
 
-  if (!actualGoal && !detail.isError) return null
+  if (!actualGoal && !editing?.execution_context && !detail.isError) return null
 
   return (
     <FormDialog open={open} onOpenChange={onOpenChange} dirty={form.formState.isDirty}>

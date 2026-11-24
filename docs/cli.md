@@ -810,6 +810,9 @@ column after the title, which names that host. A host that cannot be reached
 shows `(unreachable)` after its name. A list with no such task has no `HOST`
 column. `task inspect` prints the workflow, the current
 column, and one line per column — its skills, its pin, and its session.
+On a worker, inspection uses the task’s saved workflow without a worker goal.
+A goal filter can use the saved source-goal ID or its prefix.
+With `--host all`, a source projection and worker response appear once.
 `task history` paints the column a move left and the one it entered beside
 the statuses. `goal inspect` prints the workflow and its columns, each with
 its capability band — every rank it lists — and its gate:

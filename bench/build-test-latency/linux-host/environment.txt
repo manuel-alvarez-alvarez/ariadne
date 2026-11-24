@@ -1,0 +1,45 @@
+host: malvarez (hostname ariadne)
+date_utc: 2026-11-23T21:22:12Z
+source_sha: 226a47eb63c8ab763167b3fbedc89e52a0e66ab3 (main, pinned once)
+uname: Linux 7.0.2-4-pve #1 SMP PREEMPT_DYNAMIC PMX 7.0.2-4 (2026-05-15T07:32Z) x86_64 GNU/Linux
+PRETTY_NAME="Ubuntu 25.04"
+virtualization: lxc
+CPU(s):                                  16
+Model name:                              AMD Ryzen 7 5700U with Radeon Graphics
+Thread(s) per core:                      2
+Core(s) per socket:                      8
+Socket(s):                               1
+CPU(s) scaling MHz:                      80%
+CPU max MHz:                             4373.8579
+CPU min MHz:                             411.6580
+MemTotal:       33554432 kB
+swap: SwapTotal:             0 kB
+df: Filesystem                Type   Size  Used Avail Use% Mounted on
+df: ssd-zfs/subvol-132-disk-0 zfs    128G  8.1G  120G   7% /
+df: tmpfs                     tmpfs   30G  168M   30G   1% /tmp
+rustc: rustc 1.100.0 (0ef1bc386 2026-11-09)
+cargo: cargo 1.100.0 (3acc79c0c 2026-11-05)
+nextest: cargo-nextest 0.9.152 (26ebeda79 2026-11-13)
+clippy: clippy 0.1.100 (0ef1bc3860 2026-11-09)
+rustup toolchain: stable-x86_64-unknown-linux-gnu (default)
+cc: cc (Ubuntu 14.2.0-19ubuntu2) 14.2.0
+ld: GNU ld (GNU Binutils for Ubuntu) 2.44
+node: v26.13.1
+npm: 11.20.0
+python3: Python 3.13.3
+git: git version 2.48.1
+tmux: tmux 3.5a
+webkit2gtk-4.1: 2.50.4
+missing: mold, clang, sccache (not used by the named commands); libxdo-dev, libssl-dev (named by CI for Tauri)
+shared cache variables before the run:
+  CARGO_HOME=<unset>
+  CARGO_TARGET_DIR=<unset>
+  RUSTC_WRAPPER=<unset>
+  CARGO_INCREMENTAL=<unset>
+  RUSTFLAGS=<unset>
+  SCCACHE_DIR=<unset>
+  npm_config_cache=<unset>
+  CI=<unset>
+~/.cargo/config.toml: absent
+worktree target, ui/node_modules, ui/dashboard/node_modules: absent at start
+cgroup cpu.max: max 100000; memory.max: max

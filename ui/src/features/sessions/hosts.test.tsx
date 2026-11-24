@@ -427,3 +427,65 @@ it("reads the request link of a pull request row of the sessions table on its ho
   const link = await screen.findByRole("link", { name: /Fix it on box|#7/ })
   expect(link.getAttribute("href")).toBe(pull.url)
 })
+
+it("links a worker session to its source goal without reading a worker goal", async () => {
+  const task = aTask({
+    ...TASK,
+    execution_context: {
+      source_goal: {
+        daemon_id: "source-id",
+        goal_id: GOAL.id,
+        title: "Saved source",
+        description: "",
+      },
+      execution_owner: "worker-id",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  const seen = stubHosts({
+    local: { "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "source-id" } },
+    box: {
+      [`/v1/sessions/${REMOTE.id}`]: REMOTE,
+      [`/v1/tasks/${TASK.id}`]: task,
+      "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "worker-id" },
+    },
+  })
+  renderScreen(<DetailPanels />, { route: `/sessions?session=${REMOTE.id}&host=box` })
+  const link = await screen.findByRole("link", { name: "Saved source" })
+  expect(link.getAttribute("href")).toContain(`goal=${GOAL.id}`)
+  expect(link.getAttribute("href")).not.toContain("host=box")
+  expect(
+    seen.some(
+      (request) => request.origin === BOX && request.url.pathname === `/v1/goals/${GOAL.id}`,
+    ),
+  ).toBe(false)
+})
+
+it("names a worker session by the task's saved workflow", async () => {
+  const task = aTask({
+    ...TASK,
+    agents: [{ id: "worker-agent", step: "build", skills: [], model: "codex:o3" }],
+    execution_context: {
+      source_goal: { daemon_id: "source", goal_id: GOAL.id, title: "Source", description: "" },
+      execution_owner: "worker",
+      workflow: {
+        name: "saved",
+        steps: [{ id: "build", title: "Saved column", description: "", skills: [], ranks: [] }],
+      },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  const session = aSession({ ...REMOTE, seat: "agent", task_agent_id: "worker-agent" })
+  stubHosts({
+    local: { "/v1/sessions": aSessionPage([]), "/v1/goals": [], "/v1/tasks": [] },
+    box: { "/v1/sessions": aSessionPage([session]), "/v1/goals": [], "/v1/tasks": [task] },
+  })
+  renderScreen(<SessionsPage />, { route: "/sessions" })
+  expect(await screen.findByText("Saved column")).toBeTruthy()
+  expect(screen.getByText("Source")).toBeTruthy()
+})

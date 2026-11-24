@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { screen, within } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
 import { qk } from "@/api"
 import { aGoal, aSession, aTask } from "@/test/fixtures"
-import { renderScreen } from "@/test/harness"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
 
 it("shows workflow agents by column", async () => {
@@ -113,4 +114,103 @@ it("links a live session that waits for permission", async () => {
   const summary = await screen.findByRole("region", { name: "Execution summary" })
   expect(summary.textContent).toContain("A session is waiting for permission.")
   expect(within(summary).getByRole("link", { name: "Open the session" })).toBeTruthy()
+})
+
+it("shows the saved source and workflow when the worker has no goal", async () => {
+  const task = aTask({
+    goal_id: "source-goal",
+    step: "build",
+    execution_context: {
+      source_goal: {
+        daemon_id: "source",
+        goal_id: "source-goal",
+        title: "Source goal",
+        description: "",
+      },
+      execution_owner: "worker",
+      workflow: {
+        name: "saved",
+        steps: [{ id: "build", title: "Saved build", description: "", skills: [], ranks: [] }],
+      },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  expect(await screen.findByText(/Source goal.*source.*unavailable/)).toBeTruthy()
+  expect(screen.getByText("Saved build")).toBeTruthy()
+})
+
+it("links a projection to its source goal", async () => {
+  const goal = aGoal({ title: "Source project" })
+  const task = aTask({
+    goal_id: goal.id,
+    execution_context: {
+      source_goal: { daemon_id: "source", goal_id: goal.id, title: goal.title, description: "" },
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  daemonFetch.mockImplementation(async (request) => {
+    if (String(request.url).includes("/v1/remote-tasks/protocol"))
+      return jsonResponse({ protocol: "remote-tasks-v1", daemon_id: "source" })
+    return jsonResponse([])
+  })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  expect(await screen.findByRole("button", { name: "Source project" })).toBeTruthy()
+})
+
+it("marks cached remote task progress as stale", async () => {
+  const task = aTask({ host: "worker", host_unreachable: true })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  expect(await screen.findByText(/progress may be stale/i)).toBeTruthy()
+})
+
+it("keeps remote task progress while cancellation is pending", async () => {
+  const user = userEvent.setup()
+  const task = aTask({
+    status: "in_progress",
+    host: "worker",
+    execution_context: {
+      source_goal: { daemon_id: "source", goal_id: "goal", title: "Source", description: "" },
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  let requested = false
+  daemonFetch.mockImplementation(async (request) => {
+    if (request.url.endsWith("/cancel")) {
+      requested = true
+      return new Promise<Response>(() => {})
+    }
+    return jsonResponse([])
+  })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  await user.click(screen.getByRole("button", { name: "Cancel task" }))
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel task" }))
+  await waitFor(() => expect(requested).toBe(true))
+  expect(screen.getAllByText("Cancelled")).toHaveLength(1)
+})
+
+it("names the worker in a source task panel", async () => {
+  const task = aTask({ host: "worker" })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  expect(await screen.findByText("worker")).toBeTruthy()
 })

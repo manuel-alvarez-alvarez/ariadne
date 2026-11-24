@@ -26,7 +26,7 @@ test that proves it. Conventions for writing and changing one are in
 | 012 | [HTTP API, event stream and usage](012-http-api-events-and-usage.md) | transports, the envelope, SSE, token accounting, and remote task contracts |
 | 013 | [MCP tool surface](013-mcp-tool-surface.md) | the tools each seat sees, remote task context, and writes to far tasks |
 | 014 | [Command-line interface](014-command-line-interface.md) | the command tree, flags, failures, completions, `doctor` |
-| 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, reusable workload views, its conversation workspace, and CLI parity |
+| 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, reusable workload views, its conversation workspace, and CLI parity, remote task inspection and host identity |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, Dependabot, CI build caches, the migration policy |
 | 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and the agent of each column; eleven skills and one document template |
 | 018 | [Agent messages](018-agent-messages.md) | agent messages, turn delivery, and relay between hosts |
