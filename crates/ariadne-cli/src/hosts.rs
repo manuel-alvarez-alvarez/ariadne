@@ -787,6 +787,61 @@ async fn merge_lists(
     if parts.is_empty() {
         return Err(not_found.unwrap_or_else(|| Failure::usage("no host answered").err()));
     }
+    if matches!(
+        cli.command,
+        Command::Task {
+            command: commands::task::TaskCommand::Ls { .. }
+        }
+    ) {
+        let identities = futures_util::future::join_all(hosts.iter().map(|host| async move {
+            let selected = client(host, local).ok()?;
+            let protocol: ariadne_api::tasks::RemoteTaskProtocol =
+                selected.get_json("/v1/remote-tasks/protocol").await.ok()?;
+            (protocol.protocol == "remote-tasks-v1")
+                .then_some((host.name.clone(), protocol.daemon_id))
+        }))
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<std::collections::HashMap<_, _>>();
+        let source_tasks: std::collections::HashSet<(String, String)> = parts
+            .iter()
+            .flat_map(|(host, listing)| {
+                listing.task_values().iter().filter_map(|task| {
+                    let context = task.get("execution_context")?;
+                    let source = context.pointer("/source_goal/daemon_id")?.as_str()?;
+                    if identities.get(host).map(String::as_str) != Some(source) {
+                        return None;
+                    }
+                    Some((
+                        context.get("execution_owner")?.as_str()?.to_owned(),
+                        task.get("id")?.as_str()?.to_owned(),
+                    ))
+                })
+            })
+            .collect();
+        for (host, listing) in &mut parts {
+            listing.retain_tasks(|task| {
+                let Some(context) = task.get("execution_context") else {
+                    return true;
+                };
+                let Some(source) = context
+                    .pointer("/source_goal/daemon_id")
+                    .and_then(Value::as_str)
+                else {
+                    return true;
+                };
+                let Some(owner) = context.get("execution_owner").and_then(Value::as_str) else {
+                    return true;
+                };
+                let Some(id) = task.get("id").and_then(Value::as_str) else {
+                    return true;
+                };
+                identities.get(host).map(String::as_str) == Some(source)
+                    || !source_tasks.contains(&(owner.to_owned(), id.to_owned()))
+            });
+        }
+    }
     listing::print_merged(&parts, cli.format)?;
     Ok(ExitCode::SUCCESS)
 }

@@ -245,6 +245,28 @@ describe("invalidateEverything", () => {
     unsubscribe()
   })
 
+  it("retries a daemon identity lookup that failed while the host was down", async () => {
+    const queryClient = createQueryClient()
+    const lookup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValue({ protocol: "remote-tasks-v1", daemon_id: "d1" })
+    const key = qk.remoteTaskProtocol("box", "")
+    const observer = new QueryObserver(queryClient, {
+      queryKey: key,
+      queryFn: lookup,
+      retry: false,
+    })
+    const unsubscribe = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(observer.getCurrentResult().isError).toBe(true))
+
+    invalidateEverything(queryClient, "box")
+
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toBeDefined())
+    expect(lookup).toHaveBeenCalledTimes(2)
+    unsubscribe()
+  })
+
   it("marks what is off screen stale, so it is read again when it is next shown", () => {
     const queryClient = createQueryClient()
     queryClient.setQueryData(qk.goals.list("local"), [GOAL])
@@ -616,4 +638,22 @@ describe("hosts", () => {
 
     expect(queryClient.getQueryData(qk.hosts.list())).toEqual([LOCAL, BOX])
   })
+})
+
+it("refreshes the source goal usage when a remote task changes", () => {
+  const client = new QueryClient()
+  client.setQueryData(qk.goals.detail("local", GOAL.id), GOAL)
+  const task = aTask({
+    goal_id: GOAL.id,
+    execution_context: {
+      source_goal: { daemon_id: "source", goal_id: GOAL.id, title: GOAL.title, description: "" },
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  dispatch(client, { event: "task_updated", data: { task, transition: null } })
+  expect(stale(client, qk.goals.detail("local", GOAL.id))).toBe(true)
 })

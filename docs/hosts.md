@@ -7,6 +7,14 @@ repositories, its own agents and its own models.
 Add and set up a host first. See [Using the CLI](cli.md) for `ariadne host`.
 The rules are in [the host specification](../specs/037-hosts.md).
 
+When a host cannot be reached, the desktop marks its cached task progress as
+potentially stale. A worker task panel shows the saved source title and workflow.
+A source goal link uses the configured host whose daemon identity matches the
+saved source. If none matches, the panel shows the source identity as unavailable.
+The desktop resolves the execution worker by daemon identity as well. It labels
+a worker that has no matching configured host as unconfigured. Cancellation and
+retry feedback follows the status returned by the daemon.
+
 ## How the orchestrator chooses
 
 While it plans, the orchestrator does these steps:

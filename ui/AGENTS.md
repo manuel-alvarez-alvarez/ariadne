@@ -312,6 +312,7 @@ the host first; below, the host is left out of each key for brevity:
 ["pull-requests", "search", { repo, q }]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
 ["dashboards",   "list", {}]       ["dashboards", "detail", name]
+["remote-task-protocol", endpoint]  (the daemon identity behind a connection)
 ```
 
 Every `qk` helper takes the host first: `qk.goals.lists(host)` invalidates

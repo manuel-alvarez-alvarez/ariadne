@@ -63,7 +63,7 @@ it("shows the colored remote host and its unreachable state", () => {
   )
   const label = screen.getByText("box")
   expect(label.getAttribute("data-host-color")).toBe("blue")
-  expect(label.getAttribute("title")).toBe("Host box cannot be reached")
+  expect(label.getAttribute("title")).toBe("Host box cannot be reached; progress may be stale")
   expect(label.className).toContain("truncate")
   const described = screen.getByRole("link").getAttribute("aria-describedby") ?? ""
   expect(document.getElementById(described)?.textContent).toContain("Host box cannot be reached")
@@ -103,7 +103,7 @@ it("updates the goal task host label from task_updated without a reload", async 
   await waitFor(() => {
     expect(screen.queryByText("box")).toBeNull()
     expect(screen.getByText("elsewhere").getAttribute("title")).toBe(
-      "Host elsewhere cannot be reached",
+      "Host elsewhere cannot be reached; progress may be stale",
     )
   })
 })
@@ -344,4 +344,53 @@ it("links a local card to its panel and a remote card to its panel on its host",
   expect(screen.getByRole("link", { name: /Remote card/ }).getAttribute("href")).toContain(
     "host=box&task=t-box",
   )
+})
+
+it("labels a projected task by worker identity and keeps the source route", async () => {
+  const worker = aTask({
+    host: "gpu",
+    execution_context: {
+      source_goal: { daemon_id: "source", goal_id: "goal", title: "Source", description: "" },
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  const gpu = { ...BOX, name: "gpu", endpoint: "http://gpu.test:7676", color: "red" as const }
+  const { stubHosts } = await import("@/test/hosts")
+  stubHosts(
+    {
+      local: { "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "worker" } },
+      box: { "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "source" } },
+      at: {
+        "http://gpu.test:7676": {
+          "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "unrelated" },
+        },
+      },
+    },
+    [LOCAL, BOX, gpu],
+  )
+  renderScreen(<TaskCard host="box" task={worker} steps={STEPS} />)
+  expect(await screen.findByText("local")).toBeTruthy()
+  expect(screen.queryByText("gpu")).toBeNull()
+  expect(screen.getByRole("link").getAttribute("href")).toContain("host=box")
+})
+
+it("labels an unresolved execution owner as unconfigured", async () => {
+  const task = aTask({
+    host: "gpu",
+    execution_context: {
+      source_goal: { daemon_id: "source", goal_id: "goal", title: "Source", description: "" },
+      execution_owner: "unknown-worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  renderScreen(<TaskCard host="box" task={task} steps={STEPS} />)
+  expect(await screen.findByText("Unconfigured worker")).toBeTruthy()
+  expect(screen.queryByText("gpu")).toBeNull()
 })

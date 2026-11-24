@@ -153,12 +153,12 @@ export function useUpdateTask(host: Host, taskId: string) {
  * moves to `cancelled` on the click and only comes back if the daemon refuses
  * (it does, with a `409`, when the task already left a cancellable state).
  */
-export function useCancelTask(host: Host, taskId: string) {
+export function useCancelTask(host: Host, taskId: string, remote = false) {
   return useTaskAction(
     host,
     taskId,
     () => unwrap(api(host).POST("/v1/tasks/{id}/cancel", { params: { path: { id: taskId } } })),
-    "cancelled",
+    remote ? undefined : "cancelled",
   )
 }
 

@@ -195,3 +195,96 @@ async fn all_hosts_keep_the_daemon_host_first_and_name_each_task_host_second() {
     assert!(row(&stdout, "far-task").contains("build"));
     assert!(row(&stdout, "remote-task").contains("local"));
 }
+
+#[tokio::test]
+async fn inspect_remote_task_without_a_worker_goal() {
+    let mut remote = task("01REMOTE", "remote-task", "build", true);
+    remote["execution_context"] = json!({
+        "source_goal": {"daemon_id":"source", "goal_id":"01GOAL", "title":"Source", "description":""},
+        "execution_owner":"worker", "workflow":{"name":"saved-flow", "steps":[{"id":"build", "title":"Saved build", "description":"", "skills":[], "ranks":[]}]},
+        "revision":1, "authorized":true, "authorized_revision":1
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route(
+            "/v1/tasks",
+            get({
+                let remote = remote.clone();
+                move || async move { Json(json!([remote])) }
+            }),
+        )
+        .route("/v1/tasks/{id}", get(move || async move { Json(remote) }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (code, stdout, stderr) =
+        ariadne(&endpoint, "local", &["task", "inspect", "01REMOTE"]).await;
+    server.abort();
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stdout.contains("saved-flow"));
+    assert!(stdout.contains("Saved build"));
+    assert!(stdout.contains("build (unreachable)"));
+}
+
+#[tokio::test]
+async fn all_hosts_show_a_projected_task_once() {
+    let mut remote = task("01REMOTE", "unique-remote", "local", false);
+    remote["execution_context"] = json!({"source_goal":{"daemon_id":"source", "goal_id":"01GOAL", "title":"Source", "description":""}, "execution_owner":"worker", "workflow":{"name":"saved", "steps":[]}, "revision":1, "authorized":true, "authorized_revision":1});
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let worker_endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let worker_task = remote.clone();
+    let app = Router::new()
+        .route(
+            "/v1/tasks",
+            get(move || async move { Json(json!([worker_task])) }),
+        )
+        .route(
+            "/v1/remote-tasks/protocol",
+            get(|| async { Json(json!({"protocol":"remote-tasks-v1", "daemon_id":"worker"})) }),
+        );
+    let worker = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    remote["host"] = json!("build");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let hosts = registry(&worker_endpoint);
+    let app = Router::new()
+        .route(
+            "/v1/tasks",
+            get(move || async move { Json(json!([remote])) }),
+        )
+        .route("/v1/hosts", get(move || async move { Json(hosts) }))
+        .route(
+            "/v1/remote-tasks/protocol",
+            get(|| async { Json(json!({"protocol":"remote-tasks-v1", "daemon_id":"source"})) }),
+        );
+    let source = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (code, stdout, stderr) = ariadne(&endpoint, "all", &["task", "ls"]).await;
+    let (json_code, json_out, _) =
+        ariadne(&endpoint, "all", &["--format", "json", "task", "ls"]).await;
+    source.abort();
+    worker.abort();
+    assert_eq!(json_code, Some(0));
+    assert_eq!(json_out.matches("unique-remote").count(), 1);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout.matches("unique-remote").count(), 1, "{stdout}");
+    assert!(row(&stdout, "unique-remote").contains("local"));
+}
+
+#[tokio::test]
+async fn worker_task_list_resolves_a_saved_source_goal_prefix() {
+    let mut remote = task("01REMOTE", "worker-task", "local", false);
+    remote["execution_context"] = json!({"source_goal":{"daemon_id":"source", "goal_id":"01GOAL", "title":"Source", "description":""}, "execution_owner":"worker", "workflow":{"name":"saved", "steps":[]}, "revision":1, "authorized":true, "authorized_revision":1});
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route(
+            "/v1/tasks",
+            get(move || async move { Json(json!([remote])) }),
+        )
+        .route("/v1/goals", get(|| async { Json(json!([])) }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (code, stdout, stderr) =
+        ariadne(&endpoint, "local", &["task", "ls", "--goal", "01GO"]).await;
+    server.abort();
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stdout.contains("worker-task"));
+}

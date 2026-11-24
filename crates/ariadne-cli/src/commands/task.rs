@@ -363,8 +363,12 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             // The goal carries the columns the task runs through, titles and
             // all; the task alone names only the id of the one it is in.
-            let g: GoalDto = client.get_json(&format!("/v1/goals/{}", t.goal_id)).await?;
-            print(format, &t, || print_kv(&inspect_pairs(&t, &g)))?;
+            let goal: Option<GoalDto> = if t.execution_context.is_none() {
+                Some(client.get_json(&format!("/v1/goals/{}", t.goal_id)).await?)
+            } else {
+                None
+            };
+            print(format, &t, || print_kv(&inspect_pairs(&t, goal.as_ref())))?;
         }
         TaskCommand::Messages { id, full } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
@@ -510,7 +514,7 @@ async fn ls(
             .print(format);
     }
     let goal = match goal {
-        Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
+        Some(goal) => Some(resolve_task_goal(client, &goal).await?),
         None => None,
     };
     // The stream takes the same goal filter the list does, so a watch on one
@@ -546,10 +550,29 @@ pub(crate) async fn list(
     step: Option<&str>,
 ) -> Result<Listing> {
     let goal = match goal {
-        Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
+        Some(goal) => Some(resolve_task_goal(client, &goal).await?),
         None => None,
     };
     listing(client, goal, statuses, all, step).await
+}
+
+/// Resolve a source goal saved on a worker when that worker has no goal row.
+async fn resolve_task_goal(client: &Client, typed: &str) -> Result<String> {
+    match resolve::id(client, Kind::Goal, typed).await {
+        Ok(id) => Ok(id),
+        Err(error) if crate::error::exit(&error) == crate::error::Exit::NotFound => {
+            let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
+            let mut goals = std::collections::BTreeMap::new();
+            for task in tasks {
+                if let Some(context) = task.execution_context {
+                    goals.insert(context.source_goal.goal_id, context.source_goal.title);
+                }
+            }
+            let rows = goals.into_iter().map(|(id, title)| resolve::row(id, title));
+            Ok(resolve::among(Kind::Goal, rows).pick(typed)?.id.clone())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// The table as it stands, read afresh.
@@ -688,15 +711,22 @@ fn visible(
 /// A task names its goal's workflow, its current column, and the agent of
 /// every column in column order; the goal is what carries the columns, since
 /// a task pending its first column has no `step` of its own yet.
-fn inspect_pairs(t: &TaskDto, g: &GoalDto) -> Vec<(&'static str, Kv)> {
-    vec![
+fn inspect_pairs(t: &TaskDto, g: Option<&GoalDto>) -> Vec<(&'static str, Kv)> {
+    let (workflow, steps) = match &t.execution_context {
+        Some(context) => (&context.workflow.name, &context.workflow.steps),
+        None => {
+            let goal = g.expect("local task has a goal");
+            (&goal.workflow, &goal.steps)
+        }
+    };
+    let mut pairs = vec![
         ("id", Kv::id(t.id.clone())),
         ("goal", Kv::id(t.goal_id.clone())),
         ("title", Kv::title(t.title.clone())),
         ("status", Kv::status(t.status.as_str())),
-        ("workflow", g.workflow.clone().into()),
+        ("workflow", workflow.clone().into()),
         ("step", dash(t.step.as_deref()).into()),
-        ("agents", step_lines(t, &g.steps).into()),
+        ("agents", step_lines(t, steps).into()),
         (
             "depends on",
             Kv::id(match t.depends_on.is_empty() {
@@ -717,7 +747,11 @@ fn inspect_pairs(t: &TaskDto, g: &GoalDto) -> Vec<(&'static str, Kv)> {
         ("pull request", dash(t.pr_url.as_deref()).into()),
         ("created", Kv::meta(moment(&t.created_at))),
         ("description", format!("\n---\n{}", t.description).into()),
-    ]
+    ];
+    if t.host != LOCAL_HOST {
+        pairs.insert(3, ("host", host_cell(t).into()));
+    }
+    pairs
 }
 
 /// One line per column of the task's workflow, in column order: the column,
@@ -1026,7 +1060,7 @@ mod tests {
             depends_on: vec!["01DEP".into()],
             ..dto()
         };
-        let pairs = inspect_pairs(&t, &fixtures::goal("01GOAL", "Ship the board"));
+        let pairs = inspect_pairs(&t, Some(&fixtures::goal("01GOAL", "Ship the board")));
         let keys: Vec<_> = pairs.iter().map(|(key, _)| *key).collect();
         assert!(keys.contains(&"depends on"), "{keys:?}");
         assert!(keys.contains(&"pull request"), "{keys:?}");
@@ -1158,7 +1192,7 @@ mod tests {
             ],
             ..fixtures::goal("01GOAL", "Ship the board")
         };
-        let pairs = inspect_pairs(&t, &g);
+        let pairs = inspect_pairs(&t, Some(&g));
         let keys: Vec<_> = pairs.iter().map(|(key, _)| *key).collect();
         assert_eq!(
             &keys[..7],
@@ -1193,7 +1227,7 @@ mod tests {
             ..dto()
         };
         let block = kv_block(
-            &inspect_pairs(&t, &fixtures::goal("01GOAL", "Ship the board")),
+            &inspect_pairs(&t, Some(&fixtures::goal("01GOAL", "Ship the board"))),
             &View::plain(),
         );
         assert!(block.contains("step          -"), "{block}");

@@ -66,6 +66,9 @@ export const qk = {
     /** `GET /v1/host-setups`: every saved setup and update. */
     setups: () => [LOCAL_HOST, "host-setups", "list", {}] as const,
   },
+  /** `GET /v1/remote-tasks/protocol`: the daemon identity behind one connection. */
+  remoteTaskProtocol: (host: Host, endpoint: string) =>
+    [host, "remote-task-protocol", endpoint] as const,
   pullRequests: {
     all: (host: Host) => [host, "pull-requests"] as const,
     lists: (host: Host) => [host, "pull-requests", "list"] as const,
