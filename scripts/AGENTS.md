@@ -194,6 +194,14 @@ Include audits, lint, unused checks, Rust builds, and Tauri formatting and compi
 Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
 Require GitHub CI on the current PR head before GitHub squash merges.
 
+A worktree that the old main-push hook built can hold stale test binaries.
+The old hook built in a temporary checkout and deleted it, so the binaries
+kept that deleted path in `CARGO_MANIFEST_DIR`. Cargo treats them as fresh.
+The two `ariadne-store` migration tests then fail with `No such file or
+directory`. The hook neither detects this nor rebuilds. Run `cargo clean -p
+ariadne-store`, then push again. The cause is in
+[the hook report](../bench/build-test-latency/main-push-worktree.md#existing-worktrees-with-stale-manifest-paths).
+
 Run `bash scripts/tests/githooks.sh CASE` for the landing boundary cases:
 `main-push`, `main-merge`, `merge-message`, and `subject-validator`.
 `main-push` checks the pushing worktree, that the dashboard `npm ci` runs

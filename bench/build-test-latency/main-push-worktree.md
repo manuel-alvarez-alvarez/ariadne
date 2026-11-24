@@ -112,7 +112,9 @@ This hook change does not alter that fixture.
 
 The first main push can fail after this hook change.
 A clean index and the correct HEAD do not prevent this failure.
-The new hook does not currently repair stale artifacts or print a specific repair command.
+The user decided to record this in documents only.
+The hook does not detect stale artifacts and does not rebuild them.
+The repair is `cargo clean -p ariadne-store`, as [`scripts/AGENTS.md`](../../scripts/AGENTS.md) states.
 
 The two migration tests compile `env!("CARGO_MANIFEST_DIR")` into their binaries.
 They use that absolute path at runtime to read the migration directory.

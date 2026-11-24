@@ -1,6 +1,7 @@
 # Proposed isolated Linux CI measurements
 
 Status: proposal for user agreement; no implementation or dispatch is authorized.
+The workflow was removed and was never dispatched; this page stays as history.
 The reader must approve the experiment, its limits, and its runner budget before implementation.
 
 ## Question and recommendation

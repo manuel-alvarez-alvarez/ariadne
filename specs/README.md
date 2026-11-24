@@ -48,4 +48,3 @@ test that proves it. Conventions for writing and changing one are in
 | 036 | [Dashboards](036-dashboards.md) | editable Perses dashboard documents, their catalog routes, events and CLI |
 | 037 | [Hosts](037-hosts.md) | database hosts and colours, CRUD routes and events, SSH worker inspection and review in three setup groups, resumable setup, explicit idle updates and repository population, catalog and portable configuration synchronization, idle maintenance restarts, host query routes, and far tasks that a goal's daemon sends to a host and mirrors; durable worker identity and remote execution |
 | 038 | [Agent relay](038-agent-relay.md) | `ariadned relay`, session paths, versioned durable replay, acknowledgments, stop, exit reporting, upgrades, and terminal status |
-| 039 | [Isolated Linux latency measurements](039-isolated-linux-latency.md) | dispatch-only bounded Linux cohorts, private caches, evidence and image comparability |

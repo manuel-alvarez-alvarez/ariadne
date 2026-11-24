@@ -11,12 +11,12 @@ Obtain user agreement on task boundaries before implementation.
 
 Baseline: `0561a6ab4a5864186724fab5bcf783030359298b`, measured on 2026-11-22.
 The task branch started clean at that revision.
-The historical audit below changes no production checks. The separately approved [Linux design](linux-ci-proposal.md) now has an isolated manual workflow; it has not been dispatched.
+The historical audit below changes no production checks. The [Linux design](linux-ci-proposal.md) is kept as history. Its workflow was removed and was never dispatched.
 The follow-up measures the same source baseline from report revision `cb3a7efdcad2ca10d9a7ccf00b6d12acb0629556`.
 
 Sources:
 
-- [Proposed isolated Linux CI experiment](linux-ci-proposal.md) defines the cohort and decisions for user agreement.
+- [Proposed isolated Linux CI experiment](linux-ci-proposal.md) defines the cohort and decisions it asked the user to agree. Its workflow was removed and was never dispatched.
 - [Host malvarez Linux measurement](linux-host.md) times every check stage at `226a47eb`, cold and warm, three times each, and ranks the slowest tests. Its results are for host malvarez only; do not pool them with the CI or macOS data.
 - [Daemon fixed waits removed](daemon-fixed-waits.md) records three daemon tests before and after their fixed waits were removed.
 
@@ -317,20 +317,7 @@ This report supports scope agreement; it does not establish complete performance
 9. Separate nextest compilation from the runner's execution summary.
 10. Obtain orchestrator approval for additional CI runs and controlled cache resets.
 
-Historical measurements remain separate from the [manual Linux runner](../../.github/experiments/linux-latency/README.md), which measures a later fixed revision only after dispatch approval.
-
 ## Report checks
 
 Run `git diff --check` for whitespace.
 Check each relative Markdown target in this directory and its index.
-For the manual Linux experiment, run these bounded fixture and syntax checks (no project workloads):
-
-```sh
-python3 .github/experiments/linux-latency/test_run.py
-shellcheck .github/experiments/linux-latency/linker.sh
-actionlint -ignore 'label "ubuntu-26.04" is unknown' .github/workflows/linux-latency-experiment.yml
-```
-
-The actionlint ignore is limited to the local tool's outdated hosted-label catalog.
-See [preflight and live gaps](../../.github/experiments/linux-latency/README.md#preflight).
-This experiment never becomes a hook check or an ordinary CI trigger.
