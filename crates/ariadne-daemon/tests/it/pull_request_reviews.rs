@@ -1069,7 +1069,7 @@ async fn a_review_resolves_its_own_fixed_finding() {
             &theirs.to_string(),
         ),
     );
-    stub.reprogram(script);
+    stub.reprogram(script.clone());
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
     ask_review(&h, &id, &repo, 1, PIN).await;
@@ -1095,6 +1095,30 @@ async fn a_review_resolves_its_own_fixed_finding() {
         .as_str()
         .unwrap()
         .to_string();
+    // The post wakes a fetch, and the forge now lists the finding. Wait
+    // until a fetch has read it back into its GitHub thread: a resolve
+    // that lands while that fetch is under way reads the stored finding
+    // and the fetched threads out of step.
+    let mut posted = script;
+    posted.as_array_mut().unwrap()[0] = answer(
+        &["api", "repos/acme/widgets/pulls/1/comments"],
+        0,
+        &json!([{"id": 501, "user": {"login": "me", "type": "User"},
+            "body": "**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->",
+            "path": "a.txt", "line": 1, "created_at": "2026-10-02T00:00:00Z"},
+            theirs[0].clone()])
+        .to_string(),
+    );
+    stub.reprogram(posted);
+    let repo_id = h.store.get_pull_request(&id).await.unwrap().repository_id;
+    h.state.forge_poll.wake(&repo_id);
+    eventually(TIMEOUT, "the fetch to read the finding back", async || {
+        let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        comments
+            .iter()
+            .any(|c| c["id"] == mine && c["thread_id"] == "PRRT_501")
+    })
+    .await;
     let resolve = |comment: &str, as_: &str| {
         as_session(
             &format!("/v1/pull-requests/{id}/comments/{comment}/resolve"),

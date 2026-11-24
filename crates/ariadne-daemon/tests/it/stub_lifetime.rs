@@ -1,4 +1,4 @@
-//! Every Python test stub ends when its direct parent ends.
+//! Every test stub ends when its direct parent ends.
 
 use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -66,6 +66,26 @@ async fn a_forge_stub_exits_when_its_parent_is_killed() {
     // reparenting; kill(pid, 0) alone would call that zombie alive.
     wait_for_exit(pid).await;
     process.wait().unwrap();
+}
+
+/// A call that reads its body with `--input -` ends with its parent too,
+/// while the test still holds the write end of that input open: the read
+/// alone would never end.
+#[tokio::test]
+async fn a_forge_stub_reading_its_input_exits_when_its_parent_is_killed() {
+    let forge = stub_forge_cli(json!([{"args": ["api"], "stdout": "{}"}]));
+    let (mut process, mut stdin) = parent(&forge.gh, &["api", "--input", "-"]);
+    forge.set_parent_pid(process.id());
+    launch(&mut stdin);
+    eventually(TIMEOUT, "the forge stub to start", || async {
+        forge.pid().is_some()
+    })
+    .await;
+    let pid = forge.pid().unwrap();
+    process.kill().unwrap();
+    wait_for_exit(pid).await;
+    process.wait().unwrap();
+    drop(stdin);
 }
 
 #[tokio::test]

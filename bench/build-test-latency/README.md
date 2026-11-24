@@ -18,6 +18,7 @@ Sources:
 
 - [Proposed isolated Linux CI experiment](linux-ci-proposal.md) defines the cohort and decisions it asked the user to agree. Its workflow was removed and was never dispatched.
 - [Host malvarez Linux measurement](linux-host.md) times every check stage at `226a47eb`, cold and warm, three times each, and ranks the slowest tests. Its results are for host malvarez only; do not pool them with the CI or macOS data.
+- [Host malvarez fake forge cost](fake-forge.md) splits the time of the five slowest forge tests and measures a cheaper fake `gh`, before and after, in interleaved rounds.
 - [Daemon fixed waits removed](daemon-fixed-waits.md) records three daemon tests before and after their fixed waits were removed.
 - [Shell fake forge on macOS](fake-forge-macos.md) runs the fake `gh` tests three times at `3050fabd` and at its merge base on this Mac.
 

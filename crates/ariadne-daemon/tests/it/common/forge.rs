@@ -1,14 +1,20 @@
 //! A scriptable stub of the forge CLI, `gh`, as test support.
 //!
-//! [`stub_forge_cli`] writes one python3 program and links it under its
-//! name, as [`super::acp`] links its stub agent: one shared launcher, so no
-//! test waits on macOS to check a new executable. The program reads a JSON
-//! script, a list of entries, each an argument prefix (`args`), a `stdout`,
-//! an optional `stderr` and an `exit` code, an optional `program` that holds
-//! the entry to `gh`, and an optional `wait_for`, a file the
-//! answer waits for, so a test holds a call open. It answers the first entry whose
-//! prefix matches, and an invocation no entry matches exits 1. It appends
-//! every invocation, its name and its arguments, to a log the test reads.
+//! [`stub_forge_cli`] links one shared POSIX `sh` program under its name,
+//! as [`super::acp`] links its stub agent: one shared launcher, so no test
+//! waits on macOS to check a new executable. Each call stays a child
+//! process of its own, but `sh` starts in about a millisecond where
+//! python3 and its imports took about twenty, and the forge tests make
+//! dozens of calls each.
+//!
+//! A test programs the stub with a JSON script, a list of entries, each an
+//! argument prefix (`args`), a `stdout`, an optional `stderr` and an `exit`
+//! code, an optional `program` that holds the entry to `gh`, and an
+//! optional `wait_for`, a file the answer waits for, so a test holds a call
+//! open. [`write_script`] compiles that list into a `sh` function the stub
+//! sources on each call. The stub answers the first entry whose prefix
+//! matches, and an invocation no entry matches exits 1. It records every
+//! invocation, its name and its arguments, in a log the test reads.
 //! [`super::HarnessBuilder::forge_cli`] points the daemon's `gh_bin` at it.
 
 use std::path::{Path, PathBuf};
@@ -20,7 +26,9 @@ use serde_json::{Value, json};
 pub(crate) struct StubForgeCli {
     pub gh: String,
     script_file: PathBuf,
-    log: PathBuf,
+    /// One record per call, in the order the calls started.
+    calls: PathBuf,
+    /// One record per call, in the order the calls finished.
     finished: PathBuf,
     pid_file: PathBuf,
     fetches: Fetches,
@@ -49,16 +57,16 @@ impl StubForgeCli {
     }
     /// Every invocation, in the order they ran.
     pub(crate) fn invocations(&self) -> Vec<Invocation> {
-        let Ok(log) = std::fs::read_to_string(&self.log) else {
-            return Vec::new();
-        };
-        log.lines()
-            .map(|line| {
-                let call: Value = serde_json::from_str(line).unwrap();
+        records(&self.calls)
+            .into_iter()
+            .map(|fields| {
+                let [has_input, input, program, args @ ..] = &fields[..] else {
+                    panic!("a call record holds its input and its program: {fields:?}");
+                };
                 Invocation {
-                    program: call["program"].as_str().unwrap().to_string(),
-                    args: serde_json::from_value(call["args"].clone()).unwrap(),
-                    input: call["input"].as_str().map(str::to_string),
+                    program: program.clone(),
+                    args: args.to_vec(),
+                    input: (has_input == "1").then(|| input.clone()),
                 }
             })
             .collect()
@@ -85,15 +93,15 @@ impl StubForgeCli {
     /// stranded start into a permanent undercount; reading what finished,
     /// whichever call it was, does not.
     fn finished(&self) -> Vec<Invocation> {
-        let Ok(log) = std::fs::read_to_string(&self.finished) else {
-            return Vec::new();
-        };
-        log.lines()
-            .map(|line| {
-                let call: Value = serde_json::from_str(line).unwrap();
+        records(&self.finished)
+            .into_iter()
+            .map(|fields| {
+                let [_refused, program, args @ ..] = &fields[..] else {
+                    panic!("a finish record holds its program: {fields:?}");
+                };
                 Invocation {
-                    program: call["program"].as_str().unwrap().to_string(),
-                    args: serde_json::from_value(call["args"].clone()).unwrap(),
+                    program: program.clone(),
+                    args: args.to_vec(),
                     input: None,
                 }
             })
@@ -198,15 +206,18 @@ pub(crate) fn check_states(host: &str, pairs: &[(i64, &str)]) -> Value {
 /// Write the stub into a directory of its own, answering from `script`.
 pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
     let dir = tempfile::tempdir().unwrap();
-    let script_file = dir.path().join("forge-script.json");
+    let script_file = dir.path().join("forge-script.sh");
     write_script(&script_file, &script);
     std::fs::write(
         dir.path().join("forge-parent-pid"),
         std::process::id().to_string(),
     )
     .unwrap();
-    std::fs::write(dir.path().join("forge-stub.py"), STUB).unwrap();
-    let launcher = super::shared_script(LAUNCHER);
+    let calls = dir.path().join("forge-calls");
+    let finished = dir.path().join("forge-finished");
+    std::fs::create_dir(&calls).unwrap();
+    std::fs::create_dir(&finished).unwrap();
+    let launcher = super::shared_script(STUB);
     let link = |name: &str| {
         let bin = dir.path().join(name);
         std::os::unix::fs::symlink(&launcher, &bin).unwrap();
@@ -214,8 +225,8 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
     };
     StubForgeCli {
         gh: link("gh"),
-        log: dir.path().join("forge-calls.jsonl"),
-        finished: dir.path().join("forge-finished.jsonl"),
+        calls,
+        finished,
         pid_file: dir.path().join("forge-pid"),
         fetches: Fetches::Repository,
         script_file,
@@ -223,67 +234,181 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
     }
 }
 
+/// Compile `script` into the `answer` function the stub sources, and put
+/// it in place whole: a call that starts during a reprogram reads the old
+/// script or the new one, never a part of each.
 fn write_script(path: &Path, script: &Value) {
-    assert!(script.is_array(), "a forge script is a list of entries");
-    std::fs::write(path, serde_json::to_string_pretty(script).unwrap()).unwrap();
+    let entries = script
+        .as_array()
+        .expect("a forge script is a list of entries");
+    let mut sh = String::from("answer() {\n");
+    for entry in entries {
+        let prefix: Vec<&str> = entry
+            .get("args")
+            .map(|args| {
+                args.as_array()
+                    .expect("an entry's args are a list")
+                    .iter()
+                    .map(|arg| arg.as_str().expect("an entry's args are strings"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut test = vec![format!("[ $# -ge {} ]", prefix.len())];
+        if let Some(program) = entry.get("program") {
+            let program = program.as_str().expect("an entry's program is a string");
+            test.push(format!("[ \"$program\" = {} ]", quote(program)));
+        }
+        for (i, arg) in prefix.iter().enumerate() {
+            test.push(format!("[ \"${{{}}}\" = {} ]", i + 1, quote(arg)));
+        }
+        let text = |key: &str| {
+            entry.get(key).map_or("", |value| {
+                value
+                    .as_str()
+                    .unwrap_or_else(|| panic!("an entry's {key} is a string"))
+            })
+        };
+        // `sys.exit` of the Python stub took the status modulo 256 too.
+        let exit = entry.get("exit").map_or(0, |code| {
+            code.as_i64().expect("an entry's exit is a number") & 0xff
+        });
+        sh.push_str(&format!(
+            "    if {}; then\n        stdout={}\n        stderr={}\n        wait_for={}\n        code={exit}\n        return 0\n    fi\n",
+            test.join(" && "),
+            quote(text("stdout")),
+            quote(text("stderr")),
+            quote(text("wait_for")),
+        ));
+    }
+    sh.push_str("    return 1\n}\n");
+    let partial = path.with_extension("partial");
+    std::fs::write(&partial, sh).unwrap();
+    std::fs::rename(&partial, path).unwrap();
 }
 
-/// What the daemon runs: the stub beside the link, told which name it was
-/// run under. `$0` is the link, not the shared file.
-const LAUNCHER: &str = "#!/bin/sh\n\
-dir=${0%/*}\n\
-IFS= read -r parent < \"$dir/forge-parent-pid\"\n\
-exec python3 -S \"$dir/forge-stub.py\" \"$parent\" \"$dir\" \"${0##*/}\" \"$@\"\n";
+/// `text` as one single-quoted `sh` word.
+fn quote(text: &str) -> String {
+    assert!(!text.contains('\0'), "sh cannot hold a NUL: {text:?}");
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
 
-const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, sys, threading, time
+/// The records the stub wrote into `dir`, in slot order: each slot file
+/// holds its field count, then its fields, each ended by a NUL, so an
+/// argument may hold any other byte. A slot that is not whole is skipped:
+/// its call is still writing it, or `Cli::run`'s `kill_on_drop(true)` killed
+/// the call between the claim and the write, and then it stays empty.
+fn records(dir: &Path) -> Vec<Vec<String>> {
+    let mut records = Vec::new();
+    for slot in 1.. {
+        let Ok(bytes) = std::fs::read(dir.join(slot.to_string())) else {
+            break;
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        let mut fields: Vec<String> = text.split('\0').map(str::to_string).collect();
+        // What follows the last NUL: empty once the record is whole.
+        if fields.pop().is_none_or(|rest| !rest.is_empty()) {
+            continue;
+        }
+        let Some(count) = fields.first().and_then(|count| count.parse::<usize>().ok()) else {
+            continue;
+        };
+        if fields.len() != count + 1 {
+            continue;
+        }
+        fields.remove(0);
+        records.push(fields);
+    }
+    records
+}
 
-parent = int(sys.argv[1])
-def parent_alive():
-    # kill(pid, 0) still succeeds for an unreaped zombie. A direct child is
-    # reparented as soon as its parent dies, so getppid detects that state
-    # without requiring anyone else to reap the former parent first.
-    if os.getppid() != parent:
-        return False
-    try:
-        os.kill(parent, 0)
-    except OSError:
-        return False
-    return True
-def orphaned():
-    # Ends with the test process, however that one ends.
-    while parent_alive():
-        time.sleep(0.2)
-    os._exit(0)
-threading.Thread(target=orphaned, daemon=True).start()
-
-if not parent_alive():
-    os._exit(0)
-dir, program, args = sys.argv[2], sys.argv[3], sys.argv[4:]
-with open(os.path.join(dir, "forge-pid"), "w") as f:
-    f.write(str(os.getpid()))
-call = {"program": program, "args": args}
-if "--input" in args and args[args.index("--input") + 1:args.index("--input") + 2] == ["-"]:
-    call["input"] = sys.stdin.read()
-with open(os.path.join(dir, "forge-calls.jsonl"), "a") as f:
-    f.write(json.dumps(call) + "\n")
-script = json.load(open(os.path.join(dir, "forge-script.json")))
-for entry in script:
-    if entry.get("program", program) != program:
-        continue
-    prefix = entry.get("args", [])
-    if args[:len(prefix)] == prefix:
-        while entry.get("wait_for") and not os.path.exists(entry["wait_for"]):
-            time.sleep(0.02)
-        sys.stdout.write(entry.get("stdout", ""))
-        sys.stderr.write(entry.get("stderr", ""))
-        with open(os.path.join(dir, "forge-finished.jsonl"), "a") as f:
-            f.write(json.dumps({"program": program, "args": args}) + "\n")
-        sys.exit(entry.get("exit", 0))
-sys.stderr.write("stub %s: no entry for %s\n" % (program, " ".join(args)))
-with open(os.path.join(dir, "forge-finished.jsonl"), "a") as f:
-    f.write(json.dumps({"program": program, "args": args, "refused": True}) + "\n")
-sys.exit(1)
+/// The stub the daemon runs, under the name of the link. `$0` is the link,
+/// not the shared file, so the directory of `$0` holds the test's files.
+///
+/// It records the call, then answers from `forge-script.sh` read at that
+/// moment, then records the finish. A held call polls its gate every 20 ms
+/// and ends once the process it names as its parent has ended. A read of
+/// `--input -` runs in the background beside a watch that does the same
+/// check, so a call whose input stays open still ends with its parent.
+/// `$PPID` is fixed at start, and `kill -0` still succeeds for an unreaped
+/// zombie, so the check also reads the current parent with `ps -o ppid=`,
+/// which Linux and macOS both have. Each record takes the next free slot
+/// file of its log, created with `set -C` (`O_EXCL`), so concurrent calls
+/// never share one.
+const STUB: &str = r#"#!/bin/sh
+dir=${0%/*}
+program=${0##*/}
+IFS= read -r parent < "$dir/forge-parent-pid"
+[ "$PPID" = "$parent" ] && kill -0 "$parent" 2>/dev/null || exit 0
+alive() {
+    kill -0 "$parent" 2>/dev/null || return 1
+    set -- $(ps -o ppid= -p $$)
+    [ "$1" = "$parent" ]
+}
+slots() {
+    set -- "$1"/*
+    if [ -e "$1" ]; then slot=$(($# + 1)); else slot=1; fi
+}
+record() {
+    log=$1
+    shift
+    slots "$log"
+    set -C
+    while ! { printf '%s\0' "$#" "$@" > "$log/$slot"; } 2>/dev/null; do
+        [ -e "$log/$slot" ] || exit 1
+        slot=$((slot + 1))
+    done
+    set +C
+}
+echo $$ > "$dir/forge-pid"
+has_input=0
+input=
+after=
+for arg; do
+    if [ -n "$after" ]; then
+        [ "$arg" = - ] && has_input=1
+        break
+    fi
+    [ "$arg" = --input ] && after=1
+done
+if [ $has_input = 1 ]; then
+    # Read in the background, so a watch can end the read with the parent.
+    # A background list reads /dev/null unless its input is named, so
+    # name the call's own input through fd 3.
+    exec 3<&0
+    cat <&3 > "$dir/forge-input.$$" &
+    reader=$!
+    exec 3<&-
+    (
+        polls=0
+        while sleep 0.02 && kill -0 "$reader" 2>/dev/null; do
+            polls=$((polls + 1))
+            [ $((polls % 10)) -ne 0 ] || alive || kill "$reader" $$ 2>/dev/null
+        done
+    ) > /dev/null 2>&1 &
+    watch=$!
+    wait "$reader"
+    kill "$watch" 2>/dev/null
+    input=$(cat "$dir/forge-input.$$"; printf .)
+    input=${input%.}
+    rm -f "$dir/forge-input.$$"
+fi
+record "$dir/forge-calls" "$has_input" "$input" "$program" "$@"
+. "$dir/forge-script.sh"
+if answer "$@"; then
+    polls=0
+    while [ -n "$wait_for" ] && [ ! -e "$wait_for" ]; do
+        polls=$((polls + 1))
+        [ $((polls % 10)) -ne 0 ] || alive || exit 0
+        sleep 0.02
+    done
+    printf '%s' "$stdout"
+    printf '%s' "$stderr" >&2
+    record "$dir/forge-finished" 0 "$program" "$@"
+    exit "$code"
+fi
+printf 'stub %s: no entry for %s\n' "$program" "$*" >&2
+record "$dir/forge-finished" 1 "$program" "$@"
+exit 1
 "#;
 
 /// A request Ariadne works on, as a fetch would leave its read in memory

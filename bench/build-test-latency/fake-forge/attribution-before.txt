@@ -1,0 +1,15 @@
+test=pull_request_babysit::asking_keeps_another_authors_request_until_the_merge rc=0 wall=2.817s busy_any_child=2.746s
+  gh             n=  96 union=  1.522s sum=  2.300s mean=   24.0ms
+  phases: fixture(start->first gh)=0.462s gh_union=1.522s rest(daemon+acp+test)=0.834s gh_share=54%
+test=pull_request_babysit::asking_keeps_a_request_of_mine_by_hand_until_the_merge rc=0 wall=2.724s busy_any_child=2.656s
+  gh             n=  94 union=  1.488s sum=  2.245s mean=   23.9ms
+  phases: fixture(start->first gh)=0.443s gh_union=1.488s rest(daemon+acp+test)=0.793s gh_share=55%
+test=pull_request_babysit::asking_keeps_a_dependabot_request_until_the_merge rc=0 wall=2.793s busy_any_child=2.720s
+  gh             n=  97 union=  1.520s sum=  2.325s mean=   24.0ms
+  phases: fixture(start->first gh)=0.457s gh_union=1.520s rest(daemon+acp+test)=0.816s gh_share=54%
+test=pull_request_reviews::a_review_round_needs_an_ask_and_runs_on_the_current_head rc=0 wall=2.660s busy_any_child=2.585s
+  gh             n=  89 union=  1.595s sum=  2.144s mean=   24.1ms
+  phases: fixture(start->first gh)=0.416s gh_union=1.595s rest(daemon+acp+test)=0.648s gh_share=60%
+test=pull_request_reviews::a_reply_in_a_review_thread_starts_one_round rc=0 wall=2.073s busy_any_child=2.002s
+  gh             n=  66 union=  1.121s sum=  1.546s mean=   23.4ms
+  phases: fixture(start->first gh)=0.402s gh_union=1.121s rest(daemon+acp+test)=0.550s gh_share=54%
