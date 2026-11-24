@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-21
+updated: 2026-11-24
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -408,6 +408,7 @@ it leaves nothing to delete.
 17. At every first launch and resume, select herdr, then tmux, then a direct child.
     Herdr is found when its executable is on the daemon's search path and its server answers a ping.
     A herdr server that does not answer counts as not found, so automatic selection uses tmux or a direct child.
+    Every wait on herdr or tmux lasts the probe time of the running daemon's timeouts, 5 seconds by default.
     `session_place` can force `none`, `tmux`, or `herdr`.
     A missing forced multiplexer fails the launch or resume with its name and reason.
     Record the selected place on the session row before starting its process.

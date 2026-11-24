@@ -1,4 +1,5 @@
 //! Select session locations without changing the process environment.
+use crate::common::{RUNS_OUT, probe};
 use ariadne_daemon::place::Place;
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
@@ -13,11 +14,11 @@ fn automatic_selection_uses_tmux_before_a_direct_child() {
     std::fs::copy(&binary, dir.path().join("herdr")).unwrap();
     let missing = dir.path().join("no-herdr.sock");
     assert_eq!(
-        Place::find_with(None, Some(dir.path().as_os_str()), Some(&missing)).unwrap(),
+        Place::find_with(None, Some(dir.path().as_os_str()), Some(&missing), probe()).unwrap(),
         Place::Tmux(binary)
     );
     assert_eq!(
-        Place::find(Some("none"), Some(dir.path().as_os_str())).unwrap(),
+        Place::find(Some("none"), Some(dir.path().as_os_str()), probe()).unwrap(),
         Place::None
     );
 }
@@ -44,11 +45,11 @@ fn automatic_selection_uses_herdr_before_tmux() {
     let herdr = crate::common::herdr::FakeHerdr::start();
     let (_dir, path) = search_path_with_tmux(&herdr);
     assert_eq!(
-        Place::find_with(None, Some(&path), Some(&herdr.socket())).unwrap(),
+        Place::find_with(None, Some(&path), Some(&herdr.socket()), probe()).unwrap(),
         Place::Herdr(herdr.socket())
     );
     assert_eq!(
-        Place::find_with(Some("herdr"), Some(&path), Some(&herdr.socket())).unwrap(),
+        Place::find_with(Some("herdr"), Some(&path), Some(&herdr.socket()), probe()).unwrap(),
         Place::Herdr(herdr.socket())
     );
 }
@@ -59,9 +60,10 @@ fn a_herdr_server_that_does_not_answer_is_not_found() {
     let (_dir, path) = search_path_with_tmux(&herdr);
     // Each silent server costs one probe time, so ask both questions together.
     let (selected, error) = std::thread::scope(|scope| {
-        let auto = scope.spawn(|| Place::find_with(None, Some(&path), Some(&herdr.socket())));
-        let forced =
-            Place::find_with(Some("herdr"), Some(&path), Some(&herdr.socket())).unwrap_err();
+        let auto =
+            scope.spawn(|| Place::find_with(None, Some(&path), Some(&herdr.socket()), RUNS_OUT));
+        let forced = Place::find_with(Some("herdr"), Some(&path), Some(&herdr.socket()), RUNS_OUT)
+            .unwrap_err();
         (auto.join().unwrap().unwrap(), forced)
     });
     assert!(matches!(selected, Place::Tmux(_)), "{selected:?}");
@@ -74,8 +76,12 @@ fn a_herdr_server_that_does_not_answer_is_not_found() {
 #[test]
 fn doctor_reports_herdr_as_the_selected_place_with_its_reason() {
     let herdr = crate::common::herdr::FakeHerdr::start();
-    let report =
-        ariadne_daemon::place::report(None, Some(&herdr.search_path()), Some(&herdr.socket()));
+    let report = ariadne_daemon::place::report(
+        None,
+        Some(&herdr.search_path()),
+        Some(&herdr.socket()),
+        probe(),
+    );
     assert_eq!(report.name, "herdr");
     assert!(report.available);
     assert_eq!(report.reason, "herdr is installed and its server answers");
@@ -83,6 +89,7 @@ fn doctor_reports_herdr_as_the_selected_place_with_its_reason() {
         Some("herdr"),
         Some(&herdr.search_path()),
         Some(&herdr.socket()),
+        probe(),
     );
     assert_eq!((forced.name.as_str(), forced.available), ("herdr", true));
     assert_eq!(forced.reason, "forced by session_place");
@@ -92,7 +99,9 @@ fn doctor_reports_herdr_as_the_selected_place_with_its_reason() {
 fn a_missing_forced_multiplexer_refuses_launch() {
     for name in ["tmux", "herdr"] {
         assert_eq!(
-            Place::find(Some(name), None).unwrap_err().to_string(),
+            Place::find(Some(name), None, probe())
+                .unwrap_err()
+                .to_string(),
             format!("forced session place {name} was not found")
         );
     }
@@ -100,7 +109,7 @@ fn a_missing_forced_multiplexer_refuses_launch() {
 
 #[test]
 fn automatic_selection_uses_a_direct_child_without_multiplexers() {
-    assert_eq!(Place::find(None, None).unwrap(), Place::None);
+    assert_eq!(Place::find(None, None, probe()).unwrap(), Place::None);
 }
 
 struct PaneHome(tempfile::TempDir);
@@ -132,7 +141,7 @@ async fn a_detached_relay_pane_can_be_found_and_stopped() {
     use crate::common::{TIMEOUT, eventually};
     use ariadne_daemon::place::PaneLaunch;
     let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
-    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref(), probe()).unwrap();
     let args = vec![
         "-u".into(),
         "-c".into(),
@@ -150,6 +159,7 @@ async fn a_detached_relay_pane_can_be_found_and_stopped() {
             program: "python3",
             args: &args,
             env: &[],
+            probe: probe(),
         })
         .await
         .unwrap();
@@ -158,24 +168,39 @@ async fn a_detached_relay_pane_can_be_found_and_stopped() {
     })
     .await;
     assert_eq!(
-        place.live_panes(home.0.path()).await.unwrap(),
+        place.live_panes(home.0.path(), probe()).await.unwrap(),
         vec![pane.clone()]
     );
-    place.stop_pane(home.0.path(), &pane).await.unwrap();
-    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+    place
+        .stop_pane(home.0.path(), &pane, probe())
+        .await
+        .unwrap();
+    assert!(
+        place
+            .live_panes(home.0.path(), probe())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
 async fn listing_panes_without_a_tmux_server_returns_an_empty_list() {
     let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
-    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
-    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref(), probe()).unwrap();
+    assert!(
+        place
+            .live_panes(home.0.path(), probe())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
 async fn listing_panes_on_a_server_without_a_session_returns_an_empty_list() {
     let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
-    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref(), probe()).unwrap();
     // A server that outlives its last session answers `list-panes -a` with "no current target".
     let output = std::process::Command::new("tmux")
         .arg("-S")
@@ -186,14 +211,22 @@ async fn listing_panes_on_a_server_without_a_session_returns_an_empty_list() {
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+    assert!(
+        place
+            .live_panes(home.0.path(), probe())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
 async fn a_pane_listing_directly_after_the_start_finds_the_pane() {
     use ariadne_daemon::place::PaneLaunch;
     let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
-    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref(), probe()).unwrap();
+    // The relay's agent is a stand-in that only has to stay alive while the
+    // pane is listed.
     let args = vec!["-c".into(), "import time; time.sleep(30)".into()];
     for round in 0..5 {
         let session = format!("direct-{round}");
@@ -209,12 +242,13 @@ async fn a_pane_listing_directly_after_the_start_finds_the_pane() {
                 program: "python3",
                 args: &args,
                 env: &[],
+                probe: probe(),
             })
             .await
             .unwrap();
         assert!(
             place
-                .live_panes(home.0.path())
+                .live_panes(home.0.path(), probe())
                 .await
                 .unwrap()
                 .contains(&pane),
@@ -250,7 +284,7 @@ async fn a_server_that_exits_during_the_pane_listing_returns_no_panes_and_warns(
     )
     .unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let place = Place::find(Some("tmux"), Some(dir.path().as_os_str())).unwrap();
+    let place = Place::find(Some("tmux"), Some(dir.path().as_os_str()), probe()).unwrap();
     let warnings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured = warnings.clone();
     let guard = tracing::subscriber::set_default(
@@ -259,7 +293,13 @@ async fn a_server_that_exits_during_the_pane_listing_returns_no_panes_and_warns(
             .with_writer(move || WarningCapture(captured.clone()))
             .finish(),
     );
-    assert!(place.live_panes(dir.path()).await.unwrap().is_empty());
+    assert!(
+        place
+            .live_panes(dir.path(), probe())
+            .await
+            .unwrap()
+            .is_empty()
+    );
     drop(guard);
     let output = String::from_utf8(warnings.lock().unwrap().clone()).unwrap();
     assert_eq!(output.matches("WARN").count(), 1, "{output}");
@@ -279,15 +319,23 @@ async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
     )
     .unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let place = Place::find(Some("tmux"), Some(dir.path().as_os_str())).unwrap();
-    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    let place = Place::find(Some("tmux"), Some(dir.path().as_os_str()), probe()).unwrap();
+    let error = place
+        .live_panes(dir.path(), probe())
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("protocol version mismatch"), "{error}");
     std::fs::write(
         &binary,
         "#!/bin/sh\necho 'server exited unexpectedly' >&2\nexit 1\n",
     )
     .unwrap();
-    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    let error = place
+        .live_panes(dir.path(), probe())
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("server exited unexpectedly"), "{error}");
     // A server that closes with its last session fails one call, then is gone.
     let count = dir.path().join("count");
@@ -307,7 +355,13 @@ async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
             .with_writer(move || WarningCapture(captured.clone()))
             .finish(),
     );
-    assert!(place.live_panes(dir.path()).await.unwrap().is_empty());
+    assert!(
+        place
+            .live_panes(dir.path(), probe())
+            .await
+            .unwrap()
+            .is_empty()
+    );
     drop(guard);
     let output = String::from_utf8(warnings.lock().unwrap().clone()).unwrap();
     assert_eq!(output.matches("WARN").count(), 1, "{output}");
@@ -315,7 +369,11 @@ async fn a_tmux_that_cannot_run_fails_the_pane_listing() {
     std::fs::remove_file(&binary).unwrap();
     std::fs::write(&binary, [0u8; 8]).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let error = place.live_panes(dir.path()).await.unwrap_err().to_string();
+    let error = place
+        .live_panes(dir.path(), probe())
+        .await
+        .unwrap_err()
+        .to_string();
     // macOS runs the file as a script and reports its failure; Linux cannot start it.
     assert!(
         error.contains("listing tmux relay sessions") || error.contains("running tmux"),
@@ -334,6 +392,7 @@ async fn a_herdr_relay_pane_can_be_found_and_stopped_through_the_socket_api() {
         Some("herdr"),
         Some(&herdr.search_path()),
         Some(&herdr.socket()),
+        probe(),
     )
     .unwrap();
     let args = vec![
@@ -352,6 +411,7 @@ async fn a_herdr_relay_pane_can_be_found_and_stopped_through_the_socket_api() {
         program: "python3",
         args: &args,
         env: &[("PANE_VALUE".into(), "kept".into())],
+        probe: probe(),
     };
     let pane = place.start_pane(&launch).await.unwrap();
     assert_eq!(pane.name, "ariadne-launch-herdr");
@@ -371,15 +431,28 @@ async fn a_herdr_relay_pane_can_be_found_and_stopped_through_the_socket_api() {
     })
     .await;
     assert_eq!(
-        place.live_panes(home.0.path()).await.unwrap(),
+        place.live_panes(home.0.path(), probe()).await.unwrap(),
         vec![pane.clone()]
     );
     assert!(
-        place.live_panes(other.path()).await.unwrap().is_empty(),
+        place
+            .live_panes(other.path(), probe())
+            .await
+            .unwrap()
+            .is_empty(),
         "another home does not see this home's panes"
     );
-    place.stop_pane(home.0.path(), &pane).await.unwrap();
-    assert!(place.live_panes(home.0.path()).await.unwrap().is_empty());
+    place
+        .stop_pane(home.0.path(), &pane, probe())
+        .await
+        .unwrap();
+    assert!(
+        place
+            .live_panes(home.0.path(), probe())
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert!(!herdr.pane_running(&pane.id));
 
     // A pane whose relay cannot be asked to stop is closed through the API.
@@ -394,7 +467,10 @@ async fn a_herdr_relay_pane_can_be_found_and_stopped_through_the_socket_api() {
         ..pane.clone()
     };
     assert!(herdr.pane_running(&pane.id));
-    place.stop_pane(home.0.path(), &unreachable).await.unwrap();
+    place
+        .stop_pane(home.0.path(), &unreachable, probe())
+        .await
+        .unwrap();
     assert!(!herdr.pane_running(&pane.id));
     assert!(
         herdr
@@ -424,7 +500,7 @@ async fn reconnect_resends_only_unaccepted_inputs_and_restores_pending_output() 
         })
         .await
         .unwrap();
-    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref(), probe()).unwrap();
     let args = vec![
         "-u".into(),
         "-c".into(),
@@ -442,6 +518,7 @@ async fn reconnect_resends_only_unaccepted_inputs_and_restores_pending_output() 
             program: "python3",
             args: &args,
             env: &[],
+            probe: probe(),
         })
         .await
         .unwrap();
@@ -476,7 +553,10 @@ async fn reconnect_resends_only_unaccepted_inputs_and_restores_pending_output() 
     let second = link.receive().await.unwrap();
     assert_eq!(second["seq"], 2);
     assert_eq!(second["data"], "next-input");
-    place.stop_pane(home.0.path(), &pane).await.unwrap();
+    place
+        .stop_pane(home.0.path(), &pane, probe())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -486,7 +566,7 @@ async fn a_relay_pane_preserves_arguments_environment_and_working_directory() {
     use serde_json::{Value, json};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let home = PaneHome(tempfile::tempdir_in("/tmp").unwrap());
-    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref(), probe()).unwrap();
     let args = vec!["-u".into(), "-c".into(),
         "import sys,os,json; print(json.dumps([sys.argv[1:],os.environ['PANE_VALUE'],os.getcwd()]),flush=True); sys.stdin.read()".into(),
         "space value".into(), "trailing;".into(), "\\;".into(), ";".into(), "$(echo should-stay-literal)".into(), "'quoted'".into()];
@@ -502,6 +582,7 @@ async fn a_relay_pane_preserves_arguments_environment_and_working_directory() {
             program: "python3",
             args: &args,
             env: &[("PANE_VALUE".into(), "literal $HOME ; value".into())],
+            probe: probe(),
         })
         .await
         .unwrap();
@@ -546,7 +627,10 @@ async fn a_relay_pane_preserves_arguments_environment_and_working_directory() {
         ])
     );
     drop(socket);
-    place.stop_pane(home.0.path(), &pane).await.unwrap();
+    place
+        .stop_pane(home.0.path(), &pane, probe())
+        .await
+        .unwrap();
 }
 
 /// Run the real pane lifecycle with an isolated, non-UTF-8 client locale.
@@ -589,5 +673,11 @@ async fn a_tmux_server_without_a_current_target_has_no_live_panes() {
     .unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
     let place = Place::Tmux(binary);
-    assert!(place.live_panes(home.path()).await.unwrap().is_empty());
+    assert!(
+        place
+            .live_panes(home.path(), probe())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

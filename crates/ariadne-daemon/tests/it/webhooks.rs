@@ -107,11 +107,14 @@ fn fetches(stub: &StubForgeCli) -> usize {
         .count()
 }
 
+/// Listen for [`QUIET`]: the fetch count stays at `count`. A fetch that never
+/// comes publishes nothing to wait for, so only its absence proves it.
 async fn quiet(stub: &StubForgeCli, count: usize) {
     assert!(
         tokio::time::timeout(QUIET, async {
             loop {
                 assert_eq!(fetches(stub), count);
+                // The pace of the check inside the QUIET listen.
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })

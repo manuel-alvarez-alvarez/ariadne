@@ -574,6 +574,7 @@ def send_between_turn_updates():
     if not between:
         return
     marker = between.get("wait_for")
+    # Stand-in poll: hold the updates until the test creates the marker.
     while marker and not os.path.exists(marker):
         time.sleep(0.01)
     send_updates(script.get("session_id", "stub-session"), between.get("updates", []))
@@ -651,6 +652,7 @@ def respond(request):
                 if cancelled_meanwhile() and not turn.get("ignore_cancel"):
                     stop_reason = "cancelled"
                     break
+                # Stand-in poll: the pace of the turn's cancel and late-update checks.
                 time.sleep(0.01)
         if "exit" in turn:
             sys.exit(int(turn["exit"]))

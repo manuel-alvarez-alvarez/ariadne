@@ -80,6 +80,12 @@ pub(crate) const QUIET: Duration = Duration::from_millis(100);
 /// runs under it.
 pub(crate) const RUNS_OUT: Duration = Duration::from_millis(500);
 
+/// The probe time the daemon has by default, for a test that calls the
+/// place functions itself and has no daemon to take it from.
+pub(crate) fn probe() -> Duration {
+    Timeouts::default().probe
+}
+
 /// The registry id the harness registers its stub agent under.
 pub(crate) const STUB: &str = "stub";
 
@@ -2416,6 +2422,7 @@ pub(crate) async fn eventually(
             return;
         }
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        // The poll interval: the check, not the clock, ends the wait.
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
@@ -2436,6 +2443,7 @@ where
             return value;
         }
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        // The poll interval: the check, not the clock, ends the wait.
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }

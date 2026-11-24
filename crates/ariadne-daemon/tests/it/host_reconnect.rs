@@ -46,8 +46,9 @@ async fn local_is_400_and_an_unknown_name_is_404_in_the_error_envelope() {
 
 #[tokio::test]
 async fn a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after() {
-    // Each run exits at once: 1 s, then 2 s, then 4 s between runs.
-    let base = Duration::from_secs(1);
+    // Each run exits at once: the base, then twice, then four times the base
+    // between runs.
+    let base = Duration::from_millis(250);
     let stub = stub_ssh(json!({"stderr": "Connection refused", "exit": 255}));
     let host = "endpoint = \"ssh://box\"\nremote = \"/run/far.sock\"\n";
     let timeouts = Timeouts {
@@ -66,7 +67,7 @@ async fn a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after()
     .await;
     let mut updates = Updates(local.bus.subscribe());
 
-    // The wait is now 4 s: a run within 2 s is the reconnect's.
+    // The wait is now 4 bases: a run within 2 bases is the reconnect's.
     reconnect(&local).await;
     assert_eq!(updates.next().await.status, HostStatus::Connecting);
     eventually(2 * base, "a run at once", || async {
@@ -76,7 +77,7 @@ async fn a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after()
     let fourth = Instant::now();
     assert_eq!(updates.next().await.status, HostStatus::Down);
 
-    // The wait after it is the first one again, not 8 s.
+    // The wait after it is the first one again, not 8 bases.
     eventually(3 * base, "a run after the first wait", || async {
         stub.runs().len() == 5
     })

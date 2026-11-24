@@ -455,6 +455,8 @@ async fn shutdown_ends_the_checks_of_a_direct_host() {
 
     local.state.hosts.shutdown().await;
     let asked = health.asked();
+    // A check after the shutdown publishes nothing to wait for: only the
+    // continued absence of a check proves the loop ended.
     tokio::time::sleep(QUIET).await;
     assert_eq!(health.asked(), asked, "no check after shutdown");
 }
@@ -504,6 +506,8 @@ async fn editing_and_deleting_a_host_stop_its_old_health_checks() {
     let (status, _) = local.send(crate::common::delete("/v1/hosts/far")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let new_count = new.asked();
+    // Neither stand-in is told of a late check by any event: only the counts
+    // staying put over a listen prove the deleted host stopped asking.
     tokio::time::sleep(QUIET).await;
     assert_eq!(old.asked(), old_count);
     assert_eq!(new.asked(), new_count);

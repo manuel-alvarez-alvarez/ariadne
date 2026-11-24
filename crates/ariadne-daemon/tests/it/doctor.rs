@@ -12,8 +12,9 @@ use crate::common;
 
 use ariadne_api::agents::AcpAgentStatus;
 use ariadne_api::doctor::DaemonReportDto;
+use ariadne_daemon::timeouts::Timeouts;
 
-use common::{Harness, STUB, harness};
+use common::{Harness, RUNS_OUT, STUB, harness};
 
 async fn report(h: &Harness) -> DaemonReportDto {
     h.get("/v1/doctor").await
@@ -138,7 +139,14 @@ async fn endpoint_is_in_the_openapi_document() {
 async fn doctor_reports_a_missing_forced_place_and_its_reason() {
     // A herdr server that never answers is the same as no herdr.
     let herdr = crate::common::herdr::FakeHerdr::silent();
-    let h = harness().session_place("herdr").herdr(&herdr).await;
+    let h = harness()
+        .timeouts(Timeouts {
+            probe: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .session_place("herdr")
+        .herdr(&herdr)
+        .await;
     let report: serde_json::Value = h.get("/v1/doctor").await;
     assert_eq!(report["place"]["name"], "herdr");
     assert_eq!(report["place"]["available"], false);

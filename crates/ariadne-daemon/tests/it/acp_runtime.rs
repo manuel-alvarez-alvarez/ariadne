@@ -20,7 +20,7 @@ use common::acp::{
     StubAcpAgent, discovery_accepted, discovery_settled, pid_is_alive, registry_home,
     registry_home_as, script, stub_acp_agent,
 };
-use common::{Cast, Harness, TIMEOUT, eventually, harness, sh};
+use common::{Cast, Harness, TIMEOUT, eventually, harness, probe, sh};
 
 /// A task whose author runs on the registry agent `stub`, in a real repo,
 /// with an effort pinned so the launch has one to set.
@@ -1630,9 +1630,9 @@ async fn a_tmux_resume_replaces_the_old_pane_and_keeps_the_conversation() {
     let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
     let session = h.lone_session("tmux-new-pane").await;
     h.agent_runs(&session).await;
-    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref()).unwrap();
+    let place = Place::find(Some("tmux"), std::env::var_os("PATH").as_deref(), probe()).unwrap();
     let old = place
-        .live_panes(&h.launcher.cfg.root)
+        .live_panes(&h.launcher.cfg.root, probe())
         .await
         .unwrap()
         .remove(0);
@@ -1665,7 +1665,10 @@ async fn a_tmux_resume_replaces_the_old_pane_and_keeps_the_conversation() {
         h.agent.calls_of("session/resume").len() == 1
     })
     .await;
-    let panes = place.live_panes(&h.launcher.cfg.root).await.unwrap();
+    let panes = place
+        .live_panes(&h.launcher.cfg.root, probe())
+        .await
+        .unwrap();
     assert_eq!(panes.len(), 1);
     assert_ne!(panes[0].name, old.name);
     assert_eq!(panes[0].name, format!("ariadne-{launch_id}"));
@@ -1979,12 +1982,15 @@ async fn assert_failed_relay_is_swept(fault: &str, keep_healthy: bool) {
             )
             .await
             .unwrap();
-        let place =
-            ariadne_daemon::place::Place::find(Some("tmux"), std::env::var_os("PATH").as_deref())
-                .unwrap();
+        let place = ariadne_daemon::place::Place::find(
+            Some("tmux"),
+            std::env::var_os("PATH").as_deref(),
+            probe(),
+        )
+        .unwrap();
         assert!(
             place
-                .live_panes(&h.launcher.cfg.root)
+                .live_panes(&h.launcher.cfg.root, probe())
                 .await
                 .unwrap()
                 .is_empty()

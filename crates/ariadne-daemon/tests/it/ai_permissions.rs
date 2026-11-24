@@ -972,6 +972,8 @@ async fn a_switch_while_off_is_only_stored_and_the_next_turn_on_installs_it() {
         .await;
     assert_eq!(stored.state, AiPermissionsState::Disabled);
     assert_eq!(stored.flavour.as_str(), "0.8b");
+    // A disabled model installs nothing and publishes nothing to show it:
+    // only the empty record after a listen proves no install started.
     tokio::time::sleep(QUIET).await;
     assert!(recorded(record.path()).is_empty(), "nothing installed");
     assert_eq!(status(&h).await.installed_release.as_deref(), Some(PIN));
@@ -1011,6 +1013,8 @@ async fn the_stored_flavour_without_a_device_keeps_the_device_and_starts_no_inst
         .await;
     assert_eq!(same.state, AiPermissionsState::Ready, "no install started");
     assert_eq!(same.device.as_str(), "cpu");
+    // An install that started anyway would show only in the record: the
+    // empty record after a listen proves none did.
     tokio::time::sleep(QUIET).await;
     assert!(recorded(record.path()).is_empty(), "nothing installed");
     assert_eq!(status(&h).await.state, AiPermissionsState::Ready);

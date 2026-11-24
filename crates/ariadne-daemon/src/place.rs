@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 /// A resolved session location.
@@ -28,15 +29,16 @@ impl Place {
     /// Herdr is found when its executable is on the search path and its
     /// server answers a ping on the socket. A server that stays silent is
     /// the same as one that is not there.
-    fn find_herdr(path: Option<&OsStr>, socket: Option<&Path>) -> Option<Self> {
+    fn find_herdr(path: Option<&OsStr>, socket: Option<&Path>, probe: Duration) -> Option<Self> {
         probe::which(path?, "herdr")?;
         let socket = socket.map(Path::to_path_buf).or_else(herdr_socket)?;
-        herdr_answers(&socket).then_some(Self::Herdr(socket))
+        herdr_answers(&socket, probe).then_some(Self::Herdr(socket))
     }
 
-    /// Select a location on the daemon's search path.
-    pub fn find(forced: Option<&str>, path: Option<&OsStr>) -> Result<Self> {
-        Self::find_with(forced, path, None)
+    /// Select a location on the daemon's search path. `probe` is how long a
+    /// herdr server may take to answer.
+    pub fn find(forced: Option<&str>, path: Option<&OsStr>, probe: Duration) -> Result<Self> {
+        Self::find_with(forced, path, None, probe)
     }
 
     /// Select a location; `herdr_socket` replaces the socket herdr's own
@@ -45,6 +47,7 @@ impl Place {
         forced: Option<&str>,
         path: Option<&OsStr>,
         herdr_socket: Option<&Path>,
+        probe: Duration,
     ) -> Result<Self> {
         let tmux = || {
             path.and_then(|path| probe::which(path, "tmux"))
@@ -52,12 +55,12 @@ impl Place {
         };
         match forced {
             Some("none") => Ok(Self::None),
-            Some("herdr") => Self::find_herdr(path, herdr_socket)
+            Some("herdr") => Self::find_herdr(path, herdr_socket, probe)
                 .ok_or_else(|| anyhow::anyhow!("forced session place herdr was not found")),
             Some("tmux") => {
                 tmux().ok_or_else(|| anyhow::anyhow!("forced session place tmux was not found"))
             }
-            None => Ok(Self::find_herdr(path, herdr_socket)
+            None => Ok(Self::find_herdr(path, herdr_socket, probe)
                 .or_else(tmux)
                 .unwrap_or(Self::None)),
             Some(value) => bail!("invalid session place {value:?}; expected none, tmux, or herdr"),
@@ -70,9 +73,10 @@ pub fn report(
     forced: Option<&str>,
     path: Option<&OsStr>,
     herdr_socket: Option<&Path>,
+    probe: Duration,
 ) -> ariadne_api::doctor::PlaceDto {
     use ariadne_api::doctor::PlaceDto;
-    match Place::find_with(forced, path, herdr_socket) {
+    match Place::find_with(forced, path, herdr_socket, probe) {
         Ok(place) => PlaceDto {
             name: place.name().into(),
             reason: if forced.is_some() {
@@ -106,6 +110,8 @@ pub struct PaneLaunch<'a> {
     pub program: &'a str,
     pub args: &'a [String],
     pub env: &'a [(String, String)],
+    /// How long one call to the multiplexer may take.
+    pub probe: Duration,
 }
 
 /// A live pane in a location's private server.
@@ -119,6 +125,7 @@ pub struct Pane {
 impl Place {
     /// Start a detached relay pane.
     pub async fn start_pane(&self, launch: &PaneLaunch<'_>) -> Result<Pane> {
+        let probe = launch.probe;
         for id in [launch.session_id, launch.launch_id] {
             ensure!(
                 !id.is_empty()
@@ -170,7 +177,7 @@ impl Place {
                 "@ariadne_session",
                 launch.session_id,
             ]);
-        let output = run(command).await?;
+        let output = run(command, probe).await?;
         ensure!(
             output.status.success(),
             "starting tmux relay pane: {}",
@@ -188,11 +195,11 @@ impl Place {
     /// Every tmux call names its target. `list-panes -a` fails with "no current
     /// target" on a server that has no session, so the sessions are listed
     /// first and each relay session is asked for its own panes.
-    pub async fn live_panes(&self, home: &std::path::Path) -> Result<Vec<Pane>> {
+    pub async fn live_panes(&self, home: &std::path::Path, probe: Duration) -> Result<Vec<Pane>> {
         if let Self::Herdr(socket) = self {
-            return herdr_panes(socket, home).await;
+            return herdr_panes(socket, home, probe).await;
         }
-        let (names, exited) = self.relay_sessions(home).await?;
+        let (names, exited) = self.relay_sessions(home, probe).await?;
         let Some(names) = names else {
             if exited {
                 tracing::warn!("the tmux server exited while its relay sessions were listed");
@@ -207,11 +214,11 @@ impl Place {
             command.args(["list-panes", "-s", "-t"]);
             command.arg(format!("={name}:"));
             command.args(["-F", "#{pane_id} #{session_name} #{@ariadne_session}"]);
-            let output = run(command).await?;
+            let output = run(command, probe).await?;
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
                 // The session ended, or the server with it, since the listing.
-                match self.relay_sessions(home).await?.0 {
+                match self.relay_sessions(home, probe).await?.0 {
                     Some(names) if names.contains(&name) => {}
                     Some(_) => continue,
                     None => {
@@ -241,12 +248,16 @@ impl Place {
     /// A server that closes with its last session can answer a client that is
     /// already connected with "server exited unexpectedly". Ask again: once it
     /// has closed, no server runs. A server that keeps failing is an error.
-    async fn relay_sessions(&self, home: &std::path::Path) -> Result<(Option<Vec<String>>, bool)> {
+    async fn relay_sessions(
+        &self,
+        home: &std::path::Path,
+        probe: Duration,
+    ) -> Result<(Option<Vec<String>>, bool)> {
         let mut attempts = 0;
         loop {
             let mut command = self.command(home)?;
             command.args(["list-sessions", "-F", "#{session_name}"]);
-            let output = run(command).await?;
+            let output = run(command, probe).await?;
             if output.status.success() {
                 let names = String::from_utf8(output.stdout)?
                     .lines()
@@ -268,7 +279,12 @@ impl Place {
     }
 
     /// Stop the relay first so its agent process group cannot outlive the pane.
-    pub async fn stop_pane(&self, home: &std::path::Path, pane: &Pane) -> Result<()> {
+    pub async fn stop_pane(
+        &self,
+        home: &std::path::Path,
+        pane: &Pane,
+        probe: Duration,
+    ) -> Result<()> {
         let socket_path = home
             .join("relays")
             .join(format!("{}.sock", pane.session_id));
@@ -276,7 +292,7 @@ impl Place {
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(mut socket) => {
                 told = true;
-                tokio::time::timeout(crate::timeouts::Timeouts::default().probe, async {
+                tokio::time::timeout(probe, async {
                     socket.write_all(b"{\"type\":\"stop\"}\n").await?;
                     let mut discarded = Vec::new();
                     socket.read_to_end(&mut discarded).await?;
@@ -294,22 +310,22 @@ impl Place {
         }
         if let Self::Herdr(socket) = self {
             if told {
-                herdr_relay_exits(&socket_path, socket, home, pane).await;
+                herdr_relay_exits(&socket_path, socket, home, pane, probe).await;
             }
-            return herdr_close(socket, home, pane).await;
+            return herdr_close(socket, home, pane, probe).await;
         }
         if self
-            .live_panes(home)
+            .live_panes(home, probe)
             .await?
             .iter()
             .any(|live| live.id == pane.id)
         {
             let mut command = self.command(home)?;
             command.args(["kill-session", "-t", &pane.name]);
-            let output = run(command).await?;
+            let output = run(command, probe).await?;
             if !output.status.success()
                 && self
-                    .live_panes(home)
+                    .live_panes(home, probe)
                     .await?
                     .iter()
                     .any(|live| live.id == pane.id)
@@ -348,8 +364,11 @@ fn tmux_literal(value: impl AsRef<OsStr>) -> OsString {
     }
 }
 
-async fn run(mut command: tokio::process::Command) -> Result<std::process::Output> {
-    tokio::time::timeout(crate::timeouts::Timeouts::default().probe, command.output())
+async fn run(
+    mut command: tokio::process::Command,
+    probe: Duration,
+) -> Result<std::process::Output> {
+    tokio::time::timeout(probe, command.output())
         .await
         .context("tmux command timed out")?
         .context("running tmux")
@@ -369,9 +388,8 @@ fn herdr_socket() -> Option<PathBuf> {
 }
 
 /// Whether a herdr server answers a ping on `socket` within the probe time.
-fn herdr_answers(socket: &Path) -> bool {
+fn herdr_answers(socket: &Path, probe: Duration) -> bool {
     use std::io::{BufRead, BufReader, Write};
-    let probe = crate::timeouts::Timeouts::default().probe;
     let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) else {
         return false;
     };
@@ -389,8 +407,8 @@ fn herdr_answers(socket: &Path) -> bool {
 }
 
 /// Send one request on a fresh connection and return its result.
-async fn herdr_call(socket: &Path, method: &str, params: Value) -> Result<Value> {
-    tokio::time::timeout(crate::timeouts::Timeouts::default().probe, async {
+async fn herdr_call(socket: &Path, method: &str, params: Value, probe: Duration) -> Result<Value> {
+    tokio::time::timeout(probe, async {
         let mut stream = tokio::io::BufReader::new(
             tokio::net::UnixStream::connect(socket)
                 .await
@@ -468,6 +486,7 @@ async fn herdr_start(socket: &Path, launch: &PaneLaunch<'_>, name: String) -> Re
         socket,
         "workspace.create",
         json!({"label": label, "cwd": cwd, "focus": false}),
+        launch.probe,
     )
     .await
     .context("creating herdr workspace")?;
@@ -487,6 +506,7 @@ async fn herdr_start(socket: &Path, launch: &PaneLaunch<'_>, name: String) -> Re
             "focus": false,
             "root": {"type": "pane", "label": label, "cwd": cwd, "command": command, "env": env},
         }),
+        launch.probe,
     )
     .await;
     let id = match applied {
@@ -498,6 +518,7 @@ async fn herdr_start(socket: &Path, launch: &PaneLaunch<'_>, name: String) -> Re
                 socket,
                 "workspace.close",
                 json!({"workspace_id": workspace}),
+                launch.probe,
             )
             .await;
             return Err(error.context("starting herdr relay pane"));
@@ -505,7 +526,7 @@ async fn herdr_start(socket: &Path, launch: &PaneLaunch<'_>, name: String) -> Re
     };
     let id = match id {
         Some(id) => id,
-        None => herdr_panes(socket, launch.home)
+        None => herdr_panes(socket, launch.home, launch.probe)
             .await?
             .into_iter()
             .find(|pane| pane.name == name)
@@ -519,9 +540,9 @@ async fn herdr_start(socket: &Path, launch: &PaneLaunch<'_>, name: String) -> Re
     })
 }
 
-async fn herdr_panes(socket: &Path, home: &Path) -> Result<Vec<Pane>> {
+async fn herdr_panes(socket: &Path, home: &Path, probe: Duration) -> Result<Vec<Pane>> {
     let tag = format!("@{}", home_tag(home));
-    let listed = match herdr_call(socket, "pane.list", json!({})).await {
+    let listed = match herdr_call(socket, "pane.list", json!({}), probe).await {
         Ok(listed) => listed,
         Err(error)
             if error.chain().any(|cause| {
@@ -556,10 +577,16 @@ async fn herdr_panes(socket: &Path, home: &Path) -> Result<Vec<Pane>> {
 /// Closing a pane hangs up its terminal, and a relay that is hung up before
 /// it finishes stopping leaves its socket behind. Give the relay the time
 /// to remove it, until the pane ends or the probe time runs out.
-async fn herdr_relay_exits(relay_socket: &Path, socket: &Path, home: &Path, pane: &Pane) {
-    let _ = tokio::time::timeout(crate::timeouts::Timeouts::default().probe, async {
+async fn herdr_relay_exits(
+    relay_socket: &Path,
+    socket: &Path,
+    home: &Path,
+    pane: &Pane,
+    probe: Duration,
+) {
+    let _ = tokio::time::timeout(probe, async {
         while relay_socket.exists()
-            && herdr_panes(socket, home)
+            && herdr_panes(socket, home, probe)
                 .await
                 .is_ok_and(|panes| panes.iter().any(|live| live.id == pane.id))
         {
@@ -569,12 +596,12 @@ async fn herdr_relay_exits(relay_socket: &Path, socket: &Path, home: &Path, pane
     .await;
 }
 
-async fn herdr_close(socket: &Path, home: &Path, pane: &Pane) -> Result<()> {
+async fn herdr_close(socket: &Path, home: &Path, pane: &Pane, probe: Duration) -> Result<()> {
     let live = |panes: Vec<Pane>| panes.iter().any(|live| live.id == pane.id);
-    if live(herdr_panes(socket, home).await?) {
-        let closed = herdr_call(socket, "pane.close", json!({"pane_id": pane.id})).await;
+    if live(herdr_panes(socket, home, probe).await?) {
+        let closed = herdr_call(socket, "pane.close", json!({"pane_id": pane.id}), probe).await;
         if let Err(error) = closed
-            && live(herdr_panes(socket, home).await?)
+            && live(herdr_panes(socket, home, probe).await?)
         {
             return Err(error.context("stopping herdr relay pane"));
         }

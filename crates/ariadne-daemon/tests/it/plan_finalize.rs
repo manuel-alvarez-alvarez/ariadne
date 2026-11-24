@@ -420,6 +420,8 @@ async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_not
         h.notify_goal(&cast.goal.id);
         h.flush_scheduler().await;
     }
+    // A prompt still in the ACP queue publishes no event to wait for: only
+    // its continued absence proves the scheduler decided against one.
     tokio::time::sleep(QUIET).await;
 
     assert!(

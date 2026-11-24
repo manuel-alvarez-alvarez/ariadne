@@ -18,6 +18,7 @@ Sources:
 
 - [Proposed isolated Linux CI experiment](linux-ci-proposal.md) defines the cohort and decisions for user agreement.
 - [Host malvarez Linux measurement](linux-host.md) times every check stage at `226a47eb`, cold and warm, three times each, and ranks the slowest tests. Its results are for host malvarez only; do not pool them with the CI or macOS data.
+- [Daemon fixed waits removed](daemon-fixed-waits.md) records three daemon tests before and after their fixed waits were removed.
 
 - [macOS contention follow-up](contention.md) compares identical checks across two worktrees at a separately pinned revision.
 - [CI step evidence](ci-evidence.md) records every job step and its duration.

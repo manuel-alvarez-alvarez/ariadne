@@ -373,11 +373,14 @@ fn fetches_after_the_last_hook_call(stub: &StubForgeCli) -> usize {
         .count()
 }
 
+/// Listen for [`QUIET`]: the fetch count stays at `count`. A fetch that never
+/// comes publishes nothing to wait for, so only its absence proves it.
 async fn quiet(stub: &StubForgeCli, count: usize) {
     assert!(
         tokio::time::timeout(QUIET, async {
             loop {
                 assert_eq!(fetches(stub), count);
+                // The pace of the check inside the QUIET listen.
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -1051,6 +1054,7 @@ while child.poll() is None:
     if os.getppid() != parent:
         child.kill()
         break
+    # Stand-in poll: the pace of the parent check.
     time.sleep(0.2)
 ";
 

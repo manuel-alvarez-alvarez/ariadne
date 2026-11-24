@@ -169,12 +169,19 @@ struct Places {
     forced: Option<String>,
     path: Option<std::ffi::OsString>,
     herdr_socket: Option<PathBuf>,
+    /// How long one call to a multiplexer may take, from the runtime's timeouts.
+    probe: Duration,
 }
 
 impl Places {
     /// Find a location again, by name, as it was stored on a session row.
     fn find(&self, forced: Option<&str>) -> Result<crate::place::Place> {
-        crate::place::Place::find_with(forced, self.path.as_deref(), self.herdr_socket.as_deref())
+        crate::place::Place::find_with(
+            forced,
+            self.path.as_deref(),
+            self.herdr_socket.as_deref(),
+            self.probe,
+        )
     }
 }
 
@@ -696,6 +703,7 @@ impl AcpRuntime {
 
     /// Configure the daemon's relay locations. Test runtimes default to direct children.
     pub fn with_places(mut self, home: PathBuf, daemon: PathBuf, forced: Option<String>) -> Self {
+        let probe = self.inner.timeouts.probe;
         Arc::get_mut(&mut self.inner)
             .expect("runtime is not shared while configured")
             .places = Some(Places {
@@ -704,6 +712,7 @@ impl AcpRuntime {
             forced,
             path: std::env::var_os("PATH"),
             herdr_socket: None,
+            probe,
         });
         self
     }
@@ -719,7 +728,7 @@ impl AcpRuntime {
             ),
             None => (Some("none"), None, None),
         };
-        crate::place::report(forced, path, socket)
+        crate::place::report(forced, path, socket, self.inner.timeouts.probe)
     }
 
     /// Override the socket herdr is looked for on, for an embedded daemon.
@@ -1709,6 +1718,7 @@ impl AcpRuntime {
                     program: &launch.program,
                     args: &launch.args,
                     env: &env,
+                    probe: settings.probe,
                 })
                 .await?;
             save_relay_metadata(&pane_path, &(place.clone(), pane.clone()))?;
@@ -1768,7 +1778,7 @@ impl AcpRuntime {
                             break Err(error);
                         }
                         if !place
-                            .live_panes(&settings.home)
+                            .live_panes(&settings.home, settings.probe)
                             .await?
                             .iter()
                             .any(|live| live.id == pane.id)
@@ -1784,7 +1794,7 @@ impl AcpRuntime {
         let link = match linked {
             Ok(Ok(link)) => link,
             result => {
-                let _ = place.stop_pane(&settings.home, &pane).await;
+                let _ = place.stop_pane(&settings.home, &pane, settings.probe).await;
                 return match result {
                     Ok(Err(error)) => Err(error),
                     _ => Err(anyhow!("timed out connecting to relay pane")),
@@ -2175,7 +2185,11 @@ impl AcpRuntime {
         }
         if let Some(relay) = io.relay {
             relay.bridge.abort();
-            if let Err(error) = relay.place.stop_pane(&relay.home, &relay.pane).await {
+            if let Err(error) = relay
+                .place
+                .stop_pane(&relay.home, &relay.pane, self.inner.timeouts.probe)
+                .await
+            {
                 tracing::warn!(session = %launch.session_id, %error, "stopping relay pane failed");
             }
         }
@@ -4552,7 +4566,7 @@ async fn cleanup_relay(settings: &Places, session: &str, old_place: Option<&str>
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let path = settings.home.join("relays").join(format!("{session}.sock"));
     if let Ok(mut socket) = tokio::net::UnixStream::connect(&path).await {
-        tokio::time::timeout(Timeouts::default().probe, async {
+        tokio::time::timeout(settings.probe, async {
             socket.write_all(b"{\"type\":\"stop\"}\n").await?;
             socket.read_to_end(&mut Vec::new()).await?;
             std::io::Result::Ok(())
@@ -4564,12 +4578,14 @@ async fn cleanup_relay(settings: &Places, session: &str, old_place: Option<&str>
         && let Ok(place) = settings.find(Some(old))
     {
         for pane in place
-            .live_panes(&settings.home)
+            .live_panes(&settings.home, settings.probe)
             .await?
             .into_iter()
             .filter(|pane| pane.session_id == session)
         {
-            place.stop_pane(&settings.home, &pane).await?;
+            place
+                .stop_pane(&settings.home, &pane, settings.probe)
+                .await?;
         }
     }
     for extension in ["sock", "jsonl", "transcript.json", "turn.json"] {
@@ -4611,7 +4627,7 @@ async fn existing_relay_pane(
     };
     let name = format!("ariadne-{}", launch.launch_id);
     let mut pane = place
-        .live_panes(&settings.home)
+        .live_panes(&settings.home, settings.probe)
         .await
         .unwrap_or_default()
         .into_iter()

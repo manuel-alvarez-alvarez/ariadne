@@ -233,6 +233,7 @@ async fn a_server_that_never_answers_health_is_not_live() {
     let h = harness()
         .python_bin(python())
         .ai_permissions_installer(installer())
+        // A stand-in server that stays up and never answers health.
         .ai_permissions_serve_command(vec!["/bin/sleep".into(), "10".into()])
         .timeouts(Timeouts {
             ai_permissions_serve_start: std::time::Duration::from_millis(100),
@@ -462,6 +463,8 @@ async fn a_switch_as_the_install_ends_is_still_installed_and_served() {
         dir.path().join("waiting"),
         dir.path().join("release"),
     );
+    // The stand-in holds in a poll until the test creates `release`, so the
+    // test controls when the install ends and no clock does.
     let python = shared_script(&format!(
         "#!/bin/sh\n\
          if [ -f '{gate}' ]; then\n\
@@ -479,6 +482,7 @@ async fn a_switch_as_the_install_ends_is_still_installed_and_served() {
     let h = harness()
         .python_bin(python.display().to_string())
         .ai_permissions_hardware(mac())
+        // The stand-in installer polls until the test creates its release file.
         .ai_permissions_installer(vec![
             "/bin/sh".into(),
             "-c".into(),

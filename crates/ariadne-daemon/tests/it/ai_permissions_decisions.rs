@@ -687,6 +687,7 @@ if not parent_alive():
 with open(sys.argv[2], 'w') as f:
     f.write(str(os.getpid()) + '\n')
 gate = sys.argv[3]
+# Stand-in poll: the server stays unready until the test creates the gate.
 while not os.path.exists(gate):
     time.sleep(0.05)
 args = sys.argv[4:]

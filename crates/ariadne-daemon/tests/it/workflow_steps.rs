@@ -1595,6 +1595,8 @@ fn cancelled(h: &Harness) -> bool {
 /// The agent the task's ending left standing, after a listen: running, its
 /// turn not cancelled, and its session live.
 async fn still_in_its_turn(h: &Harness, session: &AgentSession) {
+    // A stop that never comes publishes nothing: only the agent still
+    // standing after a listen proves the ending let it be.
     tokio::time::sleep(QUIET).await;
     assert!(h.launcher.acp.is_running(&session.id));
     assert!(!cancelled(h));
