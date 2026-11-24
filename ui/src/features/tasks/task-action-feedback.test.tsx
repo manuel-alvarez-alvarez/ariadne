@@ -70,3 +70,21 @@ it.each([
   )
   expect(screen.getAllByText(label).length).toBeGreaterThan(0)
 })
+
+it("reports a retry request awaiting worker acknowledgment", async () => {
+  feedback.mockClear()
+  const user = userEvent.setup()
+  const task = remote("failed")
+  daemonFetch.mockImplementation(async (request: Request) =>
+    request.url.endsWith("/retry") ? jsonResponse(task) : jsonResponse([]),
+  )
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  await user.click(screen.getByRole("button", { name: "Retry task" }))
+  await waitFor(() =>
+    expect(feedback).toHaveBeenCalledWith("Retry requested", {
+      description: "The task remains failed until the worker acknowledges recovery.",
+    }),
+  )
+})

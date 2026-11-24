@@ -1221,3 +1221,7 @@ Future daemon integration must use the versioned greeting to preserve compatibil
 
 Integrators can use the socket and journal contracts in
 [spec 038](../specs/038-agent-relay.md).
+
+A successful `ariadne task retry` prints the returned task status. For a remote
+task, the source can still report `failed` while delivery is queued; the status
+changes when the worker acknowledges recovery. See [the API contract](../specs/012-http-api-events-and-usage.md).
