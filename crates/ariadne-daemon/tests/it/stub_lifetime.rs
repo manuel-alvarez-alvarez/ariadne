@@ -1,4 +1,4 @@
-//! Every Python test stub ends when its direct parent ends.
+//! Every test stub ends when its direct parent ends.
 
 use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -7,6 +7,7 @@ use serde_json::json;
 
 use crate::common::acp::{pid_is_alive, script, stub_acp_agent};
 use crate::common::forge::stub_forge_cli;
+use crate::common::ssh::{StubSsh, stub_ssh};
 use crate::common::{TIMEOUT, eventually};
 
 /// A stand-in parent: it starts the program under test, inheriting its own
@@ -88,4 +89,43 @@ async fn an_acp_stub_exits_when_its_parent_is_killed() {
     // reparenting; kill(pid, 0) alone would call that zombie alive.
     wait_for_exit(pid).await;
     process.wait().unwrap();
+}
+
+/// Start `ssh` with `args` under a stand-in parent, kill and reap that
+/// parent, and wait for the run to end. The stub checks its parent with
+/// `kill -0`, as its Python form did, so the parent is reaped first.
+async fn ssh_run_exits_with_its_parent(ssh: &StubSsh, args: &[&str]) {
+    let (mut process, mut stdin) = parent(&ssh.ssh, args);
+    ssh.set_parent_pid(process.id());
+    launch(&mut stdin);
+    eventually(TIMEOUT, "the ssh stub to start", || async {
+        !ssh.runs().is_empty()
+    })
+    .await;
+    let pid = ssh.runs()[0].pid;
+    process.kill().unwrap();
+    process.wait().unwrap();
+    wait_for_exit(pid).await;
+    drop(stdin);
+}
+
+#[tokio::test]
+async fn an_ssh_stub_whose_home_call_hangs_exits_when_its_parent_is_killed() {
+    let ssh = stub_ssh(json!({"home_hang": true}));
+    ssh_run_exits_with_its_parent(&ssh, &["box", "printf %s \"$HOME\""]).await;
+}
+
+/// A runtime command that waits for the disconnect FIFO ends with its
+/// parent too, while no writer ever opens that FIFO: the read alone would
+/// never end.
+#[tokio::test]
+async fn an_ssh_stub_waiting_for_its_disconnect_exits_when_its_parent_is_killed() {
+    let home = tempfile::tempdir().unwrap();
+    let fifo = home.path().join("disconnect");
+    let made = Command::new("mkfifo").arg(&fifo).status().unwrap();
+    assert!(made.success(), "mkfifo {}", fifo.display());
+    let ssh = stub_ssh(json!({"setup": {
+        "home": home.path(), "runtime_disconnect": fifo
+    }, "exit": 0}));
+    ssh_run_exits_with_its_parent(&ssh, &["-T", "box", "sh -c 'bounded provide node'"]).await;
 }
