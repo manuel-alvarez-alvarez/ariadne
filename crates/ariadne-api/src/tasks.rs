@@ -350,6 +350,29 @@ pub struct AuthorizeRemoteTaskRequest {
 /// Explicit protocol negotiation, independent of application version.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RemoteTaskProtocol {
+    /// Negotiated optional operations. New source references require source-dependency-controls-v1.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     pub protocol: String,
     pub daemon_id: String,
 }
+
+/// Fail one unauthorized draft revision after a source dependency failure.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FailRemoteDependencyRequest {
+    pub revision: i64,
+    pub operation_id: String,
+    pub reason: String,
+}
+
+/// Retry the identified dependency failure into a newer blocked draft revision.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RetryRemoteDependencyRequest {
+    pub revision: i64,
+    pub operation_id: String,
+}
+
+/// Both fenced source dependency operations are required for new source references.
+pub const SOURCE_DEPENDENCY_CONTROLS: &str = "source-dependency-controls-v1";

@@ -2203,6 +2203,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/remote-tasks/{id}/dependency-failure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["tasks_dependency_failure"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/remote-tasks/{id}/retry-dependency": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["tasks_retry_dependency"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories": {
         parameters: {
             query?: never;
@@ -3957,6 +3989,13 @@ export interface components {
          * @enum {string}
          */
         EventOrder: "asc" | "desc";
+        /** @description Fail one unauthorized draft revision after a source dependency failure. */
+        FailRemoteDependencyRequest: {
+            operation_id: string;
+            reason: string;
+            /** Format: int64 */
+            revision: number;
+        };
         /**
          * @description Body of `POST /v1/tasks/{id}/step/fail`: the current column's agent hands
          *     the task back to the previous column, or fails it from the first one.
@@ -4789,6 +4828,8 @@ export interface components {
         };
         /** @description Explicit protocol negotiation, independent of application version. */
         RemoteTaskProtocol: {
+            /** @description Negotiated optional operations. New source references require source-dependency-controls-v1. */
+            capabilities?: string[];
             daemon_id: string;
             protocol: string;
         };
@@ -4831,6 +4872,12 @@ export interface components {
              * @description Events this connection lost. Informational: they cannot be recovered.
              */
             missed: number;
+        };
+        /** @description Retry the identified dependency failure into a newer blocked draft revision. */
+        RetryRemoteDependencyRequest: {
+            operation_id: string;
+            /** Format: int64 */
+            revision: number;
         };
         /** @description One inline comment of a review (029). */
         ReviewCommentRequest: {
@@ -7966,6 +8013,92 @@ export interface operations {
                 };
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_dependency_failure: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FailRemoteDependencyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_retry_dependency: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryRemoteDependencyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

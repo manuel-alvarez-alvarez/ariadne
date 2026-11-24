@@ -814,7 +814,13 @@ impl Follower<'_> {
             .await
             .ok_or(Unsent::Left)??;
         for reference in references {
-            if reference.worker_id != protocol.daemon_id || protocol.protocol != "remote-tasks-v1" {
+            if reference.worker_id != protocol.daemon_id
+                || protocol.protocol != "remote-tasks-v1"
+                || !protocol
+                    .capabilities
+                    .iter()
+                    .any(|c| c == ariadne_api::tasks::SOURCE_DEPENDENCY_CONTROLS)
+            {
                 store.source_tasks_unreachable(self.host, true).await?;
                 return Err(Unsent::Refused(
                     "worker identity changed; restore the original worker or upgrade Ariadne"
@@ -865,17 +871,60 @@ impl Follower<'_> {
                     Err(error) => return Err(error.into()),
                 }
             } else if !cancel
+                && let (Some(reason), Some(operation), Some(revision)) = (
+                    &current_reference.dependency_failure,
+                    &current_reference.failure_operation_id,
+                    current_reference.failure_revision,
+                )
+            {
+                let request = ariadne_api::tasks::FailRemoteDependencyRequest {
+                    revision,
+                    operation_id: operation.clone(),
+                    reason: reason.clone(),
+                };
+                match self
+                    .fenced(self.client.post_json(
+                        &format!("/v1/remote-tasks/{}/dependency-failure", reference.id),
+                        &request,
+                    ))
+                    .await
+                    .ok_or(Unsent::Left)?
+                {
+                    Ok(task) => far = task,
+                    Err(ClientError::Api { status, .. }) if status == StatusCode::CONFLICT => {
+                        store
+                            .clear_source_dependency_request(&reference.id, operation)
+                            .await?;
+                        continue;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            } else if !cancel
                 && current_reference.retry_requested != 0
                 && far.status == TaskStatus::Failed
                 && store.task_dependencies_merged(&reference.id).await?
             {
-                far = self
-                    .fenced(
+                far = if !far.execution_context.as_ref().is_some_and(|c| c.authorized)
+                    && let Some(operation) = &current_reference.failure_operation_id
+                {
+                    let request = ariadne_api::tasks::RetryRemoteDependencyRequest {
+                        revision: far.execution_context.as_ref().unwrap().revision,
+                        operation_id: operation.clone(),
+                    };
+                    self.fenced(self.client.post_json(
+                        &format!("/v1/remote-tasks/{}/retry-dependency", reference.id),
+                        &request,
+                    ))
+                    .await
+                    .ok_or(Unsent::Left)??
+                } else {
+                    self.fenced(
                         self.client
                             .post_empty(&format!("/v1/tasks/{}/retry", reference.id)),
                     )
                     .await
-                    .ok_or(Unsent::Left)??;
+                    .ok_or(Unsent::Left)??
+                };
             } else if !cancel
                 && goal
                     .as_ref()

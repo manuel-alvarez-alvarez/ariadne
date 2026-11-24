@@ -173,7 +173,7 @@ impl AppState {
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
-        remote_tasks::protocol, remote_tasks::create, remote_tasks::authorize,
+        remote_tasks::protocol, remote_tasks::create, remote_tasks::authorize, remote_tasks::dependency_failure, remote_tasks::retry_dependency,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         channel::list_task_messages, channel::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, channel::diff,
@@ -422,6 +422,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/tasks/{id}/transitions",
             post(tasks::transition).get(tasks::list_transitions),
+        )
+        .route(
+            "/v1/remote-tasks/{id}/dependency-failure",
+            post(remote_tasks::dependency_failure),
+        )
+        .route(
+            "/v1/remote-tasks/{id}/retry-dependency",
+            post(remote_tasks::retry_dependency),
         )
         .route("/v1/tasks/{id}/cancel", post(tasks::cancel))
         .route("/v1/tasks/{id}/retry", post(tasks::retry))

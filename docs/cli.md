@@ -798,9 +798,11 @@ Older remote mirrors and linked goals keep their existing lifecycle.
 Use the source goal's task commands to inspect and control this work.
 Disconnected tasks retain acknowledged progress and show `(unreachable)`.
 Cancellation remains pending until the worker confirms its outcome. A completion that wins cancellation stays finished.
-A failed dependency requires an explicit source retry. The worker draft stays blocked until dependencies finish.
+The worker records dependency failures. An explicit source retry restores a blocked draft on the same task ID.
+Execution still waits for source approval and completed dependencies.
 The source retains cancellation coordination after goal deletion until the worker answers.
-Workers need `remote-tasks-v1` support. An incompatible worker produces an upgrade instruction.
+Workers need `remote-tasks-v1` and the `source-dependency-controls-v1` capability.
+An incompatible worker produces an upgrade instruction before task creation.
 
 `task ls` shows each task's current column in a `step` column, and `--step
 <id>` narrows the list to it. A task that runs on another host adds a `HOST`

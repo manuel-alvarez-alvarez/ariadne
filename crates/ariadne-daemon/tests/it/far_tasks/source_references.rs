@@ -477,7 +477,7 @@ async fn stream_loss_marks_progress_stale_until_the_current_worker_is_reconciled
 }
 
 #[tokio::test]
-async fn dependency_failure_and_retry_are_source_controls_on_one_blocked_worker_draft() {
+async fn dependency_failure_and_retry_preserve_one_authoritative_worker_draft() {
     let p = pair_on(true).await;
     let repo = forge_repository(&p.local, "source", "owner/control").await;
     forge_repository(&p.far, "worker", "owner/control").await;
@@ -489,6 +489,7 @@ async fn dependency_failure_and_retry_are_source_controls_on_one_blocked_worker_
         task(&p.far, &dependency.id).await.status == TaskStatus::Ready
     })
     .await;
+    p.front.lose_next("dependency failure");
     p.far
         .store
         .transition_task(
@@ -505,7 +506,7 @@ async fn dependency_failure_and_retry_are_source_controls_on_one_blocked_worker_
     })
     .await;
     let worker = task(&p.far, &blocked.id).await;
-    assert_eq!(worker.status, TaskStatus::Pending);
+    assert_eq!(worker.status, TaskStatus::Failed);
     assert!(!worker.execution_context.unwrap().authorized);
     let failure = task(&p.local, &blocked.id).await;
     assert!(failure.reason.unwrap().contains("Dependency"));
@@ -551,6 +552,7 @@ async fn dependency_failure_and_retry_are_source_controls_on_one_blocked_worker_
     })
     .await;
     assert_eq!(task(&p.local, &blocked.id).await.status, TaskStatus::Failed);
+    p.front.lose_next("dependency retry");
     p.local
         .json::<TaskDto>(
             post(&format!("/v1/tasks/{}/retry", blocked.id)),
@@ -564,6 +566,24 @@ async fn dependency_failure_and_retry_are_source_controls_on_one_blocked_worker_
     )
     .await;
     assert_eq!(task(&p.local, &blocked.id).await.id, blocked.id);
+    let history: Vec<Value> = p
+        .far
+        .get(&format!("/v1/tasks/{}/transitions", blocked.id))
+        .await;
+    assert_eq!(
+        history
+            .iter()
+            .filter(|t| t["to_status"] == "failed")
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|t| t["to_status"] == "pending")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -922,4 +942,42 @@ async fn source_cleanup_preserves_local_branches_that_share_a_worker_task_name()
         &format!("git rev-parse --verify refs/heads/{}", source.branch),
     );
     assert_eq!(task(&p.far, &source.id).await.status, TaskStatus::Pending);
+}
+
+#[tokio::test]
+async fn a_worker_with_creation_only_v1_requires_a_dependency_control_upgrade() {
+    let (p, goal) = setup().await;
+    let protocol: Value = p.far.get("/v1/remote-tasks/protocol").await;
+    *p.front.protocol_override.lock().unwrap() =
+        Some(json!({"protocol":"remote-tasks-v1","daemon_id":protocol["daemon_id"]}));
+    let reason = refusal(
+        &p.local,
+        &goal,
+        task_body(
+            &goal,
+            "Needs source controls",
+            &p.model,
+            json!({"host":"far"}),
+        ),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    assert!(reason.contains("upgrade"));
+    assert!(reason.contains("source-dependency-controls-v1"));
+    assert!(
+        p.local
+            .store
+            .list_tasks(Default::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        p.far
+            .store
+            .list_tasks(Default::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

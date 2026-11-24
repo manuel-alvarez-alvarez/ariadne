@@ -45,12 +45,16 @@ pub(super) async fn create(
             )),
             _ => super::tasks::far_error(host, error),
         })?;
-    if protocol.protocol != "remote-tasks-v1"
+    if !protocol
+        .capabilities
+        .iter()
+        .any(|c| c == ariadne_api::tasks::SOURCE_DEPENDENCY_CONTROLS)
+        || protocol.protocol != "remote-tasks-v1"
         || protocol.daemon_id.is_empty()
         || protocol.daemon_id == state.store.daemon_id().await?
     {
         return Err(ApiError::conflict(format!(
-            "upgrade or correct host {host}: a distinct remote-tasks-v1 worker is required"
+            "upgrade or correct host {host}: a distinct remote-tasks-v1 worker with source-dependency-controls-v1 is required"
         )));
     }
     let local = state
@@ -112,6 +116,8 @@ pub(super) async fn create(
                 cancel_requested: 0,
                 retry_requested: 0,
                 dependency_failure: None,
+                failure_operation_id: None,
+                failure_revision: None,
                 authorization_revision: None,
                 progress_id: None,
                 progress_at: None,
@@ -157,10 +163,6 @@ pub(crate) async fn project(store: &Store, task: &Task) -> Result<TaskDto, Store
         .ok_or_else(|| StoreError::Invalid("missing source reference".into()))?;
     let mut dto: TaskDto =
         serde_json::from_str(&reference.cache).map_err(|e| StoreError::Invalid(e.to_string()))?;
-    if let Some(reason) = reference.dependency_failure {
-        dto.status = ariadne_core::TaskStatus::Failed;
-        dto.reason = Some(reason);
-    }
     dto.host = reference.host;
     dto.repo_id = reference.repo_id;
     dto.host_unreachable = reference.stale != 0;
@@ -246,7 +248,7 @@ async fn route(
         return Ok(Json(project(&state.store, &task).await?).into_response());
     }
     if suffix == "retry" && request.method() == axum::http::Method::POST {
-        let task = state.store.request_source_retry(id, ctx.actor).await?;
+        let task = state.store.request_source_retry(id).await?;
         state.notify_scheduler(id);
         return Ok(Json(project(&state.store, &task).await?).into_response());
     }
@@ -258,9 +260,7 @@ async fn route(
             serde_json::from_slice(&bytes).map_err(|e| ApiError::bad_request(e.to_string()))?;
         let task = match transition.to {
             ariadne_core::TaskStatus::Cancelled => state.store.request_source_cancel(id).await?,
-            ariadne_core::TaskStatus::Ready => {
-                state.store.request_source_retry(id, ctx.actor).await?
-            }
+            ariadne_core::TaskStatus::Ready => state.store.request_source_retry(id).await?,
             _ => {
                 return Err(ApiError::forbidden(
                     "use worker agent step operations to advance execution",
@@ -382,21 +382,7 @@ async fn route(
             Json(project(&state.store, &state.store.get_task(id).await?).await?).into_response(),
         );
     }
-    let mut body = response.body;
-    if suffix == "transitions" && (200..300).contains(&response.status) {
-        let mut history: Vec<ariadne_api::tasks::TaskTransitionDto> =
-            serde_json::from_slice(&body).map_err(|e| ApiError::conflict(e.to_string()))?;
-        history.extend(
-            state
-                .store
-                .source_task_control_history(id)
-                .await?
-                .into_iter()
-                .map(super::convert::transition_dto),
-        );
-        history.sort_by(|a, b| a.id.cmp(&b.id));
-        body = serde_json::to_vec(&history).unwrap();
-    }
+    let body = response.body;
     let mut answer = (StatusCode::from_u16(response.status).unwrap(), body).into_response();
     if let Some(content_type) = response.content_type {
         answer

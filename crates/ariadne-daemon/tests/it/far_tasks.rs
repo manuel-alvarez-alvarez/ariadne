@@ -64,6 +64,8 @@ fn kind(method: &axum::http::Method, path: &str) -> &'static str {
         ("POST", "/v1/goals") => "create goal",
         ("PUT", path) if path.starts_with("/v1/remote-tasks/") => "create remote task",
         ("POST", path) if path.ends_with("/relay-message") => "relay message",
+        ("POST", path) if path.ends_with("/dependency-failure") => "dependency failure",
+        ("POST", path) if path.ends_with("/retry-dependency") => "dependency retry",
         ("POST", path) if path.ends_with("/tasks") => "create task",
         ("GET", "/v1/events/stream") => "stream",
         ("GET", "/v1/remote-tasks/protocol") => "protocol",

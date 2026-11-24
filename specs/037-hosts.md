@@ -716,7 +716,7 @@ picker, the Hosts screen and one stream per host — is spec
 ### Source references for new tasks
 
 102. New remote creation uses the worker protocol from rule 101 during source planning.
-     The source checks protocol compatibility before reserving a stable task ID.
+     The source requires the source-dependency-controls-v1 capability before reserving a stable task ID.
      Incompatible workers receive an explicit upgrade instruction. No legacy fallback creates duplicate records.
      The source reserves its reference and creation request before the first worker write.
      A lost response replays the same ID and request. Acknowledgment removes the creation request.
@@ -726,17 +726,17 @@ picker, the Hosts screen and one stream per host — is spec
      Dependency validation and cycle detection include local tasks and source references.
      A durable authorization claim prevents dependency changes after admission begins.
      Authorization names the worker's current draft revision. Repeated authorization never restarts execution.
-104. A failed dependency records a source control failure on an unauthorized reference.
-     The source projects `failed` with the dependency reason. The worker draft remains pending and unauthorized.
-     Explicit source retry clears this control failure on the same task identity.
+104. A failed dependency queues a repeatable failure request for an unauthorized worker draft revision.
+     The worker owns the failure, reason, and audit under the dependency control contract in 012.
+     Source status remains the last acknowledged worker status until that operation resolves.
+     Explicit source retry uses the worker dependency retry operation on the same task identity.
      Worker execution failures retain their existing retry path. Queued retries wait for completed dependencies.
 105. Source task lists, details, and events include referenced worker tasks with their stable task IDs.
      Projections retain worker execution context, staffing IDs, usage, and acknowledged execution progress.
      They replace host aliases, repository IDs, and dependencies with source values.
-     Source dependency failure overrides the projected status and reason, as rule 104 specifies.
      Session IDs use `far~TASK_ID~WORKER_SESSION_ID` at the source. Worker reads retain worker session IDs.
 106. Source task controls, worker history, and diffs resolve the worker by its persistent daemon ID.
-     Source history also includes source dependency control outcomes.
+     Worker history includes authoritative dependency failure and recovery audits.
      Session aliases route session controls, console reads, streams, input, and terminal connections to the worker.
      A session must belong to its referenced task. Source sessions cannot control another source goal.
      Worker endpoints can change without changing task ownership. Another worker cannot replace the recorded owner.
@@ -760,11 +760,12 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 102 and 105: `far_tasks::source_references::new_remote_tasks_are_worker_drafts_during_source_planning`.
 - Rule 102 restart: `far_tasks::source_references::reopening_the_source_store_recovers_an_unacknowledged_creation_without_a_second_worker_task`.
 - Rule 102 recovery: `far_tasks::source_references::a_lost_worker_creation_response_replays_one_task_identity`.
+- Rule 102 capability negotiation: `far_tasks::source_references::a_worker_with_creation_only_v1_requires_a_dependency_control_upgrade`.
 - Rule 102 compatibility: `far_tasks::source_references::incompatible_workers_require_an_upgrade_without_creating_records`.
 - Rule 103: `far_tasks::source_references::source_dependencies_hold_worker_authorization_until_the_plan_and_dependencies_finish`.
 - Rule 103 source edits: `far_tasks::source_references::source_dependency_edits_need_no_worker_connection_or_local_staffing`.
 - Rule 103 revisions and cycles: `far_tasks::source_references::source_draft_edits_advance_worker_revision_and_reject_dependency_cycles`.
-- Rule 104: `far_tasks::source_references::dependency_failure_and_retry_are_source_controls_on_one_blocked_worker_draft`.
+- Rule 104: `far_tasks::source_references::dependency_failure_and_retry_preserve_one_authoritative_worker_draft`.
 - Rules 105, 106, and 110: `far_tasks::source_references::source_sessions_history_diffs_and_usage_resolve_the_worker_identity`.
 - Rule 106 endpoint changes: `far_tasks::source_references::an_endpoint_change_preserves_the_worker_identity_and_task_reference`.
 - Rule 106 ownership: `far_tasks::source_references::changing_the_host_endpoint_cannot_replace_the_recorded_execution_owner`.

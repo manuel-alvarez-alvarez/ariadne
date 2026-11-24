@@ -3766,6 +3766,90 @@
         }
       }
     },
+    "/v1/remote-tasks/{id}/dependency-failure": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "dependency_failure",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FailRemoteDependencyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "409": {}
+        }
+      }
+    },
+    "/v1/remote-tasks/{id}/retry-dependency": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "retry_dependency",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryRemoteDependencyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "409": {}
+        }
+      }
+    },
     "/v1/repositories": {
       "get": {
         "tags": [
@@ -8057,6 +8141,28 @@
           "desc"
         ]
       },
+      "FailRemoteDependencyRequest": {
+        "type": "object",
+        "description": "Fail one unauthorized draft revision after a source dependency failure.",
+        "required": [
+          "revision",
+          "operation_id",
+          "reason"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
       "FailStepRequest": {
         "type": "object",
         "description": "Body of `POST /v1/tasks/{id}/step/fail`: the current column's agent hands\nthe task back to the previous column, or fails it from the first one.",
@@ -10107,6 +10213,13 @@
           "daemon_id"
         ],
         "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Negotiated optional operations. New source references require source-dependency-controls-v1."
+          },
           "daemon_id": {
             "type": "string"
           },
@@ -10198,6 +10311,24 @@
             "minimum": 0
           }
         }
+      },
+      "RetryRemoteDependencyRequest": {
+        "type": "object",
+        "description": "Retry the identified dependency failure into a newer blocked draft revision.",
+        "required": [
+          "revision",
+          "operation_id"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
       },
       "ReviewCommentRequest": {
         "type": "object",

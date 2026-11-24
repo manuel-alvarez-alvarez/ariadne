@@ -530,7 +530,7 @@ impl Store {
         // Status is validated on the row inside the write transaction: a check
         // against the read pool could be stale by the time we hold the lock.
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "task_index", task_id).await?;
-        let authorizing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r WHERE r.id=? AND (r.authorization_revision IS NOT NULL OR r.cancel_requested<>0 OR NOT EXISTS(SELECT 1 FROM goals g WHERE g.id=r.goal_id AND g.status IN ('planning','active'))))").bind(task_id).fetch_one(&mut *tx).await?;
+        let authorizing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r WHERE r.id=? AND (r.authorization_revision IS NOT NULL OR r.dependency_failure IS NOT NULL OR r.cancel_requested<>0 OR NOT EXISTS(SELECT 1 FROM goals g WHERE g.id=r.goal_id AND g.status IN ('planning','active'))))").bind(task_id).fetch_one(&mut *tx).await?;
         if authorizing {
             return Err(StoreError::Conflict(
                 "dependencies cannot change after authorization or source cancellation".into(),
@@ -937,13 +937,9 @@ impl Store {
         if let Some(reference) = self.source_task_reference(task_id).await? {
             let cached: serde_json::Value = serde_json::from_str(&reference.cache)
                 .map_err(|e| StoreError::Invalid(e.to_string()))?;
-            return Ok((if reference.dependency_failure.is_some() {
-                status == TaskStatus::Failed
-            } else {
-                cached["status"].as_str() == Some(status.as_str())
-            })
-            .then(|| reference.progress_id.zip(reference.progress_at))
-            .flatten());
+            return Ok((cached["status"].as_str() == Some(status.as_str()))
+                .then(|| reference.progress_id.zip(reference.progress_at))
+                .flatten());
         }
         Ok(sqlx::query_as(
             "SELECT id, created_at FROM task_transitions

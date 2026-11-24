@@ -14,7 +14,7 @@ use axum::http::{HeaderMap, StatusCode};
 fn source_only(headers: &HeaderMap) -> ApiResult<()> {
     if headers.contains_key(ariadne_api::SESSION_HEADER) {
         return Err(ApiError::forbidden(
-            "an agent session cannot create or authorize remote drafts",
+            "an agent session cannot control remote drafts",
         ));
     }
     Ok(())
@@ -24,6 +24,7 @@ fn source_only(headers: &HeaderMap) -> ApiResult<()> {
     responses((status = 200, body = RemoteTaskProtocol)))]
 pub(super) async fn protocol(State(state): State<AppState>) -> ApiResult<Json<RemoteTaskProtocol>> {
     Ok(Json(RemoteTaskProtocol {
+        capabilities: vec![ariadne_api::tasks::SOURCE_DEPENDENCY_CONTROLS.into()],
         protocol: "remote-tasks-v1".into(),
         daemon_id: state.store.daemon_id().await?,
     }))
@@ -135,5 +136,41 @@ pub(super) async fn authorize(
     source_only(&headers)?;
     let task = state.store.authorize_remote_task(&id, req.revision).await?;
     state.notify_scheduler(&task.id);
+    Ok(Json(task_dto_of(&state.store, task).await?))
+}
+
+#[utoipa::path(post, path = "/v1/remote-tasks/{id}/dependency-failure", tag = "tasks",
+ request_body = ariadne_api::tasks::FailRemoteDependencyRequest, params(("id" = String, Path)),
+ responses((status = 200, body = TaskDto), (status = 400), (status = 403), (status = 409)))]
+pub(super) async fn dependency_failure(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<ariadne_api::tasks::FailRemoteDependencyRequest>,
+) -> ApiResult<Json<TaskDto>> {
+    source_only(&headers)?;
+    let task = state
+        .store
+        .fail_remote_dependency(&id, req.revision, &req.operation_id, &req.reason)
+        .await?;
+    state.notify_scheduler(&id);
+    Ok(Json(task_dto_of(&state.store, task).await?))
+}
+
+#[utoipa::path(post, path = "/v1/remote-tasks/{id}/retry-dependency", tag = "tasks",
+ request_body = ariadne_api::tasks::RetryRemoteDependencyRequest, params(("id" = String, Path)),
+ responses((status = 200, body = TaskDto), (status = 400), (status = 403), (status = 409)))]
+pub(super) async fn retry_dependency(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<ariadne_api::tasks::RetryRemoteDependencyRequest>,
+) -> ApiResult<Json<TaskDto>> {
+    source_only(&headers)?;
+    let task = state
+        .store
+        .retry_remote_dependency(&id, req.revision, &req.operation_id)
+        .await?;
+    state.notify_scheduler(&id);
     Ok(Json(task_dto_of(&state.store, task).await?))
 }

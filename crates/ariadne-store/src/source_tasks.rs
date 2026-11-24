@@ -17,6 +17,8 @@ pub struct SourceTaskReference {
     pub cancel_requested: i64,
     pub retry_requested: i64,
     pub dependency_failure: Option<String>,
+    pub failure_operation_id: Option<String>,
+    pub failure_revision: Option<i64>,
     pub authorization_revision: Option<i64>,
     pub progress_id: Option<String>,
     pub progress_at: Option<String>,
@@ -125,8 +127,28 @@ impl Store {
         } else {
             reference.progress_at
         };
-        sqlx::query("UPDATE source_task_references SET cache = ?, request = NULL, stale = 0, updated_at = ?, progress_id = ?, progress_at = ?, retry_requested = CASE WHEN json_extract(?, '$.status') <> 'failed' THEN 0 ELSE retry_requested END, dependency_failure = CASE WHEN json_extract(?, '$.status') IN ('cancelled','finished') THEN NULL ELSE dependency_failure END WHERE id = ?")
-            .bind(cache.to_string()).bind(now()).bind(progress_id).bind(progress_at).bind(cache.to_string()).bind(cache.to_string()).bind(id).execute(&mut *tx).await?;
+        let status = cache["status"].as_str();
+        let resolved = matches!(status, Some("finished" | "cancelled"))
+            || status == Some("pending") && reference.retry_requested != 0;
+        let failure = if resolved || status == Some("failed") {
+            None
+        } else {
+            reference.dependency_failure
+        };
+        let operation = if resolved {
+            None
+        } else {
+            reference.failure_operation_id
+        };
+        let failure_revision = if resolved {
+            None
+        } else {
+            reference.failure_revision
+        };
+        sqlx::query("UPDATE source_task_references SET cache=?,request=NULL,stale=0,updated_at=?,progress_id=?,progress_at=?,retry_requested=?,dependency_failure=?,failure_operation_id=?,failure_revision=? WHERE id=?")
+            .bind(cache.to_string()).bind(now()).bind(progress_id).bind(progress_at)
+            .bind(if status == Some("failed") { reference.retry_requested } else { 0 })
+            .bind(failure).bind(operation).bind(failure_revision).bind(id).execute(&mut *tx).await?;
         tx.commit().await?;
         let task = self.get_task(id).await?;
         if reference.request.is_some() {
@@ -160,26 +182,16 @@ impl Store {
         Ok(task)
     }
 
-    pub async fn request_source_retry(&self, id: &str, actor: ariadne_core::Actor) -> Result<Task> {
+    pub async fn request_source_retry(&self, id: &str) -> Result<Task> {
         let mut tx = self.w().begin().await?;
-        let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r JOIN goals g ON g.id=r.goal_id WHERE r.id=? AND r.cancel_requested=0 AND g.status='active' AND (json_extract(r.cache,'$.status')='failed' OR r.dependency_failure IS NOT NULL))")
+        let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r JOIN goals g ON g.id=r.goal_id WHERE r.id=? AND r.cancel_requested=0 AND g.status='active' AND json_extract(r.cache,'$.status')='failed')")
             .bind(id).fetch_one(&mut *tx).await?;
         if !eligible {
             return Err(StoreError::Conflict(
                 "only a failed task in an active source goal can retry".into(),
             ));
         }
-        let control_failure: bool = sqlx::query_scalar(
-            "SELECT dependency_failure IS NOT NULL FROM source_task_references WHERE id=?",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if control_failure {
-            sqlx::query("INSERT INTO source_task_controls (id,task_id,from_status,to_status,actor,reason,created_at) VALUES (?,?,'failed','pending',?,'retry source dependencies',?)")
-                .bind(new_id()).bind(id).bind(actor.as_str()).bind(now()).execute(&mut *tx).await?;
-        }
-        sqlx::query("UPDATE source_task_references SET retry_requested=CASE WHEN dependency_failure IS NULL THEN 1 ELSE 0 END, dependency_failure=NULL WHERE id=?")
+        sqlx::query("UPDATE source_task_references SET retry_requested=1 WHERE id=?")
             .bind(id)
             .execute(&mut *tx)
             .await?;
@@ -220,39 +232,27 @@ impl Store {
         Ok(eligible)
     }
 
-    /// Record a real source dependency outcome without changing worker execution state.
+    /// Queue a dependency failure without inventing a worker transition.
     pub async fn fail_source_dependency(&self, id: &str, reason: &str) -> Result<()> {
-        let mut tx = self.w().begin().await?;
-        let progress_id = new_id();
-        let timestamp = now();
-        let n = sqlx::query("UPDATE source_task_references SET dependency_failure=?, progress_id=?, progress_at=? WHERE id=? AND dependency_failure IS NULL AND authorization_revision IS NULL AND json_extract(cache,'$.status')='pending' AND EXISTS(SELECT 1 FROM task_dependencies d JOIN task_index t ON t.id=d.depends_on_task_id WHERE d.task_id=source_task_references.id AND t.status IN ('failed','cancelled'))")
-            .bind(reason).bind(&progress_id).bind(&timestamp).bind(id).execute(&mut *tx).await?.rows_affected();
+        let n = sqlx::query("UPDATE source_task_references SET dependency_failure=?,failure_operation_id=?,failure_revision=json_extract(cache,'$.execution_context.revision') WHERE id=? AND dependency_failure IS NULL AND authorization_revision IS NULL AND json_extract(cache,'$.status')='pending' AND json_extract(cache,'$.execution_context.revision') IS NOT NULL AND EXISTS(SELECT 1 FROM task_dependencies d JOIN task_index t ON t.id=d.depends_on_task_id WHERE d.task_id=source_task_references.id AND t.status IN ('failed','cancelled'))")
+            .bind(reason).bind(new_id()).bind(id).execute(self.w()).await?.rows_affected();
         if n != 0 {
-            sqlx::query("INSERT INTO source_task_controls (id,task_id,from_status,to_status,actor,reason,created_at) VALUES (?,?,'pending','failed','daemon',?,?)")
-                .bind(progress_id).bind(id).bind(reason).bind(timestamp).execute(&mut *tx).await?;
-        }
-        tx.commit().await?;
-        if n != 0 {
-            let task = self.get_task(id).await?;
-            self.publish_goal_update(&task.goal_id).await?;
             self.publish(Change::TaskUpdated {
-                task,
+                task: self.get_task(id).await?,
                 transition: None,
             });
         }
         Ok(())
     }
 
-    pub async fn source_task_control_history(
-        &self,
-        id: &str,
-    ) -> Result<Vec<crate::TaskTransition>> {
-        Ok(
-            sqlx::query_as("SELECT * FROM source_task_controls WHERE task_id=? ORDER BY id")
-                .bind(id)
-                .fetch_all(self.r())
-                .await?,
-        )
+    pub async fn clear_source_dependency_request(&self, id: &str, operation: &str) -> Result<()> {
+        sqlx::query("UPDATE source_task_references SET dependency_failure=NULL,failure_operation_id=NULL,failure_revision=NULL WHERE id=? AND failure_operation_id=?")
+            .bind(id).bind(operation).execute(self.w()).await?;
+        self.publish(Change::TaskUpdated {
+            task: self.get_task(id).await?,
+            transition: None,
+        });
+        Ok(())
     }
 
     pub async fn remove_source_task_reference(&self, id: &str) -> Result<()> {

@@ -54,7 +54,7 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
    `failed`. `finished` and `cancelled` are terminal; `failed` is retryable.
    A task is `in_progress` from its first column to its last: the column it
    is on is the task's `step`, not a status (030).
-5. Every status change is checked against one transition table
+5. Ordinary status changes are checked against one transition table
    (`ariadne_core::state_machine`), which names both the move and the actor
    allowed to make it — `orchestrator`, `agent`, `daemon`, `user`. The legal
    moves are:
@@ -149,14 +149,18 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     Repeated creation preserves edits. Repeated authorization never starts another execution.
     Cancellation permanently rejects authorization. Authorized failed tasks retain the normal retry path.
     Dependencies belong to source coordination. Workers accept no task dependencies for remote execution.
+    Fenced dependency recovery uses a source-only `failed -> pending` exception (012).
+    It validates the worker draft revision and writes its audit in one transaction.
+    Generic User transitions retain their existing permissions.
     Existing local tasks and linked goals retain their records and behavior.
 
 23. New remote tasks use source references under 037 rules 102 through 110.
-    Source control outcomes coexist with worker execution ownership. Existing mirrors keep rules 19 through 21.
+    Workers record dependency failure and recovery through the source-controlled protocol in 012.
+    Existing mirrors keep rules 19 through 21.
 
 ## Acceptance criteria
 
-- Rule 23: `far_tasks::source_references::dependency_failure_and_retry_are_source_controls_on_one_blocked_worker_draft`
+- Rule 23: `far_tasks::source_references::dependency_failure_and_retry_preserve_one_authoritative_worker_draft`
   and `::source_cancellation_waits_for_worker_acknowledgment_after_reconnection`.
 
 - Rule 22: `remote_tasks.rs::a_remote_draft_has_context_without_a_worker_goal`,
