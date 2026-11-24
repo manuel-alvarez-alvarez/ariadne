@@ -182,10 +182,12 @@ The original UI measurements also cannot support an idle-host comparison with CI
 The historical evidence remains labelled, but no ranking or benefit claim uses those numbers.
 An isolated host window requires orchestrator coordination; this session cannot stop unrelated host workloads.
 
-The main-push hook creates a detached temporary worktree at the outgoing commit.
-It shares the caller's Cargo target directory, then removes the temporary checkout.
-It does not share either npm installation directory.
-Therefore, every fresh main candidate needs both `npm ci` installations.
+The previous main-push hook created a detached temporary worktree at the outgoing commit.
+It shared the caller's Cargo target directory, then removed the temporary checkout.
+It did not share either npm installation directory.
+Therefore, every fresh main candidate needed both `npm ci` installations.
+The current hook checks the pushing worktree and keeps ignored artifacts.
+See [the hook comparison](main-push-worktree.md).
 Temporary source paths can invalidate workspace build fingerprints; this is a hypothesis requiring repeated checkout measurements.
 The original lock observations do not quantify the cost of target sharing between equal agent workloads.
 No target-sharing recommendation follows from that sample.
@@ -287,7 +289,7 @@ The following measurements remain unavailable:
 - Guaranteed idle-host macOS repetitions; sequential shared-host measurements do not provide that guarantee.
 - Repeated Linux CI runs at this revision, including controlled cold and warm cache conditions.
 - Controlled complete agent workloads with process, CPU, memory, and I/O sampling.
-- Main-push temporary checkout overhead, fingerprint invalidation, and repeated npm installation distributions.
+- Repeat the [main-push worktree comparison](main-push-worktree.md) with warm frontend artifacts and an isolated host.
 - Release, signing, installer, and Tauri bundle timings.
 - Per-test subprocess counts and database migration, copy, startup, and cleanup duration distributions.
 

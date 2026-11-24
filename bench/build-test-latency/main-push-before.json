@@ -1,0 +1,104 @@
+{
+  "label": "before",
+  "sha": "9ded33b51b62cc66a568439aa5943029f98c005d",
+  "status": 0,
+  "total": 317.9734199580271,
+  "checks": [
+    [
+      "cargo machete .",
+      0.08860233402810991
+    ],
+    [
+      "cargo audit",
+      2.052365208044648
+    ],
+    [
+      "cargo build --locked --workspace --bins",
+      22.55822033295408
+    ],
+    [
+      "cargo nextest run --workspace --profile ci",
+      105.9275816672016
+    ],
+    [
+      "cargo test --doc --workspace",
+      1.6710114169400185
+    ],
+    [
+      "cargo clippy --workspace --all-targets -- -D warnings",
+      20.617665166035295
+    ],
+    [
+      "cargo fmt --all -- --check",
+      0.8847384590189904
+    ],
+    [
+      "scripts/check-unused-rust",
+      9.971158957807347
+    ],
+    [
+      "scripts/check-migrations.sh",
+      0.5980712501332164
+    ],
+    [
+      "npm ci",
+      3.3126773750409484
+    ],
+    [
+      "npm run check:audit",
+      2.1615378328133374
+    ],
+    [
+      "npm run lint",
+      1.4318174170330167
+    ],
+    [
+      "npm run typecheck",
+      8.103323667077348
+    ],
+    [
+      "npm run check:unused",
+      0.3899949579499662
+    ],
+    [
+      "npm test",
+      64.6156177080702
+    ],
+    [
+      "npm ci",
+      36.28849591687322
+    ],
+    [
+      "npm run build",
+      17.264955542050302
+    ],
+    [
+      "npm run check:audit",
+      0.9674977499525994
+    ],
+    [
+      "npm run lint",
+      0.7481592909898609
+    ],
+    [
+      "npm run typecheck",
+      1.0472804170567542
+    ],
+    [
+      "npm run check:unused",
+      0.22177662514150143
+    ],
+    [
+      "npm test",
+      1.7079910419415683
+    ],
+    [
+      "cargo fmt --all -- --check",
+      0.06305933301337063
+    ],
+    [
+      "cargo check",
+      15.017904999898747
+    ]
+  ]
+}

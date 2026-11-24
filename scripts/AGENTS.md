@@ -181,7 +181,12 @@ their cases. `tests/githooks.sh`, `tests/release-notes.sh` and
 `tests/githooks-command.sh` need no direct invocation; the scenario scripts
 put them on `PATH` for the tools they stand in for.
 
-Main pushes run full checks against the outgoing commit in an isolated checkout.
+Main pushes run full checks in the pushing worktree, with HEAD at the outgoing commit.
+The hook refuses tracked changes before checks and removes untracked paths with `git clean -fd`.
+It prints removed paths and keeps ignored artifacts.
+If untracked nested repositories remain, it names each directory and refuses the push.
+Move or remove each directory by hand. The hook never forces their deletion.
+It refuses the push if HEAD or tracked files change during checks.
 This includes `cargo nextest run --workspace --profile ci`, doctests, both `npm test` suites, and `npm run build`.
 Run the frontend build from `ui/`; it also builds the dashboard, so the hook
 runs `npm ci` in `ui/dashboard` first when `ui/dashboard/node_modules` is missing.
@@ -191,6 +196,12 @@ Require GitHub CI on the current PR head before GitHub squash merges.
 
 Run `bash scripts/tests/githooks.sh CASE` for the landing boundary cases:
 `main-push`, `main-merge`, `merge-message`, and `subject-validator`.
-`main-push` checks an unrelated checkout, that the dashboard `npm ci` runs
+`main-push` checks the pushing worktree, that the dashboard `npm ci` runs
 before `npm run build`, and a failed test command.
 Use `scripts/check-commit-subject.sh SUBJECT` for authored subjects and future PR titles.
+
+Run `main-clean`, `main-dirty`, `main-staged`, `main-not-head`, `main-rewrite`,
+`main-moved`, and `main-changed` for cleanup and main-push refusal boundaries.
+Run `full` to prove manual full checks retain dirty and untracked files.
+
+Run `main-nested` to prove nested repositories survive cleanup and prevent checks.

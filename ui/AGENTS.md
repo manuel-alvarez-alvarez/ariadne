@@ -827,7 +827,12 @@ instance, which only ever reads it once, as its internal store's initial
 value, and so never picked up the fresh document. `key={version}`, bumped on
 every successful load, is what makes a reload remount the component instead.
 
-Main pushes run full checks against the outgoing commit in an isolated checkout.
+Main pushes run full checks in the pushing worktree, with HEAD at the outgoing commit.
+The hook refuses tracked changes before checks and removes untracked paths with `git clean -fd`.
+It prints removed paths and keeps ignored artifacts.
+If untracked nested repositories remain, it names each directory and refuses the push.
+Move or remove each directory by hand. The hook never forces their deletion.
+It refuses the push if HEAD or tracked files change during checks.
 This includes `cargo nextest run --workspace --profile ci`, doctests, both `npm test` suites, and `npm run build`.
 Run the frontend build from `ui/`; it also builds the dashboard.
 Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.

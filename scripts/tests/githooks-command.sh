@@ -24,5 +24,14 @@ if [ "${TEST_GIT_PROBE:-}" = 1 ] && [ "$tool" = cargo ]; then
 fi
 
 if [ "${TEST_CANDIDATE:-}" = 1 ]; then
+    [ "$(git rev-parse --show-toplevel)" = "$(cd "$TEST_ROOT/repo" && pwd -P)" ]
+    [ "$(git worktree list --porcelain | grep -c "^worktree ")" = 1 ]
     [ -f "$(git rev-parse --show-toplevel)/docs/candidate.md" ]
+fi
+
+if [ "$line" = 'cargo machete .' ]; then
+    case "${TEST_MUTATE:-}" in
+        main-moved) git update-ref HEAD HEAD^ ;;
+        main-changed) printf 'during checks\n' >> docs/seeded.md ;;
+    esac
 fi

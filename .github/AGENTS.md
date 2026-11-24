@@ -141,7 +141,12 @@ The UI caches npm's downloads through `actions/setup-node`, keyed by
 (`actions/setup-node@820762786026740c76f36085b0efc47a31fe5020`,
 `node-version: 22`). The two should match; nothing today keeps them in sync.
 
-Main pushes run full checks against the outgoing commit in an isolated checkout.
+Main pushes run full checks in the pushing worktree, with HEAD at the outgoing commit.
+The hook refuses tracked changes before checks and removes untracked paths with `git clean -fd`.
+It prints removed paths and keeps ignored artifacts.
+If untracked nested repositories remain, it names each directory and refuses the push.
+Move or remove each directory by hand. The hook never forces their deletion.
+It refuses the push if HEAD or tracked files change during checks.
 This includes `cargo nextest run --workspace --profile ci`, doctests, both `npm test` suites, and `npm run build`.
 Run the frontend build from `ui/`; it also builds the dashboard.
 Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.

@@ -174,21 +174,95 @@ case "$test_case" in
         git -C "$TEST_ROOT/repo" add -A
         git -C "$TEST_ROOT/repo" commit -q -m 'docs: add candidate'
         head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
-        git -C "$TEST_ROOT/repo" checkout -q --detach "$base"
+        rmdir "$TEST_ROOT/repo/ui/node_modules"
         export TEST_CANDIDATE=1
         printf 'HEAD %s refs/heads/main %s\n' "$head" "$base" |
             "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
+        assert_commands 'cargo machete .' 'cargo audit' \
+            'cargo build --locked --workspace --bins' \
+            'cargo nextest run --workspace --profile ci' \
+            'cargo test --doc --workspace' \
+            'cargo clippy --workspace --all-targets -- -D warnings' \
+            'cargo fmt --all -- --check' 'check-unused-rust' 'check-migrations.sh' \
+            'npm ci' 'npm run check:audit' 'npm run lint' 'npm run typecheck' \
+            'npm run check:unused' 'npm test' 'npm ci' 'npm run build' 'npm ci' \
+            'npm run check:audit' 'npm run lint' 'npm run typecheck' \
+            'npm run check:unused' 'npm test' \
+            'cargo fmt --all -- --check' 'cargo check'
         grep -Fx 'cargo nextest run --workspace --profile ci' "$TEST_ROOT/commands"
         [ "$(grep -c '^npm test$' "$TEST_ROOT/commands")" = 2 ]
-        # The ui build also builds the dashboard: the candidate has neither
+        # The ui build also builds the dashboard: the worktree has neither
         # node_modules, so both npm ci runs must come before it.
         [ "$(sed '/^npm run build$/q' "$TEST_ROOT/commands" | grep -cFx 'npm ci')" = 2 ]
-        [ "$(git -C "$TEST_ROOT/repo" rev-parse HEAD)" = "$base" ]
+        [ "$(git -C "$TEST_ROOT/repo" rev-parse HEAD)" = "$head" ]
         export TEST_FAIL='npm test'
         if printf 'HEAD %s refs/heads/main %s\n' "$head" "$base" |
             "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1; then
             exit 1
         fi
+        ;;
+    main-clean|main-dirty|main-staged|main-not-head|main-rewrite|main-moved|main-changed)
+        setup_repo
+        base="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        printf 'ignored/\n' > "$TEST_ROOT/repo/.gitignore"
+        git -C "$TEST_ROOT/repo" add .gitignore
+        git -C "$TEST_ROOT/repo" commit -q -m 'chore: ignore artifacts'
+        head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        mkdir "$TEST_ROOT/repo/ignored"
+        printf 'keep\n' > "$TEST_ROOT/repo/ignored/artifact"
+        printf 'remove\n' > "$TEST_ROOT/repo/untracked file"
+        case "$test_case" in
+            main-dirty|main-staged)
+                printf 'keep change\n' >> "$TEST_ROOT/repo/docs/seeded.md"
+                if [ "$test_case" = main-staged ]; then
+                    git -C "$TEST_ROOT/repo" add docs/seeded.md
+                fi ;;
+            main-not-head) head="$base" ;;
+            main-rewrite) swap="$head"; head="$base"; base="$swap" ;;
+            main-moved|main-changed) export TEST_MUTATE="$test_case" ;;
+        esac
+        if printf 'HEAD %s refs/heads/main %s\n' "$head" "$base" |
+            "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1; then
+            [ "$test_case" = main-clean ]
+            [ ! -e "$TEST_ROOT/repo/untracked file" ]
+            grep -F 'untracked file' "$TEST_ROOT/output"
+            [ "$(cat "$TEST_ROOT/repo/ignored/artifact")" = keep ]
+        else
+            case "$test_case" in
+                main-dirty|main-staged)
+                    grep -F 'commit or stash' "$TEST_ROOT/output"
+                    grep -F 'keep change' "$TEST_ROOT/repo/docs/seeded.md"
+                    [ -f "$TEST_ROOT/repo/untracked file" ] ;;
+                main-not-head) grep -F 'check out the commit that you push' "$TEST_ROOT/output" ;;
+                main-rewrite) grep -F 'history rewrite' "$TEST_ROOT/output" ;;
+                main-moved|main-changed) grep -F 'during checks' "$TEST_ROOT/output" ;;
+                *) exit 1 ;;
+            esac
+        fi
+        ;;
+    main-nested)
+        setup_repo
+        head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        mkdir -p "$TEST_ROOT/repo/container" "$TEST_ROOT/repo/ignored"
+        printf 'ignored/\n' > "$TEST_ROOT/repo/.git/info/exclude"
+        for path in 'nested one' container/nested-two ignored/nested; do
+            git init -q "$TEST_ROOT/repo/$path"
+            printf 'keep\n' > "$TEST_ROOT/repo/$path/file"
+        done
+        printf 'remove\n' > "$TEST_ROOT/repo/untracked"
+        if printf 'HEAD %s refs/heads/main %s\n' "$head" "$head" |
+            "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1; then
+            exit 1
+        fi
+        grep -F 'move or remove the directory by hand' "$TEST_ROOT/output"
+        grep -Fx 'Untracked nested repository: nested one/' "$TEST_ROOT/output"
+        grep -Fx 'Untracked nested repository: container/nested-two/' "$TEST_ROOT/output"
+        for path in 'nested one' container/nested-two ignored/nested; do
+            [ "$(cat "$TEST_ROOT/repo/$path/file")" = keep ]
+            [ -d "$TEST_ROOT/repo/$path/.git" ]
+        done
+        [ ! -e "$TEST_ROOT/repo/untracked" ]
+        [ ! -s "$TEST_ROOT/commands" ]
         ;;
     main-merge)
         setup_repo
@@ -348,6 +422,17 @@ case "$test_case" in
             'npm run check:unused' 'npm ci' 'npm run check:audit' \
             'npm run lint' 'npm run typecheck' 'npm run check:unused' \
             'cargo fmt --all -- --check' 'cargo check'
+        ;;
+    full)
+        setup_repo
+        printf 'keep change\n' >> "$TEST_ROOT/repo/docs/seeded.md"
+        printf 'keep file\n' > "$TEST_ROOT/repo/untracked"
+        "$TEST_ROOT/repo/.githooks/pre-push" --full > "$TEST_ROOT/output" 2>&1
+        grep -Fx 'cargo nextest run --workspace --profile ci' "$TEST_ROOT/commands"
+        [ "$(grep -c '^npm test$' "$TEST_ROOT/commands")" = 2 ]
+        grep -Fx 'npm run build' "$TEST_ROOT/commands"
+        [ -f "$TEST_ROOT/repo/untracked" ]
+        grep -F 'keep change' "$TEST_ROOT/repo/docs/seeded.md"
         ;;
     fail)
         setup_repo

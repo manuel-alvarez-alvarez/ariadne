@@ -4,7 +4,7 @@
 set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="${GITHOOKS_CANDIDATE_ROOT:-$(cd "$HOOK_DIR/.." && pwd)}"
+REPO_ROOT="$(cd "$HOOK_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 # shellcheck source=lib.sh disable=SC1091
@@ -24,6 +24,7 @@ else
     remote_name="${1:-origin}"
 fi
 
+main_head=""
 run_rust=0
 run_ui=0
 run_dashboard=0
@@ -45,11 +46,7 @@ if [ "$all" = 1 ]; then
     run_tauri=1
 else
     diff_paths_file="$(mktemp)"
-    candidate=""
     cleanup() {
-        if [ -n "$candidate" ]; then
-            git worktree remove --force "$candidate" || true
-        fi
         rm -f "$diff_paths_file"
     }
     trap cleanup EXIT
@@ -77,18 +74,36 @@ else
                 echo 'Refuse merge commits on main.' >&2
                 exit 1
             fi
-            # Check the outgoing object, even with a dirty or unrelated checkout.
-            candidate="$(mktemp -d)"
-            rmdir "$candidate"
-            git worktree add --quiet --detach "$candidate" "$local_sha"
-            # Share the primary target dir: the candidate path is temporary.
-            if ! CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$(cd "$HOOK_DIR/.." && pwd)/target}" \
-                GITHOOKS_CANDIDATE_ROOT="$candidate" "$HOOK_DIR/pre-push" --full < /dev/null; then
-                git worktree remove --force "$candidate"
+            if [ "$(git rev-parse HEAD)" != "$local_sha" ]; then
+                echo 'Refuse main push: check out the commit that you push.' >&2
                 exit 1
             fi
-            git worktree remove --force "$candidate"
-            candidate=""
+            if ! git diff --quiet --ignore-submodules=none ||
+                ! git diff --cached --quiet --ignore-submodules=none; then
+                echo 'Refuse main push: commit or stash tracked changes.' >&2
+                exit 1
+            fi
+            main_head="$local_sha"
+            # Keep ignored artifacts. Never reset tracked files.
+            git clean -fd
+            # Git keeps nested repositories. Refuse instead of forcing removal.
+            git ls-files --others --exclude-standard -z > "$diff_paths_file"
+            nested_repo=0
+            while IFS= read -r -d '' path; do
+                if [ -d "$path" ] && [ -e "$path/.git" ]; then
+                    printf 'Untracked nested repository: %s\n' "$path" >&2
+                    nested_repo=1
+                fi
+            done < "$diff_paths_file"
+            if [ "$nested_repo" = 1 ]; then
+                echo 'Refuse main push: move or remove the directory by hand.' >&2
+                exit 1
+            fi
+            full=1
+            run_rust=1
+            run_ui=1
+            run_dashboard=1
+            run_tauri=1
             continue
         fi
         if [ "$remote_sha" = "$ZERO_SHA" ]; then
@@ -168,4 +183,13 @@ fi
 if [ "$run_tauri" = 1 ]; then
     (cd ui/src-tauri && githooks_run cargo fmt --all -- --check)
     (cd ui/src-tauri && githooks_run cargo check)
+fi
+
+if [ -n "$main_head" ]; then
+    if [ "$(git rev-parse HEAD)" != "$main_head" ] ||
+        ! git diff --quiet --ignore-submodules=none ||
+        ! git diff --cached --quiet --ignore-submodules=none; then
+        echo 'Refuse main push: HEAD or tracked files changed during checks. Commit or stash, then retry.' >&2
+        exit 1
+    fi
 fi

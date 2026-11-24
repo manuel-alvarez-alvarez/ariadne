@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-11-22
+updated: 2026-11-24
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
@@ -128,7 +128,14 @@ latency experiment belongs to spec 039; its local caches do not change rule 19.
    The validator accepts `chore(deps)` dependency updates, including breaking-change subjects.
    It reserves `deps` for `chore` and rejects an empty subject.
    The commit hook exempts actual merges. The reusable subject validator never exempts titles.
-   Main pushes check the outgoing commit in an isolated checkout with the full host-platform check set.
+   Main pushes run the full host-platform check set in the pushing worktree.
+   HEAD must equal the outgoing commit. Otherwise, check out the commit that you push.
+   Commit or stash tracked changes before checks.
+   The hook removes untracked paths with `git clean -fd`, prints them, and keeps ignored artifacts.
+   It names each remaining untracked nested repository and refuses the push before checks.
+   Move or remove each named directory by hand. The hook never forces deletion of nested repositories.
+   It never resets tracked files.
+   It refuses the push if HEAD or tracked files change during checks.
    Other branch pushes retain scoped checks. Require GitHub CI before GitHub squash merges.
    GitHub settings are versioned in `.github/settings/`. Only squash merging
    is on, with the PR title as the squash subject, and merged remote branches
@@ -405,7 +412,13 @@ fails the service step`).
 `crates/ariadne-daemon/src/resource.rs`, `crates/ariadne-daemon/src/main.rs`,
 `crates/ariadne-cli/src/commands/daemon.rs`.
 
-Local landing acceptance: `scripts/tests/githooks.sh main-push` proves full checks, candidate isolation, and failure rejection.
+Local landing acceptance: `scripts/tests/githooks.sh main-push` proves full checks in the pushing worktree, no second checkout, and failure rejection.
+`main-clean` proves untracked cleanup and ignored artifact retention.
+`main-nested` proves nested repository retention, named refusal, and no check execution.
+`main-dirty` and `main-staged` prove tracked change retention and refusal.
+`main-not-head` proves outgoing commit validation.
+`main-rewrite` proves history rewrite refusal.
+`main-moved` and `main-changed` prove checks cannot accept a changed worktree.
 `subject-validator` proves shared subject rules, including dependency updates through the validator and commit hook. `merge-message` proves the merge exception.
 `main-merge` rejects main merge commits. Scoped push cases prove task-branch behavior.
 
