@@ -270,7 +270,10 @@ async fn source_sessions_history_diffs_and_usage_resolve_the_worker_identity() {
     sh(path, &format!("git checkout -b {}", worker_task.branch));
     std::fs::write(path.join("reference-proof.txt"), "worker changes\n").unwrap();
     sh(path, "git add reference-proof.txt");
-    sh(path, "git commit -m 'test: add worker changes'");
+    sh(
+        path,
+        "git -c user.email=t@t -c user.name=t commit -m 'test: add worker changes'",
+    );
     p.far
         .store
         .set_task_worktree(&source.id, Some(&repository.path))
