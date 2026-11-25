@@ -7,6 +7,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom"
 import { api, type GoalDto, type Host, qk, unwrap } from "@/api"
 import { HostLabel } from "@/components/host-label"
 import { StatusBadge } from "@/components/status-badge"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
@@ -20,8 +21,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { When } from "@/components/when"
 import {
   answerQuestion,
+  choiceLabel,
   formFields,
   listQuestions,
+  questionSteps,
 } from "@/features/sessions/console/form-questions"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
@@ -534,11 +537,12 @@ function FormAnswers({
   })
   const asked = questions.data?.find((question) => question.id === questionId)
   if (!asked) return null
-  const [field, ...rest] = formFields(asked.schema)
+  const [step, ...rest] = questionSteps(formFields(asked.schema))
+  const field = step?.field
   if (!field || rest.length > 0 || field.kind.type !== "single") return null
   const settled = answer.isPending || answer.isSuccess
   return (
-    <section aria-label="Agent question" className="flex flex-col gap-1 px-3 pb-2 text-xs">
+    <section aria-label="Agent question" className="flex flex-col gap-1 px-3 pb-2 text-sm">
       {asked.message === "" ? null : (
         <p className="whitespace-pre-wrap text-foreground">{asked.message}</p>
       )}
@@ -553,7 +557,10 @@ function FormAnswers({
             title={choice.description}
             onClick={() => answer.mutate({ [field.key]: choice.value })}
           >
-            {choice.title}
+            {choiceLabel(choice.title)}
+            {choiceLabel(choice.title) !== choice.title ? (
+              <Badge className="text-sm">Recommended</Badge>
+            ) : null}
           </Button>
         ))}
       </fieldset>
