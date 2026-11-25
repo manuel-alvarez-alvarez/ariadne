@@ -2902,6 +2902,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/{id}/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put the body into the live session of the orchestrator or of the agent
+         *     of one column, on one task of this host.
+         * @description Each refusal is a bad request with the sentence the caller reads.
+         */
+        post: operations["tasks_post_to_session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{id}/pull-request": {
         parameters: {
             query?: never;
@@ -4626,6 +4647,15 @@ export interface components {
             telemetry_rollups_days: number;
             /** Format: int64 */
             telemetry_samples_days: number;
+        };
+        /**
+         * @description Body of `POST /v1/tasks/{id}/posts`: text for the live session of another
+         *     agent, with no stored row. The sender is the session header's.
+         */
+        PostToSessionRequest: {
+            body: string;
+            /** @description `orchestrator`, or the column of a staffed agent of the task. */
+            to: string;
         };
         /**
          * @description The work Ariadne does on one pull request as a goal of its own: one active
@@ -9422,6 +9452,42 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_post_to_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostToSessionRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
