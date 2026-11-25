@@ -109,15 +109,6 @@ pub(crate) mod render {
                 width,
                 color,
             ),
-            TranscriptItem::UserQuestion { meta, .. } => text_block(
-                meta,
-                "QUESTION",
-                DIM,
-                &item.question_lines().join("\n"),
-                Style::default(),
-                width,
-                color,
-            ),
             TranscriptItem::Error {
                 meta,
                 text,

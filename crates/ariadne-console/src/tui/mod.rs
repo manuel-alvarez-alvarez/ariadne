@@ -515,8 +515,8 @@ impl Console {
         self.pin_questions();
     }
 
-    /// Keep each open `wait_for_user` question of the session's own after
-    /// every later block (031): it waits on the user, so it draws in the live
+    /// Keep each open question of the session's own after every later
+    /// block (021): it waits on the user, so it draws in the live
     /// area right over the input, and the blocks written after it go above
     /// it and into the scrollback. A question that closes stays where it
     /// is then, after the blocks before its close. A session that has ended
@@ -1070,8 +1070,7 @@ impl Console {
                 TranscriptItem::PermissionQuestion { answer, .. } => answer.is_none(),
                 // An open question waits over the input (031). It is pinned
                 // after every block, so it holds back no other block.
-                TranscriptItem::UserQuestion { closed: None, .. }
-                | TranscriptItem::FormQuestion { closed: None, .. } => !self.has_ended(),
+                TranscriptItem::FormQuestion { closed: None, .. } => !self.has_ended(),
                 TranscriptItem::ToolCall { tool, .. } => {
                     self.view_running() && !transcript::tool_is_terminal(tool.status.as_deref())
                 }
@@ -1444,14 +1443,10 @@ fn absorb(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
     }
 }
 
-/// Whether a block is a question that waits for an answer: a
-/// `wait_for_user` one, or one the agent asked with its own tool.
+/// Whether a block is a question the agent asked with its own tool that
+/// waits for an answer.
 fn is_waiting(item: &TranscriptItem) -> bool {
-    matches!(
-        item,
-        TranscriptItem::UserQuestion { closed: None, .. }
-            | TranscriptItem::FormQuestion { closed: None, .. }
-    )
+    matches!(item, TranscriptItem::FormQuestion { closed: None, .. })
 }
 
 /// Where the run of open questions at the end of `items` starts.
@@ -1470,10 +1465,7 @@ fn waiting_at(items: &[TranscriptItem]) -> usize {
 /// close looks among the questions, for the one it closes, which then
 /// stays where it is.
 fn absorb_over_questions(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
-    if matches!(
-        event.kind.as_str(),
-        "agent_request.resolved" | "question.resolved"
-    ) {
+    if event.kind == "question.resolved" {
         absorb(items, event);
         return;
     }
@@ -1487,8 +1479,7 @@ fn absorb_over_questions(items: &mut Vec<TranscriptItem>, event: &AgentEventDto)
     items.extend(asked);
 }
 
-/// Move each `wait_for_user` question from `from` on that waits for an
-/// answer after every other block, in its order. `pending` keeps pointing
+/// Move each question from `from` on that waits for an answer after every other block, in its order. `pending` keeps pointing
 /// at the prompts it pointed at.
 fn pin_questions(items: &mut Vec<TranscriptItem>, from: usize, pending: &mut VecDeque<usize>) {
     let mut pinned = Vec::new();

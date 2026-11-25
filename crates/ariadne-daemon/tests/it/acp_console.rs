@@ -2310,6 +2310,30 @@ async fn the_cancel_endpoint_is_in_the_openapi_document() {
     assert!(doc["paths"]["/v1/sessions/{id}/console/input"]["post"].is_object());
 }
 
+/// The `wait_for_user` request routes are gone: the OpenAPI document names
+/// none, and a call to one finds no route. The native question routes stay.
+#[tokio::test]
+async fn the_agent_request_routes_are_gone() {
+    let h = harness().await;
+    let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
+    let paths = doc["paths"].as_object().unwrap();
+    assert!(
+        paths.keys().all(|path| !path.contains("agent-requests")),
+        "{:?}",
+        paths.keys().collect::<Vec<_>>()
+    );
+    assert!(paths.contains_key("/v1/sessions/{id}/questions"));
+    let session = h.lone_session("no-requests").await;
+    let (status, _) = h
+        .send(crate::common::as_session(
+            &format!("/v1/sessions/{}/agent-requests", session.id),
+            &session.id,
+            serde_json::json!({"summary": "Pick a base"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 /// A session whose one turn sends `updates`, then ends normally. Whatever
 /// child it announces stays known to the session's agent for as long as the
 /// agent process runs, which is what lets the cancel route reach it after

@@ -588,8 +588,6 @@ it leaves nothing to delete.
   `acp_runtime.rs::reconnect_keeps_a_subagent_announced_in_an_earlier_turn`.
 - The console retains the command list from completed turns:
   `acp_runtime.rs::reconnect_restores_commands_offered_in_a_completed_turn`.
-- Turn identity preserves the question raised by the current turn:
-  `acp_runtime.rs::reconnect_keeps_the_question_raised_by_the_current_turn_open`.
 - Transcript usage retains the resumed launch's initial baseline:
   `transcript_usage.rs::reconnect_keeps_the_resumed_launchs_original_transcript_baseline`.
 - Recovery distinguishes unanswered prompts, stored permission answers, and unprocessed prompt responses:

@@ -7,7 +7,6 @@
 
 mod acp_catalogs;
 mod acp_registry;
-mod agent_requests;
 mod agents;
 mod ai_permissions;
 mod attention;
@@ -40,7 +39,6 @@ mod usage;
 mod webhooks;
 mod workflows;
 
-pub use agent_requests::{AgentRequest, ClaimSettlement};
 pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;
 pub use dashboards::NewDashboard;

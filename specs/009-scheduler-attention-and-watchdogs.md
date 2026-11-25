@@ -244,16 +244,11 @@ the ACP runtime that takes a prompt (021).
     window (rule 32), so its session is retired and the seat is filled, or the
     death counted, without a tick or a window end. An agent that a kill or a
     relaunch took down sends no such wake: the daemon did that itself.
-43. An agent between turns with a pending `wait_for_user` request (031 rule
-    11) is waiting on the user's answer, as an idle planning orchestrator is
-    (rule 31). It is never nudged, never flagged stalled and never
-    relaunched. The watchdog reads the request row, since the question sets
-    no attention reason. Between turns is the test of rule 11: the row reads
-    idle, or the runtime says no turn is in flight. A turn that never ends
-    with a question pending is still flagged and relaunched. Once the
-    request is answered, withdrawn or expired, the quiet clock applies again.
+43. No pending `wait_for_user` request shelters an agent from the quiet
+    clock: Ariadne holds none (031 rule 12). Rule 45 answers for an agent
+    that waits on its own open question.
 44. An agent between turns whose latest message to the orchestrator (018)
-    has not reached it waits on the orchestrator, as rule 43's agent waits
+    has not reached it waits on the orchestrator, as rule 45's agent waits
     on the user. It is never nudged, never flagged stalled and never
     relaunched: an orchestrator down for hours on a usage limit does not
     make the agents that asked it wedged. Once the message is delivered,
@@ -316,12 +311,6 @@ the ACP runtime that takes a prompt (021).
   of that task resumes the same session with its relaunches back, so its
   next silence is relaunched, not failed
   (`::a_retried_task_gets_its_relaunches_back`).
-- An idle agent with a pending question is not nudged, flagged or
-  relaunched past the relaunch threshold, and once the question is
-  withdrawn the same silence is relaunched
-  (`::an_idle_agent_with_a_pending_question_is_left_alone_until_it_closes`).
-  An agent stuck inside a turn with a pending question is still relaunched
-  (`::an_agent_stuck_in_a_turn_with_a_pending_question_is_still_relaunched`).
 - An idle agent whose question has not reached the orchestrator is not
   nudged, flagged or relaunched, and one whose question was delivered a
   minute ago is measured from the delivery

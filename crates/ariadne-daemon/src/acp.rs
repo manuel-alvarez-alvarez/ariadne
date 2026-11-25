@@ -272,13 +272,6 @@ struct Inner {
     /// long as the last one already held it, never on anything of its
     /// own.
     goal_attention: Arc<tokio::sync::Mutex<()>>,
-    /// Serializes every change of an agent request with the event that
-    /// records it (031): an open and its `agent_request` event, and each
-    /// close — an answer, a withdrawal, a turn's expiry — and its
-    /// `agent_request.resolved` event. No close can then land between a
-    /// request's row and its opening event, so a replay never meets a
-    /// resolution before the request it closes.
-    agent_requests: tokio::sync::Mutex<()>,
 }
 
 /// The branch one session works on, shared between the runtime and the
@@ -315,10 +308,6 @@ impl Drop for LaunchGate {
     }
 }
 
-/// The `prompt_kind` of the prompt that carries a user's answer to an agent
-/// request (031).
-const ANSWER_DELIVERY: &str = "answer_delivery";
-
 /// Where a prompt came from, as `user_prompt_submit` reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum PromptSource {
@@ -349,10 +338,6 @@ struct Prompt {
     /// The lifecycle kind of a daemon prompt that has one, recorded as
     /// `prompt_kind` on `user_prompt_submit`.
     kind: Option<PromptKind>,
-    /// The agent request (031) this prompt delivers the answer to, recorded
-    /// as `request_id` on `user_prompt_submit` beside the `prompt_kind`
-    /// `answer_delivery`.
-    answers: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -373,8 +358,7 @@ pub(crate) enum Delivery {
     Step(String),
     /// An agent message, by id (018).
     Message(String),
-    /// A post (039), by a one-off id. It has no row to claim, and its turn
-    /// ends no pending request of the session: a post answers nothing.
+    /// A post (039), by a one-off id. It has no row to claim.
     Post(String),
     /// The news of a pull request (026). Boxed: it carries two marks and a
     /// list, where a message carries an id.
@@ -483,9 +467,6 @@ struct Turn {
     /// A load replay: keep the first transcript, skip later copies.
     replay: Option<bool>,
     running: bool,
-    /// The prompt this turn represents, while its `wait_for_user` calls can
-    /// mark their requests as current.
-    agent_request_turn_id: Option<String>,
     /// The agent's own session id, as the turn's events name it.
     agent_session: Option<String>,
     /// The run of chunks being written. The next thing the agent reports
@@ -726,7 +707,6 @@ impl AcpRuntime {
                 portable_config: None,
                 failure_diagnosis: None,
                 goal_attention: Arc::new(tokio::sync::Mutex::new(())),
-                agent_requests: tokio::sync::Mutex::new(()),
             }),
         }
     }
@@ -1210,7 +1190,6 @@ impl AcpRuntime {
             source: PromptSource::Daemon,
             delivery,
             kind,
-            answers: None,
         });
         if sent.is_err()
             && let Some(key) = &key
@@ -1326,42 +1305,6 @@ impl AcpRuntime {
                 source: PromptSource::Console,
                 delivery: None,
                 kind: None,
-                answers: None,
-            })
-            .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
-    }
-
-    /// Hold while an agent request changes and its event is recorded.
-    pub(crate) async fn agent_request_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.inner.agent_requests.lock().await
-    }
-
-    /// Queue `text` as a console prompt, whatever else the agent waits on:
-    /// the answer to a question (031) is never the reply to a permission.
-    ///
-    /// `answers` names the request the text answers; the prompt's event
-    /// carries it as `request_id`, so a reader tells it from typed input.
-    pub(crate) fn send_prompt_input(
-        &self,
-        session_id: &str,
-        text: String,
-        answers: Option<String>,
-    ) -> Result<()> {
-        let prompts = {
-            let running = self.inner.running.lock().expect("acp registry lock");
-            running
-                .get(session_id)
-                .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?
-                .prompts
-                .clone()
-        };
-        prompts
-            .send(Prompt {
-                text,
-                source: PromptSource::Console,
-                delivery: None,
-                kind: None,
-                answers,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
@@ -1434,20 +1377,6 @@ impl AcpRuntime {
             }
         };
         questions.answer(question_id, result)
-    }
-
-    /// The turn whose `wait_for_user` call the session is making now. A
-    /// request outside a live prompt has no turn marker and is closed by the
-    /// next one that ends.
-    pub(crate) async fn agent_request_turn_id(&self, session_id: &str) -> Option<String> {
-        let turn = self
-            .inner
-            .running
-            .lock()
-            .expect("acp registry lock")
-            .get(session_id)
-            .map(|agent| agent.turn.clone())?;
-        turn.lock().await.agent_request_turn_id.clone()
     }
 
     /// Cancel the turn in flight: ACP `session/cancel`, sent while the
@@ -3642,7 +3571,6 @@ async fn run_protocol(
                 source: PromptSource::Daemon,
                 delivery: None,
                 kind: None,
-                answers: None,
             });
         if let Some(delivery) = &prompt.delivery {
             rpc.in_flight.claim(delivery.clone());
@@ -4192,7 +4120,6 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     {
         let mut turn = rpc.turn.lock().await;
         turn.running = true;
-        turn.agent_request_turn_id = Some(turn_id.clone());
         turn.agent_session = Some(session_id.to_string());
         turn.text = None;
         // A call the last turn left open is not this turn's to finish.
@@ -4207,11 +4134,7 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
                     "prompt": full,
                     "text": prompt.text,
                     "source": prompt.source.as_str(),
-                    "prompt_kind": match (&prompt.answers, prompt.kind) {
-                        (Some(_), _) => Some(ANSWER_DELIVERY),
-                        (None, kind) => kind.map(|kind| kind.as_str()),
-                    },
-                    "request_id": prompt.answers,
+                    "prompt_kind": prompt.kind.map(|kind| kind.as_str()),
                 }),
             )
             .await;
@@ -4262,32 +4185,6 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         }
         turn.running = false;
     }
-    let store = &rpc.sink.runtime.inner.store;
-    let requests = rpc.sink.runtime.inner.agent_requests.lock().await;
-    // A post answers nothing, so its turn leaves a pending request open.
-    let expired = if matches!(prompt.delivery, Some(Delivery::Post(_))) {
-        Vec::new()
-    } else {
-        store
-            .finish_agent_request_turn(&rpc.sink.session_id, &turn_id)
-            .await?
-    };
-    // A console card closes with its request, so a replay never offers it.
-    for request_id in expired {
-        if let Err(error) = crate::http::agent_requests::record_resolution(
-            store,
-            &rpc.sink.session_id,
-            &request_id,
-            ariadne_api::attention::AgentRequestResolution::Expired,
-            None,
-        )
-        .await
-        {
-            tracing::warn!(session = %rpc.sink.session_id, error = ?error.body, "recording an expired request failed");
-        }
-    }
-    drop(requests);
-    rpc.turn.lock().await.agent_request_turn_id = None;
     let response = response?;
     if response
         .pointer("/_meta/jetbrains/air/sessionFailure/category")
@@ -4940,6 +4837,30 @@ mod tests {
 
     use ariadne_core::{Seat, TokenUsage};
     use serde_json::json;
+
+    /// A relay turn file that the last release wrote names the request its
+    /// prompt answered. It still loads, and the turn keeps its prompt.
+    #[test]
+    fn a_turn_file_of_the_last_release_still_loads() {
+        let written = json!({
+            "version": 1,
+            "launch_id": "launch",
+            "turn_id": "turn",
+            "prompt": {
+                "text": "Main",
+                "source": "Console",
+                "delivery": null,
+                "kind": null,
+                "answers": "01RQ"
+            },
+            "full": "Main",
+            "brief_after": null
+        });
+        let turn: super::PersistedTurn = serde_json::from_value(written).unwrap();
+        assert_eq!(turn.turn_id, "turn");
+        assert_eq!(turn.prompt.text, "Main");
+        assert_eq!(turn.prompt.source, super::PromptSource::Console);
+    }
 
     #[test]
     fn opencode_config_content_matches_the_acp_mcp_entry() {

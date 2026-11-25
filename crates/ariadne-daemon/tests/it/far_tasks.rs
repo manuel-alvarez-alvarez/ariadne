@@ -2224,43 +2224,6 @@ async fn a_far_message_made_while_away_is_delivered_once_after_reconnect() {
 }
 
 #[tokio::test]
-async fn a_far_agents_user_question_stays_in_the_hosts_attention_list() {
-    use ariadne_api::attention::AttentionListDto;
-
-    let c = Conversation::new().await;
-    start_on_far(&c.pair.far, &c.there.id).await;
-    c.pair
-        .far
-        .set_status(&c.agent, ariadne_core::SessionStatus::Idle)
-        .await;
-    let _: Value = c
-        .pair
-        .far
-        .json(
-            as_session(
-                &format!("/v1/sessions/{}/agent-requests", c.agent.id),
-                &c.agent.id,
-                json!({"summary": "Which account should I use?"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    let far: AttentionListDto = c.pair.far.get("/v1/attention").await;
-    let local: AttentionListDto = c.pair.local.get("/v1/attention").await;
-    assert!(
-        far.items
-            .iter()
-            .any(|item| item.summary == "Which account should I use?")
-    );
-    assert!(
-        local
-            .items
-            .iter()
-            .all(|item| item.summary != "Which account should I use?")
-    );
-}
-
-#[tokio::test]
 async fn an_orchestrator_message_reaches_the_far_agent_as_a_turn() {
     use ariadne_core::SessionStatus;
     use ariadne_daemon::scheduler::{self, SchedEvent};
