@@ -434,7 +434,7 @@ Out: the daemon endpoints themselves (012).
     Each question occupies one step, in the console body font and size.
     The header shows its title or "Question", clock time, and position for multiple questions.
     Question tabs mark answered questions and allow navigation.
-    Markdown draws the message for one question and the field description for several.
+    Markdown draws the message and the field description for one question, and the field description for several.
     Large numbered choice rows show titles and descriptions.
     A case-insensitive "(Recommended)" title suffix becomes a Recommended badge.
     A single pick advances, or sends immediately on the last step.

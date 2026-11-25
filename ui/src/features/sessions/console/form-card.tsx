@@ -213,7 +213,9 @@ export function FormCard({
             </nav>
           ) : null}
           <Markdown>
-            {steps.length === 1 ? question.message : (field?.description ?? question.message)}
+            {steps.length === 1
+              ? [question.message, field?.description].filter(Boolean).join("\n\n")
+              : (field?.description ?? question.message)}
           </Markdown>
           <form
             className="mt-3 flex flex-col gap-2"

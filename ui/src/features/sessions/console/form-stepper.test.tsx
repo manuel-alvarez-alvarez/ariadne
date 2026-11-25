@@ -129,6 +129,7 @@ it("uses the message for one question and sends its choice immediately", async (
     },
   } as typeof schema)
   screen.getByText("Please answer the following questions.")
+  screen.getByText("storage")
   expect(screen.queryByText("1 of 1")).toBeNull()
   fireEvent.click(screen.getByRole("button", { name: /SQLite/ }))
   await waitFor(() =>
