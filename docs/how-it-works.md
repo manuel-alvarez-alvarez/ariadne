@@ -67,13 +67,10 @@ the item shape and the producers that fill it.
 
 When an agent needs a human decision, it asks with the question tool of
 its own client: the question, the options to pick from, the option it
-recommends first, and why. Needs attention shows the question and the agent console.
-In Ariadne Desktop, the console draws the question as a card: click an option
-to answer at once, or type an answer of your own. In the terminal, run the
-listed `ariadne attach <session-id>` command, then type an option's number or
-your own answer. Your input answers the newest open question of that session alone.
+recommends first, and why. Needs attention shows the question and the agent
+console.
 
-An agent can also ask with its own question tool: `AskUserQuestion` in
+The question tool is `AskUserQuestion` in
 Claude, `request_user_input` in Codex, or `question` in opencode. Ariadne
 holds the question open until you answer it, in every permission mode, and
 Needs attention lists it with its session's console. In the terminal, run

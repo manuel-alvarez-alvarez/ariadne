@@ -387,12 +387,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   No skill repeats any of it
   (`skill_tests/template.rs::each_rule_is_stated_in_exactly_one_briefing`).
 - The quiet nudge says this is not a new request, to check whether the work
-  is done, to make the call that ends the column or go on, to ask an open
-  question again, and to write no reply about the nudge; the stop rule has
-  the agent seat text as its one owner
-  (`defaults.rs::the_quiet_nudge_says_five_things_and_the_stop_rule_has_one_owner`).
-  The orchestrator nudge says to ask an open question again too, beside
-  the conversation and the goal under way
+  is done, to make the call that ends the column or go on, and to write no
+  reply about the nudge; the stop rule has the agent seat text as its one
+  owner
+  (`defaults.rs::the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner`).
+  The orchestrator nudge does not say to ask an open question again. It
+  fits the conversation and the goal under way
   (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`).
 - `coding` adds a new commit on a return and amends nothing, and no skill
   divides a task

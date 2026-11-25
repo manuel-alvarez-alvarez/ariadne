@@ -400,24 +400,22 @@ with the arrow keys or its number key. The rest of the command draws in your
 terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
 When an agent asks you a question, it uses the question tool of its own
 client: the question, the options you can pick, the option it recommends
-first, and why. The console draws the question under `waiting for you`,
-with each option by its number and `(recommended)` and the reason beside the
-agent's pick:
+first, and why. The console draws the question as a form above the input,
+one field at a time, under `waiting for you`:
 
 ```
 ● waiting for you · Pick a base branch
   Which base branch should the task land on?
-    1. Main — Land on the trunk. (recommended) · The trunk is green.
+    1. Main (Recommended) — Land on the trunk. The trunk is green.
     2. Next
-  Type a number, or your own answer.
 ```
 
-Type a number, an option's id or its label to pick that option; the agent
-reads the option and what it means. Anything else you type is your own
-answer. Your input answers the newest open question alone, and that
-question then shows how it closed: `answered · <answer>`, `question
-withdrawn` or `question expired`. While a permission request is open, your
-input answers the permission and leaves the question open. 
+Pick a choice with the arrows or its number key, check several with Space,
+and press Enter to take a field. On a text field, type the answer in the
+box. The last Enter sends the answer, and Esc declines the question. Text you
+type on a choice field is a prompt: it waits for the turn to end and leaves
+the question open. While a permission request is open, your input answers
+the permission and leaves the question open.
 
 ```
 ─ permission ───────────────────────────────────
