@@ -254,6 +254,12 @@ export interface paths {
          *     tell a live daemon from a dead one, and a changed `started_at` to tell a
          *     restarted daemon from the one it was talking to.
          *
+         *     A source daemon names itself with `source`, its persistent daemon ID.
+         *     Its stream then also carries `source_post` frames (`SourcePostDto`): the
+         *     posts of worker agents to the orchestrator of that source (039). A post
+         *     goes on the newest open stream of the source alone, at once, and no stream
+         *     gets it again.
+         *
          *     A client that falls too far behind loses events. It is never left silently
          *     stale: the daemon sends a final `resync` event (`{"missed": n}`) and closes
          *     the connection, so an `EventSource` reconnects and takes the refetch path
@@ -2219,6 +2225,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/remote-tasks/{id}/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put a post of the source orchestrator into the live session of the agent
+         *     of one column of a worker-protocol task on this worker. The worker applies
+         *     the rules of a local post.
+         */
+        post: operations["tasks_post_from_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/remote-tasks/{id}/retry-dependency": {
         parameters: {
             query?: never;
@@ -2648,6 +2675,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The questions the session's agent waits on, oldest first, each with the
+         *     form the agent sent, unchanged.
+         */
+        get: operations["sessions_list_questions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/questions/{question_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer one question: `accept` with the form content, `decline` or
+         *     `cancel`. The agent reads it as the result of its request. One answer
+         *     closes the question, and a second is refused.
+         */
+        post: operations["sessions_answer_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/resume": {
         parameters: {
             query?: never;
@@ -2913,7 +2981,8 @@ export interface paths {
         put?: never;
         /**
          * Put the body into the live session of the orchestrator or of the agent
-         *     of one column, on one task of this host.
+         *     of one column, on one task of this host or a worker-protocol task on
+         *     another.
          * @description Each refusal is a bad request with the sentence the caller reads.
          */
         post: operations["tasks_post_to_session"];
@@ -3382,6 +3451,14 @@ export interface components {
             option_id?: string | null;
             /** @description The answer the user typed. */
             text?: string | null;
+        };
+        /**
+         * @description Body of `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+         *     `content` is present with `accept` only.
+         */
+        AnswerQuestionRequest: {
+            action: components["schemas"]["QuestionAction"];
+            content?: Record<string, never> | null;
         };
         /**
          * @description Body of
@@ -4838,6 +4915,25 @@ export interface components {
             version?: string | null;
         };
         /**
+         * @description What the person did with a question, as ACP names it.
+         * @enum {string}
+         */
+        QuestionAction: "accept" | "decline" | "cancel";
+        /**
+         * @description One open question an agent asks with ACP `elicitation/create` in form
+         *     mode, as `GET /v1/sessions/{id}/questions` lists it (021).
+         */
+        QuestionDto: {
+            created_at: string;
+            id: string;
+            /** @description The agent's own text over the form. */
+            message: string;
+            /** @description The `requestedSchema` of the ACP request, unchanged. */
+            schema: Record<string, never>;
+            /** @description The Ariadne session whose agent asks. */
+            session_id: string;
+        };
+        /**
          * @description One learned permission to write whole, as another daemon pushes it (037).
          *     A row with the same repository, tool name, level and key keeps its id and
          *     `created_at`, and takes everything else from the request.
@@ -4855,6 +4951,17 @@ export interface components {
             target: components["schemas"]["LearnedPermissionTarget"];
             tool_call: unknown;
             tool_name: string;
+        };
+        /**
+         * @description Body of `POST /v1/remote-tasks/{id}/posts`: a post of the source
+         *     orchestrator to a column of a worker-protocol task on this worker.
+         */
+        RemotePostRequest: {
+            body: string;
+            /** @description The persistent daemon ID of the source that sends the post. */
+            source_daemon_id: string;
+            /** @description The column of a staffed agent of the task. */
+            to: string;
         };
         /** @description Explicit protocol negotiation, independent of application version. */
         RemoteTaskProtocol: {
@@ -5220,6 +5327,18 @@ export interface components {
             description: string;
             goal_id: string;
             title: string;
+        };
+        /**
+         * @description The `source_post` frame of `GET /v1/events/stream?source=…`: a post of a
+         *     worker agent to the orchestrator of its source goal. The worker sends it
+         *     on one open stream of that source, live, and never again.
+         */
+        SourcePostDto: {
+            body: string;
+            /** @description The column of the sender. */
+            column: string;
+            id: string;
+            task_id: string;
         };
         /**
          * @description What a step waits for before the next one may start: the author's commit,
@@ -6096,6 +6215,12 @@ export interface operations {
                 goal?: string | null;
                 /** @description Only events belonging to this task. */
                 task?: string | null;
+                /**
+                 * @description The persistent daemon ID of a source daemon that follows this stream.
+                 *     The stream also carries `source_post` frames (`SourcePostDto`): the
+                 *     posts of worker agents to the orchestrator of that source.
+                 */
+                source?: string | null;
             };
             header?: never;
             path?: never;
@@ -6103,7 +6228,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. */
+            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. A stream with `source` also carries `source_post` (SourcePostDto). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8099,6 +8224,42 @@ export interface operations {
             };
         };
     };
+    tasks_post_from_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemotePostRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     tasks_retry_dependency: {
         parameters: {
             query?: never;
@@ -8899,6 +9060,76 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_list_questions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_answer_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description The answer was sent to the agent */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -221,7 +221,11 @@ async fn route(
     let Some(reference) = state.store.source_task_reference(id).await? else {
         return Ok(next.run(request).await);
     };
-    if suffix == "messages" || suffix.is_empty() && request.method() == axum::http::Method::GET {
+    // A post keeps the rules of 039, and its route sends it to the worker.
+    if suffix == "messages"
+        || suffix == "posts"
+        || suffix.is_empty() && request.method() == axum::http::Method::GET
+    {
         return Ok(next.run(request).await);
     }
     let ctx = super::caller::call_ctx(&state.store, request.headers()).await?;

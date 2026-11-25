@@ -23,6 +23,7 @@ mod logs;
 mod permissions;
 mod pins;
 mod posts;
+pub(crate) use posts::agent_sender;
 mod pull_requests;
 mod query;
 mod questions;
@@ -100,6 +101,9 @@ pub struct AppState {
     /// the once check through the forge call, so two replies racing for the
     /// same comment cannot both read it unanswered before either is stored.
     pub reply_locks: pull_requests::ReplyLocks,
+    /// The open event streams of source daemons, which carry the posts of
+    /// worker agents to the source orchestrator (039).
+    pub source_posts: crate::source_posts::SourcePosts,
 }
 
 impl AppState {
@@ -177,7 +181,7 @@ impl AppState {
         tasks::create, tasks::list, tasks::get, tasks::update,
         remote_tasks::protocol, remote_tasks::create, remote_tasks::authorize, remote_tasks::dependency_failure, remote_tasks::retry_dependency,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        channel::list_task_messages, channel::post_task_message, posts::post_to_session,
+        channel::list_task_messages, channel::post_task_message, posts::post_to_session, posts::post_from_source,
         goals::list_goal_messages, goals::post_goal_message, channel::diff,
         channel::open_pull_request, steps::complete, steps::fail,
         sessions::list,
@@ -196,7 +200,7 @@ impl AppState {
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
-        ariadne_api::stream::HeartbeatDto,
+        ariadne_api::stream::HeartbeatDto, ariadne_api::messages::SourcePostDto,
         ariadne_api::hosts::HostColor, hosts::CreateHost, hosts::PatchHost,
         ariadne_api::hosts::HostDto, ariadne_api::hosts::HostKind, ariadne_api::hosts::HostStatus,
         ariadne_api::hosts::ConfigSyncDto, ariadne_api::hosts::PortableConfigDto,
@@ -443,6 +447,7 @@ pub fn router(state: AppState) -> Router {
             get(channel::list_task_messages).post(channel::post_task_message),
         )
         .route("/v1/tasks/{id}/posts", post(posts::post_to_session))
+        .route("/v1/remote-tasks/{id}/posts", post(posts::post_from_source))
         .route(
             "/v1/tasks/{id}/relay-message",
             post(channel::relay_task_message),

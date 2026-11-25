@@ -37,6 +37,12 @@ use ariadne_api::stream::{DomainEvent, EventStreamQuery, ResyncDto};
 /// tell a live daemon from a dead one, and a changed `started_at` to tell a
 /// restarted daemon from the one it was talking to.
 ///
+/// A source daemon names itself with `source`, its persistent daemon ID.
+/// Its stream then also carries `source_post` frames (`SourcePostDto`): the
+/// posts of worker agents to the orchestrator of that source (039). A post
+/// goes on the newest open stream of the source alone, at once, and no stream
+/// gets it again.
+///
 /// A client that falls too far behind loses events. It is never left silently
 /// stale: the daemon sends a final `resync` event (`{"missed": n}`) and closes
 /// the connection, so an `EventSource` reconnects and takes the refetch path
@@ -50,13 +56,20 @@ use ariadne_api::stream::{DomainEvent, EventStreamQuery, ResyncDto};
                        seconds. A lagging client gets a final `resync` event (ResyncDto) \
                        and the connection is closed. `task_branch_updated` (TaskBranchDto) \
                        comes from the daemon's watch on the task branch rather than from a \
-                       store write: it says a commit landed and the task's diff has moved.",
+                       store write: it says a commit landed and the task's diff has moved. \
+                       A stream with `source` also carries `source_post` (SourcePostDto).",
         content_type = "text/event-stream", body = DomainEvent)))]
 pub(super) async fn stream(
     State(state): State<AppState>,
     Query(q): Query<EventStreamQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (goal, task) = (q.goal, q.task);
+    // Open before the stream returns, so a post sent once the source holds
+    // this stream finds it.
+    let posts = q
+        .source
+        .as_deref()
+        .map(|source| state.source_posts.open(source));
     // Not a `DomainEvent`: like `resync`, it describes the stream and the
     // daemon behind it, not a change in the daemon's state. No `id` either —
     // it is the same frame over and over, and one that never moves says
@@ -85,5 +98,17 @@ pub(super) async fn stream(
             Some(sse::identified_event("resync", ResyncDto { missed }))
         },
     );
-    sse::respond_alive(hello.chain(events), beat)
+    let posts = futures_util::stream::unfold(posts, |posts| async move {
+        let (open, mut rx) = posts?;
+        let post = rx.recv().await?;
+        let event = sse::identified_event("source_post", post);
+        Some((Ok(event), Some((open, rx))))
+    });
+    // The domain events end the stream: a `None` after their last frame
+    // ends the posts with them.
+    let events = events.map(Some).chain(once(async { None }));
+    let merged = futures_util::stream::select(events, posts.map(Some))
+        .take_while(|frame| std::future::ready(frame.is_some()))
+        .filter_map(std::future::ready);
+    sse::respond_alive(hello.chain(merged), beat)
 }

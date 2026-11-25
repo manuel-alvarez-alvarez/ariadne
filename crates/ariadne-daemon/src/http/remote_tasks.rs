@@ -11,7 +11,7 @@ use ariadne_store::{GoalStep, NewRemoteTask};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 
-fn source_only(headers: &HeaderMap) -> ApiResult<()> {
+pub(super) fn source_only(headers: &HeaderMap) -> ApiResult<()> {
     if headers.contains_key(ariadne_api::SESSION_HEADER) {
         return Err(ApiError::forbidden(
             "an agent session cannot control remote drafts",

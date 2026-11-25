@@ -673,6 +673,7 @@ fn watch_path(goal: Option<&str>) -> Result<String> {
         &EventStreamQuery {
             goal: goal.map(str::to_string),
             task: None,
+            source: None,
         },
     )
 }

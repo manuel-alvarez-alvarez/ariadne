@@ -6,6 +6,7 @@ areas: [api, daemon, mcp]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/posts.rs
+  - crates/ariadne-daemon/tests/it/far_tasks/posts.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/mcp.rs
@@ -14,15 +15,17 @@ tests:
 # Posts to a session
 
 One agent, or the orchestrator, puts text straight into the live session of
-another, on one host, and nothing is stored.
+another, on one host or across hosts, and nothing is stored.
 
 ## Scope
 
 In: what a post is, who may send and receive one, what the recipient reads,
-and each refusal.
+each refusal, and posts between the source orchestrator and the agent of a
+worker-protocol task on another host (037 rule 101).
 
-Out: the stored message channel (018), posts to and from a task on another
-host, and the session rules, prompts and skills.
+Out: the stored message channel (018) and its relay across hosts (037 rule
+108), a forward for legacy mirror tasks (037 rules 96 to 100), questions to
+the user across hosts, and the session rules, prompts and skills.
 
 ## Behavior
 
@@ -48,7 +51,7 @@ host, and the session rules, prompts and skills.
 8. The daemon refuses a post when the recipient has no live session, and says
    so.
 9. The daemon refuses a post to a column that the task does not staff, to a
-   task of another goal, and to a task on another host. Each refusal says why.
+   task of another goal, and to a legacy mirror task. Each refusal says why.
 10. A refusal for a wrong address names each address that works: the
     orchestrator and the current column, each only while its session is
     live, and it says so where none works, never an address that cannot receive. Each refusal
@@ -58,6 +61,37 @@ host, and the session rules, prompts and skills.
 12. The tool description permits a question, an answer or a blocker report
     only. It tells the sender to end its turn after a question, because the
     answer arrives as a new turn.
+
+### Across hosts
+
+13. A post of the source orchestrator to a column of a worker-protocol task
+    goes to the worker, at `POST /v1/remote-tasks/{id}/posts` with
+    `{"source_daemon_id", "to", "body"}` and no session header. The source
+    refuses the post while the host of the task is not `ready`, and says so.
+14. The worker applies rules 1 and 4 to 10 to that post, with the source
+    orchestrator as the sender. The prompt names `your orchestrator` and the
+    answer address `orchestrator`. A refusal of the worker returns to the
+    orchestrator as a bad request with the sentence of the worker.
+15. The source opens the event stream of each `ready` host with `source` set
+    to its persistent daemon ID (012 rule 5). While that stream is open, the
+    worker sends each post of its agents to `orchestrator` as a `source_post`
+    frame (`{"id", "task_id", "column", "body"}`) on the newest open stream
+    of the source, and on no other.
+16. The worker refuses a post to `orchestrator` when no stream of the source
+    is open, and says so. Its refusals name `orchestrator` as an address only
+    while a stream of the source is open.
+17. The source puts each `source_post` frame into the live orchestrator
+    session of the source goal as the next turn. The prompt names the column
+    of the sender, and the id and the title of the task as the source goal
+    knows it (037 rule 105). The answer address is that column and task.
+18. No daemon holds a post for a later stream or a later `ready`. A post
+    arrives one time at most: a reconnect or a `resync` of the stream does
+    not deliver it again. A frame for an orchestrator with no live session
+    is dropped.
+19. A legacy mirror task refuses each post in the two directions: the source
+    refuses a post to it, and its host refuses a post of its agent to
+    `orchestrator`. Each refusal says that a post does not cross to a mirror
+    and names `send_message`.
 
 ## Acceptance criteria
 
@@ -85,13 +119,37 @@ host, and the session rules, prompts and skills.
   (`tools.rs::post_to_session_posts_to_the_posts_route_and_says_to_end_the_turn`).
 - The seats list the tool as rule 2 says
   (`mcp.rs::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`).
+- Rules 13 and 14: the source orchestrator's post reaches the worker column as
+  a turn and writes no row
+  (`far_tasks::posts::the_source_orchestrator_posts_to_a_worker_column_as_a_turn`),
+  and the worker refuses a column that is not current, not staffed or not
+  live with its sentence
+  (`::the_worker_refuses_a_post_by_the_local_rules_with_its_sentence`).
+- Rules 13 and 18: the source refuses a post while the host is not `ready`
+  (`::the_source_refuses_a_post_while_the_host_is_not_ready`).
+- Rules 15 and 17: a worker agent's post reaches the source orchestrator as a
+  turn that names its column, task id and title, and writes no row
+  (`::a_worker_agent_posts_to_the_source_orchestrator_as_a_turn`).
+- Rules 16 and 18: the worker refuses a post with no open stream of the
+  source, and does not hold it for the stream that opens later
+  (`::the_worker_refuses_a_post_while_no_stream_of_the_source_is_open`).
+- Rule 18: a reconnect of the stream delivers a post no second time
+  (`::a_reconnect_of_the_stream_delivers_a_post_no_second_time`).
+- Rule 19: the source refuses a post to a legacy mirror task
+  (`::the_source_refuses_a_post_to_a_legacy_mirror_task`), and the host of a
+  legacy mirror task refuses a post of its agent to `orchestrator`
+  (`posts.rs::a_post_from_a_legacy_mirror_task_to_its_orchestrator_is_refused`).
 
 ## Known gap
 
-A task on another host is refused. Posts across hosts are a later task.
+A `source_post` frame for a source orchestrator with no live session is
+dropped, and the worker agent is not told, because a worker has no call to
+its source.
 
 ## Sources
 
 `crates/ariadne-daemon/src/http/posts.rs`,
+`crates/ariadne-daemon/src/source_posts.rs`,
+`crates/ariadne-daemon/src/far/posts.rs`,
 `crates/ariadne-daemon/src/agents/prompts.rs` (`post_briefing`),
 `crates/ariadne-cli/src/commands/mcp/tools.rs`.

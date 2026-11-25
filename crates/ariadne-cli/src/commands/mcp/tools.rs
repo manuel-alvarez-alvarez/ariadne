@@ -1016,7 +1016,7 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Send one message. Ask a question, answer one, or report a blocker. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
+        description = "Send one message. Ask a question, answer one, or report a blocker. Send no thanks or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
     )]
     async fn send_message(
         &self,
@@ -1026,7 +1026,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Post text into the live session of the orchestrator or of the agent of the current column, on this host. Post a question, an answer, or a blocker report only. Send no confirmations, thanks, or plans. After a question, end your turn. The answer arrives as a new turn."
+        description = "Post text into the live session of the orchestrator or of the agent of the current column. It also reaches a task on another host, but no legacy mirror. Post a question, an answer, or a blocker report only. Send no thanks or plans. After a question, end your turn. The answer arrives as a new turn."
     )]
     async fn post_to_session(
         &self,

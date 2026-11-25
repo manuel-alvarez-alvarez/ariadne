@@ -231,4 +231,8 @@ pub struct EventStreamQuery {
     pub goal: Option<String>,
     /// Only events belonging to this task.
     pub task: Option<String>,
+    /// The persistent daemon ID of a source daemon that follows this stream.
+    /// The stream also carries `source_post` frames (`SourcePostDto`): the
+    /// posts of worker agents to the orchestrator of that source.
+    pub source: Option<String>,
 }

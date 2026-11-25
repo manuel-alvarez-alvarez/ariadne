@@ -53,6 +53,30 @@ pub struct PostToSessionRequest {
     pub body: String,
 }
 
+/// Body of `POST /v1/remote-tasks/{id}/posts`: a post of the source
+/// orchestrator to a column of a worker-protocol task on this worker.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemotePostRequest {
+    /// The persistent daemon ID of the source that sends the post.
+    pub source_daemon_id: String,
+    /// The column of a staffed agent of the task.
+    pub to: String,
+    pub body: String,
+}
+
+/// The `source_post` frame of `GET /v1/events/stream?source=…`: a post of a
+/// worker agent to the orchestrator of its source goal. The worker sends it
+/// on one open stream of that source, live, and never again.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SourcePostDto {
+    pub id: String,
+    pub task_id: String,
+    /// The column of the sender.
+    pub column: String,
+    pub body: String,
+}
+
 /// What `GET /v1/tasks/{id}/messages` and `GET /v1/goals/{id}/messages` narrow
 /// by.
 #[derive(Debug, Clone, Default, Deserialize, utoipa::IntoParams)]
