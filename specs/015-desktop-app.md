@@ -509,6 +509,7 @@ Out: the daemon endpoints themselves (012).
     Labels and icon shapes distinguish roles without color alone.
     Developer prompts have no individual
     fold control or saved fold preference. Thoughts retain individual folds.
+    Questions (rule 22f) use a purple marker and subtle background, open or closed, and never fold.
     Entries have no colored left borders. Secondary icons share the same horizontal inset and align with the first text line.
     Thought summaries have no additional padding inside their activity row.
     Conversation messages have 12px separation; activity rows use 4px gaps and compact padding.
@@ -542,7 +543,7 @@ Out: the daemon endpoints themselves (012).
 23a1. Conversation and tool details scroll independently.
     Embedded and expanded views omit the static Conversation strip and its bottom border.
     The transcript retains role `log` and the accessible name `Console transcript`; history controls remain available. A message, a tool's
-    output, a command, a diff, a table and a thought grow
+    output, a command, a diff, a table, a thought and a question card grow
     with their content and wrap a wide line; none has an `overflow` or a
     `max-height` of its own. The composer keeps its own six-line cap.
 23a2. Code is a `CodeBlock` (`components/code-block.tsx`), in the Markdown
@@ -576,7 +577,9 @@ Out: the daemon endpoints themselves (012).
     shows only its last 3 rows. An activity row is an indented row: a tool,
     permission, thought, plan, note, subagent line, error or event row. A
     prompt and an agent message are conversation blocks and
-    never hide; they, the start of the view and its end bound a run. A run of
+    never hide; they, the start of the view and its end bound a run. A
+    question card draws after the transcript (rule 22f), outside every run,
+    and never hides. A run of
     3 rows or fewer shows all of them and no control. A longer run has, above
     its last 3 rows, a button `Show N earlier`, where N is the number of rows
     it hides (0 where every older row shows in place), with `aria-expanded`. A pending permission, an error and the
@@ -2411,6 +2414,10 @@ Out: the daemon endpoints themselves (012).
   `::leaves no stale entry when an echo takes a failed send's entry before its failure arrives`,
   `ui/src/features/sessions/console/session-console.test.tsx::takes back only the failed send when the same prompt is sent twice at once`,
   `::leaves nothing queued when the echo of the second send comes before the first send's failure`).
+- Open and closed questions have one purple question icon, no left border
+  and no fold, and grow with their content with no scroll area of their own
+  (rules 23a and 23a1)
+  (`ui/src/features/sessions/console/form-card.test.tsx::marks an open and a closed question with one purple icon, never folds it, and lets it grow`).
 - Role labels and tool status icons identify messages and activity
   (`ui/src/features/sessions/console/session-console.test.tsx::identifies prompts and tool states without left borders`).
 - The status row follows the input and replaces the keyboard-hint footer
