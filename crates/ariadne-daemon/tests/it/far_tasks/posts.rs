@@ -265,6 +265,29 @@ async fn the_source_tells_a_worker_agent_that_its_post_was_dropped() {
         1,
         "{pasted}"
     );
+
+    // A `resync` frame makes the source read the far tasks again. It makes no
+    // notice for a post it dropped before.
+    let refreshed = s.p.front.count("read task");
+    s.p.front.resync();
+    eventually(
+        TIMEOUT,
+        "the source to read the far tasks again",
+        async || s.p.front.count("read task") > refreshed,
+    )
+    .await;
+    worker_posts_to_orchestrator(&s, "Third try.").await;
+    eventually(TIMEOUT, "the third notice", async || {
+        s.p.far.prompted(&s.worker).contains("Third try.")
+    })
+    .await;
+    let pasted = s.p.far.prompted(&s.worker);
+    assert_eq!(
+        pasted.matches("Which fixture applies?").count(),
+        1,
+        "{pasted}"
+    );
+    assert_eq!(pasted.matches("Second try.").count(), 1, "{pasted}");
 }
 
 #[tokio::test]
