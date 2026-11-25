@@ -51,7 +51,7 @@ pub(crate) async fn create(
     if hint.lines().count() > 1 || hint.chars().count() > HINT_MAX_CHARS {
         return Err(ApiError::bad_request(format!(
             "the hint is one line of at most {HINT_MAX_CHARS} characters, not the question: \
-             call `wait_for_user` with a short hint, and put the question in its `question` field"
+             give a short hint, and put the question in its `question` field"
         )));
     }
     if let Some(question) = &request.question {

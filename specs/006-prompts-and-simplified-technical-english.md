@@ -112,15 +112,15 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    The launcher hands the index to the MCP server as `ARIADNE_SKILL_INDEX`.
    How each CLI is pointed at those files is 007.
 5. A rule every seat shares has one owner, and no other text repeats it:
-   - asking the user: the session rules, picked by seat, with a short form
-     in the `wait_for_user` description;
+   - asking the user: the session rules, picked by seat, with no tool
+     description repeats it;
    - working in the task's worktree and on the current column: the `agent`
      seat text alone; no column's skill repeats it;
    - planning the goal with the user, writing no code, and deciding no
      open point alone: the `orchestrator` seat text alone; the
      `orchestration` skill states its phases, never these three;
    - ending the turn after a call: the `complete_step`, `fail_step` and
-     `send_message` descriptions;
+     `post_to_session` descriptions;
    - how a check runs — in the foreground, split by crate, logged outside
      the worktree, its failures alone printed, never polled: the session
      rules. A skill says only which checks it runs: the checks of what it
@@ -184,13 +184,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    defaults rather than at a save. The kinds are the orchestrator's briefing,
    resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
    `AgentResume` (`ariadne_core::PromptKind`). `AgentResume`, the quiet nudge
-   of a column's agent (009), says five things only: this is not a new
+   of a column's agent (009), says four things only: this is not a new
    request, to check whether the work is done, to make the call that ends
-   the column or go on, to ask an open question again, and to write no
-   reply about the nudge itself. `OrchestratorResume` says to ask an open
-   question again too: either nudge starts a turn, and a turn that ends
-   without `wait_for_user` closes every question an earlier turn raised
-   (031 rule 12).
+   the column or go on, and to write no reply about the nudge itself.
+   `OrchestratorResume` does not say to ask an open question again.
 11. Default texts, shipped skills, workflow documents, session rules and tool
     descriptions use ASD-STE100 Simplified Technical English: one instruction
     to a sentence, the imperative for an instruction, the active voice, at

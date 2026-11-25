@@ -398,11 +398,11 @@ permission request, the console shows the call it asks about — its head line,
 the rest of the command or the diff under it — and then its choices; pick one
 with the arrow keys or its number key. The rest of the command draws in your
 terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
-When an agent asks you a question, it calls `wait_for_user` with a one-line
-hint and the question: its text, the options you can pick, the option it
-recommends, and why. The hint is what the Needs attention list shows. The
-console draws the question under `waiting for you · <hint>`, with each option
-by its number and `(recommended)` and the reason beside the agent's pick:
+When an agent asks you a question, it uses the question tool of its own
+client: the question, the options you can pick, the option it recommends
+first, and why. The console draws the question under `waiting for you`,
+with each option by its number and `(recommended)` and the reason beside the
+agent's pick:
 
 ```
 ● waiting for you · Pick a base branch
@@ -417,10 +417,7 @@ reads the option and what it means. Anything else you type is your own
 answer. Your input answers the newest open question alone, and that
 question then shows how it closed: `answered · <answer>`, `question
 withdrawn` or `question expired`. While a permission request is open, your
-input answers the permission and leaves the question open. The daemon
-refuses a hint over 100 characters or over more than one line. A later turn
-keeps a question only when it calls `wait_for_user` again with its hint.
-Otherwise, the turn ending ends the wait.
+input answers the permission and leaves the question open. 
 
 ```
 ─ permission ───────────────────────────────────

@@ -164,7 +164,7 @@ every other kebab-case word in it; the wire spells the same gate
    applying: a failed check — a hook that fails is one, never a moved base
    — that names a file of the task goes back to the previous column
    through `fail_step` with the check's output; a failed check that names
-   no file of the task goes to the orchestrator through `send_message`,
+   no file of the task goes to the orchestrator through `post_to_session`,
    and nothing lands; else the base moved — a push rejected as not a
    fast-forward, a `git diff --stat` that lists a file the task did not
    touch, or a fast-forward that fails — and the agent starts again from
@@ -359,8 +359,8 @@ every other kebab-case word in it; the wire spells the same gate
     and fixes every failure the request's own change causes in one batch;
     any other
     failure — the base, a flaky test, the forge — is fixed by nobody
-    here: the task's agent sends it to the orchestrator once through
-    `send_message`, and a keeper asks the user once (032). Repository
+    here: the task's agent posts it to the orchestrator once through
+    `post_to_session`, and a keeper asks the user once (032). Repository
     history rules choose its branch update, allowed inside a fix batch, for confirmed base conflicts or when news says the forge requires it, done
     before the batch's checks run: where they require a linear request
     branch in words it rebases; otherwise it merges. A rebase or merge
