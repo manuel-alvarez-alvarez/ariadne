@@ -183,7 +183,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     the code. It reads an area spec where the repository keeps one.
     It routes behavior, structure and prose to their proof before implementation.
     It sends contradictions with both readings and its pick to `orchestrator`
-    through `send_message`, then continues with that pick.
+    through `post_to_session`, then continues with that pick.
     It uses independent expected values and public-interface assertions that
     detect a breach of every required part of the claim.
     It runs each touched test file whole after focused checks.
@@ -195,8 +195,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     Its exclusions name `coding`, `spec-writing` and `research`.
     `research` cites a source for every fact and lists what it did not check.
     Its research report names what would change the recommendation.
-    It sends the full research report to the orchestrator through `send_message`.
-    The column report references the returned message ID.
+    It posts the full research report to the orchestrator with `post_to_session`.
     `spec-writing` writes the spec that later tasks build against,
     before its code exists: it reads the repository's spec format first,
     sends the orchestrator its open questions as one list with options and a

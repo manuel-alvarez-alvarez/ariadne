@@ -48,8 +48,6 @@ impl McpSeat {
     fn tools(&self) -> &'static [&'static str] {
         match self {
             McpSeat::Orchestrator => &[
-                "wait_for_user",
-                "withdraw_wait_for_user",
                 "get_task",
                 "create_task",
                 "update_task",
@@ -62,8 +60,6 @@ impl McpSeat {
                 "cancel_task",
                 "switch_session",
                 "complete_goal",
-                "send_message",
-                "read_messages",
                 "post_to_session",
             ],
             // The current column's agent moves the task with the two step
@@ -72,8 +68,6 @@ impl McpSeat {
             // too. None of them resolves a thread: the reviewer that opened
             // it does.
             McpSeat::Agent => &[
-                "wait_for_user",
-                "withdraw_wait_for_user",
                 "get_task",
                 "complete_step",
                 "fail_step",
@@ -85,8 +79,6 @@ impl McpSeat {
                 "get_comment",
                 "reply_comment",
                 "escalate_comment",
-                "send_message",
-                "read_messages",
                 "post_to_session",
             ],
             // No task tool and no message tool: the user reaches the
@@ -108,8 +100,6 @@ impl McpSeat {
             // session through its console. It resolves no thread and
             // submits no review: those are a review session's own (029).
             McpSeat::PullRequestKeeper => &[
-                "wait_for_user",
-                "withdraw_wait_for_user",
                 "get_pull_request",
                 "get_diff",
                 "list_comments",
@@ -236,19 +226,6 @@ impl AriadneMcp {
         Ok(format!("/v1/tasks/{task}{tail}"))
     }
 
-    /// The channel a message tool reads: the task it named, else this
-    /// session's own, else the goal.
-    ///
-    /// A goal has a channel of its own, and it is the orchestrator's inbox —
-    /// which is a session with no task, so a refusal for want of one would
-    /// leave the seat that reads that channel unable to read it.
-    fn channel_path(&self, named: Option<String>, tail: &str) -> Result<String, McpError> {
-        match named.or_else(|| self.task_id.clone()) {
-            Some(task) => Ok(format!("/v1/tasks/{task}{tail}")),
-            None => Ok(format!("/v1/goals/{}{tail}", self.goal()?)),
-        }
-    }
-
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, McpError> {
         self.client.get_json(path).await.map_err(to_mcp_err)
     }
@@ -259,16 +236,6 @@ impl AriadneMcp {
         body: &B,
     ) -> Result<serde_json::Value, McpError> {
         self.client.post_json(path, body).await.map_err(to_mcp_err)
-    }
-
-    /// `POST` a route whose success is a `204`: the daemon's withdrawal
-    /// route, for one, which has nothing to hand back once it has withdrawn
-    /// the request.
-    async fn post_no_content(&self, path: &str) -> Result<(), McpError> {
-        self.client
-            .send_no_content::<()>(http::Method::POST, path, None)
-            .await
-            .map_err(to_mcp_err)
     }
 }
 
@@ -318,31 +285,22 @@ fn drop_empty_fields(v: &mut serde_json::Value) {
 /// works its task alone, and asks only where the task cannot go on without
 /// the answer.
 ///
-/// An agent that does ask reaches the other agents through `send_message` —
-/// the seat's own playbook says so, so this rule names no channel and only
-/// says when to reach for one.
+/// Every seat asks with the question tool of its own client, and the rule
+/// names no client. A seat whose client has no such tool asks in its turn
+/// text. The rule names no Ariadne tool: Ariadne shows the question the seat
+/// asked, and the seat's own playbook says how it reaches another agent.
 ///
 /// Only the opening differs by seat: whether the seat asks at all, or asks
 /// only where its work cannot go on. The rest is one tail, written once, so
 /// a rewording reaches every seat and no copy goes stale.
-///
-/// The tail says what closes a question and what does not. It used to say
-/// "Write no text after the call" and "A turn that ends without the call
-/// ends the wait", and an orchestrator read the two together as "text ends
-/// the wait": it called `wait_for_user` three times for one question, then
-/// wrote the question out again as text. Claude Code ends every turn with
-/// text, and the console pins an open question above the input, so text
-/// after the call hides nothing. What does close a question is a later turn
-/// that ends without the call (the store's `finish_agent_request_turn`),
-/// and that is what the tail says now.
 fn ask_rule(seat: &McpSeat) -> String {
     let opening = match seat {
-        McpSeat::Orchestrator => "To ask the user, call",
+        McpSeat::Orchestrator => "To ask the user, use",
         McpSeat::Agent => {
-            "Ask the user only where the task cannot continue without a user answer. Call"
+            "Ask the user only where the task cannot continue without a user answer. Use"
         }
         McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper => {
-            "Ask the user only where the request cannot continue without a user answer. Call"
+            "Ask the user only where the request cannot continue without a user answer. Use"
         }
     };
     format!("{opening} {ASK_RULE_TAIL}")
@@ -350,7 +308,7 @@ fn ask_rule(seat: &McpSeat) -> String {
 
 /// What every seat is told about asking, after the opening [`ask_rule`]
 /// picks for it.
-const ASK_RULE_TAIL: &str = "`wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Then end the turn. One call in a turn keeps the question open. Do not use it for agent questions. A later turn that ends without the call closes it.";
+const ASK_RULE_TAIL: &str = "the question tool of your own client. If you have no such tool, ask in your turn text. Put the recommended option first. End its label with \"(Recommended)\". Give the reason in its description. Then end the turn.";
 
 /// How a seat that may keep or review a pull or merge request learns of its
 /// news: never by checking itself (026, 030). The orchestrator works no
@@ -616,8 +574,6 @@ pub(crate) mod tests {
             (
                 McpSeat::Orchestrator,
                 &[
-                    "wait_for_user",
-                    "withdraw_wait_for_user",
                     "get_task",
                     "create_task",
                     "update_task",
@@ -630,16 +586,12 @@ pub(crate) mod tests {
                     "cancel_task",
                     "switch_session",
                     "complete_goal",
-                    "send_message",
-                    "read_messages",
                     "post_to_session",
                 ][..],
             ),
             (
                 McpSeat::Agent,
                 &[
-                    "wait_for_user",
-                    "withdraw_wait_for_user",
                     "get_task",
                     "complete_step",
                     "fail_step",
@@ -651,8 +603,6 @@ pub(crate) mod tests {
                     "get_comment",
                     "reply_comment",
                     "escalate_comment",
-                    "send_message",
-                    "read_messages",
                     "post_to_session",
                 ][..],
             ),
@@ -672,8 +622,6 @@ pub(crate) mod tests {
             (
                 McpSeat::PullRequestKeeper,
                 &[
-                    "wait_for_user",
-                    "withdraw_wait_for_user",
                     "get_pull_request",
                     "get_diff",
                     "list_comments",
@@ -708,16 +656,12 @@ pub(crate) mod tests {
             "list_tasks",
             "open_pull_request",
             "post_to_session",
-            "read_messages",
             "reply_comment",
             "resolve_thread",
             "retry_task",
-            "send_message",
             "submit_review",
             "switch_session",
             "update_task",
-            "wait_for_user",
-            "withdraw_wait_for_user",
         ];
         assert_eq!(distinct_tools(), EVERY_TOOL);
         for gone in [
@@ -734,7 +678,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The agent of a column is listed its seventeen tools: the task, the
+    /// The agent of a column is listed its twelve tools: the task, the
     /// two step calls, the failure, the diff, the request its task opens and
     /// the request's six tools (013), and the two message tools. No seat
     /// word of the old pipeline names a seat, and no seat of a session with
@@ -752,7 +696,7 @@ pub(crate) mod tests {
             McpSeat::Agent,
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
-        assert_eq!(mcp.seat.tools().len(), 16);
+        assert_eq!(mcp.seat.tools().len(), 12);
         for tool in [
             "get_pull_request",
             "list_comments",
@@ -761,8 +705,6 @@ pub(crate) mod tests {
             "open_pull_request",
             "complete_step",
             "fail_step",
-            "wait_for_user",
-            "withdraw_wait_for_user",
         ] {
             assert!(mcp.allows(tool), "{tool} is the agent's");
         }
@@ -819,13 +761,7 @@ pub(crate) mod tests {
             ],
             "the pull request reviewer is listed eight tools"
         );
-        for tool in [
-            "get_task",
-            "submit_verdict",
-            "pick_winner",
-            "send_message",
-            "read_messages",
-        ] {
+        for tool in ["get_task", "submit_verdict", "pick_winner"] {
             assert!(!mcp.allows(tool), "{tool} is not its tool");
         }
         for word in ["approve", "merge"] {
@@ -840,8 +776,7 @@ pub(crate) mod tests {
     }
 
     /// A keeper pull request session (032) is listed ten tools:
-    /// `wait_for_user` and `withdraw_wait_for_user`, and eight of its own —
-    /// the request, its diff, its comments, one comment, a reply, the
+    /// eight tools of its own — the request, its diff, its comments, one comment, a reply, the
     /// escalation of a thread, the mark ready and the report. It has no task
     /// tool, no message tool, and nothing it is listed resolves a thread
     /// or submits a review: those are the reviewer seat's alone.
@@ -874,8 +809,6 @@ pub(crate) mod tests {
                 "get_pull_request",
                 "list_comments",
                 "reply_comment",
-                "wait_for_user",
-                "withdraw_wait_for_user",
             ],
             "the pull request keeper is listed ten tools"
         );
@@ -887,8 +820,6 @@ pub(crate) mod tests {
             "open_pull_request",
             "resolve_thread",
             "submit_review",
-            "send_message",
-            "read_messages",
         ] {
             assert!(!mcp.allows(tool), "{tool} is not its tool");
         }
@@ -1017,28 +948,8 @@ pub(crate) mod tests {
         assert!(description("list_tasks").contains("as a summary"));
         assert!(description("list_models").contains("models an agent can run on"));
         assert!(description("open_pull_request").contains("returns the URL"));
-        assert!(schema("send_message").contains(
-            "The whole message. Write it so that the recipient needs no follow-up question."
-        ));
-        assert!(description("wait_for_user").contains(
-            "Ask in `question`, with the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text."
-        ));
-        for sentence in [
-            "A later turn that ends without the call closes it.",
-            "Withdraw a pending question before you change it.",
-            "Returns its `id`.",
-        ] {
-            assert!(
-                description("wait_for_user").contains(sentence),
-                "wait_for_user and \"{sentence}\""
-            );
-        }
-        assert!(
-            !description("wait_for_user").contains("Write no text after the call"),
-            "the session rules own the end of the turn"
-        );
-        assert!(schema("wait_for_user").contains(
-            "\"recommendation_reason\":{\"description\":\"Why you recommend that option. Give it only with `recommended_option_id`.\""
+        assert!(schema("post_to_session").contains(
+            "The whole post. Write it so that the recipient needs no follow-up question."
         ));
         assert!(description("submit_review").contains("including rounds with no new findings."));
         for text in [
@@ -1064,9 +975,11 @@ pub(crate) mod tests {
         }
     }
 
-    /// The orchestrator is told the user answers in the console and to ask;
-    /// a column's agent is told to work alone and ask only where the task
-    /// cannot go on without the answer. No seat is told nobody answers.
+    /// The orchestrator is told to ask the user; a column's agent is told to
+    /// work alone and ask only where the task cannot go on without the
+    /// answer. Every seat asks with the question tool of its own client, and
+    /// with its turn text where it has none. The rules name no client, no
+    /// hint and no withdrawal.
     #[test]
     fn only_the_orchestrator_is_told_to_ask() {
         let orchestrator = server_at(
@@ -1075,7 +988,7 @@ pub(crate) mod tests {
         );
         let instructions = orchestrator.get_info().instructions.expect("instructions");
         assert!(
-            instructions.contains("call `wait_for_user` with a one-line hint and the question")
+            instructions.contains("To ask the user, use the question tool of your own client.")
         );
 
         for seat in SEATS {
@@ -1084,35 +997,31 @@ pub(crate) mod tests {
                 Client::resolve(Some("http://127.0.0.1:1"), None),
             );
             let instructions = mcp.get_info().instructions.expect("instructions");
-            assert!(
-                !instructions.contains("Nobody answers a question, so do not ask"),
-                "{seat:?}: {instructions}"
-            );
-            assert!(
-                instructions.contains(
-                    "`wait_for_user` with a one-line hint and the question in its `question` field."
-                ),
-                "{seat:?}: the user reads the question in the console: {instructions}"
-            );
-            assert!(
-                instructions.contains("A later turn that ends without the call closes it."),
-                "{seat:?}: a later turn that no longer waits closes its request: {instructions}"
-            );
-            assert!(
-                instructions.contains(
-                    "Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`."
-                ),
-                "{seat:?}: the console shows each option once: {instructions}"
-            );
-            assert!(
-                instructions
-                    .contains("Then end the turn. One call in a turn keeps the question open."),
-                "{seat:?}: one call is enough, and text after it closes nothing: {instructions}"
-            );
-            assert!(
-                !instructions.contains("Write no text after the call"),
-                "{seat:?}: the ban that made an agent call three times is gone: {instructions}"
-            );
+            for rule in [
+                "the question tool of your own client.",
+                "If you have no such tool, ask in your turn text.",
+                "Put the recommended option first. End its label with \"(Recommended)\". Give the reason in its description.",
+            ] {
+                assert!(
+                    instructions.contains(rule),
+                    "{seat:?}: {rule}: {instructions}"
+                );
+            }
+            for gone in [
+                "hint",
+                "withdraw",
+                "Withdraw",
+                "keeps the question open",
+                "closes it",
+                "Claude",
+                "Codex",
+                "Write no text after the call",
+            ] {
+                assert!(
+                    !instructions.contains(gone),
+                    "{seat:?}: {gone}: {instructions}"
+                );
+            }
         }
 
         let agent = server_at(
@@ -1128,12 +1037,46 @@ pub(crate) mod tests {
         );
     }
 
+    /// No shipped text names a tool that left the server, and a call to one
+    /// is refused by name (013 rule 5).
+    #[test]
+    fn no_session_text_names_a_tool_that_left_and_a_call_to_it_is_refused() {
+        const GONE: [&str; 4] = [
+            "wait_for_user",
+            "withdraw_wait_for_user",
+            "send_message",
+            "read_messages",
+        ];
+        for seat in SEATS {
+            let mcp = server_at(
+                seat.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            let instructions = mcp.get_info().instructions.expect("instructions");
+            for tool in GONE {
+                assert!(!instructions.contains(tool), "{seat:?}: {tool}");
+                assert!(!mcp.allows(tool), "{seat:?}: {tool}");
+                assert!(
+                    !mcp.listed_tools().iter().any(|t| t.name == tool),
+                    "{seat:?}: {tool}"
+                );
+            }
+        }
+        for tool in AriadneMcp::tool_router().list_all() {
+            let description = tool.description.as_deref().unwrap_or_default();
+            let schema = serde_json::to_string(&tool.input_schema).unwrap();
+            for gone in GONE {
+                assert!(!tool.name.contains(gone), "{}", tool.name);
+                assert!(!description.contains(gone), "{}: {gone}", tool.name);
+                assert!(!schema.contains(gone), "{}: {gone}", tool.name);
+            }
+        }
+    }
+
     /// And no session is told about a conversation there is not: the thread
     /// and the tools that read and wrote it are gone, and an instruction
     /// that still named one would be an agent reaching for a tool nothing
-    /// serves. `send_message` and its messages are current tools, not that
-    /// removed thread, so naming `send_message` in the agent seat text's
-    /// stop rule (006) is not a reach for one.
+    /// serves.
     #[test]
     fn no_session_is_told_of_a_conversation() {
         for seat in SEATS {
@@ -1257,8 +1200,7 @@ pub(crate) mod tests {
     }
 
     /// Each rule that every seat shares is written in its owner alone (006):
-    /// asking the user in the session rules and the `wait_for_user`
-    /// description, the end of a turn in the descriptions of the calls that
+    /// asking the user in the session rules, the end of a turn in the descriptions of the calls that
     /// end one, the check block and the trailer rule in the session rules,
     /// and never polling a request in the session rules of the `agent` and
     /// `reviewer` seats alone. Every default text and shipped skill is read
@@ -1321,37 +1263,17 @@ pub(crate) mod tests {
         for (rule, markers, owners) in [
             (
                 "asking the user",
-                &["its `question` field", "in `question`"][..],
+                &["the question tool of your own client"][..],
                 &[
                     "orchestrator session rules",
                     "agent session rules",
                     "pull request reviewer session rules",
                     "pull request keeper session rules",
-                    "wait_for_user description",
                 ][..],
             ),
-            (
-                "ending a wait",
-                &["A later turn that ends without the call closes it."][..],
-                &[
-                    "orchestrator session rules",
-                    "agent session rules",
-                    "pull request reviewer session rules",
-                    "pull request keeper session rules",
-                    "wait_for_user description",
-                ][..],
-            ),
-            // The orchestration skill still carries the old words of this
-            // rule, until its own task follows the session rules: both
-            // spellings are read as the one rule. The `wait_for_user`
-            // description carries neither: the session rules say when the
-            // turn ends, and the description keeps to what closes a question.
             (
                 "ending the turn after a question",
-                &[
-                    "Then end the turn. One call in a turn keeps the question open.",
-                    "Write no text after the call",
-                ][..],
+                &["Then end the turn."][..],
                 &[
                     "orchestrator session rules",
                     "agent session rules",
@@ -1366,7 +1288,6 @@ pub(crate) mod tests {
                     "complete_step description",
                     "fail_step description",
                     "post_to_session description",
-                    "send_message description",
                 ][..],
             ),
             (

@@ -65,7 +65,7 @@ pub(super) async fn post_to_session(
     }
     if task.is_far() {
         return Err(ApiError::bad_request(format!(
-            "task {id} is a legacy mirror of a task on host {}, and a post does not cross to a mirror. Use `send_message`",
+            "task {id} is a legacy mirror of a task on host {}, and a post does not cross to a mirror.",
             task.host.as_deref().unwrap_or_default()
         )));
     }
@@ -207,7 +207,7 @@ async fn deliver(
         // only a linked goal without a source context is a legacy mirror.
         if source.is_none() && state.store.task_goal(task).await?.origin_goal_id.is_some() {
             return Err(ApiError::bad_request(format!(
-                "task {id} is a legacy mirror of a task on another host, and a post does not reach its orchestrator. Use `send_message`"
+                "task {id} is a legacy mirror of a task on another host, and a post does not reach its orchestrator."
             )));
         }
         match (orchestrator, &source) {

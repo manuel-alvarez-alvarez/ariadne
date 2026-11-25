@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-11-24
+updated: 2026-11-25
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -50,38 +50,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 3. Whether anyone answers a question is the one rule picked by seat: the
    orchestrator's user answers in the console; a column's agent works alone, and asks only where
    the task cannot go on without the answer, and a keeper where the request cannot. The rule names no channel — the seat's own
-   playbook already says how to ask. Every seat that lists the tool is told to call
-   `wait_for_user` with a one-line hint and the question in its `question`
-   field, with options where the user picks one and a recommended option:
-   the console draws that question whole (031 rule 11), so the agent does
-   not write it again in its reply. The
-   session rules of every seat and the tool description also keep the
-   options, the recommendation and its reason out of the question text: they
-   go in `options`, `recommended_option_id` and the optional
-   `recommendation_reason`, whose schema doc is "Why you recommend that
-   option. Give it only with `recommended_option_id`." The console shows
-   each of them once. The `wait_for_user` description is the short form of
-   this rule (006 rule 5): ask in `question`, keep the three out of its text,
-   a later turn without the call closes the question, withdraw a pending
-   question before changing it, and the call returns the request's `id`,
-   which `withdraw_wait_for_user` takes as `request_id`. It says nothing of
-   the end of the turn: the session rules own that. Its
-   `hint` is one line for the Needs attention list, and the daemon refuses
-   one that is longer than a line or than 100 characters (031 rule 11), so
-   the question cannot move into the hint. The rules say what keeps a
-   question open and what closes it, in those words: one call in a turn
-   keeps it open, and a later turn that ends without the call closes it.
-   Neither the rules nor the description bans text after the call any
-   more: an orchestrator read that ban beside "a turn that ends without
-   the call ends the wait" as "text ends the wait", called `wait_for_user`
-   three times for one question, and wrote the question out again as text;
-   Claude Code ends every turn with text, and the console pins an open
-   question above the input (031 rule 12), so text after the call hides
-   nothing. Repeating the hint keeps the same request, while console input
-   answers the newest pending request of that session (031 rule 12).
-    `withdraw_wait_for_user` takes the flag down again. The daemon answers a
-    withdrawal `204`, with no body, and the tool reads that as success
-    rather than a decoding failure (014).
+   playbook already says how to ask. Every seat is told to ask the user
+   with the question tool of its own client, and, where it has none, in its
+   turn text. The rules name no client and no Ariadne tool. They tell the
+   seat to put the recommended option first, to end its label with
+   "(Recommended)" and to give the reason in its description. They say
+   nothing of a hint, a withdrawal or a call that keeps a question open.
+   `wait_for_user`, `withdraw_wait_for_user`, `send_message` and
+   `read_messages` are no MCP tools: no seat lists one, and no shipped
+   rule, prompt, skill or tool description names one. The routes, tables
+   and views behind them stay (018, 031).
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees. There are four seats
    (`McpSeat`): `Orchestrator`, `Agent`, `PullRequestReviewer` and
@@ -106,8 +84,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      it is given, refusing `default` as a model the way `update_task` does —
      the new session is briefed with a handoff of the old conversation),
      `complete_goal` — the last five are what it supervises the goal with
-     once the plan is under way (003) — and `send_message` and
-     `read_messages` (018), and `post_to_session` (039).
+     once the plan is under way (003) — and `post_to_session` (039).
    - **agent**: `get_task`, `complete_step`, `fail_step`, `fail_task`,
      `get_diff`, `open_pull_request` (a title and a body; the daemon runs
      the forge's own CLI and answers the URL it opened, rather than the
@@ -119,7 +96,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `get_comment` (one `comment_id`, read off the forge at the call),
      `reply_comment` (one `comment_id` and a `body`; the daemon posts it),
      `escalate_comment` (one `comment_id` and a `reason`; rule 16),
-     `send_message`, `read_messages` and `post_to_session` (039). Sixteen tools. It works one workflow column on its
+     and `post_to_session` (039). Twelve tools. It works one workflow column on its
      task, and its instructions name the task and the column.
      `complete_step` moves to the next column, or ends the task from the
      last; `fail_step` moves to the previous column, or fails the task
@@ -163,9 +140,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    - **pull request keeper** — a session with `ARIADNE_PULL_REQUEST_ID`
      set and seat `keeper` (032), on a request of the user's own asked for
      by hand: `get_pull_request`, `get_diff`, `list_comments`,
-     `get_comment`, `reply_comment`, `escalate_comment`,
-     beside `wait_for_user` and
-     `withdraw_wait_for_user`. Eight tools, and no task tool and no message tool, the same as the
+     `get_comment`, `reply_comment`, `escalate_comment`. Six tools, and no task tool and no message tool, the same as the
      reviewer's: it has no goal, task or staffed agent to write to, and
      the user reaches it through its console. It resolves no thread and
      submits no review: those stay the reviewer seat's alone.
@@ -190,23 +165,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    staffing that still names it (017 rule 7) and reads as empty, and the
    catalog never offers it as a fresh choice. A skill with a document,
    shipped or written, still lists.
-10. `read_messages` reads an inbox, not a transcript: a default read takes
-    delivery of what is addressed to this session's own agent, and `all`
-    reads the whole thread instead (018). The channel is the session's task,
-    or its goal where it has no task. The tool's description says both ways.
-    On the origin daemon, `all` for a far task includes the messages in both
-    directions (018 rules 14–16).
-11. `send_message` takes the address an agent writes rather than the one
-    address it could have written. `to` takes `orchestrator`, or the id of
-    a column of the task's workflow, which names the agent that staffs it;
-    the body is taken as `body` or as `message`. A refusal names every
-    column with its agent, so the sender picks a reader rather than guessing
-    again. A message to `orchestrator` makes no task read; an address that
-    names a column reads the task to find its agent. A message is a question, an answer, or a blocker report — the
-    stop rule's own call (006) — and nothing else. After a question, end
-    your turn. Do not poll `read_messages`. Ariadne delivers the answer as
-    a new turn. The same addresses work between the orchestrator and a far
-    task's agents. See 018 rules 14–17 for relay, reconnect, and user questions.
+10. Removed: `read_messages` left the MCP, and the route behind it stays (018).
+11. Removed: `send_message` left the MCP. `post_to_session` writes between the
+    seats (039).
 12. A value the schema offers is a value the tool takes. The schema an agent
     reads is derived from the parameter types, and the value it sends back is
     deserialized from them, so a spelling set on one of the two alone offers
@@ -243,8 +204,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     carries the three ranks of the `pr-reviewer` skill in its words. These
     came from the refusals real sessions got: `complete_step` with no
     `reason`, `get_comment` with no `comment_id`, `get_pull_request` on a
-    task with no request, and a `wait_for_user` repeat under one hint with
-    another question.
+    task with no request.
 16. `escalate_comment` takes a `comment_id`, `rc-<n>` or `ic-<n>`, and a
     short `reason`. It posts the trimmed reason to
     `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate` (026
@@ -332,9 +292,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
   orchestrator is told to ask, and a column's agent is told to work alone
   and ask only where the task cannot go on without the answer, and every
-  seat is told to call `wait_for_user` with the question in its `question`
-  field, and to keep the options, the recommendation and its reason out of
-  the question text
+  seat is told to ask with the question tool of its own client, in its turn
+  text where it has none, with the recommended option first
   (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
   conversation (`::no_session_is_told_of_a_conversation`).
 - Every session is told to load a deferred tool before it calls it
@@ -352,14 +311,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   - `list_tasks` says "as a summary".
   - `list_models` says "an agent", not "a slot".
   - `open_pull_request` says it "returns" the URL, not "answers" it.
-  - The `send_message` `body` doc is "The whole message. Write it so that the
+  - The `post_to_session` `body` doc is "The whole post. Write it so that the
     recipient needs no follow-up question."
-  - `wait_for_user` says "Ask in `question`, with the options, your pick
-    and its reason in `options`, `recommended_option_id` and
-    `recommendation_reason`, not in its text.", "A later turn that ends
-    without the call closes it.", "Withdraw a pending question before you
-    change it." and "Returns its `id`." (031), never "Write no text after
-    the call", and its schema lists `recommendation_reason` with its doc.
   - The `submit_review` `body` doc is "Leave it empty."
   - The `Priority` doc is "The rank: P0 is a critical risk to behavior,
     data or security. P1 is a proven defect, an unmet requirement or a rule
@@ -397,8 +350,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - A review session's MCP server is told the request, and the seat decides
   its tools: a goal and task in its environment give it no task tool
   (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
-- The pull request keeper seat lists its six request tools beside
-  `wait_for_user` and no task or message tool (032)
+- The pull request keeper seat lists its six request tools and no task or
+  message tool (032)
   (`mcp.rs::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`).
 - A refused call reaches the agent in the daemon's words
   (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`), and the
@@ -413,22 +366,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - Every refusal a tool builds, and every result string it writes in place
   of the daemon's own JSON, is Simplified Technical English
   (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`).
-- A default `read_messages` takes delivery, and `all` reads the whole thread
-  (`tools.rs::a_default_read_takes_delivery_and_all_reads_the_whole_thread`);
-  a session with no task reads the channel of its goal
-  (`::the_orchestrator_reads_the_channel_of_its_goal`).
-- A column id addresses the agent that staffs it, and an address that names
-  nobody is refused with every column and its agent
-  (`tools.rs::a_column_id_addresses_the_agent_that_staffs_it`,
-  `::a_message_to_nobody_is_refused_with_the_addresses_that_would_work`).
-- A message body written as `message` is taken
-  (`tools.rs::a_message_body_is_taken_as_message_too`).
-- `send_message`'s description tells the sender to end its turn after a
-  question, not to poll `read_messages`, and that Ariadne delivers the
-  answer as a new turn
-  (`tools.rs::send_message_tells_agents_to_end_the_turn_after_a_question`).
-- `withdraw_wait_for_user` reads the daemon's bodyless `204` as success
-  (`tools.rs::withdraw_wait_for_user_reads_a_204_as_success`).
+- No seat lists `wait_for_user`, `withdraw_wait_for_user`, `send_message` or
+  `read_messages`, no shipped text names one, and a call to one is refused
+  by name
+  (`mcp.rs::no_session_text_names_a_tool_that_left_and_a_call_to_it_is_refused`).
 
 - A result is compact and drops empty fields at every depth
   (`tools.rs::a_result_is_compact_and_drops_empty_fields_at_every_depth`);

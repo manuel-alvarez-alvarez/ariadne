@@ -70,8 +70,8 @@ that fits.
 
 - A failed check that names a file of the task. Call `fail_step` with the
   check's output.
-- A failed check that names no file of the task. Send it to the
-  orchestrator with `send_message`. Land nothing.
+- A failed check that names no file of the task. Post it to the
+  orchestrator with `post_to_session`. Land nothing.
 - Else the base moved: a non-fast-forward rejection, an extra file in
   `git diff --stat`, or a failed fast-forward. Start again from step 1.
 
