@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { expect, it, vi } from "vitest"
+import { expect, it, onTestFinished, vi } from "vitest"
 
 import { qk } from "@/api"
 import { EventStreamProvider } from "@/events/provider"
@@ -41,6 +41,10 @@ it("changes no view and logs no error when the stream carries a message_sent eve
   stubEventSource()
   const warn = vi.spyOn(console, "warn")
   const error = vi.spyOn(console, "error")
+  onTestFinished(() => {
+    warn.mockRestore()
+    error.mockRestore()
+  })
   const task = aTask()
   // Every list read settles, so a refetch the event caused would be a new
   // request. The seeded task and goal stay as they are.
