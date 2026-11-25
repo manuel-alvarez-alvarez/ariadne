@@ -43,6 +43,16 @@ pub struct SendMessageRequest {
     pub body: String,
 }
 
+/// Body of `POST /v1/tasks/{id}/posts`: text for the live session of another
+/// agent, with no stored row. The sender is the session header's.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PostToSessionRequest {
+    /// `orchestrator`, or the column of a staffed agent of the task.
+    pub to: String,
+    pub body: String,
+}
+
 /// What `GET /v1/tasks/{id}/messages` and `GET /v1/goals/{id}/messages` narrow
 /// by.
 #[derive(Debug, Clone, Default, Deserialize, utoipa::IntoParams)]

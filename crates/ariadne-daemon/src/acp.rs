@@ -350,6 +350,9 @@ pub(crate) enum Delivery {
     Step(String),
     /// An agent message, by id (018).
     Message(String),
+    /// A post (039), by a one-off id. It has no row to claim, and its turn
+    /// ends no pending request of the session: a post answers nothing.
+    Post(String),
     /// The news of a pull request (026). Boxed: it carries two marks and a
     /// list, where a message carries an id.
     PullRequestNews(Box<NewsDelivery>),
@@ -400,6 +403,7 @@ impl Delivery {
         match self {
             Delivery::Step(id) => format!("step:{id}"),
             Delivery::Message(id) => format!("message:{id}"),
+            Delivery::Post(id) => format!("post:{id}"),
             Delivery::PullRequestNews(news) => format!("news:{}", news.pull_request_id),
             // Signed by its own content, not only the goal: a situation
             // that changes while the previous one is still queued is a
@@ -1144,6 +1148,17 @@ impl AcpRuntime {
             text,
             Some(Delivery::Message(message_id.to_string())),
             None,
+        )
+    }
+
+    /// Hand the running agent a post as a prompt (039). It writes no row and
+    /// ends no pending request of the session when its turn ends.
+    pub(crate) fn send_post(&self, session_id: &str, text: String) -> Result<()> {
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::Post(new_id())),
+            Some(PromptKind::IncomingMessage),
         )
     }
 
@@ -2141,6 +2156,9 @@ impl AcpRuntime {
             let released = match &delivery {
                 Delivery::Step(id) => self.inner.store.release_step_briefing(id).await,
                 Delivery::Message(id) => self.inner.store.unmark_message_delivered(id).await,
+                // No row was claimed, so a post that never went out is lost
+                // with its launch, and the sender may post again.
+                Delivery::Post(_) => Ok(()),
                 Delivery::PullRequestNews(news) => {
                     self.inner
                         .store
@@ -3483,6 +3501,7 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
     let claimed = match delivery {
         Delivery::Step(id) => store.claim_step_briefing(id).await,
         Delivery::Message(id) => store.mark_message_delivered(id).await,
+        Delivery::Post(_) => Ok(true),
         Delivery::PullRequestNews(news) => {
             store
                 .claim_pull_request_news_for_seat(
@@ -3992,9 +4011,14 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     }
     let store = &rpc.sink.runtime.inner.store;
     let requests = rpc.sink.runtime.inner.agent_requests.lock().await;
-    let expired = store
-        .finish_agent_request_turn(&rpc.sink.session_id, &turn_id)
-        .await?;
+    // A post answers nothing, so its turn leaves a pending request open.
+    let expired = if matches!(prompt.delivery, Some(Delivery::Post(_))) {
+        Vec::new()
+    } else {
+        store
+            .finish_agent_request_turn(&rpc.sink.session_id, &turn_id)
+            .await?
+    };
     // A console card closes with its request, so a replay never offers it.
     for request_id in expired {
         if let Err(error) = crate::http::agent_requests::record_resolution(

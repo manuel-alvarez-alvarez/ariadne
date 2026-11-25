@@ -5500,6 +5500,42 @@
         }
       }
     },
+    "/v1/tasks/{id}/posts": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Put the body into the live session of the orchestrator or of the agent\nof one column, on one task of this host.",
+        "description": "Each refusal is a bad request with the sentence the caller reads.",
+        "operationId": "post_to_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostToSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {}
+        }
+      }
+    },
     "/v1/tasks/{id}/pull-request": {
       "post": {
         "tags": [
@@ -9734,6 +9770,24 @@
           "telemetry_samples_days": {
             "type": "integer",
             "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PostToSessionRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/tasks/{id}/posts`: text for the live session of another\nagent, with no stored row. The sender is the session header's.",
+        "required": [
+          "to",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string",
+            "description": "`orchestrator`, or the column of a staffed agent of the task."
           }
         },
         "additionalProperties": false

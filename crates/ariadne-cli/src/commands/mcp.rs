@@ -64,6 +64,7 @@ impl McpSeat {
                 "complete_goal",
                 "send_message",
                 "read_messages",
+                "post_to_session",
             ],
             // The current column's agent moves the task with the two step
             // tools, and the `pr` column keeps the request its task opens
@@ -86,6 +87,7 @@ impl McpSeat {
                 "escalate_comment",
                 "send_message",
                 "read_messages",
+                "post_to_session",
             ],
             // No task tool and no message tool: the user reaches the
             // session through its console. It resolves only a thread it
@@ -630,6 +632,7 @@ pub(crate) mod tests {
                     "complete_goal",
                     "send_message",
                     "read_messages",
+                    "post_to_session",
                 ][..],
             ),
             (
@@ -650,6 +653,7 @@ pub(crate) mod tests {
                     "escalate_comment",
                     "send_message",
                     "read_messages",
+                    "post_to_session",
                 ][..],
             ),
             (
@@ -703,6 +707,7 @@ pub(crate) mod tests {
             "list_skills",
             "list_tasks",
             "open_pull_request",
+            "post_to_session",
             "read_messages",
             "reply_comment",
             "resolve_thread",
@@ -747,7 +752,7 @@ pub(crate) mod tests {
             McpSeat::Agent,
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
-        assert_eq!(mcp.seat.tools().len(), 15);
+        assert_eq!(mcp.seat.tools().len(), 16);
         for tool in [
             "get_pull_request",
             "list_comments",
@@ -1360,6 +1365,7 @@ pub(crate) mod tests {
                 &[
                     "complete_step description",
                     "fail_step description",
+                    "post_to_session description",
                     "send_message description",
                 ][..],
             ),

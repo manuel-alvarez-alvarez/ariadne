@@ -51,6 +51,7 @@ mod models;
 mod pins;
 mod plan_finalize;
 mod portable_config;
+mod posts;
 mod prompts;
 mod relay;
 mod remote_tasks;

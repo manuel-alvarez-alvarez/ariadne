@@ -107,7 +107,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      the new session is briefed with a handoff of the old conversation),
      `complete_goal` — the last five are what it supervises the goal with
      once the plan is under way (003) — and `send_message` and
-     `read_messages` (018).
+     `read_messages` (018), and `post_to_session` (039).
    - **agent**: `get_task`, `complete_step`, `fail_step`, `fail_task`,
      `get_diff`, `open_pull_request` (a title and a body; the daemon runs
      the forge's own CLI and answers the URL it opened, rather than the
@@ -119,8 +119,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `get_comment` (one `comment_id`, read off the forge at the call),
      `reply_comment` (one `comment_id` and a `body`; the daemon posts it),
      `escalate_comment` (one `comment_id` and a `reason`; rule 16),
-     `send_message` and
-     `read_messages`. Fifteen tools. It works one workflow column on its
+     `send_message`, `read_messages` and `post_to_session` (039). Sixteen tools. It works one workflow column on its
      task, and its instructions name the task and the column.
      `complete_step` moves to the next column, or ends the task from the
      last; `fail_step` moves to the previous column, or fails the task

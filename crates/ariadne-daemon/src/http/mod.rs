@@ -22,6 +22,7 @@ mod issues;
 mod logs;
 mod permissions;
 mod pins;
+mod posts;
 mod pull_requests;
 mod query;
 use query::QueryRoutes;
@@ -175,7 +176,7 @@ impl AppState {
         tasks::create, tasks::list, tasks::get, tasks::update,
         remote_tasks::protocol, remote_tasks::create, remote_tasks::authorize, remote_tasks::dependency_failure, remote_tasks::retry_dependency,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        channel::list_task_messages, channel::post_task_message,
+        channel::list_task_messages, channel::post_task_message, posts::post_to_session,
         goals::list_goal_messages, goals::post_goal_message, channel::diff,
         channel::open_pull_request, steps::complete, steps::fail,
         sessions::list,
@@ -437,6 +438,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/tasks/{id}/messages",
             get(channel::list_task_messages).post(channel::post_task_message),
         )
+        .route("/v1/tasks/{id}/posts", post(posts::post_to_session))
         .route(
             "/v1/tasks/{id}/relay-message",
             post(channel::relay_task_message),
