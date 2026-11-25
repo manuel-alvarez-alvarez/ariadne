@@ -49,6 +49,7 @@ import {
 import { toast } from "sonner"
 
 import {
+  type AgentEventDto,
   type AgentRequestDto,
   api,
   type Host,
@@ -416,6 +417,21 @@ function ConsolePane({
     [host, sessionId],
   )
 
+  // A question an event carries, from the snapshot or the stream, stays known,
+  // so a newer snapshot that drops it from the page still finds its close in
+  // the history.
+  const rememberAsked = useCallback((events: readonly AgentEventDto[]) => {
+    const asked = events.flatMap((event) => questionOfEvent(event) ?? [])
+    if (asked.length === 0) return
+    setSeenForms((seen) => [
+      ...seen,
+      ...asked.filter(
+        (one, at) =>
+          !seen.some((s) => s.id === one.id) && asked.findIndex((o) => o.id === one.id) === at,
+      ),
+    ])
+  }, [])
+
   useEffect(() => {
     setTranscript(emptyTranscript())
     setRequests([])
@@ -442,18 +458,13 @@ function ConsolePane({
         resetHistory()
         setSnapshotted(true)
         setTranscript((current) => applySnapshot(current, events))
+        rememberAsked(events)
         readRequests()
         readForms(events.at(-1)?.id ?? "")
       },
       onEvent: (event) => {
         setTranscript((current) => applyEvent(current, event))
-        // A question the stream carries stays known, so a newer snapshot that
-        // drops it from the page still finds its close in the history.
-        const asked = questionOfEvent(event)
-        if (asked)
-          setSeenForms((seen) =>
-            seen.some((one) => one.id === asked.id) ? seen : [...seen, asked],
-          )
+        rememberAsked([event])
       },
       onStatus: (next, error) => {
         setStreamStatus(next)
@@ -466,7 +477,7 @@ function ConsolePane({
       formReads.current += 1
       stream.stop()
     }
-  }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests, readForms])
+  }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests, readForms, rememberAsked])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus request is read once, on arrival
   useEffect(() => {

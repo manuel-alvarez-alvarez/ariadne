@@ -406,3 +406,20 @@ it("says the open questions could not be read, and reads them again on Retry", a
   await screen.findByText("Which database should I use?")
   expect(screen.queryByText(/Could not read the open questions/)).toBeNull()
 })
+
+it("keeps a closed question a snapshot carried when a newer snapshot omits it", async () => {
+  listed = []
+  const question = asked()
+  const close = event("question.resolved", {
+    question_id: "Q1",
+    action: "accept",
+    content: { db: "pg" },
+  })
+  const source = renderConsole([question, close])
+  await waitFor(() => expect(card().textContent).toContain("Database → Postgres"))
+
+  history = [question, close]
+  act(() => source.emit("snapshot", [event("agent_message", { text: "newest page" })]))
+
+  await waitFor(() => expect(card().textContent).toContain("Database → Postgres"))
+})

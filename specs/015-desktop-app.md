@@ -495,7 +495,7 @@ Out: the daemon endpoints themselves (012).
     that rather than draw keys or no answer. Only a question the history holds
     no close for (the daemon recorded none, or the history ends first) draws
     as `Closed`, with no answer, and it no longer counts as waiting. A
-    question the console has read, from the list or from the stream, stays
+    question the console has read, from the list, a snapshot or the stream, stays
     drawn when it closes, even when a later read of the list no longer has
     it and a newer snapshot drops it. A failed read of the list shows its
     error with Retry, which reads the list again. A read of the list that lands
@@ -2266,6 +2266,7 @@ Out: the daemon endpoints themselves (012).
   `::recovers the answer of a question a reconnect omits from the history`,
   `::keeps a question the stream carried when a newer snapshot drops it and its close`,
   `::says the open questions could not be read, and reads them again on Retry`,
+  `::keeps a closed question a snapshot carried when a newer snapshot omits it`,
   `ui/src/features/sessions/console/form-questions.test.ts::keeps a listed question that a resolved event closes, with its answer`,
   `ui/src/features/sessions/console/form-questions.test.ts::closes a question the console read that is no longer listed and has no resolved event`,
   `::closes a question its event carried that the list no longer holds, once the list was read after it`,
