@@ -66,7 +66,7 @@ impl Launcher {
     /// somebody else's task.
     async fn assert_no_live_session(
         &self,
-        goal_id: &str,
+        goal_id: Option<&str>,
         task_id: Option<&str>,
         seat: Seat,
         agent_id: Option<&str>,
@@ -74,7 +74,7 @@ impl Launcher {
         let live = self
             .store
             .list_sessions(SessionFilter {
-                goal_id: Some(goal_id.to_string()),
+                goal_id: goal_id.map(str::to_string),
                 task_id: task_id.map(str::to_string),
                 live_only: true,
                 ..Default::default()
@@ -220,8 +220,11 @@ impl Launcher {
             None => prompts::system_prompt(seat, &skills, Some(&skills_dir)),
         };
         let skill_index = prompts::skill_index(&skills, Some(&skills_dir));
-        if session.goal_id.is_none() && session.pull_request_id.is_none() {
-            anyhow::bail!("a staffed session needs a goal");
+        if session.goal_id.is_none()
+            && session.pull_request_id.is_none()
+            && session.task_id.is_none()
+        {
+            anyhow::bail!("a staffed session needs a goal, task, or pull request");
         }
         // The orchestrator plans in its agent's plan mode while its goal is
         // in planning (021 rule 22). No other seat changes mode.
@@ -553,7 +556,7 @@ impl Launcher {
         let goal = self.store.get_goal(goal_id).await?;
         let repos = self.store.list_goal_repositories(goal_id).await?;
         let repo = repos.first().context("goal has no repos")?;
-        self.assert_no_live_session(goal_id, None, Seat::Orchestrator, None)
+        self.assert_no_live_session(Some(goal_id), None, Seat::Orchestrator, None)
             .await?;
 
         let session = self
@@ -613,7 +616,7 @@ impl Launcher {
         let Some((previous, internal)) = found else {
             return self.spawn_orchestrator(goal_id).await;
         };
-        self.assert_no_live_session(goal_id, None, Seat::Orchestrator, None)
+        self.assert_no_live_session(Some(goal_id), None, Seat::Orchestrator, None)
             .await?;
         let session = self.store.restart_session(&previous.id, None).await?;
         self.launch_resumed(&session, PathBuf::from(&repo.path), &internal, instruction)
@@ -629,8 +632,13 @@ impl Launcher {
     /// history. The scheduler supplies the durable column prompt after this
     /// launch.
     pub async fn start_step_agent(&self, task: &Task, agent: &TaskAgent) -> Result<AgentSession> {
-        self.assert_no_live_session(&task.goal_id, Some(&task.id), Seat::Agent, Some(&agent.id))
-            .await?;
+        self.assert_no_live_session(
+            task.goal_id.as_deref(),
+            Some(&task.id),
+            Seat::Agent,
+            Some(&agent.id),
+        )
+        .await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
         let worktree = self
             .task_worktree(
@@ -656,7 +664,7 @@ impl Launcher {
             _ => (
                 self.store
                     .create_session(NewSession {
-                        goal_id: Some(task.goal_id.clone()),
+                        goal_id: task.goal_id.clone(),
                         task_id: Some(task.id.clone()),
                         seat: Some(Seat::Agent),
                         task_agent_id: Some(agent.id.clone()),
@@ -719,7 +727,7 @@ impl Launcher {
             _ => self
                 .cfg
                 .worktree_root
-                .join(tail(&task.goal_id))
+                .join(task.goal_id.as_deref().map(tail).unwrap_or("tasks"))
                 .join(format!("{}-eng", tail(&task.id))),
         };
         if !worktree.exists() {
@@ -937,9 +945,11 @@ impl Launcher {
         self.acp.kill_and_wait(&old.id).await;
         // The old agent is gone, so a live agent on the seat now is another
         // session's: the seat is taken, and this switch starts nothing.
-        if let (Some(goal_id), Some(seat)) = (old.goal_id.as_deref(), old.seat()) {
+        if let Some(seat) = old.seat()
+            && (old.goal_id.is_some() || old.task_id.is_some())
+        {
             self.assert_no_live_session(
-                goal_id,
+                old.goal_id.as_deref(),
                 old.task_id.as_deref(),
                 seat,
                 old.task_agent_id.as_deref(),

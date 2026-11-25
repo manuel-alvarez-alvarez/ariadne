@@ -52,11 +52,13 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
 /// its `develop` column.
 pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
     TaskDto {
+        workflow: None,
+        steps: Vec::new(),
         execution_context: None,
         step: None,
         operation: None,
         id: id.into(),
-        goal_id: goal_id.into(),
+        goal_id: Some(goal_id.into()),
         repo_id: "01REPO".into(),
         title: format!("task {id}"),
         description: String::new(),

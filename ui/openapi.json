@@ -5079,6 +5079,15 @@
         "operationId": "list",
         "parameters": [
           {
+            "name": "no_goal",
+            "in": "query",
+            "description": "List tasks without a goal.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "goal",
             "in": "query",
             "description": "Filter by goal id.",
@@ -5132,6 +5141,37 @@
               }
             }
           }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Create a local task without a goal. Only the user can create one.",
+        "operationId": "create_standalone",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateStandaloneTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "404": {}
         }
       }
     },
@@ -6931,6 +6971,43 @@
             "type": "string",
             "description": "Kebab-case, and free: a name Ariadne already ships is refused.",
             "example": "api-design"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateStandaloneTaskRequest": {
+        "type": "object",
+        "description": "Create user-owned local work with its own saved columns.",
+        "required": [
+          "title",
+          "repo_id",
+          "workflow",
+          "agents"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentAssignment"
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workflow": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -10987,7 +11064,6 @@
         "description": "Payload of `task_branch_updated`: where a task's branch points now.\n\nA commit in the task's worktree changes nothing in the store, so no\nother event says the task's diff is no longer the one a client fetched.",
         "required": [
           "task_id",
-          "goal_id",
           "branch",
           "head"
         ],
@@ -10997,7 +11073,10 @@
             "description": "The task branch whose head moved."
           },
           "goal_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "head": {
             "type": "string",
@@ -11012,7 +11091,6 @@
         "type": "object",
         "required": [
           "id",
-          "goal_id",
           "repo_id",
           "title",
           "description",
@@ -11062,7 +11140,10 @@
             ]
           },
           "goal_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "host": {
             "type": "string",
@@ -11126,6 +11207,12 @@
             ],
             "description": "The column of its goal's workflow the task is in while it is\n`in_progress`; null before its first column and once it has ended."
           },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            }
+          },
           "title": {
             "type": "string"
           },
@@ -11135,6 +11222,12 @@
           "usage": {
             "$ref": "#/components/schemas/TaskUsageDto",
             "description": "What the agents of this task have spent between them."
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "worktree_path": {
             "type": [

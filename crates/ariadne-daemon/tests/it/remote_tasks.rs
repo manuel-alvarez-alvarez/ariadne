@@ -186,7 +186,7 @@ async fn simultaneous_creation_and_authorization_keep_one_task_and_one_start() {
     assert_eq!(second.0, StatusCode::OK);
     let history: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/transitions")).await;
     assert_eq!(history.len(), 1);
-    assert_eq!(h.store.remote_tasks().await.unwrap().len(), 1);
+    assert_eq!(h.store.tasks_without_local_goals().await.unwrap().len(), 1);
     let mut conflicting = draft(&repo.id);
     conflicting["title"] = json!("Another task");
     h.json::<Value>(put_json(&path, conflicting), StatusCode::CONFLICT)

@@ -1753,7 +1753,7 @@ impl Harness {
             self.flush_scheduler().await;
         }
         self.advance(task, TaskStatus::InProgress).await;
-        let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
+        let steps = self.store.task_steps(task).await.unwrap();
         let wanted = steps
             .iter()
             .position(|s| s.id == step)
@@ -1836,7 +1836,7 @@ impl Harness {
             .find(|a| a.step == step)
             .unwrap_or_else(|| panic!("the task has no agent on column {step}"));
         let session = self.launcher.start_step_agent(&task, &agent).await.unwrap();
-        let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
+        let steps = self.store.task_steps(&task).await.unwrap();
         let column = steps
             .iter()
             .find(|s| s.id == step)

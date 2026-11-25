@@ -479,7 +479,7 @@ mod tests {
         Task {
             step: Some("develop".into()),
             id: "01taskxxxxxxxxxxxxxxxxxxxx".into(),
-            goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
+            goal_id: Some("01goalxxxxxxxxxxxxxxxxxxxx".into()),
             repo_id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
             title: "Render prompts from the database".into(),
             description: "Read them from the store.".into(),

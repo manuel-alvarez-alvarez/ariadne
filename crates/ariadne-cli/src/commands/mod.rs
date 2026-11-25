@@ -475,6 +475,7 @@ mod tests {
             query_path(
                 "/v1/tasks",
                 &TaskListQuery {
+                    no_goal: false,
                     goal: Some("a b&c".into()),
                     status: Some(TaskStatus::InProgress),
                     origin_task_id: None,

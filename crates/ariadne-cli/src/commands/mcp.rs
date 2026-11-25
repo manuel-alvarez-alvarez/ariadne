@@ -142,7 +142,10 @@ impl AriadneMcp {
             pull_request_id.is_some(),
         )?;
         let goal_id = std::env::var("ARIADNE_GOAL_ID").ok();
-        if goal_id.is_none() && pull_request_id.is_none() {
+        if goal_id.is_none()
+            && pull_request_id.is_none()
+            && std::env::var("ARIADNE_TASK_ID").is_err()
+        {
             anyhow::bail!("ARIADNE_GOAL_ID not set");
         }
         Ok(Self {

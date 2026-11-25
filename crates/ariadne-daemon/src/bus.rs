@@ -339,7 +339,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
             let (dto, keys) = task_event_of(store, task).await?;
             BusEvent {
                 event: DomainEvent::TaskCreated(dto),
-                goal_id: Some(keys.0),
+                goal_id: keys.0,
                 task_id: Some(keys.1),
                 recorded: None,
             }
@@ -351,7 +351,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                     task: dto,
                     transition: transition.map(transition_dto),
                 }),
-                goal_id: Some(keys.0),
+                goal_id: keys.0,
                 task_id: Some(keys.1),
                 recorded: None,
             }
@@ -441,7 +441,7 @@ async fn goal_event(
 async fn task_event_of(
     store: &Store,
     task: Task,
-) -> Result<(ariadne_api::tasks::TaskDto, (String, String))> {
+) -> Result<(ariadne_api::tasks::TaskDto, (Option<String>, String))> {
     let keys = (task.goal_id.clone(), task.id.clone());
     Ok((task_dto_of(store, task).await?, keys))
 }

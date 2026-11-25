@@ -339,8 +339,15 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             // The goal carries the columns the task runs through, titles and
             // all; the task alone names only the id of the one it is in.
-            let goal: Option<GoalDto> = if t.execution_context.is_none() {
-                Some(client.get_json(&format!("/v1/goals/{}", t.goal_id)).await?)
+            let goal: Option<GoalDto> = if t.execution_context.is_none() && t.goal_id.is_some() {
+                Some(
+                    client
+                        .get_json(&format!(
+                            "/v1/goals/{}",
+                            t.goal_id.as_deref().unwrap_or_default()
+                        ))
+                        .await?,
+                )
             } else {
                 None
             };
@@ -550,6 +557,7 @@ async fn listing(
     let path = query_path(
         "/v1/tasks",
         &TaskListQuery {
+            no_goal: false,
             goal,
             status,
             origin_task_id: None,
@@ -665,7 +673,7 @@ fn inspect_pairs(t: &TaskDto, g: Option<&GoalDto>) -> Vec<(&'static str, Kv)> {
     };
     let mut pairs = vec![
         ("id", Kv::id(t.id.clone())),
-        ("goal", Kv::id(t.goal_id.clone())),
+        ("goal", Kv::id(t.goal_id.clone().unwrap_or_default())),
         ("title", Kv::title(t.title.clone())),
         ("status", Kv::status(t.status.as_str())),
         ("workflow", workflow.clone().into()),

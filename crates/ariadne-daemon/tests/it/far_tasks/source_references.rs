@@ -18,7 +18,7 @@ async fn new_remote_tasks_are_worker_drafts_during_source_planning() {
         .await;
     let worker: TaskDto = p.far.get(&format!("/v1/tasks/{}", created.id)).await;
     assert_eq!(worker.repo_id, worker_repo.id);
-    assert_eq!(worker.goal_id, goal.id);
+    assert_eq!(worker.goal_id.as_ref(), Some(&goal.id));
     assert!(!worker.execution_context.as_ref().unwrap().authorized);
     assert_eq!(created.id, worker.id);
     assert_eq!(created.host, "far");

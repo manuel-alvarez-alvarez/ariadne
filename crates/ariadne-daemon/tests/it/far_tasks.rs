@@ -1049,7 +1049,7 @@ async fn one_linked_goal_on_a_host_takes_every_far_task_of_a_goal() {
     assert_eq!(linked[0].title, goal.title);
     assert_eq!(linked[0].status, GoalStatus::Active);
     for far in [&first, &second] {
-        assert_eq!(far.goal_id, linked[0].id);
+        assert_eq!(far.goal_id.as_ref(), Some(&linked[0].id));
         assert_eq!(far.repo_id, theirs.id);
         assert_eq!(far.agents[0].model, p.model);
     }
@@ -1338,7 +1338,7 @@ async fn a_repository_set_up_later_joins_the_same_linked_goal() {
     let second = far_task(&p.far, &goal, "Gadgets").await;
     let linked = linked_goals(&p.far, &goal).await;
     assert_eq!(linked.len(), 1, "{linked:?}");
-    assert_eq!(second.goal_id, linked[0].id);
+    assert_eq!(second.goal_id.as_ref(), Some(&linked[0].id));
     assert_eq!(second.repo_id, far_gadgets.id);
     assert!(linked[0].repos.iter().any(|repo| repo.id == far_gadgets.id));
 }
@@ -1579,7 +1579,7 @@ async fn a_task_the_host_made_is_found_again_after_its_linked_goal_ended() {
     let made = far_task(&p.far, &goal, "Made once").await;
     p.far
         .store
-        .end_goal(&made.goal_id, GoalStatus::Completed)
+        .end_goal(made.goal_id.as_deref().unwrap(), GoalStatus::Completed)
         .await
         .unwrap();
     p.front.release();

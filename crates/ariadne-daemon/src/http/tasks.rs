@@ -296,7 +296,10 @@ pub(super) async fn list(
         }
     };
     tasks.retain(|task| {
-        q.goal.as_ref().is_none_or(|goal| &task.goal_id == goal)
+        q.goal
+            .as_ref()
+            .is_none_or(|goal| task.goal_id.as_ref() == Some(goal))
+            && (!q.no_goal || task.goal_id.is_none())
             && q.status.is_none_or(|status| task.status() == status)
     });
     let mut out = Vec::with_capacity(tasks.len());
@@ -646,4 +649,42 @@ pub(super) async fn list_transitions(
     state.store.get_task(&id).await?;
     let rows = state.store.list_task_transitions(&id).await?;
     Ok(Json(rows.into_iter().map(transition_dto).collect()))
+}
+
+/// Create a local task without a goal. Only the user can create one.
+#[utoipa::path(post, path = "/v1/tasks", tag = "tasks",
+    request_body = ariadne_api::tasks::CreateStandaloneTaskRequest,
+    responses((status = 201, body = TaskDto), (status = 400), (status = 403), (status = 404)))]
+pub(super) async fn create_standalone(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ariadne_api::tasks::CreateStandaloneTaskRequest>,
+) -> ApiResult<(StatusCode, Json<TaskDto>)> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    if ctx.actor != Actor::User {
+        return Err(ApiError::forbidden(
+            "only the user may create a goal-less task",
+        ));
+    }
+    if req.host.as_deref().is_some_and(|host| host != "local") {
+        return Err(ApiError::bad_request(
+            "a goal-less task requires the local host",
+        ));
+    }
+    let agents = resolve_agents(&state, &req.agents, true).await?;
+    let task = state
+        .store
+        .create_standalone_task(
+            &req.repo_id,
+            &req.title,
+            &req.description,
+            &req.workflow,
+            agents,
+        )
+        .await?;
+    state.notify_scheduler(&task.id);
+    Ok((
+        StatusCode::CREATED,
+        Json(task_dto_of(&state.store, task).await?),
+    ))
 }

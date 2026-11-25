@@ -561,7 +561,7 @@ mod tests {
         Task {
             step: None,
             id: format!("01{title}"),
-            goal_id: "01goal".into(),
+            goal_id: Some("01goal".into()),
             repo_id: "01repo".into(),
             title: title.into(),
             description: String::new(),

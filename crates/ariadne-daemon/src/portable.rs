@@ -235,7 +235,9 @@ impl PortableRuntime {
         let mut drain = Drain::default();
         for task in store.list_tasks(TaskFilter::default()).await? {
             if task.status() == TaskStatus::InProgress {
-                drain.goals.insert(task.goal_id.clone());
+                if let Some(goal) = &task.goal_id {
+                    drain.goals.insert(goal.clone());
+                }
                 let goal = store.task_goal(&task).await?;
                 if let (Some(repository), Some(number)) = (goal.pr_repository_id, goal.pr_number)
                     && let Some(pull) = store.pull_request_by_number(&repository, number).await?

@@ -39,7 +39,7 @@ pub struct TaskUpdatedDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskBranchDto {
     pub task_id: String,
-    pub goal_id: String,
+    pub goal_id: Option<String>,
     /// The task branch whose head moved.
     pub branch: String,
     /// Full sha of the commit the branch points at now.

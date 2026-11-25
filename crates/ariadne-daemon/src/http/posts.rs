@@ -53,7 +53,7 @@ pub(super) async fn post_to_session(
         return Err(ApiError::bad_request("a post needs a body"));
     }
     let task = state.store.get_task(&id).await?;
-    if sender.goal_id.as_deref() != Some(task.goal_id.as_str()) {
+    if sender.goal_id.as_deref() != task.goal_id.as_deref() {
         return Err(ApiError::bad_request(format!(
             "task {id} is a task of another goal, so you cannot post to it"
         )));
@@ -151,6 +151,7 @@ async fn deliver(
     // The addresses that work now: the orchestrator and the agent of the
     // current column, each with a live session that is not the sender's own.
     let orchestrator = match (&source, sender) {
+        _ if task.goal_id.is_none() => None,
         (_, Sender::Source(_)) => None,
         (Some(context), _) => state
             .source_posts
@@ -159,7 +160,7 @@ async fn deliver(
         (None, _) => live_session(
             state,
             SessionFilter {
-                goal_id: Some(task.goal_id.clone()),
+                goal_id: task.goal_id.clone(),
                 live_only: true,
                 ..Default::default()
             },

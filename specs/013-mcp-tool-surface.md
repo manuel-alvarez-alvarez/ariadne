@@ -5,6 +5,7 @@ updated: 2026-11-25
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
+  - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-daemon/tests/it/far_tasks.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
@@ -230,7 +231,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 20. Existing source MCP task tools also operate through references for new remote tasks (037 rules 102 through 110).
     Tool addresses retain the task ID and worker staffing IDs. Source dependency control failures remain visible through source reads.
 
+21. A task agent can start its MCP server with a task ID and no goal ID.
+    `get_task` uses the task's saved `steps` for a goal-less task, without fetching a goal.
+    Its step tools retain their usual gates and permissions.
+    `post_to_session` refuses an orchestrator recipient for a goal-less task.
+    MCP `create_task` still requires the orchestrator's goal and creates only goal tasks.
+
 ## Acceptance criteria
+
+- Rule 21: `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`.
+  `tools.rs::reading_a_goal_less_task_uses_its_saved_columns_without_reading_a_goal` proves the MCP read.
 
 - Rule 18: far writes, session switches, held tasks, host refusals and linked
   goal endings are checked by the tests for 001 rules 20 and 21.

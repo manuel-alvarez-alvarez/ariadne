@@ -5,6 +5,8 @@ updated: 2026-11-25
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
+  - crates/ariadne-store/tests/standalone_migration.rs
+  - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-store/tests/remote_task_migration.rs
   - crates/ariadne-store/tests/message_migration.rs
   - crates/ariadne-daemon/tests/it/remote_tasks.rs
@@ -162,7 +164,19 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     loses its `messages` table (018) and no other row. The deletion of a
     goal, of a local task and of a source task works as before.
 
+25. The user can create local work with `POST /v1/tasks` without a goal.
+    The request requires a registered `repo_id`, a title, a known workflow, and complete column staffing.
+    It accepts no `depends_on` field. It accepts only an absent host or `local`.
+    The task starts `ready`, without planning or an orchestrator.
+    Its nullable `goal_id` stays null in storage, sessions, task responses, and events.
+    `GET /v1/tasks?no_goal=true` lists only these tasks.
+    Cancel, retry, and completion cleanup use the existing task rules.
+    Migration 0026 preserves existing task records and accepts null goal references.
+
 ## Acceptance criteria
+
+- Rule 25: `standalone_tasks::a_user_creates_a_ready_task_without_a_goal`, `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`.
+  `crates/ariadne-store/tests/standalone_migration.rs::an_upgrade_preserves_goal_tasks_and_accepts_a_null_goal` proves the migration.
 
 - Rule 24: `crates/ariadne-store/tests/message_migration.rs::an_upgrade_drops_the_messages_and_keeps_every_other_row`
   and `::a_goal_and_a_task_still_delete_after_the_upgrade`.

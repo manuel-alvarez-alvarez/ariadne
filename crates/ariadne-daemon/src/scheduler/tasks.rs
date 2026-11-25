@@ -474,7 +474,7 @@ impl super::Scheduler {
         let all = self
             .store
             .list_tasks(TaskFilter {
-                goal_id: Some(task.goal_id.clone()),
+                goal_id: task.goal_id.clone(),
                 status: None,
             })
             .await?;
@@ -671,7 +671,7 @@ mod tests {
         Task {
             step: None,
             id: id.into(),
-            goal_id: "01goal".into(),
+            goal_id: Some("01goal".into()),
             repo_id: "01repo".into(),
             title: title.into(),
             description: String::new(),
