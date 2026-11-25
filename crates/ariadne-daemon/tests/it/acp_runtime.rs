@@ -83,6 +83,24 @@ async fn a_codex_launch_disables_guardian_approval() {
     assert_eq!(modes, vec![Some("agent-full-access".to_string())]);
 }
 
+/// Every Codex process runs with the feature that lets the agent ask the
+/// user in its default mode, whose question reaches the daemon as an
+/// `elicitation/create` (021).
+#[tokio::test]
+async fn a_codex_launch_lets_the_agent_ask_the_user() {
+    let h = harness().await;
+    let session = h.lone_session("codex-questions").await;
+
+    h.agent_runs_as(&session, "codex-acp").await;
+
+    let configs = h.agent.codex_configs_for(&session.id);
+    assert_eq!(
+        configs[0].as_ref().unwrap()["features"]["default_mode_request_user_input"],
+        json!(true),
+        "Codex asks the user with its own tool in its default mode"
+    );
+}
+
 /// The kinds of every event this session put in the store, in order.
 async fn event_kinds(h: &Harness, session_id: &str) -> Vec<String> {
     h.store
@@ -1616,6 +1634,110 @@ async fn an_unanswered_permission_returns_to_the_console_after_reconnect() {
             .filter(|message| message.get("method").is_none() && message["id"] == "permission-1")
             .count(),
         1
+    );
+    runtime.kill_and_wait(&session.id).await;
+}
+
+/// An open question behaves as an open permission does when the daemon
+/// connects again to the live agent: it is asked once, it is open again
+/// under the same id, and the answer reaches the agent once.
+#[tokio::test]
+async fn an_unanswered_question_returns_to_the_console_after_reconnect() {
+    use ariadne_api::sessions::QuestionDto;
+    use ariadne_daemon::acp::AcpRuntime;
+    use tower::ServiceExt;
+    let mut scripted = script();
+    scripted["relay_parent"] = json!(true);
+    scripted["prompts"] = json!([{"elicitation": {"message": "Which base branch?",
+        "requestedSchema": {"type": "object", "properties": {"base": {"type": "string"}}}},
+        "updates": []}]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let cast = acp_cast(&h).await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "question open before disconnect", || async {
+        !h.launcher.acp.open_questions(&session.id).await.is_empty()
+    })
+    .await;
+    let asked = h.launcher.acp.open_questions(&session.id).await.remove(0);
+    h.launcher.acp.detach_relays().await;
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("none".into()),
+    );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    eventually(TIMEOUT, "restored question", || async {
+        !runtime.open_questions(&session.id).await.is_empty()
+    })
+    .await;
+    let mut state = h.state.clone();
+    state.launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
+        cfg: h.launcher.cfg.clone(),
+        forge_poll: Default::default(),
+        store: h.store.clone(),
+        git: ariadne_daemon::gitwt::GitManager,
+        acp: runtime.clone(),
+        registry: h.launcher.registry.clone(),
+        branches: ariadne_daemon::branch::BranchWatchers::new(h.bus.clone()),
+        live: Default::default(),
+    });
+    let router = ariadne_daemon::http::router(state);
+    let response = router
+        .clone()
+        .oneshot(common::get(&format!(
+            "/v1/sessions/{}/questions",
+            session.id
+        )))
+        .await
+        .unwrap();
+    let body = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let restored: Vec<QuestionDto> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(restored, vec![asked.clone()]);
+    let response = router
+        .oneshot(common::post_json(
+            &format!("/v1/sessions/{}/questions/{}/answer", session.id, asked.id),
+            json!({"action": "accept", "content": {"base": "main"}}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "restored question turn complete", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let kinds = event_kinds(&h, &session.id).await;
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| kind.as_str() == "question")
+            .count(),
+        1
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| kind.as_str() == "question.resolved")
+            .count(),
+        1
+    );
+    let replies: Vec<_> = stub
+        .messages()
+        .into_iter()
+        .filter(|message| message.get("method").is_none() && message["id"] == "elicitation-1")
+        .collect();
+    assert_eq!(replies.len(), 1);
+    assert_eq!(
+        replies[0]["result"],
+        json!({"action": "accept", "content": {"base": "main"}})
     );
     runtime.kill_and_wait(&session.id).await;
 }

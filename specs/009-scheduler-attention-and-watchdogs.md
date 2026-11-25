@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-11-21
+updated: 2026-11-25
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -259,6 +259,11 @@ the ACP runtime that takes a prompt (021).
     make the agents that asked it wedged. Once the message is delivered,
     the quiet clock counts from the delivery where that is later than the
     agent's own last report.
+45. An agent that waits on its own open question (021 rule 21) waits on a
+    person, inside its turn or not. It is never nudged, never flagged
+    stalled and never relaunched. The watchdog asks the runtime, since the
+    question sets no attention reason. Once the question closes, the quiet
+    clock applies again.
 
 ## Acceptance criteria
 
@@ -325,6 +330,9 @@ the ACP runtime that takes a prompt (021).
   (`::an_agent_silent_long_after_its_question_was_delivered_is_relaunched`).
 - An orchestrator of a finished goal raises no attention
   (`events.rs::an_orchestrator_of_a_finished_goal_raises_no_attention`).
+- An agent that waits on its own question is not nudged, flagged or
+  relaunched, however long it is silent
+  (`scheduler_attention.rs::an_agent_waiting_on_its_question_is_left_alone`).
 - A session waiting on a person is never nudged or relaunched
   (`scheduler_attention.rs::a_session_waiting_on_a_person_is_never_nudged`,
   `::a_running_agent_waiting_on_a_person_is_never_relaunched`), and an agent

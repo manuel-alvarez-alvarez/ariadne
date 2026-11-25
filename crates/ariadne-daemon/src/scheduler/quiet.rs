@@ -86,6 +86,11 @@ impl super::Scheduler {
         ) {
             return Ok(());
         }
+        // An agent waiting on its own question (021) is blocked on a person
+        // too, inside its turn or not.
+        if self.launcher.acp.question_open(&session.id) {
+            return Ok(());
+        }
         let Some(mut since) = self.last_heard_from(session) else {
             return Ok(());
         };

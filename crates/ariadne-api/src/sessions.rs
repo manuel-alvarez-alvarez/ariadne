@@ -184,6 +184,54 @@ pub struct ConsoleInputRequest {
     pub text: String,
 }
 
+/// One open question an agent asks with ACP `elicitation/create` in form
+/// mode, as `GET /v1/sessions/{id}/questions` lists it (021).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct QuestionDto {
+    pub id: String,
+    /// The Ariadne session whose agent asks.
+    pub session_id: String,
+    /// The agent's own text over the form.
+    pub message: String,
+    /// The `requestedSchema` of the ACP request, unchanged.
+    #[schema(value_type = Object)]
+    pub schema: serde_json::Value,
+    pub created_at: String,
+}
+
+/// What the person did with a question, as ACP names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionAction {
+    /// The person answered with the form content.
+    Accept,
+    /// The person refused to answer.
+    Decline,
+    /// The person dismissed the question.
+    Cancel,
+}
+
+impl QuestionAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Accept => "accept",
+            Self::Decline => "decline",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+/// Body of `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+/// `content` is present with `accept` only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerQuestionRequest {
+    pub action: QuestionAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub content: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
 /// Body of `POST /v1/sessions/{id}/console/cancel`. Omitted, or omitting
 /// `subagent_id`, cancels the session's own running turn, as before (021).
 /// Naming a child cancels that child's turn instead, and is refused with

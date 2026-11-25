@@ -134,7 +134,9 @@ what the row says. The count starts again with each turn and is not
 shown between turns; attaching in the middle of a turn counts from its prompt.
 
 The footer shows the keys you can press now on the left — to send, to answer
-a permission question (`up/down or 1-9 choose · enter answer`), or to confirm that
+a permission question (`up/down or 1-9 choose · enter answer`), to answer an
+agent's question field by field (`up/down or 1-9 choose · space check · enter
+next · esc decline`), or to confirm that
 you want to leave after one Ctrl-C — and on the right the tokens the session
 has spent, read (`↑`) and written (`↓`), such as `↑ 12.4k ↓ 3.1k`. The counts
 are the whole session's, every launch of it included, and they move each time

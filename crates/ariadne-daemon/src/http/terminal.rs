@@ -327,6 +327,16 @@ impl Sink for Posts {
             .map_err(|error| error.body.error.message)
     }
 
+    async fn answer(
+        &mut self,
+        question_id: &str,
+        answer: ariadne_api::sessions::AnswerQuestionRequest,
+    ) -> Result<(), String> {
+        super::questions::take_answer(&self.state, &self.id, question_id, &answer)
+            .await
+            .map_err(|error| error.body.error.message)
+    }
+
     async fn cancel(&mut self) {
         // A turn that ended between the key and the cancel has nothing to
         // cancel, and says so with a conflict: not a failure of the console.

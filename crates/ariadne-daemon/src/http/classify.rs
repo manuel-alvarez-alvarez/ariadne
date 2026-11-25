@@ -152,6 +152,21 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
     if kind == super::agent_requests::AGENT_REQUEST_RESOLVED_EVENT {
         return finish(&agent_request_resolution_summary(payload));
     }
+    // A question the agent asks with its own tool (021): its message, and
+    // how it closed.
+    if kind == crate::acp_questions::QUESTION_EVENT {
+        return finish(&match non_empty_str(payload.pointer("/question/message")) {
+            Some(message) => format!("question · {message}"),
+            None => "question".into(),
+        });
+    }
+    if kind == crate::acp_questions::QUESTION_RESOLVED_EVENT {
+        return finish(&match non_empty_str(payload.get("action")) {
+            Some("accept") => "question answered".to_string(),
+            Some("decline") => "question declined".to_string(),
+            _ => "question cancelled".to_string(),
+        });
+    }
     let text = tool_call_summary(payload)
         .or_else(|| {
             (kind == "post_tool_use")

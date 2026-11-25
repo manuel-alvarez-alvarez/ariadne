@@ -75,6 +75,19 @@ your own answer. Your input answers the newest open question of that session alo
 later turn keeps a question only when it calls `wait_for_user` again;
 otherwise, ending the turn ends the wait, and the card closes for good.
 
+An agent can also ask with its own question tool: `AskUserQuestion` in
+Claude, `request_user_input` in Codex, or `question` in opencode. Ariadne
+holds the question open until you answer it, in every permission mode, and
+Needs attention lists it with its session's console. In the terminal, run
+`ariadne attach <session-id>`. The console draws the question as a form
+above the input, one field at a time. Pick a choice with the arrows or its
+number, check several with Space, or type the answer of a text field in the
+box. Enter takes a field, and the last Enter sends the answer. Esc declines
+the question. Text you type on a choice field is a prompt, and it waits for
+the turn to end. `ariadne session logs <session-id>` shows the question and
+its answer. See [ACP runtime](../specs/021-acp-runtime.md) rule 21 for the
+rules.
+
 `attach` revives an ended Ariadne session before it opens the console.
 The session keeps its work and conversation. [Resuming a
 session](resuming-sessions.md) has the commands.
