@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-11-21
+updated: 2026-11-25
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -186,7 +186,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     A fetch that finds nothing new hands nothing.
 14. Each change is told once (009 rule 4).
     A told comment's mark carries `told_at`. The row keeps a told mark for the rest: the failed checks by name (a failed check is marked only when its line is told, so never while `checks` reads `pending`), `behind_base`, the conflict episode, the check state, the review decision and the state.
-    The ACP driver writes both right before the prompt goes out, as it claims an agent message (018). A prompt that never went out, a kill before it included, gives them back.
+    The ACP driver writes both right before the prompt goes out, as it claims a step briefing (030). A prompt that never went out, a kill before it included, gives them back.
     The claim is a compare and set: it holds only while the row still carries the mark the news was computed from, and every comment it names is untold. A stale news is refused, its prompt is skipped, and the next pass computes the news again.
     News of a request still queued is not queued again.
     A check that turns green, or a head that catches up, writes the mark at once with no prompt, so its next turn is news again.

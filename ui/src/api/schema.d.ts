@@ -443,28 +443,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/goals/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The messages of a goal: what its agents said that was not about one task.
-         * @description A goal's channel is the orchestrator's inbox. Everything an agent says to
-         *     it about a task is on that task instead, and this is where the rest goes.
-         */
-        get: operations["goals_list_goal_messages"];
-        put?: never;
-        /** Send a message about the goal itself. */
-        post: operations["goals_post_goal_message"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/health": {
         parameters: {
             query?: never;
@@ -2881,29 +2859,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/tasks/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The messages of a task: what its agents have said to each other. */
-        get: operations["tasks_list_task_messages"];
-        put?: never;
-        /**
-         * Send a message about a task.
-         * @description Who it is from is the session header's, never the body's: an agent cannot
-         *     write as somebody else, and a call with no session behind it is the user
-         *     speaking.
-         */
-        post: operations["tasks_post_task_message"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/tasks/{id}/posts": {
         parameters: {
             query?: never;
@@ -3167,11 +3122,6 @@ export interface components {
          * @enum {string}
          */
         AcpDegradation: "no_efforts" | "no_restart_resume";
-        /**
-         * @description Who is attempting a transition: a seat, the daemon, or the user.
-         * @enum {string}
-         */
-        Actor: "orchestrator" | "agent" | "daemon" | "user";
         /**
          * @description One agent to staff on a task: the column it works, the skills it loads,
          *     and what it is to run on.
@@ -3815,11 +3765,6 @@ export interface components {
             /** @enum {string} */
             event: "task_branch_updated";
         } | {
-            /** @description One agent said something to another. */
-            data: components["schemas"]["MessageDto"];
-            /** @enum {string} */
-            event: "message_sent";
-        } | {
             data: components["schemas"]["SessionDto"];
             /** @enum {string} */
             event: "session_created";
@@ -4406,47 +4351,6 @@ export interface components {
             /** @description Why Ariadne cannot do this, and what to do, in plain words. */
             reason: string;
         };
-        MessageDto: {
-            body: string;
-            created_at: string;
-            /**
-             * @description When it was handed to the recipient's agent, or None while it is still
-             *     waiting for one to be free.
-             */
-            delivered_at?: string | null;
-            from_actor: components["schemas"]["Actor"];
-            /**
-             * @description The staffed agent that sent it, or None for the orchestrator, the
-             *     daemon and the user.
-             */
-            from_agent_id?: string | null;
-            from_session?: string | null;
-            goal_id: string;
-            id: string;
-            kind: components["schemas"]["MessageKind"];
-            /** @description The task it is about, or None for a message about the goal itself. */
-            task_id?: string | null;
-            to_actor: components["schemas"]["Actor"];
-            /** @description The staffed agent it is for, or None for the orchestrator. */
-            to_agent_id?: string | null;
-        };
-        /**
-         * @description What one agent is saying to another.
-         *
-         *     Agents talk to each other through one channel, and one kind carries
-         *     everything they say on it, whether it asks something or answers it. There
-         *     is no `answer` kind and no `reply` tool: an answer is a message to whoever
-         *     asked, addressed the way the question was, so nothing threads. Each
-         *     message reaches its agent as a turn — which is why the tool that sends one
-         *     takes questions and answers and nothing else, no confirmation and no
-         *     thanks.
-         *
-         *     A review used to run on the channel too, as three kinds of its own; a
-         *     workflow column moves a task through the step routes now, and the one
-         *     kind left is what the agents say.
-         * @enum {string}
-         */
-        MessageKind: "message";
         /** @description A local repository a host has no checkout of. */
         MissingRepositoryDto: {
             /** @description `owner/repo` on its forge; null for a repository with no forge. */
@@ -4925,23 +4829,6 @@ export interface components {
          * @enum {string}
          */
         Seat: "orchestrator" | "agent" | "reviewer" | "keeper";
-        /**
-         * @description Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.
-         *
-         *     Who it is *from* comes from the session header rather than the body: an
-         *     agent cannot send a message as somebody else, and a message with no session
-         *     behind it is the user's.
-         */
-        SendMessageRequest: {
-            body: string;
-            /** @description Who it is for. `orchestrator` needs no agent id — a goal has one. */
-            to_actor: components["schemas"]["Actor"];
-            /**
-             * @description The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.
-             *     Required for `agent`, refused for the orchestrator.
-             */
-            to_agent_id?: string | null;
-        };
         SessionDto: {
             attention_reason?: components["schemas"]["AttentionReason"] | null;
             /** @description When the current `attention_reason` was first raised. */
@@ -6482,80 +6369,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GoalDto"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    goals_list_goal_messages: {
-        parameters: {
-            query?: {
-                /** @description Only the messages for this staffed agent. */
-                to_agent_id?: string | null;
-                /** @description Only the ones that have not reached their agent yet. */
-                undelivered?: boolean;
-                /**
-                 * @description Hand the caller its own undelivered messages: narrow the list to the
-                 *     calling session's agent, and stamp every row it returns delivered.
-                 *
-                 *     This is a delivery, not a read. It needs a session behind it, and it
-                 *     is what makes a read of the channel count the same as a prompt: a
-                 *     message handed over here is never handed over again.
-                 */
-                deliver?: boolean;
-            };
-            header?: never;
-            path: {
-                /** @description goal id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"][];
-                };
-            };
-        };
-    };
-    goals_post_goal_message: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description goal id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SendMessageRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"];
                 };
             };
             403: {
@@ -9374,80 +9187,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    tasks_list_task_messages: {
-        parameters: {
-            query?: {
-                /** @description Only the messages for this staffed agent. */
-                to_agent_id?: string | null;
-                /** @description Only the ones that have not reached their agent yet. */
-                undelivered?: boolean;
-                /**
-                 * @description Hand the caller its own undelivered messages: narrow the list to the
-                 *     calling session's agent, and stamp every row it returns delivered.
-                 *
-                 *     This is a delivery, not a read. It needs a session behind it, and it
-                 *     is what makes a read of the channel count the same as a prompt: a
-                 *     message handed over here is never handed over again.
-                 */
-                deliver?: boolean;
-            };
-            header?: never;
-            path: {
-                /** @description task id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"][];
-                };
-            };
-        };
-    };
-    tasks_post_task_message: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description task id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SendMessageRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"];
-                };
-            };
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -331,13 +331,28 @@ impl PromptSource {
 struct Prompt {
     text: String,
     source: PromptSource,
-    /// What this prompt delivers: an agent message (018) or a pull
+    /// What this prompt delivers: a step briefing, a post (039) or a pull
     /// request's news (026). The driver claims it right before the prompt
-    /// goes out. A nudge, a briefing and console input carry none.
+    /// goes out. A nudge and console input carry none. A turn file that an
+    /// earlier release wrote can name a delivery this build does not know,
+    /// such as an agent message. It loads with none.
+    #[serde(default, deserialize_with = "known_or_none")]
     delivery: Option<Delivery>,
     /// The lifecycle kind of a daemon prompt that has one, recorded as
     /// `prompt_kind` on `user_prompt_submit`.
+    #[serde(default, deserialize_with = "known_or_none")]
     kind: Option<PromptKind>,
+}
+
+/// A value this build knows, or None for one it does not: a turn file
+/// outlives the release that wrote it.
+fn known_or_none<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = <Option<Value> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -356,12 +371,10 @@ struct PersistedTurn {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Delivery {
     Step(String),
-    /// An agent message, by id (018).
-    Message(String),
     /// A post (039), by a one-off id. It has no row to claim.
     Post(String),
     /// The news of a pull request (026). Boxed: it carries two marks and a
-    /// list, where a message carries an id.
+    /// list, where a step carries an id.
     PullRequestNews(Box<NewsDelivery>),
     /// A goal's failed and stalled tasks (031), named by id with the
     /// `updated_at` each failure carried at the moment this was queued —
@@ -404,12 +417,11 @@ pub(crate) struct NewsDelivery {
 }
 
 impl Delivery {
-    /// What tells two queued deliveries apart: one per message, and one per
-    /// pull request, whose next news waits until the queued one is claimed.
+    /// What tells two queued deliveries apart: one per step briefing and
+    /// post, and one per pull request, whose next news waits until the queued one is claimed.
     fn key(&self) -> String {
         match self {
             Delivery::Step(id) => format!("step:{id}"),
-            Delivery::Message(id) => format!("message:{id}"),
             Delivery::Post(id) => format!("post:{id}"),
             Delivery::PullRequestNews(news) => format!("news:{}", news.pull_request_id),
             // Signed by its own content, not only the goal: a situation
@@ -1136,27 +1148,6 @@ impl AcpRuntime {
         )
     }
 
-    /// Hand the running agent an agent message as a prompt, the way
-    /// [`Self::send_prompt`] does. The driver claims the message right
-    /// before the prompt goes out, and skips the prompt where a read took
-    /// the message first (018).
-    ///
-    /// A message still queued for this agent is not queued again: the
-    /// hand-over answers `Ok` and changes nothing.
-    pub(crate) fn send_message(
-        &self,
-        session_id: &str,
-        message_id: &str,
-        text: String,
-    ) -> Result<()> {
-        self.queue_daemon_prompt(
-            session_id,
-            text,
-            Some(Delivery::Message(message_id.to_string())),
-            None,
-        )
-    }
-
     /// Hand the running agent a post as a prompt (039). It writes no row and
     /// ends no pending request of the session when its turn ends.
     pub(crate) fn send_post(&self, session_id: &str, text: String) -> Result<()> {
@@ -1197,18 +1188,6 @@ impl AcpRuntime {
             agent.queued_messages.remove(key);
         }
         sent.map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
-    }
-
-    /// Whether this message is queued for the session's running agent
-    /// already, behind a turn: a hand-over now would change nothing.
-    pub(crate) fn holds_message(&self, session_id: &str, message_id: &str) -> bool {
-        let key = Delivery::Message(message_id.to_string()).key();
-        self.inner
-            .running
-            .lock()
-            .expect("acp registry lock")
-            .get(session_id)
-            .is_some_and(|agent| agent.queued_messages.contains(&key))
     }
 
     /// Take a delivery off this launch's queue: the driver is about to claim
@@ -2206,11 +2185,10 @@ impl AcpRuntime {
         drop(protocol);
         // A claimed delivery whose prompt never reached the agent's stdin —
         // the write failed, or a kill came first — waits for the next live
-        // agent, or for a read, again (018, 026).
+        // agent again (026).
         if let Some(delivery) = in_flight.unwritten() {
             let released = match &delivery {
                 Delivery::Step(id) => self.inner.store.release_step_briefing(id).await,
-                Delivery::Message(id) => self.inner.store.unmark_message_delivered(id).await,
                 // No row was claimed, so a post that never went out is lost
                 // with its launch, and the sender may post again.
                 Delivery::Post(_) => Ok(()),
@@ -3649,8 +3627,8 @@ async fn serve_with_input(
 }
 
 /// Claim the delivery a prompt carries, right before the prompt goes out
-/// (018, 026). Answers whether the prompt goes out. A prompt that carries no
-/// delivery always does. One whose message a read already took does not:
+/// (026). Answers whether the prompt goes out. A prompt that carries no
+/// delivery always does. One whose delivery is claimed already does not:
 /// the agent has that text, and the prompt would say it twice. A pull
 /// request's news is claimed by writing its told marks.
 async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
@@ -3675,7 +3653,6 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
     let store = &sink.runtime.inner.store;
     let claimed = match delivery {
         Delivery::Step(id) => store.claim_step_briefing(id).await,
-        Delivery::Message(id) => store.mark_message_delivered(id).await,
         Delivery::Post(_) => Ok(true),
         Delivery::PullRequestNews(news) => {
             store
@@ -4860,6 +4837,54 @@ mod tests {
         assert_eq!(turn.turn_id, "turn");
         assert_eq!(turn.prompt.text, "Main");
         assert_eq!(turn.prompt.source, super::PromptSource::Console);
+    }
+
+    /// A relay turn file that the last release wrote for an agent message
+    /// names a delivery and a kind that are gone. It still loads, with no
+    /// delivery to claim, and the turn keeps its prompt.
+    #[test]
+    fn a_turn_file_of_an_agent_message_still_loads() {
+        let written = json!({
+            "version": 1,
+            "launch_id": "launch",
+            "turn_id": "turn",
+            "prompt": {
+                "text": "Message from your orchestrator",
+                "source": "Daemon",
+                "delivery": { "Message": "01MSG" },
+                "kind": "incoming_message"
+            },
+            "full": "Message from your orchestrator",
+            "brief_after": null
+        });
+        let turn: super::PersistedTurn = serde_json::from_value(written).unwrap();
+        assert_eq!(turn.turn_id, "turn");
+        assert_eq!(turn.prompt.text, "Message from your orchestrator");
+        assert!(turn.prompt.delivery.is_none());
+    }
+
+    /// A turn file keeps the delivery and the kind this build knows.
+    #[test]
+    fn a_turn_file_keeps_a_known_delivery() {
+        let written = json!({
+            "version": 1,
+            "launch_id": "launch",
+            "turn_id": "turn",
+            "prompt": {
+                "text": "Brief",
+                "source": "Daemon",
+                "delivery": { "Step": "01STEP" },
+                "kind": "step_briefing"
+            },
+            "full": "Brief",
+            "brief_after": null
+        });
+        let turn: super::PersistedTurn = serde_json::from_value(written).unwrap();
+        assert!(matches!(turn.prompt.delivery, Some(super::Delivery::Step(id)) if id == "01STEP"));
+        assert_eq!(
+            turn.prompt.kind,
+            Some(ariadne_core::PromptKind::StepBriefing)
+        );
     }
 
     #[test]

@@ -321,13 +321,13 @@ it leaves nothing to delete.
    `permission.replied`; all three are null if no row answered.
 10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
-   nudge, a review briefing, an agent message — is a `session/prompt`, sent
+   nudge, a review briefing, a post — is a `session/prompt`, sent
    at once between turns and queued in order behind a running one. Console
    input (008) arrives the same way, except that a pending permission question takes it as
    the answer (rule 9): only a person's input selects a console choice.
-   A prompt that carries an agent message is claimed right before it goes
-   out, and skipped when the claim fails: a read took the message first
-   (018). A message already in the queue is not queued again. The runtime
+   A prompt that carries a step briefing or a request's news is claimed
+   right before it goes out, and skipped when the claim fails. A delivery
+   already in the queue is not queued again. The runtime
    watches the agent's stdin for each `session/prompt` line written whole. A
    claimed prompt that was never written gives its claim back when its launch
    ends. A written one keeps it, an error answer included.

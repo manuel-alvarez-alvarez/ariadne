@@ -365,12 +365,12 @@ mod tests {
         let err = Failure::conflict(
             "task 01TASK is finished — its agents and worktrees have been cleaned up",
         )
-        .hint("inspect with: ariadne task history 01TASK; ariadne task messages 01TASK")
+        .hint("inspect with: ariadne task history 01TASK; ariadne task diff 01TASK")
         .err();
         assert_eq!(
             error_line(false, &err),
             "error: task 01TASK is finished — its agents and worktrees have been cleaned up \
-             (inspect with: ariadne task history 01TASK; ariadne task messages 01TASK)"
+             (inspect with: ariadne task history 01TASK; ariadne task diff 01TASK)"
         );
     }
 

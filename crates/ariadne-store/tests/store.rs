@@ -1,8 +1,7 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, PermissionMode, Seat, SessionStatus,
-    TaskStatus, TokenUsage,
+    Actor, AttentionReason, GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus, TokenUsage,
 };
 use ariadne_store::defaults::{DEFAULT_WORKFLOW, PULL_REQUEST_WORKFLOW};
 use ariadne_store::*;
@@ -1507,72 +1506,6 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     assert_eq!(
         store.list_task_transitions(&task.id).await.unwrap().len(),
         2
-    );
-}
-
-/// A message goes to exactly one recipient and is delivered once: the stamp is
-/// what says which of them have reached their agent, and the claim that puts
-/// it there answers true once and false after.
-#[tokio::test]
-async fn a_message_is_delivered_once_and_the_stamp_says_so() {
-    let w = World::new().await;
-    let (store, task) = (&w.store, &w.task);
-    let developer = agent_of(store, task, "develop").await.id;
-    let reviewer = agent_of(store, task, "review").await.id;
-
-    let asked = store
-        .send_message(NewMessage {
-            goal_id: task.goal_id.clone(),
-            task_id: Some(task.id.clone()),
-            kind: MessageKind::Message,
-            from_actor: Actor::Agent,
-            from_agent_id: Some(reviewer),
-            from_session: None,
-            to_actor: Actor::Agent,
-            to_agent_id: Some(developer),
-            body: "why the retry?".into(),
-        })
-        .await
-        .unwrap();
-    assert!(!asked.is_delivered());
-
-    let waiting = store
-        .list_messages(MessageFilter {
-            task_id: Some(task.id.clone()),
-            undelivered_only: true,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(waiting.len(), 1);
-
-    assert!(
-        store.mark_message_delivered(&asked.id).await.unwrap(),
-        "the first claim is the one that stamps"
-    );
-    let delivered = store.get_message(&asked.id).await.unwrap();
-    let at = delivered.delivered_at.clone().expect("stamped");
-
-    // A second claim loses and keeps the first time: the prompt and the read
-    // race for one row, and only one of them may hand it over.
-    assert!(
-        !store.mark_message_delivered(&asked.id).await.unwrap(),
-        "a claim on a stamped row answers that it lost"
-    );
-    assert_eq!(
-        store.get_message(&asked.id).await.unwrap().delivered_at,
-        Some(at)
-    );
-    assert!(
-        store
-            .list_messages(MessageFilter {
-                task_id: Some(task.id.clone()),
-                undelivered_only: true,
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .is_empty()
     );
 }
 
@@ -4373,7 +4306,7 @@ async fn a_task_agent_cannot_be_staffed_on_the_reviewer_sessions_skill() {
 
 /// An edit replaces the column staffing whole: every column is staffed
 /// with the skills and the pin the edit gave it. An agent already on its
-/// column keeps its row, and with it the sessions and messages that name
+/// column keeps its row, and with it the sessions that name
 /// it; a column staffed for the first time gets a new row, and a column the
 /// edit leaves out loses its agent. A task is edited while it is not running
 /// — pending, ready, or failed and waiting for a retry, which is when the
@@ -4385,23 +4318,8 @@ async fn an_edit_replaces_the_whole_column_staffing() {
     let store = &w.store;
     let before = store.list_task_agents(&w.task.id).await.unwrap();
     assert_eq!(before.len(), 3);
-    // A session of the develop agent, and a message to it: what a re-staffing
-    // has to keep.
+    // A session of the develop agent: what a re-staffing has to keep.
     let develop_session = w.agent_session().await;
-    let said = store
-        .send_message(NewMessage {
-            goal_id: w.goal.id.clone(),
-            task_id: Some(w.task.id.clone()),
-            kind: MessageKind::Message,
-            from_actor: Actor::Orchestrator,
-            from_agent_id: None,
-            from_session: None,
-            to_actor: Actor::Agent,
-            to_agent_id: Some(before[0].id.clone()),
-            body: "Kept across the edit.".into(),
-        })
-        .await
-        .unwrap();
     let restaffed = || {
         vec![
             NewTaskAgent::new(
@@ -4455,10 +4373,6 @@ async fn an_edit_replaces_the_whole_column_staffing() {
             .as_deref(),
         Some(before[0].id.as_str()),
         "and the session that names it stays"
-    );
-    assert_eq!(
-        store.get_message(&said.id).await.unwrap().body,
-        "Kept across the edit."
     );
     assert_eq!(
         staffing(&w.task.id).await,
@@ -4572,14 +4486,10 @@ async fn an_edit_replaces_the_whole_column_staffing() {
         ["review", "merge"]
     );
     // The develop agent kept its row through the edit that dropped the other
-    // two columns; the message to it is still there.
+    // two columns.
     assert_eq!(
         store.list_task_agents(&w.task.id).await.unwrap()[0].id,
         before[0].id
-    );
-    assert_eq!(
-        store.get_message(&said.id).await.unwrap().to_agent_id,
-        Some(before[0].id.clone())
     );
     store
         .update_task(
@@ -4606,7 +4516,7 @@ async fn an_edit_replaces_the_whole_column_staffing() {
             .all(|a| before.iter().all(|b| b.id != a.id))
     );
 
-    // A column whose agent has a session or a message behind it cannot be
+    // A column whose agent has a session behind it cannot be
     // left out: dropping the agent would drop them.
     let review_session = w
         .session(Seat::Agent, Some(&again[1].id), Some(&w.task.id))

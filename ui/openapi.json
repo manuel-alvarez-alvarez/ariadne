@@ -985,112 +985,6 @@
         }
       }
     },
-    "/v1/goals/{id}/messages": {
-      "get": {
-        "tags": [
-          "goals"
-        ],
-        "summary": "The messages of a goal: what its agents said that was not about one task.",
-        "description": "A goal's channel is the orchestrator's inbox. Everything an agent says to\nit about a task is on that task instead, and this is where the rest goes.",
-        "operationId": "list_goal_messages",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "goal id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "to_agent_id",
-            "in": "query",
-            "description": "Only the messages for this staffed agent.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "undelivered",
-            "in": "query",
-            "description": "Only the ones that have not reached their agent yet.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "deliver",
-            "in": "query",
-            "description": "Hand the caller its own undelivered messages: narrow the list to the\ncalling session's agent, and stamp every row it returns delivered.\n\nThis is a delivery, not a read. It needs a session behind it, and it\nis what makes a read of the channel count the same as a prompt: a\nmessage handed over here is never handed over again.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MessageDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "goals"
-        ],
-        "summary": "Send a message about the goal itself.",
-        "operationId": "post_goal_message",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "goal id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SendMessageRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageDto"
-                }
-              }
-            }
-          },
-          "403": {},
-          "409": {}
-        }
-      }
-    },
     "/v1/health": {
       "get": {
         "tags": [
@@ -5381,112 +5275,6 @@
         }
       }
     },
-    "/v1/tasks/{id}/messages": {
-      "get": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "The messages of a task: what its agents have said to each other.",
-        "operationId": "list_task_messages",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "to_agent_id",
-            "in": "query",
-            "description": "Only the messages for this staffed agent.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "undelivered",
-            "in": "query",
-            "description": "Only the ones that have not reached their agent yet.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "deliver",
-            "in": "query",
-            "description": "Hand the caller its own undelivered messages: narrow the list to the\ncalling session's agent, and stamp every row it returns delivered.\n\nThis is a delivery, not a read. It needs a session behind it, and it\nis what makes a read of the channel count the same as a prompt: a\nmessage handed over here is never handed over again.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MessageDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Send a message about a task.",
-        "description": "Who it is from is the session header's, never the body's: an agent cannot\nwrite as somebody else, and a call with no session behind it is the user\nspeaking.",
-        "operationId": "post_task_message",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SendMessageRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageDto"
-                }
-              }
-            }
-          },
-          "403": {},
-          "409": {}
-        }
-      }
-    },
     "/v1/tasks/{id}/posts": {
       "post": {
         "tags": [
@@ -6114,16 +5902,6 @@
         "enum": [
           "no_efforts",
           "no_restart_resume"
-        ]
-      },
-      "Actor": {
-        "type": "string",
-        "description": "Who is attempting a transition: a seat, the daemon, or the user.",
-        "enum": [
-          "orchestrator",
-          "agent",
-          "daemon",
-          "user"
         ]
       },
       "AgentAssignment": {
@@ -7519,26 +7297,6 @@
                 "type": "string",
                 "enum": [
                   "task_branch_updated"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "description": "One agent said something to another.",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/MessageDto",
-                "description": "One agent said something to another."
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "message_sent"
                 ]
               }
             }
@@ -9122,82 +8880,6 @@
           }
         }
       },
-      "MessageDto": {
-        "type": "object",
-        "required": [
-          "id",
-          "goal_id",
-          "kind",
-          "from_actor",
-          "to_actor",
-          "body",
-          "created_at"
-        ],
-        "properties": {
-          "body": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "delivered_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "When it was handed to the recipient's agent, or None while it is still\nwaiting for one to be free."
-          },
-          "from_actor": {
-            "$ref": "#/components/schemas/Actor"
-          },
-          "from_agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The staffed agent that sent it, or None for the orchestrator, the\ndaemon and the user."
-          },
-          "from_session": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "goal_id": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/MessageKind"
-          },
-          "task_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The task it is about, or None for a message about the goal itself."
-          },
-          "to_actor": {
-            "$ref": "#/components/schemas/Actor"
-          },
-          "to_agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The staffed agent it is for, or None for the orchestrator."
-          }
-        }
-      },
-      "MessageKind": {
-        "type": "string",
-        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and one kind carries\neverything they say on it, whether it asks something or answers it. There\nis no `answer` kind and no `reply` tool: an answer is a message to whoever\nasked, addressed the way the question was, so nothing threads. Each\nmessage reaches its agent as a turn — which is why the tool that sends one\ntakes questions and answers and nothing else, no confirmation and no\nthanks.\n\nA review used to run on the channel too, as three kinds of its own; a\nworkflow column moves a task through the step routes now, and the one\nkind left is what the agents say.",
-        "enum": [
-          "message"
-        ]
-      },
       "MissingRepositoryDto": {
         "type": "object",
         "description": "A local repository a host has no checkout of.",
@@ -10360,31 +10042,6 @@
           "reviewer",
           "keeper"
         ]
-      },
-      "SendMessageRequest": {
-        "type": "object",
-        "description": "Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.\n\nWho it is *from* comes from the session header rather than the body: an\nagent cannot send a message as somebody else, and a message with no session\nbehind it is the user's.",
-        "required": [
-          "to_actor",
-          "body"
-        ],
-        "properties": {
-          "body": {
-            "type": "string"
-          },
-          "to_actor": {
-            "$ref": "#/components/schemas/Actor",
-            "description": "Who it is for. `orchestrator` needs no agent id — a goal has one."
-          },
-          "to_agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.\nRequired for `agent`, refused for the orchestrator."
-          }
-        },
-        "additionalProperties": false
       },
       "SessionDto": {
         "type": "object",

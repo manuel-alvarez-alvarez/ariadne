@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-11-23
+updated: 2026-11-25
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -106,10 +106,7 @@ same binary also serves (013).
    given: 030), how each task is staffed (`--agent`, rule 38), and whether
    the goal is over (`goal complete`) or cancelled outright, with every task
    under it (`goal cancel`), behind the usual confirmation.
-10. What the agents said to each other is readable from here: `task messages`
-    lists the whole channel of a task, oldest first (018); `--full` prints
-    each one whole, through `$PAGER`, since the table cuts a body to its
-    opening.
+10. Removed: `task messages` is gone with the agent messages (018).
 11. `task history` is a table too: each row is one transition, `from` and
     `to` painted with the same status glyphs every other status cell carries.
 12. `ariadne events` prints one line per event, `time · kind · subject ·
@@ -299,7 +296,7 @@ same binary also serves (013).
     skill` manages skills: `ls` lists every workflow, shipped and written,
     its `name` column marked `builtin` with the shared `yes_no` wording and
     its `columns` column the titles of its steps joined with ` → `; `show`
-    prints the document whole, through `$PAGER` as `task messages --full`
+    prints the document whole, through `$PAGER` as `task diff`
     does, and `--format json` prints the DTO; `create --file <path>|-` and
     `update --file <path>|-` read the document from `--file`, or from stdin
     where none is named or where `-` names it, and send `{document}`; `reset`
@@ -621,9 +618,6 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   transition with no reason
   (`commands/task.rs::history_paints_the_from_and_to_statuses`,
   `::a_history_row_carries_the_transition_and_a_dash_for_no_reason`).
-- `task messages --full` prints a message's header and its whole body, every
-  message of the channel, not just the first
-  (`commands/task.rs::a_full_message_carries_its_header_and_its_whole_body`).
 - A failure is one line, attach hints stay on that line, and JSON keeps the
   envelope (`error.rs::a_bare_message_is_the_whole_line`,
   `::an_attach_failure_is_one_line_with_recovery_commands`,

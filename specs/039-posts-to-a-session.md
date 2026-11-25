@@ -23,15 +23,15 @@ In: what a post is, who may send and receive one, what the recipient reads,
 each refusal, and posts between the source orchestrator and the agent of a
 worker-protocol task on another host (037 rule 101).
 
-Out: the stored message channel (018) and its relay across hosts (037 rule
-108), a forward for legacy mirror tasks (037 rules 96 to 100), questions to
+Out: the stored message channel and its relay across hosts, which are
+gone (018), a forward for legacy mirror tasks (037 rules 96 to 100), questions to
 the user across hosts, and the session rules, prompts and skills.
 
 ## Behavior
 
 1. A **post** is text for the live session of one recipient. The daemon
-   queues it as a prompt in that session and writes no row in the `messages`
-   table. The routes, tables and views of the messages (018) work as they did; no MCP tool writes them.
+   queues it as a prompt in that session and writes no row. Ariadne stores
+   no agent message (018).
 2. The MCP tool is `post_to_session` (013). The orchestrator seat and the
    agent seat list it. The reviewer and keeper seats do not.
 3. It takes `to` (`orchestrator` or a column id), an optional `task_id` and a

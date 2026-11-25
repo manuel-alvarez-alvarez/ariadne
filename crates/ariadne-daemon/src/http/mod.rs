@@ -180,8 +180,7 @@ impl AppState {
         tasks::create, tasks::list, tasks::get, tasks::update,
         remote_tasks::protocol, remote_tasks::create, remote_tasks::authorize, remote_tasks::dependency_failure, remote_tasks::retry_dependency,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        channel::list_task_messages, channel::post_task_message, posts::post_to_session, posts::post_from_source,
-        goals::list_goal_messages, goals::post_goal_message, channel::diff,
+        posts::post_to_session, posts::post_from_source, channel::diff,
         channel::open_pull_request, steps::complete, steps::fail,
         sessions::list,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
@@ -409,10 +408,6 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/goals/{id}/cancel", post(goals::cancel))
         .route("/v1/goals/{id}/finalize", post(goals::finalize))
         .route("/v1/goals/{id}/complete", post(goals::complete))
-        .route(
-            "/v1/goals/{id}/messages",
-            get(goals::list_goal_messages).post(goals::post_goal_message),
-        )
         .route("/v1/goals/{goal_id}/tasks", post(tasks::create))
         // tasks
         .route("/v1/tasks", get(tasks::list))
@@ -437,16 +432,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/tasks/{id}/cancel", post(tasks::cancel))
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
-        .route(
-            "/v1/tasks/{id}/messages",
-            get(channel::list_task_messages).post(channel::post_task_message),
-        )
         .route("/v1/tasks/{id}/posts", post(posts::post_to_session))
         .route("/v1/remote-tasks/{id}/posts", post(posts::post_from_source))
-        .route(
-            "/v1/tasks/{id}/relay-message",
-            post(channel::relay_task_message),
-        )
         .route("/v1/tasks/{id}/diff", get(channel::diff))
         .route("/v1/tasks/{id}/step/complete", post(steps::complete))
         .route("/v1/tasks/{id}/step/fail", post(steps::fail))

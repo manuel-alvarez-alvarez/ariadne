@@ -17,7 +17,7 @@ use std::path::Path;
 
 use ariadne_core::{PromptKind, Seat};
 use ariadne_store::defaults::{default_prompt_text, default_system_prompt};
-use ariadne_store::{Goal, GoalStep, Message, PullRequest, Repository, Skill, Task};
+use ariadne_store::{Goal, GoalStep, PullRequest, Repository, Skill, Task};
 
 /// The template `kind` is rendered from: the built-in text of that kind,
 /// which every launch and every resume reads straight from the code.
@@ -259,39 +259,6 @@ pub(crate) fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) 
     )
 }
 
-/// What one agent said to another, as the recipient reads it: who wrote it,
-/// and where an answer goes.
-///
-/// The sender is named by its column, the task it is of and that task's
-/// title: a task staffs one agent per column, so the column names one
-/// reader, and it is the address `post_to_session` takes. `task_title` and
-/// `column` are fetched by the scheduler from the message's own `task_id`
-/// and `from_agent_id`. A message with no sending agent, such as the
-/// orchestrator's, is named by `seat` alone, and names no address.
-pub(crate) fn incoming_message_briefing(
-    template: &str,
-    message: &Message,
-    seat: &str,
-    task_title: Option<&str>,
-    column: Option<&str>,
-) -> String {
-    let (from, answer_to) = match (&message.task_id, task_title, column) {
-        (Some(task_id), Some(title), Some(column)) if message.from_agent_id.is_some() => (
-            format!(r#"the {column} agent of task {task_id} "{title}""#),
-            format!(", with `post_to_session` to `{column}` and task `{task_id}`"),
-        ),
-        _ => (format!("your {seat}"), String::new()),
-    };
-    render(
-        template,
-        &[
-            ("from", &from),
-            ("body", &fence(&message.body)),
-            ("answer_to", &answer_to),
-        ],
-    )
-}
-
 /// What a post puts in the recipient's session: who wrote it, the body as
 /// fenced data, and where an answer to a question goes. `from` names the
 /// sender and `answer` the `post_to_session` call that reaches it.
@@ -508,23 +475,6 @@ mod tests {
         }
     }
 
-    fn message() -> Message {
-        Message {
-            id: "01msgxxxxxxxxxxxxxxxxxxxxx".into(),
-            goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
-            task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
-            kind: "message".into(),
-            from_actor: "agent".into(),
-            from_agent_id: Some("01agentxxxxxxxxxxxxxxxxxxx".into()),
-            from_session: None,
-            to_actor: "agent".into(),
-            to_agent_id: Some("01otherxxxxxxxxxxxxxxxxxxx".into()),
-            body: "Why is the retry unbounded?".into(),
-            delivered_at: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
-
     fn task() -> Task {
         Task {
             step: Some("develop".into()),
@@ -680,13 +630,9 @@ mod tests {
                 PromptKind::GoalAttention => {
                     goal_attention_briefing(&template, &goal, "- one task failed")
                 }
-                PromptKind::IncomingMessage => incoming_message_briefing(
-                    &template,
-                    &message(),
-                    "agent",
-                    Some(task.title.as_str()),
-                    Some("review"),
-                ),
+                // A post tags its prompt with this kind and writes its own
+                // text (039), so no builder renders the template.
+                PromptKind::IncomingMessage => continue,
             };
             assert!(
                 !rendered.contains('{'),

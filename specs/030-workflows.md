@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-11-23
+updated: 2026-11-25
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
@@ -233,7 +233,7 @@ every other kebab-case word in it; the wire spells the same gate
    planned, left that way when the goal went active — fails before it
    starts, naming the column, and spends no launch. `update_task.agents` replaces the complete staffing while the
    task is `pending`, `ready` or `failed`: an agent already on its column
-   keeps its row, and with it the sessions, messages and usage that name it;
+   keeps its row, and with it the sessions and usage that name it;
    a column staffed for the first time gets a new row; two rows on one
    column fold into the first; a column the edit leaves out loses its agent
    only while nothing names it, and is refused by name otherwise. A session
@@ -247,8 +247,7 @@ every other kebab-case word in it; the wire spells the same gate
    in the first column and stays `in_progress` between columns: the column
    it is on is `TaskDto.step`. Only the current column's agent receives work
    or watchdog attention (009 rule 5). Other column agents remain idle until
-   their column becomes current, and a message to one waits for its column
-   (018 rule 9).
+   their column becomes current.
 4. `POST /v1/tasks/{id}/step/complete` takes `reason` and optional
    `merge_commit`. It moves forward one column, or finishes the task from
    the last column. `POST /v1/tasks/{id}/step/fail` takes `reason`. It moves
@@ -320,7 +319,7 @@ every other kebab-case word in it; the wire spells the same gate
    `repositories.default_workflow` is `NOT NULL DEFAULT
    'develop-review-merge'`. `task_agents` keys an agent by `step`, not by a
    seat; `agent_sessions.seat` is `orchestrator`, `agent` or `reviewer`;
-   `messages.kind` is `message` alone; `task_transitions.actor` is
+   there is no `messages` table (0025); `task_transitions.actor` is
    `orchestrator`, `agent`, `daemon` or `user`. There is no `task_picks`
    table, no `tasks.picked_agent_id` and no `goal_repositories.goal_branch`.
    A database on a schema this release does not ship — the fixed
@@ -512,8 +511,8 @@ every other kebab-case word in it; the wire spells the same gate
 - A staffing names the goal's columns once each, inherits skills, refuses an
   unknown or doubled column by name, may leave columns for later while the
   goal is planned, and is refused by name once the goal is active; an edit
-  replaces the whole staffing and keeps the row, the sessions and the
-  messages of an agent already on its column
+  replaces the whole staffing and keeps the row and the sessions of an
+  agent already on its column
   (`store.rs::a_staffing_names_the_goals_columns_once_each_and_may_leave_some_for_later`,
   `::an_edit_replaces_the_whole_column_staffing`,
   `tools.rs::a_workflow_task_staffs_one_agent_for_each_column`).

@@ -683,7 +683,7 @@ impl Store {
         if let Some(agents) = &mut update.agents {
             // Re-staffing is the whole staffing again, column by column: an
             // agent already on a column keeps its row — and with it the
-            // sessions, messages and usage that name it — on the skills and
+            // sessions and usage that name it — on the skills and
             // the pin the edit gives it; a column staffed for the first time
             // gets a new row, and a column the edit leaves out loses its
             // agent. The task is not running, so no live agent session is

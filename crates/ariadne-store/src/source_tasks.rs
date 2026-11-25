@@ -262,14 +262,6 @@ impl Store {
             .await?;
         Ok(())
     }
-
-    /// Read staffing from the worker cache without creating local staffing rows.
-    pub async fn source_task_agents(&self, id: &str) -> Result<Vec<crate::TaskAgent>> {
-        match self.source_task_reference(id).await? {
-            Some(reference) => reference.cached_agents(),
-            None => Ok(Vec::new()),
-        }
-    }
 }
 
 impl SourceTaskReference {

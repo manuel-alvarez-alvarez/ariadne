@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use ariadne_api::dashboards::DashboardDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto, LinkedGoalDto, PullRequestOperationDto};
-use ariadne_api::messages::MessageDto;
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
 };
@@ -22,7 +21,7 @@ use ariadne_api::usage::TokenUsageDto;
 use ariadne_api::workflows::{WorkflowDto, WorkflowStepDto};
 use ariadne_core::models::agent_of;
 use ariadne_core::workflow::WorkflowStep;
-use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
+use ariadne_core::{Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, SessionFilter, Store, StoreError};
 
 /// One conversion per entity: the fields that are not a straight move, then
@@ -166,17 +165,6 @@ dto! {
 
     pub(crate) fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
         .. id, from_status, to_status, actor, reason, created_at, from_step, to_step
-    }
-
-    pub(crate) fn message_dto(m: store::Message) -> MessageDto {
-        // A kind or an actor this build does not know is carried rather than
-        // dropped: the body is what somebody typed, and a listing that
-        // silently loses a message is worse than one that shows a `note`.
-        kind: m.kind().unwrap_or(MessageKind::Message),
-        from_actor: m.from_actor().unwrap_or(Actor::Daemon),
-        to_actor: m.to_actor().unwrap_or(Actor::Daemon),
-        .. id, goal_id, task_id, from_agent_id, from_session, to_agent_id,
-           body, delivered_at, created_at
     }
 
     /// `usage` is what this session has spent and `step` is the workflow

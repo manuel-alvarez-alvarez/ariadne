@@ -296,49 +296,6 @@ async fn source_sessions_history_diffs_and_usage_resolve_the_worker_identity() {
 }
 
 #[tokio::test]
-async fn source_messages_survive_disconnection_without_local_staffing() {
-    let (p, goal) = setup().await;
-    let source = draft(&p, &goal, "Conversation", &[]).await;
-    let stored_goal = p.local.store.get_goal(&goal.id).await.unwrap();
-    let orchestrator = p.local.orchestrator_session(&stored_goal).await;
-    go_away(&p).await;
-    p.local.json::<Value>(as_session(&format!("/v1/tasks/{}/messages",source.id), &orchestrator.id,
-        json!({"to_actor":"agent", "to_agent_id":source.agents[0].id, "body":"Continue after reconnection"})), StatusCode::CREATED).await;
-    back(&p).await;
-    eventually(TIMEOUT, "queued worker message", async || {
-        let messages: Vec<Value> = p
-            .far
-            .get(&format!("/v1/tasks/{}/messages", source.id))
-            .await;
-        messages.len() == 1
-    })
-    .await;
-    p.far
-        .store
-        .send_message(ariadne_store::NewMessage {
-            goal_id: goal.id.clone(),
-            task_id: Some(source.id.clone()),
-            kind: ariadne_core::MessageKind::Message,
-            from_actor: Actor::Agent,
-            from_agent_id: Some(source.agents[0].id.clone()),
-            from_session: None,
-            to_actor: Actor::Orchestrator,
-            to_agent_id: None,
-            body: "Worker question".into(),
-        })
-        .await
-        .unwrap();
-    eventually(TIMEOUT, "worker question at source", async || {
-        let messages: Vec<Value> = p
-            .local
-            .get(&format!("/v1/tasks/{}/messages", source.id))
-            .await;
-        messages.len() == 2 && messages[1]["from_agent_id"] == source.agents[0].id
-    })
-    .await;
-}
-
-#[tokio::test]
 async fn deleting_a_source_goal_keeps_coordination_until_worker_cancellation_is_acknowledged() {
     let (p, goal) = setup().await;
     let source = draft(&p, &goal, "Delete while disconnected", &[]).await;
@@ -737,65 +694,6 @@ async fn worker_session_creation_refreshes_source_progress_without_a_usage_repor
     })
     .await;
     assert_eq!(task(&p.local, &source.id).await.usage.total.input_tokens, 0);
-}
-
-#[tokio::test]
-async fn worker_messages_reach_the_source_orchestrator_with_the_worker_column_address() {
-    let p = pair_setup(false).await;
-    let repo = forge_repository(&p.local, "source", "owner/message-address").await;
-    forge_repository(&p.far, "worker", "owner/message-address").await;
-    let goal = goal_on(&p.local, &repo).await;
-    let source = draft(&p, &goal, "Addressed conversation", &[]).await;
-    let source_goal = p.local.store.get_goal(&goal.id).await.unwrap();
-    let orchestrator = p.local.orchestrator_session(&source_goal).await;
-    p.local.agent_runs(&orchestrator).await;
-    p.local
-        .set_status(&orchestrator, ariadne_core::SessionStatus::Idle)
-        .await;
-    let mut state = p.local.state.clone();
-    state.sched_tx = Some(ariadne_daemon::scheduler::start(
-        p.local.store.clone(),
-        p.local.launcher.clone(),
-        false,
-        p.local.timeouts,
-    ));
-    ariadne_daemon::far::start(&state, p.local.timeouts);
-    activate(&p.local, &goal).await;
-    let worker_task = p.far.store.get_task(&source.id).await.unwrap();
-    let worker_goal = p.far.store.task_goal(&worker_task).await.unwrap();
-    let agent = p
-        .far
-        .session(
-            &worker_goal,
-            Some(&worker_task),
-            ariadne_core::Seat::Agent,
-            &source.agents[0].id,
-        )
-        .await;
-    p.far
-        .json::<Value>(
-            as_session(
-                &format!("/v1/tasks/{}/messages", source.id),
-                &agent.id,
-                json!({"to_actor":"orchestrator","body":"Which source fixture applies?"}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    eventually(TIMEOUT, "source orchestrator message turn", async || {
-        p.local
-            .prompted(&orchestrator)
-            .contains("Which source fixture applies?")
-    })
-    .await;
-    let prompt = p.local.prompted(&orchestrator);
-    assert!(
-        prompt.contains(&format!(
-            "Message from the {} agent of task {}",
-            source.agents[0].step, source.id
-        )),
-        "{prompt}"
-    );
 }
 
 #[tokio::test]

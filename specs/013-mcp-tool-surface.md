@@ -165,7 +165,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    staffing that still names it (017 rule 7) and reads as empty, and the
    catalog never offers it as a fresh choice. A skill with a document,
    shipped or written, still lists.
-10. Removed: `read_messages` left the MCP, and the route behind it stays (018).
+10. Removed: `read_messages` left the MCP, and the route behind it is gone (018).
 11. Removed: `send_message` left the MCP. `post_to_session` writes between the
     seats (039).
 12. A value the schema offers is a value the tool takes. The schema an agent
@@ -234,14 +234,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 - Rule 18: far writes, session switches, held tasks, host refusals and linked
   goal endings are checked by the tests for 001 rules 20 and 21.
-- The task message routes used by the tools carry far agent messages,
-  orchestrator replies, and both directions of the thread
-  (`far_tasks.rs::a_far_agent_message_reaches_the_orchestrator_as_a_task_turn`,
-  `::an_orchestrator_message_reaches_the_far_agent_as_a_turn`,
-  `::a_far_task_thread_shows_both_directions`).
-- The tools' message channel survives a host outage without duplicate turns
-  (`far_tasks.rs::messages_wait_for_the_far_host_and_arrive_in_order_even_after_a_lost_answer`,
-  `::a_far_message_made_while_away_is_delivered_once_after_reconnect`).
 
 - Every launch hands the agent the `ariadne mcp serve` server and the
   session context it reads
