@@ -24,7 +24,7 @@ Use `documentation` for a prose-only task.
 
    Done when each file you change has its rules named.
 3. Name an assumption for each gap. Report a contradiction
-   with `send_message` to `orchestrator`. Send both readings and your pick.
+   with `post_to_session` to `orchestrator`. Send both readings and your pick.
    Continue with your pick.
 
    Done when every gap has an assumption.

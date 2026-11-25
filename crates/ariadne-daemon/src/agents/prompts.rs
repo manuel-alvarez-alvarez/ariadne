@@ -264,7 +264,7 @@ pub(crate) fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) 
 ///
 /// The sender is named by its column, the task it is of and that task's
 /// title: a task staffs one agent per column, so the column names one
-/// reader, and it is the address `send_message` takes. `task_title` and
+/// reader, and it is the address `post_to_session` takes. `task_title` and
 /// `column` are fetched by the scheduler from the message's own `task_id`
 /// and `from_agent_id`. A message with no sending agent, such as the
 /// orchestrator's, is named by `seat` alone, and names no address.
@@ -278,7 +278,7 @@ pub(crate) fn incoming_message_briefing(
     let (from, answer_to) = match (&message.task_id, task_title, column) {
         (Some(task_id), Some(title), Some(column)) if message.from_agent_id.is_some() => (
             format!(r#"the {column} agent of task {task_id} "{title}""#),
-            format!(", with `send_message` to `{column}` and task `{task_id}`"),
+            format!(", with `post_to_session` to `{column}` and task `{task_id}`"),
         ),
         _ => (format!("your {seat}"), String::new()),
     };

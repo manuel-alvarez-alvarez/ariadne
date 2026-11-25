@@ -31,7 +31,7 @@ the user across hosts, and the session rules, prompts and skills.
 
 1. A **post** is text for the live session of one recipient. The daemon
    queues it as a prompt in that session and writes no row in the `messages`
-   table. `send_message` and `read_messages` (018) work as they did.
+   table. The routes, tables and views of the messages (018) work as they did; no MCP tool writes them.
 2. The MCP tool is `post_to_session` (013). The orchestrator seat and the
    agent seat list it. The reviewer and keeper seats do not.
 3. It takes `to` (`orchestrator` or a column id), an optional `task_id` and a
@@ -91,7 +91,7 @@ the user across hosts, and the session rules, prompts and skills.
 19. A legacy mirror task refuses each post in the two directions: the source
     refuses a post to it, and its host refuses a post of its agent to
     `orchestrator`. Each refusal says that a post does not cross to a mirror
-    and names `send_message`.
+    and names no other tool.
 
 20. When the source drops a `source_post` frame because the orchestrator of
     the source goal has no live session, it sends one notice to the worker,
