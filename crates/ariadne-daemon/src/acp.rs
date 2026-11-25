@@ -149,6 +149,11 @@ pub struct AcpLaunch {
     pub repository_path: String,
     /// The repository's permission mode, resolved before the launch.
     pub permission_mode: PermissionMode,
+    /// The goal this session orchestrates; None for every other seat. While
+    /// that goal is in planning, the daemon refuses the agent's
+    /// `ExitPlanMode` (021 rule 21).
+    #[serde(default)]
+    pub orchestrated_goal: Option<String>,
 }
 
 /// The daemon-owned ACP agents, one child process per live session.
@@ -609,6 +614,9 @@ struct ConfigSwitch {
 struct Outbound {
     connection: Arc<tokio::sync::OnceCell<ConnectionTo<Agent>>>,
     sending: Arc<tokio::sync::Mutex<()>>,
+    /// The `plan` mode this launch set, which `finalize_plan` ends
+    /// ([`AcpRuntime::end_plan_mode`]). None where the launch set none.
+    plan_mode: Arc<Mutex<Option<PlanMode>>>,
 }
 
 impl Outbound {
@@ -1053,6 +1061,63 @@ impl AcpRuntime {
         result
             .await
             .map_err(|_| anyhow!("the ACP agent ended before changing its pin"))?
+    }
+
+    /// End the `plan` mode the session's launch set: `finalize_plan`
+    /// succeeded (021 rule 21). The session goes back to the mode it ran in
+    /// before ([`PlanMode::mode_after`]).
+    ///
+    /// The call goes out on its own task, and nothing waits on it: the
+    /// orchestrator calls `finalize_plan` from inside a turn, and an agent
+    /// may hold a mode change until that tool call is answered. A session
+    /// whose launch set no plan mode, or whose agent is gone, changes nothing.
+    pub(crate) fn end_plan_mode(&self, session_id: &str) {
+        let outbound = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            running.get(session_id).map(|agent| agent.outbound.clone())
+        };
+        let Some(outbound) = outbound else {
+            return;
+        };
+        let Some(plan) = outbound
+            .plan_mode
+            .lock()
+            .expect("ACP plan mode lock")
+            .take()
+        else {
+            return;
+        };
+        let Some(connection) = outbound.connection.get().cloned() else {
+            return;
+        };
+        let Some(mode) = plan.mode_after() else {
+            return;
+        };
+        let session_id = session_id.to_string();
+        tokio::spawn(async move {
+            let sent = match &plan.switch {
+                ModeSwitch::ConfigOption(config_id) => connection
+                    .send_request(v1::SetSessionConfigOptionRequest::new(
+                        plan.agent_session.clone(),
+                        config_id.clone(),
+                        v1::SessionConfigOptionValue::value_id(mode.clone()),
+                    ))
+                    .block_task()
+                    .await
+                    .map(|_| ()),
+                ModeSwitch::SessionMode => connection
+                    .send_request(v1::SetSessionModeRequest::new(
+                        plan.agent_session.clone(),
+                        mode.clone(),
+                    ))
+                    .block_task()
+                    .await
+                    .map(|_| ()),
+            };
+            if let Err(error) = sent {
+                tracing::warn!(session = %session_id, mode, error = %format!("{error:#}"), "the session stayed in plan mode after the plan was finalized");
+            }
+        });
     }
 
     /// Hand the running agent a prompt from the daemon itself — a scheduler
@@ -2002,6 +2067,7 @@ impl AcpRuntime {
             pending_permission: permission.clone(),
             reports: io.reports.clone(),
             subagents: io.subagents.clone(),
+            orchestrated_goal: launch.orchestrated_goal.clone(),
         };
         if let Some(history) = &recovery {
             incoming.restore_prior_turn_state(history).await;
@@ -2675,6 +2741,8 @@ struct RuntimeIncoming {
     reports: Followers,
     /// The children the agent announced this launch.
     subagents: Subagents,
+    /// The goal this session orchestrates, None for every other seat.
+    orchestrated_goal: Option<String>,
 }
 
 impl RuntimeIncoming {
@@ -2931,6 +2999,11 @@ impl RuntimeIncoming {
         );
         payload["options"] = params.get("options").cloned().unwrap_or_default();
         let signature = permission_signature(&params["toolCall"]);
+        if signature.tool_name == EXIT_PLAN_MODE && self.goal_in_planning().await {
+            return Ok(self
+                .refuse_exit_plan_mode(params, session_id, payload, requested_at)
+                .await);
+        }
         // The learned row's key and the request's risk tags. The model reads
         // neither: it is given the raw input.
         let key = normalize(
@@ -3215,6 +3288,69 @@ impl RuntimeIncoming {
         Ok(json!({"outcome": outcome}))
     }
 
+    /// Whether this session orchestrates a goal that is in planning now.
+    async fn goal_in_planning(&self) -> bool {
+        let Some(goal_id) = &self.orchestrated_goal else {
+            return false;
+        };
+        self.sink
+            .runtime
+            .inner
+            .store
+            .get_goal(goal_id)
+            .await
+            .is_ok_and(|goal| goal.status() == ariadne_core::GoalStatus::Planning)
+    }
+
+    /// Answer a planning orchestrator's `ExitPlanMode` with the agent's
+    /// rejecting option, in every repository permission mode (021 rule 21):
+    /// `finalize_plan` is what ends plan mode. The request and the reply are
+    /// recorded as every daemon answer is, decided by `plan`.
+    async fn refuse_exit_plan_mode(
+        &self,
+        params: &Value,
+        session_id: Value,
+        mut payload: Value,
+        requested_at: Instant,
+    ) -> Value {
+        let decided_by = "plan";
+        let selected = console_rejecting_option(params);
+        payload["decided_by"] = json!(decided_by);
+        payload["waiting"] = json!(false);
+        self.end_text().await;
+        self.sink.emit("permission_request", payload).await;
+        let reply = PermissionReplyDto {
+            session_id,
+            option_id: selected.clone(),
+            console_option_id: None,
+            decided_by: decided_by.into(),
+            label: None,
+            danger: None,
+            allow_threshold: None,
+            deny_threshold: None,
+            ai_error: None,
+            operation: None,
+            risk_tags: None,
+            cap: None,
+            probabilities: None,
+            learned_id: None,
+            learned_level: None,
+            learned_key: None,
+        };
+        crate::metrics::record_permission(
+            decided_by,
+            permission_answer(selected.as_deref(), None, params),
+            metric_tool_name_of(&params["toolCall"]),
+            requested_at.elapsed().as_secs_f64(),
+        );
+        self.sink.emit("permission.replied", json!(reply)).await;
+        let outcome = selected.map_or_else(
+            || json!({"outcome": "cancelled"}),
+            |option_id| json!({"outcome": "selected", "optionId": option_id}),
+        );
+        json!({"outcome": outcome})
+    }
+
     /// Find an allowing command row, then a family row, whose risk tags hold
     /// every tag of the request. A
     /// request with no `rawInput` never matches one.
@@ -3362,6 +3498,9 @@ async fn run_protocol(
             effort,
         )
         .await;
+    }
+    if config.plan_mode {
+        options = enter_plan_mode(rpc, &session_id, options, setup.modes.as_ref()).await;
     }
 
     rpc.sink
@@ -3609,6 +3748,8 @@ pub(crate) fn to_params<T: serde::Serialize>(request: &T) -> Result<Value> {
 struct OpenedSession {
     session_id: String,
     config_options: Vec<v1::SessionConfigOption>,
+    /// The ACP session modes, where the agent offers them.
+    modes: Option<v1::SessionModeState>,
 }
 
 async fn session_setup(
@@ -3624,6 +3765,7 @@ async fn session_setup(
         return Ok(OpenedSession {
             session_id: opened.session_id.to_string(),
             config_options: opened.config_options.unwrap_or_default(),
+            modes: opened.modes,
         });
     };
     // A resumed conversation is reopened the way the agent says it can be.
@@ -3634,19 +3776,22 @@ async fn session_setup(
     let capabilities = &initialized.agent_capabilities;
     // Neither answer carries the id it reopened: it is the one that was
     // asked for, and every caller reads one off the result.
-    let config_options = if capabilities.session_capabilities.resume.is_some() {
+    let (config_options, modes) = if capabilities.session_capabilities.resume.is_some() {
         let request =
             v1::ResumeSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
-        rpc.call("session/resume", request).await?.config_options
+        let resumed = rpc.call("session/resume", request).await?;
+        (resumed.config_options, resumed.modes)
     } else if capabilities.load_session {
         let request = v1::LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
-        rpc.call("session/load", request).await?.config_options
+        let loaded = rpc.call("session/load", request).await?;
+        (loaded.config_options, loaded.modes)
     } else {
         bail!("ACP agent supports neither session/resume nor session/load")
     };
     Ok(OpenedSession {
         session_id: session_id.clone(),
         config_options: config_options.unwrap_or_default(),
+        modes,
     })
 }
 
@@ -3844,6 +3989,155 @@ fn category_name(category: &v1::SessionConfigOptionCategory) -> &str {
         C::Other(name) => name,
         _ => "",
     }
+}
+
+/// The id of the mode an orchestrator plans in (021 rule 21).
+const PLAN_MODE: &str = "plan";
+
+/// The tool an agent calls to leave its plan mode. A planning orchestrator
+/// leaves it through `finalize_plan` instead (021 rule 21).
+const EXIT_PLAN_MODE: &str = "ExitPlanMode";
+
+/// How an agent offers its `plan` mode, and so how the daemon sets it.
+#[derive(Debug, Clone, PartialEq)]
+enum ModeSwitch {
+    /// A session configuration option of category `mode`, by its id.
+    ConfigOption(String),
+    /// An ACP session mode, set with `session/set_mode`.
+    SessionMode,
+}
+
+/// The `plan` mode an agent offers: how it is set, the mode the session
+/// runs in now, and every mode the agent offers.
+#[derive(Debug, Clone, PartialEq)]
+struct PlanMode {
+    switch: ModeSwitch,
+    before: Option<String>,
+    offered: Vec<String>,
+    /// The agent's own id of the session the mode was set on.
+    agent_session: String,
+}
+
+impl PlanMode {
+    /// The mode the session goes back to once planning ends: the one it ran
+    /// in before the daemon set `plan`. Where that is unknown or is `plan`
+    /// itself, `default`, else the first offered mode that is not `plan`.
+    fn mode_after(&self) -> Option<String> {
+        self.before
+            .clone()
+            .filter(|mode| mode != PLAN_MODE)
+            .or_else(|| {
+                self.offered
+                    .iter()
+                    .find(|mode| *mode == "default")
+                    .or_else(|| self.offered.iter().find(|mode| *mode != PLAN_MODE))
+                    .cloned()
+            })
+    }
+}
+
+/// The `plan` mode the agent offers, if it offers one: a configuration
+/// option of category `mode` with the value `plan`, else an ACP session mode
+/// with the id `plan`. Codex offers neither, and runs as it always has.
+fn plan_mode_offer(
+    options: &[v1::SessionConfigOption],
+    modes: Option<&v1::SessionModeState>,
+    agent_session: &str,
+) -> Option<PlanMode> {
+    if let Some(option) = find_config_option(options, &["mode"], &[])
+        && let v1::SessionConfigKind::Select(select) = &option.kind
+    {
+        let offered: Vec<String> = match &select.options {
+            v1::SessionConfigSelectOptions::Ungrouped(options) => {
+                options.iter().map(|o| o.value.0.to_string()).collect()
+            }
+            v1::SessionConfigSelectOptions::Grouped(groups) => groups
+                .iter()
+                .flat_map(|group| group.options.iter())
+                .map(|o| o.value.0.to_string())
+                .collect(),
+            _ => Vec::new(),
+        };
+        if offered.iter().any(|mode| mode == PLAN_MODE) {
+            return Some(PlanMode {
+                switch: ModeSwitch::ConfigOption(option.id.0.to_string()),
+                before: current_value(option).map(str::to_string),
+                offered,
+                agent_session: agent_session.to_string(),
+            });
+        }
+    }
+    let modes = modes?;
+    let offered: Vec<String> = modes
+        .available_modes
+        .iter()
+        .map(|mode| mode.id.0.to_string())
+        .collect();
+    offered
+        .iter()
+        .any(|mode| mode == PLAN_MODE)
+        .then(|| PlanMode {
+            switch: ModeSwitch::SessionMode,
+            before: Some(modes.current_mode_id.0.to_string()),
+            offered,
+            agent_session: agent_session.to_string(),
+        })
+}
+
+/// Set the session's `plan` mode, before the first prompt of a launch whose
+/// goal is in planning (021 rule 21).
+///
+/// A mode the agent does not offer is no mode change. A refused or failed
+/// call does not stop the launch: the session runs in the agent's own mode,
+/// and a `session.pin_fallback` event names the mode and the reason, as for a
+/// pin. A mode that landed is kept for [`AcpRuntime::end_plan_mode`].
+async fn enter_plan_mode(
+    rpc: &mut Rpc,
+    session_id: &str,
+    options: Vec<v1::SessionConfigOption>,
+    modes: Option<&v1::SessionModeState>,
+) -> Vec<v1::SessionConfigOption> {
+    let Some(plan) = plan_mode_offer(&options, modes, session_id) else {
+        return options;
+    };
+    let (options, error) = match &plan.switch {
+        ModeSwitch::ConfigOption(_) => {
+            match set_pinned_option(rpc, session_id, options, &["mode"], &[], "mode", PLAN_MODE)
+                .await
+            {
+                Ok(options) => (options, None),
+                Err(Unpinned { options, error }) => (options, Some(error)),
+            }
+        }
+        ModeSwitch::SessionMode => {
+            let request = v1::SetSessionModeRequest::new(session_id.to_string(), PLAN_MODE);
+            let error = rpc
+                .call("session/set_mode", request)
+                .await
+                .with_context(|| format!("setting ACP mode to `{PLAN_MODE}`"))
+                .err();
+            (options, error)
+        }
+    };
+    let Some(error) = error else {
+        *rpc.outbound.plan_mode.lock().expect("ACP plan mode lock") = Some(plan);
+        return options;
+    };
+    let error = format!("{error:#}");
+    tracing::warn!(session = %rpc.sink.session_id, %error, "plan mode did not land, running in the agent's own mode");
+    rpc.sink
+        .emit(
+            "session.pin_fallback",
+            json!({
+                "session_id": session_id,
+                "option": "mode",
+                "asked": PLAN_MODE,
+                "running": plan.before,
+                "error": error,
+            }),
+        )
+        .await;
+    options
 }
 
 /// The seat brief a launch sends in a turn: its seat text and skill index,
@@ -4691,6 +4985,7 @@ mod tests {
                 model: "test-model".into(),
                 effort: None,
                 extra_flags: Vec::new(),
+                plan_mode: false,
             };
             let plan = if resume {
                 crate::agents::plan_resume(&ctx, "acp-session-1", "continue").unwrap()
@@ -4943,10 +5238,12 @@ mod tests {
                         effort: None,
                         resume_session_id: None,
                         mcp_servers: vec![],
+                        plan_mode: false,
                     },
                     repository_id: "repo".into(),
                     repository_path: String::new(),
                     permission_mode: ariadne_core::PermissionMode::Auto,
+                    orchestrated_goal: None,
                 })
                 .await
         });
@@ -5027,6 +5324,30 @@ mod tests {
             }),
             "a boolean option carries its type beside the value"
         );
+    }
+
+    /// A session whose mode before `plan` is unknown goes back to
+    /// `default`, else to the first offered mode that is not `plan`
+    /// (021 rule 21).
+    #[test]
+    fn an_unknown_mode_before_plan_mode_ends_in_default() {
+        let plan = |offered: &[&str]| super::PlanMode {
+            switch: super::ModeSwitch::SessionMode,
+            before: None,
+            offered: offered.iter().map(|mode| mode.to_string()).collect(),
+            agent_session: "s".into(),
+        };
+        assert_eq!(
+            plan(&["plan", "acceptEdits", "default"])
+                .mode_after()
+                .as_deref(),
+            Some("default")
+        );
+        assert_eq!(
+            plan(&["plan", "acceptEdits"]).mode_after().as_deref(),
+            Some("acceptEdits")
+        );
+        assert_eq!(plan(&["plan"]).mode_after(), None);
     }
 
     #[test]

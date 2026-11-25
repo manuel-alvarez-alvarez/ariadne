@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-24
+updated: 2026-11-25
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -21,6 +21,8 @@ tests:
   - crates/ariadne-daemon/tests/it/seat_brief.rs
   - crates/ariadne-daemon/src/learned_key.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-daemon/tests/it/plan_mode.rs
+  - crates/ariadne-daemon/tests/it/adapters.rs
 ---
 
 # ACP runtime
@@ -86,6 +88,9 @@ it leaves nothing to delete.
    the session with `session/new` — or, for a resume, `session/resume` where
    the agent advertises it and `session/load` where it only advertises
    loading — and passes the MCP servers of the launch file every time.
+   The runtime keeps the configuration options and the ACP session modes
+   that the answer carries, for the pins of rule 3 and the plan mode of
+   rule 21.
 3. The model is set through `session/set_config_option` on the option of
    category `model`, or, where no option has that category, on the option
    whose id or name is `model`. The effort is set the same way, on category
@@ -113,6 +118,8 @@ it leaves nothing to delete.
    pin must land: a refused option fails a switch between turns with the
    agent's reason, and the session keeps its old pin
    (`::a_refused_same_agent_option_keeps_the_old_pin`).
+   After the pins, and before the first prompt, a launch can set the plan
+   mode of rule 21.
 4. A prompt the runtime sends is its own text. The first prompt of a launch
    and the first after a model switch carry the system prompt and a blank
    line ahead of that text (006 rule 2). A command never carries it: where text from any
@@ -317,6 +324,8 @@ it leaves nothing to delete.
    handles every answer that is not a confident allow or deny.
    The answering row's id, level and key appear on `permission_request` and
    `permission.replied`; all three are null if no row answered.
+   Rule 21 answers one request before every mode of this rule: an
+   orchestrator's `ExitPlanMode` while its goal is in `planning`.
 10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
    nudge, a review briefing, an agent message — is a `session/prompt`, sent
@@ -457,9 +466,67 @@ it leaves nothing to delete.
     Stop a pane after its relay with `pane.close`.
     A daemon stop, a new daemon's reconnect and a kill follow rule 18, with herdr in place of tmux.
     The herdr agent-state detection is not used.
+21. The orchestrator of a goal in `planning` runs in the plan mode of its
+    agent. No setting turns this off.
+    - An agent offers plan mode when it offers a session mode with the id
+      `plan`. The runtime finds a configuration option of category `mode`
+      with the value `plan`, else an ACP session mode with the id `plan`.
+    - The launch file carries `planMode`. The launcher sets it for every
+      orchestrator launch whose goal is in `planning`: a spawn, a respawn,
+      a resume, and a switch to another agent. It never sets it for a
+      column's agent, a pull request session, or an orchestrator of a goal
+      out of `planning`.
+    - With `planMode`, the runtime sets `plan` after the pins of rule 3 and
+      before the first prompt. It uses `session/set_config_option` on the
+      mode option, else `session/set_mode`.
+    - An agent that offers no plan mode, such as Codex, gets no mode call.
+    - A refused or failed mode call does not stop the launch. The session
+      runs in the agent's own mode. A `session.pin_fallback` event names the
+      option `mode`, the value `plan`, the mode the agent runs in, and the
+      reason.
+    - When `finalize_plan` succeeds, the daemon sets the live session back
+      to the mode it ran in before `plan`. Where that mode is unknown or is
+      `plan`, it uses `default`, else the first offered mode that is not
+      `plan`. The call goes out on its own task, because the orchestrator
+      calls `finalize_plan` inside a turn. A failed call is logged.
+    - While the goal is in `planning`, the daemon answers the orchestrator's
+      permission request for `ExitPlanMode` with the agent's rejecting
+      option. This applies in `auto`, `ask`, `learn` and `ai`. The request
+      and the reply are recorded as `permission_request` and
+      `permission.replied`, with `decided_by` `plan`. Out of `planning`,
+      rule 9 answers `ExitPlanMode` as any other tool.
+    - The MCP server of a plan-mode launch gets `ARIADNE_PLAN_MODE=1`, and
+      lists the orchestrator's tools as read-only (003 rule 18).
 
 ## Acceptance criteria
 
+- A planning orchestrator is put in plan mode after its pins and before its
+  first prompt
+  (`plan_mode.rs::a_planning_orchestrator_is_put_in_plan_mode_before_its_first_prompt`),
+  through an ACP session mode where it has no mode option
+  (`::an_agent_offering_a_plan_session_mode_is_put_in_it`). A resume and a
+  switch to another agent set it again
+  (`::a_resumed_planning_orchestrator_is_put_in_plan_mode_again`,
+  `::a_planning_orchestrator_switched_to_another_agent_starts_in_plan_mode`).
+  The launch file and the MCP server are told
+  (`adapters.rs::a_plan_mode_launch_tells_the_runtime_and_the_mcp_server`).
+- An agent without a plan mode, a column's agent, and an orchestrator of an
+  active goal get no mode change
+  (`plan_mode.rs::an_agent_without_a_plan_mode_gets_no_mode_change`,
+  `::a_column_agent_gets_no_mode_change`,
+  `::an_orchestrator_of_an_active_goal_gets_no_mode_change`).
+- A refused plan mode runs the session in the agent's own mode and records
+  why (`plan_mode.rs::a_refused_plan_mode_runs_the_session_in_the_agents_own_mode`).
+- `finalize_plan` puts the session back in its own mode
+  (`plan_mode.rs::finalizing_the_plan_puts_the_orchestrator_back_in_its_own_mode`),
+  in `default` or the first other mode where it was already in `plan`
+  (`::a_session_that_was_already_planning_goes_back_to_default`), and where
+  its mode was unknown
+  (`acp.rs::an_unknown_mode_before_plan_mode_ends_in_default`).
+- A planning orchestrator's `ExitPlanMode` is refused in every permission
+  mode (`plan_mode.rs::a_planning_orchestrator_is_refused_exit_plan_mode_in_every_permission_mode`),
+  and is answered by the permission mode out of planning
+  (`::exit_plan_mode_out_of_planning_is_answered_by_the_permission_mode`).
 - Selection order, direct fallback, and forced failures:
   `place.rs::automatic_selection_uses_tmux_before_a_direct_child`,
   `::automatic_selection_uses_a_direct_child_without_multiplexers`, and
@@ -480,7 +547,7 @@ it leaves nothing to delete.
   `acp_runtime.rs::a_missing_forced_place_refuses_a_resume_with_its_reason` and
   `doctor.rs::doctor_reports_a_missing_forced_place_and_its_reason`.
 - Forced settings parse through daemon configuration:
-  `config.rs::tests::the_daemon_accepts_each_forced_session_place`.
+  `config.rs::the_daemon_accepts_each_forced_session_place`.
 - Doctor explains a missing forced location:
   `doctor.rs::doctor_reports_a_missing_forced_place_and_its_reason`.
 - A detached pane starts, lists, and stops:
@@ -572,7 +639,7 @@ it leaves nothing to delete.
   (`acp_runtime.rs::an_acp_error_keeps_an_existing_message_and_reads_other_data_shapes`).
 - Common detail keys, nested errors, strings, and compact JSON all supply
   readable messages for any ACP agent. Long JSON is cut
-  (`acp.rs::tests::common_error_detail_fields_and_long_json_are_readable`).
+  (`acp.rs::common_error_detail_fields_and_long_json_are_readable`).
 - An error without data stays unchanged, and an empty `data.message` takes
   the reason from another field
   (`acp_runtime.rs::an_acp_error_without_data_stays_unchanged_and_an_empty_message_is_filled`).
@@ -601,7 +668,7 @@ it leaves nothing to delete.
   a pattern also in the detail of the error's data, while another error
   remains plain. The stub preserves configured error data
   (`auto_switch.rs::a_codex_exhaustion_switches_to_another_agent_at_the_same_rank`,
-  `acp.rs::tests::exhaustion_signals_are_classified_and_a_plain_error_is_not`,
+  `acp.rs::exhaustion_signals_are_classified_and_a_plain_error_is_not`,
   `auto_switch.rs::a_plain_error_does_not_switch`).
 - The review column's agent runs the same way, in the task's one worktree
   (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent`).

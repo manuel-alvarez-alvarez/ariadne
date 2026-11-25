@@ -25,6 +25,7 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         model: "test-model".into(),
         effort: None,
         extra_flags,
+        plan_mode: false,
     }
 }
 
@@ -111,6 +112,41 @@ fn a_spawn_plans_a_new_session_briefed_and_pinned() {
         config,
         "the plan carries what the record says"
     );
+}
+
+/// A launch in plan mode says so in its launch file and tells its MCP
+/// server, which marks the seat's tools read-only (021 rule 21). A launch
+/// out of plan mode carries neither.
+#[test]
+fn a_plan_mode_launch_tells_the_runtime_and_the_mcp_server() {
+    let mcp_flag = |config: &serde_json::Value| {
+        config["mcpServers"][0]["env"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["name"] == "ARIADNE_PLAN_MODE")
+            .map(|v| v["value"].as_str().unwrap().to_string())
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let planning = SpawnCtx {
+        seat: Seat::Orchestrator,
+        task_id: None,
+        plan_mode: true,
+        ..ctx_with_flags(dir.path().into(), Vec::new())
+    };
+    plan_resume(&planning, "acp-session-1", "continue").unwrap();
+    let config = launch_file(dir.path());
+    assert_eq!(config["planMode"], true);
+    assert_eq!(mcp_flag(&config).as_deref(), Some("1"));
+
+    let normal = SpawnCtx {
+        plan_mode: false,
+        ..planning
+    };
+    plan_spawn(&normal).unwrap();
+    let config = launch_file(dir.path());
+    assert_eq!(config["planMode"], false);
+    assert_eq!(mcp_flag(&config), None);
 }
 
 /// A resume names the agent session it continues, and delivers its

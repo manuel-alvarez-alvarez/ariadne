@@ -223,6 +223,14 @@ impl Launcher {
         if session.goal_id.is_none() && session.pull_request_id.is_none() {
             anyhow::bail!("a staffed session needs a goal");
         }
+        // The orchestrator plans in its agent's plan mode while its goal is
+        // in planning (021 rule 21). No other seat changes mode.
+        let plan_mode = match (&session.goal_id, &session.pull_request_id) {
+            (Some(goal_id), None) if seat == Seat::Orchestrator => {
+                self.store.get_goal(goal_id).await?.status() == GoalStatus::Planning
+            }
+            _ => false,
+        };
         // The pin is `<agent>:<model>`; the agent is told only its own half.
         let model = session
             .model
@@ -249,6 +257,7 @@ impl Launcher {
             model,
             effort: session.effort.clone(),
             extra_flags,
+            plan_mode,
         })
     }
 
@@ -345,6 +354,10 @@ impl Launcher {
                 repository_id,
                 repository_path,
                 permission_mode,
+                orchestrated_goal: match (session.seat(), &session.pull_request_id) {
+                    (Some(Seat::Orchestrator), None) => session.goal_id.clone(),
+                    _ => None,
+                },
             })
             .await
             .context("spawning the ACP agent")?;

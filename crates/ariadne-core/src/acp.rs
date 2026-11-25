@@ -20,6 +20,11 @@ pub struct LaunchConfig {
     pub effort: Option<String>,
     pub resume_session_id: Option<String>,
     pub mcp_servers: Vec<McpServer>,
+    /// Whether the launch sets the agent's `plan` mode before its first
+    /// prompt: true for the orchestrator of a goal in planning. A launch file
+    /// written before the field reads as false.
+    #[serde(default)]
+    pub plan_mode: bool,
 }
 
 /// One standard-input MCP server passed through `session/new` or restore.

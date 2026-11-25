@@ -1140,10 +1140,12 @@ impl Harness {
                     effort: None,
                     resume_session_id: None,
                     mcp_servers: Vec::new(),
+                    plan_mode: false,
                 },
                 repository_id,
                 repository_path: String::new(),
                 permission_mode: PermissionMode::Auto,
+                orchestrated_goal: None,
             })
             .await
             .unwrap();

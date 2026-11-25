@@ -72,6 +72,10 @@ pub struct SpawnCtx {
     /// session, the MCP server, the system prompt, the model and its effort —
     /// travels in the launch file instead.
     pub extra_flags: Vec<String>,
+    /// Whether this launch runs the agent in its `plan` mode: the
+    /// orchestrator of a goal in planning (021 rule 21). The MCP server is
+    /// told too, and marks the seat's tools read-only (003 rule 18).
+    pub plan_mode: bool,
 }
 
 /// Link an agent's run-dir `skills` folder onto the daemon's shared home

@@ -57,6 +57,7 @@ fn plan(
                 .map(|(name, value)| EnvVariable { name, value })
                 .collect(),
         }],
+        plan_mode: ctx.plan_mode,
     };
     write_config(ctx, &config)?;
     Ok(SpawnPlan {
@@ -68,12 +69,16 @@ fn plan(
     })
 }
 
-/// The MCP server's environment: the session's own, and the index of its
-/// skills, which the server puts in its instructions after the seat text.
+/// The MCP server's environment: the session's own, the index of its
+/// skills, which the server puts in its instructions after the seat text,
+/// and whether the launch runs in plan mode.
 fn mcp_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
     let mut env = base_env(ctx);
     if !ctx.skill_index.is_empty() {
         env.push(("ARIADNE_SKILL_INDEX".into(), ctx.skill_index.clone()));
+    }
+    if ctx.plan_mode {
+        env.push(("ARIADNE_PLAN_MODE".into(), "1".into()));
     }
     env
 }

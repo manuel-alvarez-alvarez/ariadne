@@ -137,6 +137,9 @@ pub(crate) struct AriadneMcp {
     /// The index of the skills this session loads, as the launcher renders
     /// it (`ARIADNE_SKILL_INDEX`). None where the session loads no skill.
     skill_index: Option<String>,
+    /// Whether the agent runs in its plan mode (`ARIADNE_PLAN_MODE`): the
+    /// orchestrator of a goal in planning (021 rule 21).
+    plan_mode: bool,
     tool_router: ToolRouter<Self>,
 }
 
@@ -162,6 +165,7 @@ impl AriadneMcp {
             pull_request_id,
             found_pull_request_id: Default::default(),
             skill_index: std::env::var("ARIADNE_SKILL_INDEX").ok(),
+            plan_mode: std::env::var("ARIADNE_PLAN_MODE").is_ok_and(|value| value == "1"),
             tool_router: Self::tool_router(),
         })
     }
@@ -217,11 +221,25 @@ impl AriadneMcp {
     }
 
     /// The tools this session is listed, which are the ones it may call.
+    ///
+    /// An orchestrator in plan mode is listed every tool as read-only (003
+    /// rule 18). Claude Code's plan mode asks permission for each MCP tool
+    /// that is not read-only, and an allow rule does not change that. None of
+    /// these tools edits a file or runs a command: they keep the plan in
+    /// Ariadne.
     fn listed_tools(&self) -> Vec<Tool> {
+        let read_only = self.plan_mode && self.seat == McpSeat::Orchestrator;
         self.tool_router
             .list_all()
             .into_iter()
             .filter(|t| self.allows(t.name.as_ref()))
+            .map(|t| match read_only {
+                true => {
+                    let annotations = t.annotations.clone().unwrap_or_default().read_only(true);
+                    t.annotate(annotations)
+                }
+                false => t,
+            })
             .collect()
     }
 
@@ -594,7 +612,41 @@ pub(crate) mod tests {
             pull_request_id: pull_request.then(|| "01PR".into()),
             found_pull_request_id: Default::default(),
             skill_index: Some(skill_index),
+            plan_mode: false,
             tool_router: AriadneMcp::tool_router(),
+        }
+    }
+
+    /// An orchestrator in plan mode is listed every tool it may call as
+    /// read-only, so Claude Code's plan mode lets it plan through them
+    /// without a permission request (003 rule 18). Out of plan mode, and for
+    /// any other seat, no tool says so.
+    #[test]
+    fn a_planning_orchestrator_is_listed_its_tools_read_only() {
+        let read_only = |seat: McpSeat, plan_mode: bool| -> Vec<(String, Option<bool>)> {
+            let mcp = AriadneMcp {
+                plan_mode,
+                ..server_at(seat, Client::resolve(Some("http://127.0.0.1:1"), None))
+            };
+            mcp.listed_tools()
+                .into_iter()
+                .map(|t| {
+                    let hint = t.annotations.as_ref().and_then(|a| a.read_only_hint);
+                    (t.name.to_string(), hint)
+                })
+                .collect()
+        };
+
+        let planning = read_only(McpSeat::Orchestrator, true);
+        assert_eq!(planning.len(), McpSeat::Orchestrator.tools().len());
+        for (tool, hint) in &planning {
+            assert_eq!(*hint, Some(true), "{tool} is read-only in plan mode");
+        }
+        for (tool, hint) in read_only(McpSeat::Orchestrator, false)
+            .into_iter()
+            .chain(read_only(McpSeat::Agent, true))
+        {
+            assert_ne!(hint, Some(true), "{tool} is not marked read-only");
         }
     }
 

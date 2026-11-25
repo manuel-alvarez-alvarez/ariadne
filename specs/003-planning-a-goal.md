@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-11-23
+updated: 2026-11-25
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -12,6 +12,8 @@ tests:
   - crates/ariadne-daemon/tests/it/goal_completion.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
   - crates/ariadne-daemon/tests/it/linked_goals.rs
+  - crates/ariadne-daemon/tests/it/plan_mode.rs
+  - crates/ariadne-cli/src/commands/mcp.rs
 ---
 
 # Planning a goal
@@ -134,7 +136,8 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     every task at once. Only the goal's orchestrator may call it, only out of
     `planning`, and never on a plan with no tasks. It refuses a plan with a
     task that has no agent on a column, and the refusal names the task and
-    the column.
+    the column. It also ends the plan mode the orchestrator planned in
+    (021 rule 21).
 11. Nothing runs while the goal is in `planning`. A task created there stays
     `pending` however often the scheduler is woken about it: the daemon
     reconciles the tasks of active goals alone. That is what makes 8 safe —
@@ -165,6 +168,19 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 17. A linked goal starts `active` without an orchestrator session.
     It accepts `POST /v1/goals/{id}/tasks` without a session header.
     The daemon schedules each new task immediately, as after `finalize_plan`.
+18. The orchestrator plans in the plan mode of its agent, where the agent
+    has one (021 rule 21).
+    - Its briefing says that it plans in plan mode, that the Ariadne tools
+      are permitted there, and that `finalize_plan` ends plan mode. It says
+      not to call `ExitPlanMode`. An ACP permission answer carries no
+      reason, so the briefing carries the instruction.
+    - In plan mode, Claude Code asks permission for each MCP tool that is
+      not read-only, and an allow rule does not change that. Its plan mode
+      also tells the model to change nothing, and the model then refuses a
+      tool such as `create_task` by itself. So the MCP server of a plan-mode
+      launch lists every orchestrator tool with `readOnlyHint`, and the
+      briefing names the Ariadne tools as permitted. Out of plan mode, and
+      for every other seat, no tool carries the hint.
 
 ## Acceptance criteria
 
@@ -244,6 +260,12 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   (`::a_goal_with_a_task_still_going_is_refused_by_name`), a cancelled task is
   no bar (`::a_cancelled_task_is_no_bar_to_completing_the_goal`), and it
   happens once (`::a_goal_is_completed_only_out_of_active`).
+- The briefing explains plan mode
+  (`defaults.rs::the_orchestrator_briefing_explains_plan_mode`), and a
+  planning orchestrator is listed its tools read-only
+  (`mcp.rs::a_planning_orchestrator_is_listed_its_tools_read_only`).
+  `finalize_plan` ends plan mode
+  (`plan_mode.rs::finalizing_the_plan_puts_the_orchestrator_back_in_its_own_mode`).
 - A linked goal starts active without an orchestrator session
   (`linked_goals.rs::a_linked_goal_starts_active_without_an_orchestrator`).
 - A task posted without a session header starts immediately on a linked goal
