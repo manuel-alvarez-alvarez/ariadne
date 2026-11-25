@@ -1,11 +1,12 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-11-24
+updated: 2026-11-25
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
   - crates/ariadne-store/tests/remote_task_migration.rs
+  - crates/ariadne-store/tests/message_migration.rs
   - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-core/src/state_machine.rs
   - crates/ariadne-store/tests/store.rs
@@ -157,8 +158,14 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
 23. New remote tasks use source references under 037 rules 102 through 110.
     Workers record dependency failure and recovery through the source-controlled protocol in 012.
     Existing mirrors keep rules 19 through 21.
+24. A database of the release before migration 0025 upgrades in place. It
+    loses its `messages` table (018) and no other row. The deletion of a
+    goal, of a local task and of a source task works as before.
 
 ## Acceptance criteria
+
+- Rule 24: `crates/ariadne-store/tests/message_migration.rs::an_upgrade_drops_the_messages_and_keeps_every_other_row`
+  and `::a_goal_and_a_task_still_delete_after_the_upgrade`.
 
 - Rule 23: `far_tasks::source_references::dependency_failure_and_retry_preserve_one_authoritative_worker_draft`
   and `::source_cancellation_waits_for_worker_acknowledgment_after_reconnection`.

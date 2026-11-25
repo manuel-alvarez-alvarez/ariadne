@@ -491,8 +491,16 @@ it leaves nothing to delete.
       its default mode too.
     The routes are in 012 (rule 29), the attention item in 031 (rule 18),
     the watchdog in 009 (rule 45), and the console in 008 (rule 38).
+22. A relay turn file that an earlier release wrote still loads. A delivery
+    or a prompt kind that this build does not know, such as an agent message
+    (018), loads as none. The turn keeps its prompt and has nothing to claim.
 
 ## Acceptance criteria
+
+- A turn file of an agent message still loads with no delivery, and a turn
+  file keeps a delivery and a kind that this build knows
+  (`acp::tests::a_turn_file_of_an_agent_message_still_loads`,
+  `::a_turn_file_keeps_a_known_delivery`).
 
 - `initialize` declares form elicitation and no other mode
   (`ariadne-daemon::acp::tests::initialize_tells_the_agent_what_the_daemon_supports`).

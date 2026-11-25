@@ -61,7 +61,10 @@ the ACP runtime that takes a prompt (021).
    briefed on entry to the column and resumed where it went away, and the
    cleanup its ending owes (001, 030). The agents of the other columns are
    left idle until their column is current: nothing is wanted of them, so
-   nothing is sent to them and no clock watches them.
+   nothing is sent to them and no clock watches them. Every agent of a task
+   stays up until the task is over. The agent of a column the task has left
+   sits idle and is not killed, since the current column's agent may still
+   post to it (039).
 6. Everything the scheduler says to an agent — a nudge, a step briefing, a
    goal's attention — is handed to the session's ACP agent as a
    `session/prompt` (021). The runtime sends it at once to an agent between
@@ -274,7 +277,8 @@ the ACP runtime that takes a prompt (021).
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries`).
 - An idle column agent past the threshold is raised on its session and its
   task (`scheduler_attention.rs::a_step_agent_stall_flags_the_task_and_its_session`).
-- Only the current column is nudged, and an idle column raises no attention
+- Only the current column is nudged, an idle column raises no attention,
+  and the agent of a column the task has left stays up until the task ends
   (`workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
 - An idle orchestrator in planning is waiting on the user, not silent, so it
   is never nudged or flagged stalled, however long it sits idle
