@@ -51,6 +51,8 @@ export interface FormQuestion {
   createdAt: string
   /** None while it waits for an answer. */
   closed?: FormClosed
+  /** Only its close is known: the question itself is in an older page of the history. */
+  orphan?: true
 }
 
 type Json = Record<string, unknown>
@@ -169,11 +171,18 @@ function closedOf(payload: unknown): FormClosed {
 /**
  * Every question of the session as the console draws it, oldest first: the
  * ones the events carry, each closed by its `question.resolved` event, and
- * the listed ones older than the events, closed or not.
+ * the ones the console read from the list, which the events do not carry.
+ *
+ * `listed` is the latest read, the questions open now. `seen` is every
+ * question any read of this session listed: one that is no longer listed and
+ * has no resolved event closed while the console was away, so it draws closed
+ * with no answer. A close whose question nothing carries is an `orphan`: its
+ * form is in an older page of the history, which the console loads.
  */
 export function formQuestions(
   events: readonly AgentEventDto[],
   listed: readonly QuestionDto[],
+  seen: readonly QuestionDto[] = listed,
 ): FormQuestion[] {
   const asked = new Map<string, FormQuestion>()
   const closed = new Map<string, FormClosed>()
@@ -194,11 +203,9 @@ export function formQuestions(
       if (id !== undefined) closed.set(id, closedOf(payload))
     }
   }
-  // A question the events do not carry still draws, closed where an event says
-  // so: the listed one keeps its form, and a close with no question at all
-  // keeps the answer it carried, under each answer's own key.
+  const open = new Set(listed.map((dto) => dto.id))
   const older = new Map<string, FormQuestion>()
-  for (const dto of listed) if (!asked.has(dto.id)) older.set(dto.id, questionOf(dto))
+  for (const dto of [...seen, ...listed]) if (!asked.has(dto.id)) older.set(dto.id, questionOf(dto))
   for (const [id, close] of closed) {
     if (asked.has(id) || older.has(id)) continue
     older.set(id, {
@@ -211,13 +218,19 @@ export function formQuestions(
         kind: { type: "text" },
       })),
       createdAt: "",
+      orphan: true,
     })
   }
   return [...older.values(), ...asked.values()].map((question) => {
-    const close = closed.get(question.id)
+    const close =
+      closed.get(question.id) ??
+      (older.has(question.id) && !open.has(question.id) ? GONE : undefined)
     return close ? { ...question, closed: close } : question
   })
 }
+
+/** How a question closed that the console did not see close. */
+const GONE: FormClosed = { action: "cancel", content: {}, closedBy: "unknown" }
 
 /** The open questions of a session, oldest first. */
 export async function listQuestions(host: Host, sessionId: string): Promise<QuestionDto[]> {

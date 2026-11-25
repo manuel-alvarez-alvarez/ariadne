@@ -140,6 +140,7 @@ it("keeps the answer of a closed question that no event or list carries", () => 
 
   const [question] = formQuestions([resolved], [])
   expect(question?.id).toBe("Q9")
+  expect(question?.orphan).toBe(true)
   expect(question?.fields.map((field) => field.title)).toEqual(["db"])
   expect(question?.closed?.action).toBe("accept")
 })
@@ -169,4 +170,18 @@ it("sends only what the person filled, and stops on an empty required field", ()
   expect(formContent(fields, { db: "lite", count: "2.5" })).toEqual({
     problem: "Count takes a whole number",
   })
+})
+
+it("closes a question the console read that is no longer listed and has no resolved event", () => {
+  const dto: QuestionDto = {
+    id: "Q1",
+    session_id: "S",
+    message: "m",
+    schema: SCHEMA as never,
+    created_at: "2026-11-25T09:00:00Z",
+  }
+
+  const [question] = formQuestions([], [], [dto])
+  expect(question?.closed).toEqual({ action: "cancel", content: {}, closedBy: "unknown" })
+  expect(formQuestions([], [dto], [dto])[0]?.closed).toBeUndefined()
 })

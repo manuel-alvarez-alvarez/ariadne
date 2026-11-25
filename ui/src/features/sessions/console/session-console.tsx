@@ -249,6 +249,8 @@ function ConsolePane({
   const reads = useRef(0)
   /** The session's open native questions, as read with the last snapshot. */
   const [listedForms, setListedForms] = useState<QuestionDto[]>([])
+  /** Every question any read of the session listed, open or since closed. */
+  const [seenForms, setSeenForms] = useState<QuestionDto[]>([])
   /** Counts the reads of the open native questions, so only the latest one lands. */
   const formReads = useRef(0)
   const [streamStatus, setStreamStatus] = useState<ConsoleStreamStatus>("connecting")
@@ -387,13 +389,14 @@ function ConsolePane({
     const read = ++formReads.current
     listQuestions(host, sessionId).then(
       (listed) => {
-        // A question stays listed once seen, so one that closes after the read
-        // still draws, with its answer, when the next read no longer has it.
-        if (read === formReads.current)
-          setListedForms((seen) => [
-            ...seen.filter((one) => !listed.some((now) => now.id === one.id)),
-            ...listed,
-          ])
+        if (read !== formReads.current) return
+        setListedForms(listed)
+        // A question stays known once read, so one that closes after the read
+        // still draws, closed, when the next read no longer has it.
+        setSeenForms((seen) => [
+          ...seen.filter((one) => !listed.some((now) => now.id === one.id)),
+          ...listed,
+        ])
       },
       () => {},
     )
@@ -403,6 +406,7 @@ function ConsolePane({
     setTranscript(emptyTranscript())
     setRequests([])
     setListedForms([])
+    setSeenForms([])
     setRequestsError(null)
     setSnapshotted(false)
     resetHistory()
@@ -434,6 +438,7 @@ function ConsolePane({
     stream.start()
     return () => {
       reads.current += 1
+      formReads.current += 1
       stream.stop()
     }
   }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests, readForms])
@@ -626,11 +631,19 @@ function ConsolePane({
   // view, so it comes first: the composer answers the newest.
   const restored = child ? [] : restoredQuestions(requests, transcript)
   // The questions the agent asks with its own tool: a child's stay out of its view.
-  const forms = useMemo(
-    () => (child ? [] : formQuestions(transcript.events, listedForms)),
-    [child, transcript.events, listedForms],
+  const allForms = useMemo(
+    () => (child ? [] : formQuestions(transcript.events, listedForms, seenForms)),
+    [child, transcript.events, listedForms, seenForms],
   )
-  const formOpen = live && forms.some((form) => form.closed === undefined)
+  // A close whose question is in an older page draws once that page is in,
+  // else the card would show keys in place of the form's own labels.
+  const lookingFor = allForms.some((form) => form.orphan)
+  const forms = allForms.filter((form) => !form.orphan || history.state === "start")
+  // Load older pages until the form of a question closed in view is found.
+  useEffect(() => {
+    if (snapshotted && lookingFor && history.state === "idle") void loadOlder()
+  }, [snapshotted, lookingFor, history, loadOlder])
+  const formOpen = live && allForms.some((form) => form.closed === undefined)
   const question = live && !child ? openQuestion([...restored, ...blocks], answered) : undefined
   const questionId = question?.requestId
   // An open question waits on the user, so a live `main` draws it last,

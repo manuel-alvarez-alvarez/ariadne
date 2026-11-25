@@ -69,17 +69,34 @@ const asked = (id = "Q1") =>
 
 const posts: { path: string; body: unknown }[] = []
 let listed: unknown[] = []
+/** Holds the first session's question read open until a test lets it go. */
+let held: Promise<void> | undefined
+/** The older page of events `GET /v1/events` answers. */
+let history: unknown[] = []
 let reply: () => Response = () => new Response(null, { status: 204 })
 
 beforeEach(() => {
   posts.length = 0
   listed = []
+  held = undefined
+  history = []
   reply = () => new Response(null, { status: 204 })
   stubEventSource()
   daemonFetch.mockImplementation(async (input: Request | string | URL) => {
     const request = input instanceof Request ? input : new Request(input)
     const path = new URL(request.url).pathname
-    if (request.method === "GET") return Response.json(path.endsWith("/questions") ? listed : [])
+    if (request.method === "GET" && path.endsWith(`${SESSION_ID}/questions`) && held)
+      return held.then(() => Response.json(listed))
+    if (request.method === "GET")
+      return Response.json(
+        path.endsWith("/questions")
+          ? path.includes(SESSION_ID)
+            ? listed
+            : []
+          : path.endsWith("/v1/events")
+            ? history
+            : [],
+      )
     posts.push({ path, body: JSON.parse((await request.text()) || "null") })
     return reply()
   })
@@ -234,4 +251,80 @@ it("keeps a question restored from the list, with its answer, when it closes and
 
   await waitFor(() => expect(card().textContent).toContain("Database → SQLite"))
   expect(card().textContent).toContain("An older question")
+})
+
+it("draws a question closed as closed, not waiting, when a reconnect omits it and its close", async () => {
+  listed = [
+    {
+      id: "QOLD",
+      session_id: SESSION_ID,
+      message: "An older question",
+      schema: SCHEMA,
+      created_at: "2026-11-25T09:00:00Z",
+    },
+  ]
+  const source = renderConsole([])
+  await screen.findByText("An older question")
+
+  listed = []
+  act(() => source.emit("snapshot", []))
+
+  await waitFor(() => expect(card().textContent).toContain("Closed"))
+  expect(within(card()).queryByRole("button", { name: "Send" })).toBeNull()
+  expect(screen.getByRole("region", { name: "Session status" }).textContent).not.toContain(
+    "waiting for you",
+  )
+})
+
+it("draws a close whose question is in an older page with the question's own labels", async () => {
+  history = [asked("QOLD")].map((one) => ({
+    ...one,
+    payload: {
+      question: {
+        ...(one.payload as { question: object }).question,
+        message: "From the older page",
+      },
+    },
+  }))
+  renderConsole([
+    event("question.resolved", {
+      question_id: "QOLD",
+      action: "accept",
+      content: { db: "lite" },
+    }),
+  ])
+
+  await screen.findByText("From the older page")
+  expect(card().textContent).toContain("Database → SQLite")
+})
+
+it("draws no card of the session it left when its question read lands late", async () => {
+  let release = () => {}
+  held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  listed = [
+    {
+      id: "QOLD",
+      session_id: SESSION_ID,
+      message: "A question of the first session",
+      schema: SCHEMA,
+      created_at: "2026-11-25T09:00:00Z",
+    },
+  ]
+  const { rerender } = renderScreen(
+    <SessionConsole host="local" sessionId={SESSION_ID} status="idle" />,
+  )
+  act(() => {
+    latestSource().succeed()
+    latestSource().emit("snapshot", [])
+  })
+  // The other session has sent no snapshot yet, so it has read nothing of its own.
+  rerender(<SessionConsole host="local" sessionId="01JOTHER00000000000000000" status="idle" />)
+  await act(async () => {
+    release()
+    await held
+  })
+
+  expect(screen.queryByText("A question of the first session")).toBeNull()
 })

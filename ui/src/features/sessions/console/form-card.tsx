@@ -151,7 +151,9 @@ function ClosedAnswers({ closed, fields }: { closed: FormClosed; fields: readonl
             ? "Withdrawn by the agent"
             : closed.closedBy === "session"
               ? "Closed: the session ended"
-              : "Cancelled"}
+              : closed.closedBy === "unknown"
+                ? "Closed"
+                : "Cancelled"}
       </p>
     )
   }
