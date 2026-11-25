@@ -203,6 +203,34 @@ it("closes the card with its answer when the resolved event lands, live and in a
   expect(within(card()).queryByRole("button", { name: "Send" })).toBeNull()
 })
 
+/** The card's marker, border, fold controls and scroll areas, as the console draws them. */
+function cardMarks() {
+  const nodes = Array.from(card().querySelectorAll("*"))
+  return {
+    purpleIcons: card().querySelectorAll(".lucide-circle-help.text-purple-500").length,
+    leftBorders: card().querySelectorAll(".border-l").length,
+    folds: card().querySelectorAll("[aria-expanded]").length,
+    scrollAreas: nodes.filter((node) =>
+      /(^|\s)(overflow-(auto|scroll|x-auto|y-auto)|max-h-)/.test(node.getAttribute("class") ?? ""),
+    ).length,
+  }
+}
+
+it("marks an open and a closed question with one purple icon, never folds it, and lets it grow", () => {
+  const unmarked = { purpleIcons: 1, leftBorders: 0, folds: 0, scrollAreas: 0 }
+  const source = renderConsole([asked()])
+  expect(cardMarks()).toEqual(unmarked)
+  expect(within(card()).getByText("Which database should I use?").className).toContain(
+    "whitespace-pre-wrap",
+  )
+
+  act(() =>
+    source.emit("event", event("question.resolved", { question_id: "Q1", action: "decline" })),
+  )
+  expect(card().textContent).toContain("Dismissed")
+  expect(cardMarks()).toEqual(unmarked)
+})
+
 it("shows a dismissed question closed", () => {
   renderConsole([asked(), event("question.resolved", { question_id: "Q1", action: "decline" })])
 

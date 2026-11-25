@@ -102,7 +102,6 @@ function eventLabel(event: StoredAgentEvent, startsSubagent: boolean): string {
     permission_request: "Permission asked",
     "permission.replied": "Permission answered",
     agent_message: "Agent said",
-    agent_request: "Waiting for you",
     question: "Waiting for you",
     "question.resolved": "Question closed",
     agent_thought: "Agent thought",

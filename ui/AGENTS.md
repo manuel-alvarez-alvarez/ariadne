@@ -296,7 +296,6 @@ the host first; below, the host is left out of each key for brevity:
 ["tasks",        "list", filters]   ["tasks",    "detail", id]
 ["tasks",        "detail", id, "transitions" | "diff"]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
-["sessions",     "detail", id, "agent-requests"]
 ["sessions",     "detail", id, "questions"]
 ["hosts",        "list", {}]         (always under "local")
 ["skills",       "list", filters]   ["skills",   "detail", name]
@@ -503,14 +502,8 @@ stream (008). It lives in `src/features/sessions/console/`:
   the view bar, the stream and history lines and a failed send. A prompt and a permission pick both post `{"text"}` to
   `POST /v1/sessions/{id}/console/input`. A cancel posts
   `POST /v1/sessions/{id}/console/cancel` with no body. A failed post is kept
-  in the transcript with Retry and Edit. `questions.tsx` draws a `wait_for_user` question as a card,
-  and posts its answer to the request's own
-  `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`, never to the
-  input route; a failed answer shows on the card. With every snapshot it
-  reads `GET /v1/sessions/{id}/agent-requests` and restores a card for a
-  pending question older than the snapshot's page. `form-card.tsx` draws a question the agent asks with its own tool
-  (an ACP form elicitation) as a card of its own, with no code of the
-  `wait_for_user` card; `form-questions.ts` reads its schema, folds the
+  in the transcript with Retry and Edit. `form-card.tsx` draws a question the agent asks with its own tool
+  (an ACP form elicitation) as a card; `form-questions.ts` reads its schema, folds the
   `question` and `question.resolved` events with `GET /v1/sessions/{id}/questions`,
   and posts to `POST /v1/sessions/{id}/questions/{question_id}/answer`.
   A session with subagents
