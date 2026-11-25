@@ -30,11 +30,29 @@ impl Follower<'_> {
             .await
             .map_err(unreadable)?
         else {
-            // Not filtered by host: two host names of one worker follow the
-            // same stream of the worker, and the one it picked may be the alias.
             warn!(host = self.host, task = %post.task_id, "a post names no task of this source");
             return Ok(());
         };
+        // Two host names of one worker share the stream of the worker, so the
+        // post may come through the alias. Then the worker itself, by its
+        // persistent ID, must own the task.
+        if reference.host != self.host {
+            let Some(protocol) = self
+                .fenced(
+                    self.client
+                        .get_json::<ariadne_api::tasks::RemoteTaskProtocol>(
+                            "/v1/remote-tasks/protocol",
+                        ),
+                )
+                .await
+            else {
+                return Ok(());
+            };
+            if protocol?.daemon_id != reference.worker_id {
+                warn!(host = self.host, task = %post.task_id, "a post names a task of another worker");
+                return Ok(());
+            }
+        }
         // The title as the source goal knows it: the projection of 037 rule
         // 105 takes it from the cached worker task.
         let title = serde_json::from_str::<TaskDto>(&reference.cache)
