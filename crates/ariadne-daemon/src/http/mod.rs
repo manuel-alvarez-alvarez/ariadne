@@ -25,6 +25,7 @@ mod pins;
 mod posts;
 mod pull_requests;
 mod query;
+mod questions;
 use query::QueryRoutes;
 mod remote_tasks;
 mod repositories;
@@ -183,6 +184,7 @@ impl AppState {
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
         agent_requests::create, agent_requests::list, agent_requests::withdraw, agent_requests::answer,
+        questions::list, questions::answer,
         terminal::terminal,
         events::list, stream::stream,
         models::list,
@@ -210,6 +212,8 @@ impl AppState {
         ariadne_api::attention::CreateAgentRequest, ariadne_api::attention::AgentQuestion,
         ariadne_api::attention::AgentQuestionOption, ariadne_api::attention::AnswerAgentRequest,
         ariadne_api::attention::AgentRequestResolution, ariadne_api::attention::AgentRequestDto,
+        ariadne_api::sessions::QuestionDto, ariadne_api::sessions::QuestionAction,
+        ariadne_api::sessions::AnswerQuestionRequest,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
@@ -470,6 +474,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/sessions/{session_id}/agent-requests/{request_id}/answer",
             post(agent_requests::answer),
+        )
+        .route("/v1/sessions/{id}/questions", get(questions::list))
+        .route(
+            "/v1/sessions/{id}/questions/{question_id}/answer",
+            post(questions::answer),
         )
         .route("/v1/sessions/{id}/console/cancel", post(console::cancel))
         .route(

@@ -258,6 +258,8 @@ pub(crate) fn transcript_kinds() -> Vec<CompletionCandidate> {
         "post_tool_use",
         "permission_request",
         "permission.replied",
+        "question",
+        "question.resolved",
         "stop",
         "compaction_update",
         "session.error",

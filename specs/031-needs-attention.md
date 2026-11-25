@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-11-16
+updated: 2026-11-25
 areas: [api, daemon, cli, store, ui]
 commits: []
 tests:
@@ -658,6 +658,21 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     the escalation does not clear it. A comment at the same time is not later. A dismissal also hides it. A merged or closed request raises
     none, and nor does a comment the last read no longer holds.
 
+## The question producer
+
+18. `crate::attention::questions` raises one item for each question an
+    agent asks with its own tool (021 rule 21) and waits on. It reads the
+    runtime's open questions, not a table. It uses no row of
+    `agent_requests`. The item's id is `question:<question id>`, its
+    producer `agent_request` and its reason `unknown`. Its summary is the
+    first line of the agent's message, cut at 200 characters. Its
+    `required_action` is "Answer the question in the agent's console." Its
+    `since` is the question's `created_at`. Its `target` is the console of
+    its session. The item goes when the question closes. A session that is
+    not live, or whose work is not active, raises none. A question asks
+    nothing that the session's attention reason says, so the session raises
+    no second item for it.
+
 ### Individual dismissal
 
 `POST /v1/attention/{id}/dismiss` hides the current occurrence and returns 204.
@@ -727,6 +742,9 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
 
 ## Acceptance criteria
 
+- An open question is one item on its session's console, and the item goes
+  when the question closes
+  (`questions.rs::an_open_question_is_one_attention_item_until_it_closes`).
 - The route answers an empty, complete list when nothing is stuck, and is
   in the API document under the `attention` tag
   (`attention.rs::an_empty_daemon_answers_an_empty_complete_list`).

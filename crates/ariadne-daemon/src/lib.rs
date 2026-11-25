@@ -5,6 +5,7 @@ pub mod acp;
 mod acp_calls;
 pub mod acp_discovery;
 mod acp_index;
+pub(crate) mod acp_questions;
 mod acp_schema;
 pub mod acp_sessions;
 pub(crate) mod acp_subagents;

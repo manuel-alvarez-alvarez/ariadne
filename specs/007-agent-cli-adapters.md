@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-11-14
+updated: 2026-11-25
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -175,8 +175,11 @@ skill says (017).
    and runs in the seat's worktree, or the repository for the orchestrator.
    Every `codex-acp` process also carries `INITIAL_AGENT_MODE` set to
    `agent-full-access`, so its sessions never hand an approval to Codex's
-   guardian sub-agent. The setting applies to that process only and does not
-   edit the user's Codex configuration. Every staffed `opencode`, `opencode-v2` and legacy
+   guardian sub-agent. It also carries `CODEX_CONFIG` with the feature
+   `default_mode_request_user_input` on, so Codex asks the user with its own
+   tool in its default mode (021, rule 21). A `CODEX_CONFIG` the daemon was
+   given is kept, with the feature added. The settings apply to that process
+   only and do not edit the user's Codex configuration. Every staffed `opencode`, `opencode-v2` and legacy
    `opencode-acp` process also carries `OPENCODE_CONFIG_CONTENT`. Its JSON has
    one `mcp.ariadne` local entry; its command array holds the launch file's
    command and arguments, and its environment equals that MCP server's
@@ -342,6 +345,10 @@ skill says (017).
   the MCP server's (`adapters.rs::every_launch_carries_the_session_context`).
 - Every Codex launch starts in full-access mode, with no guardian review
   (`acp_runtime.rs::a_codex_launch_disables_guardian_approval`).
+- Every Codex launch runs with the question feature on, and keeps the
+  configuration the daemon was given
+  (`acp_runtime.rs::a_codex_launch_lets_the_agent_ask_the_user`,
+  `ariadne-daemon::acp::tests::codex_runs_with_the_question_feature_on`).
 - Every launch of a session reports under a new launch id
   (`resume.rs::every_launch_of_a_session_reports_under_a_new_id`).
 - A spawn writes the launch file with the briefing, the pins and the
