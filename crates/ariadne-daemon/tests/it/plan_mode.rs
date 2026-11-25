@@ -416,3 +416,38 @@ async fn exit_plan_mode_out_of_planning_is_answered_by_the_permission_mode() {
         json!({"outcome": "selected", "optionId": "exit-plan-auto"})
     );
 }
+
+/// In plan mode, Claude Code asks permission for an Ariadne tool, and the
+/// repository permission mode answers it as any other tool: `auto` allows
+/// `create_task`, so the orchestrator can plan (003 rule 18).
+#[tokio::test]
+async fn an_ariadne_tool_in_plan_mode_is_answered_by_the_permission_mode() {
+    let h = harness().await;
+    let mut scripted = claude_like();
+    scripted["prompts"] = json!([{
+        "permission": {
+            "toolCall": {
+                "toolCallId": "call-task",
+                "title": "ariadne: create_task",
+                "rawInput": {"title": "x"},
+                "_meta": {"claudeCode": {"toolName": "mcp__ariadne__create_task"}},
+            },
+            "options": [
+                {"optionId": "allow-once", "name": "Yes", "kind": "allow_once"},
+                {"optionId": "reject", "name": "No", "kind": "reject_once"},
+            ],
+        },
+        "stop_reason": "end_turn",
+    }]);
+    let cast = planning(&h, scripted).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Auto)
+        .await;
+
+    orchestrator(&h, &cast).await;
+
+    assert_eq!(modes_set(&h), ["plan"]);
+    assert_eq!(
+        permission_answer(&h),
+        json!({"outcome": "selected", "optionId": "allow-once"})
+    );
+}

@@ -174,13 +174,18 @@ Out: the columns and their gates (030), the model catalog the sizing reads
       are permitted there, and that `finalize_plan` ends plan mode. It says
       not to call `ExitPlanMode`. An ACP permission answer carries no
       reason, so the briefing carries the instruction.
+    - Claude Code's plan mode tells the model to change nothing, and the
+      model then refuses a tool such as `create_task` by itself. The
+      briefing names the Ariadne tools as permitted, and the model then
+      calls them.
     - In plan mode, Claude Code asks permission for each MCP tool that is
-      not read-only, and an allow rule does not change that. Its plan mode
-      also tells the model to change nothing, and the model then refuses a
-      tool such as `create_task` by itself. So the MCP server of a plan-mode
-      launch lists every orchestrator tool with `readOnlyHint`, and the
-      briefing names the Ariadne tools as permitted. Out of plan mode, and
-      for every other seat, no tool carries the hint.
+      not read-only. An allow rule and a `PreToolUse` hook do not change
+      that. The repository permission mode answers the request as for any
+      other tool (021 rule 9): `auto` allows it, and `ask` asks the user.
+    - No Ariadne tool carries `readOnlyHint`, for any seat. Every tool can
+      change Ariadne's state. Claude Code reads the tool list once and
+      ignores `notifications/tools/list_changed`, so a hint could not
+      follow the mode after `finalize_plan`.
 
 ## Acceptance criteria
 
@@ -262,8 +267,10 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   happens once (`::a_goal_is_completed_only_out_of_active`).
 - The briefing explains plan mode
   (`defaults.rs::the_orchestrator_briefing_explains_plan_mode`), and a
-  planning orchestrator is listed its tools read-only
-  (`mcp.rs::a_planning_orchestrator_is_listed_its_tools_read_only`).
+  planning orchestrator's Ariadne tool is answered by the permission mode
+  (`plan_mode.rs::an_ariadne_tool_in_plan_mode_is_answered_by_the_permission_mode`).
+  No tool is listed read-only
+  (`mcp.rs::no_tool_is_listed_read_only`).
   `finalize_plan` ends plan mode
   (`plan_mode.rs::finalizing_the_plan_puts_the_orchestrator_back_in_its_own_mode`).
 - A linked goal starts active without an orchestrator session

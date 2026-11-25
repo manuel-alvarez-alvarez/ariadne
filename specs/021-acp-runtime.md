@@ -495,8 +495,8 @@ it leaves nothing to delete.
       and the reply are recorded as `permission_request` and
       `permission.replied`, with `decided_by` `plan`. Out of `planning`,
       rule 9 answers `ExitPlanMode` as any other tool.
-    - The MCP server of a plan-mode launch gets `ARIADNE_PLAN_MODE=1`, and
-      lists the orchestrator's tools as read-only (003 rule 18).
+    - In plan mode, an Ariadne tool call is a permission request that rule
+      9 answers (003 rule 18).
 
 ## Acceptance criteria
 
@@ -508,8 +508,8 @@ it leaves nothing to delete.
   switch to another agent set it again
   (`::a_resumed_planning_orchestrator_is_put_in_plan_mode_again`,
   `::a_planning_orchestrator_switched_to_another_agent_starts_in_plan_mode`).
-  The launch file and the MCP server are told
-  (`adapters.rs::a_plan_mode_launch_tells_the_runtime_and_the_mcp_server`).
+  The launch file says so
+  (`adapters.rs::a_plan_mode_launch_tells_the_runtime`).
 - An agent without a plan mode, a column's agent, and an orchestrator of an
   active goal get no mode change
   (`plan_mode.rs::an_agent_without_a_plan_mode_gets_no_mode_change`,
