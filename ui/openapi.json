@@ -4621,70 +4621,6 @@
         }
       }
     },
-    "/v1/sessions/{id}/agent-requests": {
-      "get": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "The requests of a session that still wait for an answer, oldest first.",
-        "description": "A console opens on the newest page of events (`GET /console`), and a\nquestion asked before that page has no opening line in it. The console\nreads this list with each snapshot, and draws every pending question it\ndoes not already hold, so a reload or a reconnect never hides one.",
-        "operationId": "list_agent_requests",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/AgentRequestDto"
-                  }
-                }
-              }
-            }
-          },
-          "404": {}
-        }
-      },
-      "post": {
-        "tags": [
-          "sessions"
-        ],
-        "operationId": "create",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {}
-        }
-      }
-    },
     "/v1/sessions/{id}/console": {
       "get": {
         "tags": [
@@ -5050,81 +4986,6 @@
                 }
               }
             }
-          },
-          "400": {},
-          "404": {},
-          "409": {}
-        }
-      }
-    },
-    "/v1/sessions/{session_id}/agent-requests/{request_id}": {
-      "post": {
-        "tags": [
-          "sessions"
-        ],
-        "operationId": "withdraw",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "request_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {}
-        }
-      }
-    },
-    "/v1/sessions/{session_id}/agent-requests/{request_id}/answer": {
-      "post": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "Answer one request: the option of its question the user picked, or the\ntext the user typed.",
-        "description": "The answer reaches the agent as a fresh console prompt — sent at once if\nthe agent is between turns, or queued behind the turn that runs — and is\nnever read as the answer to a pending permission. A request that is no\nlonger pending (answered, withdrawn, or expired with the turn that asked\nit) is refused with `409` and the code `agent_request_closed`, and sends\nnothing. Where the prompt cannot reach the agent, the request opens again\nso the user can retry.",
-        "operationId": "answer_agent_request",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "request_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnswerAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "The answer was recorded and sent to the agent"
           },
           "400": {},
           "404": {},
@@ -6417,105 +6278,6 @@
           }
         }
       },
-      "AgentQuestion": {
-        "type": "object",
-        "description": "A question an agent asks the user through `wait_for_user` (031).",
-        "required": [
-          "text"
-        ],
-        "properties": {
-          "options": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AgentQuestionOption"
-            },
-            "description": "The answers the user can pick. With none, the user types the answer."
-          },
-          "recommendation_reason": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Why the agent recommends that option. It needs\n`recommended_option_id`."
-          },
-          "recommended_option_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The `id` of the option the agent recommends."
-          },
-          "text": {
-            "type": "string",
-            "description": "The question, with the context the user needs to answer it."
-          }
-        }
-      },
-      "AgentQuestionOption": {
-        "type": "object",
-        "description": "One answer the user can pick.",
-        "required": [
-          "id",
-          "label"
-        ],
-        "properties": {
-          "description": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What the answer means, or what it causes."
-          },
-          "id": {
-            "type": "string",
-            "description": "A stable id, unique in the question."
-          },
-          "label": {
-            "type": "string",
-            "description": "The short name of the answer."
-          }
-        }
-      },
-      "AgentRequestDto": {
-        "type": "object",
-        "description": "One pending request of a session, as `GET .../agent-requests` lists it:\nwhat a console restores a question card from when its opening event is\nolder than the page the console opened on.",
-        "required": [
-          "id",
-          "summary",
-          "created_at"
-        ],
-        "properties": {
-          "created_at": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "question": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/AgentQuestion"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "summary": {
-            "type": "string",
-            "description": "The one-line hint."
-          }
-        }
-      },
-      "AgentRequestResolution": {
-        "type": "string",
-        "description": "How a request closed, as its `agent_request.resolved` event says.",
-        "enum": [
-          "answered",
-          "withdrawn",
-          "expired"
-        ]
-      },
       "AgentUsageDto": {
         "type": "object",
         "description": "What one staffed agent spent on a task, named the way a reader addresses\nit: an agent has no name of its own, so its column and its skills are what\nidentify it.",
@@ -6658,26 +6420,6 @@
           "weights_present": {
             "type": "boolean",
             "description": "Whether the checkpoints of the last good install are on disk."
-          }
-        }
-      },
-      "AnswerAgentRequest": {
-        "type": "object",
-        "description": "The user's answer to one request: an option of its question, or text.",
-        "properties": {
-          "option_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The `id` of the option the user picked."
-          },
-          "text": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The answer the user typed."
           }
         }
       },
@@ -7198,30 +6940,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "CreateAgentRequest": {
-        "type": "object",
-        "description": "An agent's flag that it waits for the user (`wait_for_user`, 013).",
-        "required": [
-          "summary"
-        ],
-        "properties": {
-          "question": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/AgentQuestion",
-                "description": "The whole question, which the console shows as a card. Without it,\nthe request is the hint alone."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "summary": {
-            "type": "string",
-            "description": "One line for the Needs attention list, at most 100 characters. The\nquestion itself goes in `question`; a summary that runs longer, or\nover more than one line, is refused."
-          }
-        }
       },
       "CreateDashboardRequest": {
         "type": "object",
@@ -10454,7 +10172,15 @@
         ],
         "properties": {
           "body": {
-            "type": "string"
+            "type": "string",
+            "description": "The body of the post, or of the dropped post when `dropped` is set."
+          },
+          "dropped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when this is a notice that the source dropped the post in `body`\nof a worker agent to its orchestrator: the reason. The worker puts a\nnotice into the session, not a post, and asks for no answer."
           },
           "source_daemon_id": {
             "type": "string",

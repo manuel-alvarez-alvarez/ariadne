@@ -22,10 +22,9 @@ use crate::launcher::Launcher;
 /// every registered producer currently finds.
 ///
 /// Registering a producer is adding a call here and extending it, the one
-/// extension point this route gives a later task: [`recovery`] and
-/// [`pull_requests`] are complete; [`agent_requests`] is registered already
-/// but answers empty until a later task gives it its eligibility rules
-/// (009, 026). A producer whose read fails costs the list its `complete`
+/// extension point this route gives a later task: [`recovery`],
+/// [`agent_requests`] (a live session's own flag), [`questions`] and
+/// [`pull_requests`] are complete (031). A producer whose read fails costs the list its `complete`
 /// flag rather than its other producers' items, so a partial read never
 /// answers as if nothing were wrong.
 pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> AttentionListDto {
@@ -41,7 +40,7 @@ pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> Attention
     match agent_requests::items(store).await {
         Ok(found) => items.extend(found),
         Err(error) => {
-            tracing::warn!(%error, "the agent-request attention producer could not read its evidence");
+            tracing::warn!(%error, "the session attention producer could not read its evidence");
             complete = false;
         }
     }
@@ -69,9 +68,7 @@ pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> Attention
                         let kind =
                             serde_json::to_value(subject.kind).expect("subject kind serializes");
                         let kind = kind.as_str().expect("subject kind is a string");
-                        let version = if item.id == format!("agent_request:{}", item.occurrence)
-                            || item.id == format!("question:{}", item.occurrence)
-                        {
+                        let version = if item.id == format!("question:{}", item.occurrence) {
                             // A question has its own immutable request id. Other session
                             // flags cannot turn it into a new question.
                             0

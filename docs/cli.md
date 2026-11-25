@@ -401,13 +401,15 @@ terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
 When an agent asks you a question, it uses the question tool of its own
 client: the question, the options you can pick, the option it recommends
 first, and why. The console draws the question as a form above the input,
-one field at a time, under `waiting for you`:
+one field at a time, under a `question` rule:
 
 ```
-● waiting for you · Pick a base branch
-  Which base branch should the task land on?
-    1. Main (Recommended) — Land on the trunk. The trunk is green.
+─ question ─────────────────────────────────────
+Pick a base branch
+❯ 1/1 Which base branch should the task land on? · pick one
+  ❯ 1. Main (Recommended) — Land on the trunk. The trunk is green.
     2. Next
+────────────────────────────────────────────────
 ```
 
 Pick a choice with the arrows or its number key, check several with Space,

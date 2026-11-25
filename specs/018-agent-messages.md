@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-11-23
+updated: 2026-11-25
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -149,8 +149,6 @@ moves a task through (001), and the wording of the text a message arrives in
   (`far_tasks.rs::a_far_message_made_while_away_is_delivered_once_after_reconnect`).
 - The origin task thread carries messages in both directions
   (`far_tasks.rs::a_far_task_thread_shows_both_directions`).
-- A far agent's question to the user appears only in the host's Needs attention list
-  (`far_tasks.rs::a_far_agents_user_question_stays_in_the_hosts_attention_list`).
 
 - Agents write to each other without leaving the task and without the step
   moving (`agent_messages.rs::agents_write_to_each_other_without_leaving_the_task`).

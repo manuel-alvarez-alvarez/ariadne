@@ -242,8 +242,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - The tools' message channel survives a host outage without duplicate turns
   (`far_tasks.rs::messages_wait_for_the_far_host_and_arrive_in_order_even_after_a_lost_answer`,
   `::a_far_message_made_while_away_is_delivered_once_after_reconnect`).
-- The far agent's user question stays in its host's attention list
-  (`far_tasks.rs::a_far_agents_user_question_stays_in_the_hosts_attention_list`).
 
 - Every launch hands the agent the `ariadne mcp serve` server and the
   session context it reads

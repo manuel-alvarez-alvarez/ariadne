@@ -111,20 +111,6 @@ impl super::Scheduler {
         if quiet_secs < QUIET_NUDGE_SECS {
             return Ok(());
         }
-        // An agent that asked the user a question and ended its turn is
-        // waiting on the answer, as a planning orchestrator is: the question
-        // is a pending request row, not an attention reason, so the row is
-        // what is read. A turn that never ends is still watched, question or
-        // not.
-        if self.between_turns(session).await
-            && !self
-                .store
-                .pending_session_agent_requests(&session.id)
-                .await?
-                .is_empty()
-        {
-            return Ok(());
-        }
         let done = self.quiet.entry(session.id.clone()).or_default();
         if done.situation != situation {
             done.situation = situation;

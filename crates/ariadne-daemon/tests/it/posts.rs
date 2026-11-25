@@ -234,53 +234,6 @@ async fn a_post_to_an_agent_in_a_turn_waits_and_arrives_as_the_next_turn() {
     assert_eq!(carrying, 1, "{}", h.prompted(&author));
 }
 
-/// A post is not an answer to a pending question of the recipient, and the
-/// question stays in the Needs attention list.
-#[tokio::test]
-async fn a_post_leaves_a_pending_question_of_the_recipient_open() {
-    let h = harness().await;
-    let cast = h.active_cast().await;
-    let author = h.agent_session(&cast, "develop").await;
-    h.agent_runs(&author).await;
-    h.set_status(&author, SessionStatus::Idle).await;
-    let reviewer = h.agent_session(&cast, "review").await;
-    h.advance(&cast.task, TaskStatus::InProgress).await;
-    let requests_uri = format!("/v1/sessions/{}/agent-requests", author.id);
-    let _: serde_json::Value = h
-        .json(
-            as_session(
-                &requests_uri,
-                &author.id,
-                json!({"summary": "Which API version applies?"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-
-    let (status, _) = h
-        .send(as_session(
-            &posts_uri(&cast),
-            &reviewer.id,
-            post("develop", "Version 2, as in the spec."),
-        ))
-        .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    eventually(TIMEOUT, "the post to reach the agent", async || {
-        h.prompted(&author).contains("Version 2, as in the spec.")
-    })
-    .await;
-
-    let pending: Vec<ariadne_api::attention::AgentRequestDto> = h.get(&requests_uri).await;
-    assert_eq!(
-        pending.len(),
-        1,
-        "the post answered the question: {pending:?}"
-    );
-    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(list.items.len(), 1, "{:?}", list.items);
-    assert_eq!(list.items[0].summary, "Which API version applies?");
-}
-
 /// The agent of a legacy mirror task, on the host that runs its linked goal,
 /// cannot post to `orchestrator`, and the refusal says why.
 #[tokio::test]

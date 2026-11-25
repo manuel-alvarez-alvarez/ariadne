@@ -115,8 +115,6 @@ the user across hosts, and the session rules, prompts and skills.
 - A post leaves a pending permission and its attention alone, waits behind the
   blocked turn, and arrives after the console answer
   (`acp_console.rs::a_post_leaves_a_pending_permission_and_its_attention_alone`).
-- A post leaves a pending question open and in the attention list
-  (`posts.rs::a_post_leaves_a_pending_question_of_the_recipient_open`).
 - The orchestrator sends and receives a post
   (`posts.rs::the_orchestrator_posts_and_is_posted_to`).
 - A post to a column that is not current, to a column the task does not

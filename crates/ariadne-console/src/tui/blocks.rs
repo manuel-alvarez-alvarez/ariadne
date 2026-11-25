@@ -117,17 +117,6 @@ pub(super) fn block(
                 None,
             )
         }
-        TranscriptItem::UserQuestion { .. } => {
-            let text = item.question_lines().join("\n");
-            prefixed(
-                &text,
-                theme::AGENT_MARKER,
-                AGENT,
-                Style::default(),
-                width,
-                None,
-            )
-        }
         TranscriptItem::Error { text, .. } => marked(
             wrap_whole(text, width.saturating_sub(theme::ERROR_MARKER.width())),
             theme::ERROR_MARKER,

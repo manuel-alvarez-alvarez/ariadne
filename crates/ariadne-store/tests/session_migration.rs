@@ -66,7 +66,6 @@ async fn assert_only_owned_remains(path: &std::path::Path) {
     for (table, expected) in [
         ("SELECT session_id FROM agent_events", "owned"),
         ("SELECT session_id FROM session_usage", "owned"),
-        ("SELECT session_id FROM agent_requests", "owned"),
     ] {
         let rows: Vec<(String,)> = sqlx::query_as(table).fetch_all(&pool).await.unwrap();
         assert_eq!(rows, vec![(expected.to_string(),)], "{table}");
