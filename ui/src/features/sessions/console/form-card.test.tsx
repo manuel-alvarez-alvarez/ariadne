@@ -371,3 +371,38 @@ it("recovers the answer of a question a reconnect omits from the history", async
 
   await waitFor(() => expect(card().textContent).toContain("Database → Postgres"))
 })
+
+it("keeps a question the stream carried when a newer snapshot drops it and its close", async () => {
+  listed = []
+  const source = renderConsole([])
+  const question = asked()
+  act(() => source.emit("event", question))
+  await screen.findByText("Which database should I use?")
+
+  history = [
+    question,
+    event("question.resolved", { question_id: "Q1", action: "accept", content: { db: "pg" } }),
+  ]
+  act(() => source.emit("snapshot", [event("agent_message", { text: "newest page" })]))
+
+  await waitFor(() => expect(card().textContent).toContain("Database → Postgres"))
+})
+
+it("says the open questions could not be read, and reads them again on Retry", async () => {
+  let failing = true
+  daemonFetch.mockImplementation(async (input: Request | string | URL) => {
+    const request = input instanceof Request ? input : new Request(input)
+    const path = new URL(request.url).pathname
+    if (path.endsWith(`${SESSION_ID}/questions`))
+      return failing ? errorResponse(503, "unavailable", "down") : Response.json(listed)
+    return Response.json([])
+  })
+  renderConsole([event("agent_message", { text: "newest page" })])
+
+  const alert = await screen.findByText(/Could not read the open questions/)
+  failing = false
+  fireEvent.click(within(alert.parentElement as HTMLElement).getByRole("button", { name: "Retry" }))
+
+  await screen.findByText("Which database should I use?")
+  expect(screen.queryByText(/Could not read the open questions/)).toBeNull()
+})

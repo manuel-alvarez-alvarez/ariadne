@@ -81,7 +81,7 @@ import {
   watchViewState,
 } from "./console-view-state"
 import { FormCard } from "./form-card"
-import { formQuestions, listQuestions } from "./form-questions"
+import { formQuestions, listQuestions, questionOfEvent } from "./form-questions"
 import {
   answerRequest,
   isOpenQuestion,
@@ -255,6 +255,10 @@ function ConsolePane({
   const [seenForms, setSeenForms] = useState<QuestionDto[]>([])
   /** Counts the reads of the open native questions, so only the latest one lands. */
   const formReads = useRef(0)
+  /** Why the last read of the open native questions failed; none once one succeeds. */
+  const [formsError, setFormsError] = useState<string | null>(null)
+  /** The newest event the console held at the last snapshot, for a retry of the read. */
+  const formsThrough = useRef("")
   const [streamStatus, setStreamStatus] = useState<ConsoleStreamStatus>("connecting")
   const [streamError, setStreamError] = useState<string | null>(null)
   const [draft, setDraft] = useState(() => readViewState(key).draft)
@@ -385,16 +389,18 @@ function ConsolePane({
   }, [host, sessionId])
 
   // The open native questions are read again with every snapshot as well. A
-  // failed read leaves the list as it was: the stream's own events still draw
-  // every question asked since the page in view.
+  // failed read leaves the list as it was and says so with a Retry: the
+  // stream's own events still draw every question asked since the page in view.
   const readForms = useCallback(
     (through: string) => {
+      formsThrough.current = through
       const read = ++formReads.current
       listQuestions(host, sessionId).then(
         (listed) => {
           if (read !== formReads.current) return
           setListedForms(listed)
           setListedThrough(through)
+          setFormsError(null)
           // A question stays known once read, so one that closes after the read
           // still draws, closed, when the next read no longer has it.
           setSeenForms((seen) => [
@@ -402,7 +408,9 @@ function ConsolePane({
             ...listed,
           ])
         },
-        () => {},
+        (error) => {
+          if (read === formReads.current) setFormsError(describeError(error))
+        },
       )
     },
     [host, sessionId],
@@ -413,6 +421,7 @@ function ConsolePane({
     setRequests([])
     setListedForms([])
     setSeenForms([])
+    setFormsError(null)
     setListedThrough("")
     setRequestsError(null)
     setSnapshotted(false)
@@ -436,7 +445,16 @@ function ConsolePane({
         readRequests()
         readForms(events.at(-1)?.id ?? "")
       },
-      onEvent: (event) => setTranscript((current) => applyEvent(current, event)),
+      onEvent: (event) => {
+        setTranscript((current) => applyEvent(current, event))
+        // A question the stream carries stays known, so a newer snapshot that
+        // drops it from the page still finds its close in the history.
+        const asked = questionOfEvent(event)
+        if (asked)
+          setSeenForms((seen) =>
+            seen.some((one) => one.id === asked.id) ? seen : [...seen, asked],
+          )
+      },
       onStatus: (next, error) => {
         setStreamStatus(next)
         setStreamError(error ?? null)
@@ -1157,6 +1175,21 @@ function ConsolePane({
                 >
                   Could not read the pending questions: {requestsError}
                   <Button size="xs" variant="outline" onClick={readRequests}>
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
+              {formsError ? (
+                <div
+                  role="alert"
+                  className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
+                >
+                  Could not read the open questions: {formsError}
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => readForms(formsThrough.current)}
+                  >
                     Retry
                   </Button>
                 </div>
