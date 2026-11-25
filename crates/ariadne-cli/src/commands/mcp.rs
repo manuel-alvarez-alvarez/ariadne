@@ -598,9 +598,10 @@ pub(crate) mod tests {
         }
     }
 
-    /// No tool claims to be read-only, for any seat: every tool can change
-    /// Ariadne's state, and an agent reads its tool list once, so a hint
-    /// could not follow the plan mode of the session (003 rule 18).
+    /// No tool carries a read-only hint, for any seat (003 rule 18). To skip
+    /// plan mode's permission request, the hint would have to mark tools that
+    /// change Ariadne's state, such as `create_task`. An agent reads its tool
+    /// list once, so the hint would stay after `finalize_plan`.
     #[test]
     fn no_tool_is_listed_read_only() {
         for seat in [

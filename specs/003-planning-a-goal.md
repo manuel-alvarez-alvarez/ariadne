@@ -182,10 +182,11 @@ Out: the columns and their gates (030), the model catalog the sizing reads
       not read-only. An allow rule and a `PreToolUse` hook do not change
       that. The repository permission mode answers the request as for any
       other tool (021 rule 9): `auto` allows it, and `ask` asks the user.
-    - No Ariadne tool carries `readOnlyHint`, for any seat. Every tool can
-      change Ariadne's state. Claude Code reads the tool list once and
-      ignores `notifications/tools/list_changed`, so a hint could not
-      follow the mode after `finalize_plan`.
+    - No Ariadne tool carries `readOnlyHint`, for any seat. The hint would
+      have to mark tools that change Ariadne's state, such as `create_task`,
+      to skip the request. Claude Code reads the tool list once and ignores
+      `notifications/tools/list_changed`, so such a hint would stay after
+      `finalize_plan`.
 
 ## Acceptance criteria
 
