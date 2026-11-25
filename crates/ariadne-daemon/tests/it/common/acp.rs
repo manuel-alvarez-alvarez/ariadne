@@ -3,6 +3,8 @@
 //! [`stub_acp_agent`] writes a python3 program that speaks ACP version 1 over
 //! its standard input and output, answering from a script the test wrote:
 //! the capabilities it declares, the configuration options it offers, the
+//! ACP session modes it offers (`modes`, with `reject_mode` the one it
+//! refuses), the
 //! reply to each prompt — updates of any kind (message and thought chunks, a
 //! plan, tool calls and as many updates of each as the test lists), a
 //! permission request, a question (`elicitation`, an `elicitation/create`
@@ -616,13 +618,19 @@ def respond(request):
         return initialized
     if method == "session/new":
         claim_writer(sid, resumed=False)
-        return {"sessionId": sid, "configOptions": options}
+        opened = {"sessionId": sid, "configOptions": options}
+        if "modes" in script:
+            opened["modes"] = script["modes"]
+        return opened
     if method in ("session/load", "session/resume"):
         wanted = request.get("params", {}).get("sessionId")
         if wanted in script.get("stored_sessions", []):
             claim_writer(wanted, resumed=True)
             send_updates(wanted, script.get("load_updates", []))
-            return {"configOptions": options}
+            reopened = {"configOptions": options}
+            if "modes" in script:
+                reopened["modes"] = script["modes"]
+            return reopened
         raise Failure(-32001, "unknown session %s" % wanted)
     if method == "session/close":
         return {}
@@ -636,6 +644,12 @@ def respond(request):
             if option.get("id") == params.get("configId"):
                 option["currentValue"] = settled
         return {"configOptions": options}
+    if method == "session/set_mode":
+        mode = request["params"].get("modeId")
+        if "modes" not in script or mode == script.get("reject_mode"):
+            raise Failure(-32000, "the agent refused the mode")
+        script["modes"]["currentModeId"] = mode
+        return {}
     if method == "session/prompt":
         turn = prompts.pop(0) if prompts else {}
         if "error" in turn:

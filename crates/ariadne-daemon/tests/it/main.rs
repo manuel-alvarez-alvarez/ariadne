@@ -50,6 +50,7 @@ mod metrics;
 mod models;
 mod pins;
 mod plan_finalize;
+mod plan_mode;
 mod portable_config;
 mod posts;
 mod prompts;

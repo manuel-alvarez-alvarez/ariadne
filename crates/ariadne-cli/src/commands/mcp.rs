@@ -558,6 +558,26 @@ pub(crate) mod tests {
         }
     }
 
+    /// No tool carries a read-only hint, for any seat (003 rule 18). To skip
+    /// plan mode's permission request, the hint would have to mark tools that
+    /// change Ariadne's state, such as `create_task`. An agent reads its tool
+    /// list once, so the hint would stay after `finalize_plan`.
+    #[test]
+    fn no_tool_is_listed_read_only() {
+        for seat in [
+            McpSeat::Orchestrator,
+            McpSeat::Agent,
+            McpSeat::PullRequestReviewer,
+            McpSeat::PullRequestKeeper,
+        ] {
+            let mcp = server_at(seat, Client::resolve(Some("http://127.0.0.1:1"), None));
+            for tool in mcp.listed_tools() {
+                let hint = tool.annotations.as_ref().and_then(|a| a.read_only_hint);
+                assert_ne!(hint, Some(true), "{} claims to be read-only", tool.name);
+            }
+        }
+    }
+
     /// The whole tool surface, and which seat sees which part of it: a tool a
     /// seat is not allowed is a tool it never sees, so an omission here is
     /// invisible from inside the session and an extra one is surface nothing

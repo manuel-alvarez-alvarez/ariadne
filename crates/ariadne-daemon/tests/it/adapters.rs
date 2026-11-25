@@ -25,6 +25,7 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         model: "test-model".into(),
         effort: None,
         extra_flags,
+        plan_mode: false,
     }
 }
 
@@ -111,6 +112,28 @@ fn a_spawn_plans_a_new_session_briefed_and_pinned() {
         config,
         "the plan carries what the record says"
     );
+}
+
+/// A launch in plan mode says so in its launch file, for the runtime to
+/// set the mode (021 rule 22). A launch out of plan mode does not.
+#[test]
+fn a_plan_mode_launch_tells_the_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let planning = SpawnCtx {
+        seat: Seat::Orchestrator,
+        task_id: None,
+        plan_mode: true,
+        ..ctx_with_flags(dir.path().into(), Vec::new())
+    };
+    plan_resume(&planning, "acp-session-1", "continue").unwrap();
+    assert_eq!(launch_file(dir.path())["planMode"], true);
+
+    let normal = SpawnCtx {
+        plan_mode: false,
+        ..planning
+    };
+    plan_spawn(&normal).unwrap();
+    assert_eq!(launch_file(dir.path())["planMode"], false);
 }
 
 /// A resume names the agent session it continues, and delivers its
