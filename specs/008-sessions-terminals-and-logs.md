@@ -87,6 +87,7 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
       choice of a multi-select, and Enter takes the field. On a text field,
       Enter takes the text in the input box.
     - A required field without an answer stays, and says why.
+    - A form with no fields takes Enter as `accept` with empty content, while the input box is empty.
     - The last field's Enter sends `accept` with the content. Esc sends
       `decline`.
     - While the input box holds text on a choice field, the keys are the
@@ -116,7 +117,7 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 19. An open question stays above the input, a closed one goes into the scrollback once after the blocks before its close, one open at the exit is written once, and a finished session keeps event order (`ariadne-console::tui::viewport::tests::an_open_question_stays_over_the_input_while_later_blocks_go_into_the_scrollback`, `::a_closed_question_goes_into_the_scrollback_once_after_the_blocks_before_its_close`, `::a_question_open_at_the_close_is_written_once_after_every_block`, `::a_finished_session_draws_its_questions_in_event_order`); chunks under an open question make one block, and a replay keeps a close's place (`ariadne-console::tui::viewport::tests::chunks_under_an_open_question_make_one_block_that_is_written_whole`, `::a_question_closed_while_the_stream_was_down_keeps_its_close_position`).
 
 20. A session place survives a store restart (`crates/ariadne-store/tests/session_place.rs::the_session_place_survives_a_store_restart`).
-21. A question draws its fields above the input with the option text as written, the keys answer it field by field, Esc declines it, text typed on a choice field is a prompt, a required field is not left empty, and a closed question shows each answer (`ariadne-console::tui::form::tests::an_open_question_draws_its_fields_and_the_option_text_as_written_above_the_input`, `::the_keys_answer_each_field_and_the_last_enter_sends_the_content`, `::escape_declines_the_question`, `::text_typed_on_a_choice_field_is_sent_as_a_prompt`, `::a_required_field_with_no_choice_left_is_not_taken`, `::a_closed_question_shows_each_answer_by_the_option_text`).
+21. A question draws its fields above the input with the option text as written, the keys answer it field by field, Esc declines it, a form with no fields is accepted, text typed on a choice field is a prompt, a required field is not left empty, and a closed question shows each answer (`ariadne-console::tui::form::tests::an_open_question_draws_its_fields_and_the_option_text_as_written_above_the_input`, `::the_keys_answer_each_field_and_the_last_enter_sends_the_content`, `::escape_declines_the_question`, `::enter_accepts_a_form_without_fields_with_empty_content`, `::text_typed_on_a_choice_field_is_sent_as_a_prompt`, `::a_required_field_with_no_choice_left_is_not_taken`, `::a_closed_question_shows_each_answer_by_the_option_text`).
 22. `ariadne session logs` draws a question's fields, its options as written and its answers, and a followed log draws the close under it (`ariadne-cli::commands::transcript::tests::a_question_draws_each_field_with_its_options_as_written_and_its_answers`, `::a_followed_question_draws_its_close_under_it`).
 
 ## Sources

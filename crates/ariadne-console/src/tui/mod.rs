@@ -816,6 +816,21 @@ impl Console {
                 },
             });
         }
+        if fields.is_empty() {
+            // A form with no fields has nothing to take: Enter accepts it.
+            if key.code == KeyCode::Enter && key.modifiers.is_empty() && self.input.is_empty() {
+                self.form = FormState::default();
+                self.invalidate_blocks();
+                return Some(Action::Answer {
+                    question_id,
+                    answer: AnswerQuestionRequest {
+                        action: QuestionAction::Accept,
+                        content: Some(Default::default()),
+                    },
+                });
+            }
+            return None;
+        }
         let field = fields.get(state.field)?;
         let count = form::choice_count(field);
         let typing = count == 0;

@@ -371,6 +371,31 @@ mod tests {
     }
 
     #[test]
+    fn enter_accepts_a_form_without_fields_with_empty_content() {
+        let mut console = Console::new(header());
+        console.snapshot(&[event(
+            "question",
+            "question",
+            json!({"session_id": "agent", "question": {
+                "id": "q2", "session_id": "session",
+                "message": "Go on?",
+                "created_at": "2026-11-25T00:00:00Z",
+                "schema": {"type": "object", "properties": {}},
+            }}),
+        )]);
+        assert_eq!(
+            enter(&mut console),
+            Action::Answer {
+                question_id: "q2".into(),
+                answer: AnswerQuestionRequest {
+                    action: QuestionAction::Accept,
+                    content: Some(serde_json::Map::new()),
+                },
+            }
+        );
+    }
+
+    #[test]
     fn escape_declines_the_question() {
         let mut console = asking();
         assert_eq!(
