@@ -184,6 +184,17 @@ pub(super) struct SendMessageReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+pub(super) struct PostToSessionReq {
+    /// Who to post to: `orchestrator`, or a column id from `get_task`.
+    pub to: String,
+    /// The task it is about. Omit it for your own task.
+    pub task_id: Option<String>,
+    /// The whole post. Write it so that the recipient needs no follow-up question.
+    pub body: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 pub(super) struct WaitForUserReq {
     /// One short line for the Needs attention list, under 100 characters.
     /// Not the question: put the question in `question`.
@@ -1012,6 +1023,29 @@ impl AriadneMcp {
         Parameters(req): Parameters<SendMessageReq>,
     ) -> Result<CallToolResult, McpError> {
         self.write_message(req.task_id, &req.to, req.body).await
+    }
+
+    #[tool(
+        description = "Post text into the live session of the orchestrator or of the agent of the current column, on this host. Post a question, an answer, or a blocker report only. Send no confirmations, thanks, or plans. After a question, end your turn. The answer arrives as a new turn."
+    )]
+    async fn post_to_session(
+        &self,
+        Parameters(req): Parameters<PostToSessionReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(McpError::invalid_params("a post needs a body", None));
+        }
+        let path = self.task_path(req.task_id, "/posts")?;
+        let request = ariadne_api::messages::PostToSessionRequest {
+            to: req.to,
+            body: body.to_string(),
+        };
+        self.client
+            .send_no_content(http::Method::POST, &path, Some(&request))
+            .await
+            .map_err(to_mcp_err)?;
+        json_result(serde_json::json!({"posted": true}))
     }
 
     #[tool(
@@ -2088,6 +2122,52 @@ mod tests {
                 "goal_steps": [{"id": "develop"}]
             })
         );
+    }
+
+    /// `post_to_session` posts the three parameters to the posts route of the
+    /// task, its own where none is named, and its description permits a
+    /// question, an answer or a blocker report and tells the sender to end
+    /// its turn after a question (039).
+    #[tokio::test]
+    async fn post_to_session_posts_to_the_posts_route_and_says_to_end_the_turn() {
+        let (endpoint, seen) = recording_no_content_daemon().await;
+        let mut mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.task_id = Some("01T".into());
+        mcp.post_to_session(Parameters(PostToSessionReq {
+            to: "review".into(),
+            task_id: None,
+            body: " Is the bound a limit? ".into(),
+        }))
+        .await
+        .expect("post_to_session");
+        mcp.post_to_session(Parameters(PostToSessionReq {
+            to: "orchestrator".into(),
+            task_id: Some("01OTHER".into()),
+            body: "  ".into(),
+        }))
+        .await
+        .expect_err("an empty body");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "the empty body reaches no route");
+        assert_eq!(
+            (seen[0].method.as_str(), seen[0].path.as_str()),
+            ("POST", "/v1/tasks/01T/posts")
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&seen[0].body).unwrap(),
+            serde_json::json!({"to": "review", "body": "Is the bound a limit?"})
+        );
+        let description = AriadneMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "post_to_session")
+            .and_then(|tool| tool.description)
+            .expect("the post_to_session tool");
+        assert!(description.contains("question, an answer, or a blocker report only"));
+        assert!(description.contains("After a question, end your turn."));
     }
 
     /// One verb, and it names the column it is for: the message goes to the
