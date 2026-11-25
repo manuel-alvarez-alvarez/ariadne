@@ -16,7 +16,7 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_core::{GoalStatus, PermissionMode, SessionStatus};
+use ariadne_core::{AttentionReason, GoalStatus, PermissionMode, SessionStatus};
 use ariadne_store::AgentSession;
 
 use common::acp::{option, script};
@@ -417,20 +417,15 @@ async fn exit_plan_mode_out_of_planning_is_answered_by_the_permission_mode() {
     );
 }
 
-/// In plan mode, Claude Code asks permission for an Ariadne tool, and the
-/// repository permission mode answers it as any other tool: `auto` allows
-/// `create_task`, so the orchestrator can plan (003 rule 18).
-#[tokio::test]
-async fn an_ariadne_tool_in_plan_mode_is_answered_by_the_permission_mode() {
-    let h = harness().await;
-    let mut scripted = claude_like();
-    scripted["prompts"] = json!([{
+/// A permission turn for the tool `name`, with the options Claude offers.
+fn tool_turn(name: &str) -> Value {
+    json!({
         "permission": {
             "toolCall": {
-                "toolCallId": "call-task",
-                "title": "ariadne: create_task",
+                "toolCallId": "call-tool",
+                "title": name,
                 "rawInput": {"title": "x"},
-                "_meta": {"claudeCode": {"toolName": "mcp__ariadne__create_task"}},
+                "_meta": {"claudeCode": {"toolName": name}},
             },
             "options": [
                 {"optionId": "allow-once", "name": "Yes", "kind": "allow_once"},
@@ -438,16 +433,127 @@ async fn an_ariadne_tool_in_plan_mode_is_answered_by_the_permission_mode() {
             ],
         },
         "stop_reason": "end_turn",
-    }]);
+    })
+}
+
+/// The stub, offering Claude's modes, whose first turn asks for `name`.
+fn asking_for(name: &str) -> Value {
+    let mut scripted = claude_like();
+    scripted["prompts"] = json!([tool_turn(name)]);
+    scripted
+}
+
+/// In plan mode, Claude Code asks permission for an Ariadne tool. While the
+/// goal is in planning, the daemon allows it in every repository permission
+/// mode, and records the answer as its own, so the orchestrator can plan
+/// (003 rule 18, 021 rule 9).
+#[tokio::test]
+async fn a_planning_orchestrator_is_allowed_an_ariadne_tool_in_every_permission_mode() {
+    for mode in [
+        PermissionMode::Auto,
+        PermissionMode::Ask,
+        PermissionMode::Learn,
+        PermissionMode::Ai,
+    ] {
+        let h = harness().await;
+        let cast = planning(&h, asking_for("mcp__ariadne__create_task")).await;
+        h.set_permission_mode(&cast.repo, mode).await;
+
+        let session = orchestrator(&h, &cast).await;
+
+        assert_eq!(modes_set(&h), ["plan"], "{mode:?}");
+        assert_eq!(
+            permission_answer(&h),
+            json!({"outcome": "selected", "optionId": "allow-once"}),
+            "{mode:?}"
+        );
+        let events = events(&h, &session).await;
+        let replied = events
+            .iter()
+            .find(|event| event.kind == "permission.replied")
+            .expect("the answer was recorded")
+            .payload
+            .clone();
+        assert_eq!(replied["decided_by"], "plan", "{mode:?}");
+        let request = events
+            .iter()
+            .find(|event| event.kind == "permission_request")
+            .expect("the request was recorded");
+        assert_eq!(request.payload["waiting"], false, "{mode:?}");
+    }
+}
+
+/// A tool of another server keeps the repository mode: `ask` waits for the
+/// console, even where its name ends like an Ariadne tool's.
+#[tokio::test]
+async fn another_servers_tool_keeps_the_permission_mode() {
+    for name in [
+        "mcp__other__create_task",
+        "mcp__ariadne__create__task",
+        "Bash",
+    ] {
+        let h = harness().await;
+        let cast = planning(&h, asking_for(name)).await;
+        h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
+
+        let session = h.launcher.spawn_orchestrator(&cast.goal.id).await.unwrap();
+
+        waits_for_the_console(&h, &session).await;
+    }
+}
+
+/// A column's agent keeps the repository mode for an Ariadne tool.
+#[tokio::test]
+async fn a_column_agents_ariadne_tool_keeps_the_permission_mode() {
+    let h = harness().await;
+    h.git_repo("repo");
+    let cast = planning(&h, asking_for("mcp__ariadne__create_task")).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
+
+    let session = h.start_agent(&cast.task, "develop").await;
+
+    waits_for_the_console(&h, &session).await;
+}
+
+/// After `finalize_plan`, the orchestrator's Ariadne tool keeps the
+/// repository mode: `ask` waits for the console.
+#[tokio::test]
+async fn an_ariadne_tool_after_finalize_plan_keeps_the_permission_mode() {
+    let h = harness().await;
+    let mut scripted = claude_like();
+    scripted["prompts"] = json!([
+        {"updates": [], "stop_reason": "end_turn"},
+        tool_turn("mcp__ariadne__create_task"),
+    ]);
     let cast = planning(&h, scripted).await;
-    h.set_permission_mode(&cast.repo, PermissionMode::Auto)
+    h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
+    let session = orchestrator(&h, &cast).await;
+    h.json::<Value>(
+        as_session(
+            &format!("/v1/goals/{}/finalize", cast.goal.id),
+            &session.id,
+            json!({}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+
+    let (status, _) = h
+        .send(common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            json!({"text": "go on"}),
+        ))
         .await;
+    assert!(status.is_success(), "{status}");
 
-    orchestrator(&h, &cast).await;
+    waits_for_the_console(&h, &session).await;
+}
 
-    assert_eq!(modes_set(&h), ["plan"]);
-    assert_eq!(
-        permission_answer(&h),
-        json!({"outcome": "selected", "optionId": "allow-once"})
-    );
+/// The session's request waits for a person, and the agent got no answer.
+async fn waits_for_the_console(h: &Harness, session: &AgentSession) {
+    eventually(TIMEOUT, "the permission attention to rise", || async {
+        h.attention(session).await == Some(AttentionReason::WaitingPermission)
+    })
+    .await;
+    assert_eq!(permission_answer(h), Value::Null);
 }

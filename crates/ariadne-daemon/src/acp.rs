@@ -2180,6 +2180,11 @@ impl AcpRuntime {
             reports: io.reports.clone(),
             subagents: io.subagents.clone(),
             orchestrated_goal: launch.orchestrated_goal.clone(),
+            ariadne_server: launch
+                .config
+                .mcp_servers
+                .first()
+                .map(|server| server.name.clone()),
         };
         if let Some(history) = &recovery {
             incoming.restore_prior_turn_state(history).await;
@@ -2923,6 +2928,8 @@ struct RuntimeIncoming {
     subagents: Subagents,
     /// The goal this session orchestrates, None for every other seat.
     orchestrated_goal: Option<String>,
+    /// The name of the MCP server the daemon passed this launch: Ariadne's.
+    ariadne_server: Option<String>,
 }
 
 impl RuntimeIncoming {
@@ -3265,8 +3272,17 @@ impl RuntimeIncoming {
         payload["options"] = params.get("options").cloned().unwrap_or_default();
         let signature = permission_signature(&params["toolCall"]);
         if signature.tool_name == EXIT_PLAN_MODE && self.goal_in_planning().await {
+            let selected = console_rejecting_option(params);
             return Ok(self
-                .refuse_exit_plan_mode(params, session_id, payload, requested_at)
+                .answer_in_planning(params, session_id, payload, requested_at, selected)
+                .await);
+        }
+        if self.is_ariadne_tool(&signature.tool_name)
+            && let Some(selected) = allowing_agent_option(params)
+            && self.goal_in_planning().await
+        {
+            return Ok(self
+                .answer_in_planning(params, session_id, payload, requested_at, Some(selected))
                 .await);
         }
         // The learned row's key and the request's risk tags. The model reads
@@ -3567,19 +3583,28 @@ impl RuntimeIncoming {
             .is_ok_and(|goal| goal.status() == ariadne_core::GoalStatus::Planning)
     }
 
-    /// Answer a planning orchestrator's `ExitPlanMode` with the agent's
-    /// rejecting option, in every repository permission mode (021 rule 22):
-    /// `finalize_plan` is what ends plan mode. The request and the reply are
-    /// recorded as every daemon answer is, decided by `plan`.
-    async fn refuse_exit_plan_mode(
+    /// Whether `tool_name` is a tool of the MCP server the daemon passed at
+    /// launch.
+    fn is_ariadne_tool(&self, tool_name: &str) -> bool {
+        self.ariadne_server
+            .as_deref()
+            .is_some_and(|server| names_server_tool(server, tool_name))
+    }
+
+    /// Answer a planning orchestrator's permission request with `selected`,
+    /// in every repository permission mode (021 rule 9): the rejecting
+    /// option for `ExitPlanMode`, because `finalize_plan` is what ends plan
+    /// mode, and the allowing option for an Ariadne tool. The request and
+    /// the reply are recorded as every daemon answer is, decided by `plan`.
+    async fn answer_in_planning(
         &self,
         params: &Value,
         session_id: Value,
         mut payload: Value,
         requested_at: Instant,
+        selected: Option<String>,
     ) -> Value {
         let decided_by = "plan";
-        let selected = console_rejecting_option(params);
         payload["decided_by"] = json!(decided_by);
         payload["waiting"] = json!(false);
         self.end_text().await;
@@ -4261,6 +4286,17 @@ fn category_name(category: &v1::SessionConfigOptionCategory) -> &str {
         C::Other(name) => name,
         _ => "",
     }
+}
+
+/// Whether `tool_name` is `mcp__<server>__<tool>`, with `<tool>` holding no
+/// `__`: a tool of another server whose name only starts the same way has a
+/// further `__` in the rest (021 rule 9).
+fn names_server_tool(server: &str, tool_name: &str) -> bool {
+    tool_name
+        .strip_prefix("mcp__")
+        .and_then(|rest| rest.strip_prefix(server))
+        .and_then(|rest| rest.strip_prefix("__"))
+        .is_some_and(|tool| !tool.is_empty() && !tool.contains("__"))
 }
 
 /// The id of the mode an orchestrator plans in (021 rule 22).
@@ -5625,6 +5661,19 @@ mod tests {
             }),
             "a boolean option carries its type beside the value"
         );
+    }
+
+    /// A tool is Ariadne's only as `mcp__<server>__<tool>`, for the server
+    /// the daemon passed (021 rule 9).
+    #[test]
+    fn an_ariadne_tool_is_named_by_the_server_the_daemon_passed() {
+        use super::names_server_tool as named;
+        assert!(named("ariadne", "mcp__ariadne__create_task"));
+        assert!(!named("ariadne", "mcp__other__create_task"));
+        assert!(!named("ariadne", "mcp__ariadne__create__task"));
+        assert!(!named("ariadne", "mcp__ariadne__"));
+        assert!(!named("ariadne", "mcp__ariadne2__create_task"));
+        assert!(!named("ariadne", "create_task"));
     }
 
     /// A session whose mode before `plan` is unknown goes back to

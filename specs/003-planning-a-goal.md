@@ -180,8 +180,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
       calls them.
     - In plan mode, Claude Code asks permission for each MCP tool that is
       not read-only. An allow rule and a `PreToolUse` hook do not change
-      that. The repository permission mode answers the request as for any
-      other tool (021 rule 9): `auto` allows it, and `ask` asks the user.
+      that. While the goal is in planning, the daemon allows the request
+      for a tool of Ariadne's server in every repository permission mode
+      (021 rule 9), so `ask` asks the user nothing for it.
     - No Ariadne tool carries `readOnlyHint`, for any seat. The hint would
       have to mark tools that change Ariadne's state, such as `create_task`,
       to skip the request. Claude Code reads the tool list once and ignores
@@ -268,8 +269,8 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   happens once (`::a_goal_is_completed_only_out_of_active`).
 - The briefing explains plan mode
   (`defaults.rs::the_orchestrator_briefing_explains_plan_mode`), and a
-  planning orchestrator's Ariadne tool is answered by the permission mode
-  (`plan_mode.rs::an_ariadne_tool_in_plan_mode_is_answered_by_the_permission_mode`).
+  planning orchestrator's Ariadne tool is allowed in every permission mode
+  (`plan_mode.rs::a_planning_orchestrator_is_allowed_an_ariadne_tool_in_every_permission_mode`).
   No tool is listed read-only
   (`mcp.rs::no_tool_is_listed_read_only`).
   `finalize_plan` ends plan mode

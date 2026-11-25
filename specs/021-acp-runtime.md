@@ -232,6 +232,15 @@ it leaves nothing to delete.
    rejecting kind. The tool name is
    `toolCall.name`, else `toolCall._meta.claudeCode.toolName`, else
    `toolCall.title`, else `toolCall.toolCallId`.
+   While the goal is in `planning`, the daemon answers the orchestrator's
+   permission request for a tool of Ariadne's MCP server with the agent's
+   allowing option (the choice of a console answer), in `auto`, `ask`, `learn`
+   and `ai`, and records it as rule 22 records its answers. The tool is
+   Ariadne's where its name is `mcp__<server>__<tool>`, with `<server>` the
+   name of the server the daemon passed at launch and `<tool>` holding no
+   `__`. Every other tool keeps the repository's mode, as does every tool
+   of a column's agent, a pull request session and an orchestrator out of
+   `planning`.
    The table `learned_permissions` keeps one row per repository, tool name,
    level and key (`learned_key::normalize`). The key is made from
    `rawInput` in four steps:
@@ -530,7 +539,7 @@ it leaves nothing to delete.
       `permission.replied`, with `decided_by` `plan`. Out of `planning`,
       rule 9 answers `ExitPlanMode` as any other tool.
     - In plan mode, an Ariadne tool call is a permission request that rule
-      9 answers (003 rule 18).
+      9 allows while the goal is in `planning` (003 rule 18).
 
 ## Acceptance criteria
 
@@ -582,6 +591,16 @@ it leaves nothing to delete.
   mode (`plan_mode.rs::a_planning_orchestrator_is_refused_exit_plan_mode_in_every_permission_mode`),
   and is answered by the permission mode out of planning
   (`::exit_plan_mode_out_of_planning_is_answered_by_the_permission_mode`).
+- A planning orchestrator's Ariadne tool is allowed without a console
+  request in every permission mode
+  (`plan_mode.rs::a_planning_orchestrator_is_allowed_an_ariadne_tool_in_every_permission_mode`).
+  A tool of another server, a column's agent, and an orchestrator after
+  `finalize_plan` keep the permission mode
+  (`::another_servers_tool_keeps_the_permission_mode`,
+  `::a_column_agents_ariadne_tool_keeps_the_permission_mode`,
+  `::an_ariadne_tool_after_finalize_plan_keeps_the_permission_mode`).
+  A tool name that only starts like Ariadne's is not Ariadne's
+  (`acp.rs::an_ariadne_tool_is_named_by_the_server_the_daemon_passed`).
 - Selection order, direct fallback, and forced failures:
   `place.rs::automatic_selection_uses_tmux_before_a_direct_child`,
   `::automatic_selection_uses_a_direct_child_without_multiplexers`, and
