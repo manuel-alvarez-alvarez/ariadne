@@ -5,7 +5,7 @@
  *
  *     ["local", "goals", "list", filters?]            list of goals
  *     ["local", "goals", "detail", id]                one goal
- *     ["box", "tasks", "detail", id, "messages"]      a sub-resource of a task on `box`
+ *     ["box", "tasks", "detail", id, "diff"]          a sub-resource of a task on `box`
  *
  * The host is the name `GET /v1/hosts` gives it, `local` for the settings
  * daemon. Ids are only unique on one daemon, so two hosts never share an
@@ -100,7 +100,6 @@ export const qk = {
     list: (host: Host, filters?: TaskFilters) => [host, "tasks", "list", filters ?? {}] as const,
     details: (host: Host) => [host, "tasks", "detail"] as const,
     detail: (host: Host, id: string) => [host, "tasks", "detail", id] as const,
-    messages: (host: Host, id: string) => [host, "tasks", "detail", id, "messages"] as const,
     transitions: (host: Host, id: string) => [host, "tasks", "detail", id, "transitions"] as const,
     diff: (host: Host, id: string) => [host, "tasks", "detail", id, "diff"] as const,
   },
