@@ -42,17 +42,20 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react"
 import { toast } from "sonner"
 
 import {
+  type AgentEventDto,
   type AgentRequestDto,
   api,
   type Host,
   hostBaseUrl,
   hostUnreachable,
+  type QuestionDto,
   qk,
   type SessionDto,
   type SessionStatus,
@@ -78,6 +81,8 @@ import {
   updateViewState,
   watchViewState,
 } from "./console-view-state"
+import { FormCard } from "./form-card"
+import { formQuestions, listQuestions, questionOfEvent } from "./form-questions"
 import {
   answerRequest,
   isOpenQuestion,
@@ -243,6 +248,18 @@ function ConsolePane({
   const [requestsError, setRequestsError] = useState<string | null>(null)
   /** Counts the reads of the pending requests, so only the latest one lands. */
   const reads = useRef(0)
+  /** The session's open native questions, as read with the last snapshot. */
+  const [listedForms, setListedForms] = useState<QuestionDto[]>([])
+  /** Every question any read of the session listed, open or since closed. */
+  /** The newest event the console held when the last read of the list was asked. */
+  const [listedThrough, setListedThrough] = useState("")
+  const [seenForms, setSeenForms] = useState<QuestionDto[]>([])
+  /** Counts the reads of the open native questions, so only the latest one lands. */
+  const formReads = useRef(0)
+  /** Why the last read of the open native questions failed; none once one succeeds. */
+  const [formsError, setFormsError] = useState<string | null>(null)
+  /** The newest event the console held at the last snapshot, for a retry of the read. */
+  const formsThrough = useRef("")
   const [streamStatus, setStreamStatus] = useState<ConsoleStreamStatus>("connecting")
   const [streamError, setStreamError] = useState<string | null>(null)
   const [draft, setDraft] = useState(() => readViewState(key).draft)
@@ -372,9 +389,56 @@ function ConsolePane({
     )
   }, [host, sessionId])
 
+  // The open native questions are read again with every snapshot as well. A
+  // failed read leaves the list as it was and says so with a Retry: the
+  // stream's own events still draw every question asked since the page in view.
+  const readForms = useCallback(
+    (through: string) => {
+      formsThrough.current = through
+      const read = ++formReads.current
+      listQuestions(host, sessionId).then(
+        (listed) => {
+          if (read !== formReads.current) return
+          setListedForms(listed)
+          setListedThrough(through)
+          setFormsError(null)
+          // A question stays known once read, so one that closes after the read
+          // still draws, closed, when the next read no longer has it.
+          setSeenForms((seen) => [
+            ...seen.filter((one) => !listed.some((now) => now.id === one.id)),
+            ...listed,
+          ])
+        },
+        (error) => {
+          if (read === formReads.current) setFormsError(describeError(error))
+        },
+      )
+    },
+    [host, sessionId],
+  )
+
+  // A question an event carries, from the snapshot or the stream, stays known,
+  // so a newer snapshot that drops it from the page still finds its close in
+  // the history.
+  const rememberAsked = useCallback((events: readonly AgentEventDto[]) => {
+    const asked = events.flatMap((event) => questionOfEvent(event) ?? [])
+    if (asked.length === 0) return
+    setSeenForms((seen) => [
+      ...seen,
+      ...asked.filter(
+        (one, at) =>
+          !seen.some((s) => s.id === one.id) && asked.findIndex((o) => o.id === one.id) === at,
+      ),
+    ])
+  }, [])
+
   useEffect(() => {
     setTranscript(emptyTranscript())
     setRequests([])
+    setListedForms([])
+    setSeenForms([])
+    setFormsError(null)
+    setListedThrough("")
     setRequestsError(null)
     setSnapshotted(false)
     resetHistory()
@@ -394,9 +458,14 @@ function ConsolePane({
         resetHistory()
         setSnapshotted(true)
         setTranscript((current) => applySnapshot(current, events))
+        rememberAsked(events)
         readRequests()
+        readForms(events.at(-1)?.id ?? "")
       },
-      onEvent: (event) => setTranscript((current) => applyEvent(current, event)),
+      onEvent: (event) => {
+        setTranscript((current) => applyEvent(current, event))
+        rememberAsked([event])
+      },
       onStatus: (next, error) => {
         setStreamStatus(next)
         setStreamError(error ?? null)
@@ -405,9 +474,10 @@ function ConsolePane({
     stream.start()
     return () => {
       reads.current += 1
+      formReads.current += 1
       stream.stop()
     }
-  }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests])
+  }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests, readForms, rememberAsked])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus request is read once, on arrival
   useEffect(() => {
@@ -596,6 +666,23 @@ function ConsolePane({
   // A question restored from the requests list was asked before the page in
   // view, so it comes first: the composer answers the newest.
   const restored = child ? [] : restoredQuestions(requests, transcript)
+  // The questions the agent asks with its own tool: a child's stay out of its view.
+  const allForms = useMemo(
+    () => (child ? [] : formQuestions(transcript.events, listedForms, seenForms, listedThrough)),
+    [child, transcript.events, listedForms, seenForms, listedThrough],
+  )
+  // A close whose question is in an older page, and a question that left the
+  // list with no close in view, draw once the older pages are in: else the card
+  // would show keys in place of the form's own labels, or no answer.
+  const lookingFor = allForms.some((form) => form.orphan || form.lost)
+  // With no event in view there is no older page to look in.
+  const searched = history.state === "start" || transcript.seen.size === 0
+  const forms = allForms.filter((form) => !(form.orphan || form.lost) || searched)
+  // Load older pages until the form of a question closed in view is found.
+  useEffect(() => {
+    if (snapshotted && lookingFor && history.state === "idle") void loadOlder()
+  }, [snapshotted, lookingFor, history, loadOlder])
+  const formOpen = live && allForms.some((form) => form.closed === undefined)
   const question = live && !child ? openQuestion([...restored, ...blocks], answered) : undefined
   const questionId = question?.requestId
   // An open question waits on the user, so a live `main` draws it last,
@@ -1103,6 +1190,21 @@ function ConsolePane({
                   </Button>
                 </div>
               ) : null}
+              {formsError ? (
+                <div
+                  role="alert"
+                  className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
+                >
+                  Could not read the open questions: {formsError}
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => readForms(formsThrough.current)}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
               {live ? null : restored.map(card)}
               {transcript.queuedPrompts.map((prompt) => (
                 <div key={prompt.id} data-block="prompt">
@@ -1118,6 +1220,15 @@ function ConsolePane({
                 />
               ))}
               {waiting.map(card)}
+              {forms.map((form) => (
+                <FormCard
+                  key={form.id}
+                  host={host}
+                  sessionId={sessionId}
+                  question={form}
+                  live={live}
+                />
+              ))}
             </div>
             {away ? (
               <Button
@@ -1172,6 +1283,7 @@ function ConsolePane({
                 ? { tool: runningTool(transcript), seconds: elapsedSeconds(turnStartedAt, now) }
                 : undefined
             }
+            waiting={formOpen}
             tokens={tokenTotals(transcript, usage)}
           />
         </ConsoleWorkspace>

@@ -4852,6 +4852,85 @@
         }
       }
     },
+    "/v1/sessions/{id}/questions": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "The questions the session's agent waits on, oldest first, each with the\nform the agent sent, unchanged.",
+        "operationId": "list_questions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QuestionDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/v1/sessions/{id}/questions/{question_id}/answer": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Answer one question: `accept` with the form content, `decline` or\n`cancel`. The agent reads it as the result of its request. One answer\ncloses the question, and a second is refused.",
+        "operationId": "answer_question",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The answer was sent to the agent"
+          },
+          "400": {},
+          "404": {},
+          "409": {}
+        }
+      }
+    },
     "/v1/sessions/{id}/resume": {
       "post": {
         "tags": [
@@ -6554,6 +6633,25 @@
             "description": "The answer the user typed."
           }
         }
+      },
+      "AnswerQuestionRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/sessions/{id}/questions/{question_id}/answer`.\n`content` is present with `accept` only.",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/QuestionAction"
+          },
+          "content": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "AskBabysitRequest": {
         "type": "object",
@@ -10203,6 +10301,46 @@
             ],
             "description": "The version it printed, without the `Python ` in front of it.",
             "example": "3.12.1"
+          }
+        }
+      },
+      "QuestionAction": {
+        "type": "string",
+        "description": "What the person did with a question, as ACP names it.",
+        "enum": [
+          "accept",
+          "decline",
+          "cancel"
+        ]
+      },
+      "QuestionDto": {
+        "type": "object",
+        "description": "One open question an agent asks with ACP `elicitation/create` in form\nmode, as `GET /v1/sessions/{id}/questions` lists it (021).",
+        "required": [
+          "id",
+          "session_id",
+          "message",
+          "schema",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "description": "The agent's own text over the form."
+          },
+          "schema": {
+            "type": "object",
+            "description": "The `requestedSchema` of the ACP request, unchanged."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "The Ariadne session whose agent asks."
           }
         }
       },

@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-24
+updated: 2026-11-25
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -469,6 +469,40 @@ Out: the daemon endpoints themselves (012).
     question draw above it. A card that closes draws in its own place in
     the transcript, by its event order. A child's view and a session that
     is not live draw every card in event order.
+22f. A question the agent asks with its own tool, an ACP form elicitation
+    (021), is a form card (`console/form-card.tsx`), apart from the
+    `wait_for_user` card of rule 22a and sharing none of its code. The
+    `question` event of the console stream draws it, and the console reads
+    `GET /v1/sessions/{id}/questions` with every snapshot, a reconnect's
+    included, to draw an open question older than the snapshot's page. In
+    `main` each card draws after the transcript, directly above the composer.
+    It shows the agent's message as written, each field of the form with its
+    title and description, and each choice with its label and description as
+    the schema gives them. A single choice (and a boolean) is a radio group,
+    several choices a checkbox group, free text and a number an input, and
+    one form may hold several fields. Send is off until each required field
+    holds an answer, and posts `{"action":"accept","content":{...}}` with the
+    fields the user filled to
+    `POST /v1/sessions/{id}/questions/{question_id}/answer`. Dismiss posts
+    `{"action":"decline"}`. A failed post shows its error on the card, which
+    stays answerable; an accepted one shows `Answer sent` until the
+    `question.resolved` event closes the card. A closed card shows each answer
+    under its field's title, or `Dismissed`, `Cancelled`, `Withdrawn by the
+    agent` or `Closed: the session ended`. A live stream, a reload, a
+    reconnect and a history replay draw the same closed card, with the same
+    answer: the console reads the close and the form from the history, and
+    loads older pages until it finds what a card lacks, and the card waits for
+    that rather than draw keys or no answer. Only a question the history holds
+    no close for (the daemon recorded none, or the history ends first) draws
+    as `Closed`, with no answer, and it no longer counts as waiting. A
+    question the console has read, from the list, a snapshot or the stream, stays
+    drawn when it closes, even when a later read of the list no longer has
+    it and a newer snapshot drops it. A failed read of the list shows its
+    error with Retry, which reads the list again. A read of the list that lands
+    after the console moved to another session draws nothing. A session
+    that is not live takes no answer. While a question is open the console's
+    status row says `waiting for you`, and the session activity feed labels
+    its `question` event `Waiting for you`.
 23. The console uses the app's own tokens, in both themes. An Expand control
     opens it in a near-fullscreen modal, and its Collapse control restores
     it to the panel; each move closes the old stream and opens a fresh one.
@@ -1355,7 +1389,11 @@ Out: the daemon endpoints themselves (012).
     rule 74's no-host row under one pick does not apply to it. A toast names its item's
     host, `local` included, whenever a named host is listed. A `wait_for_user` question is answered in the
     row, and the answer posts to that host's
-    `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`. An attention
+    `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`. A form question
+    (rule 22f) of one single-select field is answered in the row too, with one
+    button per choice that posts `accept` to that host's
+    `POST /v1/sessions/{id}/questions/{question_id}/answer`; any other form is
+    answered in the console its row opens. An attention
     error of one host follows rule 75: it names that host and has Retry; the items of the other
     hosts stay and their toasts continue. The first answer of a host raises no
     toast, also for a host that answers late, becomes listed, or comes back: a
@@ -2206,6 +2244,41 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/composer.test.tsx::answers an open question from the composer on that request's own route`,
   `::answers a question restored from the requests list from the composer`,
   `::answers the newest of a restored and a loaded question`).
+- A form question draws its message, fields and choices as written, in every
+  field kind (rule 22f)
+  (`ui/src/features/sessions/console/form-card.test.tsx::draws the message, each field and each choice with its description as written`,
+  `ui/src/features/sessions/console/form-questions.test.ts::reads each field of the schema with its choices as the agent wrote them`).
+- A form question is sent as accept with its content, or dismissed as decline,
+  on its own route (rule 22f)
+  (`ui/src/features/sessions/console/form-card.test.tsx::sends the answers as accept with the content of the form`,
+  `::sends decline when the user dismisses the question`,
+  `::shows a failed answer on the card and lets the user try again`).
+- A form question closes the same way live, on a reload and on a replay, and an
+  open one older than the page is restored (rule 22f)
+  (`ui/src/features/sessions/console/form-card.test.tsx::closes the card with its answer when the resolved event lands, live and in a replay`,
+  `::shows a dismissed question closed`,
+  `::restores an open question older than the snapshot's page from the list`,
+  `::keeps a question restored from the list, with its answer, when it closes and the list is read again`,
+  `::draws a question closed as closed, not waiting, when a reconnect omits it and its close`,
+  `::draws a close whose question is in an older page with the question's own labels`,
+  `::draws no card of the session it left when its question read lands late`,
+  `::closes a question the snapshot carries when the list no longer holds it`,
+  `::recovers the answer of a question a reconnect omits from the history`,
+  `::keeps a question the stream carried when a newer snapshot drops it and its close`,
+  `::says the open questions could not be read, and reads them again on Retry`,
+  `::keeps a closed question a snapshot carried when a newer snapshot omits it`,
+  `ui/src/features/sessions/console/form-questions.test.ts::keeps a listed question that a resolved event closes, with its answer`,
+  `ui/src/features/sessions/console/form-questions.test.ts::closes a question the console read that is no longer listed and has no resolved event`,
+  `::closes a question its event carried that the list no longer holds, once the list was read after it`,
+  `::keeps the answer of a closed question that no event or list carries`,
+  `ui/src/features/sessions/console/form-questions.test.ts::closes a question with its resolved event, whatever order a replay brings them in`).
+- The status row says the session waits for the user while a form question is
+  open (rule 22f)
+  (`ui/src/features/sessions/console/form-card.test.tsx::says the session waits for the user while a question is open`).
+- The attention strip answers a one-field single-select form in place, and
+  opens the console for any other (rule 59)
+  (`ui/src/features/goals/attention-forms.test.tsx::answers a form of one single-select question in place`,
+  `::opens the console of the session for a form it does not answer in place`).
 - A refused message keeps its text with Retry and Edit, and the newer draft
   (rule 22d)
   (`ui/src/features/sessions/console/composer.test.tsx::keeps a refused message with Retry, and Retry sends the same text without touching the draft`,

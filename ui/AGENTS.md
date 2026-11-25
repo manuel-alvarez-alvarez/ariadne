@@ -297,6 +297,7 @@ the host first; below, the host is left out of each key for brevity:
 ["tasks",        "detail", id, "messages" | "transitions" | "diff"]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
 ["sessions",     "detail", id, "agent-requests"]
+["sessions",     "detail", id, "questions"]
 ["hosts",        "list", {}]         (always under "local")
 ["skills",       "list", filters]   ["skills",   "detail", name]
 ["workflows",    "list", {}]        ["workflows", "detail", name]
@@ -507,7 +508,12 @@ stream (008). It lives in `src/features/sessions/console/`:
   `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`, never to the
   input route; a failed answer shows on the card. With every snapshot it
   reads `GET /v1/sessions/{id}/agent-requests` and restores a card for a
-  pending question older than the snapshot's page. A session with subagents
+  pending question older than the snapshot's page. `form-card.tsx` draws a question the agent asks with its own tool
+  (an ACP form elicitation) as a card of its own, with no code of the
+  `wait_for_user` card; `form-questions.ts` reads its schema, folds the
+  `question` and `question.resolved` events with `GET /v1/sessions/{id}/questions`,
+  and posts to `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+  A session with subagents
   shows a bar of views, as the CLI
   attach pane does (008 rules 30 to 36). the arrow keys switch the view
   inside the bar, which is one Tab stop, and a child's view is read-only. Escape there goes back to `main`, or
