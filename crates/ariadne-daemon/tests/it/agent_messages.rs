@@ -488,7 +488,9 @@ async fn a_message_a_read_hands_over_is_never_handed_over_as_a_prompt() {
 /// A develop agent that sits inside a turn until the test writes the file
 /// this answers with: the agent of a task that waits for an answer inside
 /// one turn. The review agent is the session the test writes to it as.
-async fn author_held_in_a_turn(h: &Harness) -> (Cast, AgentSession, AgentSession, PathBuf) {
+pub(crate) async fn author_held_in_a_turn(
+    h: &Harness,
+) -> (Cast, AgentSession, AgentSession, PathBuf) {
     author_held_in(h, json!({})).await
 }
 

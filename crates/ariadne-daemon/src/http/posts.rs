@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::messages::PostToSessionRequest;
-use ariadne_core::{PromptKind, Seat};
+use ariadne_core::Seat;
 use ariadne_store::{AgentSession, SessionFilter, Task};
 
 use super::AppState;
@@ -58,10 +58,6 @@ pub(super) async fn post_to_session(
         )));
     }
     let agents = state.store.list_task_agents(&id).await?;
-    let roll_call = || {
-        let columns: Vec<&str> = agents.iter().map(|a| a.step.as_str()).collect();
-        format!("`orchestrator`, or one of: {}", columns.join(", "))
-    };
     let recipient = if req.to.trim().eq_ignore_ascii_case("orchestrator") {
         live_session(
             &state,
@@ -82,7 +78,7 @@ pub(super) async fn post_to_session(
             return Err(ApiError::bad_request(format!(
                 "task {id} staffs no column {}. Say {}",
                 req.to.trim(),
-                roll_call()
+                current_address(&task)
             )));
         };
         if task.step.as_deref() != Some(agent.step.as_str()) {
@@ -130,7 +126,7 @@ pub(super) async fn post_to_session(
     state
         .launcher
         .acp
-        .send_prompt_of_kind(&recipient.id, text, PromptKind::IncomingMessage)
+        .send_post(&recipient.id, text)
         .map_err(|_| ApiError::bad_request("the recipient has no live session to take the post"))?;
     Ok(StatusCode::NO_CONTENT)
 }
