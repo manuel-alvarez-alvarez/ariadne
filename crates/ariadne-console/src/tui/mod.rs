@@ -833,7 +833,10 @@ impl Console {
             return None;
         }
         let field = fields.get(state.field)?;
-        if matches!(key.code, KeyCode::Tab | KeyCode::Left | KeyCode::Right) {
+        if matches!(key.code, KeyCode::Tab | KeyCode::Left | KeyCode::Right)
+            && key.modifiers.is_empty()
+            && self.input.is_empty()
+        {
             state.field = if key.code == KeyCode::Left {
                 (state.field + fields.len() - 1) % fields.len()
             } else {

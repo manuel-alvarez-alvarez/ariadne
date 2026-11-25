@@ -607,6 +607,27 @@ mod tests {
         );
     }
 
+    /// Left, Right and Tab move between questions only while the input box is
+    /// empty: with text in it they belong to the box.
+    #[test]
+    fn left_with_text_in_the_box_does_not_change_the_question() {
+        let mut console = Console::new(header());
+        let mut question = asked();
+        question.payload["question"]["schema"]["properties"] = json!({
+            "a": {"type": "string", "title": "First"},
+            "b": {"type": "string", "title": "Second"},
+        });
+        console.snapshot(&[question]);
+        type_into(&mut console, "helo");
+        press(&mut console, KeyCode::Left);
+        press(&mut console, KeyCode::Tab);
+        type_into(&mut console, "l");
+        let mut terminal = pane();
+        console.show(&mut terminal).unwrap();
+        let shown = shown(&terminal);
+        assert!(shown.contains("First · 1 of 2"), "{shown}");
+    }
+
     #[test]
     fn a_required_field_with_no_choice_left_is_not_taken() {
         let mut console = Console::new(header());
