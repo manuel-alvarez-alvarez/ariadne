@@ -173,7 +173,7 @@ src/
     command-palette/ ⌘K: search over every entity, plus the actions
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
-    tasks/         the task panel: facts, steps, diff, messages, sessions, history
+    tasks/         the task panel: facts, steps, diff, sessions, history
     dashboard/     the Dashboards screen's data layer: the dashboard picker's list,
                    and the reset mutation — the iframe itself is `ui/dashboard/`
                    (see "The dashboard package")
@@ -294,7 +294,7 @@ the host first; below, the host is left out of each key for brevity:
 ```
 ["goals",        "list", filters]   ["goals",    "detail", id]
 ["tasks",        "list", filters]   ["tasks",    "detail", id]
-["tasks",        "detail", id, "messages" | "transitions" | "diff"]
+["tasks",        "detail", id, "transitions" | "diff"]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
 ["sessions",     "detail", id, "agent-requests"]
 ["sessions",     "detail", id, "questions"]
@@ -339,8 +339,8 @@ filtered, with nothing the app opens on one id alone.
 The pull-requests list is a key the daemon pages: the cursor stays out of the
 key, because the pages of one filter are the pages of one infinite query.
 
-Sub-resources hang off their detail key: `["tasks", "detail", id, "messages"]`,
-`… "transitions"`, `… "diff"`. Two consequences the event dispatcher
+Sub-resources hang off their detail key: `["tasks", "detail", id, "transitions"]`,
+`… "diff"`. Two consequences the event dispatcher
 depends on: invalidating `qk.tasks.lists()` refetches every task list without
 disturbing an open detail view, and invalidating a detail key also invalidates
 that entity's sub-resources.
@@ -416,7 +416,7 @@ event's row into each cached list it belongs in, newest activity first.
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `attention.lists`; a transition on the event also invalidates `tasks.transitions` and `tasks.diff` — a transition can be the task landing, and the diff answers for the merge commit once there is one |
 | `task_branch_updated` | invalidate `tasks.diff` for the task — a commit in the author's worktree, with nothing about the task row itself changed |
-| `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
+| `message_sent` | nothing: no view reads a message |
 | `session_created` | patch `sessions.detail`, patch the row into every cached `sessions.lists` entry it belongs in (refetch one whose read is under way); a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `session_updated` | patch `sessions.detail` and the cached `sessions.lists` the same way, invalidate `attention.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |

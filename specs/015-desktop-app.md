@@ -93,8 +93,7 @@ Out: the daemon endpoints themselves (012).
    All and Finished status segments. A status-menu icon holds a custom
    selection. Each goal is one slim lane under two global column headers; its
    one-line row carries the goal's tokens at the right end (rule 39). The task
-   panel (facts, messages listed oldest first with both agents named by skills,
-   diff, history), sessions — Ariadne's own,
+   panel (facts, diff, history), sessions — Ariadne's own,
    each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
    be staffed on, Workflows — shipped and user workflows grouped separately,
@@ -322,7 +321,7 @@ Out: the daemon endpoints themselves (012).
     title, with one inline notice above it rather than a second title and a
     lost panel. The same holds for every read that has content cached: shared
     tables, the goals board, a goal's task list, and a task panel with its
-    history and messages keep showing that content when a refresh fails, under
+    history keep showing that content when a refresh fails, under
     one `RefreshWarning` ("Could not refresh …", marked as possibly outdated,
     with a Retry for that read alone). A read that never succeeded shows the
     load error instead. The warning leaves with the next successful refresh;
@@ -940,7 +939,7 @@ Out: the daemon endpoints themselves (012).
     fills all six fields from ten cases in the shape a real `claude-acp`
     request has: Run the tests, Edit a file in the worktree, Read a file
     outside the worktree, Write the shell startup file, Fetch a page, Search
-    the web, Read the task messages, Finish the task, Pipe a script to the
+    the web, Read the task, Complete the step, Pipe a script to the
     shell and Send SSH keys to a paste site. Each carries the three real
     option names, the input path in Locations where a real request has one,
     and the generic workspace. Test is the dialog's primary button and Cmd/Ctrl+Enter runs it. Test
@@ -1136,7 +1135,7 @@ Out: the daemon endpoints themselves (012).
     shows no step. The goal panel's sessions table and the Sessions screen
     are unchanged.
 45. The task panel's History tab renders each transition's reason as
-    Markdown, through the same renderer as descriptions and messages, so a
+    Markdown, through the same renderer as descriptions, so a
     reason an agent wrote with lists, code or links reads as it does
     everywhere else.
 45a. The task panel opens on an execution summary above the technical facts:
@@ -1399,11 +1398,9 @@ Out: the daemon endpoints themselves (012).
     toast, also for a host that answers late, becomes listed, or comes back: a
     returning host's cache is not an answer, so what it raised while away is
     not announced.
-60. The task panel (facts, steps, diff, messages, sessions, history) reads and
+60. The task panel (facts, steps, diff, sessions, history) reads and
     writes through `api(host)` for the `?host=` of its route. Retry, cancel and
-    update post to that host. The Messages tab has a composer that sends the
-    user's message to the orchestrator or one agent with
-    `POST /v1/tasks/{id}/messages` on that host. The task dialog writes to the host of its goal,
+    update post to that host. The task dialog writes to the host of its goal,
     and its model pin pickers read that host. A task card of a named host
     links to its panel on that host.
 61. The sessions screen merges the sessions of the selected hosts with
@@ -1743,9 +1740,9 @@ Out: the daemon endpoints themselves (012).
 
 - A task card of a named host links to its panel on that host
   (`ui/src/features/tasks/task-card.test.tsx::links a local card to its panel and a remote card to its panel on its host`).
-- The task panel reads a named host, and its stream refreshes the messages
-  and retry posts there
-  (`ui/src/features/tasks/hosts.test.tsx::reads the task of a named host and refreshes its messages on that host's stream`,
+- The task panel reads a named host, its stream refreshes the task, and
+  retry posts there
+  (`ui/src/features/tasks/hosts.test.tsx::reads the task of a named host and refreshes it on that host's stream`,
   `::retries a failed task on the host the panel is open on`).
 - The sessions screen merges hosts, and a remote session's console streams,
   takes input and cancels on its host
@@ -1978,9 +1975,10 @@ Out: the daemon endpoints themselves (012).
   `ui/src/routes/router.test.tsx::leads nowhere from a screen the app no longer has`).
 - The palette opens `#/repositories` on a picked repository
   (`ui/src/features/command-palette/command-palette.test.tsx::opens the repositories screen on a repository from the palette`).
-- The task's Messages tab reads one oldest-first list, names both agents by
-  their skills, shows its empty state, and refetches after `message_sent`
-  (`ui/src/features/tasks/task-messages.test.tsx`).
+- The task panel has no messages tab and no message input, reads no
+  message route, and a `message_sent` event changes nothing on it
+  (`ui/src/features/tasks/task-panel.test.tsx::offers no messages tab and no message input, and reads no message route`,
+  `::changes no view and logs no error when the stream carries a message_sent event`).
 - The agents screen gives every registry agent a tab, puts each model in the
   tab of the agent that runs it, counts each agent's catalog on its tab, and
   sends a flag edit to that agent's endpoint
@@ -2753,7 +2751,6 @@ Out: the daemon endpoints themselves (012).
   a successful retry clears it
   (`ui/src/features/tasks/stale-reads.test.tsx::keeps an empty goal task list under the warning, and clears it on a successful retry`,
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
-  `::keeps the cached task and its empty messages under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
 - The goals screen narrows the board by title and names the search when nothing matches.
 

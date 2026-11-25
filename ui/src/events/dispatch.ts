@@ -123,12 +123,8 @@ export function dispatchDomainEvent(
       break
     }
     case "message_sent": {
-      // A message about the goal itself belongs to no task's channel.
-      if (event.data.task_id) {
-        void queryClient.invalidateQueries({
-          queryKey: qk.tasks.messages(host, event.data.task_id),
-        })
-      }
+      // No view reads a message any more. The kind stays only while the
+      // generated types still list it.
       break
     }
     case "session_created": {
