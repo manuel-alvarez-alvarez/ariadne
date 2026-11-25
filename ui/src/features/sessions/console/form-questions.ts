@@ -169,7 +169,7 @@ function closedOf(payload: unknown): FormClosed {
 /**
  * Every question of the session as the console draws it, oldest first: the
  * ones the events carry, each closed by its `question.resolved` event, and
- * the listed ones older than the events that neither show nor have seen close.
+ * the listed ones older than the events, closed or not.
  */
 export function formQuestions(
   events: readonly AgentEventDto[],
@@ -194,8 +194,26 @@ export function formQuestions(
       if (id !== undefined) closed.set(id, closedOf(payload))
     }
   }
-  const older = listed.filter((dto) => !asked.has(dto.id) && !closed.has(dto.id)).map(questionOf)
-  return [...older, ...asked.values()].map((question) => {
+  // A question the events do not carry still draws, closed where an event says
+  // so: the listed one keeps its form, and a close with no question at all
+  // keeps the answer it carried, under each answer's own key.
+  const older = new Map<string, FormQuestion>()
+  for (const dto of listed) if (!asked.has(dto.id)) older.set(dto.id, questionOf(dto))
+  for (const [id, close] of closed) {
+    if (asked.has(id) || older.has(id)) continue
+    older.set(id, {
+      id,
+      message: "",
+      fields: Object.keys(close.content).map((key) => ({
+        key,
+        title: key,
+        required: false,
+        kind: { type: "text" },
+      })),
+      createdAt: "",
+    })
+  }
+  return [...older.values(), ...asked.values()].map((question) => {
     const close = closed.get(question.id)
     return close ? { ...question, closed: close } : question
   })

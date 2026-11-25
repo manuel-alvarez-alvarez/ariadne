@@ -387,7 +387,13 @@ function ConsolePane({
     const read = ++formReads.current
     listQuestions(host, sessionId).then(
       (listed) => {
-        if (read === formReads.current) setListedForms(listed)
+        // A question stays listed once seen, so one that closes after the read
+        // still draws, with its answer, when the next read no longer has it.
+        if (read === formReads.current)
+          setListedForms((seen) => [
+            ...seen.filter((one) => !listed.some((now) => now.id === one.id)),
+            ...listed,
+          ])
       },
       () => {},
     )

@@ -208,3 +208,30 @@ it("says the session waits for the user while a question is open", () => {
   )
   expect(status().textContent).not.toContain("waiting for you")
 })
+
+it("keeps a question restored from the list, with its answer, when it closes and the list is read again", async () => {
+  listed = [
+    {
+      id: "QOLD",
+      session_id: SESSION_ID,
+      message: "An older question",
+      schema: SCHEMA,
+      created_at: "2026-11-25T09:00:00Z",
+    },
+  ]
+  const source = renderConsole([])
+  await screen.findByText("An older question")
+
+  listed = []
+  const resolved = event("question.resolved", {
+    question_id: "QOLD",
+    action: "accept",
+    content: { db: "lite" },
+  })
+  act(() => source.emit("event", resolved))
+  // A reconnect: the snapshot carries the close, and the list no longer has the question.
+  act(() => source.emit("snapshot", [resolved]))
+
+  await waitFor(() => expect(card().textContent).toContain("Database → SQLite"))
+  expect(card().textContent).toContain("An older question")
+})

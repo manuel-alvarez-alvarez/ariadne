@@ -489,7 +489,10 @@ Out: the daemon endpoints themselves (012).
     `question.resolved` event closes the card. A closed card shows each answer
     under its field's title, or `Dismissed`, `Cancelled`, `Withdrawn by the
     agent` or `Closed: the session ended`. A live stream, a reload, a
-    reconnect and a history replay draw the same closed state, and a session
+    reconnect and a history replay draw the same closed state. A question
+    the console has read stays drawn when it closes, with its answer, even when
+    a later read of the list no longer has it; a close whose question the
+    console never read draws the answer under its keys. A session
     that is not live takes no answer. While a question is open the console's
     status row says `waiting for you`, and the session activity feed labels
     its `question` event `Waiting for you`.
@@ -1378,10 +1381,12 @@ Out: the daemon endpoints themselves (012).
     Each row names its host whenever a named host is listed, under any pick;
     rule 74's no-host row under one pick does not apply to it. A toast names its item's
     host, `local` included, whenever a named host is listed. A `wait_for_user` question is answered in the
-    row, and so is a form question (rule 22f) of one single-select field, with one
-    button per choice that posts `accept` to its own question route; any other
-    form is answered in the console its row opens, and the answer posts to that host's
-    `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`. An attention
+    row, and the answer posts to that host's
+    `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`. A form question
+    (rule 22f) of one single-select field is answered in the row too, with one
+    button per choice that posts `accept` to that host's
+    `POST /v1/sessions/{id}/questions/{question_id}/answer`; any other form is
+    answered in the console its row opens. An attention
     error of one host follows rule 75: it names that host and has Retry; the items of the other
     hosts stay and their toasts continue. The first answer of a host raises no
     toast, also for a host that answers late, becomes listed, or comes back: a
@@ -2246,6 +2251,9 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/form-card.test.tsx::closes the card with its answer when the resolved event lands, live and in a replay`,
   `::shows a dismissed question closed`,
   `::restores an open question older than the snapshot's page from the list`,
+  `::keeps a question restored from the list, with its answer, when it closes and the list is read again`,
+  `ui/src/features/sessions/console/form-questions.test.ts::keeps a listed question that a resolved event closes, with its answer`,
+  `::keeps the answer of a closed question that no event or list carries`,
   `ui/src/features/sessions/console/form-questions.test.ts::closes a question with its resolved event, whatever order a replay brings them in`).
 - The status row says the session waits for the user while a form question is
   open (rule 22f)

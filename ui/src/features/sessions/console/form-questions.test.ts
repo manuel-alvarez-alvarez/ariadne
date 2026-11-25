@@ -111,7 +111,7 @@ it("closes a question with its resolved event, whatever order a replay brings th
   }
 })
 
-it("does not draw a listed question that a resolved event has closed", () => {
+it("keeps a listed question that a resolved event closes, with its answer", () => {
   const dto: QuestionDto = {
     id: "Q1",
     session_id: "S",
@@ -119,9 +119,29 @@ it("does not draw a listed question that a resolved event has closed", () => {
     schema: SCHEMA as never,
     created_at: "2026-11-25T09:00:00Z",
   }
-  const resolved = event("question.resolved", { question_id: "Q1", action: "decline" })
+  const resolved = event("question.resolved", {
+    question_id: "Q1",
+    action: "accept",
+    content: { db: "pg" },
+  })
 
-  expect(formQuestions([resolved], [dto])).toEqual([])
+  const [question] = formQuestions([resolved], [dto])
+  expect(question?.message).toBe("m")
+  expect(question?.fields.map((field) => field.key)).toContain("db")
+  expect(question?.closed?.content).toEqual({ db: "pg" })
+})
+
+it("keeps the answer of a closed question that no event or list carries", () => {
+  const resolved = event("question.resolved", {
+    question_id: "Q9",
+    action: "accept",
+    content: { db: "pg" },
+  })
+
+  const [question] = formQuestions([resolved], [])
+  expect(question?.id).toBe("Q9")
+  expect(question?.fields.map((field) => field.title)).toEqual(["db"])
+  expect(question?.closed?.action).toBe("accept")
 })
 
 it("puts a listed question older than the events before the ones they carry", () => {
