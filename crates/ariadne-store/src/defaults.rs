@@ -544,11 +544,7 @@ Workflow: {workflow}
 {repositories}
 
 ## Plan mode
-While the goal is in planning, Ariadne runs you in the plan mode of your agent, if it has one.
-In plan mode, you can call the Ariadne tools. They keep the plan in Ariadne and change no file.
-Plan mode stops file edits and commands only.
-`finalize_plan` ends plan mode.
-Do not call `ExitPlanMode`. Ariadne refuses it."#;
+In planning, you run in plan mode if your agent has one. The Ariadne tools are permitted in plan mode. `finalize_plan` ends plan mode. Do not call `ExitPlanMode`."#;
 
 /// What an orchestrator that has gone quiet is picked up with, in both
 /// situations there are.
@@ -1309,8 +1305,8 @@ pub(crate) mod tests {
     fn the_orchestrator_briefing_explains_plan_mode() {
         let briefing = default_prompt_text(PromptKind::OrchestratorBriefing);
         for line in [
-            "While the goal is in planning, Ariadne runs you in the plan mode of your agent, if it has one.",
-            "In plan mode, you can call the Ariadne tools.",
+            "In planning, you run in plan mode if your agent has one.",
+            "The Ariadne tools are permitted in plan mode.",
             "`finalize_plan` ends plan mode.",
             "Do not call `ExitPlanMode`.",
         ] {
