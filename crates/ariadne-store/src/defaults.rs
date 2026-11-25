@@ -539,7 +539,10 @@ Workflow: {workflow}
 {columns}
 
 ## Repositories
-{repositories}"#;
+{repositories}
+
+## Plan mode
+In planning, you run in plan mode if your agent has one. The Ariadne tools are permitted in plan mode. `finalize_plan` ends plan mode. Do not call `ExitPlanMode`."#;
 
 /// What an orchestrator that has gone quiet is picked up with, in both
 /// situations there are.
@@ -1287,6 +1290,22 @@ pub(crate) mod tests {
         );
         for gone in ["landing", "Landing", "author", "reviewer"] {
             assert!(!briefing.contains(gone), "{briefing}");
+        }
+    }
+
+    /// The orchestrator is told that it plans in plan mode, that the
+    /// Ariadne tools are permitted there, that `finalize_plan` ends it, and
+    /// not to call `ExitPlanMode` (003 rule 18).
+    #[test]
+    fn the_orchestrator_briefing_explains_plan_mode() {
+        let briefing = default_prompt_text(PromptKind::OrchestratorBriefing);
+        for line in [
+            "In planning, you run in plan mode if your agent has one.",
+            "The Ariadne tools are permitted in plan mode.",
+            "`finalize_plan` ends plan mode.",
+            "Do not call `ExitPlanMode`.",
+        ] {
+            assert!(briefing.contains(line), "{line} is missing from {briefing}");
         }
     }
 

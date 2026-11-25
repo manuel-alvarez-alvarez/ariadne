@@ -298,6 +298,11 @@ pub(super) async fn finalize(
         }
     }
     let goal = state.store.set_goal_status(&id, GoalStatus::Active).await?;
+    // Planning is over, and so is the plan mode the orchestrator planned in
+    // (021 rule 22).
+    if let Some(session) = &ctx.session {
+        state.launcher.acp.end_plan_mode(&session.id);
+    }
     // Wake the scheduler: pending tasks with no deps become ready now.
     for task in tasks {
         state.notify_scheduler(&task.id);
