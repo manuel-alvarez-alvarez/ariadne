@@ -43,15 +43,14 @@ async fn before_the_drop(dir: &std::path::Path) -> std::path::PathBuf {
     path
 }
 
-/// The row count of every table but `agent_requests`, `messages` (which a
-/// later migration drops) and the migration log.
+/// Count the original tables, except those that later migrations drop.
 async fn row_counts(path: &std::path::Path) -> Vec<(String, i64)> {
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
         .await
         .unwrap();
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table'
-         AND name NOT IN ('agent_requests', 'messages', '_sqlx_migrations') ORDER BY name",
+         AND name NOT IN ('agent_requests', 'messages', '_sqlx_migrations', 'task_workflows') ORDER BY name",
     )
     .fetch_all(&pool)
     .await
