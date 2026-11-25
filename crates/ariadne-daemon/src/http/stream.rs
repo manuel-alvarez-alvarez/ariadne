@@ -1,6 +1,8 @@
 //! Server-sent domain events: the live view of everything the daemon changes.
 
 use std::convert::Infallible;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::extract::{Query, State};
 use axum::response::sse::{Event, Sse};
@@ -82,6 +84,8 @@ pub(super) async fn stream(
         async move { Ok(beat) }
     });
     let client = crate::metrics::EventStreamClient::open();
+    let ended = Arc::new(AtomicBool::new(false));
+    let resync_sent = ended.clone();
     let events = sse::follow(
         state.events.subscribe(),
         move |event| {
@@ -92,7 +96,9 @@ pub(super) async fn stream(
                 .matches(goal.as_deref(), task.as_deref())
                 .then(|| sse::identified_event(event.event.kind(), event.event.payload()))
         },
-        |missed| {
+        move |missed| {
+            // `resync` is the last frame: no post follows it.
+            resync_sent.store(true, Ordering::SeqCst);
             warn!(missed, "event stream subscriber lagged; signalling resync");
             crate::metrics::record_events_resync();
             Some(sse::identified_event("resync", ResyncDto { missed }))
@@ -104,11 +110,47 @@ pub(super) async fn stream(
         let event = sse::identified_event("source_post", post);
         Some((Ok(event), Some((open, rx))))
     });
-    // The domain events end the stream: a `None` after their last frame
-    // ends the posts with them.
-    let events = events.map(Some).chain(once(async { None }));
-    let merged = futures_util::stream::select(events, posts.map(Some))
-        .take_while(|frame| std::future::ready(frame.is_some()))
-        .filter_map(std::future::ready);
+    let merged = with_posts(events, posts, ended);
     sse::respond_alive(hello.chain(merged), beat)
+}
+
+/// The domain events and the posts as one stream. The domain events end it,
+/// and so does the flag `ended` once it is set: a post that is ready when the
+/// last event goes out never follows it.
+fn with_posts<T>(
+    events: impl Stream<Item = T>,
+    posts: impl Stream<Item = T>,
+    ended: Arc<AtomicBool>,
+) -> impl Stream<Item = T> {
+    let events = events.map(Some).chain(once(async { None }));
+    let posts = posts
+        .take_while(move |_| std::future::ready(!ended.load(Ordering::SeqCst)))
+        .map(Some);
+    futures_util::stream::select(events, posts)
+        .take_while(|frame| std::future::ready(frame.is_some()))
+        .filter_map(std::future::ready)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_post_that_is_ready_never_follows_the_resync() {
+        let ended = Arc::new(AtomicBool::new(false));
+        let flag = ended.clone();
+        let events = futures_util::stream::iter(["resync"]).inspect(move |_| {
+            flag.store(true, Ordering::SeqCst);
+        });
+        // Ready only once the resync is out, as after a lag with a queued post.
+        let waiting = ended.clone();
+        let posts = once(async move {
+            while !waiting.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            "source_post"
+        });
+        let frames: Vec<_> = with_posts(events, posts, ended).collect().await;
+        assert_eq!(frames, ["resync"]);
+    }
 }

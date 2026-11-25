@@ -29,9 +29,10 @@ impl Follower<'_> {
             .source_task_reference(&post.task_id)
             .await
             .map_err(unreadable)?
-            .filter(|reference| reference.host == self.host)
         else {
-            warn!(host = self.host, task = %post.task_id, "a post names no task of this host");
+            // Not filtered by host: two host names of one worker follow the
+            // same stream of the worker, and the one it picked may be the alias.
+            warn!(host = self.host, task = %post.task_id, "a post names no task of this source");
             return Ok(());
         };
         // The title as the source goal knows it: the projection of 037 rule
