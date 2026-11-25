@@ -666,15 +666,6 @@ mod tests {
         let output = render::transcript(&items, Some(72), false);
 
         for line in [
-            "Codex needs your input to continue.",
-            "1. Which base branch? (pick one)",
-            "   - Main",
-            "   - Next — the *release* line — Cut on Fridays",
-            "2. Which checks? (pick any) (optional)",
-            "   - Format",
-            "   - Clippy",
-            "3. Anything else? (optional)",
-            "answered",
             "  Which base branch? → Next — the *release* line",
             "  Which checks? → Format, Clippy",
             "  Anything else? → ship it",

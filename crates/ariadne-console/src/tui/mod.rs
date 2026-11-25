@@ -803,7 +803,8 @@ impl Console {
         else {
             return None;
         };
-        let (question_id, fields) = (question_id.clone(), fields.clone());
+        let (question_id, all_fields) = (question_id.clone(), fields.clone());
+        let fields = transcript::questions(&all_fields);
         let mut state = self.form_state(at);
         if key.code == KeyCode::Esc {
             self.form = FormState::default();
@@ -832,7 +833,39 @@ impl Console {
             return None;
         }
         let field = fields.get(state.field)?;
-        let count = form::choice_count(field);
+        if matches!(key.code, KeyCode::Tab | KeyCode::Left | KeyCode::Right) {
+            state.field = if key.code == KeyCode::Left {
+                (state.field + fields.len() - 1) % fields.len()
+            } else {
+                (state.field + 1) % fields.len()
+            };
+            state.picked = 0;
+            state.chosen.clear();
+            let target = &fields[state.field];
+            if let Some(value) = state.content.get(&target.key) {
+                match &target.kind {
+                    transcript::FieldKind::Single(choices) => {
+                        state.picked = choices.iter().position(|c| &c.value == value).unwrap_or(0);
+                    }
+                    transcript::FieldKind::Multi(choices) => {
+                        for (index, choice) in choices.iter().enumerate() {
+                            if value
+                                .as_array()
+                                .is_some_and(|values| values.contains(&choice.value))
+                            {
+                                state.chosen.insert(index);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            self.form = state;
+            self.invalidate_blocks();
+            return Some(Action::None);
+        }
+        let custom = transcript::companion(&all_fields, field);
+        let count = form::choice_count(field) + usize::from(custom.is_some());
         let typing = count == 0;
         let boxed = !self.input.is_empty();
         match key.code {
@@ -846,6 +879,13 @@ impl Console {
                 let index = digit as usize - '1' as usize;
                 if index < count {
                     state.picked = index;
+                    if matches!(field.kind, transcript::FieldKind::Single(_))
+                        && index < form::choice_count(field)
+                    {
+                        self.form = state;
+                        return self
+                            .form_key(at, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
                 }
             }
             KeyCode::Char(' ')
@@ -855,9 +895,35 @@ impl Console {
                     state.chosen.insert(state.picked);
                 }
             }
-            KeyCode::Enter if key.modifiers.is_empty() && (typing || !boxed) => {
-                let typed = if typing { self.input.take() } else { None };
-                match form::take_value(field, &state, typed.as_deref()) {
+            KeyCode::Enter
+                if key.modifiers.is_empty() && (typing || !boxed || custom.is_some()) =>
+            {
+                let typed = if typing || custom.is_some() {
+                    self.input.take()
+                } else {
+                    None
+                };
+                let custom_text = custom.zip(typed.as_deref());
+                let result = if let Some((custom, text)) = custom_text {
+                    state.content.insert(
+                        custom.key.clone(),
+                        serde_json::Value::String(text.to_string()),
+                    );
+                    if matches!(field.kind, transcript::FieldKind::Single(_)) {
+                        state.content.remove(&field.key);
+                        Ok(None)
+                    } else {
+                        form::take_value(field, &state, None)
+                    }
+                } else if custom.is_some() && state.picked == count - 1 {
+                    Err("Type your own answer in the box.".into())
+                } else {
+                    if let Some(custom) = custom {
+                        state.content.remove(&custom.key);
+                    }
+                    form::take_value(field, &state, typed.as_deref())
+                };
+                match result {
                     Ok(value) => {
                         if let Some(value) = value {
                             state.content.insert(field.key.clone(), value);

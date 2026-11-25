@@ -489,8 +489,8 @@ it leaves nothing to delete.
     - The request closes on the person's answer, on the agent's
       `$/cancel_request`, on a cancel of the turn, or at the end of the
       session. A cancel of the turn answers each open question `cancel`.
-    - No permission mode answers a question. Console input does not answer
-      it either: the input is a prompt, and it waits behind the turn.
+    - No permission mode answers a question. Console form input follows 008 rule 38.
+      Prompts submitted outside the form wait behind the turn.
     - The question id is a digest of the launch and the request id, so a
       request that a relay replays keeps its question.
     - The event `question` records the question before the agent can read an

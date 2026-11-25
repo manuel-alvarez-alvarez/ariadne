@@ -1655,7 +1655,7 @@ mod tests {
             &shown,
             &[
                 "before-003",
-                "Pick a base",
+                "answered",
                 "Which base branch? → Next",
                 "after-001",
             ],
@@ -1777,7 +1777,7 @@ mod tests {
             "the blocks before the close, the question, then the ones after it: {shown}"
         );
         assert_eq!(
-            found(&shown, &["Pick a base"])[0].1,
+            found(&shown, &["Which base branch? → Next"])[0].1,
             1,
             "the question shows once: {shown}"
         );

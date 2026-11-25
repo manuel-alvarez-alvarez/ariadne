@@ -395,7 +395,7 @@ impl FormClosed {
 
 impl FormField {
     /// The text of each choice `value` names, as the agent wrote it.
-    pub fn answer_text(&self, value: &Value) -> String {
+    fn answer_text(&self, value: &Value) -> String {
         let choices = match &self.kind {
             FieldKind::Single(choices) | FieldKind::Multi(choices) => choices.as_slice(),
             _ => &[],
@@ -418,8 +418,27 @@ impl FormField {
     }
 }
 
+/// Pair only an adjacent plain string companion with its choice question.
+pub(crate) fn companion<'a>(fields: &'a [FormField], field: &FormField) -> Option<&'a FormField> {
+    let at = fields.iter().position(|f| f.key == field.key)?;
+    let next = fields.get(at + 1)?;
+    (matches!(field.kind, FieldKind::Single(_) | FieldKind::Multi(_))
+        && next.key == format!("{}_custom", field.key)
+        && matches!(next.kind, FieldKind::Text))
+    .then_some(next)
+}
+
+pub(crate) fn questions(fields: &[FormField]) -> Vec<FormField> {
+    fields
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| *at == 0 || companion(fields, &fields[*at - 1]).is_none())
+        .map(|(_, field)| field.clone())
+        .collect()
+}
+
 /// The fields of a form, in the order the schema lists them.
-fn form_fields(schema: &Value) -> Vec<FormField> {
+fn form_fields(schema: &Value, message: &str) -> Vec<FormField> {
     let required: Vec<&str> = schema
         .get("required")
         .and_then(Value::as_array)
@@ -434,7 +453,7 @@ fn form_fields(schema: &Value) -> Vec<FormField> {
         .flatten()
         .map(|(key, property)| FormField {
             key: key.clone(),
-            title: string_at(property, "/title").unwrap_or_else(|| key.clone()),
+            title: string_at(property, "/title").unwrap_or_else(|| message.to_string()),
             description: string_at(property, "/description"),
             required: required.contains(&key.as_str()),
             kind: field_kind(property),
@@ -525,6 +544,9 @@ impl TranscriptItem {
         else {
             return Vec::new();
         };
+        if let Some(closed) = closed {
+            return closed_lines(closed, fields);
+        }
         let mut lines = vec!["question".to_string()];
         lines.extend(message.lines().map(str::to_string));
         for (at, field) in fields.iter().enumerate() {
@@ -570,10 +592,27 @@ pub fn closed_lines(closed: &FormClosed, fields: &[FormField]) -> Vec<String> {
     match closed.action.as_str() {
         "accept" => {
             let mut lines = vec!["answered".to_string()];
-            for field in fields {
+            for field in questions(fields) {
+                let mut answers = Vec::new();
                 if let Some(value) = closed.content.get(&field.key) {
-                    lines.push(format!("  {} → {}", field.title, field.answer_text(value)));
+                    answers.push(field.answer_text(value));
                 }
+                if let Some(custom) = companion(fields, &field)
+                    .and_then(|custom| closed.content.get(&custom.key))
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                {
+                    answers.push(custom.to_string());
+                }
+                lines.push(format!(
+                    "  {} → {}",
+                    field.title,
+                    if answers.is_empty() {
+                        "(no answer)".into()
+                    } else {
+                        answers.join(", ")
+                    }
+                ));
             }
             lines
         }
@@ -674,6 +713,7 @@ impl From<&AgentEventDto> for TranscriptItem {
                         .payload
                         .pointer("/question/schema")
                         .unwrap_or(&Value::Null),
+                    &string_at(&event.payload, "/question/message").unwrap_or_default(),
                 ),
                 closed: None,
             },
