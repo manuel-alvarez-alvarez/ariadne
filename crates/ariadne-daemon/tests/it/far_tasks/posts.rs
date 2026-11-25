@@ -221,6 +221,55 @@ async fn a_worker_agent_posts_to_the_source_orchestrator_as_a_turn() {
 }
 
 #[tokio::test]
+async fn the_source_tells_a_worker_agent_that_its_post_was_dropped() {
+    let s = posting(pair().await).await;
+    // The source goal has no live orchestrator session.
+    worker_posts_to_orchestrator(&s, "Which fixture applies?").await;
+    eventually(
+        TIMEOUT,
+        "the notice to reach the worker agent",
+        async || s.p.far.prompted(&s.worker).contains("did not reach"),
+    )
+    .await;
+    let pasted = s.p.far.prompted(&s.worker);
+    assert!(
+        pasted.contains(
+            "Your post to `orchestrator` did not reach it. The orchestrator has no live session.\n\n\
+             <<<untrusted>>>Which fixture applies?<<<end untrusted>>>\n\n\
+             Do not answer this notice."
+        ),
+        "{pasted}"
+    );
+    no_message_rows(&s.p).await;
+
+    // A second post makes its own notice, and the first makes no second one.
+    worker_posts_to_orchestrator(&s, "Second try.").await;
+    eventually(TIMEOUT, "the second notice", async || {
+        s.p.far.prompted(&s.worker).contains("Second try.")
+    })
+    .await;
+    let pasted = s.p.far.prompted(&s.worker);
+    assert_eq!(
+        pasted.matches("Which fixture applies?").count(),
+        1,
+        "{pasted}"
+    );
+}
+
+#[tokio::test]
+async fn a_post_that_reaches_the_orchestrator_makes_no_notice() {
+    let s = posting(pair().await).await;
+    let orchestrator = source_orchestrator(&s).await;
+    worker_posts_to_orchestrator(&s, "Reaches it.").await;
+    eventually(TIMEOUT, "the post", async || {
+        s.p.local.prompted(&orchestrator).contains("Reaches it.")
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(!s.p.far.prompted(&s.worker).contains("did not reach"));
+}
+
+#[tokio::test]
 async fn a_reconnect_of_the_stream_delivers_a_post_no_second_time() {
     let s = posting(pair().await).await;
     let orchestrator = source_orchestrator(&s).await;

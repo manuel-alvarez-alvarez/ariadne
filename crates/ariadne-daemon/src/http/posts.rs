@@ -102,7 +102,14 @@ pub(super) async fn post_from_source(
             "task {id} is the task of another source, so you cannot post to it"
         )));
     }
-    deliver(&state, &task, Sender::Source, req.to.trim(), body).await?;
+    deliver(
+        &state,
+        &task,
+        Sender::Source(req.dropped.as_deref()),
+        req.to.trim(),
+        body,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -111,7 +118,8 @@ pub(super) async fn post_from_source(
 #[derive(Clone, Copy)]
 enum Sender<'a> {
     Session(&'a AgentSession),
-    Source,
+    /// With the reason when it tells of a dropped post.
+    Source(Option<&'a str>),
 }
 
 impl Sender<'_> {
@@ -143,7 +151,7 @@ async fn deliver(
     // The addresses that work now: the orchestrator and the agent of the
     // current column, each with a live session that is not the sender's own.
     let orchestrator = match (&source, sender) {
-        (_, Sender::Source) => None,
+        (_, Sender::Source(_)) => None,
         (Some(context), _) => state
             .source_posts
             .is_open(&context.source_daemon_id)
@@ -256,7 +264,17 @@ async fn deliver(
         })?
     };
     let (from, answer) = match sender {
-        Sender::Source => (
+        Sender::Source(Some(reason)) => {
+            let text = prompts::dropped_post_notice(reason, body);
+            return state
+                .launcher
+                .acp
+                .send_post(&recipient.id, text)
+                .map_err(|_| {
+                    ApiError::bad_request("the recipient has no live session to take the notice")
+                });
+        }
+        Sender::Source(None) => (
             "your orchestrator".to_string(),
             "to `orchestrator`".to_string(),
         ),
@@ -324,6 +342,7 @@ async fn to_worker(
         source_daemon_id: state.store.daemon_id().await?,
         to: to.to_string(),
         body: body.to_string(),
+        dropped: None,
     };
     client
         .send_no_content(

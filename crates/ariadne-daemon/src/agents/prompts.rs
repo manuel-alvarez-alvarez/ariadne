@@ -303,6 +303,17 @@ pub(crate) fn post_briefing(from: &str, body: &str, answer: &str) -> String {
     )
 }
 
+/// What the source tells a worker agent whose post to `orchestrator` it
+/// dropped: the reason and the dropped body as fenced data. It asks for no
+/// answer.
+pub(crate) fn dropped_post_notice(reason: &str, body: &str) -> String {
+    format!(
+        "Your post to `orchestrator` did not reach it. {reason}\n\n{}\n\n\
+         Do not answer this notice.",
+        fence(body)
+    )
+}
+
 /// What the orchestrator is told when the scheduler moved the exhausted
 /// agent of `column` on `task_title` from `old` to `new` (021).
 pub(crate) fn exhausted_switch_notice(
