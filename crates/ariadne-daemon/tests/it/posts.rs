@@ -138,23 +138,22 @@ async fn a_post_that_cannot_land_is_refused_with_the_reason() {
     h.advance(&cast.task, TaskStatus::InProgress).await;
     let uri = posts_uri(&cast);
 
+    // The orchestrator has no live session, so only the current column works.
     let message = refusal(&h, &uri, &reviewer.id, "review").await;
     assert!(message.contains("current column"), "{message}");
+    assert!(message.ends_with("Say `develop`."), "{message}");
 
     let message = refusal(&h, &uri, &reviewer.id, "deploy").await;
+    assert!(message.contains("staffs no column deploy"), "{message}");
+    assert!(message.ends_with("Say `develop`."), "{message}");
+
+    // The author is the sender and nobody else is live: no address works.
+    let message = refusal(&h, &uri, &author.id, "orchestrator").await;
     assert!(
-        message.contains("staffs no column deploy") && message.contains("`orchestrator`"),
+        message.contains("the orchestrator has no live session"),
         "{message}"
     );
-    assert!(message.contains("develop"), "{message}");
-    assert!(
-        !message.contains("review"),
-        "a column that is not current is no working address: {message}"
-    );
-
-    // The review agent is not running, so the orchestrator is not either.
-    let message = refusal(&h, &uri, &author.id, "orchestrator").await;
-    assert!(message.contains("no live session"), "{message}");
+    assert!(message.contains("No address works now"), "{message}");
 
     let other_goal = h.goal_on(&cast.repo, common::test_pin()).await;
     let stranger = h.orchestrator_session(&other_goal).await;
@@ -162,15 +161,40 @@ async fn a_post_that_cannot_land_is_refused_with_the_reason() {
     assert!(message.contains("another goal"), "{message}");
 }
 
-/// A column that is current but has no live session is refused.
+/// A current column with no live session is refused, and the refusal names
+/// the orchestrator alone, since it is the only address that works.
 #[tokio::test]
-async fn a_post_to_a_column_without_a_live_session_is_refused() {
+async fn a_post_to_a_column_without_a_live_session_names_the_address_that_works() {
     let h = harness().await;
     let cast = h.active_cast().await;
+    let orchestrator = h.orchestrator_session(&cast.goal).await;
+    h.agent_runs(&orchestrator).await;
     let reviewer = h.agent_session(&cast, "review").await;
     h.advance(&cast.task, TaskStatus::InProgress).await;
     let message = refusal(&h, &posts_uri(&cast), &reviewer.id, "develop").await;
-    assert!(message.contains("no live session"), "{message}");
+    assert!(
+        message.contains("the develop agent has no live session"),
+        "{message}"
+    );
+    assert!(message.ends_with("Say `orchestrator`."), "{message}");
+}
+
+/// An orchestrator with no live session is refused, and the refusal names
+/// the current column alone.
+#[tokio::test]
+async fn a_post_to_an_orchestrator_without_a_live_session_names_the_address_that_works() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let author = h.agent_session(&cast, "develop").await;
+    h.agent_runs(&author).await;
+    let reviewer = h.agent_session(&cast, "review").await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let message = refusal(&h, &posts_uri(&cast), &reviewer.id, "orchestrator").await;
+    assert!(
+        message.contains("the orchestrator has no live session"),
+        "{message}"
+    );
+    assert!(message.ends_with("Say `develop`."), "{message}");
 }
 
 /// A post to an agent in a turn waits behind that turn: the agent is not

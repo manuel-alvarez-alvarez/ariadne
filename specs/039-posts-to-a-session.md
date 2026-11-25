@@ -50,7 +50,8 @@ host, and the session rules, prompts and skills.
 9. The daemon refuses a post to a column that the task does not staff, to a
    task of another goal, and to a task on another host. Each refusal says why.
 10. A refusal for a wrong address names each address that works: the
-    orchestrator and the current column, never a column that cannot receive. Each refusal
+    orchestrator and the current column, each only while its session is
+    live, and it says so where none works, never an address that cannot receive. Each refusal
     is a bad request, and the tool returns it as bad parameters with the
     sentence of the daemon (013 rule 7).
 11. The tool description permits a question, an answer or a blocker report
@@ -76,7 +77,8 @@ host, and the session rules, prompts and skills.
   staff, to a task of another goal, and to a recipient with no live session
   is refused with its reason
   (`posts.rs::a_post_that_cannot_land_is_refused_with_the_reason`,
-  `::a_post_to_a_column_without_a_live_session_is_refused`).
+  `::a_post_to_a_column_without_a_live_session_names_the_address_that_works`,
+  `::a_post_to_an_orchestrator_without_a_live_session_names_the_address_that_works`).
 - The tool posts to the route of the task, and its description permits a
   question, an answer or a blocker report and tells the sender to end the turn
   (`tools.rs::post_to_session_posts_to_the_posts_route_and_says_to_end_the_turn`).

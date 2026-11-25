@@ -8,7 +8,7 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::messages::PostToSessionRequest;
 use ariadne_core::Seat;
-use ariadne_store::{AgentSession, SessionFilter, Task};
+use ariadne_store::{AgentSession, SessionFilter};
 
 use super::AppState;
 use super::caller::{call_ctx, ensure_task_scope};
@@ -58,48 +58,61 @@ pub(super) async fn post_to_session(
         )));
     }
     let agents = state.store.list_task_agents(&id).await?;
-    let recipient = if req.to.trim().eq_ignore_ascii_case("orchestrator") {
-        live_session(
-            &state,
-            SessionFilter {
-                goal_id: Some(task.goal_id.clone()),
-                live_only: true,
-                ..Default::default()
-            },
-            |s| s.seat() == Some(Seat::Orchestrator),
-        )
-        .await?
-        .ok_or_else(|| ApiError::bad_request("the orchestrator has no live session"))?
-    } else {
-        let Some(agent) = agents
-            .iter()
-            .find(|a| a.step.eq_ignore_ascii_case(req.to.trim()))
-        else {
-            return Err(ApiError::bad_request(format!(
-                "task {id} staffs no column {}. Say {}",
-                req.to.trim(),
-                current_address(&task)
-            )));
-        };
-        if task.step.as_deref() != Some(agent.step.as_str()) {
-            return Err(ApiError::bad_request(format!(
-                "the {} column is not the current column of task {id}. Say {}",
-                agent.step,
-                current_address(&task)
-            )));
-        }
-        live_session(
+    // The addresses that work now: the orchestrator and the agent of the
+    // current column, each with a live session that is not the sender's own.
+    let orchestrator = live_session(
+        &state,
+        SessionFilter {
+            goal_id: Some(task.goal_id.clone()),
+            live_only: true,
+            ..Default::default()
+        },
+        |s| s.seat() == Some(Seat::Orchestrator) && s.id != sender.id,
+    )
+    .await?;
+    let current = match agents
+        .iter()
+        .find(|a| task.step.as_deref() == Some(a.step.as_str()))
+    {
+        Some(agent) => live_session(
             &state,
             SessionFilter {
                 task_id: Some(id.clone()),
                 live_only: true,
                 ..Default::default()
             },
-            |s| s.task_agent_id.as_deref() == Some(agent.id.as_str()),
+            |s| s.task_agent_id.as_deref() == Some(agent.id.as_str()) && s.id != sender.id,
         )
         .await?
-        .ok_or_else(|| {
-            ApiError::bad_request(format!("the {} agent has no live session", agent.step))
+        .map(|session| (agent.step.clone(), session)),
+        None => None,
+    };
+    let working = working_addresses(
+        orchestrator.is_some(),
+        current.as_ref().map(|c| c.0.as_str()),
+    );
+    let to = req.to.trim();
+    let recipient = if to.eq_ignore_ascii_case("orchestrator") {
+        orchestrator.ok_or_else(|| {
+            ApiError::bad_request(format!("the orchestrator has no live session. {working}"))
+        })?
+    } else {
+        let Some(agent) = agents.iter().find(|a| a.step.eq_ignore_ascii_case(to)) else {
+            return Err(ApiError::bad_request(format!(
+                "task {id} staffs no column {to}. {working}"
+            )));
+        };
+        if task.step.as_deref() != Some(agent.step.as_str()) {
+            return Err(ApiError::bad_request(format!(
+                "the {} column is not the current column of task {id}. {working}",
+                agent.step
+            )));
+        }
+        current.map(|c| c.1).ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "the {} agent has no live session. {working}",
+                agent.step
+            ))
         })?
     };
     let (from, answer) = match sender.seat() {
@@ -131,10 +144,18 @@ pub(super) async fn post_to_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn current_address(task: &Task) -> String {
-    match task.step.as_deref() {
-        Some(step) => format!("`{step}`, the current column, or `orchestrator`"),
-        None => "`orchestrator`: the task has no current column".to_string(),
+/// The sentence that names each address that works now, or says none does.
+fn working_addresses(orchestrator: bool, column: Option<&str>) -> String {
+    let mut addresses = Vec::new();
+    if orchestrator {
+        addresses.push("`orchestrator`".to_string());
+    }
+    if let Some(column) = column {
+        addresses.push(format!("`{column}`"));
+    }
+    match addresses.is_empty() {
+        true => "No address works now: no other session of the task is live.".to_string(),
+        false => format!("Say {}.", addresses.join(" or ")),
     }
 }
 
