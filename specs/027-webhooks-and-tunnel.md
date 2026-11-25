@@ -1,7 +1,7 @@
 ---
 id: webhooks-and-tunnel
 status: current
-updated: 2026-11-21
+updated: 2026-11-25
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -177,7 +177,7 @@ A disabled integration has no worker, regardless of its retained hook status.
     URL, down with the error, or off. The switch is written when flipped, not on the daemon URL
     field's Save.
 21. The shutdown signal closes the tunnel and the webhook listener at once.
-    The HTTP drain, which an open event stream can hold, comes after.
+    The HTTP drain comes after. Open event streams end with the shutdown, so they do not hold it (016, rule 21).
 
 | Tunnel state | Hook state of each enabled integration | Fetch mode |
 | --- | --- | --- |
@@ -250,8 +250,8 @@ A disabled integration has no worker, regardless of its retained hook status.
   `tunnel.rs::a_silent_server_counts_as_down`.
 - A switch off during a held registration cancels it, and no URL or hook follows its release:
   `tunnel.rs::a_switch_off_during_registration_cancels_it_and_publishes_no_url`.
-- SIGTERM closes the tunnel and the listener while an open event stream holds the HTTP drain:
-  `tunnel.rs::shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds_the_drain`.
+- SIGTERM closes the tunnel and the listener, and ends an open event stream:
+  `tunnel.rs::shutdown_closes_the_tunnel_and_the_listener_and_ends_an_open_event_stream`.
 - The switch off closes the tunnel, gives "tunnel off" and `Timer`, publishes `forge_settings_updated`,
   and makes no hook call. On returns to `live` and `WakeOnly`. The switch survives a restart:
   `tunnel.rs::the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_restart`.

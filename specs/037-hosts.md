@@ -387,6 +387,11 @@ picker, the Hosts screen and one stream per host — is spec
     Failure retains completed steps and records the failing step's error.
     No successful step means `failed`; otherwise failure means `incomplete`.
     Completion requires a successful daemon status check and local connection registration.
+    Before the service step restarts the user service, it stops a daemon that answers on the worker socket
+    but is not the service's own process: SIGTERM, then SIGKILL after 30 seconds.
+    The service's process is systemd's `MainPID` or the pid in `launchctl print`.
+    The health step passes only when the daemon that answers reports the service's own pid (016, rule 21).
+    Another pid, a service with no process, or a daemon that reports no pid fails the step and names the pids.
     The user can skip a failed external-software step of a stopped setup or update.
     `POST /v1/hosts/{name}/setup/steps/{step}/skip` marks the step `skipped` and returns the full `SetupDto`.
     The route acts on an update of the machine that is not `complete`, else on its setup.
@@ -857,6 +862,9 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 70: hosts.rs::tools_only_updates_preserve_worker_binaries proves independent tool selection.
 - Rules 70 and 74: hosts.rs::updates_use_saved_ssh_and_allow_binary_only_selection proves saved SSH and binary-only updates.
 - Rule 73: hosts.rs::failed_updates_keep_maintenance_when_worker_health_fails proves failed health recovery.
+- Rule 49: hosts.rs::an_update_stops_a_daemon_outside_the_service_before_it_restarts_the_service proves the stray stop.
+- Rule 49: hosts.rs::an_update_fails_its_health_check_while_a_daemon_outside_the_service_answers proves the pid check.
+- Rule 49: `ariadne-cli` hosts.rs::daemon_status_gives_the_pid_of_the_daemon_that_answered proves the status pid.
 - Rule 73: hosts.rs::unsupported_current_workers_fail_before_binary_transfer and
   hosts.rs::unsupported_replacements_fail_before_installation_or_maintenance prove compatibility refusal.
 - Rule 71: crates/ariadne-cli/tests/hosts.rs::maintenance_cli_reads_and_changes_the_selected_worker_hold proves maintenance without curl.

@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::common::daemon::Daemon;
 use crate::common::forge::{Invocation, StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
     Harness, QUIET, RUNS_OUT, TIMEOUT, eventually, git_repo_copy, harness, next_event, post_json,
@@ -1045,73 +1046,8 @@ async fn a_switch_off_during_registration_cancels_it_and_publishes_no_url() {
     assert_eq!(state.url, None);
 }
 
-/// Runs `ariadned` under a python3 parent that kills it if the test process
-/// dies, so no daemon outlives the test however that ends.
-const WRAPPER: &str = "import os, subprocess, sys, time
-parent = os.getppid()
-child = subprocess.Popen(sys.argv[1:])
-while child.poll() is None:
-    if os.getppid() != parent:
-        child.kill()
-        break
-    # Stand-in poll: the pace of the parent check.
-    time.sleep(0.2)
-";
-
-/// A running `ariadned`. Dropping it kills it, the wrapper with it.
-struct Daemon {
-    wrapper: std::process::Child,
-    pid_file: PathBuf,
-}
-
-impl Daemon {
-    /// Start `ariadned` on `home`, with `env` beside the narrow `PATH`.
-    fn spawn(home: &Path, env: &[(&str, &str)]) -> Self {
-        Self {
-            wrapper: std::process::Command::new("python3")
-                .args(["-c", WRAPPER, env!("CARGO_BIN_EXE_ariadned"), "--home"])
-                .arg(home)
-                // The test starts no agent. Keep the daemon from probing any
-                // coding-agent command the machine happens to have installed;
-                // it still has the system `git` and the stub `gh` by absolute
-                // path through the home configuration.
-                .env("PATH", "/usr/bin:/bin")
-                .envs(env.iter().copied())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .unwrap(),
-            pid_file: ariadne_client::endpoint::pid_file(home),
-        }
-    }
-
-    fn pid(&self) -> Option<String> {
-        std::fs::read_to_string(&self.pid_file)
-            .ok()
-            .map(|pid| pid.trim().to_string())
-    }
-
-    fn signal(&self, signal: &str) -> bool {
-        self.pid().is_some_and(|pid| {
-            std::process::Command::new("kill")
-                .args([signal, &pid])
-                .status()
-                .unwrap()
-                .success()
-        })
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        self.signal("-KILL");
-        let _ = self.wrapper.kill();
-        let _ = self.wrapper.wait();
-    }
-}
-
 #[tokio::test]
-async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds_the_drain() {
+async fn shutdown_closes_the_tunnel_and_the_listener_and_ends_an_open_event_stream() {
     let dir = tempfile::tempdir().unwrap();
     let server = StandIn::start(&dir.path().join("stand-in"), 0).await;
     let gates = Gates::opened();
@@ -1192,13 +1128,15 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
     let listen = listen.unwrap();
     assert!(tokio::net::TcpStream::connect(&listen).await.is_ok());
 
-    // An open event stream holds the HTTP drain for as long as it stays.
-    let stream = client
+    // An open event stream ends with the shutdown, so it cannot hold the
+    // HTTP drain: the daemon stops while its client still listens (016).
+    let mut stream = client
         .get(format!("{api}/v1/events/stream"))
         .send()
         .await
         .unwrap();
     assert_eq!(stream.status(), StatusCode::OK);
+    let pid = daemon.pid().unwrap();
     assert!(daemon.signal("-TERM"));
     eventually(
         TIMEOUT,
@@ -1206,8 +1144,19 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
         async || server.closed() > 0 && tokio::net::TcpStream::connect(&listen).await.is_err(),
     )
     .await;
-    assert!(daemon.signal("-0"), "the drain still waits on the stream");
-    drop(stream);
+    let ended = tokio::time::timeout(TIMEOUT, async {
+        while let Ok(Some(_)) = stream.chunk().await {}
+    })
+    .await;
+    assert!(ended.is_ok(), "the event stream ends with the shutdown");
+    eventually(TIMEOUT, "the daemon to stop", async || {
+        !std::process::Command::new("kill")
+            .args(["-0", &pid])
+            .status()
+            .unwrap()
+            .success()
+    })
+    .await;
 }
 
 #[tokio::test]
