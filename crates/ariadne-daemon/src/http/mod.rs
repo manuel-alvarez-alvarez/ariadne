@@ -50,6 +50,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
+use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa::OpenApi;
@@ -103,6 +104,9 @@ pub struct AppState {
     /// The open event streams of source daemons, which carry the posts of
     /// worker agents to the source orchestrator (039).
     pub source_posts: crate::source_posts::SourcePosts,
+    /// Cancelled when shutdown starts: every open event stream ends then, so
+    /// the HTTP drain does not wait on a client that never hangs up (016).
+    pub closing: tokio_util::sync::CancellationToken,
 }
 
 impl AppState {
@@ -482,8 +486,71 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             source_tasks::forward,
         ))
+        .layer(middleware::from_fn_with_state(
+            state.closing.clone(),
+            end_streams_on_close,
+        ))
         .with_state(state)
         .layer(middleware::from_fn(record_request_duration))
+}
+
+/// End an event stream when shutdown starts. Its body otherwise lasts as
+/// long as its client stays, and the HTTP drain waits on every open body.
+/// A response that is not a stream is left whole.
+async fn end_streams_on_close(
+    State(closing): State<tokio_util::sync::CancellationToken>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let response = next.run(request).await;
+    let stream = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    if !stream {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let body = body
+        .into_data_stream()
+        .take_until(closing.cancelled_owned());
+    Response::from_parts(parts, axum::body::Body::from_stream(body))
+}
+
+/// Serve `app` on `listener` until `shutdown` resolves, then let the open
+/// requests finish for at most `drain`. A connection still open then is
+/// left behind, so a client that never hangs up cannot keep the daemon
+/// from stopping (016).
+pub async fn serve<L>(
+    listener: L,
+    app: Router,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    drain: std::time::Duration,
+) -> std::io::Result<()>
+where
+    L: axum::serve::Listener,
+    L::Addr: std::fmt::Debug,
+{
+    let stop = tokio_util::sync::CancellationToken::new();
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(stop.clone().cancelled_owned())
+        .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => return result,
+        () = shutdown => stop.cancel(),
+    }
+    match tokio::time::timeout(drain, server).await {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!(
+                ?drain,
+                "connections still open after the drain; stopping without them"
+            );
+            Ok(())
+        }
+    }
 }
 
 /// Measure normal HTTP routes after routing selected their template. Long
@@ -632,6 +699,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".into(),
         uptime_secs: state.started_at.elapsed().as_secs(),
+        pid: Some(std::process::id()),
     })
 }
 

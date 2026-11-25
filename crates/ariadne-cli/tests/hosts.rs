@@ -820,6 +820,32 @@ async fn daemon_status_and_logs_on_a_named_host_show_only_that_host() {
     remote.abort();
 }
 
+/// The pid is the answering daemon's own, not the pidfile's: the pidfile
+/// names the last daemon that started, which a worker update must tell
+/// from the one that holds the socket (037, rule 49).
+#[tokio::test]
+async fn daemon_status_gives_the_pid_of_the_daemon_that_answered() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("ariadned.pid"), "1111").unwrap();
+    let listener = tokio::net::UnixListener::bind(home.path().join("ariadne.sock")).unwrap();
+    let app = Router::new()
+        .route(
+            "/v1/health",
+            get(|| async { Json(json!({"status":"ok","uptime_secs":5,"pid":4321})) }),
+        )
+        .route(
+            "/v1/version",
+            get(|| async { Json(json!({"name":"ariadned","version":"9.9.9"})) }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let home = home.path().to_str().unwrap();
+    let (code, text) = run_cli(&["--format", "json", "daemon", "--home", home, "status"]).await;
+    assert_eq!(code, 0, "{text}");
+    let status: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(status["pid"], 4321, "{text}");
+    server.abort();
+}
+
 #[tokio::test]
 async fn daemon_status_and_logs_on_local_use_the_daemon_of_the_given_home() {
     let home = std::env::temp_dir().join(format!("ariadne-no-daemon-{}", std::process::id()));

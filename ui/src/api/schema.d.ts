@@ -4101,6 +4101,13 @@ export interface components {
         /** @description Response of `GET /v1/health`. */
         HealthResponse: {
             /**
+             * Format: int32
+             * @description The process that answered. A daemon from before this field sends
+             *     none: a worker update tells by it whether the service's own process
+             *     answers (037).
+             */
+            pid?: number | null;
+            /**
              * @description Always "ok" when the daemon is able to answer.
              * @example ok
              */
