@@ -242,7 +242,18 @@ async fn the_source_tells_a_worker_agent_that_its_post_was_dropped() {
     );
     no_message_rows(&s.p).await;
 
-    // A second post makes its own notice, and the first makes no second one.
+    // The stream breaks, as it does on a reconnect or after a `resync`, and
+    // the source opens it again. A second post makes its own notice, and the
+    // first makes no second one.
+    let opened = s.p.front.count("stream");
+    s.p.front.stream_cut.send_replace(true);
+    eventually(
+        TIMEOUT,
+        "an open refused while the stream is cut",
+        async || s.p.front.count("stream") > opened,
+    )
+    .await;
+    s.p.front.stream_cut.send_replace(false);
     worker_posts_to_orchestrator(&s, "Second try.").await;
     eventually(TIMEOUT, "the second notice", async || {
         s.p.far.prompted(&s.worker).contains("Second try.")
@@ -265,7 +276,7 @@ async fn a_post_that_reaches_the_orchestrator_makes_no_notice() {
         s.p.local.prompted(&orchestrator).contains("Reaches it.")
     })
     .await;
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(QUIET).await;
     assert!(!s.p.far.prompted(&s.worker).contains("did not reach"));
 }
 
