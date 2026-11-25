@@ -114,6 +114,8 @@ export const qk = {
     /** The session's pending agent requests (`GET /v1/sessions/{id}/agent-requests`). */
     agentRequests: (host: Host, id: string) =>
       [host, "sessions", "detail", id, "agent-requests"] as const,
+    /** The session's open native questions (`GET /v1/sessions/{id}/questions`). */
+    questions: (host: Host, id: string) => [host, "sessions", "detail", id, "questions"] as const,
   },
   skills: {
     all: (host: Host) => [host, "skills"] as const,

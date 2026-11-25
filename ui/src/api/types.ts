@@ -105,3 +105,4 @@ export type PullRequestDto = components["schemas"]["PullRequestDto"]
 
 export type AgentQuestion = Schemas["AgentQuestion"]
 export type AgentRequestDto = Schemas["AgentRequestDto"]
+export type QuestionDto = Schemas["QuestionDto"]

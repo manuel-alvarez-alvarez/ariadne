@@ -18,6 +18,11 @@ import {
 } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
+import {
+  answerQuestion,
+  formFields,
+  listQuestions,
+} from "@/features/sessions/console/form-questions"
 import { answerRequest, pendingRequests } from "@/features/sessions/console/questions"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
@@ -407,7 +412,15 @@ function Row({
         {content}
       </Link>
       {item.recovery?.producer === "agent_request" && item.recovery.target.kind === "console" ? (
-        <RequestAnswers host={item.host} sessionId={item.recovery.target.session_id} />
+        item.recovery.id.startsWith("question:") ? (
+          <FormAnswers
+            host={item.host}
+            sessionId={item.recovery.target.session_id}
+            questionId={item.recovery.id.slice("question:".length)}
+          />
+        ) : (
+          <RequestAnswers host={item.host} sessionId={item.recovery.target.session_id} />
+        )
       ) : null}
       {affectedLinks ? (
         <div className="flex flex-wrap gap-2 px-3 pb-2 pl-9 text-xs text-muted-foreground">
@@ -578,6 +591,69 @@ function RequestAnswer({
           Answer
         </Button>
       </form>
+      {answer.isSuccess ? <p role="status">Answer sent.</p> : null}
+      {answer.error ? (
+        <p role="alert" className="text-destructive">
+          Could not send the answer: {describeError(answer.error)}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+/**
+ * A question an agent asked with its own tool, answered in place when its form
+ * is one single-select question: one button per choice, posted to the
+ * question's own route. Any other form is answered in the console, which the
+ * row's own link opens.
+ */
+function FormAnswers({
+  host,
+  sessionId,
+  questionId,
+}: {
+  host: Host
+  sessionId: string
+  questionId: string
+}) {
+  const queryClient = useQueryClient()
+  const questions = useQuery({
+    queryKey: qk.sessions.questions(host, sessionId),
+    queryFn: () => listQuestions(host, sessionId),
+  })
+  const answer = useMutation({
+    mutationFn: (content: Record<string, unknown>) =>
+      answerQuestion(host, sessionId, questionId, { action: "accept", content }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.sessions.questions(host, sessionId) })
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists(host) })
+    },
+  })
+  const asked = questions.data?.find((question) => question.id === questionId)
+  if (!asked) return null
+  const [field, ...rest] = formFields(asked.schema)
+  if (!field || rest.length > 0 || field.kind.type !== "single") return null
+  const settled = answer.isPending || answer.isSuccess
+  return (
+    <section aria-label="Agent question" className="flex flex-col gap-1 px-3 pb-2 text-xs">
+      {asked.message === "" ? null : (
+        <p className="whitespace-pre-wrap text-foreground">{asked.message}</p>
+      )}
+      <fieldset aria-label={field.title} className="flex flex-wrap gap-1">
+        {field.kind.choices.map((choice) => (
+          <Button
+            key={String(choice.value)}
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={settled}
+            title={choice.description}
+            onClick={() => answer.mutate({ [field.key]: choice.value })}
+          >
+            {choice.title}
+          </Button>
+        ))}
+      </fieldset>
       {answer.isSuccess ? <p role="status">Answer sent.</p> : null}
       {answer.error ? (
         <p role="alert" className="text-destructive">

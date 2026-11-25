@@ -60,6 +60,7 @@ function answer(reply: (path: string) => Response = () => new Response(null, { s
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
+    if (request.method === "GET" && path.endsWith("/questions")) return Response.json([])
     if (request.method === "GET" && path.endsWith("/agent-requests"))
       return Response.json(pendingList)
     posts.push({ path, body: await request.text() })
@@ -594,7 +595,7 @@ it("brings back the older page the reader had loaded, and their place in it, aft
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
-    if (path.endsWith("/agent-requests")) return Response.json([])
+    if (path.endsWith("/agent-requests") || path.endsWith("/questions")) return Response.json([])
     if (path === "/v1/events") {
       const before = new URL(request.url).searchParams.get("before")
       return Response.json(before === newest.id ? [older] : [])
@@ -643,7 +644,7 @@ it("puts the block the reader was on back in place when new events move the page
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
-    if (path.endsWith("/agent-requests")) return Response.json([])
+    if (path.endsWith("/agent-requests") || path.endsWith("/questions")) return Response.json([])
     if (path === "/v1/events") {
       fetches += 1
       // The first read gets one event; the reload gets a page that goes past it.

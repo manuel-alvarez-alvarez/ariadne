@@ -34,11 +34,15 @@ function event(kind: string, payload: unknown = {}): AgentEventDto {
 
 /** The session's pending requests, as `GET .../agent-requests` lists them with each snapshot. */
 let pendingList: unknown[] = []
+/** The session's open native questions, as `GET .../questions` lists them with each snapshot. */
+let listedQuestions: unknown[] = []
 /** How many reads of the pending requests fail before one succeeds. */
 let pendingFailures = 0
 
 /** The read of the pending requests every snapshot makes, answered apart from the routes under test. */
 function pendingRead(request: Request): Response | undefined {
+  if (request.method === "GET" && new URL(request.url).pathname.endsWith("/questions"))
+    return Response.json(listedQuestions)
   if (request.method !== "GET" || !new URL(request.url).pathname.endsWith("/agent-requests"))
     return undefined
   if (pendingFailures > 0) {
@@ -69,6 +73,7 @@ beforeEach(() => {
     failed: [],
   })
   pendingList = []
+  listedQuestions = []
   pendingFailures = 0
   stubEventSource()
   answer()

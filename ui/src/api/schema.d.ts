@@ -2648,6 +2648,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The questions the session's agent waits on, oldest first, each with the
+         *     form the agent sent, unchanged.
+         */
+        get: operations["sessions_list_questions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/questions/{question_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer one question: `accept` with the form content, `decline` or
+         *     `cancel`. The agent reads it as the result of its request. One answer
+         *     closes the question, and a second is refused.
+         */
+        post: operations["sessions_answer_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/resume": {
         parameters: {
             query?: never;
@@ -3382,6 +3423,14 @@ export interface components {
             option_id?: string | null;
             /** @description The answer the user typed. */
             text?: string | null;
+        };
+        /**
+         * @description Body of `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+         *     `content` is present with `accept` only.
+         */
+        AnswerQuestionRequest: {
+            action: components["schemas"]["QuestionAction"];
+            content?: Record<string, never> | null;
         };
         /**
          * @description Body of
@@ -4836,6 +4885,25 @@ export interface components {
              * @example 3.12.1
              */
             version?: string | null;
+        };
+        /**
+         * @description What the person did with a question, as ACP names it.
+         * @enum {string}
+         */
+        QuestionAction: "accept" | "decline" | "cancel";
+        /**
+         * @description One open question an agent asks with ACP `elicitation/create` in form
+         *     mode, as `GET /v1/sessions/{id}/questions` lists it (021).
+         */
+        QuestionDto: {
+            created_at: string;
+            id: string;
+            /** @description The agent's own text over the form. */
+            message: string;
+            /** @description The `requestedSchema` of the ACP request, unchanged. */
+            schema: Record<string, never>;
+            /** @description The Ariadne session whose agent asks. */
+            session_id: string;
         };
         /**
          * @description One learned permission to write whole, as another daemon pushes it (037).
@@ -8899,6 +8967,76 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_list_questions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_answer_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description The answer was sent to the agent */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

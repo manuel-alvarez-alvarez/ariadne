@@ -42,6 +42,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react"
@@ -53,6 +54,7 @@ import {
   type Host,
   hostBaseUrl,
   hostUnreachable,
+  type QuestionDto,
   qk,
   type SessionDto,
   type SessionStatus,
@@ -78,6 +80,8 @@ import {
   updateViewState,
   watchViewState,
 } from "./console-view-state"
+import { FormCard } from "./form-card"
+import { formQuestions, listQuestions } from "./form-questions"
 import {
   answerRequest,
   isOpenQuestion,
@@ -243,6 +247,10 @@ function ConsolePane({
   const [requestsError, setRequestsError] = useState<string | null>(null)
   /** Counts the reads of the pending requests, so only the latest one lands. */
   const reads = useRef(0)
+  /** The session's open native questions, as read with the last snapshot. */
+  const [listedForms, setListedForms] = useState<QuestionDto[]>([])
+  /** Counts the reads of the open native questions, so only the latest one lands. */
+  const formReads = useRef(0)
   const [streamStatus, setStreamStatus] = useState<ConsoleStreamStatus>("connecting")
   const [streamError, setStreamError] = useState<string | null>(null)
   const [draft, setDraft] = useState(() => readViewState(key).draft)
@@ -372,9 +380,23 @@ function ConsolePane({
     )
   }, [host, sessionId])
 
+  // The open native questions are read again with every snapshot as well. A
+  // failed read leaves the list as it was: the stream's own events still draw
+  // every question asked since the page in view.
+  const readForms = useCallback(() => {
+    const read = ++formReads.current
+    listQuestions(host, sessionId).then(
+      (listed) => {
+        if (read === formReads.current) setListedForms(listed)
+      },
+      () => {},
+    )
+  }, [host, sessionId])
+
   useEffect(() => {
     setTranscript(emptyTranscript())
     setRequests([])
+    setListedForms([])
     setRequestsError(null)
     setSnapshotted(false)
     resetHistory()
@@ -395,6 +417,7 @@ function ConsolePane({
         setSnapshotted(true)
         setTranscript((current) => applySnapshot(current, events))
         readRequests()
+        readForms()
       },
       onEvent: (event) => setTranscript((current) => applyEvent(current, event)),
       onStatus: (next, error) => {
@@ -407,7 +430,7 @@ function ConsolePane({
       reads.current += 1
       stream.stop()
     }
-  }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests])
+  }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests, readForms])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus request is read once, on arrival
   useEffect(() => {
@@ -596,6 +619,12 @@ function ConsolePane({
   // A question restored from the requests list was asked before the page in
   // view, so it comes first: the composer answers the newest.
   const restored = child ? [] : restoredQuestions(requests, transcript)
+  // The questions the agent asks with its own tool: a child's stay out of its view.
+  const forms = useMemo(
+    () => (child ? [] : formQuestions(transcript.events, listedForms)),
+    [child, transcript.events, listedForms],
+  )
+  const formOpen = live && forms.some((form) => form.closed === undefined)
   const question = live && !child ? openQuestion([...restored, ...blocks], answered) : undefined
   const questionId = question?.requestId
   // An open question waits on the user, so a live `main` draws it last,
@@ -1118,6 +1147,15 @@ function ConsolePane({
                 />
               ))}
               {waiting.map(card)}
+              {forms.map((form) => (
+                <FormCard
+                  key={form.id}
+                  host={host}
+                  sessionId={sessionId}
+                  question={form}
+                  live={live}
+                />
+              ))}
             </div>
             {away ? (
               <Button
@@ -1172,6 +1210,7 @@ function ConsolePane({
                 ? { tool: runningTool(transcript), seconds: elapsedSeconds(turnStartedAt, now) }
                 : undefined
             }
+            waiting={formOpen}
             tokens={tokenTotals(transcript, usage)}
           />
         </ConsoleWorkspace>
