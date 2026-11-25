@@ -92,7 +92,8 @@ and the ACP runtime that reports the agent events (021).
    that caused it, whether it came through HTTP or from the scheduler.
 5. The stream is SSE. It opens with a heartbeat, honours per-client filters,
    and signals a resync and closes when a client lags rather than silently
-   dropping events.
+   dropping events. A stream that names a `source` daemon also carries the
+   `source_post` frames of that source (039 rule 15).
 6. CORS, on TCP and on the socket, allows only the app's allowed origins, its HTTP methods, and its
    request headers. A refused Host or Origin answers `403` in the normal
    `forbidden` envelope and includes no CORS allow headers, for every route,

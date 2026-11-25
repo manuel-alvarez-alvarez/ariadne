@@ -280,3 +280,60 @@ async fn a_post_leaves_a_pending_question_of_the_recipient_open() {
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
     assert_eq!(list.items[0].summary, "Which API version applies?");
 }
+
+/// The agent of a legacy mirror task, on the host that runs its linked goal,
+/// cannot post to `orchestrator`, and the refusal says why.
+#[tokio::test]
+async fn a_post_from_a_legacy_mirror_task_to_its_orchestrator_is_refused() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("repo")).await;
+    let goal: ariadne_api::goals::GoalDto = h
+        .json(
+            common::post_json(
+                "/v1/goals",
+                json!({
+                    "title": "Mirrored",
+                    "repository_ids": [repo.id],
+                    "model": common::test_pin().model,
+                    "linked": {"origin_goal_id": "01arz3ndektsv4rrffq69g5fav"},
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let agents: Vec<_> = goal
+        .steps
+        .iter()
+        .map(|step| json!({"step": step.id, "model": common::test_pin().model}))
+        .collect();
+    let task: ariadne_api::tasks::TaskDto = h
+        .json(
+            common::post_json(
+                &format!("/v1/goals/{}/tasks", goal.id),
+                json!({"title": "Mirror", "agents": agents}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let goal = h.store.get_goal(&goal.id).await.unwrap();
+    let task = h.store.get_task(&task.id).await.unwrap();
+    let agent = h.store.list_task_agents(&task.id).await.unwrap().remove(0);
+    let author = h
+        .session(&goal, Some(&task), ariadne_core::Seat::Agent, &agent.id)
+        .await;
+
+    let message = refusal(
+        &h,
+        &format!("/v1/tasks/{}/posts", task.id),
+        &author.id,
+        "orchestrator",
+    )
+    .await;
+    assert!(
+        message.contains(&format!(
+            "task {} is a legacy mirror of a task on another host, and a post does not reach its orchestrator",
+            task.id
+        )),
+        "{message}"
+    );
+}

@@ -526,7 +526,7 @@
           "events"
         ],
         "summary": "Subscribe to the live domain-event stream.",
-        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nNot every event is a database write. `task_branch_updated` is published by\nthe daemon's watch on each live task's branch ref, so a commit an agent\nmakes in its worktree — which changes nothing in the store — still says\nthat the task's diff (`GET /v1/tasks/{id}/diff`) is no longer the one you\nhold. It carries the branch and the full sha of its new head.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nBesides the domain events there is a `heartbeat` event (a `HeartbeatDto`:\nthe daemon's `version` and its `started_at`), sent as the connection opens\nand every 15 s an idle connection goes without one. It is a named event\nrather than the SSE comment other streams keep alive with, because a\nbrowser's `EventSource` never surfaces a comment: a client watches it to\ntell a live daemon from a dead one, and a changed `started_at` to tell a\nrestarted daemon from the one it was talking to.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
+        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nNot every event is a database write. `task_branch_updated` is published by\nthe daemon's watch on each live task's branch ref, so a commit an agent\nmakes in its worktree — which changes nothing in the store — still says\nthat the task's diff (`GET /v1/tasks/{id}/diff`) is no longer the one you\nhold. It carries the branch and the full sha of its new head.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nBesides the domain events there is a `heartbeat` event (a `HeartbeatDto`:\nthe daemon's `version` and its `started_at`), sent as the connection opens\nand every 15 s an idle connection goes without one. It is a named event\nrather than the SSE comment other streams keep alive with, because a\nbrowser's `EventSource` never surfaces a comment: a client watches it to\ntell a live daemon from a dead one, and a changed `started_at` to tell a\nrestarted daemon from the one it was talking to.\n\nA source daemon names itself with `source`, its persistent daemon ID.\nIts stream then also carries `source_post` frames (`SourcePostDto`): the\nposts of worker agents to the orchestrator of that source (039). A post\ngoes on the newest open stream of the source alone, at once, and no stream\ngets it again.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
         "operationId": "stream",
         "parameters": [
           {
@@ -552,11 +552,23 @@
                 "null"
               ]
             }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "The persistent daemon ID of a source daemon that follows this stream.\nThe stream also carries `source_post` frames (`SourcePostDto`): the\nposts of worker agents to the orchestrator of that source.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved.",
+            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. A stream with `source` also carries `source_post` (SourcePostDto).",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -3808,6 +3820,41 @@
         }
       }
     },
+    "/v1/remote-tasks/{id}/posts": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Put a post of the source orchestrator into the live session of the agent\nof one column of a worker-protocol task on this worker. The worker applies\nthe rules of a local post.",
+        "operationId": "post_from_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemotePostRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {}
+        }
+      }
+    },
     "/v1/remote-tasks/{id}/retry-dependency": {
       "post": {
         "tags": [
@@ -5584,7 +5631,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Put the body into the live session of the orchestrator or of the agent\nof one column, on one task of this host.",
+        "summary": "Put the body into the live session of the orchestrator or of the agent\nof one column, on one task of this host or a worker-protocol task on\nanother.",
         "description": "Each refusal is a bad request with the sentence the caller reads.",
         "operationId": "post_to_session",
         "parameters": [
@@ -10397,6 +10444,29 @@
         },
         "additionalProperties": false
       },
+      "RemotePostRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/remote-tasks/{id}/posts`: a post of the source\norchestrator to a column of a worker-protocol task on this worker.",
+        "required": [
+          "source_daemon_id",
+          "to",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "source_daemon_id": {
+            "type": "string",
+            "description": "The persistent daemon ID of the source that sends the post."
+          },
+          "to": {
+            "type": "string",
+            "description": "The column of a staffed agent of the task."
+          }
+        },
+        "additionalProperties": false
+      },
       "RemoteTaskProtocol": {
         "type": "object",
         "description": "Explicit protocol negotiation, independent of application version.",
@@ -11371,6 +11441,31 @@
           }
         },
         "additionalProperties": false
+      },
+      "SourcePostDto": {
+        "type": "object",
+        "description": "The `source_post` frame of `GET /v1/events/stream?source=…`: a post of a\nworker agent to the orchestrator of its source goal. The worker sends it\non one open stream of that source, live, and never again.",
+        "required": [
+          "id",
+          "task_id",
+          "column",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string",
+            "description": "The column of the sender."
+          },
+          "id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          }
+        }
       },
       "StepGate": {
         "type": "string",

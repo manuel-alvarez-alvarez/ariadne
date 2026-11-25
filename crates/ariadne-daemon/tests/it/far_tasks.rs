@@ -2274,4 +2274,5 @@ async fn an_orchestrator_message_reaches_the_far_agent_as_a_turn() {
     .await;
 }
 
+mod posts;
 mod source_references;

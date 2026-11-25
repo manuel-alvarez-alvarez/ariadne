@@ -205,6 +205,7 @@ pub(crate) async fn run(
         &EventStreamQuery {
             goal: filters.goal.clone(),
             task: filters.task.clone(),
+            source: None,
         },
     )?;
     follow::frames_reconnecting(client, &path, |frame| {

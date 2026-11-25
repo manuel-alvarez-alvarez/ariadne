@@ -254,6 +254,12 @@ export interface paths {
          *     tell a live daemon from a dead one, and a changed `started_at` to tell a
          *     restarted daemon from the one it was talking to.
          *
+         *     A source daemon names itself with `source`, its persistent daemon ID.
+         *     Its stream then also carries `source_post` frames (`SourcePostDto`): the
+         *     posts of worker agents to the orchestrator of that source (039). A post
+         *     goes on the newest open stream of the source alone, at once, and no stream
+         *     gets it again.
+         *
          *     A client that falls too far behind loses events. It is never left silently
          *     stale: the daemon sends a final `resync` event (`{"missed": n}`) and closes
          *     the connection, so an `EventSource` reconnects and takes the refetch path
@@ -2219,6 +2225,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/remote-tasks/{id}/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put a post of the source orchestrator into the live session of the agent
+         *     of one column of a worker-protocol task on this worker. The worker applies
+         *     the rules of a local post.
+         */
+        post: operations["tasks_post_from_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/remote-tasks/{id}/retry-dependency": {
         parameters: {
             query?: never;
@@ -2954,7 +2981,8 @@ export interface paths {
         put?: never;
         /**
          * Put the body into the live session of the orchestrator or of the agent
-         *     of one column, on one task of this host.
+         *     of one column, on one task of this host or a worker-protocol task on
+         *     another.
          * @description Each refusal is a bad request with the sentence the caller reads.
          */
         post: operations["tasks_post_to_session"];
@@ -4924,6 +4952,17 @@ export interface components {
             tool_call: unknown;
             tool_name: string;
         };
+        /**
+         * @description Body of `POST /v1/remote-tasks/{id}/posts`: a post of the source
+         *     orchestrator to a column of a worker-protocol task on this worker.
+         */
+        RemotePostRequest: {
+            body: string;
+            /** @description The persistent daemon ID of the source that sends the post. */
+            source_daemon_id: string;
+            /** @description The column of a staffed agent of the task. */
+            to: string;
+        };
         /** @description Explicit protocol negotiation, independent of application version. */
         RemoteTaskProtocol: {
             /** @description Negotiated optional operations. New source references require source-dependency-controls-v1. */
@@ -5288,6 +5327,18 @@ export interface components {
             description: string;
             goal_id: string;
             title: string;
+        };
+        /**
+         * @description The `source_post` frame of `GET /v1/events/stream?source=…`: a post of a
+         *     worker agent to the orchestrator of its source goal. The worker sends it
+         *     on one open stream of that source, live, and never again.
+         */
+        SourcePostDto: {
+            body: string;
+            /** @description The column of the sender. */
+            column: string;
+            id: string;
+            task_id: string;
         };
         /**
          * @description What a step waits for before the next one may start: the author's commit,
@@ -6164,6 +6215,12 @@ export interface operations {
                 goal?: string | null;
                 /** @description Only events belonging to this task. */
                 task?: string | null;
+                /**
+                 * @description The persistent daemon ID of a source daemon that follows this stream.
+                 *     The stream also carries `source_post` frames (`SourcePostDto`): the
+                 *     posts of worker agents to the orchestrator of that source.
+                 */
+                source?: string | null;
             };
             header?: never;
             path?: never;
@@ -6171,7 +6228,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. */
+            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. A stream with `source` also carries `source_post` (SourcePostDto). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8160,6 +8217,42 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_post_from_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemotePostRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

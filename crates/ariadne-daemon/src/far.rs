@@ -16,6 +16,7 @@
 //! return at the same endpoint a next `ready` too.
 
 mod messages;
+mod posts;
 
 pub(crate) use messages::RelayMessage;
 
@@ -69,6 +70,7 @@ pub fn start(state: &AppState, timeouts: Timeouts) -> FarTasks {
         store: state.store.clone(),
         events: state.events.clone(),
         sched: state.sched_tx.clone(),
+        launcher: state.launcher.clone(),
         timeouts,
     };
     let hosts = state.hosts.clone();
@@ -83,6 +85,8 @@ struct Ctx {
     store: Store,
     events: crate::bus::EventBus,
     sched: Option<mpsc::UnboundedSender<SchedEvent>>,
+    /// Where a worker agent's post reaches the orchestrator session (039).
+    launcher: Arc<crate::launcher::Launcher>,
     timeouts: Timeouts,
 }
 
@@ -313,7 +317,16 @@ impl Follower<'_> {
         // of the host falls between the read and the stream.
         // Fenced as each call is: a host that leaves `ready` while the stream
         // opens does not hold back its far tasks' `host_unreachable`.
-        let mut stream = match self.fenced(self.client.stream("/v1/events/stream")).await {
+        // The stream names this daemon as the source, so the worker sends on
+        // it the posts of its agents to the orchestrator here (039).
+        let path = match self.ctx.store.daemon_id().await {
+            Ok(daemon_id) => format!("/v1/events/stream?source={daemon_id}"),
+            Err(error) => {
+                warn!(host = self.host, %error, "cannot read the daemon ID of this daemon");
+                return Lost::Stream;
+            }
+        };
+        let mut stream = match self.fenced(self.client.stream(&path)).await {
             None => return Lost::Left,
             Some(Ok(stream)) => stream,
             Some(Err(error)) => {
@@ -514,6 +527,7 @@ impl Follower<'_> {
                 Ok(())
             }
             "message_sent" => self.on_message(serde_json::from_str(&frame.data)?).await,
+            "source_post" => self.on_post(serde_json::from_str(&frame.data)?).await,
             // The stream lost events: read every far task and its messages again.
             "resync" => self.refresh().await,
             _ => Ok(()),
