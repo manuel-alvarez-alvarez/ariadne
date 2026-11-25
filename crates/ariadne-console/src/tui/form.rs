@@ -329,6 +329,86 @@ mod tests {
     }
 
     #[test]
+    fn skipped_required_questions_block_submission_until_answered() {
+        for custom in [false, true] {
+            let mut question = asked();
+            question.payload["question"]["schema"]["required"] = json!(["base", "note"]);
+            if custom {
+                let properties = question.payload["question"]["schema"]["properties"]
+                    .as_object_mut()
+                    .unwrap();
+                let previous = std::mem::take(properties);
+                for (key, value) in previous {
+                    properties.insert(key.clone(), value);
+                    if key == "base" {
+                        properties.insert(
+                            "base_custom".into(),
+                            json!({"type":"string","title":"Other"}),
+                        );
+                    }
+                }
+            }
+            let mut console = Console::new(header());
+            console.snapshot(&[question]);
+            press(&mut console, KeyCode::Tab);
+            press(&mut console, KeyCode::Right);
+            type_into(&mut console, "done");
+            assert_eq!(enter(&mut console), Action::None);
+            let mut terminal = pane();
+            console.show(&mut terminal).unwrap();
+            let text = shown(&terminal);
+            assert!(
+                text.contains("Which base branch? needs an answer."),
+                "{text}"
+            );
+            assert!(text.contains("1 of 3"), "{text}");
+            if custom {
+                type_into(&mut console, "release");
+                assert_eq!(enter(&mut console), Action::None);
+            } else {
+                assert_eq!(press(&mut console, KeyCode::Char('2')), Action::None);
+            }
+            press(&mut console, KeyCode::Right);
+            type_into(&mut console, "done");
+            let Action::Answer { answer, .. } = enter(&mut console) else {
+                panic!("answer");
+            };
+            let content = answer.content.unwrap();
+            if custom {
+                assert_eq!(content["base_custom"], "release");
+                assert!(!content.contains_key("base"));
+            } else {
+                assert_eq!(content["base"], "next");
+            }
+            assert_eq!(content["note"], "done");
+        }
+    }
+
+    #[test]
+    fn required_multi_custom_answers_do_not_add_unselected_choices() {
+        let mut question = asked();
+        question.payload["question"]["schema"] = json!({"type":"object",
+        "required":["question_0"], "properties":{
+            "question_0":{"type":"array","title":"Checks",
+                "items":{"anyOf":[{"const":"fmt","title":"Format"}]}},
+            "question_0_custom":{"type":"string","title":"Other"}
+        }});
+        let mut console = Console::new(header());
+        console.snapshot(&[question]);
+        type_into(&mut console, "lint");
+        let Action::Answer { answer, .. } = enter(&mut console) else {
+            panic!("answer");
+        };
+        assert_eq!(
+            answer.content.unwrap(),
+            json!({"question_0_custom":"lint"})
+                .as_object()
+                .unwrap()
+                .clone()
+        );
+    }
+
+    #[test]
     fn a_number_field_remains_a_single_step_and_sends_its_value() {
         let mut question = asked();
         question.payload["question"]["schema"] = json!({"type":"object","properties":{

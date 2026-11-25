@@ -909,7 +909,9 @@ impl Console {
                         custom.key.clone(),
                         serde_json::Value::String(text.to_string()),
                     );
-                    if matches!(field.kind, transcript::FieldKind::Single(_)) {
+                    if matches!(field.kind, transcript::FieldKind::Single(_))
+                        || state.chosen.is_empty()
+                    {
                         state.content.remove(&field.key);
                         Ok(None)
                     } else {
@@ -931,6 +933,17 @@ impl Console {
                         state.next();
                     }
                     Err(problem) => state.problem = Some(problem),
+                }
+                if state.field >= fields.len()
+                    && let Some((index, missing)) = fields.iter().enumerate().find(|(_, field)| {
+                        field.required
+                            && !state.content.contains_key(&field.key)
+                            && !transcript::companion(&all_fields, field)
+                                .is_some_and(|custom| state.content.contains_key(&custom.key))
+                    })
+                {
+                    state.field = index;
+                    state.problem = Some(format!("{} needs an answer.", missing.title));
                 }
                 if state.field >= fields.len() {
                     self.form = FormState::default();
