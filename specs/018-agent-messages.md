@@ -1,7 +1,8 @@
 ---
 id: agent-messages
-status: current
+status: superseded
 updated: 2026-11-25
+superseded_by: 039
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -15,6 +16,12 @@ tests:
 ---
 
 # Agent messages
+
+Superseded by [039 Posts to a session](039-posts-to-a-session.md). This
+historical specification describes the removed message channel. Ariadne
+stores no agent message now: migration 0025 drops the `messages` table, and
+the routes, the event, the metric, the relay and `ariadne task messages` are
+gone. Rule 10 holds on as 009 rule 5.
 
 One channel for everything the agents say to each other, and one transport
 that puts it in front of them.

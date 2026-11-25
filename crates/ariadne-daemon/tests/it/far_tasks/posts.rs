@@ -5,7 +5,7 @@ use super::*;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_core::{Seat, SessionStatus};
-use ariadne_store::{AgentSession, MessageFilter};
+use ariadne_store::AgentSession;
 
 /// A goal on the source, its worker-protocol task in its first column on the
 /// worker, and a live, idle worker session for that column.
@@ -111,13 +111,6 @@ async fn worker_posts_to_orchestrator(s: &Posting, body: &str) {
     .await;
 }
 
-async fn no_message_rows(p: &Pair) {
-    for store in [&p.local.store, &p.far.store] {
-        let rows = store.list_messages(MessageFilter::default()).await.unwrap();
-        assert!(rows.is_empty(), "{rows:?}");
-    }
-}
-
 #[tokio::test]
 async fn the_source_orchestrator_posts_to_a_worker_column_as_a_turn() {
     let s = posting(pair().await).await;
@@ -149,7 +142,6 @@ async fn the_source_orchestrator_posts_to_a_worker_column_as_a_turn() {
         ),
         "{pasted}"
     );
-    no_message_rows(&s.p).await;
 }
 
 #[tokio::test]
@@ -217,7 +209,6 @@ async fn a_worker_agent_posts_to_the_source_orchestrator_as_a_turn() {
         )),
         "{pasted}"
     );
-    no_message_rows(&s.p).await;
 }
 
 #[tokio::test]
@@ -240,7 +231,6 @@ async fn the_source_tells_a_worker_agent_that_its_post_was_dropped() {
         ),
         "{pasted}"
     );
-    no_message_rows(&s.p).await;
 
     // The stream breaks, as it does on a reconnect or after a `resync`, and
     // the source opens it again. A second post makes its own notice, and the

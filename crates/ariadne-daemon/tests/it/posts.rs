@@ -3,16 +3,16 @@
 
 use crate::common;
 
+use std::path::PathBuf;
+
 use axum::http::StatusCode;
 use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
-use ariadne_api::messages::MessageDto;
 use ariadne_core::{SessionStatus, TaskStatus};
-use ariadne_store::MessageFilter;
+use ariadne_store::AgentSession;
 
-use crate::agent_messages::author_held_in_a_turn;
-use common::{Cast, Harness, TIMEOUT, as_session, eventually, get, harness};
+use common::{Cast, Harness, TIMEOUT, acp, as_session, eventually, harness, post_json};
 
 fn posts_uri(cast: &Cast) -> String {
     format!("/v1/tasks/{}/posts", cast.task.id)
@@ -20,6 +20,42 @@ fn posts_uri(cast: &Cast) -> String {
 
 fn post(to: &str, body: &str) -> serde_json::Value {
     json!({"to": to, "body": body})
+}
+
+/// A develop agent that sits inside a turn until the test writes the file
+/// this answers with: the agent of a task that waits for an answer inside
+/// one turn. The review agent is the session the test writes to it as.
+async fn author_held_in_a_turn(h: &Harness) -> (Cast, AgentSession, AgentSession, PathBuf) {
+    let release = h.at("release-turn");
+    let turn = json!({"wait_for": release.display().to_string(), "updates": [], "stop_reason": "end_turn"});
+    let mut held = acp::script();
+    held["prompts"] = json!([turn]);
+    h.agent.reprogram(held);
+    // A real repository: the scheduler cuts the task's worktree from it when
+    // it puts the agent back on its feet.
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    // In its first column and briefed, so the console input below is the
+    // agent's first turn and a post its next prompt.
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.briefed(&cast.task).await;
+    let author = h.agent_session(&cast, "develop").await;
+    h.agent_runs(&author).await;
+    h.set_status(&author, SessionStatus::Idle).await;
+    let reviewer = h.agent_session(&cast, "review").await;
+    let (status, _) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/console/input", author.id),
+            json!({"text": "HOLD: wait for the reviewer's answer."}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let reached = h.at("release-turn.reached");
+    eventually(TIMEOUT, "the author's turn to be held open", async || {
+        reached.exists()
+    })
+    .await;
+    (cast, author, reviewer, release)
 }
 
 /// A refusal's sentence: bad parameters, with the daemon's words.
@@ -35,7 +71,7 @@ async fn refusal(h: &Harness, uri: &str, session: &str, to: &str) -> String {
 
 /// The review agent posts to the current column's agent. The text reaches it
 /// as a prompt that names the sender, fences the body and says where an
-/// answer goes, and the `messages` table stays empty.
+/// answer goes.
 #[tokio::test]
 async fn a_post_reaches_the_live_session_as_a_prompt_and_writes_no_row() {
     let h = harness().await;
@@ -69,19 +105,6 @@ async fn a_post_reaches_the_live_session_as_a_prompt_and_writes_no_row() {
         )),
         "{pasted}"
     );
-    let rows = h
-        .store
-        .list_messages(MessageFilter::default())
-        .await
-        .unwrap();
-    assert!(rows.is_empty(), "{rows:?}");
-    let listed: Vec<MessageDto> = h
-        .json(
-            get(&format!("/v1/tasks/{}/messages", cast.task.id)),
-            StatusCode::OK,
-        )
-        .await;
-    assert!(listed.is_empty(), "{listed:?}");
 }
 
 /// The orchestrator is a sender and a recipient, and its address is its name.

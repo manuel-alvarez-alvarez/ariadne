@@ -1,7 +1,7 @@
 ---
 id: 037
 status: current
-updated: 2026-11-24
+updated: 2026-11-25
 areas: [api, daemon, client, cli, store, docs, ui]
 commits: []
 tests:
@@ -711,7 +711,6 @@ picker, the Hosts screen and one stream per host — is spec
      A database retains its daemon ID across restarts.
      New remote execution uses the worker draft protocol (012), independently of legacy linked goals.
      Authorized execution requires no source connection.
-     Agent messages remain stored for source reads after reconnection, including messages to the source orchestrator.
 
 ### Source references for new tasks
 
@@ -744,9 +743,7 @@ picker, the Hosts screen and one stream per host — is spec
      Reconnection reads the worker before clearing `host_unreachable` in the current connection.
      Delayed responses from previous connections cannot refresh the source snapshot.
      Older worker snapshots cannot overwrite newer acknowledged progress.
-108. Source messages address cached worker staffing without creating local staffing records.
-     Undelivered orchestrator messages remain queued through disconnection. Relay IDs prevent duplicate delivery.
-     Worker messages retain worker agent IDs at the source and reach the source orchestrator.
+108. Removed: source and worker agents store no message and relay none. Posts between them follow 039.
 109. Source cancellation records intent until the worker acknowledges its authoritative outcome.
      A worker completion that wins cancellation remains finished at the source.
      Source goal cancellation requests worker cancellation. Goal completion requires terminal referenced tasks.
@@ -772,8 +769,6 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 106 console routing: `far_tasks::source_references::source_console_stream_and_terminal_connections_reach_the_worker_session`.
 - Rule 107 session updates: `far_tasks::source_references::worker_session_creation_refreshes_source_progress_without_a_usage_report`.
 - Rule 107: `far_tasks::source_references::stream_loss_marks_progress_stale_until_the_current_worker_is_reconciled`.
-- Rule 108: `far_tasks::source_references::source_messages_survive_disconnection_without_local_staffing`
-  and `::worker_messages_reach_the_source_orchestrator_with_the_worker_column_address`.
 - Rule 109 completion: `far_tasks::source_references::goal_completion_includes_referenced_remote_work`.
 - Rule 109 cleanup: `far_tasks::source_references::source_cleanup_preserves_local_branches_that_share_a_worker_task_name`.
 - Rule 109: `far_tasks::source_references::source_cancellation_waits_for_worker_acknowledgment_after_reconnection`,
@@ -782,7 +777,7 @@ picker, the Hosts screen and one stream per host — is spec
 
 
 - Rule 101: `remote_tasks.rs::a_remote_draft_has_context_without_a_worker_goal` proves durable worker identity.
-  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves execution and retained source messages.
+  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves execution.
 
 
 - Rule 95: `far_tasks.rs::a_far_task_is_refused_on_a_host_that_is_unknown_or_not_ready`,

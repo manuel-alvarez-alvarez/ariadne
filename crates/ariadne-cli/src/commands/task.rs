@@ -7,7 +7,6 @@ use clap::Subcommand;
 use serde_json::json;
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::messages::MessageDto;
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, LOCAL_HOST, TaskDto, TaskListQuery, TaskTransitionDto,
@@ -15,7 +14,7 @@ use ariadne_api::tasks::{
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_api::workflows::WorkflowStepDto;
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::{Actor, TaskStatus};
+use ariadne_core::TaskStatus;
 
 use super::follow;
 use super::resolve::{self, Kind};
@@ -23,9 +22,9 @@ use super::{Subject, agent_label, agent_pin_label, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::listing::Listing;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, local_time, moment, note,
-    ok_id_line, pager, print, print_json, print_kv, print_list, status_line, usage_block,
-    usage_cell, view, yes_no,
+    Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, local_time, moment, ok_id_line,
+    pager, print, print_json, print_kv, print_list, status_line, usage_block, usage_cell, view,
+    yes_no,
 };
 use ariadne_console::transcript::{Filters, Since};
 use edit::{Edits, parse_agent_slot, resolve_repo, update_request};
@@ -71,15 +70,6 @@ const LS_FAR: &[Column] = &[
 /// keys to the longest one — `pull request` — and then two spaces, and a
 /// block that spills over several lines lines them all up under the first.
 const INDENT: &str = "\n              ";
-
-/// Columns of `task messages`. A message body is prose, and only its opening
-/// belongs in a table — `task messages --format json` has all of it, and
-/// `task messages --full` pages every body whole.
-const MESSAGES: &[Column] = &[
-    col("from", 20).title(),
-    col("to", 20).rank(1),
-    col("body", 60).rank(0),
-];
 
 /// Columns of `task history`. `time` is when each transition happened rather
 /// than how long ago, since a run of them is read as a sequence and the exact
@@ -210,20 +200,6 @@ pub(crate) enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-    },
-    /// Show what a task's agents have said to each other
-    ///
-    /// One channel for all of it: the questions and their answers, between
-    /// the orchestrator and the agents of every column, oldest first.
-    Messages {
-        /// Task id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
-        id: String,
-        /// Print each message in full, through the pager, instead of the
-        /// table's truncated body — no effect on `--format json`, which
-        /// already carries every body whole
-        #[arg(long)]
-        full: bool,
     },
     /// Show a task's transition history
     History {
@@ -369,39 +345,6 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
                 None
             };
             print(format, &t, || print_kv(&inspect_pairs(&t, goal.as_ref())))?;
-        }
-        TaskCommand::Messages { id, full } => {
-            let id = resolve::id(client, Kind::Task, &id).await?;
-            let mut messages: Vec<MessageDto> =
-                client.get_json(&format!("/v1/tasks/{id}/messages")).await?;
-            // Newest first. The daemon serves the channel in the order it was
-            // written, which is what an agent reading it as context wants; a
-            // person running this wants what just happened, and a channel
-            // that only grows would put it under everything else.
-            messages.reverse();
-            // The agents of the task, so a message reads as the skills that
-            // sent it rather than as an id.
-            let t: TaskDto = client.get_json(&task_path(&id)).await?;
-            if full && format == Format::Table {
-                match messages.is_empty() {
-                    true => note("nothing said yet"),
-                    false => pager::page(&full_messages(&t, &messages))?,
-                }
-                return Ok(());
-            }
-            print_list(
-                format,
-                &messages,
-                MESSAGES,
-                |m| {
-                    vec![
-                        party_label(&t, m.from_actor, m.from_agent_id.as_deref()),
-                        party_label(&t, m.to_actor, m.to_agent_id.as_deref()),
-                        m.body.clone(),
-                    ]
-                },
-                "nothing said yet",
-            )?;
         }
         TaskCommand::History { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
@@ -834,50 +777,11 @@ fn print_status(t: &TaskDto, format: Format) -> Result<()> {
     })
 }
 
-/// One end of a message, as a reader sees it.
-///
-/// An agent has no name, so it is named by the skills it works with, which is
-/// the only thing about it that says anything. The orchestrator has no skills
-/// and needs none: there is one of it.
-fn party_label(task: &TaskDto, actor: Actor, agent_id: Option<&str>) -> String {
-    let Some(agent_id) = agent_id else {
-        return actor.as_str().to_string();
-    };
-    match task.agents.iter().find(|a| a.id == agent_id) {
-        Some(agent) => agent_label(&agent.skills),
-        None => agent_id.to_string(),
-    }
-}
-
-/// One message of `task messages --full`: the same header its row of the
-/// table carries, over the body exactly as it came — no cut, since printing
-/// it whole is the point of `--full`.
-fn full_message(t: &TaskDto, m: &MessageDto) -> String {
-    format!(
-        "{} {} -> {}\n{}",
-        local_time(&m.created_at),
-        party_label(t, m.from_actor, m.from_agent_id.as_deref()),
-        party_label(t, m.to_actor, m.to_agent_id.as_deref()),
-        m.body
-    )
-}
-
-/// Every message of `task messages --full`, in the order they were passed —
-/// one text handed to the pager, rather than a page per message.
-fn full_messages(t: &TaskDto, messages: &[MessageDto]) -> String {
-    messages
-        .iter()
-        .map(|m| full_message(t, m))
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use ariadne_api::tasks::{AgentUsageDto, TaskAgentDto, TaskUsageDto};
-    use ariadne_core::MessageKind;
 
     use crate::commands::fixtures;
     use crate::output::{View, kv_block, render_table, style};
@@ -1033,20 +937,6 @@ mod tests {
             cancel_question(&t, &subject),
             "Cancel in_progress task \"Add the frobnicator\" (…2qdn2p1x)?"
         );
-    }
-
-    /// An agent has no name, so a message names its ends by the skills they
-    /// work with — by their id where the task staffs them no longer, and by
-    /// what they are where they hold no skills at all.
-    #[test]
-    fn a_message_names_its_ends_by_the_skills_they_work_with() {
-        let t = TaskDto {
-            agents: vec![fixtures::agent("01REV", "review", &["code-review"])],
-            ..dto()
-        };
-        assert_eq!(party_label(&t, Actor::Agent, Some("01REV")), "code-review");
-        assert_eq!(party_label(&t, Actor::Agent, Some("01GONE")), "01GONE");
-        assert_eq!(party_label(&t, Actor::Orchestrator, None), "orchestrator");
     }
 
     /// `task inspect` types its id, its goal, its title and its status the
@@ -1335,45 +1225,5 @@ mod tests {
         let plain = render_table(HISTORY, &rows, &View::plain()).expect("render");
         assert!(!plain.contains('\u{1b}'), "{plain}");
         assert_eq!(strip_escapes(&coloured), plain, "colour adds only escapes");
-    }
-
-    /// `--full` prints the same header a table row carries, over the body
-    /// exactly as it came — proven directly, with no pager or terminal
-    /// behind it.
-    #[test]
-    fn a_full_message_carries_its_header_and_its_whole_body() {
-        let t = TaskDto {
-            agents: vec![fixtures::agent("01REV", "review", &["code-review"])],
-            ..dto()
-        };
-        let whole_body = "a".repeat(200);
-        let m = MessageDto {
-            id: "01MSG".into(),
-            goal_id: t.goal_id.clone(),
-            task_id: Some(t.id.clone()),
-            kind: MessageKind::Message,
-            from_actor: Actor::Agent,
-            from_agent_id: Some("01REV".into()),
-            from_session: None,
-            to_actor: Actor::Orchestrator,
-            to_agent_id: None,
-            body: whole_body.clone(),
-            delivered_at: None,
-            created_at: fixtures::NOW.into(),
-        };
-
-        let text = full_message(&t, &m);
-        assert!(text.contains(&whole_body), "the body is not cut: {text}");
-        assert!(
-            text.contains("code-review -> orchestrator"),
-            "the header names both ends: {text}"
-        );
-
-        let joined = full_messages(&t, &[m.clone(), m]);
-        assert_eq!(
-            joined.matches(&whole_body).count(),
-            2,
-            "every message is printed, not just the first: {joined}"
-        );
     }
 }

@@ -379,7 +379,6 @@ const KINDS: &[(&str, Kind)] = &[
     ("task inspect", Kind::ReadOne),
     ("task logs", Kind::Stream),
     ("task ls", Kind::List),
-    ("task messages", Kind::ReadOne),
     ("task retry", Kind::Write),
     ("task update", Kind::Write),
     ("version", Kind::ReadEach),

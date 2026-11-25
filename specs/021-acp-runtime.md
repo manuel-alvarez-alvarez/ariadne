@@ -339,13 +339,13 @@ it leaves nothing to delete.
    orchestrator's `ExitPlanMode` while its goal is in `planning`.
 10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
-   nudge, a review briefing, an agent message — is a `session/prompt`, sent
+   nudge, a review briefing, a post — is a `session/prompt`, sent
    at once between turns and queued in order behind a running one. Console
    input (008) arrives the same way, except that a pending permission question takes it as
    the answer (rule 9): only a person's input selects a console choice.
-   A prompt that carries an agent message is claimed right before it goes
-   out, and skipped when the claim fails: a read took the message first
-   (018). A message already in the queue is not queued again. The runtime
+   A prompt that carries a step briefing or a request's news is claimed
+   right before it goes out, and skipped when the claim fails. A delivery
+   already in the queue is not queued again. The runtime
    watches the agent's stdin for each `session/prompt` line written whole. A
    claimed prompt that was never written gives its claim back when its launch
    ends. A written one keeps it, an error answer included.
@@ -540,8 +540,16 @@ it leaves nothing to delete.
       rule 9 answers `ExitPlanMode` as any other tool.
     - In plan mode, an Ariadne tool call is a permission request that rule
       9 allows while the goal is in `planning` (003 rule 18).
+23. A relay turn file that an earlier release wrote still loads. A delivery
+    or a prompt kind that this build does not know, such as an agent message
+    (018), loads as none. The turn keeps its prompt and has nothing to claim.
 
 ## Acceptance criteria
+
+- A turn file of an agent message still loads with no delivery, and a turn
+  file keeps a delivery and a kind that this build knows
+  (`acp::tests::a_turn_file_of_an_agent_message_still_loads`,
+  `::a_turn_file_keeps_a_known_delivery`).
 
 - `initialize` declares form elicitation and no other mode
   (`ariadne-daemon::acp::tests::initialize_tells_the_agent_what_the_daemon_supports`).

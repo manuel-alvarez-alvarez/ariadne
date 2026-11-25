@@ -769,6 +769,10 @@ async fn only_the_current_column_is_nudged_and_idle_columns_raise_no_attention()
             .contains("Not a new request: continue \"Build the feature\" at Review.")
     );
     assert!(!ariadne_daemon::attention::work_is_active(&h.store, &develop).await);
+    assert!(
+        h.launcher.acp.is_running(&develop.id),
+        "the agent of a column the task has left stays up"
+    );
     let _: Value = h
         .json(
             post_json(

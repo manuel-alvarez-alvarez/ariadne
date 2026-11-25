@@ -6,15 +6,14 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use ariadne_api::goals::{CompleteGoalRequest, CreateGoalRequest, FinalizePlanRequest, GoalDto};
-use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
 use ariadne_core::GoalStatus;
-use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, TaskFilter};
+use ariadne_store::{Goal, NewGoal, SessionFilter, TaskFilter};
 
 use super::AppState;
 use super::caller::call_ctx;
-use super::convert::{goal_dto_of, goal_dtos_of, message_dto};
+use super::convert::{goal_dto_of, goal_dtos_of};
 use super::error::{ApiError, ApiResult, Json};
-use super::{channel, pins};
+use super::pins;
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub(super) struct GoalListQuery {
@@ -360,49 +359,6 @@ pub(super) async fn complete(
     crate::metrics::record_goal_ended(&state.store, &goal).await;
     state.notify_scheduler_goal(&id);
     to_dto(&state, goal).await
-}
-
-/// The messages of a goal: what its agents said that was not about one task.
-///
-/// A goal's channel is the orchestrator's inbox. Everything an agent says to
-/// it about a task is on that task instead, and this is where the rest goes.
-#[utoipa::path(get, path = "/v1/goals/{id}/messages", tag = "goals",
-    params(("id" = String, Path, description = "goal id"), MessageListQuery),
-    responses((status = 200, body = [MessageDto])))]
-pub(super) async fn list_goal_messages(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Query(q): Query<MessageListQuery>,
-) -> ApiResult<Json<Vec<MessageDto>>> {
-    state.store.get_goal(&id).await?;
-    // The goal's own messages, and none of its tasks'. A message about a task
-    // carries the goal it belongs to as well, so a filter on the goal alone
-    // hands every task's channel to whoever reads the goal.
-    let filter = MessageFilter {
-        goal_id: Some(id.clone()),
-        goal_channel_only: true,
-        ..Default::default()
-    };
-    channel::read_channel(&state, &headers, q, &id, filter).await
-}
-
-/// Send a message about the goal itself.
-#[utoipa::path(post, path = "/v1/goals/{id}/messages", tag = "goals",
-    request_body = SendMessageRequest,
-    params(("id" = String, Path, description = "goal id")),
-    responses((status = 201, body = MessageDto), (status = 403), (status = 409)))]
-pub(super) async fn post_goal_message(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<SendMessageRequest>,
-) -> ApiResult<(StatusCode, Json<MessageDto>)> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    let goal = state.store.get_goal(&id).await?;
-    let message = channel::send(&state, &ctx, &goal.id, None, req).await?;
-    state.notify_scheduler_goal(&id);
-    Ok((StatusCode::CREATED, Json(message_dto(message))))
 }
 
 #[cfg(test)]

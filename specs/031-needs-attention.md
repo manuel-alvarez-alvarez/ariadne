@@ -203,8 +203,8 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
      session's next automatic resume, until a turn actually completes and
      confirms it. That list is read fresh every time `tell_orchestrator`
      checks it, never off the `Goal` row `reconcile_goal` fetched at the
-     top of its own pass: that copy predates `keep_orchestrator`,
-     `deliver_goal_messages` and `list_tasks`, each an await long enough,
+     top of its own pass: that copy predates `keep_orchestrator` and
+     `list_tasks`, each an await long enough,
      under load, for the very turn a failure was last handed to land its
      confirmation in the meantime. A pass that answered from the stale
      copy there would read "not confirmed yet", find the now-idle session
@@ -460,7 +460,7 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     item for a live session whose work is active and whose attention reason
     is a pending human permission, input, a wait for the user or an error.
     A pending human permission is an item; an automatic decision is not.
-    Idle turns and agent messages raise none. Each item targets its session
+    Idle turns raise none. Each item targets its session
     console. A permission the
     daemon raised on one of Ariadne's own MCP tools and *allowed* by itself —
     by its mode, the AI permission model or a learned rule, never at the
@@ -646,8 +646,8 @@ Proof: `crates/ariadne-cli/src/main.rs::tests::dismisses_a_quota_item_whose_mode
 - The route answers an empty, complete list when nothing is stuck, and is
   in the API document under the `attention` tag
   (`attention.rs::an_empty_daemon_answers_an_empty_complete_list`).
-- Agent messages and idle turns raise no item
-  (`attention.rs::agent_messages_and_idle_turns_raise_no_attention_item`).
+- Idle turns raise no item
+  (`attention.rs::an_idle_turn_raises_no_attention_item`).
 - A live session that reported an error is one item on its console
   (`attention.rs::an_agent_error_is_one_item_for_its_console`).
 - A permission on an Ariadne tool allowed by the daemon itself leaves no

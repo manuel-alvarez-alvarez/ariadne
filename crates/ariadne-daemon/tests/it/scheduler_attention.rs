@@ -298,23 +298,6 @@ impl World {
             .id
     }
 
-    /// The agent asks the orchestrator a question about its task, as
-    /// `send_message` does. Answers the message id.
-    async fn ask_the_orchestrator(&self, session: &AgentSession) -> String {
-        let task = session.task_id.as_deref().expect("a task agent");
-        let sent: serde_json::Value = self
-            .json(
-                common::as_session(
-                    &format!("/v1/tasks/{task}/messages"),
-                    &session.id,
-                    serde_json::json!({"to_actor": "orchestrator", "body": "Can I retry the push?"}),
-                ),
-                axum::http::StatusCode::CREATED,
-            )
-            .await;
-        sent["id"].as_str().expect("a message id").to_string()
-    }
-
     /// The scheduler, started over everything seeded so far. Its first tick is
     /// immediate, so a test that only needs the sweep need send nothing.
     fn scheduler(&self) -> Sched {
@@ -2159,84 +2142,6 @@ async fn a_retried_task_gets_its_relaunches_back() {
     );
 }
 
-/// An agent that asked the orchestrator something and ended its turn waits on
-/// the answer. While its question has not reached the orchestrator, the
-/// silence is not its own: it is not nudged, flagged or relaunched. Once the
-/// question is delivered, the clock counts from the delivery.
-#[tokio::test]
-async fn an_idle_agent_whose_question_has_not_reached_the_orchestrator_is_left_alone() {
-    let w = World::active().await;
-    let asked = w.agent_on(&w.task, TaskStatus::InProgress).await;
-    w.make_resumable(&w.task, &asked).await;
-    w.ask_the_orchestrator(&asked).await;
-    w.idle_for(&asked, RELAUNCH_SECS + 60).await;
-    // A second agent, as silent, whose question reached the orchestrator a
-    // minute ago: a minute is not long enough to nudge it.
-    let answered_task = w.extra_task("delivered").await;
-    let delivered = w.agent_on(&answered_task, TaskStatus::InProgress).await;
-    w.make_resumable(&answered_task, &delivered).await;
-    let message = w.ask_the_orchestrator(&delivered).await;
-    w.delivered_ago(&message, 60).await;
-    w.idle_for(&delivered, RELAUNCH_SECS + 60).await;
-    // A third, as silent, that asked nothing: its relaunch says the pass
-    // over the other two is over.
-    let control_task = w.extra_task("control").await;
-    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
-    w.make_resumable(&control_task, &control).await;
-    w.idle_for(&control, RELAUNCH_SECS + 60).await;
-    let launched = [
-        w.launched_at(&asked).await,
-        w.launched_at(&delivered).await,
-        w.launched_at(&control).await,
-    ];
-
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    sched.task(&answered_task);
-    sched.task(&control_task);
-    eventually(
-        TIMEOUT,
-        "the agent that asked nothing to be relaunched",
-        async || w.relaunched(&control, &launched[2]).await,
-    )
-    .await;
-    for (session, launched) in [(&asked, &launched[0]), (&delivered, &launched[1])] {
-        assert_eq!(
-            w.prompts_to(session).len(),
-            0,
-            "an agent waiting on the orchestrator is not nudged"
-        );
-        assert_eq!(w.attention(session).await, None, "nor flagged stalled");
-        assert_eq!(
-            &w.launched_at(session).await,
-            launched,
-            "nor killed while its question waits"
-        );
-    }
-}
-
-/// Once the orchestrator has the question, the clock counts from the
-/// delivery, and a silence long past it is the agent's own again.
-#[tokio::test]
-async fn an_agent_silent_long_after_its_question_was_delivered_is_relaunched() {
-    let w = World::active().await;
-    let asked = w.agent_on(&w.task, TaskStatus::InProgress).await;
-    w.make_resumable(&w.task, &asked).await;
-    let message = w.ask_the_orchestrator(&asked).await;
-    w.delivered_ago(&message, RELAUNCH_SECS + 60).await;
-    w.idle_for(&asked, RELAUNCH_SECS + 60).await;
-    let launched = w.launched_at(&asked).await;
-
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    eventually(
-        TIMEOUT,
-        "the agent silent since the delivery to be relaunched",
-        async || w.relaunched(&asked, &launched).await,
-    )
-    .await;
-}
-
 impl World {
     /// Wedge the task's agent until the watchdog fails the task: two
     /// relaunches out of the budget of three, each wedging again, and then
@@ -3952,7 +3857,7 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
 }
 
 /// `reconcile_goal` fetches the goal once, at the top, and carries that copy
-/// through `keep_orchestrator`, `deliver_goal_messages` and `list_tasks`
+/// through `keep_orchestrator` and `list_tasks`
 /// before `tell_orchestrator` ever reads it: a pass that started before a
 /// failure's turn confirmed, and only reaches that read afterward, used to
 /// answer from the stale copy — "not confirmed yet" — and find the now-idle

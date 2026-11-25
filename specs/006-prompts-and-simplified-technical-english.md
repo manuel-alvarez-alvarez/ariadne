@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-11-17
+updated: 2026-11-25
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -18,7 +18,7 @@ tests:
   - crates/ariadne-daemon/src/scheduler/tasks.rs
   - crates/ariadne-daemon/src/launcher.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
-  - crates/ariadne-daemon/tests/it/agent_messages.rs
+  - crates/ariadne-daemon/tests/it/posts.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
@@ -68,7 +68,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    - the **lifecycle briefing**, which carries the values of one goal, task
      or column and whatever is only true of this moment: the column's
      instructions and the summary of the column before it (030), who sent a
-     relayed message, the task it names and where to answer it (018).
+     post, the task it names and where to answer it (039).
 2. A turn carries its own text alone, except the first turn of a launch and
    the first turn after a model switch: those carry the system prompt ahead
    of their own text. A session switch and a relaunch are new launches, so
@@ -183,7 +183,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    an agent any more — every text is the code's — so the check runs over the
    defaults rather than at a save. The kinds are the orchestrator's briefing,
    resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
-   `AgentResume` (`ariadne_core::PromptKind`). `AgentResume`, the quiet nudge
+   `AgentResume` (`ariadne_core::PromptKind`). `IncomingMessage` tags the
+   prompt of a post (039). A post writes its own text, so no builder
+   renders that kind's template. `AgentResume`, the quiet nudge
    of a column's agent (009), says four things only: this is not a new
    request, to check whether the work is done, to make the call that ends
    the column or go on, and to write no reply about the nudge itself.
@@ -265,7 +267,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     URL, head and base branch names, head sha and reviewed sha, a
     comment's id, author, path and first line, a failed check's name,
     conclusion and URL, the rolled-up checks, the review decision and the
-    state a news line reports, an agent message's body, and a step's
+    state a news line reports, a post's body, and a step's
     return reason or completion summary. One line is the exception: an
     issue goal's `Closes <url>` instruction carries the raw URL, never
     fenced, since GitHub only closes the issue on that exact text; the
@@ -275,7 +277,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     fenced, since they are the user's own words — unless the goal came
     from an issue, where rule 18 already fences them as the forge's own
     text. A task's title and description are plain the same way,
-    wherever a briefing, a message or a nudge names
+    wherever a briefing, a post or a nudge names
     the task: whoever opens a task is Ariadne's own user or orchestrator,
     never a third party. The orchestrator's own brief for a column's
     agent (`TaskAgent.brief`) is plain too — the orchestrator plans
@@ -472,11 +474,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   the orchestrator's own first briefing does
   (`prompts.rs::an_issue_goals_title_stays_fenced_everywhere_it_is_named`,
   `::a_user_typed_goals_title_stays_plain_everywhere_it_is_named`).
-  A task's title and description reach a briefing, a nudge or a relayed
-  message plain, never fenced, proved through the
+  A task's title and description reach a briefing, a nudge or a post
+  plain, never fenced, proved through the
   daemon's own rendering, not a hand-built string
-  (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`,
-  `::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`,
+  (`posts.rs::a_post_reaches_the_live_session_as_a_prompt_and_writes_no_row`,
   `prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`,
   `::a_return_and_a_nudge_assemble_word_for_word`,
   `scheduler_attention.rs::an_agent_up_and_never_prompted_is_nudged`,

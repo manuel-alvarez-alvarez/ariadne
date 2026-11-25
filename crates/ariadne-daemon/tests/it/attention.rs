@@ -13,27 +13,12 @@ use crate::common::test_pin;
 use crate::common::{Harness, RUNS_OUT, TIMEOUT, as_session, eventually, harness, with_forge};
 
 #[tokio::test]
-async fn agent_messages_and_idle_turns_raise_no_attention_item() {
+async fn an_idle_turn_raises_no_attention_item() {
     let h = harness().await;
     let cast = h.active_cast().await;
     h.advance(&cast.task, TaskStatus::InProgress).await;
-    let sender = h.agent_session(&cast, "review").await;
     let receiver = h.agent_session(&cast, "develop").await;
 
-    let _: serde_json::Value = h
-        .json(
-            as_session(
-                &format!("/v1/tasks/{}/messages", cast.task.id),
-                &sender.id,
-                serde_json::json!({
-                    "to_actor": "agent",
-                    "to_agent_id": cast.develop().id,
-                    "body": "Please check the current branch.",
-                }),
-            ),
-            axum::http::StatusCode::CREATED,
-        )
-        .await;
     h.ingest(&receiver, "session_end", serde_json::json!({}))
         .await;
 

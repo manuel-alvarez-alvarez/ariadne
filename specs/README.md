@@ -29,7 +29,7 @@ test that proves it. Conventions for writing and changing one are in
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, reusable workload views, its conversation workspace, and CLI parity, remote task inspection and host identity |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, Dependabot, CI build caches, the migration policy |
 | 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and the agent of each column; eleven skills and one document template |
-| 018 | [Agent messages](018-agent-messages.md) | agent messages, turn delivery, and relay between hosts |
+| 018 | [Agent messages](018-agent-messages.md) | superseded by 039: agents post to each other's live sessions, and no message is stored |
 | 021 | [ACP runtime](021-acp-runtime.md) | ACP agents in direct children or relay panes: selection, protocol, events, kill |
 | 022 | [The `ai` permission mode](022-ai-permission-mode.md) | the fourth mode, the AI permission model's settings and prompts, the Python check and the install |
 | 023 | [Stats](023-stats.md) | superseded by 035 |

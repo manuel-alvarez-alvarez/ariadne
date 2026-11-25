@@ -15,7 +15,6 @@ mod acp_discovery;
 mod acp_runtime;
 mod acp_terminal;
 mod adapters;
-mod agent_messages;
 mod agents;
 mod ai_permissions;
 mod ai_permissions_decisions;

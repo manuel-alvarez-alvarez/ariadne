@@ -122,11 +122,6 @@ export function dispatchDomainEvent(
       void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(host, event.data.task_id) })
       break
     }
-    case "message_sent": {
-      // No view reads a message any more. The kind stays only while the
-      // generated types still list it.
-      break
-    }
     case "session_created": {
       queryClient.setQueryData(qk.sessions.detail(host, event.data.id), event.data)
       patchSessionLists(queryClient, host, event.data)

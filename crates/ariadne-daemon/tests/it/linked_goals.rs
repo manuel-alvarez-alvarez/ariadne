@@ -12,8 +12,8 @@ use ariadne_core::{GoalStatus, TaskStatus};
 use ariadne_daemon::timeouts::Timeouts;
 
 use crate::common::{
-    Harness, TIMEOUT, as_session, eventually_some, get, harness, next_sse_message, parse_sse,
-    patch_json, post_json, sh, test_pin, with_forge_enabled,
+    Harness, TIMEOUT, eventually_some, get, harness, patch_json, post_json, sh, test_pin,
+    with_forge_enabled,
 };
 
 const ORIGIN: &str = "01arz3ndektsv4rrffq69g5fav";
@@ -209,57 +209,6 @@ async fn a_linked_task_compares_its_work_against_the_fetched_remote_base() {
     let diff = String::from_utf8(body).unwrap();
     assert!(diff.contains("+++ b/mine.txt"), "{diff}");
     assert_eq!(diff.matches("+++ b/").count(), 1, "{diff}");
-}
-
-#[tokio::test]
-async fn a_linked_agents_message_to_its_orchestrator_is_stored_and_published() {
-    let h = harness().scheduler().await;
-    let repo = h.repository(&h.git_repo("repo")).await;
-    with_forge_enabled(&h, &repo, false).await;
-    let goal = create_goal(&h, &repo.id, true).await;
-    let task = running_task(&h, &post_task(&h, &goal).await).await;
-    let session = task
-        .agents
-        .iter()
-        .find_map(|a| a.session_id.as_deref())
-        .unwrap();
-    let mut stream = h
-        .stream(get(&format!("/v1/events/stream?goal={}", goal_id(&goal))))
-        .await;
-    let uri = format!("/v1/tasks/{}/messages", task.id);
-    let sent: Value = h
-        .json(
-            as_session(
-                &uri,
-                session,
-                json!({"to_actor": "orchestrator", "body": "Which branch?"}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    assert_eq!(sent["from_session"], session);
-    assert_eq!(sent["to_actor"], "orchestrator");
-    assert_eq!(sent.get("delivered_at"), Some(&Value::Null));
-    let stored: Vec<Value> = h.get(&uri).await;
-    assert_eq!(stored, vec![sent.clone()]);
-    let published = tokio::time::timeout(TIMEOUT, async {
-        loop {
-            let (kind, payload) = parse_sse(&next_sse_message(&mut stream).await);
-            if kind == "message_sent" {
-                break payload;
-            }
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(published, sent);
-
-    h.flush_scheduler().await;
-    let page: SessionPageDto = h
-        .get(&format!("/v1/sessions?goal={}&all=true", goal_id(&goal)))
-        .await;
-    assert_eq!(page.total, 1);
-    assert_eq!(page.sessions[0].id, session);
 }
 
 #[tokio::test]

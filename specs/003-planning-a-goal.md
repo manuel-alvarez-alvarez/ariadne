@@ -150,9 +150,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     nothing left to do. Once per situation, as a prompt of its own. Work in
     progress is what the orchestrator delegated, and it is not woken for
     that.
-14. It is also open to the agents themselves. Any of them can write to it
-    about anything it needs to know, and the message arrives as a turn
-    (018). It acts on what it is told or sends a message back.
+14. It is also open to the agents themselves. Any of them can post to it
+    about anything it needs to know, and the post arrives as a turn
+    (039). It acts on what it is told or posts back.
 15. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
     `update_task`, `switch_session` (013) or nothing at all. For each failed
     task it retries, rewrites or cancels. A retry of a task with a column

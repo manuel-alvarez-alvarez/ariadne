@@ -428,7 +428,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
    `revision` describes draft freshness. `authorized_revision` retains the exact source authorization through retries.
    Existing task fields retain their meanings. Remote `goal_id` names the source goal.
    Existing task timestamps and events expose subsequent execution changes.
-   Reads, transitions, messages, usage, sessions, and diffs require no worker goal.
+   Reads, transitions, usage, sessions, and diffs require no worker goal.
 
 5. `RemoteTaskProtocol.capabilities` advertises `source-dependency-controls-v1` for both source dependency operations.
    New source creation requires this capability. Older `remote-tasks-v1` workers without it require an upgrade.
@@ -465,7 +465,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 
 
 - `remote_tasks.rs::the_remote_protocol_and_context_are_in_the_published_schema` proves the additive API contract.
-  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves task reads, history, messages, usage, and diffs.
+  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves task reads, history, usage, and diffs.
 
 
 - `POST /v1/sessions/{id}/switch` is in the OpenAPI document with

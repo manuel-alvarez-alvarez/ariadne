@@ -91,19 +91,6 @@ async fn authorization_starts_one_saved_workflow_without_a_source_connection() {
     let observed: Value = h.get(&format!("/v1/sessions/{session}")).await;
     assert_eq!(observed["task_id"], TASK);
     assert_eq!(observed["goal_id"], GOAL);
-    h.json::<Value>(as_session(&format!("/v1/tasks/{TASK}/messages"), session,
-        json!({"to_actor":"orchestrator", "body":"Source is unavailable; retain this question."})), StatusCode::CREATED).await;
-    h.flush_scheduler().await;
-    let messages: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/messages")).await;
-    assert_eq!(messages.len(), 1);
-    assert!(messages[0]["delivered_at"].is_null());
-    for _ in 0..2 {
-        h.json::<Value>(post_json(&format!("/v1/tasks/{TASK}/relay-message"), json!({
-            "id":"source-message", "origin_task_id":TASK, "column":"develop", "body":"The source reconnected."
-        })), StatusCode::OK).await;
-    }
-    let reconnected: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/messages")).await;
-    assert_eq!(reconnected.len(), 2);
     h.store
         .upsert_session_usage(
             session,

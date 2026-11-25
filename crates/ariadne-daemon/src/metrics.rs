@@ -243,18 +243,6 @@ pub fn record_switch(
     );
 }
 
-/// Record one stored message, by its kind and the actors at its two ends.
-pub fn record_message(kind: &str, from_actor: &str, to_actor: &str) {
-    counter("ariadne.messages").add(
-        1,
-        &[
-            kv("kind", kind),
-            kv("from_actor", from_actor),
-            kv("to_actor", to_actor),
-        ],
-    );
-}
-
 /// Record a permission answer and how long the agent waited for it.
 pub fn record_permission(decided_by: &str, answer: &str, tool_name: &str, waited: f64) {
     counter("ariadne.permissions").add(
