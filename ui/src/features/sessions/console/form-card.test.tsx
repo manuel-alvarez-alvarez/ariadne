@@ -125,34 +125,24 @@ function renderConsole(snapshot: AgentEventDto[]) {
 
 const card = () => screen.getByRole("region", { name: "Agent question" })
 
-it("draws the message, each field and each choice with its description as written", () => {
+it("draws one question at a time with large choice rows", () => {
   renderConsole([asked()])
-
   const form = within(card())
-  form.getByText("Which database should I use?")
-  const database = form.getByRole("group", { name: /Database/ })
-  within(database).getByRole("radio", { name: /Postgres/ })
-  within(database).getByText("The server one")
-  within(database).getByRole("radio", { name: /SQLite/ })
-  within(form.getByRole("group", { name: /Extras/ })).getAllByRole("checkbox")
-  form.getByRole("textbox", { name: /Note/ })
-  expect(
-    card().compareDocumentPosition(screen.getByRole("textbox", { name: "Message the agent" })) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy()
+  form.getByText("1 of 3")
+  form.getByRole("button", { name: /Postgres/ })
+  form.getByText("The server one")
+  expect(form.queryByRole("textbox", { name: /Note/ })).toBeNull()
 })
 
 it("sends the answers as accept with the content of the form", async () => {
   renderConsole([asked()])
   const form = within(card())
-
-  expect((form.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true)
-  fireEvent.click(form.getByRole("radio", { name: /SQLite/ }))
-  fireEvent.click(form.getByRole("checkbox", { name: "CI" }))
-  fireEvent.click(form.getByRole("checkbox", { name: "Docs" }))
+  fireEvent.click(form.getByRole("button", { name: /SQLite/ }))
+  fireEvent.click(form.getByRole("checkbox", { name: /CI/ }))
+  fireEvent.click(form.getByRole("checkbox", { name: /Docs/ }))
+  fireEvent.click(form.getByRole("button", { name: "Next" }))
   fireEvent.change(form.getByRole("textbox", { name: /Note/ }), { target: { value: "soon" } })
   fireEvent.click(form.getByRole("button", { name: "Send" }))
-
   await waitFor(() =>
     expect(posts).toEqual([
       {
@@ -161,7 +151,6 @@ it("sends the answers as accept with the content of the form", async () => {
       },
     ]),
   )
-  await screen.findByText(/Answer sent/)
 })
 
 it("sends decline when the user dismisses the question", async () => {
@@ -175,8 +164,9 @@ it("sends decline when the user dismisses the question", async () => {
 it("shows a failed answer on the card and lets the user try again", async () => {
   reply = () => errorResponse(409, "question_closed", "question Q1 is closed")
   renderConsole([asked()])
-  fireEvent.click(within(card()).getByRole("radio", { name: /Postgres/ }))
-  fireEvent.click(within(card()).getByRole("button", { name: "Send" }))
+  fireEvent.click(within(card()).getByRole("button", { name: /Postgres/ }))
+  fireEvent.click(within(card()).getByRole("button", { name: "Skip" }))
+  fireEvent.click(within(card()).getByRole("button", { name: "Skip" }))
 
   await within(card()).findByRole("alert")
   expect((within(card()).getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(
@@ -216,19 +206,16 @@ function cardMarks() {
   }
 }
 
-it("marks an open and a closed question with one purple icon, never folds it, and lets it grow", () => {
+it("marks an open and a closed question with one purple icon, folds only closed cards, and lets it grow", () => {
   const unmarked = { purpleIcons: 1, leftBorders: 0, folds: 0, scrollAreas: 0 }
   const source = renderConsole([asked()])
   expect(cardMarks()).toEqual(unmarked)
-  expect(within(card()).getByText("Which database should I use?").className).toContain(
-    "whitespace-pre-wrap",
-  )
 
   act(() =>
     source.emit("event", event("question.resolved", { question_id: "Q1", action: "decline" })),
   )
   expect(card().textContent).toContain("Dismissed")
-  expect(cardMarks()).toEqual(unmarked)
+  expect(cardMarks()).toEqual({ ...unmarked, folds: 1 })
 })
 
 it("shows a dismissed question closed", () => {
@@ -287,7 +274,7 @@ it("keeps a question restored from the list, with its answer, when it closes and
   act(() => source.emit("snapshot", [resolved]))
 
   await waitFor(() => expect(card().textContent).toContain("Database → SQLite"))
-  expect(card().textContent).toContain("An older question")
+  expect(card().textContent).toContain("Database → SQLite")
 })
 
 it("draws a question closed as closed, not waiting, when a reconnect omits it and its close", async () => {
@@ -332,7 +319,7 @@ it("draws a close whose question is in an older page with the question's own lab
     }),
   ])
 
-  await screen.findByText("From the older page")
+  await waitFor(() => expect(card().textContent).toContain("Database → SQLite"))
   expect(card().textContent).toContain("Database → SQLite")
 })
 
@@ -450,4 +437,13 @@ it("keeps a closed question a snapshot carried when a newer snapshot omits it", 
   act(() => source.emit("snapshot", [event("agent_message", { text: "newest page" })]))
 
   await waitFor(() => expect(card().textContent).toContain("Database → Postgres"))
+})
+
+it("keeps composer number and Enter keys outside the question shortcuts", () => {
+  renderConsole([asked()])
+  const composer = screen.getByRole("textbox", { name: "Message the agent" })
+  fireEvent.focus(composer)
+  fireEvent.keyDown(composer, { key: "2" })
+  expect(within(card()).getByText("1 of 3")).toBeTruthy()
+  expect(posts).toEqual([])
 })

@@ -12,7 +12,7 @@
 import { type AgentEventDto, api, type Host, type QuestionDto, unwrap } from "@/api"
 
 /** One choice of a field: the value the answer carries, and the text the agent wrote for it. */
-export interface FormChoice {
+interface FormChoice {
   value: string | number | boolean
   title: string
   description?: string
@@ -25,7 +25,7 @@ type FieldKind =
   | { type: "number"; integer: boolean }
 
 /** One field of a form, read off its `requestedSchema`. */
-export interface FormField {
+interface FormField {
   /** The property name, which the answer's content is keyed by. */
   key: string
   /** The field's `title`, else its key. */
@@ -337,4 +337,30 @@ export function formContent(
     content[field.key] = given
   }
   return { content }
+}
+
+/** A choice and its following Other field form one question. */
+export function questionSteps(fields: readonly FormField[]) {
+  return fields.flatMap((field, index) => {
+    const previous = fields[index - 1]
+    if (
+      previous &&
+      (previous.kind.type === "single" || previous.kind.type === "multi") &&
+      field.key === `${previous.key}_custom` &&
+      field.kind.type === "text"
+    )
+      return []
+    const next = fields[index + 1]
+    const custom =
+      (field.kind.type === "single" || field.kind.type === "multi") &&
+      next?.key === `${field.key}_custom` &&
+      next.kind.type === "text"
+        ? next
+        : undefined
+    return [{ field, custom }]
+  })
+}
+
+export function choiceLabel(title: string) {
+  return title.replace(/\s*\(recommended\)$/i, "")
 }

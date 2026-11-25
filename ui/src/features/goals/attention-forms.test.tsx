@@ -85,3 +85,27 @@ it("opens the console of the session for a form it does not answer in place", as
   expect(link.getAttribute("href")).toContain("session=S1")
   expect(screen.queryByRole("region", { name: "Agent question" })).toBeNull()
 })
+
+it("answers one Claude question with its companion and Recommended badge in place", async () => {
+  const seen = open({
+    type: "object",
+    properties: {
+      question_0: {
+        type: "string",
+        title: "Database",
+        oneOf: [choice("Postgres (Recommended)", "Postgres (Recommended)")],
+      },
+      question_0_custom: { type: "string", title: "Other" },
+    },
+  })
+  fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
+  const form = await screen.findByRole("region", { name: "Agent question" })
+  within(form).getByText("Recommended")
+  expect(form.textContent).not.toContain("(Recommended)")
+  fireEvent.click(within(form).getByRole("button", { name: /Postgres/ }))
+  await waitFor(() =>
+    expect(seen.find((r) => r.method === "POST")?.body).toBe(
+      JSON.stringify({ action: "accept", content: { question_0: "Postgres (Recommended)" } }),
+    ),
+  )
+})

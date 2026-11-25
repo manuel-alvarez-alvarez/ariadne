@@ -431,20 +431,34 @@ Out: the daemon endpoints themselves (012).
     `GET /v1/sessions/{id}/questions` with every snapshot, a reconnect's
     included, to draw an open question older than the snapshot's page. In
     `main` each card draws after the transcript, directly above the composer.
-    It shows the agent's message as written, each field of the form with its
-    title and description, and each choice with its label and description as
-    the schema gives them. A single choice (and a boolean) is a radio group,
-    several choices a checkbox group, free text and a number an input, and
-    one form may hold several fields. Send is off until each required field
-    holds an answer, and posts `{"action":"accept","content":{...}}` with the
-    fields the user filled to
-    `POST /v1/sessions/{id}/questions/{question_id}/answer`. Dismiss posts
-    `{"action":"decline"}`. A failed post shows its error on the card, which
-    stays answerable; an accepted one shows `Answer sent` until the
-    `question.resolved` event closes the card. A closed card shows each answer
-    under its field's title, or `Dismissed`, `Cancelled`, `Withdrawn by the
-    agent` or `Closed: the session ended`. A live stream, a reload, a
-    reconnect and a history replay draw the same closed card, with the same
+    Each question occupies one step, in the console body font and size.
+    The header shows its title or "Question", clock time, and position for multiple questions.
+    Question tabs mark answered questions and allow navigation.
+    Markdown draws the message for one question and the field description for several.
+    Large numbered choice rows show titles and descriptions.
+    A case-insensitive "(Recommended)" title suffix becomes a Recommended badge.
+    A single pick advances, or sends immediately on the last step.
+    Multi-select check rows use Next, or Send on the last step.
+    An Other companion is a string field without choices, directly after its choice field,
+    named `<choice key>_custom`. Claude emits `question_N` and `question_N_custom`;
+    Codex and OpenCode emit no companion. A choice and its companion form one question.
+    The companion appears as "Type your own answer…". Enter confirms typed text.
+    A free-text question has one input. Other fields, including numbers, each occupy one step.
+    Picks remain in `content[key]`; typed text remains in `content[key_custom]`.
+    A custom single-select answer without a pick sends only `content[key_custom]`.
+    Skip omits the question and its companion. Dismiss posts `{"action":"decline"}`.
+    Accept posts `{"action":"accept","content":{...}}` to
+    `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+    The card takes focus when opened. Scoped keys 1–9 select rows, arrows move focus,
+    Enter confirms, and Back returns. Composer keys remain with the composer.
+    A failed post displays its error and allows another attempt.
+    A closed card folds to one line per question: "<field title, else message> → <answer>".
+    Custom text merges into that question, without raw companion keys.
+    Dismissed, withdrawn, cancelled, and session-closed cards show one status line.
+    Clicking the summary opens the full card read-only, with picks marked.
+    An attention-strip form with one single-select question, including its companion,
+    answers in place with one click and displays the Recommended badge.
+    Other forms open the console. A live stream, reload, reconnect and replay show the same
     answer: the console reads the close and the form from the history, and
     loads older pages until it finds what a card lacks, and the card waits for
     that rather than draw keys or no answer. Only a question the history holds
@@ -508,7 +522,7 @@ Out: the daemon endpoints themselves (012).
     Labels and icon shapes distinguish roles without color alone.
     Developer prompts have no individual
     fold control or saved fold preference. Thoughts retain individual folds.
-    Questions (rule 22f) use a purple marker and subtle background, open or closed, and never fold.
+    Questions (rule 22f) use a purple marker and subtle background. Open cards never fold; closed cards show clickable summaries.
     Entries have no colored left borders. Secondary icons share the same horizontal inset and align with the first text line.
     Thought summaries have no additional padding inside their activity row.
     Conversation messages have 12px separation; activity rows use 4px gaps and compact padding.
@@ -2195,7 +2209,7 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/composer.test.tsx::sends the composer's text to the console input route, with an old agent request in view`).
 - A form question draws its message, fields and choices as written, in every
   field kind (rule 22f)
-  (`ui/src/features/sessions/console/form-card.test.tsx::draws the message, each field and each choice with its description as written`,
+  (`ui/src/features/sessions/console/form-card.test.tsx::draws one question at a time with large choice rows`,
   `ui/src/features/sessions/console/form-questions.test.ts::reads each field of the schema with its choices as the agent wrote them`).
 - A form question is sent as accept with its content, or dismissed as decline,
   on its own route (rule 22f)
@@ -2413,9 +2427,9 @@ Out: the daemon endpoints themselves (012).
   `ui/src/features/sessions/console/session-console.test.tsx::takes back only the failed send when the same prompt is sent twice at once`,
   `::leaves nothing queued when the echo of the second send comes before the first send's failure`).
 - Open and closed questions have one purple question icon, no left border
-  and no fold, and grow with their content with no scroll area of their own
+  and fold only when closed, and grow without a scroll area of their own
   (rules 23a and 23a1)
-  (`ui/src/features/sessions/console/form-card.test.tsx::marks an open and a closed question with one purple icon, never folds it, and lets it grow`).
+  (`ui/src/features/sessions/console/form-card.test.tsx::marks an open and a closed question with one purple icon, folds only closed cards, and lets it grow`).
 - Role labels and tool status icons identify messages and activity
   (`ui/src/features/sessions/console/session-console.test.tsx::identifies prompts and tool states without left borders`).
 - The status row follows the input and replaces the keyboard-hint footer
@@ -2795,6 +2809,27 @@ Out: the daemon endpoints themselves (012).
   `::warns in the goal dialog of a host whose sync is failed, and still creates`,
   `::warns in the goal dialog of a host whose sync is pending, and still creates`,
   `::names the host in the toast of a goal created on a named host, and offers all hosts when the pick leaves it out`).
+
+
+Stepper acceptance for rule 22f:
+- Body typography, Markdown, header, recommendation, progress, companion grouping and pick advancement:
+  `ui/src/features/sessions/console/form-stepper.test.tsx::groups Claude companions and advances a single pick before sending multiple picks`.
+- Custom answers and Skip omit unselected content:
+  `ui/src/features/sessions/console/form-stepper.test.tsx::sends only custom text and skips without content`.
+- Single-question message and immediate submission:
+  `ui/src/features/sessions/console/form-stepper.test.tsx::uses the message for one question and sends its choice immediately`.
+- Keyboard focus, arrows, numbered Other row and Back:
+  `ui/src/features/sessions/console/form-stepper.test.tsx::moves between rows and returns to the previous question`.
+- Composer keys stay outside the card shortcuts:
+  `ui/src/features/sessions/console/form-card.test.tsx::keeps composer number and Enter keys outside the question shortcuts`.
+- Dismissed cards open read-only:
+  `ui/src/features/sessions/console/form-stepper.test.tsx::keeps a dismissed card to one status and opens its full form read-only`.
+- Number validation and submission:
+  `ui/src/features/sessions/console/form-stepper.test.tsx::validates a number step and keeps shortcuts inside the card`.
+- Summary expansion and marked read-only picks:
+  `ui/src/features/sessions/console/form-stepper.test.tsx::opens an answered summary read-only with its picks marked`.
+- Attention-strip companions and recommendation:
+  `ui/src/features/goals/attention-forms.test.tsx::answers one Claude question with its companion and Recommended badge in place`.
 
 ## Known gap
 
