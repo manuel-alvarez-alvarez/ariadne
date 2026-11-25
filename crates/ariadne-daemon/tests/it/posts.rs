@@ -155,6 +155,9 @@ async fn a_post_that_cannot_land_is_refused_with_the_reason() {
     );
     assert!(message.contains("No address works now"), "{message}");
 
+    let message = refusal(&h, &uri, &author.id, "develop").await;
+    assert!(message.contains("your own session"), "{message}");
+
     let other_goal = h.goal_on(&cast.repo, common::test_pin()).await;
     let stranger = h.orchestrator_session(&other_goal).await;
     let message = refusal(&h, &uri, &stranger.id, "develop").await;

@@ -108,6 +108,11 @@ pub(super) async fn post_to_session(
                 agent.step
             )));
         }
+        if sender.task_agent_id.as_deref() == Some(agent.id.as_str()) {
+            return Err(ApiError::bad_request(format!(
+                "you cannot post to your own session. {working}"
+            )));
+        }
         current.map(|c| c.1).ok_or_else(|| {
             ApiError::bad_request(format!(
                 "the {} agent has no live session. {working}",

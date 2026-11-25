@@ -54,7 +54,8 @@ host, and the session rules, prompts and skills.
     live, and it says so where none works, never an address that cannot receive. Each refusal
     is a bad request, and the tool returns it as bad parameters with the
     sentence of the daemon (013 rule 7).
-11. The tool description permits a question, an answer or a blocker report
+11. The daemon refuses a post to the own session of the sender, and says so.
+12. The tool description permits a question, an answer or a blocker report
     only. It tells the sender to end its turn after a question, because the
     answer arrives as a new turn.
 
@@ -74,8 +75,8 @@ host, and the session rules, prompts and skills.
 - The orchestrator sends and receives a post
   (`posts.rs::the_orchestrator_posts_and_is_posted_to`).
 - A post to a column that is not current, to a column the task does not
-  staff, to a task of another goal, and to a recipient with no live session
-  is refused with its reason
+  staff, to a task of another goal, to a recipient with no live session and
+  to the own session of the sender is refused with its reason
   (`posts.rs::a_post_that_cannot_land_is_refused_with_the_reason`,
   `::a_post_to_a_column_without_a_live_session_names_the_address_that_works`,
   `::a_post_to_an_orchestrator_without_a_live_session_names_the_address_that_works`).
