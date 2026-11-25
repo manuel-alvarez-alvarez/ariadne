@@ -208,12 +208,8 @@ moves a task through (001), and the wording of the text a message arrives in
   (`agent_messages.rs::a_delivering_read_is_refused_a_channel_of_another_goal`).
 - A goal's channel holds none of what its tasks said
   (`agent_messages.rs::a_goals_channel_holds_none_of_what_its_tasks_said`).
-- A message names the column it is for
-  (`tools.rs::a_message_names_the_column_it_is_for`),
-  the orchestrator is addressed by name
-  (`::the_orchestrator_is_addressed_by_name_and_needs_no_agent_id`), and a
-  message to nobody is refused with the addresses that would work
-  (`::a_message_to_nobody_is_refused_with_the_addresses_that_would_work`).
+- No MCP tool addresses a message: the column and orchestrator addresses are
+  `post_to_session`'s (039).
 - An agent's message to the orchestrator of a linked goal is stored and published.
   The linked goal keeps only the task's agent session
   (`linked_goals.rs::a_linked_agents_message_to_its_orchestrator_is_stored_and_published`).
