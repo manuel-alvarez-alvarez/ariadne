@@ -1,7 +1,6 @@
 /**
  * The questions an agent asks with its own tool, an ACP `elicitation/create`
- * in form mode (021): what the console reads of them, apart from the
- * `wait_for_user` cards of `questions.tsx`.
+ * in form mode (021): what the console reads of them.
  *
  * A question reaches the console twice. The `question` and `question.resolved`
  * events of the stream carry it and its close, so a replay draws the same

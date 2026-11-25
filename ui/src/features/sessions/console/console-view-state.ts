@@ -21,8 +21,6 @@ import type { Host } from "@/api"
 export type FailedSend = {
   id: string
   text: string
-  /** The question it answered; none for a message to the console. */
-  requestId: string | undefined
   message: string
 }
 

@@ -2,8 +2,8 @@
 
 /**
  * What a streamed chunk draws again in the console: only the block it
- * changes, never a question card or a permission picker beside it, while a
- * change of the card or the picker still draws them again.
+ * changes, never a permission picker beside it, while a change of the
+ * picker still draws it again.
  */
 
 import { act, fireEvent, screen, within } from "@testing-library/react"
@@ -16,19 +16,9 @@ import { daemonFetch, renderScreen } from "@/test/harness"
 import { consoleViewKey, updateViewState } from "./console-view-state"
 import { SessionConsole } from "./session-console"
 
-const renders = vi.hoisted(() => ({ card: 0, picker: 0 }))
+const renders = vi.hoisted(() => ({ picker: 0 }))
 
-// Count the renders of a question card and a permission picker; each still draws as it does.
-vi.mock("./questions", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./questions")>()
-  return {
-    ...actual,
-    QuestionCard: (props: Parameters<typeof actual.QuestionCard>[0]) => {
-      renders.card += 1
-      return <actual.QuestionCard {...props} />
-    },
-  }
-})
+// Count the renders of a permission picker; it still draws as it does.
 vi.mock("./blocks", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./blocks")>()
   return {
@@ -80,35 +70,6 @@ function renderConsole(snapshot: AgentEventDto[]) {
 function transcript() {
   return screen.getByRole("log", { name: "Console transcript" })
 }
-
-it("draws a question card again for its own change, not for a message streamed after it", () => {
-  const source = renderConsole([
-    event("agent_request", {
-      request_id: "01RQ",
-      hint: "Pick a base",
-      question: { text: "Which base?", options: [{ id: "main", label: "Main" }] },
-    }),
-  ])
-  renders.card = 0
-
-  act(() => source.emit("event", event("agent_message_chunk", { text: "still " })))
-  act(() => source.emit("event", event("agent_message_chunk", { text: "working" })))
-  within(transcript()).getByText("still working")
-  expect(renders.card).toBe(0)
-
-  act(() =>
-    source.emit(
-      "event",
-      event("agent_request.resolved", {
-        request_id: "01RQ",
-        resolution: "answered",
-        answer: { text: "Main" },
-      }),
-    ),
-  )
-  within(transcript()).getByText("Answered · Main")
-  expect(renders.card).toBeGreaterThan(0)
-})
 
 it("draws a permission picker again for its own change, not for a message streamed after it", () => {
   const source = renderConsole([

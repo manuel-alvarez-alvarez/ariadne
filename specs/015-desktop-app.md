@@ -342,10 +342,10 @@ Out: the daemon endpoints themselves (012).
     merged across `pre_tool_use`, `tool_call_update` and `post_tool_use`,
     with its status, kind, title, output text and diff; a system note for a
     session's start and end, a cancelled or other non-`end_turn` stop,
-    compaction and an `agent_request` hint; an error, with the note of the
+    compaction; an error, with the note of the
     `session.diagnosis` whose `error_event_id` names it; and `kind · summary`
-    for a kind it does not know. A person's prompt, a developer prompt
-    and a question card's text are Markdown, drawn by `components/markdown.tsx`
+    for a kind it does not know. A person's prompt and a developer prompt
+    are Markdown, drawn by `components/markdown.tsx`
     as a message is: `h1` to `h3` in a visible scale above body text, lists
     with their nesting, task-list checkboxes, `del`, `kbd` and inline code
     styled, a single newline in a prompt still a line break, and a fenced
@@ -398,18 +398,11 @@ Out: the daemon endpoints themselves (012).
     live, and Stop is one beside it while a turn runs. Enter sends and Shift+Enter adds a
     line; an Enter that ends an input-method composition does neither, and a
     pasted text keeps its lines.
-22c. While a question card (rule 22a) waits for an answer, the composer
-    answers the newest such question, one restored from the pending list
-    included: its text posts as `{"text"}` to that
-    request's own answer route and never to the input route, and shows no
-    `queued` block, and the delivery prompt that follows draws none (rule
-    22a). The card then shows `Answer sent`, and the next message
-    goes to the input route. A permission pick and a normal message keep the
-    input route.
+22c. Text typed in the composer always posts to the input route (rule 22).
+    The composer answers no question.
 22d. A message the daemon refuses leaves the queue and stays in the
     transcript with the error, a Retry and an Edit. Retry sends the same
-    text again, to the same request where it answered a question, and leaves
-    the draft as it is. Edit takes the text back into the composer in front
+    text again and leaves the draft as it is. Edit takes the text back into the composer in front
     of any newer draft, and gives the composer the keyboard. Refused messages are
     retained with the console's state (rule 24i), so Expand, Collapse and a
     change of tab keep them, and a send that fails after the pane was
@@ -430,48 +423,11 @@ Out: the daemon endpoints themselves (012).
     the first match. A long command name or copy label is cut with an
     ellipsis, whole on hover, and the list never scrolls sideways. The menu also shows in a child's view, with the
     actions alone.
-22a. An `agent_request` event that carries a `question` (031 rule 11) is a
-    question card (`console/questions.tsx`): a header with the hint and the
-    block's clock time at its right end, as other timed blocks have
-    it, the question text, one button per option with its description, and
-    a field for a custom answer. The recommended option's button carries a
-    `recommended` badge, and the question's `recommendation_reason`, where
-    it has one, under its description; the card has no separate
-    recommendation line. A click on an option submits at once.
-    Every answer posts `{"option_id"}` or `{"text"}` to
-    `POST /v1/sessions/{id}/agent-requests/{request_id}/answer` for the
-    card's own request, never to the input route. A failed post shows its
-    error on the card, which stays answerable for another attempt; an
-    accepted one shows `Answer sent` until the request's
-    `agent_request.resolved` event closes the card as `Answered · <answer>`,
-    `Withdrawn by the agent` or `Expired`. A closed card, a card replayed
-    from history and a card of a session that is not live take no answer.
-    An answered, withdrawn or expired card folds to a summary with its hint,
-    full question text and outcome (including the selected answer); a click unfolds its text and its options. Its fold is a
-    preference kept under its block id, as every other block's (rule 24i).
-    An open card never folds.
-    The prompt that delivers the answer to the agent (a `user_prompt_submit`
-    that carries a `request_id`, 031 rule 12) draws no prompt block, and
-    `blocksText` leaves it out, so an answered question shows once, as its
-    card; the CLI attach pane still draws it. The question text is Markdown
-    (rule 21).
-    A hint-only request stays the note `waiting for you · <hint>`.
-    With every snapshot, a reconnect's included, the console reads the
-    session's pending requests (`GET /v1/sessions/{id}/agent-requests`) and
-    draws a card, after the transcript, for each pending question the
-    transcript neither shows nor has seen closed — one asked before the
-    snapshot's page — so a reload never hides it; an older page that brings
-    its line in draws it in place instead. A failed read shows its error
-    with a Retry that reads the list again.
-    In `main` of a live session an open card, a restored one included,
-    draws after every later block, directly above the composer: text, tool
-    calls, notes, queued prompts and failed sends that come after the
-    question draw above it. A card that closes draws in its own place in
-    the transcript, by its event order. A child's view and a session that
-    is not live draw every card in event order.
+22a. The console draws no card for an `agent_request` event or an
+    `agent_request.resolved` event. An old one in the history is a
+    `kind · summary` row, as every kind the console does not know (rule 21).
 22f. A question the agent asks with its own tool, an ACP form elicitation
-    (021), is a form card (`console/form-card.tsx`), apart from the
-    `wait_for_user` card of rule 22a and sharing none of its code. The
+    (021), is a form card (`console/form-card.tsx`). The
     `question` event of the console stream draws it, and the console reads
     `GET /v1/sessions/{id}/questions` with every snapshot, a reconnect's
     included, to draw an open question older than the snapshot's page. In
@@ -541,12 +497,9 @@ Out: the daemon endpoints themselves (012).
     Questions stay in the conversation. Permissions use compact selectable rows;
     their command, diff, AI note and response picker open in the same details area as tools.
     New permissions never replace the current selection automatically. The Pending request
-    control opens the pending permission and focuses its picker. For questions, it switches
-    to the question's view, closes the drawer, scrolls to the card and focuses its response.
+    control opens the pending permission and focuses its picker.
     The drawer repeats this control unless it already shows the pending permission.
     Requests from subagents keep their existing answer routes.
-    A successful Ariadne `wait_for_user` call is hidden only when its returned
-    request id matches a displayed question card; failed and unmatched calls stay visible.
     User, developer (daemon) prompts and assistant messages never fold. Role labels
     identify them at the main conversation margin. Assistant headers have a bot icon and
     a muted-token background with a faint solid inset border-token ring.
@@ -556,7 +509,6 @@ Out: the daemon endpoints themselves (012).
     Labels and icon shapes distinguish roles without color alone.
     Developer prompts have no individual
     fold control or saved fold preference. Thoughts retain individual folds.
-    Questions use a purple marker and subtle background; pending questions never fold.
     Entries have no colored left borders. Secondary icons share the same horizontal inset and align with the first text line.
     Thought summaries have no additional padding inside their activity row.
     Conversation messages have 12px separation; activity rows use 4px gaps and compact padding.
@@ -573,11 +525,10 @@ Out: the daemon endpoints themselves (012).
     `command · Shell`.
     Prompts and fold summaries show a muted `HH:MM:SS`. Tool rows show elapsed
     duration, and their details show the clock time. Blocks expose full timestamps on hover.
-    `BlockView` is memoized, and it compares a question card or a permission
+    `BlockView` is memoized, and it compares a permission
     picker by its props, so a streamed chunk re-renders only the block it
-    changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
-    pending permission and an open question never fold; a closed question folds
-    (rule 22a). Developer prompts render their full Markdown. A foldable block's
+    changes. A picker whose own state changes renders again. A message, a person's prompt, a plan and a
+    pending permission never fold. Developer prompts render their full Markdown. A foldable block's
     summary stays plain text. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
     its content sits outside the button, so selecting it, a link in it and
@@ -591,7 +542,7 @@ Out: the daemon endpoints themselves (012).
 23a1. Conversation and tool details scroll independently.
     Embedded and expanded views omit the static Conversation strip and its bottom border.
     The transcript retains role `log` and the accessible name `Console transcript`; history controls remain available. A message, a tool's
-    output, a command, a diff, a table, a thought and a question card grow
+    output, a command, a diff, a table and a thought grow
     with their content and wrap a wide line; none has an `overflow` or a
     `max-height` of its own. The composer keeps its own six-line cap.
 23a2. Code is a `CodeBlock` (`components/code-block.tsx`), in the Markdown
@@ -624,7 +575,7 @@ Out: the daemon endpoints themselves (012).
 23a4. In `main` and in the view of each subagent, each run of activity rows
     shows only its last 3 rows. An activity row is an indented row: a tool,
     permission, thought, plan, note, subagent line, error or event row. A
-    prompt, an agent message and a question card are conversation blocks and
+    prompt and an agent message are conversation blocks and
     never hide; they, the start of the view and its end bound a run. A run of
     3 rows or fewer shows all of them and no control. A longer run has, above
     its last 3 rows, a button `Show N earlier`, where N is the number of rows
@@ -1387,9 +1338,7 @@ Out: the daemon endpoints themselves (012).
     toasts read every reachable host for each host pick, and merge their items.
     Each row names its host whenever a named host is listed, under any pick;
     rule 74's no-host row under one pick does not apply to it. A toast names its item's
-    host, `local` included, whenever a named host is listed. A `wait_for_user` question is answered in the
-    row, and the answer posts to that host's
-    `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`. A form question
+    host, `local` included, whenever a named host is listed. A form question
     (rule 22f) of one single-select field is answered in the row too, with one
     button per choice that posts `accept` to that host's
     `POST /v1/sessions/{id}/questions/{question_id}/answer`; any other form is
@@ -2170,7 +2119,7 @@ Out: the daemon endpoints themselves (012).
   `::folds the agent's message and thought, and a plan with its statuses`,
   `::merges every event of one tool call into one block`,
   `::reads a tool call's diff from a patch or from its old and new text`,
-  `::notes a session's start and end, a stop other than end_turn, compaction and a request`,
+  `::notes a session's start and end, a stop other than end_turn, and compaction`,
   `::reads a diagnosis onto the error it names, and an unknown kind as its summary`,
   `::tags a subagent's block with its id and title`,
   `::keeps a block's first event id`).
@@ -2238,12 +2187,11 @@ Out: the daemon endpoints themselves (012).
   `::sends with Enter and the Send control, and keeps a newline, a composition and a paste`,
   `::offers Stop beside Send while a turn runs`,
   `::draws Send and Stop as icons without a label, on a row that never wraps`).
-- The prompt that delivers an answer draws no block (rule 22a)
-  (`ui/src/features/sessions/console/transcript.test.ts::draws no prompt block for the prompt that delivers an answer`).
-- The composer answers an open question on its request's own route (rule 22c)
-  (`ui/src/features/sessions/console/composer.test.tsx::answers an open question from the composer on that request's own route`,
-  `::answers a question restored from the requests list from the composer`,
-  `::answers the newest of a restored and a loaded question`).
+- An old `agent_request` event and its close draw no card (rule 22a)
+  (`ui/src/features/sessions/console/transcript.test.ts::draws an old agent request and its close as plain event lines, with no card`).
+- The composer posts its text to the input route, with an old agent request
+  in view (rule 22c)
+  (`ui/src/features/sessions/console/composer.test.tsx::sends the composer's text to the console input route, with an old agent request in view`).
 - A form question draws its message, fields and choices as written, in every
   field kind (rule 22f)
   (`ui/src/features/sessions/console/form-card.test.tsx::draws the message, each field and each choice with its description as written`,
@@ -2364,8 +2312,7 @@ Out: the daemon endpoints themselves (012).
   `::keeps a permission header on one line with its time, and shows the AI note`,
   `::keeps a pending permission open whatever the fold, and folds an answered one to one line`,
   `ui/src/features/sessions/console/session-console.test.tsx::keeps an answered permission compact and opens its details on selection`,
-  `ui/src/features/sessions/console/session-console-renders.test.tsx::draws a question card again for its own change, not for a message streamed after it`,
-  `::draws a permission picker again for its own change, not for a message streamed after it`).
+  `ui/src/features/sessions/console/session-console-renders.test.tsx::draws a permission picker again for its own change, not for a message streamed after it`).
 - The console retains a session's draft, individual fold preferences and place apart per daemon and
   session, and keeps one open stream while shown (rule 24i)
   (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft back after the console is unmounted`,
@@ -2404,38 +2351,12 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/session-console.test.tsx::answers a permission from its picker with the keyboard, and shows who decided`,
   `::picks a permission option with a click`,
   `::answers no permission on %s from an empty input`).
-- A prompt, a developer prompt and a question's text render as
-  Markdown, with a single newline kept and a fence a `CodeBlock` (rules 21,
-  22a and 23a)
+- A prompt and a developer prompt render as
+  Markdown, with a single newline kept and a fence a `CodeBlock` (rules 21
+  and 23a)
   (`ui/src/features/sessions/console/blocks.test.tsx::renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks`,
   `::renders developer prompts as full Markdown without a fold`,
-  `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`,
-  `ui/src/features/sessions/console/session-console.test.tsx::renders a question's text as Markdown, with a fence as a code block`).
-- A question is a card whose clicked choice posts at once to its own
-  request's answer route; a failed post shows on the card and a retry
-  succeeds; a custom answer posts as text; an answered card takes no answer
-  (rule 22a)
-  (`ui/src/features/sessions/console/session-console.test.tsx::draws a question as a card and submits a clicked choice at once to its request`,
-  `::shows a failed answer on the card and keeps it answerable for another attempt`,
-  `::submits a custom answer as text`,
-  `::folds an answered question with its text and chosen option`,
-  `::keeps a closed question's fold across a remount`,
-  `::folds a withdrawn and an expired question, and never an open one`,
-  `::shows the reason for a recommendation under the recommended option, once`,
-  `::shows a question's clock time at the right end of its header`,
-  `::restores a pending question older than the snapshot page on a load and a reconnect`,
-  `::draws a pending question once where the snapshot already holds it, and closed where it closed`,
-  `::shows a failed read of the pending questions, and its Retry restores them`,
-  `::keeps an open question below every later block, directly above the input`,
-  `::draws a closed question in its own place, by its event order`,
-  `::draws an open question of a finished session in its event order`,
-  `::keeps a restored pending question below every later block`),
-  and the transcript folds a question and its resolution into one card,
-  keeps a hint-only request a note, and replays a withdrawn question closed
-  (`ui/src/features/sessions/console/transcript.test.ts::folds a structured question into one card that its resolution closes`,
-  `::keeps the reason for a question's recommendation`,
-  `::keeps a hint-only request a note, and a resolution of it adds no block`,
-  `::replays a withdrawn question closed, so it is never answerable again`).
+  `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`).
 - The console expands into a near-fullscreen modal and collapses back on a
   fresh stream, keeps the modal open on Escape inside it and closes the
   modal on Escape outside it, and ⌘Escape moves focus to Collapse
@@ -2455,12 +2376,10 @@ Out: the daemon endpoints themselves (012).
   `::leaves Ctrl-O unhandled in embedded and expanded consoles`,
   `::keeps selected details when resizing between a drawer and adjacent details`,
   `::uses the same selectable details in an expanded console`,
-  `::reveals a subagent question and sends its answer through the request route`,
   `::returns from a child view to answer its pending permission in details`,
   `::shows existing input output and code changes in details without expanding the activity row`,
   `::keeps parent and child calls with the same tool id separate`,
   `::keeps user developer and assistant messages always visible`,
-  `::keeps the question and chosen option in an answered question summary`,
   `::opens permission response controls in details and keeps the conversation compact`,
   `::keeps tool selection when a permission arrives and opens its drawer only on request`).
 - The latest command list replaces the earlier one, an empty list and all,
@@ -2492,9 +2411,6 @@ Out: the daemon endpoints themselves (012).
   `::leaves no stale entry when an echo takes a failed send's entry before its failure arrives`,
   `ui/src/features/sessions/console/session-console.test.tsx::takes back only the failed send when the same prompt is sent twice at once`,
   `::leaves nothing queued when the echo of the second send comes before the first send's failure`).
-- Open, resolved and restored questions have one purple question icon and no left border
-  (`ui/src/features/sessions/console/session-console.test.tsx::shows one purple question marker before and after resolution`,
-  `::shows the question marker for a pending request outside history`).
 - Role labels and tool status icons identify messages and activity
   (`ui/src/features/sessions/console/session-console.test.tsx::identifies prompts and tool states without left borders`).
 - The status row follows the input and replaces the keyboard-hint footer
