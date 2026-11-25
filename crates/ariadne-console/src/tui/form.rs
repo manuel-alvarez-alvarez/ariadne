@@ -4,8 +4,7 @@
 //! A choice field takes the arrows, a number, Space for a multi-select, and
 //! Enter. A text field takes the text in the input box on Enter. The last
 //! field's Enter sends the answer, and Esc declines the question. While the
-//! box holds text on a choice field, the keys are the box's: the text is a
-//! prompt, and it waits behind the turn.
+//! box holds text on a choice field with a companion, Enter takes a custom answer.
 
 use std::collections::BTreeSet;
 
@@ -124,57 +123,56 @@ pub(super) fn draw(
     width: usize,
 ) -> Vec<Line<'static>> {
     let width = width.max(8);
-    let mut lines = vec![rule(width)];
-    lines.extend(
-        fit(message, width)
-            .into_iter()
-            .map(|row| Line::from(Span::styled(row, QUESTION))),
-    );
-    let total = fields.len();
-    for (at, field) in fields.iter().enumerate() {
-        if at < state.field {
-            let answer = state
-                .content
-                .get(&field.key)
-                .map(|value| field.answer_text(value))
-                .unwrap_or_else(|| "(no answer)".into());
-            lines.extend(hung(
-                &format!("{} → {answer}", field.title),
-                theme::CALL_DONE,
-                DIM,
-                DIM,
+    let all_fields = fields;
+    let fields = crate::transcript::questions(fields);
+    let Some(field) = fields.get(state.field) else {
+        return vec![rule(width)];
+    };
+    let title = if field.title.is_empty() || field.title == message {
+        QUESTION_LABEL
+    } else {
+        &field.title
+    };
+    let mut header = title.to_string();
+    if fields.len() > 1 {
+        header.push_str(&format!(" · {} of {}", state.field + 1, fields.len()));
+        for question in &fields {
+            let answered = state.content.contains_key(&question.key)
+                || crate::transcript::companion(all_fields, question)
+                    .is_some_and(|c| state.content.contains_key(&c.key));
+            header.push_str(if answered { " ✓" } else { " ○" });
+        }
+    }
+    let mut lines = hung(&header, theme::OPTION_PICKED, ASK, QUESTION, width);
+    lines.extend(hung(
+        field.description.as_deref().unwrap_or(message),
+        "",
+        QUESTION,
+        QUESTION,
+        width,
+    ));
+    if let FieldKind::Single(choices) | FieldKind::Multi(choices) = &field.kind {
+        for (index, choice) in choices.iter().enumerate() {
+            lines.extend(choice_lines(
+                index,
+                choice,
+                state.picked == index,
+                matches!(field.kind, FieldKind::Multi(_)).then(|| state.chosen.contains(&index)),
                 width,
             ));
-            continue;
         }
-        if at > state.field {
-            lines.extend(hung(&field.title, theme::OPTION_IDLE, DIM, DIM, width));
-            continue;
-        }
-        let mut head = format!("{}/{total} {}", at + 1, field.title);
-        match &field.kind {
-            FieldKind::Single(_) => head.push_str(" · pick one"),
-            FieldKind::Multi(_) => head.push_str(" · pick any"),
-            FieldKind::Text | FieldKind::Number { .. } => head.push_str(" · type it in the box"),
-        }
-        if !field.required {
-            head.push_str(" · optional");
-        }
-        lines.extend(hung(&head, theme::OPTION_PICKED, ASK, QUESTION, width));
-        if let Some(description) = &field.description {
-            lines.extend(hung(description, "  ", DIM, DIM, width));
-        }
-        if let FieldKind::Single(choices) | FieldKind::Multi(choices) = &field.kind {
-            let multi = matches!(field.kind, FieldKind::Multi(_));
-            for (index, choice) in choices.iter().enumerate() {
-                lines.extend(choice_lines(
-                    index,
-                    choice,
-                    state.picked == index,
-                    multi.then(|| state.chosen.contains(&index)),
-                    width,
-                ));
-            }
+        if crate::transcript::companion(all_fields, field).is_some() {
+            lines.extend(choice_lines(
+                choices.len(),
+                &FormChoice {
+                    title: "Type your own answer…".into(),
+                    description: None,
+                    value: Value::Null,
+                },
+                state.picked == choices.len(),
+                None,
+                width,
+            ));
         }
     }
     if let Some(problem) = &state.problem {
@@ -223,12 +221,22 @@ fn choice_lines(
         Some(false) => lead.push_str(UNCHECKED),
         None => {}
     }
-    let text = match &choice.description {
-        Some(description) => format!("{} — {description}", choice.title),
-        None => choice.title.clone(),
+    let suffix = "(recommended)";
+    let recommended = choice.title.to_lowercase().ends_with(suffix);
+    let title = if recommended {
+        choice.title[..choice.title.len() - suffix.len()].trim_end()
+    } else {
+        &choice.title
     };
     let style = if highlighted { PICKED } else { Style::new() };
-    hung(&text, &lead, style, style, width)
+    let mut lines = hung(title, &lead, style, style, width);
+    if recommended {
+        lines.extend(hung("recommended", "    ", ASK, ASK, width));
+    }
+    if let Some(description) = &choice.description {
+        lines.extend(hung(description, "    ", DIM, DIM, width));
+    }
+    lines
 }
 
 /// `text` wrapped under `lead`, its later rows hung under the first.
@@ -321,6 +329,179 @@ mod tests {
     }
 
     #[test]
+    fn skipped_required_questions_block_submission_until_answered() {
+        for custom in [false, true] {
+            let mut question = asked();
+            question.payload["question"]["schema"]["required"] = json!(["base", "note"]);
+            if custom {
+                let properties = question.payload["question"]["schema"]["properties"]
+                    .as_object_mut()
+                    .unwrap();
+                let previous = std::mem::take(properties);
+                for (key, value) in previous {
+                    properties.insert(key.clone(), value);
+                    if key == "base" {
+                        properties.insert(
+                            "base_custom".into(),
+                            json!({"type":"string","title":"Other"}),
+                        );
+                    }
+                }
+            }
+            let mut console = Console::new(header());
+            console.snapshot(&[question]);
+            press(&mut console, KeyCode::Tab);
+            press(&mut console, KeyCode::Right);
+            type_into(&mut console, "done");
+            assert_eq!(enter(&mut console), Action::None);
+            let mut terminal = pane();
+            console.show(&mut terminal).unwrap();
+            let text = shown(&terminal);
+            assert!(
+                text.contains("Which base branch? needs an answer."),
+                "{text}"
+            );
+            assert!(text.contains("1 of 3"), "{text}");
+            if custom {
+                type_into(&mut console, "release");
+                assert_eq!(enter(&mut console), Action::None);
+            } else {
+                assert_eq!(press(&mut console, KeyCode::Char('2')), Action::None);
+            }
+            press(&mut console, KeyCode::Right);
+            type_into(&mut console, "done");
+            let Action::Answer { answer, .. } = enter(&mut console) else {
+                panic!("answer");
+            };
+            let content = answer.content.unwrap();
+            if custom {
+                assert_eq!(content["base_custom"], "release");
+                assert!(!content.contains_key("base"));
+            } else {
+                assert_eq!(content["base"], "next");
+            }
+            assert_eq!(content["note"], "done");
+        }
+    }
+
+    #[test]
+    fn required_multi_custom_answers_do_not_add_unselected_choices() {
+        let mut question = asked();
+        question.payload["question"]["schema"] = json!({"type":"object",
+        "required":["question_0"], "properties":{
+            "question_0":{"type":"array","title":"Checks",
+                "items":{"anyOf":[{"const":"fmt","title":"Format"}]}},
+            "question_0_custom":{"type":"string","title":"Other"}
+        }});
+        let mut console = Console::new(header());
+        console.snapshot(&[question]);
+        type_into(&mut console, "lint");
+        let Action::Answer { answer, .. } = enter(&mut console) else {
+            panic!("answer");
+        };
+        assert_eq!(
+            answer.content.unwrap(),
+            json!({"question_0_custom":"lint"})
+                .as_object()
+                .unwrap()
+                .clone()
+        );
+    }
+
+    #[test]
+    fn a_number_field_remains_a_single_step_and_sends_its_value() {
+        let mut question = asked();
+        question.payload["question"]["schema"] = json!({"type":"object","properties":{
+            "count":{"type":"integer","title":"Count"}}});
+        let mut console = Console::new(header());
+        console.snapshot(&[question]);
+        type_into(&mut console, "12");
+        let Action::Answer { answer, .. } = enter(&mut console) else {
+            panic!("answer");
+        };
+        assert_eq!(
+            answer.content.unwrap(),
+            json!({"count":12}).as_object().unwrap().clone()
+        );
+    }
+
+    #[test]
+    fn numbers_answer_and_navigation_preserves_answers() {
+        let mut console = asking();
+        assert_eq!(press(&mut console, KeyCode::Char('2')), Action::None);
+        press(&mut console, KeyCode::Left);
+        let mut terminal = pane();
+        console.show(&mut terminal).unwrap();
+        let text = shown(&terminal);
+        assert!(text.contains("1 of 3 ✓"), "{text}");
+        press(&mut console, KeyCode::Tab);
+        press(&mut console, KeyCode::Right);
+        type_into(&mut console, "done");
+        let Action::Answer { answer, .. } = enter(&mut console) else {
+            panic!("answer");
+        };
+        assert_eq!(answer.content.unwrap()["base"], "next");
+    }
+
+    #[test]
+    fn claude_companions_are_one_step_and_custom_answers_merge() {
+        let mut question = asked();
+        question.payload["question"]["schema"] = json!({"type":"object","properties":{
+            "question_0":{"type":"string","title":"Base","description":"Which branch?",
+                "oneOf":[{"const":"Main (Recommended)","title":"Main (Recommended)","description":"Stable branch"},
+                         {"const":"Next","title":"Next"}]},
+            "question_0_custom":{"type":"string","title":"Other"},
+            "question_1":{"type":"array","title":"Checks","description":"Which checks?",
+                "items":{"anyOf":[{"const":"fmt","title":"Format"}]}},
+            "question_1_custom":{"type":"string","title":"Other"}
+        }});
+        let mut console = Console::new(header());
+        console.snapshot(&[question]);
+        let mut terminal = pane();
+        console.show(&mut terminal).unwrap();
+        let text = shown(&terminal);
+        assert!(text.contains("1 of 2"), "{text}");
+        assert!(text.contains("recommended"), "{text}");
+        assert!(!text.contains("(Recommended)"), "{text}");
+        assert!(!text.contains("Which checks?"), "{text}");
+        type_into(&mut console, "release");
+        assert_eq!(enter(&mut console), Action::None);
+        press(&mut console, KeyCode::Char(' '));
+        type_into(&mut console, "lint");
+        let Action::Answer { answer, .. } = enter(&mut console) else {
+            panic!("answer");
+        };
+        assert_eq!(
+            answer.content,
+            Some(
+                json!({"question_0_custom":"release",
+            "question_1":["fmt"],"question_1_custom":"lint"})
+                .as_object()
+                .unwrap()
+                .clone()
+            )
+        );
+        console.apply(&resolved(
+            "accept",
+            json!({"question_0_custom":"release",
+            "question_1":["fmt"],"question_1_custom":"lint"}),
+        ));
+        let text = console
+            .items
+            .iter()
+            .filter(|item| matches!(item, TranscriptItem::FormQuestion { .. }))
+            .flat_map(TranscriptItem::form_lines)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Base → release"), "{text}");
+        assert!(text.contains("Checks → Format, lint"), "{text}");
+        assert!(
+            !text.contains("Other") && !text.contains("question_0"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn an_open_question_draws_its_fields_and_the_option_text_as_written_above_the_input() {
         let mut terminal = pane();
         let mut console = asking();
@@ -334,11 +515,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("{text} is shown: {shown}"))
         };
         let message = at("Codex needs your input to continue.");
-        let field = at("1/3 Which base branch? · pick one");
+        let field = at("Which base branch? · 1 of 3");
         let option = at("2. Next — the *release* line");
-        let later = at("Which checks?");
+        assert!(!shown.contains("Which checks?"));
         let input = at(crate::theme::INPUT_PLACEHOLDER);
-        assert!(message < field && field < option && option < later && later < input);
+        assert!(field < message && message < option && option < input);
         assert!(shown.contains("1. Main"), "{shown}");
         assert!(shown.contains("esc decline"), "{shown}");
     }
@@ -420,10 +601,31 @@ mod tests {
         let mut terminal = pane();
         console.show(&mut terminal).unwrap();
         assert!(
-            shown(&terminal).contains("1/3 Which base branch?"),
+            shown(&terminal).contains("Which base branch? · 1 of 3"),
             "the question is still open: {}",
             shown(&terminal)
         );
+    }
+
+    /// Left, Right and Tab move between questions only while the input box is
+    /// empty: with text in it they belong to the box.
+    #[test]
+    fn left_with_text_in_the_box_does_not_change_the_question() {
+        let mut console = Console::new(header());
+        let mut question = asked();
+        question.payload["question"]["schema"]["properties"] = json!({
+            "a": {"type": "string", "title": "First"},
+            "b": {"type": "string", "title": "Second"},
+        });
+        console.snapshot(&[question]);
+        type_into(&mut console, "helo");
+        press(&mut console, KeyCode::Left);
+        press(&mut console, KeyCode::Tab);
+        type_into(&mut console, "l");
+        let mut terminal = pane();
+        console.show(&mut terminal).unwrap();
+        let shown = shown(&terminal);
+        assert!(shown.contains("First · 1 of 2"), "{shown}");
     }
 
     #[test]
@@ -438,7 +640,7 @@ mod tests {
         console.show(&mut terminal).unwrap();
         let shown = shown(&terminal);
         assert!(shown.contains("Branch name needs an answer."), "{shown}");
-        assert!(shown.contains("1/3 Branch name"), "{shown}");
+        assert!(shown.contains("Branch name · 1 of 3"), "{shown}");
     }
 
     #[test]

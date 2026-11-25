@@ -372,9 +372,10 @@ impl Console {
             (_, true, _) => &["up/down or 1-9 choose", "enter answer"],
             _ if self.open_form().is_some() => &[
                 "up/down or 1-9 choose",
-                "space check",
-                "enter next",
                 "esc decline",
+                "tab/←/→ question",
+                "enter next",
+                "space check",
             ],
             (_, _, true) => &[
                 "enter send",
