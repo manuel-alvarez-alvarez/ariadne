@@ -491,8 +491,12 @@ Out: the daemon endpoints themselves (012).
     agent` or `Closed: the session ended`. A live stream, a reload, a
     reconnect and a history replay draw the same closed state. A question
     the console has read stays drawn when it closes, with its answer, even when
-    a later read of the list no longer has it; a close whose question the
-    console never read draws the answer under its keys. A session
+    a later read of the list no longer has it; one that a reconnect finds
+    neither listed nor closed in the events draws as `Closed`, with no answer,
+    and no longer counts as waiting. A close whose question is not in the
+    events draws once the console has loaded the older page that holds the
+    question, with the question's own message and labels. A read of the list
+    that lands after the console moved to another session draws nothing. A session
     that is not live takes no answer. While a question is open the console's
     status row says `waiting for you`, and the session activity feed labels
     its `question` event `Waiting for you`.
@@ -2252,7 +2256,11 @@ Out: the daemon endpoints themselves (012).
   `::shows a dismissed question closed`,
   `::restores an open question older than the snapshot's page from the list`,
   `::keeps a question restored from the list, with its answer, when it closes and the list is read again`,
+  `::draws a question closed as closed, not waiting, when a reconnect omits it and its close`,
+  `::draws a close whose question is in an older page with the question's own labels`,
+  `::draws no card of the session it left when its question read lands late`,
   `ui/src/features/sessions/console/form-questions.test.ts::keeps a listed question that a resolved event closes, with its answer`,
+  `ui/src/features/sessions/console/form-questions.test.ts::closes a question the console read that is no longer listed and has no resolved event`,
   `::keeps the answer of a closed question that no event or list carries`,
   `ui/src/features/sessions/console/form-questions.test.ts::closes a question with its resolved event, whatever order a replay brings them in`).
 - The status row says the session waits for the user while a form question is
