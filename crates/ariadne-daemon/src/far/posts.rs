@@ -4,11 +4,12 @@
 //! that this daemon holds open on it. The follower puts it into the live
 //! orchestrator session of the source goal, at once, or drops it.
 
-use ariadne_api::messages::SourcePostDto;
+use ariadne_api::messages::{RemotePostRequest, SourcePostDto};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::ClientError;
 use ariadne_core::Seat;
 use ariadne_store::SessionFilter;
+use axum::http::Method;
 use tracing::warn;
 
 use super::Follower;
@@ -68,6 +69,12 @@ impl Follower<'_> {
             .find(|s| s.seat() == Some(Seat::Orchestrator));
         let Some(orchestrator) = orchestrator else {
             warn!(host = self.host, task = %reference.id, "the orchestrator has no live session for a post");
+            self.tell_dropped(
+                &reference.id,
+                &post,
+                "The orchestrator has no live session.",
+            )
+            .await;
             return Ok(());
         };
         let (from, answer) = agent_sender(&post.column, &reference.id, &title);
@@ -76,5 +83,34 @@ impl Follower<'_> {
             warn!(host = self.host, task = %reference.id, %error, "cannot hand a post to the orchestrator");
         }
         Ok(())
+    }
+
+    /// Tell the worker agent of the sender that the source dropped its post.
+    /// The source sends the notice once and holds none: a refusal of the
+    /// worker drops it.
+    async fn tell_dropped(&self, task_id: &str, post: &SourcePostDto, reason: &str) {
+        let daemon_id = match self.ctx.store.daemon_id().await {
+            Ok(id) => id,
+            Err(error) => {
+                warn!(host = self.host, %error, "cannot read the daemon id for a notice");
+                return;
+            }
+        };
+        let request = RemotePostRequest {
+            source_daemon_id: daemon_id,
+            to: post.column.clone(),
+            body: post.body.clone(),
+            dropped: Some(reason.to_string()),
+        };
+        let sent = self
+            .fenced(self.client.send_no_content(
+                Method::POST,
+                &format!("/v1/remote-tasks/{task_id}/posts"),
+                Some(&request),
+            ))
+            .await;
+        if let Some(Err(error)) = sent {
+            warn!(host = self.host, task = task_id, %error, "the worker refused a notice of a dropped post");
+        }
     }
 }

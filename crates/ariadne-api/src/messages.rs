@@ -62,7 +62,13 @@ pub struct RemotePostRequest {
     pub source_daemon_id: String,
     /// The column of a staffed agent of the task.
     pub to: String,
+    /// The body of the post, or of the dropped post when `dropped` is set.
     pub body: String,
+    /// Set when this is a notice that the source dropped the post in `body`
+    /// of a worker agent to its orchestrator: the reason. The worker puts a
+    /// notice into the session, not a post, and asks for no answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dropped: Option<String>,
 }
 
 /// The `source_post` frame of `GET /v1/events/stream?source=…`: a post of a

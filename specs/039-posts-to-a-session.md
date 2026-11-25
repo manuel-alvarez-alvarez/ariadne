@@ -87,11 +87,22 @@ the user across hosts, and the session rules, prompts and skills.
 18. No daemon holds a post for a later stream or a later `ready`. A post
     arrives one time at most: a reconnect or a `resync` of the stream does
     not deliver it again. A frame for an orchestrator with no live session
-    is dropped.
+    is dropped, and rule 20 tells the sender.
 19. A legacy mirror task refuses each post in the two directions: the source
     refuses a post to it, and its host refuses a post of its agent to
     `orchestrator`. Each refusal says that a post does not cross to a mirror
     and names `send_message`.
+
+20. When the source drops a `source_post` frame because the orchestrator of
+    the source goal has no live session, it sends one notice to the worker,
+    at `POST /v1/remote-tasks/{id}/posts` with `dropped` set to the reason
+    and `body` set to the dropped body. The worker puts it into the live
+    session of the column of the sender as the next turn. The notice says
+    that the post did not reach `orchestrator`, gives the reason, quotes the
+    dropped body as data, and asks for no answer. It writes no row. The
+    source holds no notice: a refusal of the worker drops it, and a
+    reconnect or a `resync` makes no second one. A post that reaches the
+    orchestrator makes none.
 
 ## Acceptance criteria
 
@@ -140,11 +151,16 @@ the user across hosts, and the session rules, prompts and skills.
   legacy mirror task refuses a post of its agent to `orchestrator`
   (`posts.rs::a_post_from_a_legacy_mirror_task_to_its_orchestrator_is_refused`).
 
+- Rule 20: a dropped post makes one notice in the session of the sender, and
+  a post that reaches the orchestrator makes none
+  (`far_tasks::posts::the_source_tells_a_worker_agent_that_its_post_was_dropped`,
+  `::a_post_that_reaches_the_orchestrator_makes_no_notice`).
+
 ## Known gap
 
-A `source_post` frame for a source orchestrator with no live session is
-dropped, and the worker agent is not told, because a worker has no call to
-its source.
+The source drops a notice that the worker refuses, for instance when the
+sender has no live session any more, and holds no notice for a later
+reconnect.
 
 ## Sources
 
