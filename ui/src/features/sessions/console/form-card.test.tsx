@@ -77,7 +77,16 @@ let reply: () => Response = () => new Response(null, { status: 204 })
 
 beforeEach(() => {
   posts.length = 0
-  listed = []
+  // The daemon lists the question the snapshots below ask, while it is open.
+  listed = [
+    {
+      id: "Q1",
+      session_id: SESSION_ID,
+      message: "Which database should I use?",
+      schema: SCHEMA,
+      created_at: "2026-11-25T10:00:00Z",
+    },
+  ]
   held = undefined
   history = []
   reply = () => new Response(null, { status: 204 })
@@ -277,6 +286,7 @@ it("draws a question closed as closed, not waiting, when a reconnect omits it an
 })
 
 it("draws a close whose question is in an older page with the question's own labels", async () => {
+  listed = []
   history = [asked("QOLD")].map((one) => ({
     ...one,
     payload: {
@@ -327,4 +337,37 @@ it("draws no card of the session it left when its question read lands late", asy
   })
 
   expect(screen.queryByText("A question of the first session")).toBeNull()
+})
+
+it("closes a question the snapshot carries when the list no longer holds it", async () => {
+  listed = []
+  renderConsole([asked(), event("agent_message", { text: "later" })])
+
+  await waitFor(() => expect(card().textContent).toContain("Closed"))
+  expect(within(card()).queryByRole("button", { name: "Send" })).toBeNull()
+  expect(screen.getByRole("region", { name: "Session status" }).textContent).not.toContain(
+    "waiting for you",
+  )
+})
+
+it("recovers the answer of a question a reconnect omits from the history", async () => {
+  listed = [
+    {
+      id: "Q1",
+      session_id: SESSION_ID,
+      message: "Which database should I use?",
+      schema: SCHEMA,
+      created_at: "2026-11-25T09:00:00Z",
+    },
+  ]
+  const source = renderConsole([event("agent_message", { text: "first page" })])
+  await screen.findByText("Which database should I use?")
+
+  listed = []
+  history = [
+    event("question.resolved", { question_id: "Q1", action: "accept", content: { db: "pg" } }),
+  ]
+  act(() => source.emit("snapshot", [event("agent_message", { text: "newest page" })]))
+
+  await waitFor(() => expect(card().textContent).toContain("Database → Postgres"))
 })

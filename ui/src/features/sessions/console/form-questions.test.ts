@@ -87,7 +87,10 @@ it("draws a question the same from the events and from the list", () => {
     created_at: "2026-11-25T10:00:00Z",
   }
 
-  expect(formQuestions([asked("Q1")], [])).toEqual(formQuestions([], [dto]))
+  const [fromEvent] = formQuestions([asked("Q1")], [dto])
+  const { eventId, ...same } = fromEvent ?? { eventId: "" }
+  expect(eventId).not.toBe("")
+  expect(same).toEqual(formQuestions([], [dto])[0])
 })
 
 it("closes a question with its resolved event, whatever order a replay brings them in", () => {
@@ -184,4 +187,20 @@ it("closes a question the console read that is no longer listed and has no resol
   const [question] = formQuestions([], [], [dto])
   expect(question?.closed).toEqual({ action: "cancel", content: {}, closedBy: "unknown" })
   expect(formQuestions([], [dto], [dto])[0]?.closed).toBeUndefined()
+})
+
+it("closes a question its event carried that the list no longer holds, once the list was read after it", () => {
+  const dto: QuestionDto = {
+    id: "Q1",
+    session_id: "S",
+    message: "m",
+    schema: SCHEMA as never,
+    created_at: "2026-11-25T09:00:00Z",
+  }
+  const old = asked("Q1")
+  const later = asked("Q2")
+  const [one, two] = formQuestions([old, later], [], [dto], old.id)
+
+  expect(one?.closed?.closedBy).toBe("unknown")
+  expect(two?.closed).toBeUndefined()
 })

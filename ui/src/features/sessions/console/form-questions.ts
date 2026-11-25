@@ -53,6 +53,10 @@ export interface FormQuestion {
   closed?: FormClosed
   /** Only its close is known: the question itself is in an older page of the history. */
   orphan?: true
+  /** It left the list with no close read: the close is in an older page of the history. */
+  lost?: true
+  /** The id of the event that asked it, where an event did. */
+  eventId?: string
 }
 
 type Json = Record<string, unknown>
@@ -173,16 +177,21 @@ function closedOf(payload: unknown): FormClosed {
  * ones the events carry, each closed by its `question.resolved` event, and
  * the ones the console read from the list, which the events do not carry.
  *
- * `listed` is the latest read, the questions open now. `seen` is every
- * question any read of this session listed: one that is no longer listed and
- * has no resolved event closed while the console was away, so it draws closed
- * with no answer. A close whose question nothing carries is an `orphan`: its
- * form is in an older page of the history, which the console loads.
+ * `listed` is the latest read, the questions open now, and `through` the
+ * newest event the console held when it asked for them. `seen` is every
+ * question any read of this session listed. A question the list no longer
+ * holds and no event closes closed while the console was away. Its close is
+ * in an older page of the history for a question older than the events (it
+ * is `lost` until the console finds it), and for one the events carry up to
+ * `through` there is nothing more to find: it draws closed with no answer.
+ * A close whose question nothing carries is an `orphan`: its form is in an
+ * older page of the history, which the console loads.
  */
 export function formQuestions(
   events: readonly AgentEventDto[],
   listed: readonly QuestionDto[],
   seen: readonly QuestionDto[] = listed,
+  through = "",
 ): FormQuestion[] {
   const asked = new Map<string, FormQuestion>()
   const closed = new Map<string, FormClosed>()
@@ -197,6 +206,7 @@ export function formQuestions(
         message: text(question.message) ?? "",
         fields: formFields(question.schema),
         createdAt: text(question.created_at) ?? event.created_at,
+        eventId: event.id,
       })
     } else if (event.kind === "question.resolved") {
       const id = text(payload?.question_id)
@@ -221,12 +231,21 @@ export function formQuestions(
       orphan: true,
     })
   }
-  return [...older.values(), ...asked.values()].map((question) => {
+  const beforeEvents = [...older.values()].map((question) => {
+    const close = closed.get(question.id)
+    if (close) return { ...question, closed: close }
+    if (open.has(question.id)) return question
+    return { ...question, closed: GONE, lost: true as const }
+  })
+  const fromEvents = [...asked.values()].map((question) => {
     const close =
       closed.get(question.id) ??
-      (older.has(question.id) && !open.has(question.id) ? GONE : undefined)
+      (question.eventId !== undefined && question.eventId <= through && !open.has(question.id)
+        ? GONE
+        : undefined)
     return close ? { ...question, closed: close } : question
   })
+  return [...beforeEvents, ...fromEvents]
 }
 
 /** How a question closed that the console did not see close. */
