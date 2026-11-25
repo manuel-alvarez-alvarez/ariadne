@@ -42,17 +42,19 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react"
 import { toast } from "sonner"
 
 import {
-  type AgentRequestDto,
+  type AgentEventDto,
   api,
   type Host,
   hostBaseUrl,
   hostUnreachable,
+  type QuestionDto,
   qk,
   type SessionDto,
   type SessionStatus,
@@ -78,15 +80,8 @@ import {
   updateViewState,
   watchViewState,
 } from "./console-view-state"
-import {
-  answerRequest,
-  isOpenQuestion,
-  openQuestion,
-  pendingRequests,
-  type QuestionBlock,
-  QuestionCard,
-  restoredQuestions,
-} from "./questions"
+import { FormCard } from "./form-card"
+import { formQuestions, listQuestions, questionOfEvent } from "./form-questions"
 import {
   elapsedSeconds,
   FailedMessage,
@@ -103,7 +98,6 @@ import {
   blocksText,
   collapseRuns,
   dequeuePrompt,
-  displayBlocks,
   emptyTranscript,
   oldestEventId,
   type PermissionOption,
@@ -237,12 +231,18 @@ function ConsolePane({
   const keyRef = useRef(key)
   keyRef.current = key
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript)
-  /** The session's pending requests, as read with the last snapshot. */
-  const [requests, setRequests] = useState<AgentRequestDto[]>([])
-  /** Why the last read of the pending requests failed; none once one succeeds. */
-  const [requestsError, setRequestsError] = useState<string | null>(null)
-  /** Counts the reads of the pending requests, so only the latest one lands. */
-  const reads = useRef(0)
+  /** The session's open native questions, as read with the last snapshot. */
+  const [listedForms, setListedForms] = useState<QuestionDto[]>([])
+  /** Every question any read of the session listed, open or since closed. */
+  /** The newest event the console held when the last read of the list was asked. */
+  const [listedThrough, setListedThrough] = useState("")
+  const [seenForms, setSeenForms] = useState<QuestionDto[]>([])
+  /** Counts the reads of the open native questions, so only the latest one lands. */
+  const formReads = useRef(0)
+  /** Why the last read of the open native questions failed; none once one succeeds. */
+  const [formsError, setFormsError] = useState<string | null>(null)
+  /** The newest event the console held at the last snapshot, for a retry of the read. */
+  const formsThrough = useRef("")
   const [streamStatus, setStreamStatus] = useState<ConsoleStreamStatus>("connecting")
   const [streamError, setStreamError] = useState<string | null>(null)
   const [draft, setDraft] = useState(() => readViewState(key).draft)
@@ -264,8 +264,6 @@ function ConsolePane({
   const [snapshotted, setSnapshotted] = useState(false)
   /** The sends the daemon refused, kept for a Retry or an Edit. */
   const [failed, setFailed] = useState<FailedSend[]>(() => readViewState(key).failed)
-  /** The requests an accepted answer is in for, whose resolved event has yet to land. */
-  const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set())
   const [menuOpen, setMenuOpen] = useState(false)
   const [switchOpen, setSwitchOpen] = useState(false)
   const caret = useRef<number | null>(null)
@@ -311,7 +309,6 @@ function ConsolePane({
     setRunExpansions(kept.runExpansions)
     setShown(kept.shown)
     setFailed(kept.failed)
-    setAnswered(new Set())
   }
 
   const resetHistory = useCallback(() => {
@@ -355,27 +352,55 @@ function ConsolePane({
     }
   }, [host, sessionId])
 
-  // A question older than the snapshot's page still waits: the pending
-  // requests are read again with every snapshot, a reconnect's too, and a
-  // failed read says so with a Retry rather than hide those questions.
-  const readRequests = useCallback(() => {
-    const read = ++reads.current
-    pendingRequests(host, sessionId).then(
-      (listed) => {
-        if (read !== reads.current) return
-        setRequests(listed)
-        setRequestsError(null)
-      },
-      (error) => {
-        if (read === reads.current) setRequestsError(describeError(error))
-      },
-    )
-  }, [host, sessionId])
+  // The open native questions are read again with every snapshot as well. A
+  // failed read leaves the list as it was and says so with a Retry: the
+  // stream's own events still draw every question asked since the page in view.
+  const readForms = useCallback(
+    (through: string) => {
+      formsThrough.current = through
+      const read = ++formReads.current
+      listQuestions(host, sessionId).then(
+        (listed) => {
+          if (read !== formReads.current) return
+          setListedForms(listed)
+          setListedThrough(through)
+          setFormsError(null)
+          // A question stays known once read, so one that closes after the read
+          // still draws, closed, when the next read no longer has it.
+          setSeenForms((seen) => [
+            ...seen.filter((one) => !listed.some((now) => now.id === one.id)),
+            ...listed,
+          ])
+        },
+        (error) => {
+          if (read === formReads.current) setFormsError(describeError(error))
+        },
+      )
+    },
+    [host, sessionId],
+  )
+
+  // A question an event carries, from the snapshot or the stream, stays known,
+  // so a newer snapshot that drops it from the page still finds its close in
+  // the history.
+  const rememberAsked = useCallback((events: readonly AgentEventDto[]) => {
+    const asked = events.flatMap((event) => questionOfEvent(event) ?? [])
+    if (asked.length === 0) return
+    setSeenForms((seen) => [
+      ...seen,
+      ...asked.filter(
+        (one, at) =>
+          !seen.some((s) => s.id === one.id) && asked.findIndex((o) => o.id === one.id) === at,
+      ),
+    ])
+  }, [])
 
   useEffect(() => {
     setTranscript(emptyTranscript())
-    setRequests([])
-    setRequestsError(null)
+    setListedForms([])
+    setSeenForms([])
+    setFormsError(null)
+    setListedThrough("")
     setSnapshotted(false)
     resetHistory()
     const kept = readViewState(consoleViewKey(host, baseUrl ?? "", sessionId))
@@ -394,9 +419,13 @@ function ConsolePane({
         resetHistory()
         setSnapshotted(true)
         setTranscript((current) => applySnapshot(current, events))
-        readRequests()
+        rememberAsked(events)
+        readForms(events.at(-1)?.id ?? "")
       },
-      onEvent: (event) => setTranscript((current) => applyEvent(current, event)),
+      onEvent: (event) => {
+        setTranscript((current) => applyEvent(current, event))
+        rememberAsked([event])
+      },
       onStatus: (next, error) => {
         setStreamStatus(next)
         setStreamError(error ?? null)
@@ -404,10 +433,10 @@ function ConsolePane({
     })
     stream.start()
     return () => {
-      reads.current += 1
+      formReads.current += 1
       stream.stop()
     }
-  }, [host, baseUrl, unreachable, sessionId, resetHistory, readRequests])
+  }, [host, baseUrl, unreachable, sessionId, resetHistory, readForms, rememberAsked])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus request is read once, on arrival
   useEffect(() => {
@@ -593,60 +622,39 @@ function ConsolePane({
     }
   }, [draft])
 
-  // A question restored from the requests list was asked before the page in
-  // view, so it comes first: the composer answers the newest.
-  const restored = child ? [] : restoredQuestions(requests, transcript)
-  const question = live && !child ? openQuestion([...restored, ...blocks], answered) : undefined
-  const questionId = question?.requestId
-  // An open question waits on the user, so a live `main` draws it last,
-  // directly above the input; a closed one keeps its place.
-  const waiting = live && !child ? [...restored, ...blocks.filter(isOpenQuestion)] : []
-  const visible = displayBlocks(blocks, [...restored, ...blocks])
-  const inPlace = waiting.length > 0 ? visible.filter((block) => !isOpenQuestion(block)) : visible
-  const card = (block: QuestionBlock) => (
-    <BlockView
-      key={block.id}
-      block={block}
-      folded={blockFolds[block.id] ?? true}
-      onToggle={toggleBlock}
-      picker={
-        <QuestionCard
-          host={host}
-          sessionId={sessionId}
-          block={block}
-          live={live}
-          sent={answered.has(block.requestId)}
-          onAnswered={markAnswered}
-          folded={blockFolds[block.id] ?? true}
-          onToggle={toggleBlock}
-        />
-      }
-    />
+  // The questions the agent asks with its own tool: a child's stay out of its view.
+  const allForms = useMemo(
+    () => (child ? [] : formQuestions(transcript.events, listedForms, seenForms, listedThrough)),
+    [child, transcript.events, listedForms, seenForms, listedThrough],
   )
+  // A close whose question is in an older page, and a question that left the
+  // list with no close in view, draw once the older pages are in: else the card
+  // would show keys in place of the form's own labels, or no answer.
+  const lookingFor = allForms.some((form) => form.orphan || form.lost)
+  // With no event in view there is no older page to look in.
+  const searched = history.state === "start" || transcript.seen.size === 0
+  const forms = allForms.filter((form) => !(form.orphan || form.lost) || searched)
+  // Load older pages until the form of a question closed in view is found.
+  useEffect(() => {
+    if (snapshotted && lookingFor && history.state === "idle") void loadOlder()
+  }, [snapshotted, lookingFor, history, loadOlder])
+  const formOpen = live && allForms.some((form) => form.closed === undefined)
 
-  /** Deliver one message: to the open question as its answer, else to the console. */
-  function dispatch(text: string, requestId: string | undefined) {
+  /** Deliver one message to the console. */
+  function dispatch(text: string) {
     // Each send is its own entry, so a failure takes back that send alone.
     sendCount += 1
     const id = `queued:${sendCount}`
     // A failure can land after the pane is gone: it goes to the retained state.
     const owner = keyRef.current
-    if (requestId === undefined) setTranscript((current) => queuePrompt(current, text, id))
-    const sent =
-      requestId === undefined ? post(text) : answerRequest(host, sessionId, requestId, { text })
-    sent.then(
-      () => {
-        if (requestId !== undefined) setAnswered((now) => new Set(now).add(requestId))
-      },
-      (error) => {
-        if (requestId === undefined) setTranscript((current) => dequeuePrompt(current, id, text))
-        const what = requestId === undefined ? "send the prompt" : "send the answer"
-        changeFailed(owner, (now) => [
-          ...now,
-          { id, text, requestId, message: `Could not ${what}: ${describeError(error)}` },
-        ])
-      },
-    )
+    setTranscript((current) => queuePrompt(current, text, id))
+    post(text).catch((error) => {
+      setTranscript((current) => dequeuePrompt(current, id, text))
+      changeFailed(owner, (now) => [
+        ...now,
+        { id, text, message: `Could not send the prompt: ${describeError(error)}` },
+      ])
+    })
   }
 
   // A send that fails after this pane replaced another lands in the retained
@@ -676,13 +684,13 @@ function ConsolePane({
     const text = draft
     if (!live || text.trim().length === 0) return
     edit("", 0)
-    dispatch(text, questionId)
+    dispatch(text)
     field.current?.focus()
   }
 
   function retry(one: FailedSend) {
     changeFailed(keyRef.current, (now) => now.filter((other) => other.id !== one.id))
-    dispatch(one.text, one.requestId)
+    dispatch(one.text)
   }
 
   /** Take a failed message back into the composer, in front of any newer draft. */
@@ -712,10 +720,6 @@ function ConsolePane({
     event.preventDefault()
     return true
   }
-
-  const markAnswered = useCallback((requestId: string) => {
-    setAnswered((now) => new Set(now).add(requestId))
-  }, [])
 
   function answer(option: PermissionOption) {
     setAnswering(option.id)
@@ -909,10 +913,7 @@ function ConsolePane({
     (block): block is Extract<typeof block, { type: "tool" | "permission" }> =>
       (block.type === "tool" || block.type === "permission") && block.id === selectedTool,
   )
-  const pendingQuestion = live
-    ? openQuestion([...restoredQuestions(requests, transcript), ...transcript.blocks], answered)
-    : undefined
-  const request = pending ?? pendingQuestion
+  const request = pending
   function requestTarget() {
     const id = requestFocus.current
     if (!id) return null
@@ -955,7 +956,7 @@ function ConsolePane({
         className="h-7 justify-start text-xs"
         onClick={(event) => revealRequest(event.currentTarget)}
       >
-        Pending request · {request.type === "permission" ? "Permission" : "Question"}
+        Pending request · Permission
       </Button>
     </div>
   ) : null
@@ -1028,7 +1029,7 @@ function ConsolePane({
               ref={log}
               role="log"
               aria-label="Console transcript"
-              className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2 [&>[data-block=prompt]]:mt-3 [&>[data-block=message]]:mt-3 [&>[data-block=question]]:mt-3"
+              className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2 [&>[data-block=prompt]]:mt-3 [&>[data-block=message]]:mt-3"
               onScroll={(event) => {
                 const el = event.currentTarget
                 // A restore of the reader's place waits on the blocks: until it
@@ -1053,7 +1054,7 @@ function ConsolePane({
                 if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
               }}
             >
-              {collapseRuns(inPlace, runExpansions, selectedTool).map((item) => {
+              {collapseRuns(blocks, runExpansions, selectedTool).map((item) => {
                 if (item.kind === "control")
                   return (
                     <RunToggle
@@ -1080,8 +1081,6 @@ function ConsolePane({
                     selected={tool?.id === block.id}
                     onSelect={selectTool}
                   />
-                ) : block.type === "question" ? (
-                  card(block)
                 ) : (
                   <BlockView
                     key={block.id}
@@ -1092,18 +1091,21 @@ function ConsolePane({
                   />
                 )
               })}
-              {requestsError ? (
+              {formsError ? (
                 <div
                   role="alert"
                   className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
                 >
-                  Could not read the pending questions: {requestsError}
-                  <Button size="xs" variant="outline" onClick={readRequests}>
+                  Could not read the open questions: {formsError}
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => readForms(formsThrough.current)}
+                  >
                     Retry
                   </Button>
                 </div>
               ) : null}
-              {live ? null : restored.map(card)}
               {transcript.queuedPrompts.map((prompt) => (
                 <div key={prompt.id} data-block="prompt">
                   <PromptBox text={prompt.text} queued />
@@ -1117,7 +1119,15 @@ function ConsolePane({
                   onEdit={() => editFailed(one)}
                 />
               ))}
-              {waiting.map(card)}
+              {forms.map((form) => (
+                <FormCard
+                  key={form.id}
+                  host={host}
+                  sessionId={sessionId}
+                  question={form}
+                  live={live}
+                />
+              ))}
             </div>
             {away ? (
               <Button
@@ -1154,7 +1164,6 @@ function ConsolePane({
             draft={draft}
             live={live}
             running={running}
-            question={question !== undefined}
             child={child ? { cancellable: childCancellable } : undefined}
             suggestions={suggestions}
             picked={pickedSuggestion}
@@ -1172,6 +1181,7 @@ function ConsolePane({
                 ? { tool: runningTool(transcript), seconds: elapsedSeconds(turnStartedAt, now) }
                 : undefined
             }
+            waiting={formOpen}
             tokens={tokenTotals(transcript, usage)}
           />
         </ConsoleWorkspace>

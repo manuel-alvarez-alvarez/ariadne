@@ -1,4 +1,4 @@
-//! The orchestrator plans in its agent's plan mode (021 rule 21).
+//! The orchestrator plans in its agent's plan mode (021 rule 22).
 //!
 //! A launch of the orchestrator of a goal in planning sets the agent's `plan`
 //! mode before its first prompt, where the agent offers one: a configuration

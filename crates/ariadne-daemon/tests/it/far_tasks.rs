@@ -40,6 +40,8 @@ struct Front {
     health_off: Arc<AtomicBool>,
     protocol_override: Arc<Mutex<Option<Value>>>,
     stream_cut: Arc<watch::Sender<bool>>,
+    /// Frames put into each open stream among the ones the far daemon sends.
+    stream_frames: tokio::sync::broadcast::Sender<&'static str>,
     /// The kinds of request whose next answer is lost, once each, and the
     /// kind to hold from then on.
     lose: Arc<Mutex<Vec<Loss>>>,
@@ -83,6 +85,7 @@ impl Default for Front {
             health_off: Arc::default(),
             protocol_override: Arc::default(),
             stream_cut: Arc::new(watch::Sender::new(false)),
+            stream_frames: tokio::sync::broadcast::channel(8).0,
             lose: Arc::default(),
             held: Arc::new(watch::Sender::new(Vec::new())),
             held_before: Arc::new(watch::Sender::new(Vec::new())),
@@ -94,6 +97,14 @@ impl Default for Front {
 }
 
 impl Front {
+    /// Put a `resync` frame into each open stream, as the far daemon does
+    /// when a client lags (012).
+    fn resync(&self) {
+        let _ = self
+            .stream_frames
+            .send("event: resync\ndata: {\"missed\":1}\n\n");
+    }
+
     fn set_health_off(&self, off: bool) {
         self.health_off.store(off, Ordering::SeqCst);
     }
@@ -201,15 +212,17 @@ impl Front {
                     if kind == "stream" {
                         use futures_util::StreamExt;
                         let cut = front.stream_cut.subscribe();
+                        let frames = front.stream_frames.subscribe();
                         let (parts, body) = answer.into_parts();
                         let stream = futures_util::stream::unfold(
-                            (body.into_data_stream(), cut),
-                            |(mut body, mut cut)| async move {
+                            (body.into_data_stream(), cut, frames),
+                            |(mut body, mut cut, mut frames)| async move {
                                 let frame = tokio::select! {
                                     frame = body.next() => frame,
+                                    Ok(frame) = frames.recv() => Some(Ok(frame.into())),
                                     _ = cut.wait_for(|cut| *cut) => None,
                                 };
-                                frame.map(|frame| (frame, (body, cut)))
+                                frame.map(|frame| (frame, (body, cut, frames)))
                             },
                         );
                         return axum::response::Response::from_parts(
@@ -2274,4 +2287,5 @@ async fn an_orchestrator_message_reaches_the_far_agent_as_a_turn() {
     .await;
 }
 
+mod posts;
 mod source_references;

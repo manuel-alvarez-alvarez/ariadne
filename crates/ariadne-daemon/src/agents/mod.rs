@@ -73,7 +73,7 @@ pub struct SpawnCtx {
     /// travels in the launch file instead.
     pub extra_flags: Vec<String>,
     /// Whether this launch runs the agent in its `plan` mode: the
-    /// orchestrator of a goal in planning (021 rule 21).
+    /// orchestrator of a goal in planning (021 rule 22).
     pub plan_mode: bool,
 }
 

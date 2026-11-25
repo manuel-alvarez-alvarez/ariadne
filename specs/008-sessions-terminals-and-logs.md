@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-11-21
+updated: 2026-11-25
 areas: [daemon, cli, ui]
 commits: [e4816cf6, 39937143, a69b953f, 7880c022, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -16,6 +16,8 @@ tests:
   - crates/ariadne-console/src/tui/blocks.rs
   - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-console/src/tui/subagents.rs
+  - crates/ariadne-console/src/tui/form.rs
+  - crates/ariadne-cli/src/commands/transcript.rs
 ---
 
 # Sessions, terminals and logs
@@ -71,6 +73,26 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 35. The status row says `running N subagents` while any child is in state `running`.
 36. `POST /v1/sessions/{id}/console/cancel` takes an optional body, `{"subagent_id"}`. Named, it cancels that subagent's turn (021 rule 16) instead of the session's own, which is left as it is; the body omitted, or `subagent_id` omitted, cancels the session's own turn as before. It refuses with `409` a subagent that is unknown, has already ended, or was never said to be cancellable.
 37. An open `wait_for_user` question (031 rule 11) of a live session draws in the live area right above the input, and stays there while the blocks written after it go above it and into the scrollback. A question that closes is written to the scrollback once, after the blocks that came before its close. The text the agent writes under an open question streams into one block, as it does with no question. A reconnect's replay keeps the place of a close that came while the stream was down. A question still open when the console exits is written to the scrollback once, after every block. A finished session draws its questions in event order, and a child's view has none of its own.
+38. A question an agent asks with its own tool (021 rule 21) draws as its
+    form. The console and `ariadne session logs` draw its message, then each
+    field: its title, whether it takes one choice, several or free text,
+    whether it is optional, and each choice as the agent wrote it, with its
+    description. A closed question draws each answer under its field's
+    title, or how it closed: declined, cancelled, withdrawn by the agent, or
+    closed at the end of the session. `session logs --follow` draws the
+    close when it arrives.
+    - An open question stays above the input as rule 37 has it, and the
+      console answers the oldest one, one field at a time.
+    - On a choice field, Up, Down and a number move the pick, Space checks a
+      choice of a multi-select, and Enter takes the field. On a text field,
+      Enter takes the text in the input box.
+    - A required field without an answer stays, and says why.
+    - A form with no fields takes Enter as `accept` with empty content, while the input box is empty.
+    - The last field's Enter sends `accept` with the content. Esc sends
+      `decline`.
+    - While the input box holds text on a choice field, the keys are the
+      box's. The text is a prompt, and it waits behind the turn.
+    - A permission question that waits takes the keys first.
 
 ## Acceptance criteria
 
@@ -95,6 +117,8 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 19. An open question stays above the input, a closed one goes into the scrollback once after the blocks before its close, one open at the exit is written once, and a finished session keeps event order (`ariadne-console::tui::viewport::tests::an_open_question_stays_over_the_input_while_later_blocks_go_into_the_scrollback`, `::a_closed_question_goes_into_the_scrollback_once_after_the_blocks_before_its_close`, `::a_question_open_at_the_close_is_written_once_after_every_block`, `::a_finished_session_draws_its_questions_in_event_order`); chunks under an open question make one block, and a replay keeps a close's place (`ariadne-console::tui::viewport::tests::chunks_under_an_open_question_make_one_block_that_is_written_whole`, `::a_question_closed_while_the_stream_was_down_keeps_its_close_position`).
 
 20. A session place survives a store restart (`crates/ariadne-store/tests/session_place.rs::the_session_place_survives_a_store_restart`).
+21. A question draws its fields above the input with the option text as written, the keys answer it field by field, Esc declines it, a form with no fields is accepted, text typed on a choice field is a prompt, a required field is not left empty, and a closed question shows each answer (`ariadne-console::tui::form::tests::an_open_question_draws_its_fields_and_the_option_text_as_written_above_the_input`, `::the_keys_answer_each_field_and_the_last_enter_sends_the_content`, `::escape_declines_the_question`, `::enter_accepts_a_form_without_fields_with_empty_content`, `::text_typed_on_a_choice_field_is_sent_as_a_prompt`, `::a_required_field_with_no_choice_left_is_not_taken`, `::a_closed_question_shows_each_answer_by_the_option_text`).
+22. `ariadne session logs` draws a question's fields, its options as written and its answers, and a followed log draws the close under it (`ariadne-cli::commands::transcript::tests::a_question_draws_each_field_with_its_options_as_written_and_its_answers`, `::a_followed_question_draws_its_close_under_it`).
 
 ## Sources
 

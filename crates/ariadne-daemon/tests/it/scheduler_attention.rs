@@ -371,7 +371,7 @@ impl Sched {
 
 /// The agent's resume template, rendered for the world's task on its first
 /// column: the words the daemon nudges an idle column agent with.
-const RESUME: &str = "Not a new request: continue \"task\" at Develop. Check if the work is done. Make the call that ends the column, or go on. Ask an open question again. Write no reply about this nudge.";
+const RESUME: &str = "Not a new request: continue \"task\" at Develop. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 // -- the timeline -----------------------------------------------------------
 
@@ -604,6 +604,63 @@ async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
         None,
         "nor is it raised for the user this early"
     );
+}
+
+/// An agent waiting on its own question (021) waits on a person: however
+/// long it is silent, no watchdog nudges it, flags it or relaunches it.
+#[tokio::test]
+async fn an_agent_waiting_on_its_question_is_left_alone() {
+    let w = World::active().await;
+    let mut script = common::acp::script();
+    script["prompts"] = serde_json::json!([{
+        "elicitation": {"message": "Which base branch?",
+                        "requestedSchema": {"type": "object", "properties": {
+                            "base": {"type": "string"}}}},
+        "updates": [],
+    }]);
+    w.agent.reprogram(script);
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.launcher
+        .acp
+        .send_prompt(&session.id, "Work on it.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the agent to ask its question", async || {
+        !w.launcher.acp.open_questions(&session.id).await.is_empty()
+    })
+    .await;
+    w.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    let launched = w.launched_at(&session).await;
+
+    // A second task's author, idle in the same silence: its nudge is what
+    // says the pass the asking one went through is over.
+    let control_task = w.extra_task("control").await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
+    w.idle_for(&control, NUDGE_SECS + 60).await;
+
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    sched.task(&control_task);
+    eventually(TIMEOUT, "the idle author to be nudged", async || {
+        !w.prompts_to(&control).is_empty()
+    })
+    .await;
+
+    assert_eq!(
+        w.prompts_to(&session).len(),
+        1,
+        "the asking agent was nudged"
+    );
+    assert_eq!(
+        w.attention(&session).await,
+        None,
+        "the asking agent was flagged"
+    );
+    assert_eq!(
+        w.launched_at(&session).await,
+        launched,
+        "the asking agent was relaunched"
+    );
+    assert_eq!(w.launcher.acp.open_questions(&session.id).await.len(), 1);
 }
 
 /// An agent that came up and was never handed a prompt reads `running` from

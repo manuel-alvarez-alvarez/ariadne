@@ -161,7 +161,7 @@ impl RelayEffects {
             .entry(key)
             .or_default()
             .push_back(effect.clone());
-        if method == "session/request_permission"
+        if matches!(method, "session/request_permission" | "elicitation/create")
             && let Some(id) = message.get("id")
         {
             self.permission_replies

@@ -106,6 +106,17 @@ pub(super) fn block(
             DIFF_FOLD,
         ),
         TranscriptItem::SystemNote { text, .. } => prefixed(text, "  ", DIM, DIM, width, None),
+        TranscriptItem::FormQuestion { .. } => {
+            let text = item.form_lines().join("\n");
+            prefixed(
+                &text,
+                theme::AGENT_MARKER,
+                AGENT,
+                Style::default(),
+                width,
+                None,
+            )
+        }
         TranscriptItem::UserQuestion { .. } => {
             let text = item.question_lines().join("\n");
             prefixed(

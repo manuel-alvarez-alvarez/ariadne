@@ -1,12 +1,98 @@
 // @vitest-environment jsdom
-import { screen, waitFor, within } from "@testing-library/react"
+import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { expect, it } from "vitest"
+import { expect, it, onTestFinished, vi } from "vitest"
 
 import { qk } from "@/api"
-import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { EventStreamProvider } from "@/events/provider"
+import { latestSource, stubEventSource } from "@/test/event-source"
+import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
+
+/** The paths of every request the panel made, in order. */
+function requestedPaths(): string[] {
+  return daemonFetch.mock.calls.map(([input]) => {
+    const url = input instanceof Request ? input.url : String(input)
+    return new URL(url).pathname
+  })
+}
+
+it("offers no messages tab and no message input, and reads no message route", async () => {
+  const task = aTask()
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    route: "/goals?tab=messages",
+    seed: (client) => {
+      client.setQueryData(qk.tasks.detail("local", task.id), task)
+      client.setQueryData(qk.goals.detail("local", task.goal_id), aGoal({ id: task.goal_id }))
+    },
+  })
+
+  const tabs = await screen.findAllByRole("tab")
+  expect(tabs.map((tab) => tab.textContent)).toEqual(["Description", "History", "Diff", "Sessions"])
+  expect(screen.getByRole("tab", { name: "Description" }).getAttribute("aria-selected")).toBe(
+    "true",
+  )
+  expect(screen.queryByRole("textbox")).toBeNull()
+  expect(requestedPaths().filter((path) => path.endsWith("/messages"))).toEqual([])
+})
+
+it("changes no view and logs no error when the stream carries a message_sent event", async () => {
+  stubEventSource()
+  const warn = vi.spyOn(console, "warn")
+  const error = vi.spyOn(console, "error")
+  onTestFinished(() => {
+    warn.mockRestore()
+    error.mockRestore()
+  })
+  const task = aTask()
+  // Every list read settles, so a refetch the event caused would be a new
+  // request. The seeded task and goal stay as they are.
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname
+    if (path === `/v1/tasks/${task.id}` || path === `/v1/goals/${task.goal_id}`) {
+      return new Promise(() => {})
+    }
+    return Promise.resolve(jsonResponse(path === "/v1/sessions" ? aSessionPage([]) : []))
+  })
+  renderScreen(
+    <EventStreamProvider>
+      <TaskPanel host="local" taskId={task.id} onClose={() => {}} />
+    </EventStreamProvider>,
+    {
+      seed: (client) => {
+        client.setQueryData(qk.tasks.detail("local", task.id), task)
+        client.setQueryData(qk.goals.detail("local", task.goal_id), aGoal({ id: task.goal_id }))
+      },
+    },
+  )
+  await screen.findByRole("heading", { name: task.title })
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: /Sessions/ }).textContent).toMatch(/0/),
+  )
+  const stream = latestSource()
+  act(() => {
+    stream.succeed()
+    stream.beat()
+  })
+  const before = { html: document.body.innerHTML, requests: requestedPaths() }
+
+  act(() =>
+    stream.emit("message_sent", {
+      id: "01JMESSAGE0000000000000001",
+      goal_id: task.goal_id,
+      task_id: task.id,
+      body: "Said by an agent.",
+      created_at: "2026-01-01T00:00:00Z",
+    }),
+  )
+  await act(async () => {})
+
+  expect(document.body.innerHTML).toBe(before.html)
+  expect(requestedPaths()).toEqual(before.requests)
+  expect(warn).not.toHaveBeenCalled()
+  expect(error).not.toHaveBeenCalled()
+})
 
 it("shows workflow agents by column", async () => {
   const goal = aGoal({

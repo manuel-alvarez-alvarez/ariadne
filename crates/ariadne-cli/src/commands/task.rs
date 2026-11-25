@@ -524,6 +524,7 @@ async fn ls(
         &EventStreamQuery {
             goal: goal.clone(),
             task: None,
+            source: None,
         },
     )?;
     follow::watch(client, &path, relevant, async || {

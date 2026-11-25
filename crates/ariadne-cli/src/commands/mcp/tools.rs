@@ -14,7 +14,6 @@ use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
-use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::pull_requests::{
     EscalateCommentRequest, ReplyCommentRequest, ReviewCommentRequest, SubmitReviewRequest,
 };
@@ -24,7 +23,7 @@ use ariadne_api::tasks::{
     AgentAssignment, CompleteStepRequest, CreateTaskRequest, FailStepRequest,
     OpenPullRequestRequest, TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, TaskStatus};
+use ariadne_core::TaskStatus;
 
 use super::{AriadneMcp, json_result, to_mcp_err};
 
@@ -168,63 +167,13 @@ pub(super) struct GetDiffReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub(super) struct SendMessageReq {
-    /// Who to write to: a column id from `get_task`, which names the agent
-    /// that staffs it, or `orchestrator`.
+pub(super) struct PostToSessionReq {
+    /// Who to post to: `orchestrator`, or a column id from `get_task`.
     pub to: String,
-    /// The whole message. Write it so that the recipient needs no follow-up question.
-    // `message` is taken too: an agent that spells the field that way writes
-    // the message it meant to, instead of reading a refusal and spending a
-    // turn on the same call again.
-    #[serde(alias = "message")]
-    pub body: String,
     /// The task it is about. Omit it for your own task.
     pub task_id: Option<String>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct WaitForUserReq {
-    /// One short line for the Needs attention list, under 100 characters.
-    /// Not the question: put the question in `question`.
-    pub hint: String,
-    /// The question that the console shows to the user.
-    pub question: Option<UserQuestion>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct UserQuestion {
-    /// The question, with the context that the user needs to answer it.
-    pub text: String,
-    /// The answers that the user can pick. Give none for a typed answer.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub options: Vec<UserQuestionOption>,
-    /// The `id` of the option that you recommend.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_option_id: Option<String>,
-    /// Why you recommend that option. Give it only with `recommended_option_id`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommendation_reason: Option<String>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct UserQuestionOption {
-    /// A short id that is unique in the question.
-    pub id: String,
-    /// The short name of the answer.
-    pub label: String,
-    /// What the answer causes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct WithdrawWaitForUserReq {
-    /// The `id` that `wait_for_user` returned.
-    pub request_id: String,
+    /// The whole post. Write it so that the recipient needs no follow-up question.
+    pub body: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -331,15 +280,6 @@ pub(super) struct SubmitReviewReq {
     pub comments: Vec<ReviewFinding>,
 }
 
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct ReadMessagesReq {
-    /// The task whose channel to read. Omit it for your own task.
-    pub task_id: Option<String>,
-    /// Read the whole thread. Omit it to read only what is new for you.
-    pub all: Option<bool>,
-}
-
 // ---------- helpers ----------
 
 /// One agent an orchestrator staffed on a column, as the API takes it.
@@ -411,55 +351,6 @@ fn of_agent(models: Vec<serde_json::Value>, agent_id: Option<String>) -> Vec<ser
         .collect()
 }
 
-/// Who a message is for, as an agent spells it: `orchestrator`, or the
-/// workflow column of an agent the task staffs. An agent's id is taken too,
-/// since `get_task` shows it beside the column.
-///
-/// The column is the address because it is what an agent reading `get_task`
-/// has in front of it: a task staffs one agent per column, so the word names
-/// one reader and leaves nothing to work out.
-fn addressee(to: &str, agents: &[serde_json::Value]) -> Result<(Actor, Option<String>), McpError> {
-    if to.eq_ignore_ascii_case("orchestrator") {
-        return Ok((Actor::Orchestrator, None));
-    }
-    let Some(agent) = agents.iter().find(|a| {
-        a["id"] == to
-            || a["step"]
-                .as_str()
-                .is_some_and(|step| step.eq_ignore_ascii_case(to))
-    }) else {
-        return Err(McpError::invalid_params(
-            format!(
-                "no agent {to} on this task. Say `orchestrator`, or one of: {}",
-                roll_call(agents)
-            ),
-            None,
-        ));
-    };
-    let Some(id) = agent["id"].as_str() else {
-        return Err(McpError::invalid_params(
-            format!("agent {to} has no id to write to"),
-            None,
-        ));
-    };
-    Ok((Actor::Agent, Some(id.to_string())))
-}
-
-/// The addresses that would have worked, each column with the id of the
-/// agent that staffs it: an agent reading a refusal picks its reader from
-/// this line.
-fn roll_call(agents: &[serde_json::Value]) -> String {
-    agents
-        .iter()
-        .filter_map(|a| {
-            let id = a["id"].as_str()?;
-            let step = a["step"].as_str().unwrap_or("agent");
-            Some(format!("{id} ({step})"))
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// The acknowledgement of a write on a task: where the task now stands.
 fn task_ack(task: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({"id": task["id"], "status": task["status"], "step": task["step"]})
@@ -500,36 +391,6 @@ fn goal_ack(goal: &serde_json::Value) -> serde_json::Value {
 
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
-    #[tool(
-        description = "Flag that you wait for the user. Ask in `question`, with the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text. A later turn that ends without the call closes it. Withdraw a pending question before you change it. Returns its `id`."
-    )]
-    async fn wait_for_user(
-        &self,
-        Parameters(req): Parameters<WaitForUserReq>,
-    ) -> Result<CallToolResult, McpError> {
-        json_result(
-            self.post(
-                &format!("/v1/sessions/{}/agent-requests", self.session_id),
-                &serde_json::json!({"summary": req.hint, "question": req.question}),
-            )
-            .await?,
-        )
-    }
-
-    #[tool(
-        description = "Withdraw one pending `wait_for_user` request by its `request_id`. Do it when the user no longer needs to answer, or before you ask again with another question."
-    )]
-    async fn withdraw_wait_for_user(
-        &self,
-        Parameters(req): Parameters<WithdrawWaitForUserReq>,
-    ) -> Result<CallToolResult, McpError> {
-        self.post_no_content(&format!(
-            "/v1/sessions/{}/agent-requests/{}",
-            self.session_id, req.request_id
-        ))
-        .await?;
-        json_result(serde_json::json!({"withdrawn": true}))
-    }
     #[tool(
         description = "Read one task: its title, description, status, column, branch, dependencies, `pr_url` and `reason`. Each agent gives its `id`, column, model, skills and `session_id`. `goal_steps` gives each column's ranks and gate. Omit `task_id` for your own task."
     )]
@@ -1005,31 +866,26 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Send one message. Ask a question, answer one, or report a blocker. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
+        description = "Post text into the live session of the orchestrator or of the agent of the current column. It also reaches a task on another host, but no legacy mirror. Post a question, an answer, or a blocker report only. Send no thanks or plans. After a question, end your turn. The answer arrives as a new turn."
     )]
-    async fn send_message(
+    async fn post_to_session(
         &self,
-        Parameters(req): Parameters<SendMessageReq>,
+        Parameters(req): Parameters<PostToSessionReq>,
     ) -> Result<CallToolResult, McpError> {
-        self.write_message(req.task_id, &req.to, req.body).await
-    }
-
-    #[tool(
-        description = "Read the messages sent to you that you have not received yet, oldest first. Ariadne hands over each message once. Set `all` to true for the whole thread of the task or the goal."
-    )]
-    async fn read_messages(
-        &self,
-        Parameters(req): Parameters<ReadMessagesReq>,
-    ) -> Result<CallToolResult, McpError> {
-        let path = self.channel_path(req.task_id, "/messages")?;
-        let path = match req.all.unwrap_or(false) {
-            true => path,
-            // A default read is a delivery: the daemon narrows it to this
-            // session's own agent and stamps what it hands over, so nothing
-            // reaches an agent twice.
-            false => format!("{path}?deliver=true"),
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(McpError::invalid_params("a post needs a body", None));
+        }
+        let path = self.task_path(req.task_id, "/posts")?;
+        let request = ariadne_api::messages::PostToSessionRequest {
+            to: req.to,
+            body: body.to_string(),
         };
-        json_result(self.get::<serde_json::Value>(&path).await?)
+        self.client
+            .send_no_content(http::Method::POST, &path, Some(&request))
+            .await
+            .map_err(to_mcp_err)?;
+        json_result(serde_json::json!({"posted": true}))
     }
 }
 
@@ -1075,39 +931,6 @@ impl AriadneMcp {
             }
         }
         json_result(task)
-    }
-
-    /// Write one message about `task_id` — the session's own where it names
-    /// none — to whoever `to` spells.
-    async fn write_message(
-        &self,
-        task_id: Option<String>,
-        to: &str,
-        body: String,
-    ) -> Result<CallToolResult, McpError> {
-        let body = body.trim();
-        if body.is_empty() {
-            return Err(McpError::invalid_params("a message needs a body", None));
-        }
-        let path = self.task_path(task_id.clone(), "/messages")?;
-        // The orchestrator is addressed by name: no agent id, so no task read.
-        let agents = match to.eq_ignore_ascii_case("orchestrator") {
-            true => Vec::new(),
-            false => self.agents_of(task_id).await?,
-        };
-        let (to_actor, to_agent_id) = addressee(to, &agents)?;
-        let request = SendMessageRequest {
-            to_actor,
-            to_agent_id,
-            body: body.to_string(),
-        };
-        json_result(self.post(&path, &request).await?)
-    }
-
-    /// The agents staffed on a task, as `get_task` lists them.
-    async fn agents_of(&self, task_id: Option<String>) -> Result<Vec<serde_json::Value>, McpError> {
-        let task: serde_json::Value = self.get(&self.task_path(task_id, "")?).await?;
-        Ok(task["agents"].as_array().cloned().unwrap_or_default())
     }
 
     /// Move this session's own task, which is the only one a column's agent
@@ -1380,69 +1203,6 @@ mod tests {
         assert_eq!(seen.lock().expect("lock").len(), 2);
     }
 
-    /// The daemon withdraws a request with a bare `204`, and the tool reads
-    /// that as success rather than a decoding failure.
-    #[tokio::test]
-    async fn withdraw_wait_for_user_reads_a_204_as_success() {
-        let (endpoint, seen) = recording_no_content_daemon().await;
-        let mcp = server_at(
-            McpSeat::Agent,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        mcp.withdraw_wait_for_user(Parameters(WithdrawWaitForUserReq {
-            request_id: "01REQ".into(),
-        }))
-        .await
-        .expect("a 204 withdrawal is success");
-
-        let seen = seen.lock().expect("lock").clone();
-        assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0].method, "POST");
-        assert_eq!(seen[0].path, "/v1/sessions/01SESSION/agent-requests/01REQ");
-    }
-
-    /// The tool posts the hint and the whole question, so the console can
-    /// draw the question as a card.
-    #[tokio::test]
-    async fn wait_for_user_posts_the_hint_and_the_question() {
-        let (endpoint, seen) = recording_daemon_answering(r#"{"id":"01REQ"}"#).await;
-        let mcp = server_at(
-            McpSeat::Agent,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        mcp.wait_for_user(Parameters(WaitForUserReq {
-            hint: "Pick a base".into(),
-            question: Some(UserQuestion {
-                text: "Which base?".into(),
-                options: vec![UserQuestionOption {
-                    id: "main".into(),
-                    label: "Main".into(),
-                    description: None,
-                }],
-                recommended_option_id: Some("main".into()),
-                recommendation_reason: Some("The trunk is green.".into()),
-            }),
-        }))
-        .await
-        .expect("the request opens");
-
-        let seen = seen.lock().expect("lock").clone();
-        assert_eq!(seen[0].path, "/v1/sessions/01SESSION/agent-requests");
-        let body: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
-        assert_eq!(
-            body,
-            serde_json::json!({
-                "summary": "Pick a base",
-                "question": {
-                    "text": "Which base?",
-                    "options": [{"id": "main", "label": "Main"}],
-                    "recommended_option_id": "main",
-                    "recommendation_reason": "The trunk is green."
-                }
-            })
-        );
-    }
-
     /// An agent whose task opened no request yet is told to open one, and
     /// no request route is called.
     #[tokio::test]
@@ -1638,41 +1398,6 @@ mod tests {
             .expect_err("default is no model for a column");
         texts.push(("staffing's default-model refusal", err.message.to_string()));
 
-        let (endpoint, _seen) =
-            recording_daemon_answering(r#"{"agents": [{"id": "01A", "step": "develop"}]}"#).await;
-        let err = agent_at(&endpoint)
-            .send_message(Parameters(SendMessageReq {
-                to: "nope".into(),
-                body: "Hi.".into(),
-                task_id: None,
-            }))
-            .await
-            .expect_err("no such agent");
-        texts.push(("addressee's no-agent refusal", err.message.to_string()));
-
-        let (endpoint, _seen) =
-            recording_daemon_answering(r#"{"agents": [{"step": "develop"}]}"#).await;
-        let err = agent_at(&endpoint)
-            .send_message(Parameters(SendMessageReq {
-                to: "develop".into(),
-                body: "Hi.".into(),
-                task_id: None,
-            }))
-            .await
-            .expect_err("an agent with no id");
-        texts.push(("addressee's no-id refusal", err.message.to_string()));
-
-        let (endpoint, _seen) = recording_daemon().await;
-        let err = agent_at(&endpoint)
-            .send_message(Parameters(SendMessageReq {
-                to: "develop".into(),
-                body: "".into(),
-                task_id: None,
-            }))
-            .await
-            .expect_err("a message with no body");
-        texts.push(("send_message's refusal", err.message.to_string()));
-
         for (name, text) in texts {
             for sentence in ste::sentences(&text) {
                 let words = sentence.split_whitespace().count();
@@ -1791,23 +1516,6 @@ mod tests {
             "the fix wanted",
         ] {
             assert!(fail.contains(rule), "fail_step and \"{rule}\"");
-        }
-    }
-
-    #[test]
-    fn send_message_tells_agents_to_end_the_turn_after_a_question() {
-        let tool = AriadneMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .find(|tool| tool.name == "send_message")
-            .expect("the send_message tool");
-        let description = tool.description.expect("the description");
-        for rule in [
-            "After a question, end your turn.",
-            "Do not poll `read_messages`.",
-            "Ariadne delivers the answer as a new turn.",
-        ] {
-            assert!(description.contains(rule), "the description and \"{rule}\"");
         }
     }
 
@@ -2090,137 +1798,50 @@ mod tests {
         );
     }
 
-    /// One verb, and it names the column it is for: the message goes to the
-    /// agent that staffs that column, and carries no kind.
-    ///
-    /// There is nothing to ask with and nothing to answer with: a message is
-    /// one agent telling another what it needs from it, and each one arrives
-    /// at its agent as a turn — a channel that invites one back spends two turns
-    /// saying nothing.
+    /// `post_to_session` posts the three parameters to the posts route of the
+    /// task, its own where none is named, and its description permits a
+    /// question, an answer or a blocker report and tells the sender to end
+    /// its turn after a question (039).
     #[tokio::test]
-    async fn a_message_names_the_column_it_is_for() {
-        let (endpoint, seen) = recording_daemon_answering(
-            r#"{"agents":[{"id":"01DEVELOP","step":"develop","skills":["coding"]},
-                          {"id":"01REVIEW","step":"review","skills":["code-review"]}]}"#,
-        )
-        .await;
-        let mcp = server_at(
+    async fn post_to_session_posts_to_the_posts_route_and_says_to_end_the_turn() {
+        let (endpoint, seen) = recording_no_content_daemon().await;
+        let mut mcp = server_at(
             McpSeat::Agent,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
-
-        mcp.send_message(Parameters(SendMessageReq {
-            to: "develop".into(),
-            body: "The retry is bounded by the caller, so the inner one is not.".into(),
+        mcp.task_id = Some("01T".into());
+        mcp.post_to_session(Parameters(PostToSessionReq {
+            to: "review".into(),
             task_id: None,
+            body: " Is the bound a limit? ".into(),
         }))
         .await
-        .expect("send_message");
-        let sent = seen.lock().expect("lock").last().expect("sent").clone();
-        assert_eq!(sent.method, "POST");
-        assert_eq!(sent.path, "/v1/tasks/01TASK/messages");
-        let sent: serde_json::Value = serde_json::from_str(&sent.body).expect("json");
-        assert_eq!(sent.get("kind"), None, "a message has no kind");
-        assert_eq!(sent["to_actor"], serde_json::json!("agent"));
-        assert_eq!(sent["to_agent_id"], serde_json::json!("01DEVELOP"));
-    }
-
-    /// The orchestrator is addressed by what it is: a goal has one, and it is
-    /// staffed on no task, so there is no id to name it by.
-    #[tokio::test]
-    async fn the_orchestrator_is_addressed_by_name_and_needs_no_agent_id() {
-        let (endpoint, seen) = recording_daemon_answering(
-            r#"{"agents":[{"id":"01DEVELOP","step":"develop","skills":["coding"]}]}"#,
-        )
-        .await;
-        let mcp = server_at(
-            McpSeat::Agent,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-
-        mcp.send_message(Parameters(SendMessageReq {
+        .expect("post_to_session");
+        mcp.post_to_session(Parameters(PostToSessionReq {
             to: "orchestrator".into(),
-            body: "The task names no CLI, and the spec it cites has one.".into(),
-            task_id: None,
+            task_id: Some("01OTHER".into()),
+            body: "  ".into(),
         }))
         .await
-        .expect("send_message");
-
-        let sent: serde_json::Value =
-            serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
-                .expect("json");
-        assert_eq!(sent["to_actor"], serde_json::json!("orchestrator"));
-        assert_eq!(sent["to_agent_id"], serde_json::Value::Null);
-        let seen = seen.lock().expect("lock");
-        assert_eq!(seen.len(), 1, "a message to the orchestrator reads no task");
-        assert_eq!(seen[0].method, "POST");
-    }
-
-    /// A `to` that names nobody is refused here, with the columns that would
-    /// have worked: the agent reading the refusal is the one that has to fix
-    /// it.
-    #[tokio::test]
-    async fn a_message_to_nobody_is_refused_with_the_addresses_that_would_work() {
-        let (endpoint, seen) = recording_daemon_answering(
-            r#"{"agents":[{"id":"01DEVELOP","step":"develop","skills":["coding"]}]}"#,
-        )
-        .await;
-        let mcp = server_at(
-            McpSeat::Agent,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        .expect_err("an empty body");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "the empty body reaches no route");
+        assert_eq!(
+            (seen[0].method.as_str(), seen[0].path.as_str()),
+            ("POST", "/v1/tasks/01T/posts")
         );
-
-        let err = mcp
-            .send_message(Parameters(SendMessageReq {
-                to: "01NOBODY".into(),
-                body: "the flag moved".into(),
-                task_id: None,
-            }))
-            .await
-            .expect_err("no such agent");
-        assert!(
-            err.message.contains("01DEVELOP (develop)"),
-            "{}",
-            err.message
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&seen[0].body).unwrap(),
+            serde_json::json!({"to": "review", "body": "Is the bound a limit?"})
         );
-        assert!(err.message.contains("orchestrator"), "{}", err.message);
-        // The task was read to find that out, and nothing was written.
-        assert!(
-            seen.lock()
-                .expect("lock")
-                .iter()
-                .all(|call| call.method == "GET"),
-            "a message nobody could receive was sent anyway"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_message_refusal_names_each_workflow_agent_with_its_column() {
-        let (endpoint, _seen) = recording_daemon_answering(
-            r#"{"agents":[
-                {"id":"01DEVELOP","step":"develop","skills":["coding"]},
-                {"id":"01REVIEW","step":"review","skills":["code-review"]}
-            ]}"#,
-        )
-        .await;
-        let mcp = server_at(
-            McpSeat::Agent,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        let err = mcp
-            .send_message(Parameters(SendMessageReq {
-                to: "01NOBODY".into(),
-                body: "Need help.".into(),
-                task_id: None,
-            }))
-            .await
-            .expect_err("no such agent");
-        assert!(
-            err.message.contains("01DEVELOP (develop)"),
-            "{}",
-            err.message
-        );
-        assert!(err.message.contains("01REVIEW (review)"), "{}", err.message);
+        let description = AriadneMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "post_to_session")
+            .and_then(|tool| tool.description)
+            .expect("the post_to_session tool");
+        assert!(description.contains("question, an answer, or a blocker report only"));
+        assert!(description.contains("After a question, end your turn."));
     }
 
     /// What an orchestrator may write per agent is the schema an agent reads,
@@ -2779,107 +2400,6 @@ mod tests {
                 "the description says nothing of \"{part}\": {description}"
             );
         }
-    }
-
-    /// A default read of the channel is a delivery: the daemon narrows it to
-    /// this session's own agent and stamps what it hands over, so a message
-    /// the agent has already had as a turn is not sent to it a second time as
-    /// the whole thread. `all` is the whole thread.
-    #[tokio::test]
-    async fn a_default_read_takes_delivery_and_all_reads_the_whole_thread() {
-        for (all, path) in [
-            (None, "/v1/tasks/01TASK/messages?deliver=true"),
-            (Some(false), "/v1/tasks/01TASK/messages?deliver=true"),
-            (Some(true), "/v1/tasks/01TASK/messages"),
-        ] {
-            let (endpoint, seen) = recording_daemon_answering("[]").await;
-            server_at(
-                McpSeat::Agent,
-                Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-            )
-            .read_messages(Parameters(ReadMessagesReq { task_id: None, all }))
-            .await
-            .expect("read the messages");
-
-            let seen = seen.lock().expect("lock").clone();
-            assert_eq!(seen.len(), 1, "{seen:?}");
-            assert_eq!(seen[0].method, "GET");
-            assert_eq!(seen[0].path, path, "all = {all:?}");
-        }
-    }
-
-    /// The orchestrator reads the channel of its goal, which is its inbox: it
-    /// is staffed on no task, so a read that asked for one would refuse the
-    /// one seat whose messages are all on the goal.
-    #[tokio::test]
-    async fn the_orchestrator_reads_the_channel_of_its_goal() {
-        let (endpoint, seen) = recording_daemon_answering("[]").await;
-        let mut mcp = orchestrator_at(&endpoint);
-        mcp.task_id = None;
-        mcp.read_messages(Parameters(ReadMessagesReq {
-            task_id: None,
-            all: None,
-        }))
-        .await
-        .expect("read the messages");
-
-        let seen = seen.lock().expect("lock").clone();
-        assert_eq!(seen.len(), 1, "{seen:?}");
-        assert_eq!(seen[0].path, "/v1/goals/01GOAL/messages?deliver=true");
-    }
-
-    /// A column id is an address: a task staffs one agent per column, so the
-    /// word names one reader. An id still addresses too, and a `to` that is
-    /// neither is refused with every column and the id that staffs it, so
-    /// the sender picks a reader rather than guessing again.
-    #[test]
-    fn a_column_id_addresses_the_agent_that_staffs_it() {
-        let agents = vec![
-            serde_json::json!({"id": "01DEVELOP", "step": "develop"}),
-            serde_json::json!({"id": "01REVIEW", "step": "review"}),
-        ];
-        assert_eq!(
-            addressee("develop", &agents).expect("the develop column"),
-            (Actor::Agent, Some("01DEVELOP".to_string()))
-        );
-        assert_eq!(
-            addressee("Review", &agents).expect("the review column, however spelled"),
-            (Actor::Agent, Some("01REVIEW".to_string()))
-        );
-        assert_eq!(
-            addressee("01REVIEW", &agents).expect("by id"),
-            (Actor::Agent, Some("01REVIEW".to_string()))
-        );
-        assert_eq!(
-            addressee("orchestrator", &agents).expect("the orchestrator"),
-            (Actor::Orchestrator, None)
-        );
-
-        for old in ["author", "reviewer", "01NOBODY"] {
-            let err = addressee(old, &agents).expect_err("no such agent");
-            assert!(
-                err.message.contains("01DEVELOP (develop)"),
-                "{}",
-                err.message
-            );
-            assert!(err.message.contains("01REVIEW (review)"), "{}", err.message);
-            assert!(err.message.contains("orchestrator"), "{}", err.message);
-        }
-    }
-
-    /// The body of a message is taken under the name agents write it with.
-    ///
-    /// `message` is the commonest of those, and every one of them used to be
-    /// refused as a missing `body` — a whole turn spent to send the same
-    /// words under another key.
-    #[test]
-    fn a_message_body_is_taken_as_message_too() {
-        let req: SendMessageReq = serde_json::from_value(serde_json::json!({
-            "to": "develop",
-            "message": "The bound is the caller's.",
-        }))
-        .expect("a body written as `message`");
-        assert_eq!(req.body, "The bound is the caller's.");
     }
 
     async fn text_of(answered: CallToolResult) -> String {

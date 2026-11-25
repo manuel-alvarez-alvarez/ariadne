@@ -52,6 +52,7 @@ mod pins;
 mod plan_finalize;
 mod plan_mode;
 mod portable_config;
+mod posts;
 mod prompts;
 mod relay;
 mod remote_tasks;
@@ -80,6 +81,7 @@ mod pull_request_keep_retry;
 mod pull_request_lists;
 mod pull_request_reviews;
 mod pull_requests;
+mod questions;
 
 mod tunnel;
 mod webhooks;

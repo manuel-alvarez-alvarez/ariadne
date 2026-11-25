@@ -41,6 +41,7 @@ use ariadne_core::{PermissionMode, PromptKind, TokenUsage};
 use ariadne_store::{PullRequestTold, Store};
 
 use crate::acp_calls::PromptTurn;
+use crate::acp_questions::{QUESTION_EVENT, QUESTION_RESOLVED_EVENT, Questions};
 use crate::acp_subagents::{CancelEligibility, SUBAGENT_UPDATE, Subagents};
 use crate::acp_transport::{PromptWrites, witnessed_pipes};
 use crate::ai_permissions::AiPermissions;
@@ -89,6 +90,24 @@ const CODEX_AGENT_ID: &str = "codex-acp";
 /// The mode, not `features.guardian_approval`, is what picks the reviewer.
 const CODEX_INITIAL_AGENT_MODE: &str = "agent-full-access";
 
+/// The Codex feature that lets the agent ask the user in its default mode,
+/// not in plan mode only. Its question reaches Ariadne as `elicitation/create`.
+const CODEX_QUESTION_FEATURE: &str = "default_mode_request_user_input";
+
+/// `CODEX_CONFIG` for a Codex process: the configuration the daemon was
+/// given, with the question feature on.
+fn codex_config(given: Option<&str>) -> String {
+    let mut config = given
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    if !config["features"].is_object() {
+        config["features"] = json!({});
+    }
+    config["features"][CODEX_QUESTION_FEATURE] = json!(true);
+    config.to_string()
+}
+
 /// Apply the environment Ariadne owns for one registry agent process.
 pub(crate) fn apply_agent_launch_environment(
     command: &mut Command,
@@ -97,6 +116,10 @@ pub(crate) fn apply_agent_launch_environment(
 ) {
     if agent_id == CODEX_AGENT_ID {
         command.env("INITIAL_AGENT_MODE", CODEX_INITIAL_AGENT_MODE);
+        command.env(
+            "CODEX_CONFIG",
+            codex_config(std::env::var("CODEX_CONFIG").ok().as_deref()),
+        );
     }
     if crate::acp_discovery::is_opencode(agent_id)
         && let Some(server) = config.and_then(|config| config.mcp_servers.first())
@@ -151,7 +174,7 @@ pub struct AcpLaunch {
     pub permission_mode: PermissionMode,
     /// The goal this session orchestrates; None for every other seat. While
     /// that goal is in planning, the daemon refuses the agent's
-    /// `ExitPlanMode` (021 rule 21).
+    /// `ExitPlanMode` (021 rule 22).
     #[serde(default)]
     pub orchestrated_goal: Option<String>,
 }
@@ -355,6 +378,9 @@ pub(crate) enum Delivery {
     Step(String),
     /// An agent message, by id (018).
     Message(String),
+    /// A post (039), by a one-off id. It has no row to claim, and its turn
+    /// ends no pending request of the session: a post answers nothing.
+    Post(String),
     /// The news of a pull request (026). Boxed: it carries two marks and a
     /// list, where a message carries an id.
     PullRequestNews(Box<NewsDelivery>),
@@ -405,6 +431,7 @@ impl Delivery {
         match self {
             Delivery::Step(id) => format!("step:{id}"),
             Delivery::Message(id) => format!("message:{id}"),
+            Delivery::Post(id) => format!("post:{id}"),
             Delivery::PullRequestNews(news) => format!("news:{}", news.pull_request_id),
             // Signed by its own content, not only the goal: a situation
             // that changes while the previous one is still queued is a
@@ -575,6 +602,8 @@ struct RunningAgent {
     queued_messages: HashSet<String>,
     /// The reply channel while the agent waits on one permission request.
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    /// The questions the agent asks the user and waits on (021).
+    questions: Questions,
     /// The turn in flight, shared with the driver that fills it.
     turn: Arc<tokio::sync::Mutex<Turn>>,
     /// The task the session works on, copied onto every live event.
@@ -663,6 +692,7 @@ struct DriverIo {
     relay: Option<RelayProcess>,
     outbound: Outbound,
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    questions: Questions,
     turn: Arc<tokio::sync::Mutex<Turn>>,
     task_id: Option<String>,
     subagents: Subagents,
@@ -1064,7 +1094,7 @@ impl AcpRuntime {
     }
 
     /// End the `plan` mode the session's launch set: `finalize_plan`
-    /// succeeded (021 rule 21). The session goes back to the mode it ran in
+    /// succeeded (021 rule 22). The session goes back to the mode it ran in
     /// before ([`PlanMode::mode_after`]).
     ///
     /// The call goes out on its own task, and nothing waits on it: the
@@ -1209,6 +1239,17 @@ impl AcpRuntime {
             text,
             Some(Delivery::Message(message_id.to_string())),
             None,
+        )
+    }
+
+    /// Hand the running agent a post as a prompt (039). It writes no row and
+    /// ends no pending request of the session when its turn ends.
+    pub(crate) fn send_post(&self, session_id: &str, text: String) -> Result<()> {
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::Post(new_id())),
+            Some(PromptKind::IncomingMessage),
         )
     }
 
@@ -1403,6 +1444,63 @@ impl AcpRuntime {
         })
     }
 
+    /// The questions the session's agent waits on now, oldest first.
+    pub async fn open_questions(
+        &self,
+        session_id: &str,
+    ) -> Vec<ariadne_api::sessions::QuestionDto> {
+        let questions = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            running.get(session_id).map(|agent| agent.questions.clone())
+        };
+        match questions {
+            Some(questions) => questions.settled().await,
+            None => Vec::new(),
+        }
+    }
+
+    /// Every open question of every running agent.
+    pub(crate) async fn all_open_questions(&self) -> Vec<ariadne_api::sessions::QuestionDto> {
+        let questions: Vec<Questions> = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            running
+                .values()
+                .map(|agent| agent.questions.clone())
+                .collect()
+        };
+        let mut open = Vec::new();
+        for questions in questions {
+            open.extend(questions.settled().await);
+        }
+        open
+    }
+
+    /// Whether the session's agent waits on a question of its own: a
+    /// person's to answer, so no watchdog reads the silence as a stall.
+    pub(crate) fn question_open(&self, session_id: &str) -> bool {
+        let running = self.inner.running.lock().expect("acp registry lock");
+        running
+            .get(session_id)
+            .is_some_and(|agent| !agent.questions.is_empty())
+    }
+
+    /// Give the agent the person's answer to one open question.
+    pub(crate) fn answer_question(
+        &self,
+        session_id: &str,
+        question_id: &str,
+        result: Value,
+    ) -> crate::acp_questions::Answered {
+        let questions = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            match running.get(session_id) {
+                Some(agent) => agent.questions.clone(),
+                None => return crate::acp_questions::Answered::Unknown,
+            }
+        };
+        questions.answer(question_id, result)
+    }
+
     /// The turn whose `wait_for_user` call the session is making now. A
     /// request outside a live prompt has no turn marker and is closed by the
     /// next one that ends.
@@ -1489,7 +1587,7 @@ impl AcpRuntime {
     }
 
     async fn cancel_turn(&self, session_id: &str, of_launch: Option<&str>) -> Result<()> {
-        let (turn, outbound) = {
+        let (turn, outbound, questions) = {
             let running = self.inner.running.lock().expect("acp registry lock");
             let agent = running
                 .get(session_id)
@@ -1497,10 +1595,19 @@ impl AcpRuntime {
             if of_launch.is_some_and(|launch| launch != agent.launch_id) {
                 bail!("the ACP agent for session {session_id} has been relaunched since");
             }
-            (agent.turn.clone(), agent.outbound.clone())
+            (
+                agent.turn.clone(),
+                agent.outbound.clone(),
+                agent.questions.clone(),
+            )
         };
         match outbound.cancel(&turn).await? {
-            true => Ok(()),
+            // ACP has the client answer what it still holds open `cancel`
+            // once it cancels the turn.
+            true => {
+                questions.cancel_all();
+                Ok(())
+            }
             false => bail!("no turn is running for session {session_id}"),
         }
     }
@@ -1657,6 +1764,7 @@ impl AcpRuntime {
         let (switches, pending_switches) = mpsc::unbounded_channel();
         let reports: Followers = Arc::default();
         let permission = Arc::new(Mutex::new(None));
+        let questions = Questions::default();
         let turn = Arc::new(tokio::sync::Mutex::new(Turn::default()));
         let session = self.inner.store.get_session(&launch.session_id).await?;
         let task_id = session.task_id;
@@ -1677,6 +1785,7 @@ impl AcpRuntime {
                     switches,
                     queued_messages: HashSet::new(),
                     permission: permission.clone(),
+                    questions: questions.clone(),
                     turn: turn.clone(),
                     task_id: task_id.clone(),
                     outbound: outbound.clone(),
@@ -1699,6 +1808,7 @@ impl AcpRuntime {
                         relay,
                         outbound,
                         permission,
+                        questions,
                         turn,
                         task_id,
                         subagents,
@@ -2044,6 +2154,7 @@ impl AcpRuntime {
         };
         let outbound = io.outbound.clone();
         let (turn, permission) = (io.turn.clone(), io.permission.clone());
+        let questions = io.questions.clone();
         let closing = Arc::new(AtomicBool::new(false));
         let turn_ended = Arc::new(Notify::new());
         let in_flight = MessageInFlight::default();
@@ -2065,6 +2176,7 @@ impl AcpRuntime {
             },
             branch: self.branch_of(&launch.session_id),
             pending_permission: permission.clone(),
+            questions: io.questions.clone(),
             reports: io.reports.clone(),
             subagents: io.subagents.clone(),
             orchestrated_goal: launch.orchestrated_goal.clone(),
@@ -2113,6 +2225,35 @@ impl AcpRuntime {
                             incoming.handle_permission(&request.0).await?
                         };
                         responder.respond(answer)
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_request(
+                    async |request: RawElicitationRequest, responder, cx| {
+                        let mut incoming = incoming.clone();
+                        incoming.sink.effect = effects
+                            .as_ref()
+                            .and_then(|effects| effects.take("elicitation/create", &request.0));
+                        let key = serde_json::to_value(responder.id())
+                            .expect("request IDs serialize")
+                            .to_string();
+                        // An answer the relay already carried to the agent
+                        // is sent again, never asked again.
+                        if let Some(answer) = recovery
+                            .as_ref()
+                            .and_then(|history| history.answered_permissions.get(&key))
+                        {
+                            return responder.respond(answer.clone());
+                        }
+                        let cancellation = responder.cancellation();
+                        let asked = incoming.open_question(&request.0, &key).await;
+                        // The question waits off the dispatch loop: the
+                        // agent's updates, its other questions and its
+                        // cancel of this one still arrive meanwhile.
+                        cx.spawn(async move {
+                            let result = incoming.close_question(asked, cancellation).await;
+                            responder.respond(result)
+                        })
                     },
                     agent_client_protocol::on_receive_request!(),
                 )
@@ -2207,6 +2348,9 @@ impl AcpRuntime {
             let released = match &delivery {
                 Delivery::Step(id) => self.inner.store.release_step_briefing(id).await,
                 Delivery::Message(id) => self.inner.store.unmark_message_delivered(id).await,
+                // No row was claimed, so a post that never went out is lost
+                // with its launch, and the sender may post again.
+                Delivery::Post(_) => Ok(()),
                 Delivery::PullRequestNews(news) => {
                     self.inner
                         .store
@@ -2333,6 +2477,19 @@ impl AcpRuntime {
             }
         }
         turn.lock().await.available_commands = None;
+        // A question still open has nobody left to answer it.
+        for question in questions.drain() {
+            sink.emit(
+                QUESTION_RESOLVED_EVENT,
+                json!({
+                    "session_id": sink.agent_session_id(&launch.config),
+                    "question_id": question.id,
+                    "action": "cancel",
+                    "closed_by": "session",
+                }),
+            )
+            .await;
+        }
         sink.emit(
             "session_end",
             json!({"session_id": sink.agent_session_id(&launch.config)}),
@@ -2494,6 +2651,22 @@ struct RawSessionUpdate(Value);
 #[request(method = "session/request_permission", response = Value)]
 struct RawPermissionRequest(Value);
 
+/// One `elicitation/create`, as the JSON the agent sent, answered with the
+/// ACP result the person gave.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[request(method = "elicitation/create", response = Value)]
+struct RawElicitationRequest(Value);
+
+/// A question the driver holds open, or the result it already has.
+enum AskedQuestion {
+    Open {
+        id: String,
+        agent_session: Value,
+        reply: oneshot::Receiver<Value>,
+    },
+    Settled(Value),
+}
+
 /// Where the driver reports what its agent does: the one ingestion path
 /// every event takes into the store, and the live path the chunks take to
 /// the console streams alone.
@@ -2556,6 +2729,12 @@ impl EventSink {
     /// moved past) — for a caller that needs to correlate something with
     /// it (`crate::failure_diagnosis`, with a `session.error`).
     async fn emit(&self, kind: &str, payload: Value) -> Option<String> {
+        self.emit_stored(kind, payload).await.map(|event| event.id)
+    }
+
+    /// [`Self::emit`], answering with the event as stored: for a relay's
+    /// replay, the one stored the first time.
+    async fn emit_stored(&self, kind: &str, payload: Value) -> Option<ariadne_store::AgentEvent> {
         let request = IngestEventRequest {
             session_id: self.session_id.clone(),
             launch: Some(self.launch_id.clone()),
@@ -2592,7 +2771,7 @@ impl EventSink {
         if let Some(tx) = self.runtime.inner.scheduler.get() {
             let _ = tx.send(SchedEvent::SessionEvent(self.session_id.clone()));
         }
-        event.map(|event| event.id)
+        event
     }
 
     /// Keep the session's newest context window report. The report is live
@@ -2738,6 +2917,7 @@ struct RuntimeIncoming {
     /// The session's branch, which can change while it runs.
     branch: SessionBranch,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    questions: Questions,
     reports: Followers,
     /// The children the agent announced this launch.
     subagents: Subagents,
@@ -2986,6 +3166,91 @@ impl RuntimeIncoming {
         if let Some((kind, payload)) = turn.end_text() {
             self.sink.emit(kind, payload).await;
         }
+    }
+
+    /// Record the question one `elicitation/create` asks and hold it open.
+    /// Only form mode is declared, so another mode is declined at once.
+    async fn open_question(&self, params: &Value, request_id: &str) -> AskedQuestion {
+        if params.get("mode").and_then(Value::as_str) != Some("form") {
+            return AskedQuestion::Settled(json!({"action": "decline"}));
+        }
+        let agent_session = params.get("sessionId").cloned().unwrap_or(Value::Null);
+        let question = ariadne_api::sessions::QuestionDto {
+            id: crate::acp_questions::question_id(&self.sink.launch_id, request_id),
+            session_id: self.sink.session_id.clone(),
+            message: params
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            schema: params.get("requestedSchema").cloned().unwrap_or_default(),
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        };
+        let mut payload = tagged(
+            json!({"session_id": agent_session, "question": question}),
+            self.subagents.tag(&agent_session).as_ref(),
+        );
+        if let Some(tool_call_id) = params.get("toolCallId") {
+            payload["tool_call_id"] = tool_call_id.clone();
+        }
+        let id = question.id.clone();
+        // Open before it is recorded: whoever reads the event finds the
+        // question it names already waiting for its answer, as stored.
+        let _asking = self.questions.asking().await;
+        let reply = self.questions.open(question);
+        self.end_text().await;
+        // A request the relay replays is the question asked the first time,
+        // as its stored event has it.
+        if let Some(stored) = self.sink.emit_stored(QUESTION_EVENT, payload).await
+            && let Ok(stored) = serde_json::from_str::<Value>(&stored.payload)
+            && let Ok(asked) = serde_json::from_value(stored["question"].clone())
+        {
+            self.questions.settle(asked);
+        }
+        AskedQuestion::Open {
+            id,
+            agent_session,
+            reply,
+        }
+    }
+
+    /// Wait for the person's answer, or the agent's cancel of its own
+    /// request, then record the result and give it back for the agent.
+    async fn close_question(
+        &self,
+        asked: AskedQuestion,
+        cancellation: agent_client_protocol::RequestCancellation,
+    ) -> Value {
+        let (id, agent_session, reply) = match asked {
+            AskedQuestion::Settled(result) => return result,
+            AskedQuestion::Open {
+                id,
+                agent_session,
+                reply,
+            } => (id, agent_session, reply),
+        };
+        let (result, by) = tokio::select! {
+            answer = reply => match answer {
+                Ok(result) => (result, "user"),
+                // The session ends: nobody is left to answer.
+                Err(_) => (json!({"action": "cancel"}), "session"),
+            },
+            () = cancellation.cancelled() => {
+                self.questions.withdraw(&id);
+                (json!({"action": "cancel"}), "agent")
+            }
+        };
+        let mut payload = json!({
+            "session_id": agent_session,
+            "question_id": id,
+            "action": result["action"],
+            "closed_by": by,
+        });
+        if let Some(content) = result.get("content") {
+            payload["content"] = content.clone();
+        }
+        self.sink.emit(QUESTION_RESOLVED_EVENT, payload).await;
+        result
     }
 
     /// Answer one `session/request_permission`, with the params the agent
@@ -3303,7 +3568,7 @@ impl RuntimeIncoming {
     }
 
     /// Answer a planning orchestrator's `ExitPlanMode` with the agent's
-    /// rejecting option, in every repository permission mode (021 rule 21):
+    /// rejecting option, in every repository permission mode (021 rule 22):
     /// `finalize_plan` is what ends plan mode. The request and the reply are
     /// recorded as every daemon answer is, decided by `plan`.
     async fn refuse_exit_plan_mode(
@@ -3622,6 +3887,7 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
     let claimed = match delivery {
         Delivery::Step(id) => store.claim_step_briefing(id).await,
         Delivery::Message(id) => store.mark_message_delivered(id).await,
+        Delivery::Post(_) => Ok(true),
         Delivery::PullRequestNews(news) => {
             store
                 .claim_pull_request_news_for_seat(
@@ -3713,10 +3979,16 @@ impl MessageInFlight {
 /// is nothing it would do with the report that the agent's own next event
 /// does not already do.
 fn initialize() -> RawInitialize {
-    let capabilities = v1::ClientCapabilities::new().terminal(false).session(
-        v1::ClientSessionCapabilities::new()
-            .config_options(v1::SessionConfigOptionsCapabilities::new()),
-    );
+    let capabilities = v1::ClientCapabilities::new()
+        .terminal(false)
+        .session(
+            v1::ClientSessionCapabilities::new()
+                .config_options(v1::SessionConfigOptionsCapabilities::new()),
+        )
+        // Form mode only: a person answers each question in a console.
+        .elicitation(
+            v1::ElicitationCapabilities::new().form(v1::ElicitationFormCapabilities::new()),
+        );
     let request = v1::InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(capabilities)
         .client_info(v1::Implementation::new(
@@ -3991,11 +4263,11 @@ fn category_name(category: &v1::SessionConfigOptionCategory) -> &str {
     }
 }
 
-/// The id of the mode an orchestrator plans in (021 rule 21).
+/// The id of the mode an orchestrator plans in (021 rule 22).
 const PLAN_MODE: &str = "plan";
 
 /// The tool an agent calls to leave its plan mode. A planning orchestrator
-/// leaves it through `finalize_plan` instead (021 rule 21).
+/// leaves it through `finalize_plan` instead (021 rule 22).
 const EXIT_PLAN_MODE: &str = "ExitPlanMode";
 
 /// How an agent offers its `plan` mode, and so how the daemon sets it.
@@ -4085,7 +4357,7 @@ fn plan_mode_offer(
 }
 
 /// Set the session's `plan` mode, before the first prompt of a launch whose
-/// goal is in planning (021 rule 21).
+/// goal is in planning (021 rule 22).
 ///
 /// A mode the agent does not offer is no mode change. A refused or failed
 /// call does not stop the launch: the session runs in the agent's own mode,
@@ -4286,9 +4558,14 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     }
     let store = &rpc.sink.runtime.inner.store;
     let requests = rpc.sink.runtime.inner.agent_requests.lock().await;
-    let expired = store
-        .finish_agent_request_turn(&rpc.sink.session_id, &turn_id)
-        .await?;
+    // A post answers nothing, so its turn leaves a pending request open.
+    let expired = if matches!(prompt.delivery, Some(Delivery::Post(_))) {
+        Vec::new()
+    } else {
+        store
+            .finish_agent_request_turn(&rpc.sink.session_id, &turn_id)
+            .await?
+    };
     // A console card closes with its request, so a replay never offers it.
     for request_id in expired {
         if let Err(error) = crate::http::agent_requests::record_resolution(
@@ -5291,6 +5568,30 @@ mod tests {
             capabilities["session"]["compaction"].is_null(),
             "compaction is not advertised: the daemon asks for none and reads none"
         );
+        assert_eq!(
+            capabilities["elicitation"],
+            json!({"form": {}}),
+            "an agent asks the user with a form, and with no other mode: {capabilities}"
+        );
+    }
+
+    /// Codex asks the user in its default mode only with this feature on,
+    /// and the configuration the daemon was given is kept beside it.
+    #[test]
+    fn codex_runs_with_the_question_feature_on() {
+        let config: serde_json::Value = serde_json::from_str(&super::codex_config(None)).unwrap();
+        assert_eq!(
+            config,
+            json!({"features": {"default_mode_request_user_input": true}})
+        );
+        let given = r#"{"model": "o3", "features": {"web_search": true}}"#;
+        let config: serde_json::Value =
+            serde_json::from_str(&super::codex_config(Some(given))).unwrap();
+        assert_eq!(
+            config,
+            json!({"model": "o3", "features": {"web_search": true,
+                                               "default_mode_request_user_input": true}})
+        );
     }
 
     /// What a `session/set_config_option` puts on the wire.
@@ -5328,7 +5629,7 @@ mod tests {
 
     /// A session whose mode before `plan` is unknown goes back to
     /// `default`, else to the first offered mode that is not `plan`
-    /// (021 rule 21).
+    /// (021 rule 22).
     #[test]
     fn an_unknown_mode_before_plan_mode_ends_in_default() {
         let plan = |offered: &[&str]| super::PlanMode {

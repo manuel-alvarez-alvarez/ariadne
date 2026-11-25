@@ -115,7 +115,7 @@ fn a_spawn_plans_a_new_session_briefed_and_pinned() {
 }
 
 /// A launch in plan mode says so in its launch file, for the runtime to
-/// set the mode (021 rule 21). A launch out of plan mode does not.
+/// set the mode (021 rule 22). A launch out of plan mode does not.
 #[test]
 fn a_plan_mode_launch_tells_the_runtime() {
     let dir = tempfile::tempdir().unwrap();

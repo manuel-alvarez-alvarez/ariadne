@@ -177,6 +177,7 @@ fn render_entry(item: &TranscriptItem) -> Option<String> {
         TranscriptItem::UserQuestion { .. } => {
             format!("question\n{}", item.question_lines().join("\n"))
         }
+        TranscriptItem::FormQuestion { .. } => item.form_lines().join("\n"),
         TranscriptItem::SystemNote { .. } | TranscriptItem::Raw { .. } => return None,
     };
     Some(fenced(body))

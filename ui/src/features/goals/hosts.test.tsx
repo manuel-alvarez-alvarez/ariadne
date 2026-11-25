@@ -395,7 +395,8 @@ it("opens the goal dialog on local under All", async () => {
 it("shows a question a remote host's stream delivers, and answers it on that host", async () => {
   stubEventSource()
   const question: AttentionItemDto = {
-    id: "agent_request:r1",
+    id: "question:q1",
+    occurrence: "q1",
     producer: "agent_request",
     reason: "unknown",
     summary: "Pick a database",
@@ -411,21 +412,28 @@ it("shows a question a remote host's stream delivers, and answers it on that hos
       ...EMPTY,
       "/v1/goals": [],
       "/v1/attention": () => jsonResponse({ items: asked, complete: true }),
-      "/v1/sessions/s-box/agent-requests": [
+      "/v1/sessions/s-box/questions": [
         {
-          id: "r1",
-          created_at: "2026-11-17T10:00:00Z",
-          summary: "Pick a database",
-          question: {
-            text: "Which database?",
-            options: [
-              { id: "pg", label: "Postgres" },
-              { id: "sqlite", label: "SQLite" },
-            ],
+          id: "q1",
+          session_id: "s-box",
+          message: "Which database?",
+          schema: {
+            type: "object",
+            properties: {
+              db: {
+                type: "string",
+                title: "Database",
+                oneOf: [
+                  { const: "pg", title: "Postgres" },
+                  { const: "sqlite", title: "SQLite" },
+                ],
+              },
+            },
           },
+          created_at: "2026-11-17T10:00:00Z",
         },
       ],
-      "/v1/sessions/s-box/agent-requests/r1/answer": () => new Response(null, { status: 204 }),
+      "/v1/sessions/s-box/questions/q1/answer": () => new Response(null, { status: 204 }),
     },
   })
   renderScreen(
@@ -447,7 +455,7 @@ it("shows a question a remote host's stream delivers, and answers it on that hos
   })
 
   fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
-  const card = await screen.findByRole("region", { name: "Question · Pick a database" })
+  const card = await screen.findByRole("region", { name: "Agent question" })
   const row = card.closest("li") as HTMLElement
   expect(within(row).getByTitle("Host").textContent).toBe("box")
   fireEvent.click(within(card).getByRole("button", { name: "Postgres" }))
@@ -456,8 +464,8 @@ it("shows a question a remote host's stream delivers, and answers it on that hos
   const answer = seen.find((request) => request.url.pathname.endsWith("/answer"))
   expect(answer?.origin).toBe("http://box.test:7676")
   expect(answer?.method).toBe("POST")
-  expect(answer?.url.pathname).toBe("/v1/sessions/s-box/agent-requests/r1/answer")
-  expect(JSON.parse(answer?.body ?? "{}")).toEqual({ option_id: "pg" })
+  expect(answer?.url.pathname).toBe("/v1/sessions/s-box/questions/q1/answer")
+  expect(JSON.parse(answer?.body ?? "{}")).toEqual({ action: "accept", content: { db: "pg" } })
 })
 
 /** The host each lane names, sorted. */

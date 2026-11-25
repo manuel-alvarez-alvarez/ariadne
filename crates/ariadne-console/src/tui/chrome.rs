@@ -19,7 +19,7 @@ use ariadne_api::usage::TokenUsageDto;
 use crate::theme::{AGENT, DIM, GAP, SEPARATOR, SPINNER, TOKENS_IN, TOKENS_OUT, TOOL};
 
 use super::picker::picker;
-use super::{Console, Link, Turn};
+use super::{Console, Link, TranscriptItem, Turn};
 
 /// The status row, over the box.
 const STATUS_ROWS: u16 = 1;
@@ -191,8 +191,24 @@ impl Console {
         let width = usize::from(block_width);
         let height = usize::from(height);
         let mut blocks = Vec::new();
+        let form = self.open_form();
         for (at, item) in self.items.iter().enumerate().skip(from) {
             if Some(at) == asking {
+                continue;
+            }
+            // The question being answered draws its form, as the keys
+            // leave it.
+            if Some(at) == form
+                && let TranscriptItem::FormQuestion {
+                    message, fields, ..
+                } = item
+            {
+                blocks.push(super::form::draw(
+                    message,
+                    fields,
+                    &self.form_state(at),
+                    width,
+                ));
                 continue;
             }
             let queued = !self.in_child() && self.pending.contains(&at);
@@ -354,6 +370,12 @@ impl Console {
             }
             _ if self.in_child() => &["read-only", "tab next view", "esc back"],
             (_, true, _) => &["up/down or 1-9 choose", "enter answer"],
+            _ if self.open_form().is_some() => &[
+                "up/down or 1-9 choose",
+                "space check",
+                "enter next",
+                "esc decline",
+            ],
             (_, _, true) => &[
                 "enter send",
                 "shift+enter newline",

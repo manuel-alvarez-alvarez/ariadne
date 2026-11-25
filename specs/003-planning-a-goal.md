@@ -45,11 +45,11 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    numbers: how many tasks the goal takes is what the conversation settles.
 2. The orchestrator never writes code. Its whole output is the plan.
 3. It asks the user about every unclear point, until nothing about the goal is
-   open: `wait_for_user` with a one-line hint for the Needs attention list
-   and the question in its `question` field (031 rule 11): the title, the
-   context and the direct question in its text, each option with its
-   consequence as its description, the pick as its recommended option, and
-   the reason for the pick as its `recommendation_reason`. It asks one question
+   open, with the question tool of its own client (013): the title, the
+   context and the direct question in the question text, each option with its
+   consequence as its description, the recommended option first with
+   "(Recommended)" ending its label, and the reason for the pick in its
+   description. It asks one question
    at a time, and waits for the answer before it asks the next one. Each
    question names its position, such as "Question 2 of 3"; gives the context
    the user needs, with no earlier turn required; lists two or more labeled
@@ -137,7 +137,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     `planning`, and never on a plan with no tasks. It refuses a plan with a
     task that has no agent on a column, and the refusal names the task and
     the column. It also ends the plan mode the orchestrator planned in
-    (021 rule 21).
+    (021 rule 22).
 11. Nothing runs while the goal is in `planning`. A task created there stays
     `pending` however often the scheduler is woken about it: the daemon
     reconciles the tasks of active goals alone. That is what makes 8 safe —
@@ -169,7 +169,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     It accepts `POST /v1/goals/{id}/tasks` without a session header.
     The daemon schedules each new task immediately, as after `finalize_plan`.
 18. The orchestrator plans in the plan mode of its agent, where the agent
-    has one (021 rule 21).
+    has one (021 rule 22).
     - Its briefing says that it plans in plan mode, that the Ariadne tools
       are permitted there, and that `finalize_plan` ends plan mode. It says
       not to call `ExitPlanMode`. An ACP permission answer carries no

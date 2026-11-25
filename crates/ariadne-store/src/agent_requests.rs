@@ -109,7 +109,7 @@ impl Store {
             }
         }
         Err(crate::StoreError::Conflict(
-            "the request under this hint kept closing: call `wait_for_user` again".into(),
+            "the request under this hint kept closing: send the request again".into(),
         ))
     }
 

@@ -224,7 +224,7 @@ impl Launcher {
             anyhow::bail!("a staffed session needs a goal");
         }
         // The orchestrator plans in its agent's plan mode while its goal is
-        // in planning (021 rule 21). No other seat changes mode.
+        // in planning (021 rule 22). No other seat changes mode.
         let plan_mode = match (&session.goal_id, &session.pull_request_id) {
             (Some(goal_id), None) if seat == Seat::Orchestrator => {
                 self.store.get_goal(goal_id).await?.status() == GoalStatus::Planning

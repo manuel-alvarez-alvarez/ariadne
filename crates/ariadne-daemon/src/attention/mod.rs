@@ -9,6 +9,7 @@
 
 pub(crate) mod agent_requests;
 pub(crate) mod pull_requests;
+pub(crate) mod questions;
 pub(crate) mod recovery;
 
 use ariadne_api::attention::AttentionListDto;
@@ -44,6 +45,13 @@ pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> Attention
             complete = false;
         }
     }
+    match questions::items(store, launcher).await {
+        Ok(found) => items.extend(found),
+        Err(error) => {
+            tracing::warn!(%error, "the question attention producer could not read its evidence");
+            complete = false;
+        }
+    }
     match pull_requests::items(store, &launcher.live).await {
         Ok(found) => items.extend(found),
         Err(error) => {
@@ -61,7 +69,9 @@ pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> Attention
                         let kind =
                             serde_json::to_value(subject.kind).expect("subject kind serializes");
                         let kind = kind.as_str().expect("subject kind is a string");
-                        let version = if item.id == format!("agent_request:{}", item.occurrence) {
+                        let version = if item.id == format!("agent_request:{}", item.occurrence)
+                            || item.id == format!("question:{}", item.occurrence)
+                        {
                             // A question has its own immutable request id. Other session
                             // flags cannot turn it into a new question.
                             0

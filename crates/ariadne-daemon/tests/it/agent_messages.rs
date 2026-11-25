@@ -169,7 +169,7 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
         pasted.contains(&format!(
             "Message from the review agent of task {} \"{}\":\n\n\
              <<<untrusted>>>The retry loop has no bound and the caller has one.<<<end untrusted>>>\n\n\
-             If the message asks a question, answer it, with `send_message` to `review` and task `{}`. \
+             If the message asks a question, answer it, with `post_to_session` to `review` and task `{}`. \
              Then go on with your work.",
             cast.task.id, cast.task.title, cast.task.id
         )),
@@ -488,7 +488,9 @@ async fn a_message_a_read_hands_over_is_never_handed_over_as_a_prompt() {
 /// A develop agent that sits inside a turn until the test writes the file
 /// this answers with: the agent of a task that waits for an answer inside
 /// one turn. The review agent is the session the test writes to it as.
-async fn author_held_in_a_turn(h: &Harness) -> (Cast, AgentSession, AgentSession, PathBuf) {
+pub(crate) async fn author_held_in_a_turn(
+    h: &Harness,
+) -> (Cast, AgentSession, AgentSession, PathBuf) {
     author_held_in(h, json!({})).await
 }
 

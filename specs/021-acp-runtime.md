@@ -9,6 +9,8 @@ tests:
   - crates/ariadne-daemon/tests/it/place.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/questions.rs
+  - crates/ariadne-daemon/src/acp_questions.rs
   - crates/ariadne-daemon/tests/it/subagents.rs
   - crates/ariadne-daemon/src/acp_subagents.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
@@ -90,7 +92,7 @@ it leaves nothing to delete.
    loading — and passes the MCP servers of the launch file every time.
    The runtime keeps the configuration options and the ACP session modes
    that the answer carries, for the pins of rule 3 and the plan mode of
-   rule 21.
+   rule 22.
 3. The model is set through `session/set_config_option` on the option of
    category `model`, or, where no option has that category, on the option
    whose id or name is `model`. The effort is set the same way, on category
@@ -119,7 +121,7 @@ it leaves nothing to delete.
    agent's reason, and the session keeps its old pin
    (`::a_refused_same_agent_option_keeps_the_old_pin`).
    After the pins, and before the first prompt, a launch can set the plan
-   mode of rule 21.
+   mode of rule 22.
 4. A prompt the runtime sends is its own text. The first prompt of a launch
    and the first after a model switch carry the system prompt and a blank
    line ahead of that text (006 rule 2). A command never carries it: where text from any
@@ -466,7 +468,39 @@ it leaves nothing to delete.
     Stop a pane after its relay with `pane.close`.
     A daemon stop, a new daemon's reconnect and a kill follow rule 18, with herdr in place of tmux.
     The herdr agent-state detection is not used.
-21. The orchestrator of a goal in `planning` runs in the plan mode of its
+21. An agent asks the user with its own question tool through ACP
+    `elicitation/create`. `initialize` declares `elicitation: {form: {}}`,
+    form mode only. The runtime declines a request in another mode at once.
+    claude-agent-acp sends its `AskUserQuestion`, codex-acp its
+    `request_user_input`, and `opencode acp` its `question` tool this way.
+    Each sends a `string` with `oneOf` for one choice, an `array` with
+    `items.anyOf` for several, and a plain `string` for free text.
+    - The runtime holds the request open off the dispatch loop. The agent's
+      updates, its other requests and its cancel still arrive meanwhile.
+    - The request closes on the person's answer, on the agent's
+      `$/cancel_request`, on a cancel of the turn, or at the end of the
+      session. A cancel of the turn answers each open question `cancel`.
+    - No permission mode answers a question. Console input does not answer
+      it either: the input is a prompt, and it waits behind the turn.
+    - The question id is a digest of the launch and the request id, so a
+      request that a relay replays keeps its question.
+    - The event `question` records the question before the agent can read an
+      answer. Its payload has `question` (`id`, `session_id`, `message`,
+      `schema`, `created_at`) and `tool_call_id` where the agent gives one.
+      `schema` is the `requestedSchema`, unchanged.
+    - The event `question.resolved` records the close. Its payload has
+      `question_id`, `action` (`accept`, `decline` or `cancel`), `content`
+      with `accept`, and `closed_by` (`user`, `agent` or `session`).
+    - On a reconnect (rule 19) the question behaves as an open permission
+      does. An answered request gets the stored answer again. An open one is
+      open again under the same id and `created_at`, and its event is not
+      stored twice.
+    - Every codex-acp process runs with the Codex feature
+      `default_mode_request_user_input` on (007, rule 10), so Codex asks in
+      its default mode too.
+    The routes are in 012 (rule 29), the attention item in 031 (rule 18),
+    the watchdog in 009 (rule 45), and the console in 008 (rule 38).
+22. The orchestrator of a goal in `planning` runs in the plan mode of its
     agent. No setting turns this off.
     - An agent offers plan mode when it offers a session mode with the id
       `plan`. The runtime finds a configuration option of category `mode`
@@ -499,6 +533,27 @@ it leaves nothing to delete.
       9 answers (003 rule 18).
 
 ## Acceptance criteria
+
+- `initialize` declares form elicitation and no other mode
+  (`ariadne-daemon::acp::tests::initialize_tells_the_agent_what_the_daemon_supports`).
+- A question waits for a person in each permission mode, and the agent
+  reads the answer as the result of its request
+  (`questions.rs::a_question_waits_for_a_person_in_every_permission_mode`).
+- The events record the question with its form unchanged, and its close
+  (`questions.rs::the_events_record_the_question_and_its_result`).
+- Typed console input waits behind the turn and leaves the question open
+  (`questions.rs::typed_console_input_waits_behind_the_turn_and_leaves_the_question_open`).
+- A cancelled turn answers the open question `cancel`
+  (`questions.rs::a_cancelled_turn_answers_the_open_question_cancel`).
+- An agent that cancels its own request closes the question
+  (`questions.rs::an_agent_that_cancels_its_request_closes_the_question`).
+- One answer closes one question, a second finds it closed, and a request
+  keeps its question id in its launch
+  (`ariadne-daemon::acp_questions::tests::one_answer_closes_one_question_and_a_second_is_refused`,
+  `::a_request_keeps_its_question_id_within_its_launch`).
+- An open question returns after a reconnect under the same id, and its
+  answer reaches the agent once
+  (`acp_runtime.rs::an_unanswered_question_returns_to_the_console_after_reconnect`).
 
 - A planning orchestrator is put in plan mode after its pins and before its
   first prompt

@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-11-16
+updated: 2026-11-25
 areas: [api, daemon, cli, store, ui]
 commits: []
 tests:
@@ -54,7 +54,7 @@ In: the shared item shape, `GET /v1/attention`, the producer registry
 (`crate::attention` in `ariadne-daemon`), the first complete producer —
 recovery — which covers a model's quota, every task the daemon will never
 retry on its own, a forge CLI missing from the daemon's PATH, explicit agent
-questions (the `wait_for_user` flag, its one-line hint and the console note
+questions (the agent-request flag, its one-line hint and the console note
 it leaves, rules 11-12), pending human permission requests, and the second
 complete producer — `pull_requests` — which covers a review request nobody
 is assigned to and a request a babysitting task has confirmed ready to merge
@@ -457,8 +457,9 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     changes to add one. `agent_requests` and `pull_requests` are complete
     producers, below.
 
-11. An agent creates a request only with `wait_for_user` (013); punctuation,
-    idle turns, and agent messages create none. The tool carries a `hint`
+11. An agent creates a request only through the agent-request route, which no
+    MCP tool calls any more (013); punctuation,
+    idle turns, and agent messages create none. The route carries a `hint`
     and, optionally, the whole `question`
     (`ariadne_api::attention::AgentQuestion`): its `text`, its `options`, each
     with a stable `id`, a `label` and an optional `description`, an
@@ -551,12 +552,12 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     agent reads in place of the bare text. Input while a
     permission request waits answers the permission alone and leaves every
     request pending. At the end
-    of a turn, every pending request that `wait_for_user` did not raise or
+    of a turn, every pending request that the route did not raise or
     re-raise in that turn expires, including where the turn ended by
     cancellation or error. A repeated hint keeps its request, id and `since`;
     a new hint that does not re-raise the older one leaves only its new
     request. Withdrawal
-    (`withdraw_wait_for_user`) answers only its named request. A pending
+    (the withdrawal route) answers only its named request. A pending
     human permission is an item; an automatic decision is not. Each request
     change publishes `session_updated`.
     The CLI console draws a hint-only `agent_request` event as a dim note,
@@ -576,7 +577,7 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     by its mode, the AI permission model or a learned rule, never at the
     console — leaves no permission block in the console: the call's own
     block already says what the agent did, and a frame around every
-    `wait_for_user` would read as a question the person never got. One a
+    an Ariadne tool call would read as a question the person never got. One a
     person answered at the console keeps its block and their choice; so
     does one the daemon denied (an AI `deny`, or a learned rule's reject
     option) or cancelled (`option_id` null), since the call then fails and
@@ -658,6 +659,21 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     the escalation does not clear it. A comment at the same time is not later. A dismissal also hides it. A merged or closed request raises
     none, and nor does a comment the last read no longer holds.
 
+## The question producer
+
+18. `crate::attention::questions` raises one item for each question an
+    agent asks with its own tool (021 rule 21) and waits on. It reads the
+    runtime's open questions, not a table. It uses no row of
+    `agent_requests`. The item's id is `question:<question id>`, its
+    producer `agent_request` and its reason `unknown`. Its summary is the
+    first line of the agent's message, cut at 200 characters. Its
+    `required_action` is "Answer the question in the agent's console." Its
+    `since` is the question's `created_at`. Its `target` is the console of
+    its session. The item goes when the question closes. A session that is
+    not live, or whose work is not active, raises none. A question asks
+    nothing that the session's attention reason says, so the session raises
+    no second item for it.
+
 ### Individual dismissal
 
 `POST /v1/attention/{id}/dismiss` hides the current occurrence and returns 204.
@@ -727,6 +743,9 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
 
 ## Acceptance criteria
 
+- An open question is one item on its session's console, and the item goes
+  when the question closes
+  (`questions.rs::an_open_question_is_one_attention_item_until_it_closes`).
 - The route answers an empty, complete list when nothing is stuck, and is
   in the API document under the `attention` tag
   (`attention.rs::an_empty_daemon_answers_an_empty_complete_list`).
@@ -791,22 +810,11 @@ Proof: `attention.rs::dismissing_a_question_keeps_the_request_pending`,
   block while one a person answered, one the daemon denied or cancelled, or
   one on any other tool, keeps its
   (`::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
-- The tool is `wait_for_user` with a `hint`, listed to every seat, and every
-  seat's session rules and its description say what closes the wait — a
-  later turn that ends without the call — after telling it to put the
-  question in the call's `question` field, and the tool posts the hint and
-  the question
-  (`tools.rs::wait_for_user_posts_the_hint_and_the_question`)
-  (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`,
+- No MCP tool raises a request any more (013 rule 3): the seats ask with
+  the question tool of their own client, and the route, the table and the
+  event stay
+  (`mcp.rs::no_session_text_names_a_tool_that_left_and_a_call_to_it_is_refused`,
   `mcp.rs::only_the_orchestrator_is_told_to_ask`).
-- The `wait_for_user` description, the session rules of every seat and the
-  `orchestration` skill tell the agent to write no text after the call, and
-  to end the turn, and no other text says it
-  (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`,
-  `mcp.rs::only_the_orchestrator_is_told_to_ask`,
-  `mcp.rs::each_shared_rule_is_written_in_its_owner_alone`,
-  `skill_tests/operate.rs::the_orchestration_skill_asks_one_question_at_a_time_with_its_parts`),
-  and both consoles keep an open question above the input (008, 015).
 - Console input answers the newest request of its session alone, an older
   one expiring with the turn that does not raise it again, while another
   session's request stays, and withdrawal answers its named request alone

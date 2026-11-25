@@ -41,7 +41,7 @@ moves a task through (001), and the wording of the text a message arrives in
    named by the column it staffs, which `get_task` lists. An agent has no
    name, so the column is the address; the orchestrator needs none, since the
    goal has one.
-4. One verb (`send_message`), for asking and for answering. There is no
+4. One verb (the messages route), for asking and for answering. There is no
    `answer` kind and no `reply`: an answer is a message to whoever asked,
    addressed the way the question was, so nothing threads and no row points
    at another.
@@ -86,7 +86,7 @@ moves a task through (001), and the wording of the text a message arrives in
      gives its claim back when its launch ends — a failed write, a closed
      connection or a kill — so the message reaches the next launch. A written
      prompt keeps the stamp, an error answer included: the agent can read it;
-   - a default `read_messages` (013), which answers with the undelivered
+   - a default read of the messages route, which answers with the undelivered
      messages addressed to the calling session's own agent and claims them.
      It returns only the rows it claimed, so a message the driver claimed in
      the same instant is left out.
@@ -97,7 +97,7 @@ moves a task through (001), and the wording of the text a message arrives in
      narrowed by its seat alone — every goal has one — so naming another
      goal's task would take delivery of that goal's orchestrator's messages.
      The task scope check cannot say so, since it exempts the orchestrator.
-     `read_messages` with `all` reads the whole thread of the task or the
+     A read with `all` reads the whole thread of the task or the
      goal instead, delivered messages included, and stamps nothing.
 9. A message to the agent of a column that is not current waits: the agent
    is idle until its column comes round (030), and the transport hands the
@@ -112,8 +112,8 @@ moves a task through (001), and the wording of the text a message arrives in
     of its `complete_step` or `fail_step` call travels in the next agent's
     briefing (030). Where a step is judged and the judgment is text, it is a
     step reason; where it is a question, it is a message.
-12. The MCP surface is two tools every seat has: `send_message` and
-    `read_messages` (013).
+12. No MCP tool writes or reads a message any more: the routes stay, and
+    `post_to_session` writes between the seats (013, 039).
 13. An agent can address the orchestrator of a linked goal (001 rule 14).
     The daemon stores the message on its usual channel and publishes `message_sent`.
     A goal event subscription includes these messages, including those about a task.
@@ -156,7 +156,7 @@ moves a task through (001), and the wording of the text a message arrives in
   moving (`agent_messages.rs::agents_write_to_each_other_without_leaving_the_task`).
 - The message is handed to the recipient's agent as a prompt, names the
   sender by its column, the task it is of and that task's title, says to
-  answer only a question with `send_message` to that column and task,
+  answer only a question with `post_to_session` to that column and task,
   carries no id of the message itself, and is stamped delivered once the
   prompt went out
   (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`). Two
@@ -195,7 +195,7 @@ moves a task through (001), and the wording of the text a message arrives in
   A prompt counts as written once its whole line is taken
   (`acp_transport.rs::a_prompt_counts_once_its_whole_line_is_written`).
 - A message handed to an agent as a prompt is gone from what a default
-  `read_messages` gives that agent, and a read of the whole thread holds it
+  a default read gives that agent, and a read of the whole thread holds it
   (`agent_messages.rs::a_message_handed_over_as_a_prompt_is_absent_from_a_default_read`).
 - A message a read hands over is stamped by that read, and is never handed
   over as a prompt afterwards — through a resume of its recipient and a
@@ -208,12 +208,8 @@ moves a task through (001), and the wording of the text a message arrives in
   (`agent_messages.rs::a_delivering_read_is_refused_a_channel_of_another_goal`).
 - A goal's channel holds none of what its tasks said
   (`agent_messages.rs::a_goals_channel_holds_none_of_what_its_tasks_said`).
-- A message names the column it is for
-  (`tools.rs::a_message_names_the_column_it_is_for`),
-  the orchestrator is addressed by name
-  (`::the_orchestrator_is_addressed_by_name_and_needs_no_agent_id`), and a
-  message to nobody is refused with the addresses that would work
-  (`::a_message_to_nobody_is_refused_with_the_addresses_that_would_work`).
+- No MCP tool addresses a message: the column and orchestrator addresses are
+  `post_to_session`'s (039).
 - An agent's message to the orchestrator of a linked goal is stored and published.
   The linked goal keeps only the task's agent session
   (`linked_goals.rs::a_linked_agents_message_to_its_orchestrator_is_stored_and_published`).

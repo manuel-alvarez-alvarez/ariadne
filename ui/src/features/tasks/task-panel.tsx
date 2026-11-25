@@ -1,7 +1,7 @@
 /**
  * One task in full, in a side panel over whatever screen it was opened from —
- * the `task inspect` equivalent, plus everything hanging off it: its messages,
- * its transition log, its branch diff and the agents that ran it.
+ * the `task inspect` equivalent, plus everything hanging off it: its
+ * transition log, its branch diff and the agents that ran it.
  *
  * The tab lives in the URL (like the panel itself) so a link can point at,
  * say, the diff of a task, and a reload stays where the user was. The sessions
@@ -41,7 +41,7 @@ import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { taskCopyEntries } from "@/lib/clipboard"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
-import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
+import { taskQueryOptions } from "./queries"
 import { useSourceHost } from "./source-host"
 import { StalledBadge } from "./stalled"
 import { TASK_STATUS_META } from "./status"
@@ -49,14 +49,13 @@ import { TaskActions } from "./task-actions"
 import { TaskDiff } from "./task-diff"
 import { TaskFacts } from "./task-facts"
 import { TaskHistory } from "./task-history"
-import { TaskMessages } from "./task-messages"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
 import { TaskSummary } from "./task-summary"
 import { WorkflowSteps } from "./workflow-steps"
 
 // Description leads the strip and is where the panel opens: it is what the
 // task *is*, and the first thing to read on a task just landed on.
-const TABS = ["description", "history", "messages", "diff", "sessions"] as const
+const TABS = ["description", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
 export function TaskPanel({
@@ -77,13 +76,12 @@ export function TaskPanel({
   // frame cannot do for us — nothing closed. See `useFocusReturn`.
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
-  // The two counted tabs, on the very keys their own tabs read, so the numbers
-  // cost nothing beyond the first tab that is opened — and stay live with it,
-  // since the dispatcher invalidates both lists. The sessions filter is the
-  // one `TaskSessions` itself passes, or the tab's count and the tab's list
-  // would be two cache entries and two requests.
+  // The counted tab, on the very key its own tab reads, so the number costs
+  // nothing beyond the tab itself — and stays live with it, since the
+  // dispatcher patches the sessions lists. The filter is the one
+  // `TaskSessions` itself passes, or the tab's count and the tab's list would
+  // be two cache entries and two requests.
   const sessions = useQuery(sessionsQueryOptions(host, { task: taskId }))
-  const messages = useQuery(taskMessagesQueryOptions(host, taskId))
   // The goal's workflow columns, which a stepped task is drawn and named by:
   // the same detail entry the header's breadcrumb reads.
   const goal = useQuery({
@@ -157,10 +155,6 @@ export function TaskPanel({
               <TabsList>
                 <TabsTrigger value="description">Description</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
-                <TabsTrigger value="messages">
-                  Messages
-                  <TabCount count={messages.data?.length} noun="message" />
-                </TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
                 <TabsTrigger value="sessions">
                   Sessions
@@ -176,9 +170,6 @@ export function TaskPanel({
               </TabsContent>
               <TabsContent value="history" className="pt-3">
                 <TaskHistory taskId={taskId} steps={steps} />
-              </TabsContent>
-              <TabsContent value="messages" className="pt-3">
-                <TaskMessages task={task.data} />
               </TabsContent>
               <TabsContent value="diff" className="pt-3">
                 <TaskDiff taskId={taskId} />

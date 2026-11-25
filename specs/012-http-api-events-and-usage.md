@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-11-24
+updated: 2026-11-25
 areas: [api, daemon, store]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -92,7 +92,8 @@ and the ACP runtime that reports the agent events (021).
    that caused it, whether it came through HTTP or from the scheduler.
 5. The stream is SSE. It opens with a heartbeat, honours per-client filters,
    and signals a resync and closes when a client lags rather than silently
-   dropping events.
+   dropping events. A stream that names a `source` daemon also carries the
+   `source_post` frames of that source (039 rule 15).
 6. CORS, on TCP and on the socket, allows only the app's allowed origins, its HTTP methods, and its
    request headers. A refused Host or Origin answers `403` in the normal
    `forbidden` envelope and includes no CORS allow headers, for every route,
@@ -358,6 +359,19 @@ and the ACP runtime that reports the agent events (021).
     A configured list replaces it whole.
 28. Session attention also has `exhausted`, for active work whose current
     model accepts no more work.
+29. Two routes serve the questions an agent asks with its own tool (021
+    rule 21). They use no route under `/agent-requests`.
+    `GET /v1/sessions/{id}/questions` answers the open questions of the
+    session, oldest first, as `QuestionDto`: `id`, `session_id`, `message`,
+    `schema` and `created_at`. `schema` is the agent's `requestedSchema`,
+    unchanged. An unknown session is 404.
+    `POST /v1/sessions/{id}/questions/{question_id}/answer` takes
+    `AnswerQuestionRequest`, `{"action": "accept" | "decline" | "cancel",
+    "content": {...}}`, and answers 204. `content` is present with `accept`
+    only, else the answer is 400. The agent reads the answer as the result
+    of its request. One answer closes one question: a second answer is 409
+    `question_closed`. A question the session does not hold open is 404.
+    The terminal console the daemon hosts answers through the same code.
 
 ## Pull request events (026)
 
@@ -438,6 +452,11 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 
 ## Acceptance criteria
 
+- The question routes list the open questions with their forms, refuse a
+  malformed, unknown or second answer, and answer 404 for an unknown session
+  (`questions.rs::a_question_waits_for_a_person_in_every_permission_mode`,
+  `::a_malformed_or_unknown_answer_is_refused`,
+  `::the_questions_of_an_unknown_session_are_not_found`).
 - Dependency controls: `remote_tasks.rs::source_dependency_controls_are_audited_repeatable_and_fenced_by_draft_revision`,
   `::dependency_controls_keep_agent_restrictions_and_generic_user_permissions`,
   `::failure_racing_authorization_admits_exactly_one_draft_outcome`, and
