@@ -68,7 +68,7 @@ const BOARD_BOX = "h-full rounded-lg border contain-paint"
 const BOARD_FRAME = "relative min-h-0 flex-1"
 
 /** Every task of the hosts the board reads, goal-less ones too. */
-export function useBoardTasks(hosts: readonly Host[]) {
+function useBoardTasks(hosts: readonly Host[]) {
   return useHostLists(hosts, (host) => ({
     ...taskListQueryOptions(host, {}),
     select: (rows: TaskDto[]) =>
