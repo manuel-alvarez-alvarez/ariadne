@@ -653,6 +653,85 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
     socket.close(None).await.unwrap();
 }
 
+/// A worker session serves its trajectory through the source's forwarder:
+/// the snapshot, a page of its steps, and the stream, each naming the
+/// session by its alias.
+#[tokio::test]
+async fn source_trajectory_routes_reach_the_worker_session() {
+    let (p, goal) = setup().await;
+    let source = draft(&p, &goal, "Trajectory", &[]).await;
+    let worker_task = p.far.store.get_task(&source.id).await.unwrap();
+    let worker_goal = p.far.store.task_goal(&worker_task).await.unwrap();
+    let session = p
+        .far
+        .session(
+            &worker_goal,
+            Some(&worker_task),
+            ariadne_core::Seat::Agent,
+            &source.agents[0].id,
+        )
+        .await;
+    let prompt = p
+        .far
+        .store
+        .create_event(ariadne_store::NewAgentEvent {
+            session_id: Some(session.id.clone()),
+            task_id: Some(source.id.clone()),
+            kind: "user_prompt_submit".into(),
+            payload: json!({"text": "Report", "source": "daemon"}),
+        })
+        .await
+        .unwrap();
+    for kind in ["agent_message", "stop"] {
+        p.far
+            .store
+            .create_event(ariadne_store::NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: Some(source.id.clone()),
+                kind: kind.into(),
+                payload: json!({"text": "worker answer", "stop_reason": "end_turn"}),
+            })
+            .await
+            .unwrap();
+    }
+    let alias = format!("far~{}~{}", source.id, session.id);
+
+    let snapshot: Value = p
+        .local
+        .get(&format!("/v1/sessions/{alias}/trajectory"))
+        .await;
+    let turn = snapshot["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|turn| turn["id"] == prompt.id.as_str())
+        .unwrap_or_else(|| panic!("the worker's turn: {snapshot}"));
+    assert_eq!(turn["state"], "completed");
+    assert_eq!(turn["answer"][0]["text"], "worker answer");
+    let page: Value = p
+        .local
+        .get(&format!(
+            "/v1/sessions/{alias}/trajectory/turns/{}/steps",
+            prompt.id
+        ))
+        .await;
+    assert_eq!(page["steps"][0]["content"][0]["text"], "worker answer");
+
+    let source_address = Front::default().serve(&p.local).await;
+    let client = ariadne_client::Client::tcp(format!("http://{source_address}"));
+    let mut stream = client
+        .stream(&format!("/v1/sessions/{alias}/trajectory/stream"))
+        .await
+        .unwrap();
+    let opening = tokio::time::timeout(TIMEOUT, stream.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(opening.event, "snapshot");
+    assert!(opening.data.contains("worker answer"));
+}
+
 #[tokio::test]
 async fn changing_the_host_endpoint_cannot_replace_the_recorded_execution_owner() {
     let (p, goal) = setup().await;

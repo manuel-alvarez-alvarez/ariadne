@@ -74,7 +74,7 @@ pub(super) async fn route(
         target.push('?');
         target.push_str(query);
     }
-    if suffix == "console/stream" {
+    if matches!(suffix, "console/stream" | "trajectory/stream") {
         let stream = client
             .stream(&target)
             .await

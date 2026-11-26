@@ -2695,6 +2695,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/trajectory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The session's trajectory: the newest turns, oldest first, the running
+         *     one with its last steps. With `before`, a page of the whole turns older
+         *     than that turn, at `rev` 0: a page is read from the store and is no
+         *     revision of the stream. With `subagent`, each turn carries that
+         *     subagent's steps.
+         */
+        get: operations["sessions_trajectory_snapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/trajectory/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Follow a session's trajectory.
+         * @description Opens with a `snapshot` (`TrajectorySnapshotDto`), then an `update` per
+         *     revision (`TrajectoryUpdateDto`), each `rev` one more than the one
+         *     before. Streamed text arrives as `text_append` ops. A client that falls
+         *     behind gets a `resync` (`ResyncDto`) and the connection closes; a
+         *     reconnect opens on a new snapshot.
+         */
+        get: operations["sessions_trajectory_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/trajectory/turns/{turn_id}/steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One page of the steps of a turn, oldest first: the `limit` steps before
+         *     the step `before`, or the turn's last ones, and how many come before
+         *     them. With `subagent`, that subagent's steps in the turn.
+         */
+        get: operations["sessions_trajectory_steps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{session_id}/agent-requests/{request_id}": {
         parameters: {
             query?: never;
@@ -3143,6 +3211,35 @@ export interface components {
          * @enum {string}
          */
         AcpDegradation: "no_efforts" | "no_restart_resume";
+        /** @description What a turn or a subagent did, counted. */
+        ActivityDto: {
+            /**
+             * Format: int64
+             * @description Cancelled calls.
+             */
+            cancelled: number;
+            /**
+             * Format: int64
+             * @description Failed calls.
+             */
+            failed: number;
+            /**
+             * Format: int64
+             * @description The distinct paths of completed edit, delete and move calls.
+             */
+            files_changed: number;
+            /**
+             * Format: int64
+             * @description Tool calls and subagents.
+             */
+            steps: number;
+            /** Format: int64 */
+            subagents: number;
+            /** Format: int64 */
+            thoughts: number;
+            /** Format: int64 */
+            tool_calls: number;
+        };
         /**
          * @description Who is attempting a transition: a seat, the daemon, or the user.
          * @enum {string}
@@ -3561,6 +3658,27 @@ export interface components {
             repository: string;
             tag: string;
         };
+        /** @description A slash command the agent offers. */
+        CommandDto: {
+            description: string;
+            /** @description What its argument is, where the agent says. */
+            hint?: string | null;
+            /** @description The name, without its `/`. */
+            name: string;
+        };
+        /** @enum {string} */
+        CompactionStatus: "running" | "completed" | "failed";
+        /** @description The agent compacting its context. */
+        CompactionStepDto: {
+            compaction_id: string;
+            created_at: string;
+            error?: string | null;
+            id: string;
+            lane: string;
+            status: components["schemas"]["CompactionStatus"];
+            summary: components["schemas"]["ContentBlockDto"][];
+            turn_id: string;
+        };
         /**
          * @description Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is
          *     done. Its call, not the user's, and it carries nothing — every task being
@@ -3578,11 +3696,26 @@ export interface components {
             /** @description What the next column's agent is briefed with. */
             reason: string;
         };
+        /** @description One ACP session config option, such as the model or the effort. */
+        ConfigOptionDto: {
+            /** @description The ACP category, such as `model` or `thought_level`. */
+            category?: string | null;
+            current_value?: string | null;
+            description?: string | null;
+            id: string;
+            name: string;
+            values: components["schemas"]["ConfigValueDto"][];
+        };
         /** @description The worker's effective live settings and pending registry changes. */
         ConfigSyncDto: {
             configuration: components["schemas"]["PortableConfigDto"];
             error?: string | null;
             state: components["schemas"]["SyncState"];
+        };
+        ConfigValueDto: {
+            description?: string | null;
+            name: string;
+            value: string;
         };
         /**
          * @description Body of `POST /v1/sessions/{id}/console/cancel`. Omitted, or omitting
@@ -3603,6 +3736,54 @@ export interface components {
          */
         ConsoleInputRequest: {
             text: string;
+        };
+        /**
+         * @description One ACP content block. A block with bytes carries a `blob` URL, never
+         *     the bytes.
+         */
+        ContentBlockDto: {
+            text: string;
+            /** @enum {string} */
+            type: "text";
+        } | {
+            blob?: string | null;
+            mime_type?: string | null;
+            /** @enum {string} */
+            type: "image";
+            uri?: string | null;
+        } | {
+            blob?: string | null;
+            mime_type?: string | null;
+            /** @enum {string} */
+            type: "audio";
+        } | {
+            blob?: string | null;
+            mime_type?: string | null;
+            text?: string | null;
+            /** @enum {string} */
+            type: "resource";
+            uri: string;
+        } | {
+            mime_type?: string | null;
+            name: string;
+            /** Format: int64 */
+            size?: number | null;
+            title?: string | null;
+            /** @enum {string} */
+            type: "resource_link";
+            uri: string;
+        };
+        /** @description The context window position the agent last reported. */
+        ContextWindowDto: {
+            /** Format: int64 */
+            size: number;
+            /** Format: int64 */
+            used: number;
+        };
+        CostDto: {
+            /** Format: double */
+            amount: number;
+            currency: string;
         };
         /** @description An agent's flag that it waits for the user (`wait_for_user`, 013). */
         CreateAgentRequest: {
@@ -3799,6 +3980,14 @@ export interface components {
             /** @description A note only: the flavour can still be chosen on this device. */
             slow: boolean;
         };
+        DiffStatDto: {
+            /** Format: int64 */
+            added: number;
+            /** Format: int64 */
+            files: number;
+            /** Format: int64 */
+            removed: number;
+        };
         /**
          * @description One domain event. Serialized as `{"event": "<kind>", "data": <payload>}`;
          *     on the SSE wire the kind becomes the `event:` field and the payload alone
@@ -3976,6 +4165,15 @@ export interface components {
             description?: string | null;
             /** @example high */
             id: string;
+        };
+        ErrorStepDto: {
+            created_at: string;
+            /** @description The advisory diagnosis of the error (024), once one arrived. */
+            diagnosis?: string | null;
+            id: string;
+            lane: string;
+            text: string;
+            turn_id: string;
         };
         /**
          * @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/escalate`:
@@ -4386,6 +4584,11 @@ export interface components {
         LinkedGoalDto: {
             origin_goal_id: string;
         };
+        LocationDto: {
+            /** Format: int64 */
+            line?: number | null;
+            path: string;
+        };
         /** @description One captured daemon log line. */
         LogLineDto: {
             /**
@@ -4472,12 +4675,34 @@ export interface components {
          * @enum {string}
          */
         MessageKind: "message";
+        /** @description Text the agent wrote. */
+        MessageStepDto: {
+            content: components["schemas"]["ContentBlockDto"][];
+            created_at: string;
+            id: string;
+            lane: string;
+            /** @description The ACP `messageId`, where the agent sent one. */
+            message_id?: string | null;
+            /** @description Still taking text: `text_append` ops extend it. */
+            streaming: boolean;
+            turn_id: string;
+        };
         /** @description A local repository a host has no checkout of. */
         MissingRepositoryDto: {
             /** @description `owner/repo` on its forge; null for a repository with no forge. */
             forge?: string | null;
             /** @description The local repository's id. */
             id: string;
+        };
+        ModeDto: {
+            description?: string | null;
+            id: string;
+            name: string;
+        };
+        /** @description The session's mode and the modes the agent offers. */
+        ModeStateDto: {
+            available: components["schemas"]["ModeDto"][];
+            current_id?: string | null;
         };
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: a
@@ -4515,6 +4740,19 @@ export interface components {
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
+        /** @enum {string} */
+        NoteSeverity: "info" | "warning";
+        /** @description A line the daemon says about the session. */
+        NoteStepDto: {
+            created_at: string;
+            id: string;
+            lane: string;
+            /** @description The kind of the event the note is about. */
+            origin: string;
+            severity: components["schemas"]["NoteSeverity"];
+            text: string;
+            turn_id: string;
+        };
         /**
          * @description The agent of the `pr` column asking the daemon to open the pull or merge
          *     request its task lands by. The daemon runs the forge's own CLI, so this
@@ -4556,11 +4794,24 @@ export interface components {
              */
             writable: boolean;
         };
+        PermissionAnswerDto: {
+            /** @description `console`, `ai`, `learned` or `auto`. */
+            decided_by?: string | null;
+            /** @description The name of the option chosen, or `cancelled`. */
+            label: string;
+            option_id?: string | null;
+        };
         /**
          * @description How the ACP runtime answers a tool permission request.
          * @enum {string}
          */
         PermissionMode: "auto" | "ask" | "learn" | "ai";
+        PermissionOptionDto: {
+            id: string;
+            /** @description `allow_once`, `allow_always`, `reject_once` or `reject_always`. */
+            kind?: string | null;
+            name: string;
+        };
         /** @description The fields in a `permission.replied` event payload. */
         PermissionReplyDto: {
             ai_error?: string | null;
@@ -4586,11 +4837,55 @@ export interface components {
             risk_tags?: string[] | null;
             session_id: unknown;
         };
+        /** @enum {string} */
+        PermissionState: "pending" | "answered" | "cancelled";
+        /** @description A permission the agent asked for a tool call. */
+        PermissionStepDto: {
+            /** @description Why the AI permission model had a part, where it did. */
+            ai?: string | null;
+            answer?: components["schemas"]["PermissionAnswerDto"] | null;
+            created_at: string;
+            id: string;
+            lane: string;
+            /** @description The learned rule that answered, as `command` or `family <key>`. */
+            learned?: string | null;
+            options: components["schemas"]["PermissionOptionDto"][];
+            question: string;
+            state: components["schemas"]["PermissionState"];
+            subagent?: components["schemas"]["SubagentRefDto"] | null;
+            tool: components["schemas"]["PermissionToolDto"];
+            tool_call_id: string;
+            turn_id: string;
+        };
+        PermissionToolDto: {
+            kind?: string | null;
+            subject?: string | null;
+            title: string;
+        };
         /** @description The daemon's selected session location and the reason for its selection. */
         PlaceDto: {
             available: boolean;
             name: string;
             reason: string;
+        };
+        /** @description A plan of the agent or of a subagent. */
+        PlanDto: {
+            entries: components["schemas"]["PlanEntryDto"][];
+            markdown?: string | null;
+            /** @description The file the plan is written in, for a `markdown` plan. */
+            path?: string | null;
+            /** @description The id of the stored event that opened the plan. */
+            plan_id: string;
+            removed: boolean;
+            /** @description The turn that last changed the plan. */
+            turn_id?: string | null;
+            updated_at: string;
+            variant: components["schemas"]["PlanVariant"];
+        };
+        PlanEntryDto: {
+            content: string;
+            priority?: string | null;
+            status: string;
         };
         /** @description One thing that a setup request causes, and who does it. */
         PlanItem: {
@@ -4602,6 +4897,8 @@ export interface components {
             manual?: components["schemas"]["ManualAction"] | null;
             title: string;
         };
+        /** @enum {string} */
+        PlanVariant: "entries" | "markdown";
         /** @description An agent command, keyed by its stable registry identifier. */
         PortableAgentDto: {
             command: string[];
@@ -4634,6 +4931,14 @@ export interface components {
          * @enum {string}
          */
         PrOperation: "review" | "babysit";
+        PromptDto: {
+            content: components["schemas"]["ContentBlockDto"][];
+            id: string;
+            /** @description The lifecycle kind of a daemon prompt, such as `agent_resume`. */
+            prompt_kind?: string | null;
+            /** @description `console` or `daemon`. */
+            source?: string | null;
+        };
         /**
          * @description One comment on a request, as the forge holds it now, read live (026),
          *     with the marks Ariadne keeps of it.
@@ -4806,6 +5111,29 @@ export interface components {
              * @example 3.12.1
              */
             version?: string | null;
+        };
+        QuestionOptionDto: {
+            description?: string | null;
+            id: string;
+            label: string;
+        };
+        /** @enum {string} */
+        QuestionState: "open" | "answered" | "withdrawn" | "expired";
+        /** @description A question the agent asked through `wait_for_user` (031). */
+        QuestionStepDto: {
+            /** @description The answer, once it was answered. */
+            answer?: string | null;
+            created_at: string;
+            hint: string;
+            id: string;
+            lane: string;
+            options: components["schemas"]["QuestionOptionDto"][];
+            question: string;
+            recommendation_reason?: string | null;
+            recommended?: string | null;
+            request_id: string;
+            state: components["schemas"]["QuestionState"];
+            turn_id: string;
         };
         /**
          * @description One learned permission to write whole, as another daemon pushes it (037).
@@ -5031,6 +5359,22 @@ export interface components {
             /** @description How many sessions the filters leave, over every page. */
             total: number;
         };
+        /** @description The state of the session a trajectory belongs to. */
+        SessionStateDto: {
+            attention_reason?: components["schemas"]["AttentionReason"] | null;
+            /** @description The slash commands the agent offers now. */
+            commands: components["schemas"]["CommandDto"][];
+            config_options: components["schemas"]["ConfigOptionDto"][];
+            context?: components["schemas"]["ContextWindowDto"] | null;
+            cost?: components["schemas"]["CostDto"] | null;
+            mode?: components["schemas"]["ModeStateDto"] | null;
+            /** @description The turn that runs now, if one does. */
+            running_turn_id?: string | null;
+            status: components["schemas"]["SessionStatus"];
+            /** @description The title the agent gave the session, where it gave one. */
+            title?: string | null;
+            usage: components["schemas"]["TokenUsageDto"];
+        };
         /**
          * @description Agent session lifecycle status.
          * @enum {string}
@@ -5191,12 +5535,61 @@ export interface components {
             goal_id: string;
             title: string;
         };
+        /** @description One step of a turn, tagged by `type`. */
+        StepDto: (components["schemas"]["MessageStepDto"] & {
+            /** @enum {string} */
+            type: "message";
+        }) | (components["schemas"]["ThoughtStepDto"] & {
+            /** @enum {string} */
+            type: "thought";
+        }) | (components["schemas"]["ToolCallStepDto"] & {
+            /** @enum {string} */
+            type: "tool_call";
+        }) | (components["schemas"]["PermissionStepDto"] & {
+            /** @enum {string} */
+            type: "permission";
+        }) | (components["schemas"]["QuestionStepDto"] & {
+            /** @enum {string} */
+            type: "question";
+        }) | (components["schemas"]["NoteStepDto"] & {
+            /** @enum {string} */
+            type: "note";
+        }) | (components["schemas"]["ErrorStepDto"] & {
+            /** @enum {string} */
+            type: "error";
+        }) | (components["schemas"]["SubagentStepDto"] & {
+            /** @enum {string} */
+            type: "subagent";
+        }) | (components["schemas"]["CompactionStepDto"] & {
+            /** @enum {string} */
+            type: "compaction";
+        });
         /**
          * @description What a step waits for before the next one may start: the author's commit,
          *     a push, a merge onto the base, or a request merged by a human.
          * @enum {string}
          */
         StepGate: "committed" | "pushed" | "merged" | "request_merged";
+        SubagentRefDto: {
+            id: string;
+            title: string;
+        };
+        /** @description A subagent the agent started, in the turn of its parent. */
+        SubagentStepDto: {
+            activity: components["schemas"]["ActivityDto"];
+            can_cancel: boolean;
+            created_at: string;
+            ended_at?: string | null;
+            id: string;
+            lane: string;
+            started_at: string;
+            /** @description `running`, `completed`, `failed` or `cancelled`, where the agent says. */
+            state?: string | null;
+            subagent_id: string;
+            task?: string | null;
+            title: string;
+            turn_id: string;
+        };
         /**
          * @description Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
          *     in the name of the integration login.
@@ -5462,6 +5855,15 @@ export interface components {
             /** @description The ordered risk tags derived from the complete request. */
             risk_tags?: string[] | null;
         };
+        /** @description Text the agent thought. */
+        ThoughtStepDto: {
+            content: components["schemas"]["ContentBlockDto"][];
+            created_at: string;
+            id: string;
+            lane: string;
+            streaming: boolean;
+            turn_id: string;
+        };
         /**
          * @description Tokens spent, as the agents' own transcripts report them.
          *
@@ -5485,6 +5887,108 @@ export interface components {
              */
             output_tokens: number;
         };
+        /** @enum {string} */
+        ToolCallStatus: "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+        ToolCallStepDto: {
+            created_at: string;
+            /**
+             * Format: int64
+             * @description Grows each time the call's detail changes.
+             */
+            detail_rev: number;
+            diff_stat?: components["schemas"]["DiffStatDto"] | null;
+            ended_at?: string | null;
+            id: string;
+            /**
+             * @description The ACP kind: `read`, `edit`, `delete`, `move`, `search`, `execute`,
+             *     `think`, `fetch`, `switch_mode` or `other`.
+             */
+            kind?: string | null;
+            lane: string;
+            locations: components["schemas"]["LocationDto"][];
+            /** @description The id of the permission step that asked about this call. */
+            permission?: string | null;
+            /** @description The start of what the call gave back. */
+            preview?: string | null;
+            started_at: string;
+            status: components["schemas"]["ToolCallStatus"];
+            /** @description What the call is about: the command, the path, the pattern or the URL. */
+            subject?: string | null;
+            title: string;
+            tool_call_id: string;
+            turn_id: string;
+        };
+        /** @description One change of a trajectory, tagged by `op`. */
+        TrajectoryOpDto: {
+            /** @enum {string} */
+            op: "turn_upsert";
+            turn: components["schemas"]["TurnDto"];
+        } | {
+            /** @enum {string} */
+            op: "item_upsert";
+            step: components["schemas"]["StepDto"];
+        } | {
+            item_id: string;
+            /** @enum {string} */
+            op: "text_append";
+            text: string;
+            turn_id: string;
+        } | {
+            item_id: string;
+            /** @enum {string} */
+            op: "item_remove";
+            turn_id: string;
+        } | {
+            /** @enum {string} */
+            op: "plan_upsert";
+            plan: components["schemas"]["PlanDto"];
+        } | {
+            /** @enum {string} */
+            op: "subagent_upsert";
+            subagent: components["schemas"]["SubagentStepDto"];
+        } | {
+            /** @enum {string} */
+            op: "session_patch";
+            session: components["schemas"]["SessionStateDto"];
+        };
+        /**
+         * @description A session's trajectory: what `GET /trajectory` answers, and the
+         *     `snapshot` frame of `/trajectory/stream`.
+         */
+        TrajectorySnapshotDto: {
+            /** @description Whether older turns exist: `?before=<turns[0].id>` reads them. */
+            has_older: boolean;
+            plans: components["schemas"]["PlanDto"][];
+            /**
+             * Format: int64
+             * @description The revision this snapshot stands at. The first update of a stream
+             *     carries the next one.
+             */
+            rev: number;
+            session: components["schemas"]["SessionStateDto"];
+            subagents: components["schemas"]["SubagentStepDto"][];
+            /** @description Oldest first. */
+            turns: components["schemas"]["TurnDto"][];
+        };
+        /** @description One page of the steps of a turn. */
+        TrajectoryStepsDto: {
+            /**
+             * Format: int64
+             * @description How many steps come before these.
+             */
+            earlier_steps: number;
+            /** @description Oldest first. */
+            steps: components["schemas"]["StepDto"][];
+        };
+        /** @description One `update` frame of `/trajectory/stream`. */
+        TrajectoryUpdateDto: {
+            ops: components["schemas"]["TrajectoryOpDto"][];
+            /**
+             * Format: int64
+             * @description One more than the revision before it.
+             */
+            rev: number;
+        };
         TransitionRequest: {
             /**
              * @description The commit the task landed as, where `to` is `finished` and a column
@@ -5499,6 +6003,41 @@ export interface components {
          * @enum {string}
          */
         TunnelState: "up" | "down" | "off";
+        /** @description One turn: a prompt and everything the agent did for it. */
+        TurnDto: {
+            activity: components["schemas"]["ActivityDto"];
+            /** @description The last message of the session's own agent in the turn. */
+            answer: components["schemas"]["ContentBlockDto"][];
+            /**
+             * @description What waits on a person, and the errors: a pending permission, an open
+             *     question and an error, whatever the state of the turn.
+             */
+            attention: components["schemas"]["StepDto"][];
+            /**
+             * Format: int64
+             * @description How many steps come before `steps`: the steps route pages them.
+             */
+            earlier_steps: number;
+            ended_at?: string | null;
+            /**
+             * @description The id of the stored event that opened the turn: its prompt, or the
+             *     first event of a session before its first prompt.
+             */
+            id: string;
+            lane: string;
+            prompt?: components["schemas"]["PromptDto"] | null;
+            started_at: string;
+            state: components["schemas"]["TurnState"];
+            /**
+             * @description The last steps of a running turn, oldest first. A closed turn
+             *     carries none.
+             */
+            steps: components["schemas"]["StepDto"][];
+            /** @description The ACP stop reason, once a `stop` ended the turn. */
+            stop_reason?: string | null;
+        };
+        /** @enum {string} */
+        TurnState: "running" | "completed" | "cancelled" | "failed" | "interrupted";
         /** @description Body of `PUT /v1/agents/{id}`: the whole new flag list, empty included. */
         UpdateAgentConfigRequest: {
             extra_flags: string[];
@@ -8947,6 +9486,121 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_trajectory_snapshot: {
+        parameters: {
+            query?: {
+                /** @description A turn id: answer the whole turns older than it, newest last. */
+                before?: string;
+                /** @description How many turns to answer: 20 when omitted, at most 50. */
+                limit?: number;
+                /** @description A subagent id: each turn carries that subagent's steps alone. */
+                subagent?: string;
+            };
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrajectorySnapshotDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the session streamed faster than its trajectory could be read, every time it was tried; ask again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_trajectory_stream: {
+        parameters: {
+            query?: {
+                /** @description A turn id: answer the whole turns older than it, newest last. */
+                before?: string;
+                /** @description How many turns to answer: 20 when omitted, at most 50. */
+                limit?: number;
+                /** @description A subagent id: each turn carries that subagent's steps alone. */
+                subagent?: string;
+            };
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of the trajectory (text/event-stream): a `snapshot` event (TrajectorySnapshotDto), then an `update` event per revision (TrajectoryUpdateDto). A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["TrajectoryUpdateDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_trajectory_steps: {
+        parameters: {
+            query?: {
+                /** @description A step id: answer the steps older than it. */
+                before?: string;
+                /** @description How many steps to answer: 50 when omitted, at most 200. */
+                limit?: number;
+                /** @description A subagent id: page that subagent's steps in the turn. */
+                subagent?: string;
+            };
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+                /** @description turn id */
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrajectoryStepsDto"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

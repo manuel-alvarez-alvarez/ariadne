@@ -68,6 +68,7 @@ mod switch;
 mod task_branches;
 mod task_failure;
 mod telemetry_query;
+mod trajectory;
 mod transcript_usage;
 mod unknown_fields;
 mod workflows;

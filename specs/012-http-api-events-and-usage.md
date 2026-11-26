@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-11-24
+updated: 2026-11-26
 areas: [api, daemon, store]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -31,6 +31,7 @@ tests:
   - crates/ariadne-daemon/tests/it/hosts.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
   - crates/ariadne-daemon/src/transcript.rs
+  - crates/ariadne-daemon/tests/it/trajectory.rs
 ---
 
 # HTTP API, event stream and usage
@@ -109,7 +110,9 @@ and the ACP runtime that reports the agent events (021).
    resume and switch (`POST /v1/sessions/{id}/switch`, body
    `SwitchSessionRequest`, answer the new `SessionDto` with `switched_from`,
    008), and its console (`/v1/sessions/{id}/console`, `/console/input`,
-   `/console/stream`, `/console/cancel`, 008, 021). The one WebSocket,
+   `/console/stream`, `/console/cancel`, 008, 021), and its trajectory
+   (`GET /v1/sessions/{id}/trajectory`, `/trajectory/stream` and
+   `/trajectory/turns/{turn_id}/steps`, 039). The one WebSocket,
    `/console/terminal` (008), serves that same console drawn as terminal
    bytes for an emulator, and reads the emulator's keys and size; its
    messages are DTOs of `ariadne-api` like every other. No endpoint types
@@ -546,6 +549,10 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`),
   and the usage it carries is kept
   (`acp_console.rs::a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent`).
+- The trajectory routes answer the snapshot, its stream and the pages of
+  turns and steps (039), and are in the OpenAPI document
+  (`trajectory.rs::the_stream_sends_a_snapshot_then_updates_and_text_as_appends`,
+  `docs.rs::the_committed_api_pair_holds_every_trajectory_type`).
 - The live-only console events reach neither the events listing nor the
   domain stream
   (`acp_console.rs::the_events_listing_and_the_domain_stream_carry_no_chunk`).

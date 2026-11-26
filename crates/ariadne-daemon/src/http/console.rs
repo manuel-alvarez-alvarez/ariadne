@@ -160,15 +160,41 @@ impl Merge {
         store: &Store,
         events: EventBus,
         stored: broadcast::Receiver<BusEvent>,
-        mut live: broadcast::Receiver<AgentEventDto>,
+        live: broadcast::Receiver<AgentEventDto>,
         session_id: String,
         so_far: Vec<AgentEventDto>,
     ) -> Result<(Vec<AgentEventDto>, Self), StoreError> {
+        let page_of = session_id.clone();
+        let (recorded, so_far, merge) =
+            Self::open_on(events, stored, live, session_id, so_far, || async move {
+                let page = newest_page(store, &page_of).await?;
+                let last_id = page.last().map(|event| event.id.clone());
+                Ok((page, last_id))
+            })
+            .await?;
+        Ok((snapshot_of(recorded, so_far), merge))
+    }
+
+    /// [`Self::open`] over any read of the stored events: `read` answers
+    /// what it read and the id of the newest stored event in it. Answers
+    /// that read, the text so far with the live events below the read
+    /// joined to it, and the merge.
+    pub(super) async fn open_on<T, F, Fut>(
+        events: EventBus,
+        stored: broadcast::Receiver<BusEvent>,
+        mut live: broadcast::Receiver<AgentEventDto>,
+        session_id: String,
+        so_far: Vec<AgentEventDto>,
+        read: F,
+    ) -> Result<(T, Vec<AgentEventDto>, Self), StoreError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<(T, Option<String>), StoreError>>,
+    {
         // Read before the page is: an event the pump drops from here on is
         // one the page cannot hold either, and only a later open shows it.
         let dropped = events.dropped(&session_id);
-        let recorded = newest_page(store, &session_id).await?;
-        let last_id = recorded.last().map(|event| event.id.clone());
+        let (recorded, last_id) = read().await?;
         let mut waiting = Vec::new();
         let mut lagged = None;
         loop {
@@ -190,7 +216,13 @@ impl Merge {
         merge.settled = above.is_empty();
         merge.queue.extend(above.into_iter().map(Queued::Live));
         let so_far = so_far.into_iter().chain(below).collect();
-        Ok((snapshot_of(recorded, so_far), merge))
+        Ok((recorded, so_far, merge))
+    }
+
+    /// Whether the live channel dropped events while the merge opened: its
+    /// first word will be a resync.
+    pub(super) fn lagged(&self) -> bool {
+        self.lagged.is_some()
     }
 
     /// The next event of the session. `Err` is the cue to start over from a
@@ -421,7 +453,7 @@ where
 {
     for _ in 0..SNAPSHOT_TRIES {
         let (snapshot, merge) = open().await?;
-        if merge.lagged.is_none() {
+        if !merge.lagged() {
             return Ok(Some(snapshot));
         }
     }

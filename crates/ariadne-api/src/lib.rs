@@ -22,6 +22,7 @@ pub mod sessions;
 pub mod skills;
 pub mod stream;
 pub mod tasks;
+pub mod trajectory;
 pub mod usage;
 pub mod workflows;
 

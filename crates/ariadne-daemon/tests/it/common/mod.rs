@@ -622,6 +622,7 @@ impl HarnessBuilder {
             agent_registry,
             ai_permissions,
             reply_locks: Default::default(),
+            trajectories: Default::default(),
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred

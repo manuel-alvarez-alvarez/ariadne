@@ -203,6 +203,107 @@ impl Store {
         Ok(n.max(0) as u64)
     }
 
+    /// One event by its id.
+    pub async fn get_event(&self, id: &str) -> Result<Option<AgentEvent>> {
+        Ok(
+            sqlx::query_as::<_, AgentEvent>("SELECT * FROM agent_events WHERE id = ?")
+                .bind(id)
+                .fetch_optional(self.r())
+                .await?,
+        )
+    }
+
+    /// The ids of a session's events of `kind` below `before`, newest
+    /// first, at most `limit` of them, payloads unread.
+    pub async fn session_event_ids(
+        &self,
+        session_id: &str,
+        kind: &str,
+        before: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM agent_events WHERE session_id = ? AND kind = ?
+               AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
+        )
+        .bind(session_id)
+        .bind(kind)
+        .bind(before)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(self.r())
+        .await?)
+    }
+
+    /// The id of a session's first event of `kind` above `after`, payload
+    /// unread.
+    pub async fn next_session_event_id(
+        &self,
+        session_id: &str,
+        kind: &str,
+        after: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM agent_events WHERE session_id = ? AND kind = ? AND id > ?
+               ORDER BY id LIMIT 1",
+        )
+        .bind(session_id)
+        .bind(kind)
+        .bind(after)
+        .fetch_optional(self.r())
+        .await?)
+    }
+
+    /// How many of a session's events of each kind lie from `from` on and
+    /// below `before`, payloads unread. An unset bound is open.
+    pub async fn count_session_window(
+        &self,
+        session_id: &str,
+        from: Option<&str>,
+        before: Option<&str>,
+    ) -> Result<Vec<(String, u64)>> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT kind, COUNT(*) FROM agent_events WHERE session_id = ?
+               AND (? IS NULL OR id >= ?) AND (? IS NULL OR id < ?) GROUP BY kind",
+        )
+        .bind(session_id)
+        .bind(from)
+        .bind(from)
+        .bind(before)
+        .bind(before)
+        .fetch_all(self.r())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(kind, count)| (kind, count.max(0) as u64))
+            .collect())
+    }
+
+    /// The newest `limit` of a session's events from `from` on and below
+    /// `before`, oldest first. An unset bound is open.
+    pub async fn list_session_window(
+        &self,
+        session_id: &str,
+        from: Option<&str>,
+        before: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AgentEvent>> {
+        let mut events = sqlx::query_as::<_, AgentEvent>(
+            "SELECT * FROM agent_events WHERE session_id = ?
+               AND (? IS NULL OR id >= ?) AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
+        )
+        .bind(session_id)
+        .bind(from)
+        .bind(from)
+        .bind(before)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(self.r())
+        .await?;
+        events.reverse();
+        Ok(events)
+    }
+
     /// A page of recorded events, narrowed by whichever filters were set.
     ///
     /// The query is assembled here rather than by `Filtered`, which builds one

@@ -301,6 +301,7 @@ async fn main() -> Result<()> {
         tunnel: tunnel.clone(),
         hosts: hosts.clone(),
         reply_locks: Default::default(),
+        trajectories: Default::default(),
     };
     // Far tasks follow the hosts' status from the event bus (037).
     let far = ariadne_daemon::far::start(&state, ariadne_daemon::timeouts::Timeouts::default());
