@@ -5,6 +5,7 @@ updated: 2026-11-26
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
+  - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
   - crates/ariadne-store/tests/standalone_migration.rs
   - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-store/tests/remote_task_migration.rs
@@ -183,10 +184,9 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
 
 ## Acceptance criteria
 
-- Far goal-less work: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
+- Rule 25: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
   Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
   No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
-
 
 - Rule 25: `standalone_tasks::a_user_creates_a_ready_task_without_a_goal`, `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`.
   `crates/ariadne-store/tests/standalone_migration.rs::an_upgrade_preserves_goal_tasks_and_accepts_a_null_goal` proves the migration.

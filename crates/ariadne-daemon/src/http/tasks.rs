@@ -711,42 +711,17 @@ pub(super) async fn create_standalone(
         ));
     }
     check_staffing_shape(&req.agents, req.workflow.is_some())?;
-    let agents = resolve_agents(&state, &req.agents, true).await?;
+    let mut agents = resolve_agents(&state, &req.agents, true).await?;
     if let Some(host) = req.host.as_deref().filter(|h| *h != "local") {
         let repo = state.store.get_repository(&req.repo_id).await?;
         check_host(&state, host, &repo, &req.agents, false).await?;
-        let steps = if let Some(name) = &req.workflow {
-            if matches!(name.as_str(), "pr-review" | "pr-babysit") {
-                return Err(ApiError::bad_request(
-                    "a goal-less task cannot use a pull request operation workflow",
-                ));
-            }
-            let workflow = state.store.get_workflow(name).await?;
-            workflow
-                .steps()
-                .into_iter()
-                .map(|s| ariadne_api::workflows::WorkflowStepDto {
-                    id: s.id,
-                    title: s.title,
-                    description: s.description,
-                    skills: s.skills,
-                    ranks: s.ranks,
-                    gate: s.gate,
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        let expected: Vec<_> = steps.iter().map(|s| s.id.as_str()).collect();
-        if expected.len() != req.agents.len() && req.workflow.is_some()
-            || expected
-                .iter()
-                .any(|id| !req.agents.iter().any(|a| a.step.as_deref() == Some(*id)))
-        {
-            return Err(ApiError::bad_request(
-                "staff every workflow column exactly once",
-            ));
-        }
+        let steps = state
+            .store
+            .standalone_task_steps(req.workflow.as_deref(), &mut agents)
+            .await?
+            .into_iter()
+            .map(super::convert::step_dto)
+            .collect::<Result<Vec<_>, _>>()?;
         let workflow = ariadne_api::tasks::TaskWorkflowContext {
             name: req.workflow.unwrap_or_default(),
             steps,

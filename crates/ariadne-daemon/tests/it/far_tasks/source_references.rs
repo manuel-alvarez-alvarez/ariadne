@@ -995,3 +995,62 @@ async fn goal_less_admission_checks_the_host_and_saves_its_workflow() {
         assert!(reason["error"]["message"].as_str().unwrap().contains(host));
     }
 }
+
+#[tokio::test]
+async fn far_goal_less_admission_uses_the_local_workflow_reasons() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "source", "owner/admission").await;
+    forge_repository(&p.far, "worker", "owner/admission").await;
+    p.local
+        .store
+        .create_workflow(ariadne_store::NewWorkflow {
+            name: "admission".into(),
+            document:
+                "workflow admission\n  build[Build]\n    Build.\n  inspect[Inspect]\n    Inspect.\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+    for (workflow, agents, expected) in [
+        (
+            "pr-review",
+            json!([{"step":"review","model":p.model}]),
+            "workflow pr-review runs a pull request operation; a goal cannot use it",
+        ),
+        (
+            "pr-babysit",
+            json!([{"step":"babysit","model":p.model}]),
+            "workflow pr-babysit runs a pull request operation; a goal cannot use it",
+        ),
+        (
+            "admission",
+            json!([{"step":"build","model":p.model}]),
+            "the goal is active, so every column needs an agent; none staffs inspect",
+        ),
+        (
+            "admission",
+            json!([{"step":"unknown","model":p.model}]),
+            "the agent names an unknown column unknown; the columns are build, inspect",
+        ),
+    ] {
+        for host in ["local", "far"] {
+            let reason: Value = p
+                .local
+                .json(
+                    post_json(
+                        "/v1/tasks",
+                        json!({
+                            "title":"Admission", "repo_id":repo.id,"workflow":workflow,
+                            "host":host,"agents":agents
+                        }),
+                    ),
+                    StatusCode::BAD_REQUEST,
+                )
+                .await;
+            assert_eq!(
+                reason["error"]["message"],
+                format!("invalid input: {expected}")
+            );
+        }
+    }
+}

@@ -63,41 +63,8 @@ impl Store {
         if title.trim().is_empty() {
             return Err(StoreError::Invalid("provide a task title".into()));
         }
-        if let Some(workflow) = workflow
-            && crate::defaults::pr_operation_of(workflow).is_some()
-        {
-            return Err(StoreError::Invalid(format!(
-                "workflow {workflow} runs a pull request operation; a goal cannot use it"
-            )));
-        }
         let mut tx = self.w().begin().await?;
-        let steps: Vec<GoalStep> = match workflow {
-            None => Vec::new(),
-            Some(workflow) => {
-                let saved: crate::Workflow =
-                    sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
-                        .bind(workflow)
-                        .fetch_optional(&mut *tx)
-                        .await?
-                        .ok_or_else(|| crate::not_found("workflow", workflow))?;
-                saved
-                    .steps()
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ordinal, step)| GoalStep {
-                        goal_id: String::new(),
-                        ordinal: ordinal as i64,
-                        id: step.id,
-                        title: step.title,
-                        description: step.description,
-                        skills: serde_json::to_string(&step.skills).expect("skills serialize"),
-                        ranks: serde_json::to_string(&step.ranks).expect("ranks serialize"),
-                        gate: step.gate.map(|gate| gate.as_str().to_string()),
-                    })
-                    .collect()
-            }
-        };
-        Self::check_step_staffing(&steps, &mut agents, Some("active"))?;
+        let steps = Self::standalone_steps_in_tx(&mut tx, workflow, &mut agents).await?;
         let id = new_id();
         let ts = now();
         sqlx::query("INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch, created_at, updated_at) VALUES (?, NULL, ?, ?, ?, 'ready', ?, ?, ?)")
@@ -120,6 +87,58 @@ impl Store {
         let task = self.get_task(&id).await?;
         self.publish(Change::TaskCreated(task.clone()));
         Ok(task)
+    }
+
+    /// Resolve and validate the same workflow snapshot for local and far goal-less admission.
+    pub async fn standalone_task_steps(
+        &self,
+        workflow: Option<&str>,
+        agents: &mut [NewTaskAgent],
+    ) -> Result<Vec<GoalStep>> {
+        let mut tx = self.w().begin().await?;
+        Self::standalone_steps_in_tx(&mut tx, workflow, agents).await
+    }
+
+    async fn standalone_steps_in_tx(
+        tx: &mut Transaction<'_, Sqlite>,
+        workflow: Option<&str>,
+        agents: &mut [NewTaskAgent],
+    ) -> Result<Vec<GoalStep>> {
+        if let Some(workflow) = workflow
+            && crate::defaults::pr_operation_of(workflow).is_some()
+        {
+            return Err(StoreError::Invalid(format!(
+                "workflow {workflow} runs a pull request operation; a goal cannot use it"
+            )));
+        }
+        let steps: Vec<GoalStep> = match workflow {
+            None => Vec::new(),
+            Some(workflow) => {
+                let saved: crate::Workflow =
+                    sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
+                        .bind(workflow)
+                        .fetch_optional(&mut **tx)
+                        .await?
+                        .ok_or_else(|| crate::not_found("workflow", workflow))?;
+                saved
+                    .steps()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ordinal, step)| GoalStep {
+                        goal_id: String::new(),
+                        ordinal: ordinal as i64,
+                        id: step.id,
+                        title: step.title,
+                        description: step.description,
+                        skills: serde_json::to_string(&step.skills).expect("skills serialize"),
+                        ranks: serde_json::to_string(&step.ranks).expect("ranks serialize"),
+                        gate: step.gate.map(|gate| gate.as_str().to_string()),
+                    })
+                    .collect()
+            }
+        };
+        Self::check_step_staffing(&steps, agents, Some("active"))?;
+        Ok(steps)
     }
 
     /// The persistent identity of this database, independent of connection aliases.
