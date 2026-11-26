@@ -539,6 +539,10 @@ struct OpenToolCall {
     /// The reason the call is being abandoned for, once the daemon started
     /// to store its end. A retry stores it under the same reason.
     abandoning: Option<&'static str>,
+    /// Whether an event about the call is stored: its `pre_tool_use`, or a
+    /// `tool_call_update` of a call the agent never opened. Only such a call
+    /// shows in a snapshot, and only such a call is abandoned.
+    opened: bool,
 }
 
 impl OpenToolCall {
@@ -607,22 +611,33 @@ impl Turn {
 
     /// The open calls, in the order the agent opened them.
     fn open_tools(&self) -> Vec<&OpenToolCall> {
-        let mut open: Vec<&OpenToolCall> = self.tools.values().collect();
+        let mut open: Vec<&OpenToolCall> = self
+            .tools
+            .values()
+            .filter(|call| call.opened && call.abandoning.is_none())
+            .collect();
         open.sort_by_key(|call| call.order);
         open
     }
 
-    /// The next open call to abandon, in the order they opened, and the
-    /// `tool_call_abandoned` event to store for it. The call stays open until
-    /// [`Self::abandoned`] closes it, so a write that never finished is tried
-    /// again, with the reason it was first tried for.
-    fn next_abandoned(&mut self, reason: &'static str) -> Option<(String, String, Value)> {
+    /// Each open call to abandon, in the order they opened, and the
+    /// `tool_call_abandoned` event to store for it. A call keeps the reason
+    /// it was first abandoned for, and stays open until [`Self::abandoned`]
+    /// closes it, so a write that never landed is tried again. A call with
+    /// no stored event goes at once: nothing shows it open.
+    fn abandonments(&mut self, reason: &'static str) -> Vec<(String, String, Value)> {
+        self.tools.retain(|_, call| call.opened);
         let session = json!(self.agent_session);
-        let (key, call) = self.tools.iter_mut().min_by_key(|(_, call)| call.order)?;
-        let reason = *call.abandoning.get_or_insert(reason);
-        let mut payload = call.progress(&session);
-        payload["reason"] = json!(reason);
-        Some((key.clone(), call.identity.clone(), payload))
+        let mut open: Vec<(&String, &mut OpenToolCall)> = self.tools.iter_mut().collect();
+        open.sort_by_key(|(_, call)| call.order);
+        open.into_iter()
+            .map(|(key, call)| {
+                let reason = *call.abandoning.get_or_insert(reason);
+                let mut payload = call.progress(&session);
+                payload["reason"] = json!(reason);
+                (key.clone(), call.identity.clone(), payload)
+            })
+            .collect()
     }
 
     /// Close a call whose abandonment is stored.
@@ -2619,14 +2634,19 @@ impl EventSink {
                 effect.ordinal.fetch_add(1, Ordering::SeqCst),
             )
         });
-        self.record(kind, payload, once).await
+        self.record(kind, payload, once).await.ok().flatten()
     }
 
-    /// Store an event at most once under `source` in this launch, however
-    /// often it is tried: what a retry of a write that may have landed uses.
-    async fn emit_once(&self, kind: &str, payload: Value, source: &str) -> Option<String> {
-        self.record(kind, payload, Some((source.to_string(), 0)))
-            .await
+    /// [`Self::emit`], answering whether the store holds the event now: a
+    /// relay replay of an event already stored holds too.
+    async fn emit_held(&self, kind: &str, payload: Value) -> bool {
+        let once = self.effect.as_ref().map(|effect| {
+            (
+                effect.source.clone(),
+                effect.ordinal.fetch_add(1, Ordering::SeqCst),
+            )
+        });
+        self.record(kind, payload, once).await.is_ok()
     }
 
     /// An id that stays the same when a relay replays the output frame
@@ -2638,12 +2658,14 @@ impl EventSink {
         }
     }
 
+    /// Store and publish one event. `Err` where the store refused it: the
+    /// failure is logged here, and costs the record, never the agent.
     async fn record(
         &self,
         kind: &str,
         payload: Value,
         once: Option<(String, u64)>,
-    ) -> Option<String> {
+    ) -> Result<Option<String>, ()> {
         let request = IngestEventRequest {
             session_id: self.session_id.clone(),
             launch: Some(self.launch_id.clone()),
@@ -2666,7 +2688,7 @@ impl EventSink {
             Ok(event) => event,
             Err(e) => {
                 tracing::warn!(session = %self.session_id, kind, error = %e, "recording an ACP event failed");
-                return None;
+                return Err(());
             }
         };
         crate::metrics::record_agent_activity(
@@ -2680,7 +2702,7 @@ impl EventSink {
         if let Some(tx) = self.runtime.inner.scheduler.get() {
             let _ = tx.send(SchedEvent::SessionEvent(self.session_id.clone()));
         }
-        event.map(|event| event.id)
+        Ok(event.map(|event| event.id))
     }
 
     /// Keep the session's newest context window report. The report is live
@@ -2727,6 +2749,27 @@ impl EventSink {
             .cloned()
             .or_else(|| config.resume_session_id.clone())
             .map_or(Value::Null, Value::String)
+    }
+}
+
+/// Where the end of an abandoned call is stored: the session's sink, or a
+/// test's stand-in for a store that refuses the write.
+trait CallEnds {
+    /// Store `payload` at most once under `source` in this launch, however
+    /// often it is tried. True where the store holds it now, from this write
+    /// or an earlier one; false where the store refused it.
+    async fn store_once(&self, payload: Value, source: &str) -> bool;
+}
+
+impl CallEnds for EventSink {
+    async fn store_once(&self, payload: Value, source: &str) -> bool {
+        self.record(
+            "tool_call_abandoned",
+            payload,
+            Some((source.to_string(), 0)),
+        )
+        .await
+        .is_ok()
     }
 }
 
@@ -2985,11 +3028,17 @@ impl RuntimeIncoming {
                 let mut turn = self.turn.lock().await;
                 let stored = self
                     .sink
-                    .emit(
+                    .emit_held(
                         "pre_tool_use",
                         tagged(tool_payload(session_id, &call), subagent),
                     )
                     .await;
+                // Only a call whose opener is stored, and that is still
+                // running, is open: a snapshot shows it and a turn's end
+                // abandons it. A call that opens already ended never is.
+                if !stored || terminal_tool_status(&call) {
+                    return Ok(());
+                }
                 let order = turn.next_tool;
                 turn.next_tool += 1;
                 turn.tools.insert(
@@ -3002,9 +3051,10 @@ impl RuntimeIncoming {
                         // The opening counts as the call's first stored
                         // event: a call that ends within the interval stores
                         // no progress.
-                        stored_at: stored.map(|_| Instant::now()),
+                        stored_at: Some(Instant::now()),
                         identity: self.sink.identity(),
                         abandoning: None,
+                        opened: true,
                     },
                 );
             }
@@ -3028,6 +3078,7 @@ impl RuntimeIncoming {
                         stored_at: None,
                         identity,
                         abandoning: None,
+                        opened: false,
                     });
                 merge_tool_call(&mut call.call, &update);
                 // A running call's progress is stored at most once per
@@ -3061,10 +3112,11 @@ impl RuntimeIncoming {
                 );
                 if !due {
                     self.sink.emit_live("tool_call_update", payload).await;
-                } else if self.sink.emit("tool_call_update", payload).await.is_some()
+                } else if self.sink.emit_held("tool_call_update", payload).await
                     && let Some(call) = turn.tools.get_mut(&key)
                 {
                     call.stored_at = Some(Instant::now());
+                    call.opened = true;
                 }
             }
             Some("usage_update") => {
@@ -4119,8 +4171,9 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         turn.agent_request_turn_id = Some(turn_id.clone());
         turn.agent_session = Some(session_id.to_string());
         turn.text = None;
-        // A call the last turn left open is not this turn's to finish.
-        turn.tools.clear();
+        // A call the last turn left open is not this turn's to finish: one
+        // whose end the store refused then is tried again now.
+        abandon_calls(&mut turn, &rpc.sink, "turn_ended").await;
     }
     {
         rpc.sink
@@ -4187,9 +4240,14 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         if let Some((kind, payload)) = turn.end_text() {
             rpc.sink.emit(kind, payload).await;
         }
-        // A call the turn leaves open ends with it. A failed turn ends the
+        // A call the turn leaves open ends with it. A failed turn — an
+        // error, or a response that reports a model limit — ends the
         // session, which closes its calls as `session_ended`.
-        if let Ok(response) = &response {
+        if let Some(response) = response
+            .as_ref()
+            .ok()
+            .filter(|response| !hit_a_limit(response))
+        {
             let reason = match response.get("stopReason").and_then(Value::as_str) {
                 Some("cancelled") => "cancelled",
                 _ => "turn_ended",
@@ -4220,11 +4278,7 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     drop(requests);
     rpc.turn.lock().await.agent_request_turn_id = None;
     let response = response?;
-    if response
-        .pointer("/_meta/jetbrains/air/sessionFailure/category")
-        .and_then(Value::as_str)
-        == Some("limit")
-    {
+    if hit_a_limit(&response) {
         return Err(anyhow::Error::new(
             agent_client_protocol::Error::new(
                 -32603,
@@ -4383,19 +4437,27 @@ fn adapter_usage(usage: &Value, read_field: &str) -> Option<TokenUsage> {
 /// message it came in.
 /// Where an open call is kept in the turn: by its `toolCallId`, under the
 /// child's id for a child's call, so that two agents' ids never meet.
+/// Whether a prompt response that came back reports a failed turn: the
+/// model limit JetBrains Air answers with (021, rule 14).
+fn hit_a_limit(response: &Value) -> bool {
+    response
+        .pointer("/_meta/jetbrains/air/sessionFailure/category")
+        .and_then(Value::as_str)
+        == Some("limit")
+}
+
 /// Store one `tool_call_abandoned` for each call still open, in the order
-/// they opened, under the turn lock the caller holds. Each call closes once
-/// its event is stored; a call whose write was cut off stays open, and its
-/// retry is stored once (021, rule 7).
-async fn abandon_calls(turn: &mut Turn, sink: &EventSink, reason: &'static str) {
-    while let Some((key, identity, payload)) = turn.next_abandoned(reason) {
-        sink.emit_once(
-            "tool_call_abandoned",
-            payload,
-            &format!("tool_call_abandoned:{identity}"),
-        )
-        .await;
-        turn.abandoned(&key);
+/// they opened, under the turn lock the caller holds. A call closes once the
+/// store holds its event. A call whose write failed, or was cut off, stays
+/// open, and a later try stores it once (021, rule 7).
+async fn abandon_calls(turn: &mut Turn, ends: &impl CallEnds, reason: &'static str) {
+    for (key, identity, payload) in turn.abandonments(reason) {
+        if ends
+            .store_once(payload, &format!("tool_call_abandoned:{identity}"))
+            .await
+        {
+            turn.abandoned(&key);
+        }
     }
 }
 
@@ -4872,17 +4934,17 @@ fn save_relay_metadata(path: &Path, value: &impl serde::Serialize) -> Result<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{OpenToolCall, Turn};
+    use super::{CallEnds, OpenToolCall, Turn, abandon_calls};
     use super::{
         acp_error_detail, apply_agent_launch_environment, approved_option, completed_tool_payload,
         exhausted_reason, metric_tool_name_of, permission_signature, usage_for_prompt_response,
     };
 
     use ariadne_core::{Seat, TokenUsage};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     /// An open call in a turn, as the dispatcher records it.
-    fn open_call(id: &str, order: u64) -> OpenToolCall {
+    fn open_call(id: &str, order: u64, opened: bool) -> OpenToolCall {
         OpenToolCall {
             call: json!({"toolCallId": id}),
             id: id.to_string(),
@@ -4891,33 +4953,88 @@ mod tests {
             stored_at: None,
             identity: format!("opened-{id}"),
             abandoning: None,
+            opened,
         }
     }
 
-    /// A call whose abandonment was cut off before it was stored stays open,
-    /// and is tried again under the same reason and the same identity, so
-    /// the store keeps one end for it (021, rule 7).
-    #[test]
-    fn a_call_whose_abandonment_was_cut_off_is_tried_again_as_it_was() {
-        let mut turn = Turn::default();
-        turn.tools.insert("b".into(), open_call("b", 1));
-        turn.tools.insert("a".into(), open_call("a", 0));
+    /// A store for the end of abandoned calls that refuses every write while
+    /// `refusing` holds, and keeps one event per source as the store does.
+    #[derive(Default)]
+    struct Ends {
+        refusing: std::sync::atomic::AtomicBool,
+        stored: std::sync::Mutex<std::collections::BTreeMap<String, Value>>,
+    }
 
-        let (key, identity, payload) = turn.next_abandoned("cancelled").unwrap();
-        assert_eq!((key.as_str(), identity.as_str()), ("a", "opened-a"));
-        assert_eq!(payload["reason"], "cancelled");
-        // The write never finished: nothing closed the call.
-        let (key, identity, payload) = turn.next_abandoned("session_ended").unwrap();
-        assert_eq!((key.as_str(), identity.as_str()), ("a", "opened-a"));
-        assert_eq!(payload["reason"], "cancelled");
-        assert_eq!(payload["tool_call_id"], "a");
-        turn.abandoned(&key);
+    impl CallEnds for Ends {
+        async fn store_once(&self, payload: Value, source: &str) -> bool {
+            if self.refusing.load(std::sync::atomic::Ordering::SeqCst) {
+                return false;
+            }
+            self.stored
+                .lock()
+                .unwrap()
+                .entry(source.to_string())
+                .or_insert(payload);
+            true
+        }
+    }
 
-        let (key, _, payload) = turn.next_abandoned("session_ended").unwrap();
-        assert_eq!(key, "b");
-        assert_eq!(payload["reason"], "session_ended");
-        turn.abandoned(&key);
-        assert!(turn.next_abandoned("session_ended").is_none());
+    /// A call whose abandonment the store refused stays open, out of the
+    /// snapshot, and the next try stores it once under its first reason. A
+    /// call with no stored event is never shown open, nor abandoned (021,
+    /// rule 7).
+    #[tokio::test]
+    async fn a_call_whose_abandonment_the_store_refused_is_stored_on_the_next_try() {
+        let mut turn = Turn {
+            running: true,
+            ..Turn::default()
+        };
+        turn.tools.insert("b".into(), open_call("b", 1, true));
+        turn.tools.insert("a".into(), open_call("a", 0, true));
+        turn.tools.insert("c".into(), open_call("c", 2, false));
+        // A call with no stored event, as when its opener failed to store,
+        // is not shown open.
+        let shown: Vec<Value> = turn
+            .so_far("session", &None)
+            .into_iter()
+            .map(|event| event.payload["tool_call_id"].clone())
+            .collect();
+        assert_eq!(shown, [json!("a"), json!("b")]);
+        let ends = Ends::default();
+        ends.refusing
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        abandon_calls(&mut turn, &ends, "cancelled").await;
+        assert!(ends.stored.lock().unwrap().is_empty());
+        let mut open: Vec<&str> = turn.tools.keys().map(String::as_str).collect();
+        open.sort_unstable();
+        assert_eq!(
+            open,
+            ["a", "b"],
+            "the refused calls stay; the unopened one goes"
+        );
+        assert!(
+            turn.so_far("session", &None).is_empty(),
+            "a call being abandoned is not shown open"
+        );
+
+        ends.refusing
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        abandon_calls(&mut turn, &ends, "session_ended").await;
+        abandon_calls(&mut turn, &ends, "session_ended").await;
+        assert!(turn.tools.is_empty());
+        let stored = ends.stored.lock().unwrap();
+        let reasons: Vec<(&str, &Value)> = stored
+            .iter()
+            .map(|(source, payload)| (source.as_str(), &payload["reason"]))
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                ("tool_call_abandoned:opened-a", &json!("cancelled")),
+                ("tool_call_abandoned:opened-b", &json!("cancelled")),
+            ]
+        );
     }
 
     #[test]

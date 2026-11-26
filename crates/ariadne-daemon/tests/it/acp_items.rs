@@ -637,3 +637,57 @@ async fn a_console_opened_during_a_call_reads_the_open_call() {
     );
     let _ = &t.stub;
 }
+
+/// A turn whose response reports a model limit failed: it ends the
+/// session, so its open call is abandoned as `session_ended`, not as a turn
+/// that ended.
+#[tokio::test]
+async fn a_limit_response_abandons_its_open_call_as_session_ended() {
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "updates": [
+            {"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "Bash",
+             "status": "pending", "rawInput": {"command": "ls"}},
+        ],
+        "meta": {"jetbrains": {"air": {"sessionFailure": {"category": "limit"}}}},
+    }]);
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned("stub:test-model").await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the session to retire", || async {
+        h.session_status(&session).await == SessionStatus::Exited
+    })
+    .await;
+
+    let events: Vec<Value> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    let abandoned = of_kind(&events, "tool_call_abandoned");
+    assert_eq!(abandoned.len(), 1, "{:?}", kinds(&events));
+    assert_eq!(abandoned[0]["payload"]["tool_call_id"], "call-9");
+    assert_eq!(abandoned[0]["payload"]["reason"], "session_ended");
+}
+
+/// A call that opens already ended is never open: no snapshot shows it, and
+/// the turn's end abandons nothing.
+#[tokio::test]
+async fn a_call_that_opens_already_ended_is_never_abandoned() {
+    let t = Turned::start(
+        json!([
+            {"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "Read",
+             "status": "completed", "rawInput": {"path": "README.md"}},
+        ]),
+        false,
+        Timeouts::default(),
+    )
+    .await;
+    t.begin().await;
+    t.ended().await;
+
+    let events = t.stored().await;
+    assert_eq!(
+        second_turn_kinds(&events),
+        ["user_prompt_submit", "pre_tool_use", "stop"]
+    );
+}

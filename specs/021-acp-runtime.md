@@ -229,18 +229,26 @@ it leaves nothing to delete.
    `tool_call_abandoned` `{session_id, tool_call_id, reason, acp}` for each,
    in the order they opened, after the last run and before the `stop`.
    `reason` is `cancelled` where the turn's stop reason is `cancelled`, and
-   `turn_ended` otherwise
+   `turn_ended` otherwise. A response that reports a model limit (rule 14)
+   is a failed turn, not one that ended
+   (`acp_items.rs::a_limit_response_abandons_its_open_call_as_session_ended`)
    (`acp_items.rs::a_turn_that_ends_with_open_calls_abandons_each`,
    `::a_cancelled_turn_abandons_its_open_call_as_cancelled`). A call still
    open when the agent ends — after a failed turn, a death or a kill whose
    grace ran out — is stored as `session_ended`, before the `session.error`
    and the `session_end`
-   (`::an_agent_that_ends_mid_call_abandons_it_as_session_ended`). A call
-   stays open until its `tool_call_abandoned` is stored. A write that a kill
-   cuts off is tried again when the agent ends, with its first reason, and
-   the store keeps one event for each call: each one is stored once under
-   the call's own source in its launch
-   (`acp.rs::tests::a_call_whose_abandonment_was_cut_off_is_tried_again_as_it_was`,
+   (`::an_agent_that_ends_mid_call_abandons_it_as_session_ended`). A call is
+   open only once an event about it is stored, its `pre_tool_use` or a
+   `tool_call_update`, and only while it runs: a call whose opener the store
+   refused, or one that opens `completed` or `failed`, is never shown open
+   and never abandoned
+   (`::a_call_that_opens_already_ended_is_never_abandoned`). A call stays
+   open until the store holds its `tool_call_abandoned`. A write the store
+   refuses, or that a kill cuts off, is tried again at the next turn's start
+   and when the agent ends, with its first reason, and the call is out of
+   every snapshot meanwhile. The store keeps one event for each call: each
+   one is stored once under the call's own source in its launch
+   (`acp.rs::tests::a_call_whose_abandonment_the_store_refused_is_stored_on_the_next_try`,
    `acp_recovery.rs::replaying_one_relay_effect_keeps_one_event_and_one_usage_record`).
    A console snapshot taken while a turn runs carries each open call, merged
    so far, as a live `tool_call_update` after the stored events
@@ -806,8 +814,13 @@ it leaves nothing to delete.
   `::the_interval_starts_again_at_each_stored_update`).
 - A replayed relay message keeps the `item_id` of its live chunks
   (`acp_runtime.rs::reconnect_restores_offline_text_usage_and_an_answered_permission_without_repeating_input`).
-- A cut-off abandonment is tried again as it was
-  (`acp.rs::tests::a_call_whose_abandonment_was_cut_off_is_tried_again_as_it_was`).
+- An abandonment the store refused is tried again as it was, and a call
+  with no stored event is never shown open
+  (`acp.rs::tests::a_call_whose_abandonment_the_store_refused_is_stored_on_the_next_try`).
+- A limit response abandons its open call as `session_ended`, and a call
+  that opens already ended is never abandoned
+  (`acp_items.rs::a_limit_response_abandons_its_open_call_as_session_ended`,
+  `::a_call_that_opens_already_ended_is_never_abandoned`).
 - Stored progress and an abandoned call leave the activity clock, and count
   no tool call
   (`events.rs::stored_tool_progress_and_an_abandoned_call_leave_the_activity_clock`,
