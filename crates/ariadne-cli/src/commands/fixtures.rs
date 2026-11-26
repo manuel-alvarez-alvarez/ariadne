@@ -144,7 +144,6 @@ pub(crate) fn workflow(name: &str) -> WorkflowDto {
         name: name.into(),
         document: format!("workflow {name}\n"),
         builtin: true,
-        operation: None,
         steps: Vec::new(),
         created_at: "2026-08-17T08:00:00Z".into(),
         updated_at: "2026-08-17T09:00:00Z".into(),

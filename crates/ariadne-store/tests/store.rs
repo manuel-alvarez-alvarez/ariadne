@@ -6916,78 +6916,100 @@ async fn ending_a_review_closes_its_task_and_goal_and_the_next_start_is_new() {
     );
 }
 
-/// The `pr-review` workflow is no ordinary workflow: no goal and no
-/// repository default can name it, and an edit keeps its shape — one
-/// `review` column that loads `pr-reviewer`, with no gate and only the
-/// balanced and frontier ranks — while its title, description, extra skills
-/// and band stay editable.
+/// A pull request operation runs on no workflow of the catalog (029, 032):
+/// the catalog lists neither name, no goal or repository default names
+/// either, a workflow of the user's own cannot take either name, and each
+/// operation's goal snapshots its one fixed column.
 #[tokio::test]
-async fn the_review_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it() {
+async fn pull_request_operations_run_on_no_workflow_of_the_catalog() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
-    let goal = store
-        .create_goal(NewGoal {
-            workflow: Some("pr-review".into()),
-            title: "A goal".into(),
-            description: "d".into(),
-            issue_url: None,
-            repository_ids: vec![repo.id.clone()],
-            pin: default_pin(),
-        })
-        .await;
-    assert!(
-        format!("{:?}", goal.expect_err("an ordinary goal")).contains("pr-review"),
-        "names the workflow"
-    );
-    let default = store
-        .update_repository(
-            &repo.id,
-            RepositoryUpdate {
-                default_workflow: Some("pr-review".into()),
-                ..Default::default()
-            },
-        )
-        .await;
-    assert!(default.is_err());
-
-    for (document, reason) in [
-        (
-            "workflow pr-review\n  review[Review]\n    skills: coding\n    ranks: balanced\n",
-            "pr-reviewer",
-        ),
-        (
-            "workflow pr-review\n  review[Review]\n    skills: pr-reviewer\n    ranks: fast\n",
-            "balanced and frontier",
-        ),
-        (
-            "workflow pr-review\n  review[Review]\n    skills: pr-reviewer\n    ranks: balanced\n    gate: committed\n",
-            "request-merged",
-        ),
-        (
-            "workflow pr-review\n  review[Review]\n    skills: pr-reviewer\n    ranks: balanced\n  more[More]\n    skills: coding\n",
-            "exactly one column",
-        ),
-    ] {
-        let refused = store.set_workflow_document("pr-review", document).await;
-        let message = format!("{:?}", refused.expect_err("a broken shape"));
-        assert!(message.contains(reason), "{message}");
-    }
-    let edited = store
-        .set_workflow_document(
-            "pr-review",
-            "workflow pr-review\n  review[Look]\n    Look hard.\n    skills: pr-reviewer, research\n    ranks: frontier\n    gate: request-merged\n",
-        )
+    let names: Vec<String> = store
+        .list_workflows()
         .await
-        .unwrap();
-    assert!(edited.document_text().contains("Look hard."));
-    let (owner, _) = store
+        .unwrap()
+        .into_iter()
+        .map(|w| w.name)
+        .collect();
+    assert_eq!(names, ["develop-review-merge", "develop-review-pr"]);
+    for (name, column) in [("pr-review", "review"), ("pr-babysit", "babysit")] {
+        let goal = store
+            .create_goal(NewGoal {
+                workflow: Some(name.into()),
+                title: "A goal".into(),
+                description: "d".into(),
+                issue_url: None,
+                repository_ids: vec![repo.id.clone()],
+                pin: default_pin(),
+            })
+            .await;
+        assert!(matches!(goal, Err(StoreError::NotFound { .. })), "{goal:?}");
+        let default = store
+            .update_repository(
+                &repo.id,
+                RepositoryUpdate {
+                    default_workflow: Some(name.into()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(
+            matches!(default, Err(StoreError::NotFound { .. })),
+            "{default:?}"
+        );
+        let taken = store
+            .create_workflow(NewWorkflow {
+                name: name.into(),
+                document: format!("workflow {name}\n  {column}[Column]\n    skills: coding\n"),
+            })
+            .await;
+        let message = format!("{:?}", taken.expect_err("a reserved name"));
+        assert!(message.contains("reserved"), "{message}");
+    }
+
+    let (review, _) = store
         .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
         .await
         .unwrap();
-    let steps = store.goal_steps(&owner.goal.id).await.unwrap();
-    assert_eq!(steps[0].title, "Look");
-    assert_eq!(steps[0].ranks, r#"["frontier"]"#);
-    store.reset_workflow("pr-review").await.unwrap();
+    let (babysit, _) = store
+        .start_pr_operation(babysit_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    for (owner, id, title, skill) in [
+        (&review, "review", "Review", "pr-reviewer"),
+        (&babysit, "babysit", "Babysit", "pr-babysit"),
+    ] {
+        let steps = store.goal_steps(&owner.goal.id).await.unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].id, id);
+        assert_eq!(steps[0].title, title);
+        assert_eq!(steps[0].skills, format!(r#"["{skill}"]"#));
+        assert_eq!(steps[0].ranks, r#"["balanced","frontier"]"#);
+        assert_eq!(steps[0].gate.as_deref(), Some("request_merged"));
+    }
+}
+
+/// The upgrade drops both operation workflows, edited or not, and keeps
+/// every other workflow as it was.
+#[tokio::test]
+async fn the_upgrade_drops_both_pull_request_operation_workflows() {
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::raw_sql("CREATE TABLE workflows(name TEXT, document TEXT); INSERT INTO workflows VALUES ('pr-review', 'workflow pr-review\n  review[Custom]\n    skills: pr-reviewer\n'), ('pr-babysit', NULL), ('other', 'unchanged');")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../migrations/0024_drop_pr_operation_workflows.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT name, document FROM workflows ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, [("other".to_string(), Some("unchanged".to_string()))]);
 }
 
 fn babysit_start(repository_id: &str, model: &str, skills: &[&str]) -> StartPrOperation {
@@ -7094,81 +7116,6 @@ async fn a_repeated_babysit_start_keeps_its_goal_and_an_end_leaves_the_next_star
         store.get_goal(&next.goal.id).await.unwrap().status(),
         GoalStatus::Cancelled
     );
-}
-
-/// The `pr-babysit` workflow is no ordinary workflow: no goal and no
-/// repository default can name it, and an edit keeps its shape — one
-/// `babysit` column that loads `pr-babysit`, with no gate and only the fast
-/// and balanced ranks — while its title, description, extra skills and band
-/// stay editable.
-#[tokio::test]
-async fn the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it() {
-    let (store, _dir) = test_store().await;
-    let repo = seed_repository(&store).await;
-    let goal = store
-        .create_goal(NewGoal {
-            workflow: Some("pr-babysit".into()),
-            title: "A goal".into(),
-            description: "d".into(),
-            issue_url: None,
-            repository_ids: vec![repo.id.clone()],
-            pin: default_pin(),
-        })
-        .await;
-    assert!(format!("{:?}", goal.expect_err("an ordinary goal")).contains("pr-babysit"));
-    let default = store
-        .update_repository(
-            &repo.id,
-            RepositoryUpdate {
-                default_workflow: Some("pr-babysit".into()),
-                ..Default::default()
-            },
-        )
-        .await;
-    assert!(default.is_err());
-
-    for (document, reason) in [
-        (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: coding\n    ranks: fast\n",
-            "pr-babysit",
-        ),
-        (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: fast\n",
-            "balanced and frontier",
-        ),
-        (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: balanced\n    gate: committed\n",
-            "request-merged",
-        ),
-        (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: fast\n  more[More]\n    skills: coding\n",
-            "exactly one column",
-        ),
-        (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit, pr-reviewer\n    ranks: balanced\n    gate: request-merged\n",
-            "pr-reviewer",
-        ),
-    ] {
-        let refused = store.set_workflow_document("pr-babysit", document).await;
-        let message = format!("{:?}", refused.expect_err("a broken shape"));
-        assert!(message.contains(reason), "{message}");
-    }
-    let edited = store
-        .set_workflow_document(
-            "pr-babysit",
-            "workflow pr-babysit\n  babysit[Keep]\n    Keep it.\n    skills: pr-babysit, research\n    ranks: balanced\n    gate: request-merged\n",
-        )
-        .await
-        .unwrap();
-    assert!(edited.document_text().contains("Keep it."));
-    let (owner, _) = store
-        .start_pr_operation(babysit_start(&repo.id, "stub:one", &[]))
-        .await
-        .unwrap();
-    let steps = store.goal_steps(&owner.goal.id).await.unwrap();
-    assert_eq!(steps[0].title, "Keep");
-    assert_eq!(steps[0].ranks, r#"["balanced"]"#);
-    store.reset_workflow("pr-babysit").await.unwrap();
 }
 
 #[tokio::test]

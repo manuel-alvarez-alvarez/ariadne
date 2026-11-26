@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-11-16
+updated: 2026-11-26
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -147,12 +147,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
    to.
 10. A skill has a seat, read off its name and stored in no column
     (`Skill::seat`): `orchestration` is the orchestrator's, `pr-reviewer` is
-    the review operation's — the `pr-review` workflow stages it (030) and
-    the daemon loads it for a review session — and every other skill
+    the review operation's — its fixed `review` column stages it (030
+    rule 11) and the daemon loads it for a review session — and every other skill
     is a column agent's — `pr-babysit` included, which the `pr` column of
     `develop-review-pr` stages (030) and which the daemon also loads for a
-    keeper session on a request asked for by hand (032), where the
-    `pr-babysit` workflow stages it too. The store refuses
+    keeper session on a request asked for by hand (032), where the fixed
+    `babysit` column stages it too. The store refuses
     a task agent staffed on `orchestration`, and on `pr-reviewer` unless
     the agent belongs to a review operation goal (029), and
     `list_skills` lists neither (013). Nor does it list a skill with no

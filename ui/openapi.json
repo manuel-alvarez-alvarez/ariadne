@@ -4178,7 +4178,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nactive goal for the babysit, with one staffed task and no orchestrator,\non the `pr-babysit` workflow: the model must be ranked inside that\nworkflow's band, else 400. Asking again keeps the open goal and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The goal completes when the request merges; its task fails on close.\nStopping cancels the goal and its task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
+        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nactive goal for the babysit, with one staffed task and no orchestrator,\nin one `babysit` column that Ariadne fixes: the model must be ranked\ninside that column's band, else 400. Asking again keeps the open goal and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The goal completes when the request merges; its task fails on close.\nStopping cancels the goal and its task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
         "operationId": "ask_babysit",
         "parameters": [
           {
@@ -4231,7 +4231,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one active goal for the review, with one\nstaffed task and no orchestrator, on the `pr-review` workflow: the model\nmust be ranked inside that workflow's band, else 400. Asking again keeps\nthe open goal and moves its pin and skills. The session waits while the\nrequest is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The goal completes when the\nrequest merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
+        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one active goal for the review, with one\nstaffed task and no orchestrator, in one `review` column that Ariadne\nfixes: the model must be ranked inside that column's band, else 400. Asking again keeps\nthe open goal and moves its pin and skills. The session waits while the\nrequest is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The goal completes when the\nrequest merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
         "operationId": "ask_review",
         "parameters": [
           {
@@ -9740,7 +9740,7 @@
       },
       "PrOperation": {
         "type": "string",
-        "description": "The work Ariadne does on one pull request as a goal of its own: one active\ngoal per request and operation, staffed by one task whose single column\nruns on a workflow only that operation reads (029, 030).",
+        "description": "The work Ariadne does on one pull request as a goal of its own: one active\ngoal per request and operation, staffed by one task whose single column\nAriadne fixes for that operation, on no workflow of the catalog (029, 030).",
         "enum": [
           "review",
           "babysit"
@@ -12146,17 +12146,6 @@
             "type": "string",
             "description": "Kebab-case; named on the document's first line.",
             "example": "develop-review-merge"
-          },
-          "operation": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PrOperation",
-                "description": "The pull request operation this workflow serves (029), or null for an\nordinary workflow. An operation workflow keeps the shape its\noperation reads, and no ordinary goal or repository default can name\nit."
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "steps": {
             "type": "array",

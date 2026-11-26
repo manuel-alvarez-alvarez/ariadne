@@ -178,29 +178,17 @@ pub const DEFAULT_WORKFLOW: &str = "develop-review-merge";
 /// The workflow that lands a task by a request a human merges or closes.
 pub const PULL_REQUEST_WORKFLOW: &str = "develop-review-pr";
 
-/// The workflow of a live pull request review (029): one `review` column, run
-/// by one task of a goal that no orchestrator plans. Only that operation reads
-/// it, and a goal made the ordinary way refuses it.
+/// The name a review goal (029) records as its workflow. No workflow of the
+/// catalog has it: the goal's one column is [`pr_operation_step`], fixed by
+/// Ariadne, and a workflow of the user's own cannot take the name.
 pub(crate) const PR_REVIEW_WORKFLOW: &str = "pr-review";
 
-/// The workflow of a live pull request babysit (032): one `babysit` column,
-/// run by one task of a goal that no orchestrator plans. Only that operation
-/// reads it, and a goal made the ordinary way refuses it.
+/// The name a babysit goal (032) records as its workflow. No workflow of the
+/// catalog has it: the goal's one column is [`pr_operation_step`], fixed by
+/// Ariadne, and a workflow of the user's own cannot take the name.
 pub(crate) const PR_BABYSIT_WORKFLOW: &str = "pr-babysit";
 
-/// The pull request operation a workflow serves, read off its name, where it
-/// serves one. Such a workflow is edited like any other, but its shape is
-/// fixed by [`pr_operation_shape_error`], and no ordinary goal or repository
-/// default can name it.
-pub fn pr_operation_of(name: &str) -> Option<ariadne_core::workflow::PrOperation> {
-    match name {
-        PR_REVIEW_WORKFLOW => Some(ariadne_core::workflow::PrOperation::Review),
-        PR_BABYSIT_WORKFLOW => Some(ariadne_core::workflow::PrOperation::Babysit),
-        _ => None,
-    }
-}
-
-/// The workflow an operation runs on.
+/// The name an operation's goal records as its workflow.
 pub fn pr_operation_workflow(operation: ariadne_core::workflow::PrOperation) -> &'static str {
     match operation {
         ariadne_core::workflow::PrOperation::Review => PR_REVIEW_WORKFLOW,
@@ -208,59 +196,46 @@ pub fn pr_operation_workflow(operation: ariadne_core::workflow::PrOperation) -> 
     }
 }
 
-/// Why `workflow` cannot serve `operation`, where it cannot: it keeps
-/// exactly one column with the request-merged gate, that column loads the operation's own
-/// skill, and its band names only the ranks the operation allows —
-/// `balanced` and `frontier` for a review, `fast` and `balanced` for a
-/// babysit. The column's title, description, extra skills and band stay
-/// editable.
-pub fn pr_operation_shape_error(
+/// Whether `name` is reserved for the goals of a pull request operation.
+pub(crate) fn is_pr_operation_workflow(name: &str) -> bool {
+    name == PR_REVIEW_WORKFLOW || name == PR_BABYSIT_WORKFLOW
+}
+
+/// The one column of an operation's task (029, 032). Ariadne fixes it: the
+/// column loads the operation's own skill, allows the balanced and frontier
+/// ranks, and waits for the request to merge or close.
+pub fn pr_operation_step(
     operation: ariadne_core::workflow::PrOperation,
-    workflow: &ariadne_core::workflow::Workflow,
-) -> Option<String> {
+) -> ariadne_core::workflow::WorkflowStep {
     use ariadne_core::models::ModelRank;
-    use ariadne_core::workflow::PrOperation;
-    let name = pr_operation_workflow(operation);
-    let (column, skill, allowed, allowed_text) = match operation {
+    use ariadne_core::workflow::{PrOperation, StepGate, WorkflowStep};
+    let (id, title, description, skill) = match operation {
         PrOperation::Review => (
             "review",
+            "Review",
+            "Review the request and each later push until it merges or closes.",
             PR_REVIEWER_SKILL,
-            [ModelRank::Balanced, ModelRank::Frontier],
-            "balanced and frontier",
         ),
         PrOperation::Babysit => (
             "babysit",
+            "Babysit",
+            "Keep the request until it merges or closes.",
             PR_BABYSIT_SKILL,
-            [ModelRank::Balanced, ModelRank::Frontier],
-            "balanced and frontier",
         ),
     };
-    let [step] = workflow.steps.as_slice() else {
-        return Some(format!(
-            "workflow {name} keeps exactly one column, {column}"
-        ));
-    };
-    if step.id != column {
-        return Some(format!("the one column of {name} is {column}"));
+    WorkflowStep {
+        id: id.to_string(),
+        title: title.to_string(),
+        description: description.to_string(),
+        skills: vec![skill.to_string()],
+        ranks: vec![ModelRank::Balanced, ModelRank::Frontier],
+        gate: Some(StepGate::RequestMerged),
     }
-    if !step.skills.iter().any(|s| s == skill) {
-        return Some(format!("the {column} column must load {skill}"));
-    }
-    if step.ranks.is_empty() || step.ranks.iter().any(|rank| !allowed.contains(rank)) {
-        return Some(format!(
-            "the {column} column allows the {allowed_text} ranks only"
-        ));
-    }
-    if step.gate != Some(ariadne_core::workflow::StepGate::RequestMerged) {
-        return Some(format!("the {column} column requires gate: request-merged"));
-    }
-    None
 }
 
-/// The four workflows Ariadne ships: one that lands a task on the base branch
-/// itself, one that lands it by a request a human merges or closes, and one
-/// for each pull request operation.
-pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 4] = [
+/// The two workflows Ariadne ships: one that lands a task on the base branch
+/// itself, and one that lands it by a request a human merges or closes.
+pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 2] = [
     builtin_workflow(
         DEFAULT_WORKFLOW,
         include_str!("../workflows/develop-review-merge.workflow"),
@@ -268,14 +243,6 @@ pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 4] = [
     builtin_workflow(
         PULL_REQUEST_WORKFLOW,
         include_str!("../workflows/develop-review-pr.workflow"),
-    ),
-    builtin_workflow(
-        PR_REVIEW_WORKFLOW,
-        include_str!("../workflows/pr-review.workflow"),
-    ),
-    builtin_workflow(
-        PR_BABYSIT_WORKFLOW,
-        include_str!("../workflows/pr-babysit.workflow"),
     ),
 ];
 
@@ -1310,8 +1277,6 @@ pub(crate) mod tests {
         );
         assert!(names.contains(&DEFAULT_WORKFLOW));
         assert!(names.contains(&PULL_REQUEST_WORKFLOW));
-        assert!(names.contains(&PR_REVIEW_WORKFLOW));
-        assert!(names.contains(&PR_BABYSIT_WORKFLOW));
         for workflow in &BUILTIN_WORKFLOWS {
             let parsed = ariadne_core::workflow::parse(workflow.document)
                 .unwrap_or_else(|e| panic!("{} does not parse: {e}", workflow.name));
@@ -1324,12 +1289,8 @@ pub(crate) mod tests {
                         workflow.name
                     );
                     assert_ne!(SkillSeat::of(skill), SkillSeat::Orchestrator);
-                    // Only the review operation's own workflow loads it.
-                    assert!(
-                        skill != PR_REVIEWER_SKILL || workflow.name == PR_REVIEW_WORKFLOW,
-                        "{} stages {skill}",
-                        workflow.name
-                    );
+                    // Only the review operation's own column loads it.
+                    assert_ne!(skill, PR_REVIEWER_SKILL, "{} stages {skill}", workflow.name);
                 }
             }
         }
@@ -1357,14 +1318,6 @@ pub(crate) mod tests {
                     vec![ModelRank::Balanced, ModelRank::Frontier],
                 ],
             ),
-            (
-                PR_REVIEW_WORKFLOW,
-                vec![vec![ModelRank::Balanced, ModelRank::Frontier]],
-            ),
-            (
-                PR_BABYSIT_WORKFLOW,
-                vec![vec![ModelRank::Balanced, ModelRank::Frontier]],
-            ),
         ];
 
         for (name, bands) in expected {
@@ -1382,124 +1335,24 @@ pub(crate) mod tests {
         }
     }
 
+    /// Each operation's one column loads that operation's own skill,
+    /// allows the balanced and frontier ranks, and waits for the request to
+    /// merge or close; no shipped workflow carries an operation's name.
     #[test]
-    fn pr_operations_require_a_merged_request_gate() {
-        use ariadne_core::workflow::PrOperation;
+    fn each_pr_operation_runs_one_fixed_column_and_no_shipped_workflow() {
+        use ariadne_core::workflow::{PrOperation, StepGate};
         for (operation, name, column, skill) in [
             (PrOperation::Review, "pr-review", "review", "pr-reviewer"),
             (PrOperation::Babysit, "pr-babysit", "babysit", "pr-babysit"),
         ] {
-            let document =
-                format!("workflow {name}\n {column}[Column]\n skills: {skill}\n ranks: balanced\n");
-            let workflow = ariadne_core::workflow::parse(&document).unwrap();
-            assert!(pr_operation_shape_error(operation, &workflow).is_some());
+            let step = pr_operation_step(operation);
+            assert_eq!(step.id, column);
+            assert_eq!(step.skills, [skill]);
+            assert_eq!(step.ranks, [ModelRank::Balanced, ModelRank::Frontier]);
+            assert_eq!(step.gate, Some(StepGate::RequestMerged));
+            assert_eq!(pr_operation_workflow(operation), name);
+            assert!(default_workflow_document(name).is_none(), "{name} ships");
         }
-    }
-
-    /// The shipped review workflow is the shape its operation requires, and
-    /// a document that breaks the shape is named.
-    #[test]
-    fn the_shipped_review_workflow_has_the_shape_its_operation_requires() {
-        use ariadne_core::workflow::PrOperation;
-        let parse = |doc: &str| ariadne_core::workflow::parse(doc).unwrap();
-        let shipped = parse(default_workflow_document(PR_REVIEW_WORKFLOW).unwrap());
-        assert_eq!(
-            pr_operation_shape_error(PrOperation::Review, &shipped),
-            None
-        );
-        assert_eq!(
-            pr_operation_of(PR_REVIEW_WORKFLOW),
-            Some(PrOperation::Review)
-        );
-        assert_eq!(pr_operation_of(DEFAULT_WORKFLOW), None);
-        for (document, reason) in [
-            (
-                "workflow pr-review\n a[A]\n skills: pr-reviewer\n ranks: balanced\n b[B]\n skills: coding\n",
-                "exactly one column",
-            ),
-            (
-                "workflow pr-review\n look[Look]\n skills: pr-reviewer\n ranks: balanced\n",
-                "is review",
-            ),
-            (
-                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n ranks: balanced\n gate: committed\n",
-                "request-merged",
-            ),
-            (
-                "workflow pr-review\n review[Review]\n skills: coding\n ranks: balanced\n",
-                "must load pr-reviewer",
-            ),
-            (
-                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n ranks: fast\n",
-                "balanced and frontier",
-            ),
-            (
-                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n",
-                "balanced and frontier",
-            ),
-        ] {
-            let error =
-                pr_operation_shape_error(PrOperation::Review, &parse(document)).unwrap_or_default();
-            assert!(error.contains(reason), "{document}: {error}");
-        }
-        let edited = parse(
-            "workflow pr-review\n review[Look hard]\n Read it twice.\n skills: pr-reviewer, research\n ranks: frontier\n gate: request-merged\n",
-        );
-        assert_eq!(pr_operation_shape_error(PrOperation::Review, &edited), None);
-    }
-
-    /// The shipped babysit workflow is the shape its operation requires, and
-    /// a document that breaks the shape is named.
-    #[test]
-    fn the_shipped_babysit_workflow_has_the_shape_its_operation_requires() {
-        use ariadne_core::workflow::PrOperation;
-        let parse = |doc: &str| ariadne_core::workflow::parse(doc).unwrap();
-        let shipped = parse(default_workflow_document(PR_BABYSIT_WORKFLOW).unwrap());
-        assert_eq!(
-            pr_operation_shape_error(PrOperation::Babysit, &shipped),
-            None
-        );
-        assert_eq!(
-            pr_operation_of(PR_BABYSIT_WORKFLOW),
-            Some(PrOperation::Babysit)
-        );
-        for (document, reason) in [
-            (
-                "workflow pr-babysit\n a[A]\n skills: pr-babysit\n ranks: fast\n b[B]\n skills: coding\n",
-                "exactly one column",
-            ),
-            (
-                "workflow pr-babysit\n pr[Pr]\n skills: pr-babysit\n ranks: fast\n",
-                "is babysit",
-            ),
-            (
-                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n ranks: balanced\n gate: committed\n",
-                "request-merged",
-            ),
-            (
-                "workflow pr-babysit\n babysit[B]\n skills: coding\n ranks: fast\n",
-                "must load pr-babysit",
-            ),
-            (
-                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n ranks: fast\n",
-                "balanced and frontier",
-            ),
-            (
-                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n",
-                "balanced and frontier",
-            ),
-        ] {
-            let error = pr_operation_shape_error(PrOperation::Babysit, &parse(document))
-                .unwrap_or_default();
-            assert!(error.contains(reason), "{document}: {error}");
-        }
-        let edited = parse(
-            "workflow pr-babysit\n babysit[Keep it]\n Watch it.\n skills: pr-babysit, research\n ranks: balanced\n gate: request-merged\n",
-        );
-        assert_eq!(
-            pr_operation_shape_error(PrOperation::Babysit, &edited),
-            None
-        );
     }
 
     #[test]

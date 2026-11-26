@@ -72,7 +72,6 @@ dto! {
     pub(crate) fn workflow_dto(w: store::Workflow) -> WorkflowDto {
         document: w.document_text().to_string(),
         builtin: w.is_builtin(),
-        operation: store::defaults::pr_operation_of(&w.name),
         steps: w.steps().into_iter().map(workflow_step_dto).collect(),
         .. name, created_at, updated_at
     }
