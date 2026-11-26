@@ -278,8 +278,13 @@ it("keeps the outdated notice when the cached goals were an empty list", async (
 })
 
 it("shows a load failure, not a refresh warning, when nothing was ever cached", async () => {
-  daemonFetch.mockImplementation(() =>
-    Promise.resolve(errorResponse(503, "unavailable", "daemon is busy")),
+  daemonFetch.mockImplementation((input: Request | string | URL) =>
+    Promise.resolve(
+      new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url)
+        .pathname === "/v1/goals"
+        ? errorResponse(503, "unavailable", "daemon is busy")
+        : jsonResponse([]),
+    ),
   )
   renderBoard("/goals")
 
@@ -297,14 +302,14 @@ it("narrows the board by title, and names only the search when nothing matches",
   const user = userEvent.setup()
   renderBoard("/goals")
 
-  await screen.findByLabelText("Collapse Write docs")
+  await screen.findByRole("link", { name: "Write docs" })
   await user.type(screen.getByLabelText("Search goals by title"), "fix")
-  expect(screen.getByLabelText("Collapse Fix login")).toBeTruthy()
-  expect(screen.getByLabelText("Collapse Fix billing")).toBeTruthy()
-  expect(screen.queryByLabelText("Collapse Write docs")).toBeNull()
+  expect(screen.getByRole("link", { name: "Fix login" })).toBeTruthy()
+  expect(screen.getByRole("link", { name: "Fix billing" })).toBeTruthy()
+  expect(screen.queryByRole("link", { name: "Write docs" })).toBeNull()
 
   await user.type(screen.getByLabelText("Search goals by title"), "zzz")
-  await screen.findByText("Nothing matches this search. Clear it to see more.")
+  await screen.findByText("No goal matches this search. Clear it to see more.")
 })
 
 it("matches the title alone, not a repository path", async () => {
@@ -316,10 +321,10 @@ it("matches the title alone, not a repository path", async () => {
   const user = userEvent.setup()
   renderBoard("/goals")
 
-  await screen.findByLabelText("Collapse Fix login")
+  await screen.findByRole("link", { name: "Fix login" })
   await user.type(screen.getByLabelText("Search goals by title"), "webshop")
-  await screen.findByText("Nothing matches this search. Clear it to see more.")
-  expect(screen.queryByLabelText("Collapse Fix login")).toBeNull()
+  await screen.findByText("No goal matches this search. Clear it to see more.")
+  expect(screen.queryByRole("link", { name: "Fix login" })).toBeNull()
 })
 
 it("narrows by the title search within the selected statuses", async () => {
@@ -342,23 +347,23 @@ it("narrows by the title search within the selected statuses", async () => {
   const user = userEvent.setup()
   renderBoard("/goals?status=active")
 
-  await screen.findByLabelText("Collapse Write docs")
+  await screen.findByRole("link", { name: "Write docs" })
   await user.type(screen.getByLabelText("Search goals by title"), "fix")
-  expect(screen.getByLabelText("Collapse Fix login")).toBeTruthy()
-  expect(screen.queryByLabelText("Collapse Write docs")).toBeNull()
-  expect(screen.queryByLabelText("Collapse Fix billing")).toBeNull()
+  expect(screen.getByRole("link", { name: "Fix login" })).toBeTruthy()
+  expect(screen.queryByRole("link", { name: "Write docs" })).toBeNull()
+  expect(screen.queryByRole("link", { name: "Fix billing" })).toBeNull()
 
   await user.click(screen.getByRole("button", { name: "All" }))
-  await screen.findByLabelText(/^(Collapse|Expand) Fix billing$/)
-  expect(screen.getByLabelText("Collapse Fix login")).toBeTruthy()
-  expect(screen.queryByLabelText("Collapse Write docs")).toBeNull()
+  await screen.findByRole("link", { name: "Fix billing" })
+  expect(screen.getByRole("link", { name: "Fix login" })).toBeTruthy()
+  expect(screen.queryByRole("link", { name: "Write docs" })).toBeNull()
 })
 
 it("has no Board/List toggle and no repository filter", async () => {
   stubDaemon([aGoal({ id: "g1", repos: [aRepository({ id: "repo-web", path: "/dev/web" })] })])
   renderBoard("/goals")
 
-  await screen.findByLabelText(/^Collapse /)
+  await screen.findByRole("region", { name: "Goals board" })
   expect(screen.queryByRole("button", { name: "List" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Board" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Filter by repository" })).toBeNull()
@@ -385,4 +390,102 @@ it("shows terminal tasks when leaving the Active filter", async () => {
   expect(screen.queryByText("Completed task")).toBeNull()
   await userEvent.click(screen.getByRole("button", { name: "All" }))
   expect(await screen.findByText("Completed task")).toBeTruthy()
+})
+
+it("offers one New menu: Goal opens the goal dialog with its N hint, Task the goal-less task dialog", async () => {
+  const user = userEvent.setup()
+  renderBoard("/goals")
+
+  expect(screen.queryByRole("button", { name: "New goal" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "New task" })).toBeNull()
+  await user.click(await screen.findByRole("button", { name: "New" }))
+  const goal = await screen.findByRole("menuitem", { name: "Goal" })
+  expect(goal.getAttribute("aria-keyshortcuts")).toBe("n")
+  expect(goal.textContent).toContain("N")
+  expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["GoalN", "Task"])
+  await user.click(goal)
+  expect(await screen.findByRole("dialog", { name: "New goal" })).toBeTruthy()
+})
+
+it("opens the goal-less task dialog from the Task item of the New menu", async () => {
+  const user = userEvent.setup()
+  renderBoard("/goals")
+
+  await user.click(await screen.findByRole("button", { name: "New" }))
+  await user.click(await screen.findByRole("menuitem", { name: "Task" }))
+
+  expect(await screen.findByRole("dialog", { name: "New task" })).toBeTruthy()
+  expect(await screen.findByRole("combobox", { name: "Repository" })).toBeTruthy()
+})
+
+it("shows the rows of goal-less tasks on a board with no goals at all", async () => {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      jsonResponse(
+        url.pathname === "/v1/tasks"
+          ? [aTask({ goal_id: null, title: "Only a loose task", steps: [] })]
+          : [],
+      ),
+    )
+  })
+  renderBoard("/goals")
+
+  expect(await screen.findByText("Only a loose task")).toBeTruthy()
+  expect(screen.getByRole("heading", { name: "Tasks (1)" })).toBeTruthy()
+  expect(screen.queryByText("No goals yet")).toBeNull()
+})
+
+it("shows only the empty state on a board with no goals and no tasks", async () => {
+  daemonFetch.mockImplementation(() => Promise.resolve(jsonResponse([])))
+  renderBoard("/goals")
+
+  expect(await screen.findByText("No goals yet")).toBeTruthy()
+  expect(screen.getByRole("button", { name: "New goal" })).toBeTruthy()
+  expect(screen.queryByRole("heading", { name: /^Tasks/ })).toBeNull()
+  expect(screen.queryByRole("region", { name: "Goals board" })).toBeNull()
+})
+
+it("keeps the rows of goal-less tasks when the goals request fails", async () => {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      url.pathname === "/v1/goals"
+        ? errorResponse(503, "unavailable", "daemon is busy")
+        : jsonResponse(
+            url.pathname === "/v1/tasks"
+              ? [aTask({ goal_id: null, title: "Loose task", steps: [] })]
+              : [],
+          ),
+    )
+  })
+  renderBoard("/goals")
+
+  await screen.findByText("Could not load goals")
+  expect(await screen.findByText("Loose task")).toBeTruthy()
+})
+
+it("shows a matching goal-less task beside the goal-only no-match notice", async () => {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      jsonResponse(
+        url.pathname === "/v1/goals"
+          ? [aGoal({ id: "g1", title: "Write docs" })]
+          : url.pathname === "/v1/tasks"
+            ? [aTask({ goal_id: null, title: "Repair printer", steps: [] })]
+            : [],
+      ),
+    )
+  })
+  renderBoard("/goals?q=printer")
+
+  expect(await screen.findByText("Repair printer")).toBeTruthy()
+  expect(screen.getByText("No goal matches this search. Clear it to see more.")).toBeTruthy()
 })

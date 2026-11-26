@@ -164,7 +164,7 @@ fn coding_routes_changes_and_proves_each_claim() {
         "For structure, follow the refactoring path in place of steps 5 and 6.",
         "For prose, inspect the diff and run the relevant existing checks.",
         "Skip steps 5 and 6 for prose.",
-        "with `send_message` to `orchestrator`.",
+        "with `post_to_session` to `orchestrator`.",
         "Send both readings and your pick. Continue with your pick.",
         "the area spec where the repository keeps one.",
         "Examples include a spec, manual or index where the repository keeps them.",
@@ -204,8 +204,8 @@ fn coding_routes_changes_and_proves_each_claim() {
 /// work to a sibling by name. `documentation` reads the rules and software,
 /// runs examples and page checks, links the page and commits once.
 /// `research` cites a source for every fact and names what it did not check
-/// and what would change its recommendation. It sends the full report to the
-/// orchestrator and references its message ID. `spec-writing` sends the orchestrator its
+/// and what would change its recommendation. It posts the full report to the
+/// orchestrator. `spec-writing` sends the orchestrator its
 /// open questions as one list, names the test of every criterion and marks
 /// each test that does not exist yet, and commits the spec once after the
 /// orchestrator agrees to it: its code does not exist yet, so a task that
@@ -258,19 +258,15 @@ fn each_writing_skill_names_its_sibling_and_its_own_proof() {
         ),
         (
             "research",
-            "Send the full research report to `orchestrator` through `send_message`.",
+            "Post the full research report to `orchestrator` with `post_to_session`.",
         ),
         (
             "research",
-            "Done when the message holds the full research report and the tool returns its message ID.",
-        ),
-        (
-            "research",
-            "Reference that message ID in the column report.",
+            "Done when the post holds the full research report and the tool accepts it.",
         ),
         (
             "spec-writing",
-            "Send every open question to the orchestrator in one `send_message`.",
+            "Post every open question to the orchestrator in one `post_to_session`.",
         ),
         ("spec-writing", "Name the test that proves it"),
         ("spec-writing", "The coding task writes that test."),

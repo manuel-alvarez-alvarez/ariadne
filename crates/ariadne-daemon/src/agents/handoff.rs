@@ -174,9 +174,7 @@ fn render_entry(item: &TranscriptItem) -> Option<String> {
         TranscriptItem::Error { text, .. } => {
             format!("error\n{}", text.lines().next().unwrap_or_default())
         }
-        TranscriptItem::UserQuestion { .. } => {
-            format!("question\n{}", item.question_lines().join("\n"))
-        }
+        TranscriptItem::FormQuestion { .. } => item.form_lines().join("\n"),
         TranscriptItem::SystemNote { .. } | TranscriptItem::Raw { .. } => return None,
     };
     Some(fenced(body))

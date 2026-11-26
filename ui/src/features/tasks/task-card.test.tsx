@@ -8,7 +8,7 @@ import type { TaskDto } from "@/api"
 import { qk } from "@/api"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { GoalTasks } from "@/features/goals/goal-tasks"
-import { aTask } from "@/test/fixtures"
+import { aTask, GOAL_ID } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, LOCAL } from "@/test/hosts"
 import { taskListQueryOptions } from "./queries"
@@ -76,16 +76,13 @@ it("does not show a label for the local host", () => {
 
 it("updates the goal task host label from task_updated without a reload", async () => {
   const task = aTask({ host: "box", host_unreachable: false })
-  const options = taskListQueryOptions("local", { goal: task.goal_id })
-  const { queryClient } = renderScreen(
-    <GoalTasks host="local" goalId={task.goal_id} steps={STEPS} />,
-    {
-      seed: (client) => {
-        client.setQueryData(options.queryKey, [task])
-        client.setQueryData(qk.hosts.list(), [LOCAL, { ...BOX, color: "blue" }])
-      },
+  const options = taskListQueryOptions("local", { goal: GOAL_ID })
+  const { queryClient } = renderScreen(<GoalTasks host="local" goalId={GOAL_ID} steps={STEPS} />, {
+    seed: (client) => {
+      client.setQueryData(options.queryKey, [task])
+      client.setQueryData(qk.hosts.list(), [LOCAL, { ...BOX, color: "blue" }])
     },
-  )
+  })
   expect(screen.getByText("box").getAttribute("data-host-color")).toBe("blue")
 
   const moved = { ...task, host: "elsewhere", host_unreachable: true }

@@ -117,13 +117,17 @@ pub(super) async fn switch(
             if ctx
                 .session
                 .as_ref()
-                .is_some_and(|s| s.goal_id.as_deref() != Some(&task.goal_id))
+                .is_some_and(|s| s.goal_id != task.goal_id)
             {
                 return Err(ApiError::forbidden(
                     "session belongs to another source goal",
                 ));
             }
-            if state.store.get_goal(&task.goal_id).await?.status()
+            if state
+                .store
+                .get_goal(task.goal_id.as_deref().unwrap_or_default())
+                .await?
+                .status()
                 == ariadne_core::GoalStatus::Cancelled
             {
                 return Err(ApiError::conflict("the source goal is cancelled"));

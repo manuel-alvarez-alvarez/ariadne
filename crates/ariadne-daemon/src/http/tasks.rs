@@ -110,7 +110,7 @@ fn far_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
             let model: ariadne_core::models::ModelRef =
                 assignment.model.parse().map_err(ApiError::bad_request)?;
             Ok(NewTaskAgent {
-                step: assignment.step.clone(),
+                step: assignment.step.clone().unwrap_or_default(),
                 skills: assignment.skills.clone(),
                 pin: ariadne_store::AgentPin {
                     model: model.to_string(),
@@ -125,6 +125,25 @@ fn far_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
         .collect()
 }
 
+/// Refuse a staffing whose shape does not fit the task: an agent per column
+/// for a task with a workflow, exactly one agent with no `step` for a task
+/// with none.
+fn check_staffing_shape(assignments: &[AgentAssignment], workflow: bool) -> ApiResult<()> {
+    if workflow {
+        if let Some(agent) = assignments.iter().find(|agent| agent.step.is_none()) {
+            return Err(ApiError::bad_request(format!(
+                "the agent on {} names no step; name the column it works",
+                agent.model
+            )));
+        }
+    } else if assignments.len() != 1 || assignments[0].step.is_some() {
+        return Err(ApiError::bad_request(
+            "a task with no workflow takes exactly one agent, with no step",
+        ));
+    }
+    Ok(())
+}
+
 /// The agents an assignment list asks for, in the order it names them.
 ///
 /// An agent has nothing behind it to fall back to: every assignment names its
@@ -137,7 +156,7 @@ pub(super) async fn resolve_agents(
     let mut agents = Vec::with_capacity(assignments.len());
     for assignment in assignments {
         agents.push(NewTaskAgent {
-            step: assignment.step.clone(),
+            step: assignment.step.clone().unwrap_or_default(),
             skills: assignment.skills.clone(),
             pin: if manual {
                 pins::chosen(
@@ -208,6 +227,7 @@ pub(super) async fn create(
              linked goal runs on this daemon",
         ));
     }
+    check_staffing_shape(&req.agents, true)?;
     let repos = state.store.list_goal_repositories(&goal.id).await?;
     let repo_id = match &req.repo_id {
         Some(id) => {
@@ -241,7 +261,18 @@ pub(super) async fn create(
     };
 
     if let Some(host) = &host {
-        return super::source_tasks::create(&state, &goal, &repo_id, host, req).await;
+        let workflow = ariadne_api::tasks::TaskWorkflowContext {
+            name: goal.workflow.clone(),
+            steps: state
+                .store
+                .goal_steps(&goal.id)
+                .await?
+                .into_iter()
+                .map(super::convert::step_dto)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        return super::source_tasks::create(&state, Some(&goal), workflow, &repo_id, host, req)
+            .await;
     }
     let new = NewTask {
         goal_id: goal.id,
@@ -296,7 +327,10 @@ pub(super) async fn list(
         }
     };
     tasks.retain(|task| {
-        q.goal.as_ref().is_none_or(|goal| &task.goal_id == goal)
+        q.goal
+            .as_ref()
+            .is_none_or(|goal| task.goal_id.as_ref() == Some(goal))
+            && (!q.no_goal || task.goal_id.is_none())
             && q.status.is_none_or(|status| task.status() == status)
     });
     let mut out = Vec::with_capacity(tasks.len());
@@ -366,6 +400,15 @@ pub(super) async fn update(
     }
     let current = state.store.get_task(&id).await?;
     check_unsent_host(&state, &current).await?;
+    if current.goal_id.is_none() && req.depends_on.as_ref().is_some_and(|d| !d.is_empty()) {
+        return Err(ApiError::bad_request(
+            "a goal-less task takes no dependencies",
+        ));
+    }
+    if let Some(a) = &req.agents {
+        let workflowless = state.store.task_has_no_workflow(&current).await?;
+        check_staffing_shape(a, !workflowless)?;
+    }
     let agents = match &req.agents {
         Some(a) if current.host.is_some() => Some(far_agents(a)?),
         Some(a) => Some(resolve_agents(&state, a, ctx.actor == Actor::User).await?),
@@ -395,7 +438,11 @@ pub(super) async fn update(
             },
         )
         .await?;
-    if let Some(deps) = req.depends_on {
+    // A goal-less task has no dependencies to clear.
+    if let Some(deps) = req
+        .depends_on
+        .filter(|d| current.goal_id.is_some() || !d.is_empty())
+    {
         state.store.set_task_dependencies(&id, &deps).await?;
     }
     let task = state.store.get_task(&task.id).await?;
@@ -646,4 +693,65 @@ pub(super) async fn list_transitions(
     state.store.get_task(&id).await?;
     let rows = state.store.list_task_transitions(&id).await?;
     Ok(Json(rows.into_iter().map(transition_dto).collect()))
+}
+
+/// Create a local task without a goal. Only the user can create one.
+#[utoipa::path(post, path = "/v1/tasks", tag = "tasks",
+    request_body = ariadne_api::tasks::CreateStandaloneTaskRequest,
+    responses((status = 201, body = TaskDto), (status = 400), (status = 403), (status = 404)))]
+pub(super) async fn create_standalone(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ariadne_api::tasks::CreateStandaloneTaskRequest>,
+) -> ApiResult<(StatusCode, Json<TaskDto>)> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    if ctx.actor != Actor::User {
+        return Err(ApiError::forbidden(
+            "only the user may create a goal-less task",
+        ));
+    }
+    check_staffing_shape(&req.agents, req.workflow.is_some())?;
+    if let Some(host) = req.host.as_deref().filter(|h| *h != "local") {
+        let repo = state.store.get_repository(&req.repo_id).await?;
+        check_host(&state, host, &repo, &req.agents, false).await?;
+        let mut agents = far_agents(&req.agents)?;
+        let steps = state
+            .store
+            .standalone_task_steps(req.workflow.as_deref(), &mut agents)
+            .await?
+            .into_iter()
+            .map(super::convert::step_dto)
+            .collect::<Result<Vec<_>, _>>()?;
+        let workflow = ariadne_api::tasks::TaskWorkflowContext {
+            name: req.workflow.unwrap_or_default(),
+            steps,
+        };
+        let request = CreateTaskRequest {
+            title: req.title,
+            description: req.description,
+            repo_id: Some(req.repo_id.clone()),
+            agents: req.agents,
+            depends_on: Vec::new(),
+            host: req.host.clone(),
+            origin_task_id: None,
+        };
+        return super::source_tasks::create(&state, None, workflow, &req.repo_id, host, request)
+            .await;
+    }
+    let agents = resolve_agents(&state, &req.agents, true).await?;
+    let task = state
+        .store
+        .create_standalone_task(
+            &req.repo_id,
+            &req.title,
+            &req.description,
+            req.workflow.as_deref(),
+            agents,
+        )
+        .await?;
+    state.notify_scheduler(&task.id);
+    Ok((
+        StatusCode::CREATED,
+        Json(task_dto_of(&state.store, task).await?),
+    ))
 }

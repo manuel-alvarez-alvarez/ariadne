@@ -142,15 +142,20 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
     if kind == "subagent_update" {
         return finish(&subagent_summary(payload));
     }
-    // An agent's flag that it waits for the user (031): the hint it gave,
-    // the one line the Needs attention list shows for it.
-    if kind == super::agent_requests::AGENT_REQUEST_EVENT
-        && let Some(hint) = non_empty_str(payload.get("hint"))
-    {
-        return finish(&format!("waiting for you · {hint}"));
+    // A question the agent asks with its own tool (021): its message, and
+    // how it closed.
+    if kind == crate::acp_questions::QUESTION_EVENT {
+        return finish(&match non_empty_str(payload.pointer("/question/message")) {
+            Some(message) => format!("question · {message}"),
+            None => "question".into(),
+        });
     }
-    if kind == super::agent_requests::AGENT_REQUEST_RESOLVED_EVENT {
-        return finish(&agent_request_resolution_summary(payload));
+    if kind == crate::acp_questions::QUESTION_RESOLVED_EVENT {
+        return finish(&match non_empty_str(payload.get("action")) {
+            Some("accept") => "question answered".to_string(),
+            Some("decline") => "question declined".to_string(),
+            _ => "question cancelled".to_string(),
+        });
     }
     let text = tool_call_summary(payload)
         .or_else(|| {
@@ -160,19 +165,6 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
         })
         .or_else(|| agent_text(kind, payload));
     finish(&text.unwrap_or_else(|| "…".to_string()))
-}
-
-/// How a request closed: `answered · <answer>`, `question withdrawn` or
-/// `question expired`.
-fn agent_request_resolution_summary(payload: &serde_json::Value) -> String {
-    match non_empty_str(payload.get("resolution")) {
-        Some("answered") => match payload.pointer("/answer/text").and_then(|t| t.as_str()) {
-            Some(answer) => format!("answered · {answer}"),
-            None => "answered".into(),
-        },
-        Some(other) => format!("question {other}"),
-        None => "question closed".into(),
-    }
 }
 
 /// An answered permission request: the option chosen and who chose it, and,
@@ -441,40 +433,15 @@ mod tests {
         assert_eq!(attention_for_event("session.diagnosis", &payload), None);
     }
 
-    /// The line a request leaves when it closes says how, and moves
-    /// neither the status nor the attention flag (031).
+    /// A `wait_for_user` line that an older release left in a session's
+    /// history moves neither the status nor the attention flag.
     #[test]
-    fn a_resolved_request_reads_as_how_it_closed_and_moves_nothing() {
-        let answered = serde_json::json!({"request_id": "01RQ", "resolution": "answered", "answer": {"option_id": "main", "text": "Main"}});
-        assert_eq!(status_for_event("agent_request.resolved"), None);
-        assert_eq!(
-            attention_for_event("agent_request.resolved", &answered),
-            None
-        );
-        assert_eq!(
-            summarize("agent_request.resolved", &answered),
-            "answered · Main"
-        );
-        let expired = serde_json::json!({"request_id": "01RQ", "resolution": "expired"});
-        assert_eq!(
-            summarize("agent_request.resolved", &expired),
-            "question expired"
-        );
-    }
-
-    /// An `agent_request` is the daemon's own line in the session's stream,
-    /// written when the agent flagged a wait (031): it moves neither the
-    /// status nor the attention flag — the pending request itself is what
-    /// the Needs attention list reads — and its summary is the hint.
-    #[test]
-    fn an_agent_request_event_reads_as_its_hint_and_moves_nothing() {
+    fn an_old_agent_request_event_moves_nothing() {
         let payload = json!({"request_id": "01RQ", "hint": "Approve the plan?"});
-        assert_eq!(status_for_event("agent_request"), None);
-        assert_eq!(attention_for_event("agent_request", &payload), None);
-        assert_eq!(
-            summarize("agent_request", &payload),
-            "waiting for you · Approve the plan?"
-        );
+        for kind in ["agent_request", "agent_request.resolved"] {
+            assert_eq!(status_for_event(kind), None);
+            assert_eq!(attention_for_event(kind, &payload), None);
+        }
     }
 
     /// The summary a `session.diagnosis` event reads as is the same advisory

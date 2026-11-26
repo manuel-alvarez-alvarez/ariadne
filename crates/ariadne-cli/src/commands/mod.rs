@@ -124,12 +124,23 @@ pub(crate) async fn listing(
             command:
                 task::TaskCommand::Ls {
                     goal,
+                    no_goal,
                     statuses,
                     all,
                     step,
                     watch: _,
                 },
-        } => task::list(client, goal.clone(), statuses, *all, step.as_deref()).await,
+        } => {
+            task::list(
+                client,
+                goal.clone(),
+                *no_goal,
+                statuses,
+                *all,
+                step.as_deref(),
+            )
+            .await
+        }
         Command::Workflow {
             command: workflow::WorkflowCommand::Ls,
         } => workflow::ls(client).await,
@@ -475,6 +486,7 @@ mod tests {
             query_path(
                 "/v1/tasks",
                 &TaskListQuery {
+                    no_goal: false,
                     goal: Some("a b&c".into()),
                     status: Some(TaskStatus::InProgress),
                     origin_task_id: None,

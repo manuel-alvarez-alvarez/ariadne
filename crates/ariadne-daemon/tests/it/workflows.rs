@@ -216,57 +216,17 @@ async fn the_parse_route_answers_the_steps_of_a_good_document_and_the_line_of_a_
     assert_eq!(err.error.details.unwrap()["line"], 1);
 }
 
-/// The shipped `pr-review` workflow shows in the catalog with its operation,
-/// is edited within its shape, and is refused to ordinary goals and
-/// repository defaults.
+/// The catalog holds no workflow for a pull request operation (029, 032):
+/// neither name is listed, read or taken by a new workflow, and no ordinary
+/// goal or repository default can name either.
 #[tokio::test]
-async fn the_pr_review_workflow_is_listed_edited_in_its_shape_and_closed_to_ordinary_goals() {
+async fn the_catalog_holds_no_pull_request_operation_workflow() {
     let h = harness().await;
     let listed: Vec<WorkflowDto> = h.get("/v1/workflows").await;
-    let review = listed
-        .iter()
-        .find(|w| w.name == "pr-review")
-        .expect("the catalog lists pr-review");
-    assert_eq!(
-        review.operation,
-        Some(ariadne_core::workflow::PrOperation::Review)
-    );
-    assert!(review.builtin);
-    assert_eq!(review.steps.len(), 1);
-    assert_eq!(review.steps[0].id, "review");
-    assert_eq!(review.steps[0].skills, ["pr-reviewer"]);
-    assert!(
-        listed
-            .iter()
-            .filter(|w| w.name != "pr-review" && w.name != "pr-babysit")
-            .all(|w| w.operation.is_none())
-    );
+    let names: Vec<&str> = listed.iter().map(|w| w.name.as_str()).collect();
+    assert_eq!(names, ["develop-review-merge", "develop-review-pr"]);
 
-    let (status, _) = h
-        .send(put_json(
-            "/v1/workflows/pr-review",
-            serde_json::json!({"document":
-                "workflow pr-review\n  review[Review]\n    Look.\n    skills: coding\n    ranks: balanced\n"}),
-        ))
-        .await;
-    assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "a column without pr-reviewer"
-    );
-    let edited: WorkflowDto = h
-        .json(
-            put_json(
-                "/v1/workflows/pr-review",
-                serde_json::json!({"document":
-                    "workflow pr-review\n  review[Look]\n    Look hard.\n    skills: pr-reviewer, research\n    ranks: frontier\n    gate: request-merged\n"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(edited.steps[0].title, "Look");
-
-    let repo = h.git_repo("pr-review-default");
+    let repo = h.git_repo("pr-operation-default");
     let registered: RepositoryDto = h
         .json(
             post_json(
@@ -276,98 +236,31 @@ async fn the_pr_review_workflow_is_listed_edited_in_its_shape_and_closed_to_ordi
             StatusCode::CREATED,
         )
         .await;
-    let (status, _) = h
-        .send(post_json(
-            "/v1/goals",
-            serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
-                               "model": "stub:test-model", "workflow": "pr-review"}),
-        ))
-        .await;
-    assert!(status.is_client_error(), "{status}");
-    let (status, _) = h
-        .send(put_json(
-            &format!("/v1/repositories/{}", registered.id),
-            serde_json::json!({"default_workflow": "pr-review"}),
-        ))
-        .await;
-    assert!(status.is_client_error(), "{status}");
-}
-
-/// The shipped `pr-babysit` workflow shows in the catalog with its operation,
-/// is edited within its shape, and is refused to ordinary goals and
-/// repository defaults.
-#[tokio::test]
-async fn the_pr_babysit_workflow_is_listed_edited_in_its_shape_and_closed_to_ordinary_goals() {
-    let h = harness().await;
-    let listed: Vec<WorkflowDto> = h.get("/v1/workflows").await;
-    let babysit = listed
-        .iter()
-        .find(|w| w.name == "pr-babysit")
-        .expect("the catalog lists pr-babysit");
-    assert_eq!(
-        babysit.operation,
-        Some(ariadne_core::workflow::PrOperation::Babysit)
-    );
-    assert!(babysit.builtin);
-    assert_eq!(babysit.steps.len(), 1);
-    assert_eq!(babysit.steps[0].id, "babysit");
-    assert_eq!(babysit.steps[0].skills, ["pr-babysit"]);
-    assert_eq!(
-        babysit.steps[0].ranks,
-        [
-            ariadne_core::models::ModelRank::Balanced,
-            ariadne_core::models::ModelRank::Frontier
-        ]
-    );
-
-    for document in [
-        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: coding\n    ranks: balanced\n",
-        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: fast\n",
-        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: balanced\n",
-    ] {
+    for (name, column) in [("pr-review", "review"), ("pr-babysit", "babysit")] {
+        let (status, _) = h.send(get(&format!("/v1/workflows/{name}"))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{name}");
         let (status, _) = h
-            .send(put_json(
-                "/v1/workflows/pr-babysit",
-                serde_json::json!({ "document": document }),
+            .send(post_json(
+                "/v1/workflows",
+                serde_json::json!({"name": name, "document":
+                    format!("workflow {name}\n  {column}[Column]\n    skills: coding\n")}),
             ))
             .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{document}");
+        assert!(status.is_client_error(), "{name}: {status}");
+        let (status, _) = h
+            .send(post_json(
+                "/v1/goals",
+                serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
+                                   "model": "stub:test-model", "workflow": name}),
+            ))
+            .await;
+        assert!(status.is_client_error(), "{name}: {status}");
+        let (status, _) = h
+            .send(put_json(
+                &format!("/v1/repositories/{}", registered.id),
+                serde_json::json!({"default_workflow": name}),
+            ))
+            .await;
+        assert!(status.is_client_error(), "{name}: {status}");
     }
-    let edited: WorkflowDto = h
-        .json(
-            put_json(
-                "/v1/workflows/pr-babysit",
-                serde_json::json!({"document":
-                    "workflow pr-babysit\n  babysit[Keep]\n    Keep it.\n    skills: pr-babysit, research\n    ranks: balanced\n    gate: request-merged\n"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(edited.steps[0].title, "Keep");
-
-    let repo = h.git_repo("pr-babysit-default");
-    let registered: RepositoryDto = h
-        .json(
-            post_json(
-                "/v1/repositories",
-                serde_json::json!({"path": repo.display().to_string(), "base_branch": "main"}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    let (status, _) = h
-        .send(post_json(
-            "/v1/goals",
-            serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
-                               "model": "stub:test-model", "workflow": "pr-babysit"}),
-        ))
-        .await;
-    assert!(status.is_client_error(), "{status}");
-    let (status, _) = h
-        .send(put_json(
-            &format!("/v1/repositories/{}", registered.id),
-            serde_json::json!({"default_workflow": "pr-babysit"}),
-        ))
-        .await;
-    assert!(status.is_client_error(), "{status}");
 }

@@ -9,11 +9,13 @@ const NOW: &str = "2026-01-01T00:00:00Z";
 /// A task on `host` in progress, whose title is `title` with no space in it.
 fn task(id: &str, title: &str, host: &str, host_unreachable: bool) -> Value {
     serde_json::to_value(TaskDto {
+        workflow: None,
+        steps: Vec::new(),
         execution_context: None,
         step: None,
         operation: None,
         id: id.into(),
-        goal_id: "01GOAL".into(),
+        goal_id: Some("01GOAL".into()),
         repo_id: "01REPO".into(),
         title: title.into(),
         description: String::new(),

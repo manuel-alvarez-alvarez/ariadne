@@ -3,9 +3,12 @@
 //! [`stub_acp_agent`] writes a python3 program that speaks ACP version 1 over
 //! its standard input and output, answering from a script the test wrote:
 //! the capabilities it declares, the configuration options it offers, the
+//! ACP session modes it offers (`modes`, with `reject_mode` the one it
+//! refuses), the
 //! reply to each prompt — updates of any kind (message and thought chunks, a
 //! plan, tool calls and as many updates of each as the test lists), a
-//! permission request, the stop reason, an exit mid-turn, a stdin closed
+//! permission request, a question (`elicitation`, an `elicitation/create`
+//! the agent cancels at once with `withdraw_elicitation`), the stop reason, an exit mid-turn, a stdin closed
 //! before the turn's answer (`close_stdin`), after which the agent reads
 //! nothing more and stays up until it is killed, or a pause
 //! (`wait_for`) a test holds the turn open on after its updates went out,
@@ -144,6 +147,24 @@ impl StubAcpAgent {
                     .get("codex_mode")
                     .and_then(Value::as_str)
                     .map(str::to_string)
+            })
+            .collect()
+    }
+
+    /// The `CODEX_CONFIG` each launch of `session_id` ran under, parsed.
+    pub(crate) fn codex_configs_for(&self, session_id: &str) -> Vec<Option<Value>> {
+        std::fs::read_to_string(&self.launches)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("a logged launch"))
+            .filter(|launch| {
+                launch.get("ariadne_session").and_then(Value::as_str) == Some(session_id)
+            })
+            .map(|launch| {
+                launch
+                    .get("codex_config")
+                    .and_then(Value::as_str)
+                    .map(|config| serde_json::from_str(config).expect("CODEX_CONFIG is JSON"))
             })
             .collect()
     }
@@ -474,6 +495,7 @@ with open(script["pid_file"], "w") as f:
 with open(script["launches"], "a") as f:
     f.write(json.dumps({"ariadne_session": os.environ.get("ARIADNE_SESSION_ID"),
                         "codex_mode": os.environ.get("INITIAL_AGENT_MODE"),
+                        "codex_config": os.environ.get("CODEX_CONFIG"),
                         "argv": sys.argv[3:]}) + "\n")
 
 # The process that writes the conversation, as codex-acp's `codex
@@ -518,6 +540,7 @@ def claim_writer(session, resumed):
 options = script.get("config_options", [])
 prompts = list(script.get("prompts", []))
 permissions = 0
+elicitations = 0
 
 
 class Failure(Exception):
@@ -584,7 +607,7 @@ def send_between_turn_updates():
 
 
 def respond(request):
-    global permissions
+    global permissions, elicitations
     method = request.get("method")
     if method in script.get("unsupported_methods", []):
         raise Failure(-32601, "method not supported: %s" % method)
@@ -597,13 +620,19 @@ def respond(request):
         return initialized
     if method == "session/new":
         claim_writer(sid, resumed=False)
-        return {"sessionId": sid, "configOptions": options}
+        opened = {"sessionId": sid, "configOptions": options}
+        if "modes" in script:
+            opened["modes"] = script["modes"]
+        return opened
     if method in ("session/load", "session/resume"):
         wanted = request.get("params", {}).get("sessionId")
         if wanted in script.get("stored_sessions", []):
             claim_writer(wanted, resumed=True)
             send_updates(wanted, script.get("load_updates", []))
-            return {"configOptions": options}
+            reopened = {"configOptions": options}
+            if "modes" in script:
+                reopened["modes"] = script["modes"]
+            return reopened
         raise Failure(-32001, "unknown session %s" % wanted)
     if method == "session/close":
         return {}
@@ -617,6 +646,12 @@ def respond(request):
             if option.get("id") == params.get("configId"):
                 option["currentValue"] = settled
         return {"configOptions": options}
+    if method == "session/set_mode":
+        mode = request["params"].get("modeId")
+        if "modes" not in script or mode == script.get("reject_mode"):
+            raise Failure(-32000, "the agent refused the mode")
+        script["modes"]["currentModeId"] = mode
+        return {}
     if method == "session/prompt":
         turn = prompts.pop(0) if prompts else {}
         if "error" in turn:
@@ -633,8 +668,32 @@ def respond(request):
                   "method": "session/request_permission",
                   "params": request_permission})
             read()  # the client's answer, logged like everything else
-        send_updates(sid, turn.get("updates", []))
         stop_reason = turn.get("stop_reason", "end_turn")
+        if "elicitation" in turn:
+            # A question with the agent's own tool: an `elicitation/create`
+            # held until the client answers it. The answer goes back as the
+            # turn's text, the way a model reads it. `withdraw_elicitation`
+            # has the agent cancel its own request at once.
+            elicitations += 1
+            asked = dict(turn["elicitation"])
+            asked.setdefault("mode", "form")
+            asked["sessionId"] = sid
+            eid = "elicitation-%d" % elicitations
+            send({"jsonrpc": "2.0", "id": eid, "method": "elicitation/create",
+                  "params": asked})
+            if turn.get("withdraw_elicitation"):
+                send({"jsonrpc": "2.0", "method": "$/cancel_request",
+                      "params": {"requestId": eid}})
+            while True:
+                reply = read()
+                if reply.get("id") == eid and "method" not in reply:
+                    break
+                if reply.get("method") == "session/cancel":
+                    stop_reason = "cancelled"
+            send_updates(sid, [{"sessionUpdate": "agent_message_chunk",
+                                "content": {"type": "text", "text": "answer: " + json.dumps(
+                                    reply.get("result"), sort_keys=True)}}])
+        send_updates(sid, turn.get("updates", []))
         wait_for = turn.get("wait_for")
         if wait_for:
             # Everything the turn has to say is out; now sit on it until the

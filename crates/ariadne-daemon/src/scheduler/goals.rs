@@ -25,7 +25,6 @@ impl super::Scheduler {
                     return Ok(());
                 }
                 self.keep_orchestrator(&goal).await?;
-                self.deliver_goal_messages(goal_id).await;
                 // An orchestrator has no task to flag: its session carries the
                 // stall, which is the only place a goal still in planning has
                 // to say that nothing is happening. But idle is the
@@ -62,10 +61,6 @@ impl super::Scheduler {
             GoalStatus::Active => {
                 if goal.orchestrated {
                     self.keep_orchestrator(&goal).await?;
-                    // What the agents have said to the orchestrator, before it is
-                    // told anything the daemon noticed: an agent waiting on an
-                    // answer is waiting on this pass.
-                    self.deliver_goal_messages(goal_id).await;
                     let tasks = self
                         .store
                         .list_tasks(TaskFilter {
@@ -566,7 +561,7 @@ mod tests {
         Task {
             step: None,
             id: format!("01{title}"),
-            goal_id: "01goal".into(),
+            goal_id: Some("01goal".into()),
             repo_id: "01repo".into(),
             title: title.into(),
             description: String::new(),

@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-11-21
+updated: 2026-11-26
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -84,8 +84,8 @@ reads behind them ([026](026-pull-requests.md)).
    push it as the briefing says, and that Ariadne wakes it with the news
    and ends it on the merge or the close, then to end its turn.
 6. The session loads what its agent was staffed with: `pr-babysit` — the
-   same skill the `pr` column of a task stages — through the `babysit`
-   column of the `pr-babysit` workflow, and the skills the user picked when
+   same skill the `pr` column of a task stages — through the fixed
+   `babysit` column (030 rule 11), and the skills the user picked when
    asking, each one a task agent is staffed on. A keeper from before
    goals loads `pr-babysit` and the skills stored on its request row. Its
    comment batching, branch-update and review-scope rules are 030 rule 10.
@@ -96,10 +96,9 @@ reads behind them ([026](026-pull-requests.md)).
    `{asked, model, effort, skills}`, the shape of `AskReviewRequest` (029).
    `model` is required to ask and is checked against the catalog as any pin
    is; a missing or unknown one answers 400. `model` must also have a rank
-   the `pr-babysit` workflow's `babysit` column allows (030 rule 11): an
-   unranked model, or one of another rank, answers 400 naming the band —
-   the band of the open goal's snapshot where one is open, else of the
-   workflow as it stands. Each skill must be one a task agent is staffed
+   the fixed `babysit` column allows (030 rule 11): an unranked model, or
+   one of another rank, answers 400 naming the band — the band of the open
+   goal's snapshot where one is open, else of the fixed column. Each skill must be one a task agent is staffed
    on, else 400; `pr-babysit` is loaded anyway and is not stored. Asking
    an open request starts Ariadne's work on it, makes the babysit goal
    (rule 7b), writes `pull_requests.babysit_asked`, the pin `babysit_model` and
@@ -171,8 +170,7 @@ reads behind them ([026](026-pull-requests.md)).
 
 12. The keeper seat lists `get_pull_request`, `get_diff`, `list_comments`,
     `get_comment`, `reply_comment`, `escalate_comment`,
-    beside
-    `wait_for_user` and `withdraw_wait_for_user` — the same six request
+    — the same six request
     tools the agent of a task's `pr` column has, and no task tool and no
     message tool: the user reaches the session through its console, as a
     reviewer's. No tool resolves a thread and none submits a review: those
@@ -261,11 +259,11 @@ reads behind them ([026](026-pull-requests.md)).
 - A babysit and a review of one request are two goals, and stopping one
   leaves the other:
   `pull_request_babysit.rs::a_babysit_and_a_review_of_one_request_are_two_goals`.
-- The `pr-babysit` workflow shows in the catalog, keeps its shape, and is
-  closed to ordinary goals and repository defaults:
-  `defaults.rs::the_shipped_babysit_workflow_has_the_shape_its_operation_requires`,
-  `store.rs::the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it`,
-  `tests/it/workflows.rs::the_pr_babysit_workflow_is_listed_edited_in_its_shape_and_closed_to_ordinary_goals`.
+- A babysit runs on its fixed `babysit` column and on no workflow of the
+  catalog, and no ordinary goal or repository default names `pr-babysit`:
+  `defaults.rs::each_pr_operation_runs_one_fixed_column_and_no_shipped_workflow`,
+  `store.rs::pull_request_operations_run_on_no_workflow_of_the_catalog`,
+  `tests/it/workflows.rs::the_catalog_holds_no_pull_request_operation_workflow`.
 - Asking is refused with no model, an unknown one, a skill no task agent
   loads, a request that is not open, or one a task
   already keeps — each starting no work:
@@ -346,7 +344,7 @@ reads behind them ([026](026-pull-requests.md)).
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/migrations/0003_keeper_recovery.sql`,
 `crates/ariadne-store/src/pull_requests.rs`, `crates/ariadne-store/src/pr_operations.rs`,
-`crates/ariadne-store/workflows/pr-babysit.workflow`, `crates/ariadne-store/src/defaults.rs`,
+`crates/ariadne-store/src/defaults.rs`,
 `crates/ariadne-core/src/lib.rs`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/forge/poll.rs`, `crates/ariadne-daemon/src/launcher.rs`,

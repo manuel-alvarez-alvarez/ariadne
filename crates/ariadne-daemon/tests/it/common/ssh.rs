@@ -20,6 +20,10 @@
 //! - `ssh_config`: the lines a `-G` run prints, as `ssh -G` prints the
 //!   configuration it resolves. Without it a `-G` run prints nothing.
 //!
+//! `service_pid` in `setup` is the pid the user service runs, 4242 unless
+//! set. `stray_pid` is another daemon that answers on the worker socket
+//! until a stop of it, which `stray-stops` under the home lists; with
+//! `stray_stays` it outlives that stop.
 //! `runtime_bash` in `setup` substitutes the Bash path to model a missing runtime supervisor.
 //! `runtime_disconnect` in `setup` names a FIFO. A runtime command closes its stdin
 //! when that FIFO reaches EOF, after the test observes an active download.
@@ -204,8 +208,27 @@ if "-T" in args and script.get("setup"):
         print(setup["home"])
         sys.stdout.write(setup["raw_path"])
         sys.exit(0)
+    # The user service runs `service_pid`. Whatever answers on the socket
+    # is `stray_pid` until a stop of it, and the service's process after it;
+    # with `stray_stays` the stray outlives its stop.
+    service_pid = setup.get("service_pid", 4242)
+    stopped = os.path.join(setup["home"], "stray-stopped")
+    if "MainPID" in command or "pid = " in command:
+        print(service_pid)
+        sys.exit(0)
+    if "-o comm=" in command:
+        with open(os.path.join(setup["home"], "stray-stops"), "a") as stops:
+            stops.write(command.split("pid=", 1)[1].split()[0] + "\n")
+        if not setup.get("stray_stays"):
+            open(stopped, "w").close()
+        sys.exit(0)
     if "daemon status" in command:
-        sys.exit(1 if setup.get("health_failure") else 0)
+        if setup.get("health_failure"):
+            sys.exit(1)
+        stray = setup.get("stray_pid")
+        answering = stray if stray and not os.path.exists(stopped) else service_pid
+        print(json.dumps({"status": "ok", "pid": answering}))
+        sys.exit(0)
     env = {**os.environ, "HOME": setup["home"],
            "PATH": os.path.join(dir, "service-bin") + os.pathsep + setup.get("inherited_path", os.environ["PATH"]),
            "SHELL": os.path.join(dir, "login-shell"),

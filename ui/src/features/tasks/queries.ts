@@ -11,12 +11,12 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 
 import {
   api,
+  type CreateStandaloneTaskRequest,
   type CreateTaskRequest,
   cacheRow,
   type Host,
-  type MessageDto,
+  LOCAL_HOST,
   qk,
-  type SendMessageRequest,
   type TaskDto,
   type TaskStatus,
   type UpdateTaskRequest,
@@ -57,17 +57,6 @@ export function taskTransitionsQueryOptions(host: Host, taskId: string) {
   })
 }
 
-/** The task channel, in the order the daemon wrote it. */
-export function taskMessagesQueryOptions(host: Host, taskId: string) {
-  return queryOptions({
-    queryKey: qk.tasks.messages(host, taskId),
-    queryFn: () =>
-      unwrap(
-        api(host).GET("/v1/tasks/{id}/messages", { params: { path: { id: taskId } } }),
-      ) as Promise<MessageDto[]>,
-  })
-}
-
 /**
  * The branch diff, as `git diff base...branch` prints it.
  *
@@ -91,20 +80,6 @@ export function taskDiffQueryOptions(host: Host, taskId: string) {
 }
 
 /**
- * `POST /v1/tasks/{id}/messages` — the user speaking in a task's channel, to
- * one of its agents or to the orchestrator. The messages are refetched on
- * success; the `message_sent` event will say the same thing.
- */
-export function useSendTaskMessage(host: Host, taskId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: SendMessageRequest) =>
-      unwrap(api(host).POST("/v1/tasks/{id}/messages", { params: { path: { id: taskId } }, body })),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.tasks.messages(host, taskId) }),
-  })
-}
-
-/**
  * `POST /v1/goals/{goal_id}/tasks` — the create-task form's submit.
  *
  * The daemon owns the validation (profile roles, repo membership, dep cycles,
@@ -123,6 +98,20 @@ export function useCreateTask(host: Host, goalId: string) {
         }),
       ),
     onSuccess: (task) => cacheRow(queryClient, qk.tasks, host, task),
+  })
+}
+
+/**
+ * `POST /v1/tasks` — a task with no goal. The local daemon takes it, runs it
+ * on the `host` the body names, and owns the validation, so a refusal (a far host it cannot run on yet)
+ * surfaces as the `ApiError` the dialog renders.
+ */
+export function useCreateStandaloneTask() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateStandaloneTaskRequest) =>
+      unwrap(api(LOCAL_HOST).POST("/v1/tasks", { body })),
+    onSuccess: (task) => cacheRow(queryClient, qk.tasks, LOCAL_HOST, task),
   })
 }
 

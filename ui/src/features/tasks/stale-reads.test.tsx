@@ -13,7 +13,7 @@ import { qk } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { GoalTasks } from "@/features/goals/goal-tasks"
 import { stubEventSource } from "@/test/event-source"
-import { aGoal, aTask } from "@/test/fixtures"
+import { aGoal, aTask, GOAL_ID } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 
 import { taskListQueryOptions } from "./queries"
@@ -37,13 +37,10 @@ function answerEveryRead(body: unknown): void {
 
 it("keeps an empty goal task list under the warning, and clears it on a successful retry", async () => {
   const user = userEvent.setup()
-  const { queryClient } = renderScreen(
-    <GoalTasks host="local" goalId={TASK.goal_id} steps={[]} />,
-    {
-      seed: (client) =>
-        client.setQueryData(taskListQueryOptions("local", { goal: TASK.goal_id }).queryKey, []),
-    },
-  )
+  const { queryClient } = renderScreen(<GoalTasks host="local" goalId={GOAL_ID} steps={[]} />, {
+    seed: (client) =>
+      client.setQueryData(taskListQueryOptions("local", { goal: GOAL_ID }).queryKey, []),
+  })
   await screen.findByText("No tasks yet")
 
   failEveryRead()
@@ -57,45 +54,39 @@ it("keeps an empty goal task list under the warning, and clears it on a successf
   expect(screen.getByText("No tasks yet")).toBeTruthy()
 })
 
-it.each([
-  ["history", "The task has not moved yet"],
-  ["messages", "The agents have said nothing yet"],
-])(
-  "keeps the cached task and its empty %s under warnings, and a retry clears them",
-  async (tab, empty) => {
-    const user = userEvent.setup()
-    const goal = aGoal({ id: TASK.goal_id })
-    const { queryClient } = renderScreen(
-      <TaskPanel host="local" taskId={TASK.id} onClose={() => {}} />,
-      {
-        route: `/goals?tab=${tab}`,
-        seed: (client) => {
-          client.setQueryData(qk.tasks.detail("local", TASK.id), TASK)
-          client.setQueryData(qk.goals.detail("local", goal.id), goal)
-          client.setQueryData(qk.tasks.transitions("local", TASK.id), [])
-          client.setQueryData(qk.tasks.messages("local", TASK.id), [])
-        },
+it("keeps the cached task and its empty history under warnings, and a retry clears them", async () => {
+  const empty = "The task has not moved yet"
+  const user = userEvent.setup()
+  const goal = aGoal({ id: GOAL_ID })
+  const { queryClient } = renderScreen(
+    <TaskPanel host="local" taskId={TASK.id} onClose={() => {}} />,
+    {
+      route: "/goals?tab=history",
+      seed: (client) => {
+        client.setQueryData(qk.tasks.detail("local", TASK.id), TASK)
+        client.setQueryData(qk.goals.detail("local", goal.id), goal)
+        client.setQueryData(qk.tasks.transitions("local", TASK.id), [])
       },
-    )
-    await screen.findByText(empty)
+    },
+  )
+  await screen.findByText(empty)
 
-    failEveryRead()
-    await queryClient.refetchQueries({ queryKey: qk.tasks.detail("local", TASK.id) })
+  failEveryRead()
+  await queryClient.refetchQueries({ queryKey: qk.tasks.detail("local", TASK.id) })
 
-    await screen.findByText("Could not refresh this task")
-    await screen.findByText(`Could not refresh ${tab}`)
-    expect(screen.getByText(empty)).toBeTruthy()
-    expect(screen.queryByText(/Could not load/)).toBeNull()
+  await screen.findByText("Could not refresh this task")
+  await screen.findByText("Could not refresh history")
+  expect(screen.getByText(empty)).toBeTruthy()
+  expect(screen.queryByText(/Could not load/)).toBeNull()
 
-    daemonFetch.mockImplementation((input: Request | string | URL) => {
-      const url = new URL(input instanceof Request ? input.url : String(input))
-      return Promise.resolve(jsonResponse(url.pathname === `/v1/tasks/${TASK.id}` ? TASK : []))
-    })
-    for (const retry of screen.getAllByRole("button", { name: "Retry" })) await user.click(retry)
-    await waitFor(() => expect(screen.queryByText(/Could not refresh/)).toBeNull())
-    expect(screen.getByText(empty)).toBeTruthy()
-  },
-)
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    return Promise.resolve(jsonResponse(url.pathname === `/v1/tasks/${TASK.id}` ? TASK : []))
+  })
+  for (const retry of screen.getAllByRole("button", { name: "Retry" })) await user.click(retry)
+  await waitFor(() => expect(screen.queryByText(/Could not refresh/)).toBeNull())
+  expect(screen.getByText(empty)).toBeTruthy()
+})
 
 it("keeps cached table rows under the warning, and shows a load error with none", async () => {
   const query = (over: object) => ({

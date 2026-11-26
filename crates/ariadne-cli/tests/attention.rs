@@ -34,9 +34,11 @@ fn attention(complete: bool) -> AttentionListDto {
 
 async fn listed(args: &[&str], attention: AttentionListDto) -> Output {
     let failed = TaskDto {
+        workflow: None,
+        steps: Vec::new(),
         execution_context: None,
         id: "dismissed-task".into(),
-        goal_id: "goal".into(),
+        goal_id: Some("goal".into()),
         repo_id: "repo".into(),
         title: "Dismissed failure".into(),
         description: String::new(),

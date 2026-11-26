@@ -23,8 +23,6 @@ import { SessionConsole } from "./session-console"
 
 const SESSION_ID = "01JSESS0000000000000000001"
 const posts: { path: string; body: string }[] = []
-/** The pending requests `GET .../agent-requests` lists. */
-let pendingList: unknown[] = []
 
 /** Forget what the console retained, for the sessions these tests open. */
 function resetViewStates() {
@@ -54,21 +52,19 @@ function event(kind: string, payload: unknown = {}): AgentEventDto {
   }
 }
 
-/** The daemon, answering the requests list apart from the routes under test. */
+/** The daemon, answering the questions list apart from the routes under test. */
 function answer(reply: (path: string) => Response = () => new Response(null, { status: 204 })) {
   posts.length = 0
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
-    if (request.method === "GET" && path.endsWith("/agent-requests"))
-      return Response.json(pendingList)
+    if (request.method === "GET" && path.endsWith("/questions")) return Response.json([])
     posts.push({ path, body: await request.text() })
     return reply(path)
   })
 }
 
 beforeEach(() => {
-  pendingList = []
   resetViewStates()
   stubEventSource()
   answer()
@@ -203,7 +199,7 @@ it("returns a refused message for editing in front of the newer draft", async ()
   expect(document.activeElement).toBe(input())
 })
 
-it("answers an open question from the composer on that request's own route", async () => {
+it("sends the composer's text to the console input route, with an old agent request in view", async () => {
   mount([
     event("agent_request", {
       request_id: "req-1",
@@ -211,22 +207,16 @@ it("answers an open question from the composer on that request's own route", asy
       question: { text: "Which one?", options: [{ id: "a", label: "A" }] },
     }),
   ])
-  screen.getByRole("region", { name: "Question · Pick one" })
+  expect(screen.queryByRole("region", { name: "Question · Pick one" })).toBeNull()
 
   fireEvent.change(input(), { target: { value: "my own words" } })
   fireEvent.keyDown(input(), { key: "Enter" })
 
   await waitFor(() => expect(posts).toHaveLength(1))
   expect(posts[0]).toEqual({
-    path: `/v1/sessions/${SESSION_ID}/agent-requests/req-1/answer`,
+    path: `/v1/sessions/${SESSION_ID}/console/input`,
     body: JSON.stringify({ text: "my own words" }),
   })
-  screen.getByText("Answer sent")
-
-  fireEvent.change(input(), { target: { value: "later" } })
-  fireEvent.keyDown(input(), { key: "Enter" })
-  await waitFor(() => expect(posts).toHaveLength(2))
-  expect(posts[1]?.path).toBe(`/v1/sessions/${SESSION_ID}/console/input`)
 })
 
 async function openMenu(user: ReturnType<typeof userEvent.setup>) {
@@ -416,7 +406,7 @@ it("keeps a named host's state when its address changes, and gives the host's re
   const key = consoleViewKey("box", "http://box.test:7676", SESSION_ID)
   updateViewState(key, {
     blockFolds: { b1: true },
-    failed: [{ id: "f", text: "t", requestId: undefined, message: "no" }],
+    failed: [{ id: "f", text: "t", message: "no" }],
   })
 
   // The host drops: the stream closes, the status line says why, the state stays.
@@ -504,28 +494,6 @@ it("keeps a refused message, with Retry and Edit, when the console is unmounted 
   within(transcript()).getByRole("button", { name: "Edit" })
 })
 
-it("answers a question restored from the requests list from the composer", async () => {
-  pendingList = [
-    {
-      id: "01RQ",
-      summary: "Pick a base",
-      created_at: "2026-11-14T09:00:00Z",
-      question: { text: "Which base?", options: [{ id: "main", label: "Main" }] },
-    },
-  ]
-  mount()
-  await screen.findByRole("region", { name: "Question · Pick a base" })
-
-  fireEvent.change(input(), { target: { value: "my own base" } })
-  fireEvent.keyDown(input(), { key: "Enter" })
-
-  await waitFor(() => expect(posts).toHaveLength(1))
-  expect(posts[0]).toEqual({
-    path: `/v1/sessions/${SESSION_ID}/agent-requests/01RQ/answer`,
-    body: JSON.stringify({ text: "my own base" }),
-  })
-})
-
 it("shows in the replacement pane a send that fails after the console was expanded", async () => {
   const user = userEvent.setup()
   let refuse: () => void = () => {}
@@ -550,31 +518,6 @@ it("shows in the replacement pane a send that fails after the console was expand
   within(dialog).getByRole("button", { name: "Edit" })
 })
 
-it("answers the newest of a restored and a loaded question", async () => {
-  pendingList = [
-    {
-      id: "01OLD",
-      summary: "Old one",
-      created_at: "2026-11-14T08:00:00Z",
-      question: { text: "Older?", options: [] },
-    },
-  ]
-  mount([
-    event("agent_request", {
-      request_id: "01NEW",
-      hint: "New one",
-      question: { text: "Newer?", options: [] },
-    }),
-  ])
-  await screen.findByRole("region", { name: "Question · Old one" })
-
-  fireEvent.change(input(), { target: { value: "reply" } })
-  fireEvent.keyDown(input(), { key: "Enter" })
-
-  await waitFor(() => expect(posts).toHaveLength(1))
-  expect(posts[0]?.path).toBe(`/v1/sessions/${SESSION_ID}/agent-requests/01NEW/answer`)
-})
-
 it("keeps a draft of only spaces and newlines when a menu command is inserted", async () => {
   const user = userEvent.setup()
   const { source } = mount()
@@ -594,7 +537,7 @@ it("brings back the older page the reader had loaded, and their place in it, aft
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
-    if (path.endsWith("/agent-requests")) return Response.json([])
+    if (path.endsWith("/questions")) return Response.json([])
     if (path === "/v1/events") {
       const before = new URL(request.url).searchParams.get("before")
       return Response.json(before === newest.id ? [older] : [])
@@ -643,7 +586,7 @@ it("puts the block the reader was on back in place when new events move the page
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
-    if (path.endsWith("/agent-requests")) return Response.json([])
+    if (path.endsWith("/questions")) return Response.json([])
     if (path === "/v1/events") {
       fetches += 1
       // The first read gets one event; the reload gets a page that goes past it.

@@ -1,12 +1,13 @@
 /** The shell's persistent entry point to the shared live attention list. */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { type FormEvent, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
-import { type AgentRequestDto, api, type GoalDto, type Host, qk, unwrap } from "@/api"
+import { api, type GoalDto, type Host, qk, unwrap } from "@/api"
 import { HostLabel } from "@/components/host-label"
 import { StatusBadge } from "@/components/status-badge"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
@@ -18,7 +19,13 @@ import {
 } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
-import { answerRequest, pendingRequests } from "@/features/sessions/console/questions"
+import {
+  answerQuestion,
+  choiceLabel,
+  formFields,
+  listQuestions,
+  questionSteps,
+} from "@/features/sessions/console/form-questions"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { useHasNamedHosts } from "@/hooks/use-host-filter"
@@ -406,8 +413,14 @@ function Row({
       >
         {content}
       </Link>
-      {item.recovery?.producer === "agent_request" && item.recovery.target.kind === "console" ? (
-        <RequestAnswers host={item.host} sessionId={item.recovery.target.session_id} />
+      {item.recovery?.producer === "agent_request" &&
+      item.recovery.target.kind === "console" &&
+      item.recovery.id.startsWith("question:") ? (
+        <FormAnswers
+          host={item.host}
+          sessionId={item.recovery.target.session_id}
+          questionId={item.recovery.id.slice("question:".length)}
+        />
       ) : null}
       {affectedLinks ? (
         <div className="flex flex-wrap gap-2 px-3 pb-2 pl-9 text-xs text-muted-foreground">
@@ -495,89 +508,62 @@ function rowKey(item: AttentionItem): string {
 }
 
 /**
- * The questions an agent asked through `wait_for_user`, answered in place: one
- * button per option and a field for an answer of the user's own, posted to the
- * request's own `POST /v1/sessions/{id}/agent-requests/{request_id}/answer` on
- * the host the session runs on. The row's own link still opens its console.
+ * A question an agent asked with its own tool, answered in place when its form
+ * is one single-select question: one button per choice, posted to the
+ * question's own route. Any other form is answered in the console, which the
+ * row's own link opens.
  */
-function RequestAnswers({ host, sessionId }: { host: Host; sessionId: string }) {
-  const requests = useQuery({
-    queryKey: qk.sessions.agentRequests(host, sessionId),
-    queryFn: () => pendingRequests(host, sessionId),
-  })
-  const questions = (requests.data ?? []).filter((request) => request.question)
-  if (questions.length === 0) return null
-  return (
-    <div className="flex flex-col gap-2 px-3 pb-2">
-      {questions.map((request) => (
-        <RequestAnswer key={request.id} host={host} sessionId={sessionId} request={request} />
-      ))}
-    </div>
-  )
-}
-
-function RequestAnswer({
+function FormAnswers({
   host,
   sessionId,
-  request,
+  questionId,
 }: {
   host: Host
   sessionId: string
-  request: AgentRequestDto
+  questionId: string
 }) {
   const queryClient = useQueryClient()
-  const [custom, setCustom] = useState("")
+  const questions = useQuery({
+    queryKey: qk.sessions.questions(host, sessionId),
+    queryFn: () => listQuestions(host, sessionId),
+  })
   const answer = useMutation({
-    mutationFn: (body: { option_id: string } | { text: string }) =>
-      answerRequest(host, sessionId, request.id, body),
+    mutationFn: (content: Record<string, unknown>) =>
+      answerQuestion(host, sessionId, questionId, { action: "accept", content }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: qk.sessions.agentRequests(host, sessionId) })
+      void queryClient.invalidateQueries({ queryKey: qk.sessions.questions(host, sessionId) })
       void queryClient.invalidateQueries({ queryKey: qk.attention.lists(host) })
     },
   })
-  const question = request.question
-  if (!question) return null
-  const options = question.options ?? []
+  const asked = questions.data?.find((question) => question.id === questionId)
+  if (!asked) return null
+  const [step, ...rest] = questionSteps(formFields(asked.schema))
+  const field = step?.field
+  if (!field || rest.length > 0 || field.kind.type !== "single") return null
   const settled = answer.isPending || answer.isSuccess
-
-  function submitCustom(event: FormEvent) {
-    event.preventDefault()
-    const text = custom.trim()
-    if (text !== "" && !settled) answer.mutate({ text })
-  }
-
   return (
-    <section aria-label={`Question · ${request.summary}`} className="flex flex-col gap-1 text-xs">
-      <p className="text-foreground">{question.text}</p>
-      {options.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
-          {options.map((option) => (
-            <Button
-              key={option.id}
-              type="button"
-              size="sm"
-              variant={option.id === question.recommended_option_id ? "default" : "outline"}
-              disabled={settled}
-              onClick={() => answer.mutate({ option_id: option.id })}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-      ) : null}
-      <form onSubmit={submitCustom} className="flex gap-1">
-        <input
-          aria-label="Your own answer"
-          value={custom}
-          onChange={(event) => setCustom(event.target.value)}
-          disabled={settled}
-          placeholder={options.length > 0 ? "Or type your own answer" : "Type your answer"}
-          className="min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
-        />
-        <Button type="submit" size="sm" disabled={settled || custom.trim() === ""}>
-          Answer
-        </Button>
-      </form>
+    <section aria-label="Agent question" className="flex flex-col gap-1 px-3 pb-2 text-sm">
+      {asked.message === "" ? null : (
+        <p className="whitespace-pre-wrap text-foreground">{asked.message}</p>
+      )}
+      <fieldset aria-label={field.title} className="flex flex-wrap gap-1">
+        {field.kind.choices.map((choice) => (
+          <Button
+            key={String(choice.value)}
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={settled}
+            title={choice.description}
+            onClick={() => answer.mutate({ [field.key]: choice.value })}
+          >
+            {choiceLabel(choice.title)}
+            {choiceLabel(choice.title) !== choice.title ? (
+              <Badge className="text-sm">Recommended</Badge>
+            ) : null}
+          </Button>
+        ))}
+      </fieldset>
       {answer.isSuccess ? <p role="status">Answer sent.</p> : null}
       {answer.error ? (
         <p role="alert" className="text-destructive">

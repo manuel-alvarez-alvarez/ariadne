@@ -15,9 +15,7 @@
 //! far task again, and clears `host_unreachable`. A [`Link`] epoch makes a
 //! return at the same endpoint a next `ready` too.
 
-mod messages;
-
-pub(crate) use messages::RelayMessage;
+mod posts;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -69,6 +67,7 @@ pub fn start(state: &AppState, timeouts: Timeouts) -> FarTasks {
         store: state.store.clone(),
         events: state.events.clone(),
         sched: state.sched_tx.clone(),
+        launcher: state.launcher.clone(),
         timeouts,
     };
     let hosts = state.hosts.clone();
@@ -83,6 +82,8 @@ struct Ctx {
     store: Store,
     events: crate::bus::EventBus,
     sched: Option<mpsc::UnboundedSender<SchedEvent>>,
+    /// Where a worker agent's post reaches the orchestrator session (039).
+    launcher: Arc<crate::launcher::Launcher>,
     timeouts: Timeouts,
 }
 
@@ -141,12 +142,6 @@ async fn supervise(ctx: Ctx, hosts: Hosts, mut events: broadcast::Receiver<BusEv
                 | DomainEvent::TaskUpdated(_)
                 | DomainEvent::GoalUpdated(_)
                 | DomainEvent::GoalDeleted(_) => workers.values().for_each(Worker::kick),
-                DomainEvent::MessageSent(message)
-                    if message.from_actor == Actor::Orchestrator
-                        && message.to_actor == Actor::Agent =>
-                {
-                    workers.values().for_each(Worker::kick);
-                }
                 _ => {}
             },
             Err(RecvError::Lagged(_)) => {
@@ -313,7 +308,16 @@ impl Follower<'_> {
         // of the host falls between the read and the stream.
         // Fenced as each call is: a host that leaves `ready` while the stream
         // opens does not hold back its far tasks' `host_unreachable`.
-        let mut stream = match self.fenced(self.client.stream("/v1/events/stream")).await {
+        // The stream names this daemon as the source, so the worker sends on
+        // it the posts of its agents to the orchestrator here (039).
+        let path = match self.ctx.store.daemon_id().await {
+            Ok(daemon_id) => format!("/v1/events/stream?source={daemon_id}"),
+            Err(error) => {
+                warn!(host = self.host, %error, "cannot read the daemon ID of this daemon");
+                return Lost::Stream;
+            }
+        };
+        let mut stream = match self.fenced(self.client.stream(&path)).await {
             None => return Lost::Left,
             Some(Ok(stream)) => stream,
             Some(Err(error)) => {
@@ -391,10 +395,7 @@ impl Follower<'_> {
                 return Ok(());
             };
             match read {
-                Ok(far) => {
-                    self.read_messages(&task, &far).await?;
-                    self.mirror(&task.id, &far).await;
-                }
+                Ok(far) => self.mirror(&task.id, &far).await,
                 Err(ClientError::Api { status, .. }) if status == StatusCode::NOT_FOUND => {
                     warn!(host = self.host, task = %task.id, far_task = %far_id, "the host has no such task any more");
                 }
@@ -422,7 +423,7 @@ impl Follower<'_> {
                     .store
                     .source_task_reference(&update.task.id)
                     .await
-                    .map_err(messages::local_store)?
+                    .map_err(local_store)?
                 {
                     if reference.host == self.host {
                         let Some(task) = self
@@ -459,7 +460,7 @@ impl Follower<'_> {
                         .store
                         .source_task_reference(task_id)
                         .await
-                        .map_err(messages::local_store)?
+                        .map_err(local_store)?
                     && reference.host == self.host
                 {
                     let Some(task) = self
@@ -485,7 +486,7 @@ impl Follower<'_> {
                         DomainEvent::SessionUpdated(session)
                     };
                     self.ctx.events.publish(BusEvent {
-                        goal_id: Some(reference.goal_id),
+                        goal_id: (!reference.goal_id.is_empty()).then_some(reference.goal_id),
                         task_id: Some(reference.id),
                         recorded: None,
                         event,
@@ -500,12 +501,12 @@ impl Follower<'_> {
                     .store
                     .source_task_reference(&branch.task_id)
                     .await
-                    .map_err(messages::local_store)?
+                    .map_err(local_store)?
                     && reference.host == self.host
                     && self.current()
                 {
                     self.ctx.events.publish(BusEvent {
-                        goal_id: Some(reference.goal_id),
+                        goal_id: (!reference.goal_id.is_empty()).then_some(reference.goal_id),
                         task_id: Some(reference.id),
                         recorded: None,
                         event: DomainEvent::TaskBranchUpdated(branch),
@@ -513,8 +514,8 @@ impl Follower<'_> {
                 }
                 Ok(())
             }
-            "message_sent" => self.on_message(serde_json::from_str(&frame.data)?).await,
-            // The stream lost events: read every far task and its messages again.
+            "source_post" => self.on_post(serde_json::from_str(&frame.data)?).await,
+            // The stream lost events: read every far task again.
             "resync" => self.refresh().await,
             _ => Ok(()),
         }
@@ -589,14 +590,7 @@ impl Follower<'_> {
                 }
             }
         }
-        match self.send_messages().await {
-            Ok(()) => retry,
-            Err(Unsent::Left) => None,
-            Err(Unsent::Unanswered(error) | Unsent::Refused(error)) => {
-                warn!(host = self.host, %error, "the host did not take a far task message");
-                Some(Instant::now() + self.ctx.timeouts.far_retry)
-            }
-        }
+        retry
     }
 
     async fn close_goals(&self) -> bool {
@@ -639,7 +633,11 @@ impl Follower<'_> {
         if task.far_task_id.is_some() || task.status() != TaskStatus::Pending {
             return Ok(false);
         }
-        let goal = self.ctx.store.get_goal(&task.goal_id).await?;
+        let goal = self
+            .ctx
+            .store
+            .get_goal(task.goal_id.as_deref().unwrap_or_default())
+            .await?;
         Ok(goal.status() == GoalStatus::Active
             && self.ctx.store.task_dependencies_merged(&task.id).await?)
     }
@@ -670,7 +668,9 @@ impl Follower<'_> {
     /// Create the task on the host, in the linked goal of its goal there.
     async fn dispatch(&self, task: &Task) -> Result<(), Unsent> {
         let store = &self.ctx.store;
-        let goal = store.get_goal(&task.goal_id).await?;
+        let goal = store
+            .get_goal(task.goal_id.as_deref().unwrap_or_default())
+            .await?;
         let local = store
             .list_repositories()
             .await?
@@ -703,7 +703,7 @@ impl Follower<'_> {
             .agents
             .iter()
             .map(|agent| AgentAssignment {
-                step: agent.step.clone(),
+                step: Some(agent.step.clone()).filter(|step| !step.is_empty()),
                 skills: agent.skills.clone(),
                 model: agent.model.clone(),
                 effort: agent.effort.clone(),
@@ -765,15 +765,16 @@ impl Follower<'_> {
     }
 
     async fn remember(&self, task: &Task, far: &TaskDto) -> Result<(), Unsent> {
-        // A retried dispatch can find a task whose agent already wrote while
-        // the origin daemon had no task ID to match against the stream.
-        self.read_messages(task, far).await?;
         if !self.current() {
             return Err(Unsent::Left);
         }
         self.ctx
             .store
-            .set_far_task(&task.id, &far.goal_id, &far.id)
+            .set_far_task(
+                &task.id,
+                far.goal_id.as_deref().unwrap_or_default(),
+                &far.id,
+            )
             .await?;
         self.mirror(&task.id, far).await;
         Ok(())
@@ -846,7 +847,7 @@ impl Follower<'_> {
                 continue;
             };
             let goal = store.get_goal(&reference.goal_id).await;
-            let cancel = goal.is_err()
+            let cancel = (!reference.goal_id.is_empty() && goal.is_err())
                 || current_reference.cancel_requested != 0
                 || goal
                     .as_ref()
@@ -926,9 +927,10 @@ impl Follower<'_> {
                     .ok_or(Unsent::Left)??
                 };
             } else if !cancel
-                && goal
-                    .as_ref()
-                    .is_ok_and(|g| g.status() == GoalStatus::Active)
+                && (reference.goal_id.is_empty()
+                    || goal
+                        .as_ref()
+                        .is_ok_and(|g| g.status() == GoalStatus::Active))
                 && current_reference.dependency_failure.is_none()
                 && !far.execution_context.as_ref().is_some_and(|c| c.authorized)
                 && far.status == TaskStatus::Pending
@@ -953,10 +955,7 @@ impl Follower<'_> {
                     .ok_or(Unsent::Left)??;
             }
             self.cache_reference(&reference, &far).await?;
-            let task = store.get_task(&reference.id).await?;
-            if goal.is_ok() {
-                self.read_messages(&task, &far).await?;
-            } else if far.status.is_terminal() {
+            if !reference.goal_id.is_empty() && goal.is_err() && far.status.is_terminal() {
                 store.remove_source_task_reference(&reference.id).await?;
             }
         }
@@ -984,5 +983,12 @@ impl Follower<'_> {
             let _ = sched.send(SchedEvent::GoalChanged(reference.goal_id.clone()));
         }
         Ok(())
+    }
+}
+
+fn local_store(error: ariadne_store::StoreError) -> ClientError {
+    ClientError::Unreachable {
+        endpoint: "the local store".into(),
+        source: Box::new(error),
     }
 }

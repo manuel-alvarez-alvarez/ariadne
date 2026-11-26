@@ -143,7 +143,10 @@ async function main() {
   const orchestratorAgentScript = join(root, "assets", "demo-orchestrator-agent.py")
   await writeFile(
     join(home, "config.toml"),
+    // `session_place = "none"`: agents run as the daemon's own children, never
+    // in a herdr or tmux server the machine already runs.
     `tcp_listen = "127.0.0.1:${port}"\ncli_bin = "${inertCli}"\nprevent_sleep = false\n` +
+      `session_place = "none"\n` +
       `[[acp_agents]]\nid = "demo-orchestrator"\ncommand = ["python3", "${orchestratorAgentScript}"]\n`,
   )
   await run("git", ["init", "-q", "-b", "main", repositoryPath])
@@ -215,7 +218,10 @@ async function main() {
   await page.getByRole("heading", { name: "Goals" }).waitFor()
   await page.waitForTimeout(3_000)
 
-  await page.getByRole("banner").getByRole("button", { name: "New goal" }).click()
+  await page.getByRole("banner").getByRole("button", { name: "New", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Goal" }).waitFor()
+  await page.waitForTimeout(2_000)
+  await page.getByRole("menuitem", { name: "Goal" }).click()
   await page.getByRole("dialog", { name: "New goal" }).waitFor()
   await page.waitForTimeout(2_000)
   // Typed at a visible speed, like assets/demo.tape's own typing, rather than
@@ -230,9 +236,12 @@ async function main() {
   await page.waitForTimeout(2_000)
 
   await page.getByRole("button", { name: "Orchestrator runs on" }).click()
-  await page.getByPlaceholder("Search models, or type an id…").fill(ORCHESTRATOR_MODEL)
+  await page.getByRole("searchbox", { name: "Search models" }).fill(ORCHESTRATOR_MODEL)
   await page.waitForTimeout(2_000)
-  await page.getByRole("option", { name: ORCHESTRATOR_MODEL }).click()
+  await page
+    .getByRole("listbox", { name: "Models" })
+    .getByRole("option", { name: ORCHESTRATOR_MODEL })
+    .click()
   // A pick does not close the popover by itself (ui/src/features/models/pin-picker.tsx
   // only closes it on an outside press or Escape); Escape is the one that
   // cannot also close the dialog underneath, since the picker's own listener
@@ -276,31 +285,27 @@ async function main() {
   // tasks and finalizes the plan as soon as it finds the goal, which already
   // exists by this point, so it would race ahead of the answer if it ran
   // any earlier (as assets/demo.tape's own hidden step does, for the same
-  // reason). Awaited at the very end, once the rest of the flow below has
-  // already given it time to finish, so it adds nothing to the recording's
-  // own pace while still surfacing a seeding failure loudly.
+  // reason). Wait for seeding before showing the board rows.
   const seeded = exec("python3", [join(root, "assets", "seed-demo-goal.py"), baseUrl, TASK_MODEL])
 
-  // The session view took over the whole panel, breadcrumb and tabs
-  // included (see ui/src/features/goals/goal-sessions.tsx), so the way to
-  // the goal panel's own Tasks tab is back through that breadcrumb first.
-  // Its own task list is the one row that also names its column, which is
-  // what picks the task out from the attention strip's same-named link
-  // behind the scrim.
-  await page.getByRole("button", { name: GOAL_TITLE, exact: true }).click()
-  await page.waitForTimeout(2_000)
-  await page.getByRole("tab", { name: /^Tasks/ }).click()
+  // Return to the board for the existing task-list screen, so its new
+  // rows remain visible instead of blurred behind the goal pane.
+  await seeded
+  await page
+    .locator('[data-slot="docked-pane"]')
+    .getByRole("button", { name: "Close", exact: true })
+    .click()
 
   const limiterTask = "Add the rate limiter middleware"
-  const taskRow = page.getByRole("link", { name: `${limiterTask} Develop` })
+  const taskRow = page
+    .getByRole("group", { name: `${GOAL_TITLE}: Tasks`, exact: true })
+    .getByRole("link", { name: new RegExp(`^${limiterTask}`) })
   await taskRow.waitFor()
   await page.waitForTimeout(3_000)
 
   await taskRow.click()
   await page.getByRole("heading", { name: limiterTask, exact: true }).waitFor()
   await page.waitForTimeout(3_000)
-
-  await seeded
 
   const video = page.video()
   if (!video) throw new Error("Playwright did not start video recording")

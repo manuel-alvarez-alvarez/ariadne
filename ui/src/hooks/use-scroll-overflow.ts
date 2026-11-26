@@ -5,7 +5,7 @@
  * something moves, so a board whose fifth column falls off the viewport looks
  * like a board with four columns. The answer cannot be had in CSS — it is a
  * measurement — so it is taken here and turned into whatever the caller draws
- * with it (see the board's edge fades in `goal-swimlanes.tsx`).
+ * with it (see the board's edge fades in `goal-board.tsx`).
  *
  * Measured on scroll, on every resize of the port itself — which is what a
  * window narrowing and a scrollbar appearing both come down to — and on every

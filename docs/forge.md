@@ -172,11 +172,11 @@ It posts its review as a comment on your own request, since no forge takes a cha
 request from a request's own author. Starting it closes the dialog and,
 once the daemon has the agent up, opens that session's console in the
 panel. **Stop review** takes it down. Starting a review makes a goal of its
-own on the `pr-review` workflow, with one task whose agent is that session:
+own with one task, on one fixed `review` column, and that task's agent is that session:
 the panel links it as **Review goal**, and it shows on the Goals board like
 any other goal. It completes when the request merges. A close without merging
-fails its task and leaves the goal active. **Stop review** cancels it; see [the `pr-review` workflow](workflows.md#the-pr-review-workflow).
-The model must have a rank that workflow allows. The panel's Sessions tab lists the
+fails its task and leaves the goal active. **Stop review** cancels it; see [Pull request reviews and babysits](workflows.md#pull-request-reviews-and-babysits).
+The model must have a rank that column allows. The panel's Sessions tab lists the
 review session, and the task's keeping agent where a task opened the
 request; picking one opens its console in the panel.
 
@@ -229,8 +229,8 @@ An open request that no task opened can be kept by hand: call `PUT
 [...]}`, from the CLI as `ariadne pr babysit <repo-id> <number> --model
 <agent:model>`. `--model` is required, the same way `pr review`'s is. A
 request a task opened cannot be babysat this way: asking is refused with
-409. The model must have a rank the [`pr-babysit`
-workflow](workflows.md#the-pr-babysit-workflow) allows, else the ask is
+409. The model must have a rank the [fixed `babysit`
+column](workflows.md#pull-request-reviews-and-babysits) allows, else the ask is
 refused with 400.
 
 Ask the same way from the desktop app: open a request of yours that no
@@ -242,7 +242,7 @@ dialog and, once the daemon has the keeper session up, opens that
 session's console in the panel, the same way starting a review does. An
 **Ariadne babysitting** pill marks the row and the panel while one runs,
 beside Ariadne reviewing. **Stop babysit** takes it down. Starting makes a
-goal of its own on the `pr-babysit` workflow, with one task whose agent is
+goal of its own with one task, on one fixed `babysit` column, and that task's agent is
 the keeper session: the panel links it as **Babysit goal**, and it shows on
 the Goals board like any other goal. A merge completes it. A close without
 merging fails its task and leaves the goal active. **Stop babysit** cancels it. The panel's Sessions tab lists the keeper

@@ -1,7 +1,7 @@
 ---
 id: 037
 status: current
-updated: 2026-11-24
+updated: 2026-11-26
 areas: [api, daemon, client, cli, store, docs, ui]
 commits: []
 tests:
@@ -387,6 +387,11 @@ picker, the Hosts screen and one stream per host — is spec
     Failure retains completed steps and records the failing step's error.
     No successful step means `failed`; otherwise failure means `incomplete`.
     Completion requires a successful daemon status check and local connection registration.
+    Before the service step restarts the user service, it stops a daemon that answers on the worker socket
+    but is not the service's own process: SIGTERM, then SIGKILL after 30 seconds.
+    The service's process is systemd's `MainPID` or the pid in `launchctl print`.
+    The health step passes only when the daemon that answers reports the service's own pid (016, rule 21).
+    Another pid, a service with no process, or a daemon that reports no pid fails the step and names the pids.
     The user can skip a failed external-software step of a stopped setup or update.
     `POST /v1/hosts/{name}/setup/steps/{step}/skip` marks the step `skipped` and returns the full `SetupDto`.
     The route acts on an update of the machine that is not `complete`, else on its setup.
@@ -711,7 +716,6 @@ picker, the Hosts screen and one stream per host — is spec
      A database retains its daemon ID across restarts.
      New remote execution uses the worker draft protocol (012), independently of legacy linked goals.
      Authorized execution requires no source connection.
-     Agent messages remain stored for source reads after reconnection, including messages to the source orchestrator.
 
 ### Source references for new tasks
 
@@ -744,9 +748,7 @@ picker, the Hosts screen and one stream per host — is spec
      Reconnection reads the worker before clearing `host_unreachable` in the current connection.
      Delayed responses from previous connections cannot refresh the source snapshot.
      Older worker snapshots cannot overwrite newer acknowledged progress.
-108. Source messages address cached worker staffing without creating local staffing records.
-     Undelivered orchestrator messages remain queued through disconnection. Relay IDs prevent duplicate delivery.
-     Worker messages retain worker agent IDs at the source and reach the source orchestrator.
+108. Removed: source and worker agents store no message and relay none. Posts between them follow 039.
 109. Source cancellation records intent until the worker acknowledges its authoritative outcome.
      A worker completion that wins cancellation remains finished at the source.
      Source goal cancellation requests worker cancellation. Goal completion requires terminal referenced tasks.
@@ -755,7 +757,21 @@ picker, the Hosts screen and one stream per host — is spec
 110. Goal usage adds each referenced worker task's cached usage once.
      Worker sessions create no source session rows. Existing local and legacy usage remains unchanged.
 
+111. `POST /v1/tasks` accepts a ready host for goal-less work, with or without a workflow.
+     Existing host checks refuse unavailable hosts and name the cause.
+     The source reserves a reference and authorizes its worker draft without goal planning.
+     The worker saves no source goal. The protocol advertises `goal-less-tasks-v1`.
+     Goal-less requests and execution contexts carry null `source_goal` and a separate `source_daemon_id`.
+     An empty workflow name and empty columns represent no workflow in the remote protocol.
+     The source reports worker status, step, and reason through the existing reference cache.
+     Source cancel and retry use the existing worker controls. Goal tasks retain their rules.
+
 ## Acceptance criteria
+
+- Admission: `far_tasks::source_references::goal_less_admission_checks_the_host_and_saves_its_workflow`.
+- Rule 111: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
+  Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
+  No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
 
 - Rules 102 and 105: `far_tasks::source_references::new_remote_tasks_are_worker_drafts_during_source_planning`.
 - Rule 102 restart: `far_tasks::source_references::reopening_the_source_store_recovers_an_unacknowledged_creation_without_a_second_worker_task`.
@@ -772,8 +788,6 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 106 console routing: `far_tasks::source_references::source_console_stream_and_terminal_connections_reach_the_worker_session`.
 - Rule 107 session updates: `far_tasks::source_references::worker_session_creation_refreshes_source_progress_without_a_usage_report`.
 - Rule 107: `far_tasks::source_references::stream_loss_marks_progress_stale_until_the_current_worker_is_reconciled`.
-- Rule 108: `far_tasks::source_references::source_messages_survive_disconnection_without_local_staffing`
-  and `::worker_messages_reach_the_source_orchestrator_with_the_worker_column_address`.
 - Rule 109 completion: `far_tasks::source_references::goal_completion_includes_referenced_remote_work`.
 - Rule 109 cleanup: `far_tasks::source_references::source_cleanup_preserves_local_branches_that_share_a_worker_task_name`.
 - Rule 109: `far_tasks::source_references::source_cancellation_waits_for_worker_acknowledgment_after_reconnection`,
@@ -782,7 +796,7 @@ picker, the Hosts screen and one stream per host — is spec
 
 
 - Rule 101: `remote_tasks.rs::a_remote_draft_has_context_without_a_worker_goal` proves durable worker identity.
-  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves execution and retained source messages.
+  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves execution.
 
 
 - Rule 95: `far_tasks.rs::a_far_task_is_refused_on_a_host_that_is_unknown_or_not_ready`,
@@ -862,6 +876,9 @@ picker, the Hosts screen and one stream per host — is spec
 - Rule 70: hosts.rs::tools_only_updates_preserve_worker_binaries proves independent tool selection.
 - Rules 70 and 74: hosts.rs::updates_use_saved_ssh_and_allow_binary_only_selection proves saved SSH and binary-only updates.
 - Rule 73: hosts.rs::failed_updates_keep_maintenance_when_worker_health_fails proves failed health recovery.
+- Rule 49: hosts.rs::an_update_stops_a_daemon_outside_the_service_before_it_restarts_the_service proves the stray stop.
+- Rule 49: hosts.rs::an_update_fails_its_health_check_while_a_daemon_outside_the_service_answers proves the pid check.
+- Rule 49: `ariadne-cli` hosts.rs::daemon_status_gives_the_pid_of_the_daemon_that_answered proves the status pid.
 - Rule 73: hosts.rs::unsupported_current_workers_fail_before_binary_transfer and
   hosts.rs::unsupported_replacements_fail_before_installation_or_maintenance prove compatibility refusal.
 - Rule 71: crates/ariadne-cli/tests/hosts.rs::maintenance_cli_reads_and_changes_the_selected_worker_hold proves maintenance without curl.

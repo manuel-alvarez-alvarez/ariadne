@@ -115,7 +115,7 @@ async fn next_head(body: &mut axum::body::Body, task: &Task) -> String {
             continue;
         }
         assert_eq!(payload["task_id"], task.id);
-        assert_eq!(payload["goal_id"], task.goal_id);
+        assert_eq!(payload["goal_id"], serde_json::json!(task.goal_id));
         assert_eq!(payload["branch"], task.branch);
         return payload["head"].as_str().unwrap().to_string();
     }

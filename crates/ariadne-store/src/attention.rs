@@ -29,23 +29,6 @@ impl Store {
             .collect())
     }
 
-    /// Expire questions whose agent process has ended, including old records.
-    pub async fn expire_dead_agent_requests(&self) -> Result<()> {
-        let sessions: Vec<String> = sqlx::query_scalar(
-            "UPDATE agent_requests SET answered_at = ?, resolution = 'expired'
-             WHERE answered_at IS NULL AND session_id IN
-               (SELECT id FROM agent_sessions WHERE status IN ('exited', 'failed'))
-             RETURNING session_id",
-        )
-        .bind(crate::now())
-        .fetch_all(&self.write)
-        .await?;
-        for session in sessions {
-            self.publish_session_update(&session).await?;
-        }
-        Ok(())
-    }
-
     /// Serialize attention reads and dismissals across daemon clients.
     pub async fn lock_attention(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.attention_order.lock().await

@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
 
-import { aGoal, aModel, anEffort } from "@/test/fixtures"
+import { aGoal, aModel, anEffort, aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateTaskDialog } from "./task-form-dialog"
 
@@ -58,4 +58,29 @@ it("pins a column's model and effort through the three-column picker", async () 
   await waitFor(() => expect(screen.queryByRole("listbox", { name: "Efforts" })).toBeNull())
   expect(trigger.textContent).toContain("gpt-5.5 · high")
   expect(screen.getByRole("dialog")).toBeDefined()
+})
+
+it("shows the sole repository and names agents that need models", async () => {
+  daemonFetch.mockImplementation(async () => jsonResponse([]))
+  const goal = aGoal({
+    repos: [aRepository()],
+    steps: [{ id: "build", title: "Build", description: "", skills: [], ranks: [] }],
+  })
+  renderScreen(<CreateTaskDialog host="local" goal={goal} open onOpenChange={vi.fn()} />)
+  expect(await screen.findByRole("combobox", { name: "Repository" })).toBeTruthy()
+  expect(screen.getByText("Choose a model for Build.")).toBeTruthy()
+  expect(screen.getByRole("button", { name: "Create task" }).hasAttribute("disabled")).toBe(true)
+})
+
+it("selects one repository and closes the search", async () => {
+  daemonFetch.mockImplementation(async () => jsonResponse([]))
+  const first = aRepository({ id: "first", path: "/first" })
+  const second = aRepository({ id: "second", path: "/second" })
+  const goal = aGoal({ repos: [first, second] })
+  const user = userEvent.setup()
+  renderScreen(<CreateTaskDialog host="local" goal={goal} open onOpenChange={vi.fn()} />)
+  await user.click(await screen.findByRole("combobox", { name: "Repository" }))
+  await user.click(await screen.findByText("/second"))
+  expect(screen.queryByPlaceholderText("Search repositories…")).toBeNull()
+  expect(screen.getByText("/second")).toBeTruthy()
 })

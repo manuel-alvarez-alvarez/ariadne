@@ -850,6 +850,70 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
     assert_eq!(permission_decider(&h, &session.id).await, "console");
 }
 
+/// A post to an agent that waits for a permission answers nothing: the
+/// request stays pending with its attention, the post waits behind the turn,
+/// and the console answer is the only one the agent gets (039 rule 6).
+#[tokio::test]
+async fn a_post_leaves_a_pending_permission_and_its_attention_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), permission_script());
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the permission attention to rise", || async {
+        h.attention(&session).await == Some(AttentionReason::WaitingPermission)
+    })
+    .await;
+    let sender = h.agent_session(&cast, "review").await;
+
+    let (status, _) = h
+        .send(common::as_session(
+            &format!("/v1/tasks/{}/posts", cast.task.id),
+            &sender.id,
+            json!({"to": "develop", "body": "POSTED: yes"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        h.attention(&session).await,
+        Some(AttentionReason::WaitingPermission),
+        "the post cleared the attention"
+    );
+    let texts = || {
+        stub.messages()
+            .iter()
+            .map(|message| message.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        texts().iter().all(|text| !text.contains("POSTED:")),
+        "the post must wait behind the blocked turn: {:?}",
+        texts()
+    );
+    assert!(
+        stub.messages()
+            .iter()
+            .all(|message| message["id"] != "permission-1"),
+        "the post answered the permission"
+    );
+
+    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the post to arrive as the next turn", || async {
+        texts().iter().any(|text| text.contains("POSTED: yes"))
+    })
+    .await;
+    assert_eq!(permission_decider(&h, &session.id).await, "console");
+    let reply = stub
+        .messages()
+        .into_iter()
+        .find(|message| message["id"] == "permission-1")
+        .expect("the console answer reached the agent");
+    assert_eq!(reply["result"]["outcome"]["optionId"], "yes");
+}
+
 /// Learn mode records a denial and asks again after it, replaces the row with
 /// the approval that follows, and a fresh store opened over the database
 /// finds that row.
@@ -2225,6 +2289,30 @@ async fn the_cancel_endpoint_is_in_the_openapi_document() {
     let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
     assert!(doc["paths"]["/v1/sessions/{id}/console/cancel"]["post"].is_object());
     assert!(doc["paths"]["/v1/sessions/{id}/console/input"]["post"].is_object());
+}
+
+/// The `wait_for_user` request routes are gone: the OpenAPI document names
+/// none, and a call to one finds no route. The native question routes stay.
+#[tokio::test]
+async fn the_agent_request_routes_are_gone() {
+    let h = harness().await;
+    let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
+    let paths = doc["paths"].as_object().unwrap();
+    assert!(
+        paths.keys().all(|path| !path.contains("agent-requests")),
+        "{:?}",
+        paths.keys().collect::<Vec<_>>()
+    );
+    assert!(paths.contains_key("/v1/sessions/{id}/questions"));
+    let session = h.lone_session("no-requests").await;
+    let (status, _) = h
+        .send(crate::common::as_session(
+            &format!("/v1/sessions/{}/agent-requests", session.id),
+            &session.id,
+            serde_json::json!({"summary": "Pick a base"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 /// A session whose one turn sends `updates`, then ends normally. Whatever

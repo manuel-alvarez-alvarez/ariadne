@@ -52,7 +52,7 @@ afterEach(() => {
   useSettingsStore.setState({ hostFilter: "" })
 })
 
-it("merges the goals of every host under All, each lane naming its host", async () => {
+it("merges the goals of every host under All, each goal naming its host", async () => {
   stubHosts({
     local: { ...EMPTY, "/v1/goals": [MINE] },
     box: { ...EMPTY, "/v1/goals": [THEIRS] },
@@ -62,11 +62,11 @@ it("merges the goals of every host under All, each lane naming its host", async 
   const theirs = await screen.findByRole("link", { name: THEIRS.title })
   expect(screen.getByRole("link", { name: MINE.title })).toBeTruthy()
   expect(theirs.getAttribute("href")).toBe(`/goals?goal=${THEIRS.id}&host=box`)
-  const lanes = screen.getAllByTitle("Host").map((badge) => badge.textContent)
-  expect(lanes.sort()).toEqual(["box", "local"])
+  const named = screen.getAllByTitle("Host").map((badge) => badge.textContent)
+  expect(named.sort()).toEqual(["box", "local"])
 })
 
-it("reads only the picked host, and names no host on its lanes", async () => {
+it("reads only the picked host, and names no host on its goals", async () => {
   useSettingsStore.setState({ hostFilter: "box" })
   const seen = stubHosts({
     local: { ...EMPTY, "/v1/goals": [MINE] },
@@ -84,7 +84,7 @@ it("reads only the picked host, and names no host on its lanes", async () => {
   ).toBe(false)
 })
 
-it("names each lane's host under a saved pick the daemon no longer lists", async () => {
+it("names each goal's host under a saved pick the daemon no longer lists", async () => {
   useSettingsStore.setState({ hostFilter: "gone" })
   stubHosts({
     local: { ...EMPTY, "/v1/goals": [MINE] },
@@ -94,10 +94,10 @@ it("names each lane's host under a saved pick the daemon no longer lists", async
 
   await screen.findByRole("link", { name: THEIRS.title })
   await screen.findByRole("link", { name: MINE.title })
-  expect(lanesHosts()).toEqual(["box", "local"])
+  expect(goalHosts()).toEqual(["box", "local"])
 })
 
-it("keeps the host of the lanes that stay when a named host goes down", async () => {
+it("keeps the host of the goals that stay when a named host goes down", async () => {
   stubHosts({ local: { ...EMPTY, "/v1/goals": [MINE] } }, [
     LOCAL,
     { ...BOX, status: "down", error: "connection refused" },
@@ -105,10 +105,10 @@ it("keeps the host of the lanes that stay when a named host goes down", async ()
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
   await screen.findByRole("link", { name: MINE.title })
-  await waitFor(() => expect(lanesHosts()).toEqual(["local"]))
+  await waitFor(() => expect(goalHosts()).toEqual(["local"]))
 })
 
-it("names no host on the lanes with only local listed", async () => {
+it("names no host on the goals with only local listed", async () => {
   stubHosts({ local: { ...EMPTY, "/v1/goals": [MINE] } }, [LOCAL])
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
@@ -395,7 +395,8 @@ it("opens the goal dialog on local under All", async () => {
 it("shows a question a remote host's stream delivers, and answers it on that host", async () => {
   stubEventSource()
   const question: AttentionItemDto = {
-    id: "agent_request:r1",
+    id: "question:q1",
+    occurrence: "q1",
     producer: "agent_request",
     reason: "unknown",
     summary: "Pick a database",
@@ -411,21 +412,28 @@ it("shows a question a remote host's stream delivers, and answers it on that hos
       ...EMPTY,
       "/v1/goals": [],
       "/v1/attention": () => jsonResponse({ items: asked, complete: true }),
-      "/v1/sessions/s-box/agent-requests": [
+      "/v1/sessions/s-box/questions": [
         {
-          id: "r1",
-          created_at: "2026-11-17T10:00:00Z",
-          summary: "Pick a database",
-          question: {
-            text: "Which database?",
-            options: [
-              { id: "pg", label: "Postgres" },
-              { id: "sqlite", label: "SQLite" },
-            ],
+          id: "q1",
+          session_id: "s-box",
+          message: "Which database?",
+          schema: {
+            type: "object",
+            properties: {
+              db: {
+                type: "string",
+                title: "Database",
+                oneOf: [
+                  { const: "pg", title: "Postgres" },
+                  { const: "sqlite", title: "SQLite" },
+                ],
+              },
+            },
           },
+          created_at: "2026-11-17T10:00:00Z",
         },
       ],
-      "/v1/sessions/s-box/agent-requests/r1/answer": () => new Response(null, { status: 204 }),
+      "/v1/sessions/s-box/questions/q1/answer": () => new Response(null, { status: 204 }),
     },
   })
   renderScreen(
@@ -447,7 +455,7 @@ it("shows a question a remote host's stream delivers, and answers it on that hos
   })
 
   fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
-  const card = await screen.findByRole("region", { name: "Question · Pick a database" })
+  const card = await screen.findByRole("region", { name: "Agent question" })
   const row = card.closest("li") as HTMLElement
   expect(within(row).getByTitle("Host").textContent).toBe("box")
   fireEvent.click(within(card).getByRole("button", { name: "Postgres" }))
@@ -456,12 +464,12 @@ it("shows a question a remote host's stream delivers, and answers it on that hos
   const answer = seen.find((request) => request.url.pathname.endsWith("/answer"))
   expect(answer?.origin).toBe("http://box.test:7676")
   expect(answer?.method).toBe("POST")
-  expect(answer?.url.pathname).toBe("/v1/sessions/s-box/agent-requests/r1/answer")
-  expect(JSON.parse(answer?.body ?? "{}")).toEqual({ option_id: "pg" })
+  expect(answer?.url.pathname).toBe("/v1/sessions/s-box/questions/q1/answer")
+  expect(JSON.parse(answer?.body ?? "{}")).toEqual({ action: "accept", content: { db: "pg" } })
 })
 
-/** The host each lane names, sorted. */
-function lanesHosts(): string[] {
+/** The host each goal names, sorted. */
+function goalHosts(): string[] {
   return screen
     .getAllByTitle("Host")
     .filter((badge) => !badge.closest("p"))
@@ -510,7 +518,7 @@ it("names the host that still loads while another has answered", async () => {
   expect(within(loading).getByTitle("Host").textContent).toBe("box")
 })
 
-it("says the tasks of a host are not loaded in its lanes, and names the host, local too", async () => {
+it("says the tasks of a host are not loaded in its goals, and names the host, local too", async () => {
   stubHosts({
     local: { ...EMPTY, "/v1/goals": [MINE], "/v1/tasks": failing("tasks broke on local") },
     box: { ...EMPTY, "/v1/goals": [THEIRS] },
@@ -521,8 +529,8 @@ it("says the tasks of a host are not loaded in its lanes, and names the host, lo
   const alert = warning.closest("[role=alert]") as HTMLElement
   expect(within(alert).getByText(/tasks broke on local/)).toBeTruthy()
   expect(within(alert).queryByText(/may be outdated/)).toBeNull()
-  const lane = screen.getByRole("group", { name: `${MINE.title}: Tasks` })
-  expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
+  const goal = screen.getByRole("group", { name: `${MINE.title}: Tasks` })
+  expect(within(goal).getByText("Tasks are not loaded")).toBeTruthy()
   const other = screen.getByRole("group", { name: `${THEIRS.title}: Tasks` })
   expect(within(other).getByText(/No tasks/)).toBeTruthy()
 })
@@ -548,25 +556,25 @@ it("says the last read may be outdated only while one is on screen", async () =>
   expect(screen.getByText(/may be outdated/)).toBeTruthy()
 })
 
-it("keeps the lanes and says tasks are not loaded when every host's task read fails", async () => {
+it("keeps the goals and says tasks are not loaded when every host's task read fails", async () => {
   stubHosts({ local: { ...EMPTY, "/v1/goals": [MINE], "/v1/tasks": failing("tasks broke") } }, [
     LOCAL,
   ])
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
   expect(await screen.findByText(byContent("Could not load tasks on local"))).toBeTruthy()
-  const lane = screen.getByRole("group", { name: `${MINE.title}: Tasks` })
-  expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
-  expect(within(lane).queryByText(/No tasks/)).toBeNull()
+  const goal = screen.getByRole("group", { name: `${MINE.title}: Tasks` })
+  expect(within(goal).getByText("Tasks are not loaded")).toBeTruthy()
+  expect(within(goal).queryByText(/No tasks/)).toBeNull()
 })
 
-it("shows the lanes as not loaded while every task read is pending", async () => {
+it("shows the goals as not loaded while every task read is pending", async () => {
   stubHosts({ local: { "/v1/goals": [MINE], "/v1/sessions": aSessionPage([]) } }, [LOCAL])
   renderScreen(<GoalsListPage />, { route: "/goals" })
 
-  const lane = await screen.findByRole("group", { name: `${MINE.title}: Tasks` })
-  expect(within(lane).getByText("Tasks are not loaded")).toBeTruthy()
-  expect(within(lane).queryByText(/No tasks/)).toBeNull()
+  const goal = await screen.findByRole("group", { name: `${MINE.title}: Tasks` })
+  expect(within(goal).getByText("Tasks are not loaded")).toBeTruthy()
+  expect(within(goal).queryByText(/No tasks/)).toBeNull()
 })
 
 it("names the host in the title of a goal that failed to load there", async () => {

@@ -516,37 +516,6 @@ impl AttentionReason {
     }
 }
 
-/// What one agent is saying to another.
-///
-/// Agents talk to each other through one channel, and one kind carries
-/// everything they say on it, whether it asks something or answers it. There
-/// is no `answer` kind and no `reply` tool: an answer is a message to whoever
-/// asked, addressed the way the question was, so nothing threads. Each
-/// message reaches its agent as a turn — which is why the tool that sends one
-/// takes questions and answers and nothing else, no confirmation and no
-/// thanks.
-///
-/// A review used to run on the channel too, as three kinds of its own; a
-/// workflow column moves a task through the step routes now, and the one
-/// kind left is what the agents say.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[cfg_attr(
-    feature = "clap",
-    derive(clap::ValueEnum),
-    value(rename_all = "kebab-case")
-)]
-#[serde(rename_all = "snake_case")]
-pub enum MessageKind {
-    /// A message: one agent asking another something, or answering what it
-    /// was asked.
-    Message,
-}
-
-wire_enum! { MessageKind, "message kind", [
-    Message = "message",
-]}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,7 +679,5 @@ mod tests {
             assert_eq!(seat.as_str(), word);
         }
         assert!(Seat::from_str("author").is_err());
-        assert_eq!(MessageKind::ALL, [MessageKind::Message]);
-        assert!(MessageKind::from_str("approve").is_err());
     }
 }

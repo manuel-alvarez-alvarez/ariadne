@@ -178,29 +178,17 @@ pub const DEFAULT_WORKFLOW: &str = "develop-review-merge";
 /// The workflow that lands a task by a request a human merges or closes.
 pub const PULL_REQUEST_WORKFLOW: &str = "develop-review-pr";
 
-/// The workflow of a live pull request review (029): one `review` column, run
-/// by one task of a goal that no orchestrator plans. Only that operation reads
-/// it, and a goal made the ordinary way refuses it.
+/// The name a review goal (029) records as its workflow. No workflow of the
+/// catalog has it: the goal's one column is [`pr_operation_step`], fixed by
+/// Ariadne, and a workflow of the user's own cannot take the name.
 pub(crate) const PR_REVIEW_WORKFLOW: &str = "pr-review";
 
-/// The workflow of a live pull request babysit (032): one `babysit` column,
-/// run by one task of a goal that no orchestrator plans. Only that operation
-/// reads it, and a goal made the ordinary way refuses it.
+/// The name a babysit goal (032) records as its workflow. No workflow of the
+/// catalog has it: the goal's one column is [`pr_operation_step`], fixed by
+/// Ariadne, and a workflow of the user's own cannot take the name.
 pub(crate) const PR_BABYSIT_WORKFLOW: &str = "pr-babysit";
 
-/// The pull request operation a workflow serves, read off its name, where it
-/// serves one. Such a workflow is edited like any other, but its shape is
-/// fixed by [`pr_operation_shape_error`], and no ordinary goal or repository
-/// default can name it.
-pub fn pr_operation_of(name: &str) -> Option<ariadne_core::workflow::PrOperation> {
-    match name {
-        PR_REVIEW_WORKFLOW => Some(ariadne_core::workflow::PrOperation::Review),
-        PR_BABYSIT_WORKFLOW => Some(ariadne_core::workflow::PrOperation::Babysit),
-        _ => None,
-    }
-}
-
-/// The workflow an operation runs on.
+/// The name an operation's goal records as its workflow.
 pub fn pr_operation_workflow(operation: ariadne_core::workflow::PrOperation) -> &'static str {
     match operation {
         ariadne_core::workflow::PrOperation::Review => PR_REVIEW_WORKFLOW,
@@ -208,59 +196,46 @@ pub fn pr_operation_workflow(operation: ariadne_core::workflow::PrOperation) -> 
     }
 }
 
-/// Why `workflow` cannot serve `operation`, where it cannot: it keeps
-/// exactly one column with the request-merged gate, that column loads the operation's own
-/// skill, and its band names only the ranks the operation allows —
-/// `balanced` and `frontier` for a review, `fast` and `balanced` for a
-/// babysit. The column's title, description, extra skills and band stay
-/// editable.
-pub fn pr_operation_shape_error(
+/// Whether `name` is reserved for the goals of a pull request operation.
+pub(crate) fn is_pr_operation_workflow(name: &str) -> bool {
+    name == PR_REVIEW_WORKFLOW || name == PR_BABYSIT_WORKFLOW
+}
+
+/// The one column of an operation's task (029, 032). Ariadne fixes it: the
+/// column loads the operation's own skill, allows the balanced and frontier
+/// ranks, and waits for the request to merge or close.
+pub fn pr_operation_step(
     operation: ariadne_core::workflow::PrOperation,
-    workflow: &ariadne_core::workflow::Workflow,
-) -> Option<String> {
+) -> ariadne_core::workflow::WorkflowStep {
     use ariadne_core::models::ModelRank;
-    use ariadne_core::workflow::PrOperation;
-    let name = pr_operation_workflow(operation);
-    let (column, skill, allowed, allowed_text) = match operation {
+    use ariadne_core::workflow::{PrOperation, StepGate, WorkflowStep};
+    let (id, title, description, skill) = match operation {
         PrOperation::Review => (
             "review",
+            "Review",
+            "Review the request and each later push until it merges or closes.",
             PR_REVIEWER_SKILL,
-            [ModelRank::Balanced, ModelRank::Frontier],
-            "balanced and frontier",
         ),
         PrOperation::Babysit => (
             "babysit",
+            "Babysit",
+            "Keep the request until it merges or closes.",
             PR_BABYSIT_SKILL,
-            [ModelRank::Balanced, ModelRank::Frontier],
-            "balanced and frontier",
         ),
     };
-    let [step] = workflow.steps.as_slice() else {
-        return Some(format!(
-            "workflow {name} keeps exactly one column, {column}"
-        ));
-    };
-    if step.id != column {
-        return Some(format!("the one column of {name} is {column}"));
+    WorkflowStep {
+        id: id.to_string(),
+        title: title.to_string(),
+        description: description.to_string(),
+        skills: vec![skill.to_string()],
+        ranks: vec![ModelRank::Balanced, ModelRank::Frontier],
+        gate: Some(StepGate::RequestMerged),
     }
-    if !step.skills.iter().any(|s| s == skill) {
-        return Some(format!("the {column} column must load {skill}"));
-    }
-    if step.ranks.is_empty() || step.ranks.iter().any(|rank| !allowed.contains(rank)) {
-        return Some(format!(
-            "the {column} column allows the {allowed_text} ranks only"
-        ));
-    }
-    if step.gate != Some(ariadne_core::workflow::StepGate::RequestMerged) {
-        return Some(format!("the {column} column requires gate: request-merged"));
-    }
-    None
 }
 
-/// The four workflows Ariadne ships: one that lands a task on the base branch
-/// itself, one that lands it by a request a human merges or closes, and one
-/// for each pull request operation.
-pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 4] = [
+/// The two workflows Ariadne ships: one that lands a task on the base branch
+/// itself, and one that lands it by a request a human merges or closes.
+pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 2] = [
     builtin_workflow(
         DEFAULT_WORKFLOW,
         include_str!("../workflows/develop-review-merge.workflow"),
@@ -268,14 +243,6 @@ pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 4] = [
     builtin_workflow(
         PULL_REQUEST_WORKFLOW,
         include_str!("../workflows/develop-review-pr.workflow"),
-    ),
-    builtin_workflow(
-        PR_REVIEW_WORKFLOW,
-        include_str!("../workflows/pr-review.workflow"),
-    ),
-    builtin_workflow(
-        PR_BABYSIT_WORKFLOW,
-        include_str!("../workflows/pr-babysit.workflow"),
     ),
 ];
 
@@ -449,7 +416,7 @@ const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its br
 - Call `fail_step` when the previous column must fix something.
 - Call `fail_task` when nobody can do the task as written.
 - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.
-- After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."#;
+- After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -470,14 +437,12 @@ const STEP_RETURN: &str = "Resume \"{task_title}\" at {step_title}. {direction}\
 /// What the agent of the current column is nudged with when it has gone
 /// quiet with the task still in front of it.
 ///
-/// Five things, and no more: this is not a new request, so there is nothing
+/// Four things, and no more: this is not a new request, so there is nothing
 /// to plan or narrate; check whether the work the column owes is already
-/// done; make the call that ends the column, or go on with the work; ask an
-/// open question again, since the nudge starts a turn and a turn that ends
-/// without `wait_for_user` closes every question an earlier turn raised
-/// (031); and write no reply about the nudge itself, since a reply over the
-/// nudge is a turn spent on nothing the task needed.
-const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Ask an open question again. Write no reply about this nudge.";
+/// done; make the call that ends the column, or go on with the work; and
+/// write no reply about the nudge itself, since a reply over the nudge is a
+/// turn spent on nothing the task needed.
+const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 /// Seat text of a reviewer pull request session (029): what the seat owes,
 /// and nothing a layer it already reads says. How to review is the skill's,
@@ -541,7 +506,10 @@ Workflow: {workflow}
 {columns}
 
 ## Repositories
-{repositories}"#;
+{repositories}
+
+## Plan mode
+In planning, you run in plan mode if your agent has one. The Ariadne tools are permitted in plan mode. `finalize_plan` ends plan mode. Do not call `ExitPlanMode`."#;
 
 /// What an orchestrator that has gone quiet is picked up with, in both
 /// situations there are.
@@ -556,11 +524,7 @@ Workflow: {workflow}
 /// Once the goal is active the orchestrator is the one agent that outlives
 /// its own hand-off, and what it is woken for is on the tasks: one that
 /// failed, one that has gone quiet, or a goal with nothing left to do.
-///
-/// In either situation a question can be open, and the nudge starts a turn:
-/// a turn that ends without `wait_for_user` closes every question an
-/// earlier turn raised (031), so the nudge says to ask it again.
-const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}". Ask an open question again. Before an explicit yes, continue the plan conversation. After the yes, call `finalize_plan`. When the goal is under way, read `list_tasks`."#;
+const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}". Before an explicit yes, continue the plan conversation. After the yes, call `finalize_plan`. When the goal is under way, read `list_tasks`."#;
 
 /// What the orchestrator of a goal under way is woken with.
 ///
@@ -579,7 +543,7 @@ const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
 
 {tasks}
 
-Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Send a message to the agent of a quiet task, or switch its model. Call `complete_goal` when every task is done."#;
+Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Post to the agent of a quiet task with `post_to_session`, or switch its model. A post can be refused. The refusal gives the reason. Call `complete_goal` when every task is done."#;
 
 /// What one agent said to another, as it reaches the recipient's agent.
 ///
@@ -1053,6 +1017,10 @@ pub(crate) mod tests {
                 "`submit_verdict`",
                 "`pick_winner`",
                 "`finish_task`",
+                "`wait_for_user`",
+                "`withdraw_wait_for_user`",
+                "`send_message`",
+                "`read_messages`",
             ] {
                 assert!(!text.contains(gone), "the {name} names {gone}");
             }
@@ -1075,7 +1043,7 @@ pub(crate) mod tests {
              - Call `fail_step` when the previous column must fix something.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
              - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.\n\
-             - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."
+             - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason."
         );
         assert_eq!(
             default_system_prompt(Seat::Reviewer),
@@ -1090,7 +1058,7 @@ pub(crate) mod tests {
             "Message from {from}:\n\n{body}\n\nIf the message asks a question, answer it{answer_to}. Then go on with your work."
         );
         assert!(default_prompt_text(PromptKind::GoalAttention).ends_with(
-            "Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Send a message to the agent of a quiet task, or switch its model. Call `complete_goal` when every task is done."
+            "Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Post to the agent of a quiet task with `post_to_session`, or switch its model. A post can be refused. The refusal gives the reason. Call `complete_goal` when every task is done."
         ));
         assert_eq!(
             exhausted_switch_notice(),
@@ -1098,17 +1066,16 @@ pub(crate) mod tests {
         );
     }
 
-    /// The quiet nudge says five things, and the agent seat text is the one
+    /// The quiet nudge says four things, and the agent seat text is the one
     /// place a column's agent is told to stop after three failed attempts
     /// at one fix.
     #[test]
-    fn the_quiet_nudge_says_five_things_and_the_stop_rule_has_one_owner() {
+    fn the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner() {
         let nudge = default_prompt_text(PromptKind::AgentResume);
         for rule in [
             "Not a new request",
             "Check if the work is done.",
             "Make the call that ends the column, or go on.",
-            "Ask an open question again.",
             "Write no reply about this nudge.",
         ] {
             assert!(nudge.contains(rule), "the quiet nudge and \"{rule}\"");
@@ -1194,13 +1161,11 @@ pub(crate) mod tests {
     /// there are two: a plan being agreed, and a goal under way. A resume
     /// that asked for `finalize_plan` alone would push an orchestrator past a
     /// plan the user never saw; one that named the conversation alone would
-    /// leave a running goal unattended. In both, a question can be open, and
-    /// the nudge's own turn would close it unless it is asked again.
+    /// leave a running goal unattended.
     #[test]
     fn the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way() {
         let resume = default_prompt_text(PromptKind::OrchestratorResume);
         for phase in [
-            "Ask an open question again.",
             "When the goal is under way, read `list_tasks`",
             "Before an explicit yes, continue the plan conversation",
             "After the yes, call `finalize_plan`",
@@ -1220,7 +1185,7 @@ pub(crate) mod tests {
         for rule in [
             "Read them with `list_tasks`.",
             "Retry, rewrite or cancel each failed task.",
-            "Send a message to the agent of a quiet task, or switch its model.",
+            "Post to the agent of a quiet task with `post_to_session`, or switch its model. A post can be refused. The refusal gives the reason.",
             "Call `complete_goal` when every task is done.",
         ] {
             assert!(text.contains(rule), "the goal attention and \"{rule}\"");
@@ -1295,6 +1260,22 @@ pub(crate) mod tests {
         }
     }
 
+    /// The orchestrator is told that it plans in plan mode, that the
+    /// Ariadne tools are permitted there, that `finalize_plan` ends it, and
+    /// not to call `ExitPlanMode` (003 rule 18).
+    #[test]
+    fn the_orchestrator_briefing_explains_plan_mode() {
+        let briefing = default_prompt_text(PromptKind::OrchestratorBriefing);
+        for line in [
+            "In planning, you run in plan mode if your agent has one.",
+            "The Ariadne tools are permitted in plan mode.",
+            "`finalize_plan` ends plan mode.",
+            "Do not call `ExitPlanMode`.",
+        ] {
+            assert!(briefing.contains(line), "{line} is missing from {briefing}");
+        }
+    }
+
     /// The two shipped workflows are named once, each parses, and each
     /// names only skills the catalog ships: a column staged on a skill
     /// nothing ships would refuse every task of its goal.
@@ -1310,8 +1291,6 @@ pub(crate) mod tests {
         );
         assert!(names.contains(&DEFAULT_WORKFLOW));
         assert!(names.contains(&PULL_REQUEST_WORKFLOW));
-        assert!(names.contains(&PR_REVIEW_WORKFLOW));
-        assert!(names.contains(&PR_BABYSIT_WORKFLOW));
         for workflow in &BUILTIN_WORKFLOWS {
             let parsed = ariadne_core::workflow::parse(workflow.document)
                 .unwrap_or_else(|e| panic!("{} does not parse: {e}", workflow.name));
@@ -1324,12 +1303,8 @@ pub(crate) mod tests {
                         workflow.name
                     );
                     assert_ne!(SkillSeat::of(skill), SkillSeat::Orchestrator);
-                    // Only the review operation's own workflow loads it.
-                    assert!(
-                        skill != PR_REVIEWER_SKILL || workflow.name == PR_REVIEW_WORKFLOW,
-                        "{} stages {skill}",
-                        workflow.name
-                    );
+                    // Only the review operation's own column loads it.
+                    assert_ne!(skill, PR_REVIEWER_SKILL, "{} stages {skill}", workflow.name);
                 }
             }
         }
@@ -1357,14 +1332,6 @@ pub(crate) mod tests {
                     vec![ModelRank::Balanced, ModelRank::Frontier],
                 ],
             ),
-            (
-                PR_REVIEW_WORKFLOW,
-                vec![vec![ModelRank::Balanced, ModelRank::Frontier]],
-            ),
-            (
-                PR_BABYSIT_WORKFLOW,
-                vec![vec![ModelRank::Balanced, ModelRank::Frontier]],
-            ),
         ];
 
         for (name, bands) in expected {
@@ -1382,124 +1349,24 @@ pub(crate) mod tests {
         }
     }
 
+    /// Each operation's one column loads that operation's own skill,
+    /// allows the balanced and frontier ranks, and waits for the request to
+    /// merge or close; no shipped workflow carries an operation's name.
     #[test]
-    fn pr_operations_require_a_merged_request_gate() {
-        use ariadne_core::workflow::PrOperation;
+    fn each_pr_operation_runs_one_fixed_column_and_no_shipped_workflow() {
+        use ariadne_core::workflow::{PrOperation, StepGate};
         for (operation, name, column, skill) in [
             (PrOperation::Review, "pr-review", "review", "pr-reviewer"),
             (PrOperation::Babysit, "pr-babysit", "babysit", "pr-babysit"),
         ] {
-            let document =
-                format!("workflow {name}\n {column}[Column]\n skills: {skill}\n ranks: balanced\n");
-            let workflow = ariadne_core::workflow::parse(&document).unwrap();
-            assert!(pr_operation_shape_error(operation, &workflow).is_some());
+            let step = pr_operation_step(operation);
+            assert_eq!(step.id, column);
+            assert_eq!(step.skills, [skill]);
+            assert_eq!(step.ranks, [ModelRank::Balanced, ModelRank::Frontier]);
+            assert_eq!(step.gate, Some(StepGate::RequestMerged));
+            assert_eq!(pr_operation_workflow(operation), name);
+            assert!(default_workflow_document(name).is_none(), "{name} ships");
         }
-    }
-
-    /// The shipped review workflow is the shape its operation requires, and
-    /// a document that breaks the shape is named.
-    #[test]
-    fn the_shipped_review_workflow_has_the_shape_its_operation_requires() {
-        use ariadne_core::workflow::PrOperation;
-        let parse = |doc: &str| ariadne_core::workflow::parse(doc).unwrap();
-        let shipped = parse(default_workflow_document(PR_REVIEW_WORKFLOW).unwrap());
-        assert_eq!(
-            pr_operation_shape_error(PrOperation::Review, &shipped),
-            None
-        );
-        assert_eq!(
-            pr_operation_of(PR_REVIEW_WORKFLOW),
-            Some(PrOperation::Review)
-        );
-        assert_eq!(pr_operation_of(DEFAULT_WORKFLOW), None);
-        for (document, reason) in [
-            (
-                "workflow pr-review\n a[A]\n skills: pr-reviewer\n ranks: balanced\n b[B]\n skills: coding\n",
-                "exactly one column",
-            ),
-            (
-                "workflow pr-review\n look[Look]\n skills: pr-reviewer\n ranks: balanced\n",
-                "is review",
-            ),
-            (
-                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n ranks: balanced\n gate: committed\n",
-                "request-merged",
-            ),
-            (
-                "workflow pr-review\n review[Review]\n skills: coding\n ranks: balanced\n",
-                "must load pr-reviewer",
-            ),
-            (
-                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n ranks: fast\n",
-                "balanced and frontier",
-            ),
-            (
-                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n",
-                "balanced and frontier",
-            ),
-        ] {
-            let error =
-                pr_operation_shape_error(PrOperation::Review, &parse(document)).unwrap_or_default();
-            assert!(error.contains(reason), "{document}: {error}");
-        }
-        let edited = parse(
-            "workflow pr-review\n review[Look hard]\n Read it twice.\n skills: pr-reviewer, research\n ranks: frontier\n gate: request-merged\n",
-        );
-        assert_eq!(pr_operation_shape_error(PrOperation::Review, &edited), None);
-    }
-
-    /// The shipped babysit workflow is the shape its operation requires, and
-    /// a document that breaks the shape is named.
-    #[test]
-    fn the_shipped_babysit_workflow_has_the_shape_its_operation_requires() {
-        use ariadne_core::workflow::PrOperation;
-        let parse = |doc: &str| ariadne_core::workflow::parse(doc).unwrap();
-        let shipped = parse(default_workflow_document(PR_BABYSIT_WORKFLOW).unwrap());
-        assert_eq!(
-            pr_operation_shape_error(PrOperation::Babysit, &shipped),
-            None
-        );
-        assert_eq!(
-            pr_operation_of(PR_BABYSIT_WORKFLOW),
-            Some(PrOperation::Babysit)
-        );
-        for (document, reason) in [
-            (
-                "workflow pr-babysit\n a[A]\n skills: pr-babysit\n ranks: fast\n b[B]\n skills: coding\n",
-                "exactly one column",
-            ),
-            (
-                "workflow pr-babysit\n pr[Pr]\n skills: pr-babysit\n ranks: fast\n",
-                "is babysit",
-            ),
-            (
-                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n ranks: balanced\n gate: committed\n",
-                "request-merged",
-            ),
-            (
-                "workflow pr-babysit\n babysit[B]\n skills: coding\n ranks: fast\n",
-                "must load pr-babysit",
-            ),
-            (
-                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n ranks: fast\n",
-                "balanced and frontier",
-            ),
-            (
-                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n",
-                "balanced and frontier",
-            ),
-        ] {
-            let error = pr_operation_shape_error(PrOperation::Babysit, &parse(document))
-                .unwrap_or_default();
-            assert!(error.contains(reason), "{document}: {error}");
-        }
-        let edited = parse(
-            "workflow pr-babysit\n babysit[Keep it]\n Watch it.\n skills: pr-babysit, research\n ranks: balanced\n gate: request-merged\n",
-        );
-        assert_eq!(
-            pr_operation_shape_error(PrOperation::Babysit, &edited),
-            None
-        );
     }
 
     #[test]

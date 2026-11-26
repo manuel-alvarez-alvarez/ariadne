@@ -1,4 +1,4 @@
-import { Loader2Icon, PlugZapIcon } from "lucide-react"
+import { CircleHelpIcon, Loader2Icon, PlugZapIcon } from "lucide-react"
 import { type KeyboardEvent, useRef } from "react"
 
 import type { SessionStatus } from "@/api"
@@ -163,10 +163,13 @@ function clock(seconds: number): string {
 export function StatusRow({
   status,
   turn,
+  waiting = false,
   tokens,
 }: {
   status: SessionStatus
   turn?: { tool?: string; seconds?: number }
+  /** A question of the agent waits for the user. */
+  waiting?: boolean
   tokens: TokenTotals
 }) {
   const firstLine = turn?.tool?.split("\n")[0] ?? ""
@@ -177,7 +180,12 @@ export function StatusRow({
       className="flex items-center gap-3 whitespace-nowrap border-t px-3 py-1 font-mono text-xs text-muted-foreground"
     >
       <span className="shrink-0">{status}</span>
-      {turn ? (
+      {waiting ? (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <CircleHelpIcon className="size-3 shrink-0" aria-hidden />
+          waiting for you
+        </span>
+      ) : turn ? (
         <span className="flex min-w-0 items-center gap-1.5">
           <Loader2Icon className="size-3 shrink-0 animate-spin" aria-hidden />
           {turn.tool === undefined ? (

@@ -71,7 +71,7 @@ impl Store {
     }
 
     /// Create the goal of one pull request operation: active at once, with
-    /// no orchestrator, on the workflow that operation reads. A conflict
+    /// no orchestrator, on that operation's one fixed column. A conflict
     /// means the request already has an open goal for the operation.
     pub(crate) async fn create_pr_goal(&self, new: NewGoal, pr: NewPrGoal) -> Result<Goal> {
         Ok(self.create_goal_as(new, Some(pr), None).await?.0)
@@ -97,24 +97,12 @@ impl Store {
                 repositories.push(repository);
             }
         }
-        let workflow_name = goal_workflow(new.workflow, &repositories)?;
-        // A pull request workflow belongs to its operation: an ordinary goal
-        // never runs on one, and an operation goal runs on its own alone.
-        let wanted = crate::defaults::pr_operation_of(&workflow_name);
-        match (&pr, wanted) {
-            (None, Some(_)) => {
-                return Err(StoreError::Invalid(format!(
-                    "workflow {workflow_name} runs a pull request operation; a goal cannot use it"
-                )));
-            }
-            (Some(pr), wanted) if wanted != Some(pr.operation) => {
-                return Err(StoreError::Invalid(format!(
-                    "workflow {workflow_name} does not run the {} operation",
-                    pr.operation.as_str()
-                )));
-            }
-            _ => {}
-        }
+        // An operation goal runs on its operation's one fixed column; an
+        // ordinary goal runs on a workflow of the catalog.
+        let workflow_name = match &pr {
+            Some(pr) => crate::defaults::pr_operation_workflow(pr.operation).to_string(),
+            None => goal_workflow(new.workflow, &repositories)?,
+        };
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
@@ -124,11 +112,20 @@ impl Store {
         // the middle of changing, and the columns are kept with the goal
         // from here on — a later edit of the catalog reaches later goals
         // alone.
-        let workflow: crate::Workflow = sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
-            .bind(&workflow_name)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| not_found("workflow", &workflow_name))?;
+        let steps = match &pr {
+            Some(pr) => vec![crate::defaults::pr_operation_step(pr.operation)],
+            None => {
+                let workflow: crate::Workflow =
+                    sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
+                        .bind(&workflow_name)
+                        .fetch_optional(&mut *tx)
+                        .await?
+                        .ok_or_else(|| not_found("workflow", &workflow_name))?;
+                ariadne_core::workflow::parse(workflow.document_text())
+                    .map_err(|e| StoreError::Invalid(e.to_string()))?
+                    .steps
+            }
+        };
         if let Some(origin) = origin_goal_id {
             let linked: Vec<Goal> =
                 sqlx::query_as("SELECT * FROM goals WHERE origin_goal_id = ? ORDER BY id")
@@ -164,9 +161,6 @@ impl Store {
                 )));
             }
         }
-        let steps = ariadne_core::workflow::parse(workflow.document_text())
-            .map_err(|e| StoreError::Invalid(e.to_string()))?
-            .steps;
         let (model, effort) = AgentPin::columns(&new.pin);
         let orchestrated = pr.is_none() && origin_goal_id.is_none();
         let status = if orchestrated {

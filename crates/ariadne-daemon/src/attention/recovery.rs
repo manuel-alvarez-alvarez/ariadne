@@ -374,7 +374,9 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
             // evidence to match against there is nothing to confirm.
             continue;
         };
-        if !orchestrator_has_answered_for(store, &task.goal_id, &task.id, &transition_id).await? {
+        if let Some(goal_id) = &task.goal_id
+            && !orchestrator_has_answered_for(store, goal_id, &task.id, &transition_id).await?
+        {
             continue;
         }
         let reason = store.ended_reason(&task).await?;

@@ -1,10 +1,12 @@
 ---
 id: workflows
 status: current
-updated: 2026-11-23
+updated: 2026-11-26
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
+  - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
+  - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-core/src/workflow.rs
   - crates/ariadne-core/src/state_machine.rs
@@ -116,12 +118,9 @@ every other kebab-case word in it; the wire spells the same gate
    with the same `develop` and `review` bands and gates, then `pr[Pull request]`
    (`balanced`, `frontier`; `request-merged`). `merge` stages `merge`, `pr` stages
    `pr-babysit`, and `develop-review-merge` is the default of every repository
-   that names none (`DEFAULT_WORKFLOW`). A third workflow, `pr-review`, is
-   the review operation's (rule 11 below): one `review[Review]` column that
-   stages `pr-reviewer`, with the `balanced` and `frontier` ranks and no
-   gate. A fourth, `pr-babysit`, is the babysit operation's: one
-   `babysit[Babysit]` column that stages `pr-babysit`, with the `balanced` and
-   `frontier` ranks and no gate. The orchestrator assesses each task
+   that names none (`DEFAULT_WORKFLOW`). Ariadne ships no other workflow: a
+   pull request operation runs on no workflow of the catalog (rule 11
+   below). The orchestrator assesses each task
    case by case, chooses the smallest capable eligible model, and chooses a
    more powerful eligible model only where the task demands justify it.
 3. A save — a create or a document write — parses the document and refuses a
@@ -131,9 +130,8 @@ every other kebab-case word in it; the wire spells the same gate
    orchestrator's skill (`orchestration`) or the one a reviewer pull request
    session loads (`pr-reviewer`) — neither staffs a task agent, which is
    what a workflow column does. `pr-babysit` is allowed: the `pr` column of
-   `develop-review-pr` stages it, and `pr-babysit` is the one column of
-   `pr-babysit`; `pr-review` refuses it. `pr-reviewer` is allowed in
-   `pr-review` alone, where rule 11 requires it.
+   `develop-review-pr` stages it. A create under `pr-review` or
+   `pr-babysit` is refused as a reserved name (rule 11).
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`). Its agent lands the
    reviewed task or returns it, and fixes no code: it never changes a file
@@ -164,7 +162,7 @@ every other kebab-case word in it; the wire spells the same gate
    applying: a failed check — a hook that fails is one, never a moved base
    — that names a file of the task goes back to the previous column
    through `fail_step` with the check's output; a failed check that names
-   no file of the task goes to the orchestrator through `send_message`,
+   no file of the task goes to the orchestrator through `post_to_session`,
    and nothing lands; else the base moved — a push rejected as not a
    fast-forward, a `git diff --stat` that lists a file the task did not
    touch, or a fast-forward that fails — and the agent starts again from
@@ -192,9 +190,6 @@ every other kebab-case word in it; the wire spells the same gate
    - `POST /v1/workflows/parse` — parse a document without saving it
      anywhere; 200 with its name and steps, or 400 `workflow_invalid` with
      `details.line` and the message.
-
-   `WorkflowDto.operation` is `review` for `pr-review`, `babysit` for
-   `pr-babysit`, and null for every other workflow.
 
    `WorkflowDto.document` is the effective text: the override, or the
    shipped one. Every write publishes a fat domain event —
@@ -233,7 +228,7 @@ every other kebab-case word in it; the wire spells the same gate
    planned, left that way when the goal went active — fails before it
    starts, naming the column, and spends no launch. `update_task.agents` replaces the complete staffing while the
    task is `pending`, `ready` or `failed`: an agent already on its column
-   keeps its row, and with it the sessions, messages and usage that name it;
+   keeps its row, and with it the sessions and usage that name it;
    a column staffed for the first time gets a new row; two rows on one
    column fold into the first; a column the edit leaves out loses its agent
    only while nothing names it, and is refused by name otherwise. A session
@@ -247,8 +242,7 @@ every other kebab-case word in it; the wire spells the same gate
    in the first column and stays `in_progress` between columns: the column
    it is on is `TaskDto.step`. Only the current column's agent receives work
    or watchdog attention (009 rule 5). Other column agents remain idle until
-   their column becomes current, and a message to one waits for its column
-   (018 rule 9).
+   their column becomes current.
 4. `POST /v1/tasks/{id}/step/complete` takes `reason` and optional
    `merge_commit`. It moves forward one column, or finishes the task from
    the last column. `POST /v1/tasks/{id}/step/fail` takes `reason`. It moves
@@ -320,7 +314,7 @@ every other kebab-case word in it; the wire spells the same gate
    `repositories.default_workflow` is `NOT NULL DEFAULT
    'develop-review-merge'`. `task_agents` keys an agent by `step`, not by a
    seat; `agent_sessions.seat` is `orchestrator`, `agent` or `reviewer`;
-   `messages.kind` is `message` alone; `task_transitions.actor` is
+   there is no `messages` table (0025); `task_transitions.actor` is
    `orchestrator`, `agent`, `daemon` or `user`. There is no `task_picks`
    table, no `tasks.picked_agent_id` and no `goal_repositories.goal_branch`.
    A database on a schema this release does not ship — the fixed
@@ -359,8 +353,8 @@ every other kebab-case word in it; the wire spells the same gate
     and fixes every failure the request's own change causes in one batch;
     any other
     failure — the base, a flaky test, the forge — is fixed by nobody
-    here: the task's agent sends it to the orchestrator once through
-    `send_message`, and a keeper asks the user once (032). Repository
+    here: the task's agent posts it to the orchestrator once through
+    `post_to_session`, and a keeper asks the user once (032). Repository
     history rules choose its branch update, allowed inside a fix batch, for confirmed base conflicts or when news says the forge requires it, done
     before the batch's checks run: where they require a linear request
     branch in words it rebases; otherwise it merges. A rebase or merge
@@ -403,23 +397,24 @@ every other kebab-case word in it; the wire spells the same gate
     removes the worktree and branch, and removes the request row and its
     marks.
 
-11. A workflow that serves a pull request operation is named by the
-    operation (`defaults::pr_operation_of`); `pr-review` serves `review`
-    and `pr-babysit` serves `babysit`. Its definition shows in the catalog
-    and is edited like any other, and its shape is checked at every save
-    (`defaults::pr_operation_shape_error`): exactly one column with the `request-merged` gate,
-    that loads the operation's own skill, and whose `ranks` name only what
-    the operation allows. For `review` the column is `review`, the skill is
-    `pr-reviewer` and the ranks are `balanced`, `frontier` or both. For
-    `babysit` the column is `babysit`, the skill is `pr-babysit` and the
-    ranks are `fast`, `balanced` or both. The column's
-    title, description, extra skills and band stay editable; a save that
-    breaks the shape answers 400 naming the rule. No ordinary goal and no
-    repository default can name an operation workflow: a goal create or a
-    repository write that does answers 400. A goal of the operation, and
-    its one task, are 029's to start and to end, for a babysit as for a
-    review (032 rule 7b). An upgrade adds the gate to custom operation
-    workflows and active goal snapshots, preserving completed snapshots
+11. A pull request operation runs on no workflow of the catalog. Ariadne
+    fixes the one column of each operation in code
+    (`defaults::pr_operation_step`): for `review` the column is
+    `review[Review]` and loads `pr-reviewer`; for `babysit` the column is
+    `babysit[Babysit]` and loads `pr-babysit`. Both columns allow the
+    `balanced` and `frontier` ranks and wait on the `request-merged` gate.
+    The goal of an operation snapshots that column and records `pr-review`
+    or `pr-babysit` as its workflow name
+    (`defaults::pr_operation_workflow`). Those two names are reserved: a
+    workflow create under either is refused, and no goal or repository
+    default can name either, since no catalog row has it. A goal of the
+    operation, and its one task, are 029's to start and to end, for a
+    babysit as for a review (032 rule 7b). An upgrade drops both catalog
+    rows, with any edit the user wrote over them
+    (`migrations/0028_drop_pr_operation_workflows.sql`). An open goal keeps
+    the columns it snapshotted. An older upgrade added the gate to custom
+    operation workflows and to active goal snapshots, and preserved
+    completed snapshots
     (`store.rs::operation_gate_upgrade_preserves_custom_settings_and_history`).
 
 12. A remote worker task saves its source workflow name and all workflow columns per task.
@@ -429,7 +424,29 @@ every other kebab-case word in it; the wire spells the same gate
     They use worker prompt templates and worker repository permissions at launch, as local tasks do.
     Every column shares the task worktree. Remote branches start at the fetched remote base (001 rule 16).
 
+13. A goal-less task with a workflow uses its own named workflow and snapshots its columns at creation.
+    It requires one agent for each column, with the same staffing checks as goal tasks.
+    It walks the saved columns through `complete_step` and `fail_step`, with their saved gates.
+    Catalog edits do not change its columns. Its worktree uses `worktrees/tasks/<task-tail>-eng`.
+    `TaskDto.workflow` names its saved workflow. `TaskDto.steps` carries its saved columns.
+    Goal tasks carry null and an empty array in these fields and keep their existing behavior.
+    The reserved `pr-review` and `pr-babysit` workflows remain on their operation routes.
+    Goal-less creation refuses them with the same reason as an ordinary goal.
+14. A goal-less task on any ready host may have no workflow, with the behavior of 001 rule 26.
+    `agents[].step` is optional in the request: a task with a workflow refuses an agent that names none.
+    A task of a goal still requires a workflow and keeps rules 1 through 13.
+
 ## Acceptance criteria
+
+- Rule 13: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
+  Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
+  No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
+
+- Rule 14: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_failed_task_with_no_workflow_runs_again_after_a_retry`, `standalone_tasks::a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step`.
+
+- Rule 13: `far_tasks::source_references::far_goal_less_admission_uses_the_local_workflow_reasons` proves shared admission reasons.
+
+- Rule 13: `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`, `standalone_tasks::openapi_describes_goal_less_creation_and_task_columns`.
 
 - Rule 12: `remote_tasks.rs::saved_columns_keep_their_gates_and_a_failed_task_can_retry`
   proves saved columns, the commit gate, column returns, and retries. It waits for both
@@ -479,18 +496,14 @@ every other kebab-case word in it; the wire spells the same gate
   `::a_missing_workflow_is_a_404_naming_workflow_not_found`,
   `::a_taken_name_is_a_409_and_a_built_in_refuses_delete_and_a_user_one_refuses_reset`,
   `::resetting_a_built_in_drops_the_override`).
-- The `pr-review` workflow is shipped with its one column, its shape is
-  checked at every save, and it is closed to ordinary goals and repository
-  defaults while its definition shows in the catalog
-  (`defaults.rs::the_shipped_review_workflow_has_the_shape_its_operation_requires`,
-  `store.rs::the_review_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it`,
-  `tests/it/workflows.rs::the_pr_review_workflow_is_listed_edited_in_its_shape_and_closed_to_ordinary_goals`).
-- The `pr-babysit` workflow is shipped with its one column, its shape is
-  checked at every save, and it is closed to ordinary goals and repository
-  defaults while its definition shows in the catalog
-  (`defaults.rs::the_shipped_babysit_workflow_has_the_shape_its_operation_requires`,
-  `store.rs::the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it`,
-  `tests/it/workflows.rs::the_pr_babysit_workflow_is_listed_edited_in_its_shape_and_closed_to_ordinary_goals`).
+- A pull request operation runs on one fixed column and on no workflow of
+  the catalog: the catalog lists neither operation name, a create under
+  either name is refused, no goal or repository default names either, each
+  operation's goal snapshots its fixed column, and the upgrade drops both
+  rows (`defaults.rs::each_pr_operation_runs_one_fixed_column_and_no_shipped_workflow`,
+  `store.rs::pull_request_operations_run_on_no_workflow_of_the_catalog`,
+  `::the_upgrade_drops_both_pull_request_operation_workflows`,
+  `tests/it/workflows.rs::the_catalog_holds_no_pull_request_operation_workflow`).
 - Every shipped workflow parses, stages shipped skills, and carries its
   approved rank bands. The `merge` skill passes the shipped-skill tests:
   named once, describes itself, STE, within its cap, lands in order and merges
@@ -512,8 +525,8 @@ every other kebab-case word in it; the wire spells the same gate
 - A staffing names the goal's columns once each, inherits skills, refuses an
   unknown or doubled column by name, may leave columns for later while the
   goal is planned, and is refused by name once the goal is active; an edit
-  replaces the whole staffing and keeps the row, the sessions and the
-  messages of an agent already on its column
+  replaces the whole staffing and keeps the row and the sessions of an
+  agent already on its column
   (`store.rs::a_staffing_names_the_goals_columns_once_each_and_may_leave_some_for_later`,
   `::an_edit_replaces_the_whole_column_staffing`,
   `tools.rs::a_workflow_task_staffs_one_agent_for_each_column`).

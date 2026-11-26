@@ -57,6 +57,7 @@ fn plan(
                 .map(|(name, value)| EnvVariable { name, value })
                 .collect(),
         }],
+        plan_mode: ctx.plan_mode,
     };
     write_config(ctx, &config)?;
     Ok(SpawnPlan {

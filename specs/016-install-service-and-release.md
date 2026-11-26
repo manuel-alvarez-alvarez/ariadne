@@ -1,11 +1,13 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-11-24
+updated: 2026-11-25
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/tests/it/portable_config.rs
+  - crates/ariadne-daemon/tests/it/shutdown.rs
+  - crates/ariadne-daemon/tests/it/tunnel.rs
   - crates/ariadne-daemon/src/resource.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/it/agents.rs
@@ -266,9 +268,25 @@ Out: what the daemon does once running (009, 012).
 20. Portable worker configuration uses the maintenance lifecycle in spec 037, rules 64–69.
     Installed services retain supervision across process replacement.
     Directly launched workers use the same lifecycle without requiring service installation.
+21. A daemon refuses to start while another daemon answers on its home's socket.
+    It checks before it opens either database, so it never migrates one under the daemon that runs.
+    On SIGTERM or SIGINT it closes its listeners and ends every open `text/event-stream` response.
+    Other open requests then have `shutdown_drain` (10 seconds) to finish; a connection still open after that is dropped.
+    `GET /v1/health` carries the answering process's `pid`.
+    On exit the daemon removes the socket file only while it is still the file it bound, and the pidfile only while it still holds its own pid.
+    A daemon started after this one closed its listeners keeps both files.
 
 ## Acceptance criteria
 
+- Rule 21: a start beside a daemon that answers exits with an error and creates neither database:
+  `shutdown.rs::a_start_beside_a_running_daemon_opens_no_database`.
+  SIGTERM ends an open event stream, and the daemon stops while the client still listens:
+  `tunnel.rs::shutdown_closes_the_tunnel_and_the_listener_and_ends_an_open_event_stream`.
+  A request that never finishes holds the drain only for its bound:
+  `shutdown.rs::a_request_that_never_finishes_does_not_hold_the_drain_past_its_bound`.
+  A stopping daemon leaves the socket and pidfile of the daemon that bound the path after it,
+  and `GET /v1/health` gives that daemon's pid:
+  `shutdown.rs::a_stopping_daemon_leaves_the_socket_and_pid_file_of_the_one_after_it`.
 - The Linux service preserves relay processes on daemon stop:
   `scripts/tests/install-linux.sh service` checks `KillMode=process` in the installed unit.
 
