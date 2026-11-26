@@ -285,24 +285,20 @@ async function main() {
   // tasks and finalizes the plan as soon as it finds the goal, which already
   // exists by this point, so it would race ahead of the answer if it ran
   // any earlier (as assets/demo.tape's own hidden step does, for the same
-  // reason). Awaited at the very end, once the rest of the flow below has
-  // already given it time to finish, so it adds nothing to the recording's
-  // own pace while still surfacing a seeding failure loudly.
+  // reason). Wait for seeding before showing the board rows.
   const seeded = exec("python3", [join(root, "assets", "seed-demo-goal.py"), baseUrl, TASK_MODEL])
 
-  // The session view took over the whole panel, breadcrumb and tabs
-  // included (see ui/src/features/goals/goal-sessions.tsx), so the way to
-  // the goal panel's own Tasks tab is back through that breadcrumb first.
-  // Its own task list is read inside the pane, which picks the task out from
-  // the board's row and the attention strip's link of the same name behind
-  // the scrim.
-  await page.getByRole("button", { name: GOAL_TITLE, exact: true }).click()
-  await page.waitForTimeout(2_000)
-  await page.getByRole("tab", { name: /^Tasks/ }).click()
+  // Return to the board for the existing task-list screen, so its new
+  // rows remain visible instead of blurred behind the goal pane.
+  await seeded
+  await page
+    .locator('[data-slot="docked-pane"]')
+    .getByRole("button", { name: "Close", exact: true })
+    .click()
 
   const limiterTask = "Add the rate limiter middleware"
   const taskRow = page
-    .locator('[data-slot="docked-pane"]')
+    .getByRole("group", { name: `${GOAL_TITLE}: Tasks`, exact: true })
     .getByRole("link", { name: new RegExp(`^${limiterTask}`) })
   await taskRow.waitFor()
   await page.waitForTimeout(3_000)
@@ -310,8 +306,6 @@ async function main() {
   await taskRow.click()
   await page.getByRole("heading", { name: limiterTask, exact: true }).waitFor()
   await page.waitForTimeout(3_000)
-
-  await seeded
 
   const video = page.video()
   if (!video) throw new Error("Playwright did not start video recording")

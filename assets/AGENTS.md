@@ -83,14 +83,15 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   runs as the daemon's own child, never in a herdr or tmux server the
   machine runs) and `demo-orchestrator-agent.py` registered as its
   orchestrator agent, seeds its own scratch repository with
-  `seed-demo-repo.sh`, fills the New goal form in the UI with the same goal
+  `seed-demo-repo.sh`, opens New > Goal and fills the form with the same goal
   `demo.tape` types — typed at a visible speed rather than filled in one
   frame — and the orchestrator pinned to that same stub, opens its console
   from the goal panel's Sessions tab and types the same answer `demo.tape`
   types into the console's input box (see
   `ui/src/features/sessions/console/session-console.tsx`),
   then runs `seed-demo-goal.py` the same way to add the same tasks and
-  finalize, and opens one of them. It drives the UI dev server with
+  finalize, closes the console pane to show the board as one list of task
+  rows, and opens one task from that board. It drives the UI dev server with
   Playwright, at twice the device pixel density so the GIF's downscaled text
   stays sharp, and removes the daemon, the dev server and the scratch
   directory itself when the recording ends or the script is interrupted.
@@ -110,3 +111,13 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   or less; do not drop below either the frame rate or the width to make the
   size. If a change cannot keep all three, stop and report the size and the
   trade-off rather than silently shipping a blurrier or choppier GIF.
+
+## Desktop recording prerequisites
+
+Install the UI dependencies with `npm ci` in `ui/` before recording.
+Keep port 1420 free for the recording's Vite server.
+The model picker search box has the accessible name "Search models".
+The old placeholder "Search models, or type an id…" stopped matching after
+b65f6b8f. The board change ee235ae7 repaired that selector.
+The unchanged script completed on that revision with one idle orchestrator
+session. The reported duplicate sessions and disabled input did not recur.
