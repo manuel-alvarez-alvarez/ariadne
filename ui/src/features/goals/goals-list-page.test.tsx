@@ -414,5 +414,13 @@ it("shows the No goal lane on a board with no goals at all", async () => {
 
   const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
   expect(await within(lane).findByText("Only a loose task")).toBeTruthy()
-  expect(screen.queryByText("No goals yet")).toBeNull()
+})
+
+it("keeps an empty No goal lane on a board with no goals and no tasks", async () => {
+  daemonFetch.mockImplementation(() => Promise.resolve(jsonResponse([])))
+  renderBoard("/goals")
+
+  expect(await screen.findByText("No goals yet")).toBeTruthy()
+  const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
+  expect(within(lane).getByText("No tasks")).toBeTruthy()
 })

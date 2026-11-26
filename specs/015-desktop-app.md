@@ -1689,8 +1689,8 @@ Out: the daemon endpoints themselves (012).
 84. The goals board has one "No goal" lane after the goal lanes. It holds every
     task whose `goal_id` is null, from every host the board reads, and the
     "Active" toggle and the title search narrow it as they narrow a goal lane.
-    It stays on the board while empty and says "No tasks". On a board with no
-    goal it shows while it has a task to show. A
+    It stays on the board while empty and says "No tasks", also on a board with no
+    goal, where it sits beside the empty state. A
     `task_created` or `task_updated` event moves it with the goal lanes, with no
     reload. A goal task and the goal task dialog do not change.
 85. The board header has a "New task" action, and the command palette has a
@@ -1722,7 +1722,7 @@ Out: the daemon endpoints themselves (012).
 - A `task_created` event adds a goal-less task to the "No goal" lane
   (`ui/src/features/goals/goal-swimlanes.test.tsx::adds a goal-less task to the No goal lane when its task_created event arrives`).
 - The board shows the "No goal" lane with no goal, and its header offers New task
-  (`ui/src/features/goals/goals-list-page.test.tsx::shows the No goal lane on a board with no goals at all`; `::offers New task in the board header, which opens the goal-less task dialog`).
+  (`ui/src/features/goals/goals-list-page.test.tsx::shows the No goal lane on a board with no goals at all`; `::keeps an empty No goal lane on a board with no goals and no tasks`; `::offers New task in the board header, which opens the goal-less task dialog`).
 - The palette offers New task for a task with no goal, and a distinct entry beside a goal's own
   (`ui/src/features/command-palette/command-palette.test.tsx::offers a task with no goal over a screen with no goal open, and opens its dialog`; `::offers the goal-less task beside the goal's own when a goal is open`).
 - The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine

@@ -42,8 +42,7 @@ import {
   serializeStatusFilter,
   toggleStatusFilter,
 } from "./filters"
-import { BoardSkeleton, GoalSwimlanes, useBoardTasks } from "./goal-swimlanes"
-import { goallessTasks } from "./lanes"
+import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
 import { GOAL_STATUS_META, GOAL_STATUSES, isTerminalGoalStatus } from "./status"
 import { useStatusFilter } from "./use-status-filter"
@@ -99,9 +98,6 @@ export function GoalsListPage() {
     [goals.rows],
   )
   const shown = useMemo(() => searchGoals(merged, query), [merged, query])
-  // The same read the board makes, so it costs no request: it says whether the
-  // "No goal" lane has anything to show.
-  const tasks = useBoardTasks(hosts)
   const showHost = useRowsShowHost()
   const failedEverywhere = goals.errors.length > 0 && goals.errors.length === hosts.length
   const empty = emptyBoardCopy(statuses)
@@ -109,10 +105,6 @@ export function GoalsListPage() {
   const all = statuses.length === 0
   const finished = sameFilter(statuses, FINISHED_FILTER)
   const custom = !active && !all && !finished
-  const hasNoGoalTasks = useMemo(
-    () => goallessTasks(tasks.rows, active, query).length > 0,
-    [tasks.rows, active, query],
-  )
 
   /** The goal just created opens its own panel, on its host — no hunting for it on the board. */
   function openGoal(goalId: string, host: string) {
@@ -234,7 +226,7 @@ export function GoalsListPage() {
 
       {goals.isPending ? <BoardSkeleton /> : null}
 
-      {merged.length && shown.length === 0 && !hasNoGoalTasks ? (
+      {merged.length && shown.length === 0 ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title="No goals match"
@@ -245,8 +237,7 @@ export function GoalsListPage() {
       {!goals.isPending &&
       goals.pending.length === 0 &&
       !failedEverywhere &&
-      merged.length === 0 &&
-      !hasNoGoalTasks ? (
+      merged.length === 0 ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title={empty.title}
@@ -262,7 +253,7 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {shown.length || hasNoGoalTasks ? (
+      {shown.length || (!goals.isPending && !failedEverywhere) ? (
         <GoalSwimlanes
           hosts={hosts}
           goals={shown}
