@@ -163,31 +163,80 @@ async fn a_workflow_staffs_each_column_and_a_host_goes_in_the_body() {
 #[tokio::test]
 async fn a_task_with_no_goal_refuses_what_it_cannot_take() {
     let (endpoint, seen, server) = daemon().await;
-    let agent = ["--agent", "=codex-acp:o3"];
-    let cases: [(&[&str], &str); 4] = [
-        (&["--title", "x"], "needs --repo"),
+    let cases: [(&[&str], &str); 6] = [
         (
-            &["--title", "x", "--repo", REPO, "--depends-on", GOAL],
+            &["--title", "x", "--agent", "=codex-acp:o3"],
+            "needs --repo",
+        ),
+        (
+            &[
+                "--title",
+                "x",
+                "--repo",
+                REPO,
+                "--agent",
+                "=codex-acp:o3",
+                "--depends-on",
+                GOAL,
+            ],
             "--depends-on needs a goal",
         ),
         (
-            &["--title", "x", "--repo", REPO, "--agent", "=codex-acp:o3"],
+            &[
+                "--title",
+                "x",
+                "--repo",
+                REPO,
+                "--agent",
+                "=codex-acp:o3",
+                "--agent",
+                "=codex-acp:o3",
+            ],
             "exactly one --agent",
         ),
         (
-            &["--title", "x", "--repo", REPO, "--workflow", "w"],
+            &[
+                "--title",
+                "x",
+                "--repo",
+                REPO,
+                "--agent",
+                "develop=codex-acp:o3",
+            ],
+            "exactly one --agent",
+        ),
+        (
+            &[
+                "--title",
+                "x",
+                "--repo",
+                REPO,
+                "--workflow",
+                "w",
+                "--agent",
+                "=codex-acp:o3",
+            ],
+            "names its column",
+        ),
+        (
+            &[
+                "--title",
+                "x",
+                "--repo",
+                REPO,
+                "--workflow",
+                "w",
+                "--agent",
+                "develop=codex-acp:o3",
+                "--agent",
+                ":coding=codex-acp:o3",
+            ],
             "names its column",
         ),
     ];
     for (args, reason) in cases {
         let mut line = vec!["task", "create"];
         line.extend(args);
-        if !args.contains(&"--agent") {
-            line.extend(agent);
-        }
-        if reason == "exactly one --agent" {
-            line.extend(agent);
-        }
         let (code, _, stderr) = ariadne(&endpoint, &line).await;
         assert_eq!(code, Some(2), "{line:?}: {stderr}");
         assert!(stderr.contains(reason), "{line:?}: {stderr}");
@@ -197,6 +246,41 @@ async fn a_task_with_no_goal_refuses_what_it_cannot_take() {
         seen.lock().unwrap().is_empty(),
         "nothing reached the daemon"
     );
+}
+
+#[tokio::test]
+async fn the_local_host_sends_no_host_in_the_body() {
+    let (endpoint, seen, server) = daemon().await;
+    let (code, _, stderr) = ariadne(
+        &endpoint,
+        &[
+            "--host",
+            "local",
+            "task",
+            "create",
+            "--title",
+            "x",
+            "--repo",
+            REPO,
+            "--agent",
+            "=codex-acp:o3",
+        ],
+    )
+    .await;
+    server.abort();
+    assert_eq!(code, Some(0), "{stderr}");
+    let sent = body(&seen, "POST /v1/tasks");
+    assert!(sent.get("host").is_none_or(Value::is_null), "{sent}");
+}
+
+#[tokio::test]
+async fn ls_refuses_a_goal_together_with_no_goal() {
+    let (endpoint, seen, server) = daemon().await;
+    let (code, _, stderr) = ariadne(&endpoint, &["task", "ls", "--goal", GOAL, "--no-goal"]).await;
+    server.abort();
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains("--no-goal"), "{stderr}");
+    assert!(seen.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

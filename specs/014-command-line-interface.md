@@ -966,7 +966,8 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - With a workflow and `--host`, the body carries both, rules 64 and 65
   (`crates/ariadne-cli/tests/task_create.rs::a_workflow_staffs_each_column_and_a_host_goes_in_the_body`).
 - A goal-less create refuses a missing `--repo`, `--depends-on`, a wrong agent
-  count and a column with no workflow, and sends nothing, rules 63 and 64
+  count, a column named with no workflow, and a workflow with a column-less
+  agent, and sends nothing, rules 63 and 64
   (`crates/ariadne-cli/tests/task_create.rs::a_task_with_no_goal_refuses_what_it_cannot_take`).
 - A create with a goal is unchanged, rule 62
   (`crates/ariadne-cli/tests/task_create.rs::a_task_in_a_goal_is_created_as_before`).
@@ -975,6 +976,10 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`crates/ariadne-cli/src/commands/task/edit.rs::tests::a_create_agent_may_leave_the_column_out_and_an_update_agent_may_not`).
 - `task ls --no-goal` asks for the goal-less tasks, rule 66
   (`crates/ariadne-cli/tests/task_create.rs::ls_no_goal_asks_for_the_goal_less_tasks`).
+- `task ls --goal G --no-goal` is a usage error, rule 66
+  (`crates/ariadne-cli/tests/task_create.rs::ls_refuses_a_goal_together_with_no_goal`).
+- With `--host local`, the create body names no host, rule 65
+  (`crates/ariadne-cli/tests/task_create.rs::the_local_host_sends_no_host_in_the_body`).
 
 ## Sources
 
