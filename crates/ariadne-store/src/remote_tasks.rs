@@ -105,7 +105,7 @@ impl Store {
         agents: &mut [NewTaskAgent],
     ) -> Result<Vec<GoalStep>> {
         if let Some(workflow) = workflow
-            && crate::defaults::pr_operation_of(workflow).is_some()
+            && crate::defaults::is_pr_operation_workflow(workflow)
         {
             return Err(StoreError::Invalid(format!(
                 "workflow {workflow} runs a pull request operation; a goal cannot use it"

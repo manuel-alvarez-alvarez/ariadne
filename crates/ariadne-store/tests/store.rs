@@ -6620,7 +6620,7 @@ async fn the_upgrade_drops_both_pull_request_operation_workflows() {
         .await
         .unwrap();
     sqlx::raw_sql(include_str!(
-        "../migrations/0024_drop_pr_operation_workflows.sql"
+        "../migrations/0028_drop_pr_operation_workflows.sql"
     ))
     .execute(&pool)
     .await

@@ -411,7 +411,7 @@ every other kebab-case word in it; the wire spells the same gate
     operation, and its one task, are 029's to start and to end, for a
     babysit as for a review (032 rule 7b). An upgrade drops both catalog
     rows, with any edit the user wrote over them
-    (`migrations/0024_drop_pr_operation_workflows.sql`). An open goal keeps
+    (`migrations/0028_drop_pr_operation_workflows.sql`). An open goal keeps
     the columns it snapshotted. An older upgrade added the gate to custom
     operation workflows and to active goal snapshots, and preserved
     completed snapshots
