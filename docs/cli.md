@@ -645,7 +645,7 @@ list.
 S]... [--attach]` asks Ariadne to review a request of your own (029):
 `--model` is required with neither `--stop` nor `--again`, since there is no repository
 setting to fall back to, and the model must be ranked `balanced` or
-`frontier`, the band of the [`pr-review` workflow](workflows.md#the-pr-review-workflow).
+`frontier`, the band of the [fixed `review` column](workflows.md#pull-request-reviews-and-babysits).
 The ask makes one goal with one task; `pr inspect` prints its id as `review
 goal`. `--skill` loads another skill beside `pr-reviewer`, which
 every review loads anyway; repeat it for more than one. `--attach` waits for
@@ -660,9 +660,9 @@ The round runs when the session becomes idle.
 `ariadne pr babysit <repo> <number> --model AGENT:MODEL [--effort E]
 [--skill S]... [--attach]` asks Ariadne to keep an open request that
 no task opened (032), the same way `pr review` asks for a review:
-`--model` is required with neither `--stop` nor `--again`, and the model must be ranked `fast`
-or `balanced`, the band of the [`pr-babysit`
-workflow](workflows.md#the-pr-babysit-workflow). The ask makes one goal with
+`--model` is required with neither `--stop` nor `--again`, and the model must be ranked `balanced`
+or `frontier`, the band of the [fixed `babysit`
+column](workflows.md#pull-request-reviews-and-babysits). The ask makes one goal with
 one task; `pr inspect` prints its id as `babysit goal`. `--skill` loads another
 skill beside `pr-babysit`, which every keeper session loads anyway. `--attach`
 waits for the keeper session to start and opens its console. `ariadne pr

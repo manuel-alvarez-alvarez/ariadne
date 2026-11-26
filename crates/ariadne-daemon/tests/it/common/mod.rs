@@ -419,7 +419,7 @@ impl HarnessBuilder {
         std::fs::copy(template_db().await, &db_path).unwrap();
         let store = Store::open(&db_path).await.unwrap();
         // The model every review test asks on is balanced, a rank the
-        // `pr-review` workflow allows (029).
+        // fixed `review` column allows (029).
         store
             .set_model_ranks(&[
                 (

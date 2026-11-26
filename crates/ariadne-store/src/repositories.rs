@@ -33,15 +33,9 @@ pub struct RepositoryUpdate {
 }
 
 impl Store {
-    /// A repository default is a workflow of the catalog that ordinary goals
-    /// run on: one that serves a pull request operation is not (029).
+    /// A repository default is a workflow of the catalog.
     async fn check_default_workflow(&self, name: &str) -> Result<()> {
         self.get_workflow(name).await?;
-        if crate::defaults::pr_operation_of(name).is_some() {
-            return Err(StoreError::Invalid(format!(
-                "workflow {name} runs a pull request operation; it cannot be a repository default"
-            )));
-        }
         Ok(())
     }
 

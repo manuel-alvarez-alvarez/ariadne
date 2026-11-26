@@ -253,6 +253,35 @@ export function CreateGoalDialog({
         onKeyDown={submitOnChord}
       >
         <FormDialogBody>
+          <Field data-invalid={errors.title ? "" : undefined}>
+            <FieldLabel htmlFor="goal-title">Title</FieldLabel>
+            <Input
+              id="goal-title"
+              autoComplete="off"
+              aria-invalid={errors.title ? true : undefined}
+              {...form.register("title")}
+            />
+            <FieldError>{errors.title?.message}</FieldError>
+          </Field>
+
+          <Controller
+            control={form.control}
+            name="description"
+            render={({ field }) => (
+              <MarkdownField
+                id="goal-description"
+                label="Description"
+                description="Markdown. This is the orchestrator's brief."
+                placeholder="What should be achieved, and anything the orchestrator needs to know."
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                name={field.name}
+                ref={field.ref}
+              />
+            )}
+          />
+
           {/* One host is no choice: the select shows once there are two. */}
           {hosts.length > 1 || host !== LOCAL_HOST ? (
             <Field>
@@ -298,35 +327,6 @@ export function CreateGoalDialog({
               ) : null}
             </Field>
           ) : null}
-
-          <Field data-invalid={errors.title ? "" : undefined}>
-            <FieldLabel htmlFor="goal-title">Title</FieldLabel>
-            <Input
-              id="goal-title"
-              autoComplete="off"
-              aria-invalid={errors.title ? true : undefined}
-              {...form.register("title")}
-            />
-            <FieldError>{errors.title?.message}</FieldError>
-          </Field>
-
-          <Controller
-            control={form.control}
-            name="description"
-            render={({ field }) => (
-              <MarkdownField
-                id="goal-description"
-                label="Description"
-                description="Markdown. This is the orchestrator's brief."
-                placeholder="What should be achieved, and anything the orchestrator needs to know."
-                value={field.value}
-                onChange={field.onChange}
-                onBlur={field.onBlur}
-                name={field.name}
-                ref={field.ref}
-              />
-            )}
-          />
 
           <Controller
             control={form.control}
@@ -405,6 +405,9 @@ export function CreateGoalDialog({
                 />
               )}
             />
+            {!form.watch("model").trim() ? (
+              <FieldDescription>Choose a model for the orchestrator.</FieldDescription>
+            ) : null}
             {errors.model ? (
               <FieldError>{errors.model.message}</FieldError>
             ) : (

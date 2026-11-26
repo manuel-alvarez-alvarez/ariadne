@@ -2,7 +2,8 @@
 //!
 //! Ariadne's work on a request is a goal of its own: one open goal per
 //! request and operation, no orchestrator, one task, one agent on the one
-//! column of the operation's workflow. The goal names the request by value
+//! column Ariadne fixes for the operation
+//! ([`crate::defaults::pr_operation_step`]). The goal names the request by value
 //! (`goals.pr_*`), so it outlives the request's own row. This module is the
 //! lifecycle every operation shares: start or reuse the open goal, and end
 //! it as completed or cancelled.
@@ -14,7 +15,6 @@ use ariadne_core::id::new_id;
 use ariadne_core::workflow::PrOperation;
 use ariadne_core::{Actor, GoalStatus, TaskStatus};
 
-use crate::defaults::pr_operation_workflow;
 use crate::goals::{NewGoal, NewPrGoal};
 use crate::tasks::branch_name;
 use crate::{
@@ -125,7 +125,6 @@ impl Store {
         &self,
         new: StartPrOperation,
     ) -> Result<(PrOperationOwner, bool)> {
-        let workflow = pr_operation_workflow(new.operation);
         let mut created = false;
         let mut goal = match self
             .active_pr_goal(&new.repository_id, new.number, new.operation)
@@ -134,7 +133,7 @@ impl Store {
             Some(goal) => goal,
             None => {
                 created = true;
-                self.create_operation_goal(&new, workflow).await?
+                self.create_operation_goal(&new).await?
             }
         };
         let mut owner = self.ensure_operation_task(&goal, &new).await?;
@@ -143,7 +142,7 @@ impl Store {
         if owner.task.status().is_terminal() || owner.task.status() == TaskStatus::Failed {
             self.end_goal(&goal.id, GoalStatus::Cancelled).await?;
             created = true;
-            goal = self.create_operation_goal(&new, workflow).await?;
+            goal = self.create_operation_goal(&new).await?;
             owner = self.ensure_operation_task(&goal, &new).await?;
         }
         if !created {
@@ -152,12 +151,13 @@ impl Store {
         Ok((owner, created))
     }
 
-    async fn create_operation_goal(&self, new: &StartPrOperation, workflow: &str) -> Result<Goal> {
+    async fn create_operation_goal(&self, new: &StartPrOperation) -> Result<Goal> {
         let verb = title_verb(new.operation);
         let created = self
             .create_pr_goal(
                 NewGoal {
-                    workflow: Some(workflow.to_string()),
+                    // The operation fixes the goal's one column.
+                    workflow: None,
                     title: format!("{verb} PR #{}: {}", new.number, new.title),
                     description: format!(
                         "{verb} pull request {} until it merges or closes.",
@@ -203,7 +203,7 @@ impl Store {
                 .await?;
         let step = steps
             .first()
-            .ok_or_else(|| StoreError::Invalid("the operation's workflow has no column".into()))?;
+            .ok_or_else(|| StoreError::Invalid("the operation's goal has no column".into()))?;
         let existing: Option<Task> =
             sqlx::query_as("SELECT * FROM tasks WHERE goal_id = ? ORDER BY created_at, id LIMIT 1")
                 .bind(&goal.id)

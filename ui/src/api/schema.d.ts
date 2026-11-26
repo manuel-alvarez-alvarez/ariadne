@@ -2358,8 +2358,8 @@ export interface paths {
          * Ask Ariadne to keep any open request by hand on the model the user
          *     picks, or stop asking (032), regardless of its author. Asking starts one
          *     active goal for the babysit, with one staffed task and no orchestrator,
-         *     on the `pr-babysit` workflow: the model must be ranked inside that
-         *     workflow's band, else 400. Asking again keeps the open goal and moves its
+         *     in one `babysit` column that Ariadne fixes: the model must be ranked
+         *     inside that column's band, else 400. Asking again keeps the open goal and moves its
          *     pin and skills. A request a task already keeps is refused to avoid
          *     competing keepers. The goal completes when the request merges; its task fails on close.
          *     Stopping cancels the goal and its task and ends only the keeper session,
@@ -2386,8 +2386,8 @@ export interface paths {
          * Ask Ariadne to review any open request on the model the user picks,
          *     or stop asking (029). Authorship and GitHub review assignments do not
          *     restrict the ask. Asking starts one active goal for the review, with one
-         *     staffed task and no orchestrator, on the `pr-review` workflow: the model
-         *     must be ranked inside that workflow's band, else 400. Asking again keeps
+         *     staffed task and no orchestrator, in one `review` column that Ariadne
+         *     fixes: the model must be ranked inside that column's band, else 400. Asking again keeps
          *     the open goal and moves its pin and skills. The session waits while the
          *     request is a draft. A review of the user's own request posts as a
          *     comment; other reviews may request changes. The goal completes when the
@@ -4542,7 +4542,7 @@ export interface components {
         /**
          * @description The work Ariadne does on one pull request as a goal of its own: one active
          *     goal per request and operation, staffed by one task whose single column
-         *     runs on a workflow only that operation reads (029, 030).
+         *     Ariadne fixes for that operation, on no workflow of the catalog (029, 030).
          * @enum {string}
          */
         PrOperation: "review" | "babysit";
@@ -5563,7 +5563,6 @@ export interface components {
              * @example develop-review-merge
              */
             name: string;
-            operation?: components["schemas"]["PrOperation"] | null;
             /** @description `document`, parsed into its columns. */
             steps: components["schemas"]["WorkflowStepDto"][];
             updated_at: string;
