@@ -31,7 +31,7 @@ import { type SessionAttention, SessionAttentionBadge } from "@/features/session
 import { cn } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
 import { useSourceHost } from "./source-host"
-import { StepTrack } from "./step-track"
+import { StepTrack, stepDotsWidth } from "./step-track"
 import { findStep, stepTitle } from "./steps"
 import { cardBorder, cardHints, cardState, repeatsCard } from "./task-card"
 
@@ -44,12 +44,21 @@ const NOT_A_STOP = -1
  * hide. A hidden cell leaves its `auto` column empty, so the column takes no
  * width; there is no column gap, and each cell past the title pads itself.
  *
- * Only the token column has a fixed floor, the widest figure, so the tracks
- * fit any board. The title keeps a quarter of the board up to 6rem, and the
- * badges and the steps give up their width before it.
+ * The badges, the dots and the tokens never shrink below their content: the
+ * badges and the tokens are `auto` and `max-content`, and the step column is
+ * at least `--board-dots` wide, the dots of the longest workflow on the board
+ * ({@link boardDotsWidth}). The title alone gives up its width, and ends in an
+ * ellipsis. On the narrowest board the app draws (33.9rem, a pinned
+ * inspector beside it) all four fit with the widest figure and badges.
  */
 export const BOARD_COLUMNS =
-  "grid grid-cols-[minmax(min(6rem,25%),1fr)_minmax(0,auto)_minmax(0,auto)_minmax(0,12rem)_max-content_auto_auto] @max-[60rem]/board:grid-cols-[minmax(min(6rem,25%),1fr)_minmax(0,auto)_minmax(0,auto)_minmax(0,9.5rem)_max-content_auto_auto] gap-x-0"
+  "grid grid-cols-[minmax(0,1fr)_auto_auto_minmax(var(--board-dots,0rem),12rem)_max-content_auto_auto] @max-[60rem]/board:grid-cols-[minmax(0,1fr)_auto_auto_minmax(var(--board-dots,0rem),9.5rem)_max-content_auto_auto] gap-x-0"
+
+/** The step column's floor for a board whose longest workflow has `steps` steps, in rem. */
+export function boardDotsWidth(steps: number): number {
+  // The cell's own left padding, `pl-3`, comes on top of the dots.
+  return steps === 0 ? 0 : stepDotsWidth(steps) + 0.75
+}
 
 /** The container whose width the columns follow: the board, not the window. */
 export const BOARD_CONTAINER = "@container/board"
@@ -62,6 +71,11 @@ export const TOKEN_CELL = "col-start-5 pl-3 whitespace-nowrap"
 
 /** Step names hide first: the board's widest width that still drops them. */
 const STEP_NAMES = "@max-[60rem]/board:[&_[data-step-name]]:hidden"
+/**
+ * On the board, only the current step gives up width, by its name: the other
+ * steps keep their dots whole, which the column's floor makes room for.
+ */
+const STEP_DOTS = "[&_li:not([aria-current])]:shrink-0"
 const ACTIVITY_CELL = "col-start-7 pl-3 @max-[54rem]/board:hidden"
 /** The host hides with its column, on a row and on a goal's own line alike. */
 export const HOST_HIDES = "@max-[48rem]/board:hidden"
@@ -142,10 +156,7 @@ export function TaskRow({
         >
           {task.title}
         </span>
-        <span
-          data-column="state"
-          className="col-start-2 flex max-w-[8.75rem] min-w-0 items-center gap-1 overflow-hidden pl-3"
-        >
+        <span data-column="state" className="col-start-2 flex items-center gap-1 pl-3">
           {flagged && (
             <SessionAttentionBadge size="sm" attention={flagged} hintTabIndex={NOT_A_STOP} />
           )}
@@ -178,7 +189,11 @@ export function TaskRow({
             which step names the track draws and which steps it folds. */}
         <span
           data-column="steps"
-          className={cn("col-start-4 @container flex min-w-0 items-center pl-3", STEP_NAMES)}
+          className={cn(
+            "col-start-4 @container flex min-w-0 items-center pl-3",
+            STEP_NAMES,
+            STEP_DOTS,
+          )}
         >
           <StepTrack task={task} steps={steps} />
         </span>

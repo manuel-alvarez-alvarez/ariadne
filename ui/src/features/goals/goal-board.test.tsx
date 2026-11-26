@@ -2,7 +2,7 @@
 import { act, fireEvent, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
-import type { AttentionListDto, GoalDto, SessionDto, TaskDto } from "@/api"
+import type { AttentionListDto, GoalDto, SessionDto, TaskDto, WorkflowStepDto } from "@/api"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { aGoal, aSession, aSessionPage, aTask, aWorkflow } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
@@ -157,10 +157,19 @@ it("puts the token figures in one column, the goal's total over its rows', never
   expect(list.className).toContain("max-content")
 })
 
-it("fits its tracks to any board width: only the token column has a fixed floor", async () => {
-  const goal = aGoal({ title: GOAL_TITLE })
-  stubDaemon([aTask({ goal_id: goal.id, title: "Fit" })])
-  board([goal])
+it("keeps the state, the step dots and the tokens whole: only the title gives up its width", async () => {
+  const step = (id: string) => ({ ...(aWorkflow().steps[0] as WorkflowStepDto), id, title: id })
+  const short = aGoal({ id: "g-short", title: "Short", steps: ["a", "b", "c"].map(step) })
+  const long = aGoal({
+    id: "g-long",
+    title: "Long",
+    steps: ["a", "b", "c", "d", "e", "f", "g"].map(step),
+  })
+  stubDaemon([
+    aTask({ id: "t1", goal_id: short.id, title: "Fit", status: "failed", reason: "boom" }),
+    aTask({ id: "t2", goal_id: long.id, title: "Fold" }),
+  ])
+  board([short, long])
 
   const row = (await screen.findByText("Fit")).closest("[data-task-row]") as HTMLElement
   const list = row.closest("[role=group]")?.parentElement as HTMLElement
@@ -170,15 +179,33 @@ it("fits its tracks to any board width: only the token column has a fixed floor"
   for (const template of templates) {
     const tracks = template.split("_")
     expect(tracks).toHaveLength(7)
-    // The fifth is the token column: as wide as its widest figure.
+    // The title alone can shrink to nothing.
+    expect(tracks[0]).toBe("minmax(0,1fr)")
+    // The badges take their content's width, and the dots their floor.
+    expect(tracks[1]).toBe("auto")
+    expect(tracks[3]).toMatch(/^minmax\(var\(--board-dots,0rem\),/)
+    // The tokens take the widest figure.
     expect(tracks[4]).toBe("max-content")
-    // The title keeps a share of the board, so it shrinks with the board.
-    expect(tracks[0]).toBe("minmax(min(6rem,25%),1fr)")
-    // The others can shrink to nothing; `auto` holds only a column that hides.
-    for (const track of tracks.slice(1, 4))
-      expect(track === "auto" || track.startsWith("minmax(0,")).toBe(true)
-    expect(tracks.slice(5)).toEqual(["auto", "auto"])
   }
+  // The floor is the dots of the longest workflow: seven steps fold to the
+  // current one and its neighbours, 3 × (0.875 dot + 1.25 arrow and gaps),
+  // the ellipsis (1) and the cell's padding (0.75).
+  expect(list.style.getPropertyValue("--board-dots")).toBe("8.125rem")
+  // Nothing in the state cell clips its badges.
+  const state = row.querySelector("[data-column=state]") as HTMLElement
+  expect(state.className).not.toMatch(/overflow-hidden|max-w-|min-w-0|truncate/)
+})
+
+it("sizes the dots floor to an unfolded workflow of five steps", async () => {
+  const step = (id: string) => ({ ...(aWorkflow().steps[0] as WorkflowStepDto), id, title: id })
+  const goal = aGoal({ title: GOAL_TITLE, steps: ["a", "b", "c", "d", "e"].map(step) })
+  stubDaemon([aTask({ goal_id: goal.id, title: "Five" })])
+  board([goal])
+
+  const row = (await screen.findByText("Five")).closest("[data-task-row]") as HTMLElement
+  const list = row.closest("[role=group]")?.parentElement as HTMLElement
+  // 5 × 0.875 dots, 4 × 1.25 arrows and gaps, 0.75 padding.
+  expect(list.style.getPropertyValue("--board-dots")).toBe("10.125rem")
 })
 
 it("hides a goal's host on its goal line with the host column", async () => {

@@ -14,7 +14,14 @@
  */
 
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import { type ReactNode, type RefObject, useEffect, useMemo, useRef } from "react"
+import {
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react"
 import { Link } from "react-router-dom"
 
 import { type GoalDto, type Host, type HostRow, type TaskDto, useHostLists } from "@/api"
@@ -29,6 +36,7 @@ import {
   BOARD_COLUMNS,
   BOARD_CONTAINER,
   BOARD_LINE,
+  boardDotsWidth,
   HOST_HIDES,
   TaskRow,
   TOKEN_CELL,
@@ -162,6 +170,12 @@ export function GoalBoard({
       groupOrder(group, attentionByHost.get(groupHost(group)) ?? NO_BOARD_ATTENTION),
     )
   }, [goals, byGoal, noGoal, attentionByHost])
+  // The step column is as wide as the dots of the longest workflow it shows.
+  const longestWorkflow = Math.max(
+    0,
+    ...goals.map((goal) => goal.steps.length),
+    ...noGoal.map((row) => row.steps?.length ?? 0),
+  )
   const total =
     goals.reduce(
       (count, goal) =>
@@ -220,7 +234,10 @@ export function GoalBoard({
           <div className="sticky top-0 z-30 bg-background px-5 py-2">
             <h2 className="text-sm font-semibold">Tasks ({total})</h2>
           </div>
-          <div className={BOARD_LIST}>
+          <div
+            className={BOARD_LIST}
+            style={{ "--board-dots": `${boardDotsWidth(longestWorkflow)}rem` } as CSSProperties}
+          >
             {groups.map((group) => {
               if (group.kind === "task") {
                 const { row } = group

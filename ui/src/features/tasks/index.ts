@@ -15,6 +15,7 @@ export {
   BOARD_COLUMNS,
   BOARD_CONTAINER,
   BOARD_LINE,
+  boardDotsWidth,
   HOST_HIDES,
   TaskRow,
   TOKEN_CELL,
