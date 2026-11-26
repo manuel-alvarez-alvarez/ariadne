@@ -11,6 +11,8 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/acp_items.rs
   - crates/ariadne-daemon/src/http/classify.rs
+  - crates/ariadne-daemon/tests/it/events.rs
+  - crates/ariadne-daemon/tests/it/metrics.rs
   - crates/ariadne-daemon/tests/it/subagents.rs
   - crates/ariadne-daemon/src/acp_subagents.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
@@ -176,9 +178,9 @@ it leaves nothing to delete.
    turn, and it is stored then, once, whole —
    `agent_thought` or `agent_message` `{session_id, item_id, message_id,
    content, text}` — before whatever ended it. `content` holds each ACP
-   content block of the run, in order. A plain text chunk, with no field but
-   `type` and `text`, goes on with the plain text block before it, so a
-   streamed text is one block. `text` is the run's text alone. `message_id`
+   content block of the run, in order: one block for each chunk, as the
+   agent sent it, an empty text included. A run of empty chunks is stored
+   too. `text` is the run's text alone. `message_id`
    is the run's `messageId`, and is absent where the agent sent none. A
    content block larger than 1 MB is stored as a placeholder
    `{type, mime_type, size, omitted: true}`. Its size is the bytes of its
@@ -195,14 +197,23 @@ it leaves nothing to delete.
    `{session_id, item_id, text}`, with the `item_id` that the run's stored
    whole carries
    (`acp_items.rs::each_live_chunk_and_its_stored_whole_carry_one_item_id`).
+   On a relay (rule 19), the `item_id` comes from the launch and the output
+   frame of the run's first chunk, so a reconnect that replays the frame
+   stores the whole under the id its live chunks carried
+   (`acp_runtime.rs::reconnect_restores_offline_text_usage_and_an_answered_permission_without_repeating_input`).
+   A direct child's runs take a new id. The `item_id` of a
+   `user_prompt_submit` is its turn's id, which a reconnect keeps.
    No chunk is stored, and none reaches `/v1/events` or `/v1/events/stream`.
 7. Tool call updates are merged per `toolCallId`: every field an update sets
    replaces the one on record, `content` included. `pre_tool_use` carries
    the call as it opened, including its input. The daemon stores a
    non-terminal update of a running call as `tool_call_update`
    `{session_id, tool_call_id, acp}`, with the call merged so far, when
-   `Timeouts::tool_progress` (5 seconds) has passed since the call's last
-   stored event: its `pre_tool_use` or its last stored `tool_call_update`.
+   `Timeouts::tool_progress` (5 seconds) has passed since the store took the
+   call's last stored event: its `pre_tool_use` or its last stored
+   `tool_call_update`. The interval starts when the write ends, not when it
+   begins, so a slow write cannot let two updates into one interval
+   (`acp_items.rs::the_interval_starts_again_at_each_stored_update`).
    `GET /v1/events` lists it, and the console reads it from the store
    (`acp_items.rs::a_running_calls_progress_is_stored_once_its_interval_has_passed`).
    Inside that interval the update goes live to the console stream alone, in
@@ -224,15 +235,27 @@ it leaves nothing to delete.
    open when the agent ends — after a failed turn, a death or a kill whose
    grace ran out — is stored as `session_ended`, before the `session.error`
    and the `session_end`
-   (`::an_agent_that_ends_mid_call_abandons_it_as_session_ended`). A console
-   snapshot taken while a turn runs carries each open call, merged so far,
-   as a live `tool_call_update` after the stored events
-   (`::a_console_opened_during_a_call_reads_the_open_call`). Neither
-   `tool_call_update` nor `tool_call_abandoned` moves the session's status
-   or attention
-   (`classify.rs::tests::stored_progress_and_an_abandoned_call_move_nothing`).
-   The metrics read neither, and neither is an ended tool: only
-   `post_tool_use` reports `TurnReport::ToolEnded`. A child's calls carry
+   (`::an_agent_that_ends_mid_call_abandons_it_as_session_ended`). A call
+   stays open until its `tool_call_abandoned` is stored. A write that a kill
+   cuts off is tried again when the agent ends, with its first reason, and
+   the store keeps one event for each call: each one is stored once under
+   the call's own source in its launch
+   (`acp.rs::tests::a_call_whose_abandonment_was_cut_off_is_tried_again_as_it_was`,
+   `acp_recovery.rs::replaying_one_relay_effect_keeps_one_event_and_one_usage_record`).
+   A console snapshot taken while a turn runs carries each open call, merged
+   so far, as a live `tool_call_update` after the stored events
+   (`::a_console_opened_during_a_call_reads_the_open_call`). A call's state
+   changes, and its events are stored or published, under the turn lock a
+   snapshot reads it under: a snapshot never holds a call whose
+   `pre_tool_use` is not stored yet. Neither `tool_call_update` nor
+   `tool_call_abandoned` moves the session's status or attention
+   (`classify.rs::tests::stored_progress_and_an_abandoned_call_move_nothing`),
+   and neither stamps the activity clock a stall is measured from (009)
+   (`events.rs::stored_tool_progress_and_an_abandoned_call_leave_the_activity_clock`).
+   Neither counts in `ariadne.tool_calls`
+   (`metrics.rs::stored_tool_progress_and_abandoned_calls_count_no_tool_call`),
+   and neither is an ended tool: only `post_tool_use` reports
+   `TurnReport::ToolEnded`. A child's calls carry
    its `subagent` field on both (rule 15).
 8. A running turn is cancelled with ACP `session/cancel`, sent while the
    `session/prompt` it interrupts is still in flight. The response then ends
@@ -776,10 +799,19 @@ it leaves nothing to delete.
   `::a_content_block_over_one_megabyte_is_stored_as_a_placeholder`).
 - Each live chunk carries the `item_id` of its stored whole
   (`acp_items.rs::each_live_chunk_and_its_stored_whole_carry_one_item_id`).
-- A running call's progress is stored once its interval has passed, and goes
-  live alone inside it
+- A running call's progress is stored once its interval has passed, goes
+  live alone inside it, and the interval starts again at each stored update
   (`acp_items.rs::a_running_calls_progress_is_stored_once_its_interval_has_passed`,
-  `::a_running_calls_progress_inside_its_interval_is_not_stored`).
+  `::a_running_calls_progress_inside_its_interval_is_not_stored`,
+  `::the_interval_starts_again_at_each_stored_update`).
+- A replayed relay message keeps the `item_id` of its live chunks
+  (`acp_runtime.rs::reconnect_restores_offline_text_usage_and_an_answered_permission_without_repeating_input`).
+- A cut-off abandonment is tried again as it was
+  (`acp.rs::tests::a_call_whose_abandonment_was_cut_off_is_tried_again_as_it_was`).
+- Stored progress and an abandoned call leave the activity clock, and count
+  no tool call
+  (`events.rs::stored_tool_progress_and_an_abandoned_call_leave_the_activity_clock`,
+  `metrics.rs::stored_tool_progress_and_abandoned_calls_count_no_tool_call`).
 - A call that a turn leaves open is abandoned as `turn_ended`, `cancelled` or
   `session_ended`, and the session still goes idle on the `stop`
   (`acp_items.rs::a_turn_that_ends_with_open_calls_abandons_each`,

@@ -158,8 +158,9 @@ fn second_turn_kinds(events: &[Value]) -> Vec<&str> {
 }
 
 /// A stored message keeps each content block the agent sent, in order, with
-/// its `messageId`; the text field keeps the text alone. Streamed text is
-/// one block. A thought and a prompt carry their blocks the same way.
+/// its `messageId`, an empty or adjacent text block among them; the text
+/// field keeps the text alone. A thought and a prompt carry their blocks the
+/// same way.
 #[tokio::test]
 async fn a_stored_message_keeps_each_content_block_in_order_and_its_message_id() {
     let image = json!({"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgo="});
@@ -168,6 +169,7 @@ async fn a_stored_message_keeps_each_content_block_in_order_and_its_message_id()
             chunk("agent_thought_chunk", text("Let me look."), None),
             chunk("agent_message_chunk", text("Look "), Some("msg-1")),
             chunk("agent_message_chunk", text("at this:"), Some("msg-1")),
+            chunk("agent_message_chunk", text(""), Some("msg-1")),
             chunk("agent_message_chunk", image.clone(), Some("msg-1")),
             chunk("agent_message_chunk", text("Done."), Some("msg-1")),
         ]),
@@ -182,7 +184,13 @@ async fn a_stored_message_keeps_each_content_block_in_order_and_its_message_id()
     let message = *of_kind(&events, "agent_message").last().unwrap();
     assert_eq!(
         message["payload"]["content"],
-        json!([text("Look at this:"), image, text("Done.")]),
+        json!([
+            text("Look "),
+            text("at this:"),
+            text(""),
+            image,
+            text("Done.")
+        ]),
         "{message}"
     );
     assert_eq!(message["payload"]["text"], "Look at this:Done.");
@@ -241,11 +249,13 @@ async fn a_content_block_over_one_megabyte_is_stored_as_a_placeholder() {
     );
 }
 
-/// Each live chunk of a run carries the `item_id` its stored whole carries.
+/// Each live chunk of a run carries the `item_id` its stored whole carries,
+/// a run of one empty chunk included.
 #[tokio::test]
 async fn each_live_chunk_and_its_stored_whole_carry_one_item_id() {
     let t = Turned::start(
         json!([
+            chunk("agent_thought_chunk", text(""), None),
             chunk("agent_message_chunk", text("One "), None),
             chunk("agent_message_chunk", text("two."), None),
             {"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "Bash",
@@ -269,7 +279,22 @@ async fn each_live_chunk_and_its_stored_whole_carry_one_item_id() {
     let chunks = of_kind(&seen, "agent_message_chunk");
     assert_eq!(chunks.len(), 2, "{seen:?}");
     let whole = of_kind(&seen, "agent_message")[0];
-    assert_eq!(whole["payload"]["content"], json!([text("One two.")]));
+    assert_eq!(
+        whole["payload"]["content"],
+        json!([text("One "), text("two.")])
+    );
+    let empty = of_kind(&seen, "agent_thought_chunk");
+    let thought = of_kind(&seen, "agent_thought");
+    assert_eq!((empty.len(), thought.len()), (1, 1), "{seen:?}");
+    assert_eq!(thought[0]["payload"]["content"], json!([text("")]));
+    assert_eq!(
+        empty[0]["payload"]["item_id"],
+        thought[0]["payload"]["item_id"]
+    );
+    assert_ne!(
+        thought[0]["payload"]["item_id"],
+        whole["payload"]["item_id"]
+    );
     for chunk in chunks {
         assert_eq!(
             chunk["payload"]["item_id"], whole["payload"]["item_id"],
@@ -360,6 +385,78 @@ async fn a_running_calls_progress_inside_its_interval_is_not_stored() {
             "stop"
         ]
     );
+}
+
+/// The interval starts again at each stored update: right after one is
+/// stored, the next update goes live alone, and a later one is stored once a
+/// whole interval has passed. The stub sends one update each time the test
+/// asks, until a second one is stored.
+#[tokio::test]
+async fn the_interval_starts_again_at_each_stored_update() {
+    let trigger = tempfile::tempdir().unwrap();
+    let file = trigger.path().join("next");
+    let progress: Vec<Value> = (0..2000)
+        .map(|n| {
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "call-9",
+                   "status": "in_progress",
+                   "content": [{"type": "content", "content": text(&format!("step {n}"))}]})
+        })
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    let mut scripted = second_turn(
+        dir.path(),
+        json!([{"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "Bash",
+                "status": "pending", "rawInput": {"command": "cargo build"}}]),
+        true,
+    );
+    scripted["prompts"][1]["updates_on_trigger"] =
+        json!({"file": file.display().to_string(), "updates": progress});
+    let stub = stub_acp_agent(dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .timeouts(with_tool_progress(RUNS_OUT))
+        .await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned("stub:test-model").await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the first turn to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let t = Turned {
+        dir,
+        stub,
+        h,
+        session,
+    };
+    t.begin().await;
+    let steps = |events: &[Value]| -> Vec<u64> {
+        of_kind(events, "tool_call_update")
+            .iter()
+            .map(|e| {
+                let text = e["payload"]["acp"]["content"][0]["content"]["text"]
+                    .as_str()
+                    .unwrap();
+                text.trim_start_matches("step ").parse().unwrap()
+            })
+            .collect()
+    };
+    eventually(TIMEOUT, "two stored updates", || async {
+        if !file.exists() {
+            std::fs::write(&file, "1").unwrap();
+        }
+        steps(&t.stored().await).len() >= 2
+    })
+    .await;
+
+    let stored = steps(&t.stored().await);
+    assert_eq!(stored.len(), 2, "{stored:?}");
+    assert!(
+        stored[1] > stored[0] + 1,
+        "the update after a stored one is inside the new interval: {stored:?}"
+    );
+    t.release();
+    t.ended().await;
 }
 
 /// A turn that ends with calls still open stores one `tool_call_abandoned`

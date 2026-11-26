@@ -855,3 +855,61 @@ async fn a_requested_switch_counts_the_models_left_and_entered() {
         1.0
     );
 }
+
+/// A tool call counts once, at its opening, whatever the daemon stores about
+/// it after: stored progress and the end of a call the turn left open add
+/// nothing to `ariadne.tool_calls` (021, rule 7).
+#[tokio::test]
+async fn stored_tool_progress_and_abandoned_calls_count_no_tool_call() {
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "updates": [
+            {"sessionUpdate": "tool_call", "toolCallId": "call-1", "name": "Grep",
+             "title": "Grep fn", "status": "pending"},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "in_progress"},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "in_progress"},
+            {"sessionUpdate": "tool_call", "toolCallId": "call-2", "name": "Glob",
+             "title": "Glob *.rs", "status": "pending"},
+        ],
+    }]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .timeouts(ariadne_daemon::timeouts::Timeouts {
+            cancel_grace: RUNS_OUT,
+            turn_end_grace: RUNS_OUT,
+            tool_progress: std::time::Duration::ZERO,
+            ..ariadne_daemon::timeouts::Timeouts::default()
+        })
+        .await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned("stub:test-model").await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the turn to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    for kind in ["tool_call_update", "tool_call_abandoned"] {
+        assert_eq!(
+            h.store
+                .count_session_events(&session.id, kind)
+                .await
+                .unwrap(),
+            2,
+            "{kind}"
+        );
+    }
+    let model = session.model.as_str();
+    for tool in ["Grep", "Glob"] {
+        assert_eq!(
+            h.metric(
+                "ariadne.tool_calls",
+                &[("tool_name", tool), ("model", model)]
+            )
+            .await,
+            1.0,
+            "{tool}"
+        );
+    }
+}

@@ -11,7 +11,9 @@
 //! (`wait_for`) a test holds the turn open on after its updates went out,
 //! during which a `session/cancel` ends the turn as `cancelled`, with the
 //! turn's usage, unless `ignore_cancel` says otherwise, and during which
-//! `updates_when` sends more updates once a file exists, `new_updates` sends
+//! `updates_when` sends more updates once a file exists, `updates_on_trigger`
+//! sends its next update each time its file appears and removes the file,
+//! `new_updates` sends
 //! after `session/new`, and `between_turn_updates` sends once a test creates
 //! its marker file — an update that names `as_session` goes out under that
 //! session id, a subagent's, `updates_first` goes out before the turn's
@@ -645,10 +647,16 @@ def respond(request):
             # `updates_when` names a file and the updates to send once it
             # exists, the way an agent reports a tool call ending mid-turn.
             late = turn.get("updates_when")
+            # `updates_on_trigger`: one update each time the test creates
+            # the file, which the stub removes as it sends.
+            trigger = turn.get("updates_on_trigger")
             while not os.path.exists(wait_for):
                 if late and os.path.exists(late["file"]):
                     send_updates(sid, late.get("updates", []))
                     late = None
+                if trigger and trigger["updates"] and os.path.exists(trigger["file"]):
+                    os.remove(trigger["file"])
+                    send_updates(sid, [trigger["updates"].pop(0)])
                 if cancelled_meanwhile() and not turn.get("ignore_cancel"):
                     stop_reason = "cancelled"
                     break

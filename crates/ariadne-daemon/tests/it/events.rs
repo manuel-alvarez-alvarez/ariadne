@@ -1449,3 +1449,42 @@ async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
     assert_eq!(events.len(), 1, "the event is recorded, payload and all");
     assert_eq!(events[0].kind, "stop");
 }
+
+/// A running call's stored progress and the end the daemon stores for a
+/// call a turn left open are no word from the agent's turn: neither stamps
+/// the activity clock, moves the status or clears attention (021, rule 7).
+/// A tool call's opening still stamps it.
+#[tokio::test]
+async fn stored_tool_progress_and_an_abandoned_call_leave_the_activity_clock() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let session = h.agent_session(&cast, "develop").await;
+    h.set_status(&session, SessionStatus::Running).await;
+    h.store
+        .set_session_attention(&session.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+
+    for kind in ["tool_call_update", "tool_call_abandoned"] {
+        h.ingest(
+            &session,
+            kind,
+            serde_json::json!({"session_id": "agent-1", "tool_call_id": "call-1",
+                               "reason": "cancelled", "acp": {"title": "Bash"}}),
+        )
+        .await;
+    }
+    let row = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.last_activity_at, None);
+    assert_eq!(row.status(), SessionStatus::Running);
+    assert_eq!(row.attention_reason(), Some(AttentionReason::Stalled));
+
+    h.ingest(
+        &session,
+        "pre_tool_use",
+        serde_json::json!({"session_id": "agent-1", "tool_name": "Bash"}),
+    )
+    .await;
+    let row = h.store.get_session(&session.id).await.unwrap();
+    assert!(row.last_activity_at.is_some());
+}

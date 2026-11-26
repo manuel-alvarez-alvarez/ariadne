@@ -20,7 +20,7 @@ use common::acp::{
     StubAcpAgent, discovery_accepted, discovery_settled, pid_is_alive, registry_home,
     registry_home_as, script, stub_acp_agent,
 };
-use common::{Cast, Harness, TIMEOUT, eventually, harness, probe, sh};
+use common::{Cast, Harness, TIMEOUT, eventually, eventually_some, harness, probe, sh};
 
 /// A task whose author runs on the registry agent `stub`, in a real repo,
 /// with an effort pinned so the launch has one to set.
@@ -1467,6 +1467,16 @@ async fn reconnect_restores_offline_text_usage_and_an_answered_permission_withou
             })
     })
     .await;
+    // The id the old daemon gave the message it was writing, as a console
+    // read it.
+    let live_item = eventually_some(TIMEOUT, "the text so far in the console", || async {
+        let snapshot: Vec<Value> = h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+        snapshot
+            .iter()
+            .find(|e| e["kind"] == "agent_message_chunk" && e["payload"]["text"] == "before ")
+            .map(|e| e["payload"]["item_id"].clone())
+    })
+    .await;
     h.launcher.acp.detach_relays().await;
     std::fs::write(&late, "1").unwrap();
     let journal = h
@@ -1505,6 +1515,10 @@ async fn reconnect_restores_offline_text_usage_and_an_answered_permission_withou
         .collect();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["text"], "before offline");
+    assert_eq!(
+        messages[0]["item_id"], live_item,
+        "the replayed message keeps the id its live chunks carried"
+    );
     assert_eq!(
         events
             .iter()

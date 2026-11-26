@@ -433,8 +433,7 @@ struct Run {
     /// session's own agent.
     subagent: Option<Value>,
     text: String,
-    /// Each ACP content block of the run, in order. A plain text chunk goes
-    /// on with the text block before it, so a streamed text is one block.
+    /// Each ACP content block of the run, in order: one for each chunk.
     content: Vec<Value>,
 }
 
@@ -452,39 +451,15 @@ impl Run {
             }
     }
 
-    /// Add one chunk's content block to the run. An empty text adds nothing.
+    /// Add one chunk's content block to the run, as the agent sent it.
     fn push(&mut self, block: &Value) {
-        let text = block.get("text").and_then(Value::as_str);
-        if is_plain_text(block) {
-            let text = text.unwrap_or_default();
-            if text.is_empty() {
-                return;
-            }
-            self.text.push_str(text);
-            match self.content.last_mut() {
-                Some(last) if is_plain_text(last) => {
-                    let joined = format!("{}{text}", last["text"].as_str().unwrap_or_default());
-                    last["text"] = Value::String(joined);
-                }
-                _ => self.content.push(json!({"type": "text", "text": text})),
-            }
-            return;
-        }
-        if let Some(text) = text.filter(|_| block["type"] == "text") {
+        if block["type"] == "text"
+            && let Some(text) = block["text"].as_str()
+        {
             self.text.push_str(text);
         }
         self.content.push(block.clone());
     }
-}
-
-/// Whether a content block is text and nothing else: no annotations or
-/// metadata that a join with the text beside it would lose.
-fn is_plain_text(block: &Value) -> bool {
-    block["type"] == "text"
-        && block.get("text").is_some_and(Value::is_string)
-        && block
-            .as_object()
-            .is_some_and(|fields| fields.keys().all(|key| key == "type" || key == "text"))
 }
 
 /// The largest content block stored whole, in bytes (021).
@@ -555,8 +530,15 @@ struct OpenToolCall {
     /// Its place among the calls of the turn.
     order: u64,
     /// When the call's last event was stored: its `pre_tool_use` or its
-    /// last stored `tool_call_update`. None where nothing about it is stored.
+    /// last stored `tool_call_update`, once the store took it. None where
+    /// nothing about it is stored.
     stored_at: Option<Instant>,
+    /// What tells this call apart in the store: the source its abandonment
+    /// is stored once under, by any retry (`EventSink::emit_once`).
+    identity: String,
+    /// The reason the call is being abandoned for, once the daemon started
+    /// to store its end. A retry stores it under the same reason.
+    abandoning: Option<&'static str>,
 }
 
 impl OpenToolCall {
@@ -630,19 +612,22 @@ impl Turn {
         open
     }
 
-    /// Close every open call, and hand each back as the
-    /// `tool_call_abandoned` event to store, in the order they opened.
-    fn abandon_tools(&mut self, reason: &str) -> Vec<Value> {
+    /// The next open call to abandon, in the order they opened, and the
+    /// `tool_call_abandoned` event to store for it. The call stays open until
+    /// [`Self::abandoned`] closes it, so a write that never finished is tried
+    /// again, with the reason it was first tried for.
+    fn next_abandoned(&mut self, reason: &'static str) -> Option<(String, String, Value)> {
         let session = json!(self.agent_session);
-        let mut open: Vec<OpenToolCall> = self.tools.drain().map(|(_, call)| call).collect();
-        open.sort_by_key(|call| call.order);
-        open.into_iter()
-            .map(|call| {
-                let mut payload = call.progress(&session);
-                payload["reason"] = json!(reason);
-                payload
-            })
-            .collect()
+        let (key, call) = self.tools.iter_mut().min_by_key(|(_, call)| call.order)?;
+        let reason = *call.abandoning.get_or_insert(reason);
+        let mut payload = call.progress(&session);
+        payload["reason"] = json!(reason);
+        Some((key.clone(), call.identity.clone(), payload))
+    }
+
+    /// Close a call whose abandonment is stored.
+    fn abandoned(&mut self, key: &str) {
+        self.tools.remove(key);
     }
 
     /// End the run of text being written, and hand it back as the event to
@@ -2330,10 +2315,7 @@ impl AcpRuntime {
             }
         }
         // A call still open when the agent ends ends with it.
-        let abandoned = turn.lock().await.abandon_tools("session_ended");
-        for payload in abandoned {
-            sink.emit("tool_call_abandoned", payload).await;
-        }
+        abandon_open_calls(&turn, &sink, "session_ended").await;
         if let Some(Err(error)) = &outcome {
             tracing::warn!(session = %launch.session_id, error = %format!("{error:#}"), "ACP agent failed");
             let protocol = error
@@ -2631,19 +2613,50 @@ impl EventSink {
     /// moved past) — for a caller that needs to correlate something with
     /// it (`crate::failure_diagnosis`, with a `session.error`).
     async fn emit(&self, kind: &str, payload: Value) -> Option<String> {
+        let once = self.effect.as_ref().map(|effect| {
+            (
+                effect.source.clone(),
+                effect.ordinal.fetch_add(1, Ordering::SeqCst),
+            )
+        });
+        self.record(kind, payload, once).await
+    }
+
+    /// Store an event at most once under `source` in this launch, however
+    /// often it is tried: what a retry of a write that may have landed uses.
+    async fn emit_once(&self, kind: &str, payload: Value, source: &str) -> Option<String> {
+        self.record(kind, payload, Some((source.to_string(), 0)))
+            .await
+    }
+
+    /// An id that stays the same when a relay replays the output frame
+    /// being handled (021, rule 19): the frame's own source, else a new id.
+    fn identity(&self) -> String {
+        match &self.effect {
+            Some(effect) => format!("{}:{}", self.launch_id, effect.source),
+            None => new_id(),
+        }
+    }
+
+    async fn record(
+        &self,
+        kind: &str,
+        payload: Value,
+        once: Option<(String, u64)>,
+    ) -> Option<String> {
         let request = IngestEventRequest {
             session_id: self.session_id.clone(),
             launch: Some(self.launch_id.clone()),
             kind: kind.to_string(),
             payload,
         };
-        let recorded = match &self.effect {
-            Some(effect) => {
+        let recorded = match &once {
+            Some((source, ordinal)) => {
                 crate::http::ingest_relay_event(
                     &self.runtime.inner.store,
                     &request,
-                    &effect.source,
-                    effect.ordinal.fetch_add(1, Ordering::SeqCst),
+                    source,
+                    *ordinal,
                 )
                 .await
             }
@@ -2930,7 +2943,7 @@ impl RuntimeIncoming {
                     }
                     let run = turn.text.get_or_insert_with(|| Run {
                         kind: whole,
-                        item_id: new_id(),
+                        item_id: self.sink.identity(),
                         message_id: None,
                         subagent: subagent.cloned(),
                         text: String::new(),
@@ -2962,33 +2975,38 @@ impl RuntimeIncoming {
                     )
                     .await;
             }
+            // A call's state and what is published about it change under
+            // the one turn lock a console snapshot reads it under, so a
+            // console never reads a call before its opener is stored, nor
+            // its progress twice.
             Some("tool_call") => {
                 self.end_text().await;
                 let (id, call) = tool_call_of(&update);
-                {
-                    let mut turn = self.turn.lock().await;
-                    let order = turn.next_tool;
-                    turn.next_tool += 1;
-                    turn.tools.insert(
-                        tool_key(&id, subagent),
-                        OpenToolCall {
-                            call: call.clone(),
-                            id: id.clone(),
-                            subagent: subagent.cloned(),
-                            order,
-                            // The opening counts as the call's first stored
-                            // event: a call that ends within the interval
-                            // stores no progress.
-                            stored_at: Some(Instant::now()),
-                        },
-                    );
-                }
-                self.sink
+                let mut turn = self.turn.lock().await;
+                let stored = self
+                    .sink
                     .emit(
                         "pre_tool_use",
                         tagged(tool_payload(session_id, &call), subagent),
                     )
                     .await;
+                let order = turn.next_tool;
+                turn.next_tool += 1;
+                turn.tools.insert(
+                    tool_key(&id, subagent),
+                    OpenToolCall {
+                        call,
+                        id,
+                        subagent: subagent.cloned(),
+                        order,
+                        // The opening counts as the call's first stored
+                        // event: a call that ends within the interval stores
+                        // no progress.
+                        stored_at: stored.map(|_| Instant::now()),
+                        identity: self.sink.identity(),
+                        abandoning: None,
+                    },
+                );
             }
             Some("tool_call_update") => {
                 self.end_text().await;
@@ -2996,60 +3014,57 @@ impl RuntimeIncoming {
                 let terminal = terminal_tool_status(&update);
                 let key = tool_key(&id, subagent);
                 let interval = self.sink.runtime.inner.timeouts.tool_progress;
-                let (merged, store) = {
-                    let mut turn = self.turn.lock().await;
-                    let order = turn.next_tool;
-                    let call = turn
-                        .tools
-                        .entry(key.clone())
-                        .or_insert_with(|| OpenToolCall {
-                            call: json!({"toolCallId": id}),
-                            id: id.clone(),
-                            subagent: subagent.cloned(),
-                            order,
-                            stored_at: None,
-                        });
-                    merge_tool_call(&mut call.call, &update);
-                    // A running call's progress is stored at most once per
-                    // interval since the call's last stored event (021).
-                    let store = !terminal
-                        && call
-                            .stored_at
-                            .is_none_or(|stored| stored.elapsed() >= interval);
-                    if store {
-                        call.stored_at = Some(Instant::now());
-                    }
-                    let merged = call.call.clone();
-                    let opened = call.order == order;
-                    if opened {
-                        turn.next_tool += 1;
-                    }
-                    if terminal {
-                        turn.tools.remove(&key);
-                    }
-                    (merged, store)
-                };
+                let mut turn = self.turn.lock().await;
+                let order = turn.next_tool;
+                let identity = self.sink.identity();
+                let call = turn
+                    .tools
+                    .entry(key.clone())
+                    .or_insert_with(|| OpenToolCall {
+                        call: json!({"toolCallId": id}),
+                        id: id.clone(),
+                        subagent: subagent.cloned(),
+                        order,
+                        stored_at: None,
+                        identity,
+                        abandoning: None,
+                    });
+                merge_tool_call(&mut call.call, &update);
+                // A running call's progress is stored at most once per
+                // interval, counted from when the store took the call's last
+                // stored event (021).
+                let due = call
+                    .stored_at
+                    .is_none_or(|stored| stored.elapsed() >= interval);
+                let merged = call.call.clone();
+                let opened = call.order == order;
+                if opened {
+                    turn.next_tool += 1;
+                }
                 if terminal {
+                    turn.tools.remove(&key);
                     let payload = tagged(completed_tool_payload(session_id, &merged), subagent);
                     let name = payload["tool_name"]
                         .as_str()
                         .unwrap_or_default()
                         .to_string();
                     self.sink.emit("post_tool_use", payload).await;
+                    drop(turn);
                     report(&self.reports, TurnReport::ToolEnded(name));
-                } else {
-                    // A stored update reaches the console from the store, so
-                    // it does not go live as well.
-                    let payload = tagged(
-                        json!({"session_id": session_id, "tool_call_id": id, "acp": merged}),
-                        subagent,
-                    );
-                    match store {
-                        true => {
-                            self.sink.emit("tool_call_update", payload).await;
-                        }
-                        false => self.sink.emit_live("tool_call_update", payload).await,
-                    }
+                    return Ok(());
+                }
+                // A stored update reaches the console from the store, so it
+                // does not go live as well.
+                let payload = tagged(
+                    json!({"session_id": session_id, "tool_call_id": id, "acp": merged}),
+                    subagent,
+                );
+                if !due {
+                    self.sink.emit_live("tool_call_update", payload).await;
+                } else if self.sink.emit("tool_call_update", payload).await.is_some()
+                    && let Some(call) = turn.tools.get_mut(&key)
+                {
+                    call.stored_at = Some(Instant::now());
                 }
             }
             Some("usage_update") => {
@@ -4114,7 +4129,8 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
                 json!({
                     "session_id": session_id,
                     "prompt": full,
-                    "item_id": new_id(),
+                    // The turn's own id, which a relay reconnect keeps.
+                    "item_id": turn_id,
                     "content": stored_content(&[json!({"type": "text", "text": full})]),
                     "text": prompt.text,
                     "source": prompt.source.as_str(),
@@ -4178,9 +4194,7 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
                 Some("cancelled") => "cancelled",
                 _ => "turn_ended",
             };
-            for payload in turn.abandon_tools(reason) {
-                rpc.sink.emit("tool_call_abandoned", payload).await;
-            }
+            abandon_calls(&mut turn, &rpc.sink, reason).await;
         }
         turn.running = false;
     }
@@ -4369,6 +4383,32 @@ fn adapter_usage(usage: &Value, read_field: &str) -> Option<TokenUsage> {
 /// message it came in.
 /// Where an open call is kept in the turn: by its `toolCallId`, under the
 /// child's id for a child's call, so that two agents' ids never meet.
+/// Store one `tool_call_abandoned` for each call still open, in the order
+/// they opened, under the turn lock the caller holds. Each call closes once
+/// its event is stored; a call whose write was cut off stays open, and its
+/// retry is stored once (021, rule 7).
+async fn abandon_calls(turn: &mut Turn, sink: &EventSink, reason: &'static str) {
+    while let Some((key, identity, payload)) = turn.next_abandoned(reason) {
+        sink.emit_once(
+            "tool_call_abandoned",
+            payload,
+            &format!("tool_call_abandoned:{identity}"),
+        )
+        .await;
+        turn.abandoned(&key);
+    }
+}
+
+/// [`abandon_calls`], taking the turn lock itself.
+async fn abandon_open_calls(
+    turn: &tokio::sync::Mutex<Turn>,
+    sink: &EventSink,
+    reason: &'static str,
+) {
+    let mut turn = turn.lock().await;
+    abandon_calls(&mut turn, sink, reason).await;
+}
+
 fn tool_key(id: &str, subagent: Option<&Value>) -> String {
     match subagent.and_then(|subagent| subagent["id"].as_str()) {
         Some(child) => format!("{child}/{id}"),
@@ -4832,6 +4872,7 @@ fn save_relay_metadata(path: &Path, value: &impl serde::Serialize) -> Result<()>
 
 #[cfg(test)]
 mod tests {
+    use super::{OpenToolCall, Turn};
     use super::{
         acp_error_detail, apply_agent_launch_environment, approved_option, completed_tool_payload,
         exhausted_reason, metric_tool_name_of, permission_signature, usage_for_prompt_response,
@@ -4839,6 +4880,45 @@ mod tests {
 
     use ariadne_core::{Seat, TokenUsage};
     use serde_json::json;
+
+    /// An open call in a turn, as the dispatcher records it.
+    fn open_call(id: &str, order: u64) -> OpenToolCall {
+        OpenToolCall {
+            call: json!({"toolCallId": id}),
+            id: id.to_string(),
+            subagent: None,
+            order,
+            stored_at: None,
+            identity: format!("opened-{id}"),
+            abandoning: None,
+        }
+    }
+
+    /// A call whose abandonment was cut off before it was stored stays open,
+    /// and is tried again under the same reason and the same identity, so
+    /// the store keeps one end for it (021, rule 7).
+    #[test]
+    fn a_call_whose_abandonment_was_cut_off_is_tried_again_as_it_was() {
+        let mut turn = Turn::default();
+        turn.tools.insert("b".into(), open_call("b", 1));
+        turn.tools.insert("a".into(), open_call("a", 0));
+
+        let (key, identity, payload) = turn.next_abandoned("cancelled").unwrap();
+        assert_eq!((key.as_str(), identity.as_str()), ("a", "opened-a"));
+        assert_eq!(payload["reason"], "cancelled");
+        // The write never finished: nothing closed the call.
+        let (key, identity, payload) = turn.next_abandoned("session_ended").unwrap();
+        assert_eq!((key.as_str(), identity.as_str()), ("a", "opened-a"));
+        assert_eq!(payload["reason"], "cancelled");
+        assert_eq!(payload["tool_call_id"], "a");
+        turn.abandoned(&key);
+
+        let (key, _, payload) = turn.next_abandoned("session_ended").unwrap();
+        assert_eq!(key, "b");
+        assert_eq!(payload["reason"], "session_ended");
+        turn.abandoned(&key);
+        assert!(turn.next_abandoned("session_ended").is_none());
+    }
 
     #[test]
     fn opencode_config_content_matches_the_acp_mcp_entry() {
