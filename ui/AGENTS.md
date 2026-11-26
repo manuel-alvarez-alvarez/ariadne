@@ -171,7 +171,7 @@ src/
     ui/            shadcn/ui primitives
   features/
     command-palette/ ⌘K: search over every entity, plus the actions
-    goals/         the goals board (swimlanes, attention strip), the goal panel,
+    goals/         the goals board (task rows, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, steps, diff, sessions, history
     dashboard/     the Dashboards screen's data layer: the dashboard picker's list,

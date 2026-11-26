@@ -113,10 +113,24 @@ Merge main into published PR branches and push normally. Never rebase their publ
 Never force-push main. Require current GitHub CI before a GitHub squash merge.
 Other repositories retain their explicit landing policies.
 
-On the desktop Goals board, each goal has one task area. The Active filter
-hides finished and cancelled tasks. All, Finished, and custom filters show
-all tasks in matching goals. The heading counts visible tasks; goal progress
-counts include hidden tasks. See [the desktop specification](../specs/015-desktop-app.md).
+The desktop Goals board is one list of task rows. Each row shows the task's
+state, host, steps, tokens, pull request and last activity on one line, and
+opens the task panel. The rows of one goal sit together, joined by a thin
+rail. A task with no goal is a row of its own.
+
+- Point at a row, or move the keyboard to it, to see its goal. A frame
+  surrounds the rows of the goal, and the goal bar shows above them.
+- The goal bar names the goal, its status, its progress and its tokens. Its
+  chevron folds the goal to one summary row.
+- The goal bar stays shown while the goal's orchestrator waits for you.
+- A goal with no task to show takes one row that says why, and opens the goal.
+
+Goals and tasks that need you come first, then the work that runs, then the
+finished work. The **New** menu in the header creates a goal or a task with
+no goal. The Active filter hides finished and cancelled tasks. All, Finished,
+and custom filters show all tasks in matching goals. The heading counts the
+shown task rows; goal progress counts include hidden tasks. See [the desktop
+specification](../specs/015-desktop-app.md).
 
 ## Dismiss an attention reminder
 
