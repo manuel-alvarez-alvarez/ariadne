@@ -29,6 +29,7 @@ import {
   BOARD_COLUMNS,
   BOARD_CONTAINER,
   BOARD_LINE,
+  HOST_HIDES,
   TaskRow,
   TOKEN_CELL,
   taskListQueryOptions,
@@ -432,10 +433,12 @@ function GoalLine({
       data-goal-folded={collapsed ? "" : undefined}
       className={cn(BOARD_LINE, "h-8 text-xs")}
     >
-      <div className="col-span-4 flex min-w-0 items-center gap-2 whitespace-nowrap">
+      {/* Clipped, so a very narrow board never draws it over the token total;
+          the padding keeps the chevron's and the link's focus rings inside. */}
+      <div className="col-span-4 -ml-[3px] flex min-w-0 items-center gap-2 overflow-hidden py-[3px] pl-[3px] whitespace-nowrap">
         <FoldToggle goal={goal} collapsed={collapsed} refocus={refocus} onToggle={onToggle} />
         <GoalTitle goal={goal} tasks={tasks} />
-        {showHost ? <HostLabel host={goal.host} /> : null}
+        {showHost ? <HostLabel host={goal.host} className={HOST_HIDES} /> : null}
         <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
           <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
           {status.label}

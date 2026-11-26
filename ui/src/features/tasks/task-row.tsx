@@ -43,9 +43,13 @@ const NOT_A_STOP = -1
  * last activity. The step column narrows to its dots once the step names
  * hide. A hidden cell leaves its `auto` column empty, so the column takes no
  * width; there is no column gap, and each cell past the title pads itself.
+ *
+ * Only the token column has a fixed floor, the widest figure, so the tracks
+ * fit any board. The title keeps a quarter of the board up to 6rem, and the
+ * badges and the steps give up their width before it.
  */
 export const BOARD_COLUMNS =
-  "grid grid-cols-[minmax(4rem,1fr)_auto_auto_minmax(6rem,12rem)_max-content_auto_auto] @max-[60rem]/board:grid-cols-[minmax(4rem,1fr)_auto_auto_9.5rem_max-content_auto_auto] gap-x-0"
+  "grid grid-cols-[minmax(min(6rem,25%),1fr)_minmax(0,auto)_minmax(0,auto)_minmax(0,12rem)_max-content_auto_auto] @max-[60rem]/board:grid-cols-[minmax(min(6rem,25%),1fr)_minmax(0,auto)_minmax(0,auto)_minmax(0,9.5rem)_max-content_auto_auto] gap-x-0"
 
 /** The container whose width the columns follow: the board, not the window. */
 export const BOARD_CONTAINER = "@container/board"
@@ -59,7 +63,9 @@ export const TOKEN_CELL = "col-start-5 pl-3 whitespace-nowrap"
 /** Step names hide first: the board's widest width that still drops them. */
 const STEP_NAMES = "@max-[60rem]/board:[&_[data-step-name]]:hidden"
 const ACTIVITY_CELL = "col-start-7 pl-3 @max-[54rem]/board:hidden"
-const HOST_CELL = "col-start-3 max-w-[6.75rem] pl-3 @max-[48rem]/board:hidden"
+/** The host hides with its column, on a row and on a goal's own line alike. */
+export const HOST_HIDES = "@max-[48rem]/board:hidden"
+const HOST_CELL = cn("col-start-3 max-w-[6.75rem] pl-3", HOST_HIDES)
 const PR_CELL = "col-start-6 row-start-1 pl-3 @max-[42rem]/board:hidden"
 
 export function TaskRow({

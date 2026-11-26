@@ -32,7 +32,7 @@ function stubDaemon(
   })
 }
 
-function board(goals: GoalDto[], props: { activeOnly?: boolean } = {}) {
+function board(goals: GoalDto[], props: { activeOnly?: boolean; showHost?: boolean } = {}) {
   return renderScreen(
     <GoalBoard
       hosts={["local"]}
@@ -155,6 +155,45 @@ it("puts the token figures in one column, the goal's total over its rows', never
     expect(cell.className).not.toMatch(/truncate|overflow-hidden|max-w-/)
   const list = line.closest("[role=group]")?.parentElement as HTMLElement
   expect(list.className).toContain("max-content")
+})
+
+it("fits its tracks to any board width: only the token column has a fixed floor", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  stubDaemon([aTask({ goal_id: goal.id, title: "Fit" })])
+  board([goal])
+
+  const row = (await screen.findByText("Fit")).closest("[data-task-row]") as HTMLElement
+  const list = row.closest("[role=group]")?.parentElement as HTMLElement
+  const templates = [...list.className.matchAll(/grid-cols-\[([^\]]+)\]/g)].map((m) => m[1] ?? "")
+  // One template for a wide board and one for a narrow board, seven tracks each.
+  expect(templates).toHaveLength(2)
+  for (const template of templates) {
+    const tracks = template.split("_")
+    expect(tracks).toHaveLength(7)
+    // The fifth is the token column: as wide as its widest figure.
+    expect(tracks[4]).toBe("max-content")
+    // The title keeps a share of the board, so it shrinks with the board.
+    expect(tracks[0]).toBe("minmax(min(6rem,25%),1fr)")
+    // The others can shrink to nothing; `auto` holds only a column that hides.
+    for (const track of tracks.slice(1, 4))
+      expect(track === "auto" || track.startsWith("minmax(0,")).toBe(true)
+    expect(tracks.slice(5)).toEqual(["auto", "auto"])
+  }
+})
+
+it("hides a goal's host on its goal line with the host column", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  stubDaemon([aTask({ goal_id: goal.id, title: "Hosted", host: "worker" })])
+  board([goal], { showHost: true })
+
+  const row = (await screen.findByText("Hosted")).closest("[data-task-row]") as HTMLElement
+  const line = document.querySelector("[data-goal-line]") as HTMLElement
+  const hides = (node: Element) =>
+    node.className.match(/@max-\[[\d.]+rem\]\/board:hidden/)?.[0] ?? null
+  const rowHost = row.querySelector("[data-column=host]") as HTMLElement
+  const goalHost = within(line).getByText("local")
+  expect(hides(rowHost)).not.toBeNull()
+  expect(hides(goalHost)).toBe(hides(rowHost))
 })
 
 it("hides whole columns by the board's own width: step names, then activity, host and PR link", async () => {

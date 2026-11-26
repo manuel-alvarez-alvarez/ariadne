@@ -1018,8 +1018,11 @@ Out: the daemon endpoints themselves (012).
     decides the columns, and a pinned inspector narrows it like a narrow
     window. Below 60rem the step names hide, below 54rem the last activity,
     below 48rem the host, and below 42rem the PR link. A hidden column takes
-    no width. The title, the state, the step dots and the tokens stay at
-    every width, and a title that does not fit ends in an ellipsis.
+    no width, and a goal line's host label hides with the host column. The
+    title, the state, the step dots and the tokens stay at every width, and a
+    title that does not fit ends in an ellipsis. Only the token column has a
+    fixed floor. The title keeps a quarter of the board, up to 6rem, and the
+    state and step columns give up their width before it.
     The groups sort in three bands: the groups that need the user, then the
     live groups, then the finished or cancelled groups. A goal needs the user
     when its orchestrator or one of its agents has an attention flag, or one
@@ -2685,7 +2688,11 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
   container width: step names, then last activity, host and PR link, all
   four at a pinned inspector's width; the title, state, step dots and tokens
   stay, and the title ends in an ellipsis
-  (`ui/src/features/goals/goal-board.test.tsx::hides whole columns by the board's own width: step names, then activity, host and PR link`).
+  (`ui/src/features/goals/goal-board.test.tsx::hides whole columns by the board's own width: step names, then activity, host and PR link`,
+  `::hides a goal's host on its goal line with the host column`).
+- The tracks fit any board: only the token column has a fixed floor, and
+  the title keeps a share of the board
+  (`ui/src/features/goals/goal-board.test.tsx::fits its tracks to any board width: only the token column has a fixed floor`).
 - The groups sort by band, newest change first, goal-less tasks by the same
   rule
   (`ui/src/features/goals/goal-board.test.tsx::sorts the groups: what needs the user, then live, then finished, newest change first`).
