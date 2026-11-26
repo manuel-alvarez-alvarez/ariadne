@@ -196,6 +196,30 @@ it("keeps the state, the step dots and the tokens whole: only the title gives up
   expect(state.className).not.toMatch(/overflow-hidden|max-w-|min-w-0|truncate/)
 })
 
+it("sizes the dots floor to the widest track when a folded workflow is the longest", async () => {
+  const step = (id: string) => ({ ...(aWorkflow().steps[0] as WorkflowStepDto), id, title: id })
+  const five = aGoal({
+    id: "g-five",
+    title: "Five goal",
+    steps: ["a", "b", "c", "d", "e"].map(step),
+  })
+  const seven = aGoal({
+    id: "g-seven",
+    title: "Seven goal",
+    steps: ["a", "b", "c", "d", "e", "f", "g"].map(step),
+  })
+  stubDaemon([
+    aTask({ id: "t5", goal_id: five.id, title: "Five" }),
+    aTask({ id: "t7", goal_id: seven.id, title: "Seven" }),
+  ])
+  board([five, seven])
+
+  const row = (await screen.findByText("Seven")).closest("[data-task-row]") as HTMLElement
+  const list = row.closest("[role=group]")?.parentElement as HTMLElement
+  // Seven steps fold to 8.125rem; five unfolded steps need 10.125rem, the floor.
+  expect(list.style.getPropertyValue("--board-dots")).toBe("10.125rem")
+})
+
 it("sizes the dots floor to an unfolded workflow of five steps", async () => {
   const step = (id: string) => ({ ...(aWorkflow().steps[0] as WorkflowStepDto), id, title: id })
   const goal = aGoal({ title: GOAL_TITLE, steps: ["a", "b", "c", "d", "e"].map(step) })

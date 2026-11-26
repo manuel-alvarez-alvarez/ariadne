@@ -170,12 +170,11 @@ export function GoalBoard({
       groupOrder(group, attentionByHost.get(groupHost(group)) ?? NO_BOARD_ATTENTION),
     )
   }, [goals, byGoal, noGoal, attentionByHost])
-  // The step column is as wide as the dots of the longest workflow it shows.
-  const longestWorkflow = Math.max(
-    0,
+  // The step column is as wide as the widest dots of any workflow it shows.
+  const dotsFloor = boardDotsWidth([
     ...goals.map((goal) => goal.steps.length),
     ...noGoal.map((row) => row.steps?.length ?? 0),
-  )
+  ])
   const total =
     goals.reduce(
       (count, goal) =>
@@ -236,7 +235,7 @@ export function GoalBoard({
           </div>
           <div
             className={BOARD_LIST}
-            style={{ "--board-dots": `${boardDotsWidth(longestWorkflow)}rem` } as CSSProperties}
+            style={{ "--board-dots": `${dotsFloor}rem` } as CSSProperties}
           >
             {groups.map((group) => {
               if (group.kind === "task") {

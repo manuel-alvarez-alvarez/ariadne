@@ -1025,8 +1025,9 @@ Out: the daemon endpoints themselves (012).
     pinned inspector needs a 72rem window and leaves 48rem beside it. The
     state, the dots and the tokens never shrink below their content: the
     state column takes its badges' width, the token column its widest
-    figure, and the step column the dots of the longest workflow on the
-    board, folded where the workflow folds. Only the current step's name and
+    figure, and the step column the widest dots of any workflow on the
+    board, folded where that workflow folds, above the column's own
+    maximum where needed. Only the current step's name and
     the title give up width.
     The groups sort in three bands: the groups that need the user, then the
     live groups, then the finished or cancelled groups. A goal needs the user
@@ -2696,9 +2697,10 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
   (`ui/src/features/goals/goal-board.test.tsx::hides whole columns by the board's own width: step names, then activity, host and PR link`,
   `::hides a goal's host on its goal line with the host column`).
 - The state, the step dots and the tokens never shrink below their content,
-  the step column's floor being the dots of the longest workflow, folded or
+  the step column's floor being the widest dots of any workflow, folded or
   not; only the title gives up its width
   (`ui/src/features/goals/goal-board.test.tsx::keeps the state, the step dots and the tokens whole: only the title gives up its width`,
+  `::sizes the dots floor to the widest track when a folded workflow is the longest`,
   `::sizes the dots floor to an unfolded workflow of five steps`).
 - The groups sort by band, newest change first, goal-less tasks by the same
   rule

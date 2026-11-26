@@ -46,18 +46,20 @@ const NOT_A_STOP = -1
  *
  * The badges, the dots and the tokens never shrink below their content: the
  * badges and the tokens are `auto` and `max-content`, and the step column is
- * at least `--board-dots` wide, the dots of the longest workflow on the board
- * ({@link boardDotsWidth}). The title alone gives up its width, and ends in an
+ * at least `--board-dots` wide, the widest dots of any workflow on the board
+ * ({@link boardDotsWidth}): a folded long workflow can need less than an
+ * unfolded shorter one. The title alone gives up its width, and ends in an
  * ellipsis. On the narrowest board the app draws (33.9rem, a pinned
  * inspector beside it) all four fit with the widest figure and badges.
  */
 export const BOARD_COLUMNS =
   "grid grid-cols-[minmax(0,1fr)_auto_auto_minmax(var(--board-dots,0rem),12rem)_max-content_auto_auto] @max-[60rem]/board:grid-cols-[minmax(0,1fr)_auto_auto_minmax(var(--board-dots,0rem),9.5rem)_max-content_auto_auto] gap-x-0"
 
-/** The step column's floor for a board whose longest workflow has `steps` steps, in rem. */
-export function boardDotsWidth(steps: number): number {
-  // The cell's own left padding, `pl-3`, comes on top of the dots.
-  return steps === 0 ? 0 : stepDotsWidth(steps) + 0.75
+/** The step column's floor, in rem, for a board whose workflows have these step counts. */
+export function boardDotsWidth(workflows: readonly number[]): number {
+  // The widest track, folded or not, and the cell's own `pl-3` on top of it.
+  const dots = Math.max(0, ...workflows.map(stepDotsWidth))
+  return dots === 0 ? 0 : dots + 0.75
 }
 
 /** The container whose width the columns follow: the board, not the window. */
