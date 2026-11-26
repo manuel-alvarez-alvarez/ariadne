@@ -41,6 +41,17 @@ use crate::commands::{parse_effort, parse_model, resolve};
 /// checked for being something, since which efforts a model takes is the
 /// daemon's to know.
 pub(crate) fn parse_agent_slot(s: &str) -> Result<AgentAssignment, String> {
+    parse_slot(s, true)
+}
+
+/// The `--agent` of `task create`: [`parse_agent_slot`], except that the
+/// column may be left out (`=MODEL`, `:SKILLS=MODEL@EFFORT`), which is how the
+/// one agent of a task with no workflow is written.
+pub(crate) fn parse_create_agent_slot(s: &str) -> Result<AgentAssignment, String> {
+    parse_slot(s, false)
+}
+
+fn parse_slot(s: &str, step_required: bool) -> Result<AgentAssignment, String> {
     let Some((head, model)) = s.split_once('=') else {
         return Err(format!(
             "no model in \"{s}\" — a model is required, so {}",
@@ -60,7 +71,7 @@ pub(crate) fn parse_agent_slot(s: &str) -> Result<AgentAssignment, String> {
         ),
         None => (head, Vec::new()),
     };
-    if step.is_empty() {
+    if step.is_empty() && step_required {
         return Err(format!("no column in \"{s}\" — {}", accepted()));
     }
     let effort = match effort {
@@ -75,7 +86,7 @@ pub(crate) fn parse_agent_slot(s: &str) -> Result<AgentAssignment, String> {
     }
     let model = parse_model(model).map_err(|e| format!("in \"{s}\": {e}"))?;
     Ok(AgentAssignment {
-        step: Some(step.to_string()),
+        step: (!step.is_empty()).then(|| step.to_string()),
         skills,
         model,
         effort,
@@ -200,6 +211,21 @@ mod tests {
     use super::*;
 
     use crate::commands::fixtures::repository;
+
+    #[test]
+    fn a_create_agent_may_leave_the_column_out_and_an_update_agent_may_not() {
+        let bare = parse_create_agent_slot("=codex-acp:o3").unwrap();
+        assert_eq!(bare.step, None);
+        let skilled = parse_create_agent_slot(":coding,testing=codex-acp:o3@high").unwrap();
+        assert_eq!(skilled.step, None);
+        assert_eq!(skilled.skills, ["coding", "testing"]);
+        assert_eq!(skilled.effort.as_deref(), Some("high"));
+        assert!(
+            parse_agent_slot("=codex-acp:o3")
+                .unwrap_err()
+                .contains("no column")
+        );
+    }
 
     #[test]
     fn a_repo_is_named_by_id_or_by_path() {

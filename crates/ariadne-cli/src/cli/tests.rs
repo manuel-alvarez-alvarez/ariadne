@@ -1278,8 +1278,22 @@ fn an_agent_slot_that_names_no_real_agent_is_a_usage_error() {
     assert!(err.contains("a model is required"), "{err}");
     let err = refused("review@high");
     assert!(err.contains("a model is required"), "{err}");
-    // A model with no column is the other half missing.
-    assert!(refused("=codex-acp:o3").contains("no column"));
+    // A model with no column is how a task with no workflow is staffed, so
+    // `task create` takes it; `task update` still refuses it.
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "task",
+            "create",
+            "--title",
+            "Do it",
+            "--repo",
+            "r",
+            "--agent",
+            "=codex-acp:o3"
+        ])
+        .is_ok()
+    );
     // And the half after the `@`, which the forms in the refusal spell out.
     let err = refused("review=codex-acp:o3@");
     assert!(err.contains("no effort was named"), "{err}");
