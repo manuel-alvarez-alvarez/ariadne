@@ -711,10 +711,10 @@ pub(super) async fn create_standalone(
         ));
     }
     check_staffing_shape(&req.agents, req.workflow.is_some())?;
-    let mut agents = resolve_agents(&state, &req.agents, true).await?;
     if let Some(host) = req.host.as_deref().filter(|h| *h != "local") {
         let repo = state.store.get_repository(&req.repo_id).await?;
         check_host(&state, host, &repo, &req.agents, false).await?;
+        let mut agents = far_agents(&req.agents)?;
         let steps = state
             .store
             .standalone_task_steps(req.workflow.as_deref(), &mut agents)
@@ -738,6 +738,7 @@ pub(super) async fn create_standalone(
         return super::source_tasks::create(&state, None, workflow, &req.repo_id, host, request)
             .await;
     }
+    let agents = resolve_agents(&state, &req.agents, true).await?;
     let task = state
         .store
         .create_standalone_task(
