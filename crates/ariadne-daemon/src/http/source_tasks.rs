@@ -14,7 +14,8 @@ use super::{
 
 pub(super) async fn create(
     state: &AppState,
-    goal: &Goal,
+    goal: Option<&Goal>,
+    workflow: TaskWorkflowContext,
     repo_id: &str,
     host: &str,
     request: ariadne_api::tasks::CreateTaskRequest,
@@ -57,6 +58,16 @@ pub(super) async fn create(
             "upgrade or correct host {host}: a distinct remote-tasks-v1 worker with source-dependency-controls-v1 is required"
         )));
     }
+    if goal.is_none()
+        && !protocol
+            .capabilities
+            .iter()
+            .any(|c| c == "goal-less-tasks-v1")
+    {
+        return Err(ApiError::conflict(format!(
+            "upgrade Ariadne on host {host}: goal-less-tasks-v1 is required"
+        )));
+    }
     let local = state
         .store
         .list_repositories()
@@ -70,33 +81,28 @@ pub(super) async fn create(
     let worker_repo = paired
         .get(repo_id)
         .ok_or_else(|| ApiError::conflict("worker repository is unavailable"))?;
-    let steps = state
-        .store
-        .goal_steps(&goal.id)
-        .await?
-        .into_iter()
-        .map(super::convert::step_dto)
-        .collect::<Result<Vec<_>, _>>()?;
-    check_active_staffing(&state.store, goal, &agents).await?;
+    if let Some(goal) = goal {
+        check_active_staffing(&state.store, goal, &agents).await?;
+    }
+    let source_id = state.store.daemon_id().await?;
     let request = CreateRemoteTaskRequest {
         repo_id: worker_repo.clone(),
         title: title.clone(),
         description: description.clone(),
         agents,
-        source_goal: SourceGoalReference {
-            daemon_id: state.store.daemon_id().await?,
+        source_daemon_id: goal.is_none().then_some(source_id.clone()),
+        source_goal: goal.map(|goal| SourceGoalReference {
+            daemon_id: source_id.clone(),
             goal_id: goal.id.clone(),
             title: goal.title.clone(),
             description: goal.description.clone(),
-        },
-        workflow: TaskWorkflowContext {
-            name: goal.workflow.clone(),
-            steps,
-        },
+        }),
+        workflow,
     };
     let id = new_id();
     let timestamp = chrono::Utc::now().to_rfc3339();
-    let cache = json!({"id":id,"goal_id":goal.id,"repo_id":repo_id,"title":title,"description":description,
+    let cache = json!({"id":id,"goal_id":goal.map(|g| &g.id),"repo_id":repo_id,"title":title,"description":description,
+        "workflow": (!request.workflow.name.is_empty()).then_some(&request.workflow.name), "steps": request.workflow.steps,
         "status":"pending","step":null,"branch":"","agents":[],"depends_on":dependencies,
         "worktree_path":null,"stalled":false,"merge_commit":null,"pr_url":null,"reason":null,
         "usage":{"total":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0},"agents":[]},
@@ -106,7 +112,7 @@ pub(super) async fn create(
         .reserve_source_task(
             SourceTaskReference {
                 id: id.clone(),
-                goal_id: goal.id.clone(),
+                goal_id: goal.map(|g| g.id.clone()).unwrap_or_default(),
                 repo_id: repo_id.into(),
                 host: host.into(),
                 worker_id: protocol.daemon_id.clone(),
@@ -322,8 +328,10 @@ async fn route(
         let update: ariadne_api::tasks::UpdateTaskRequest =
             serde_json::from_slice(&bytes).map_err(|e| ApiError::bad_request(e.to_string()))?;
         if let Some(assignments) = &update.agents {
-            let goal = state.store.get_goal(&reference.goal_id).await?;
-            check_active_staffing(&state.store, &goal, assignments).await?;
+            if !reference.goal_id.is_empty() {
+                let goal = state.store.get_goal(&reference.goal_id).await?;
+                check_active_staffing(&state.store, &goal, assignments).await?;
+            }
             let repo = state.store.get_repository(&reference.repo_id).await?;
             super::tasks::check_host(
                 state,

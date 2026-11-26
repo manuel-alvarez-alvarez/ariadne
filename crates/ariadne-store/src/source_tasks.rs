@@ -52,21 +52,33 @@ impl Store {
         dependencies: &[String],
     ) -> Result<()> {
         let mut tx = self.w().begin().await?;
-        let status: String = sqlx::query_scalar("SELECT status FROM goals WHERE id = ?")
-            .bind(&reference.goal_id)
-            .fetch_one(&mut *tx)
-            .await?;
-        if ![GoalStatus::Planning.as_str(), GoalStatus::Active.as_str()].contains(&status.as_str())
-        {
-            return Err(StoreError::Conflict("the goal takes no new tasks".into()));
+        if !reference.goal_id.is_empty() {
+            let status: String = sqlx::query_scalar("SELECT status FROM goals WHERE id = ?")
+                .bind(&reference.goal_id)
+                .fetch_one(&mut *tx)
+                .await?;
+            if ![GoalStatus::Planning.as_str(), GoalStatus::Active.as_str()]
+                .contains(&status.as_str())
+            {
+                return Err(StoreError::Conflict("the goal takes no new tasks".into()));
+            }
         }
         sqlx::query("INSERT INTO source_task_references (id, goal_id, repo_id, host, worker_id, request, cache, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(&reference.id).bind(&reference.goal_id).bind(&reference.repo_id).bind(&reference.host)
             .bind(&reference.worker_id).bind(&reference.request).bind(&reference.cache)
             .bind(&reference.created_at).bind(&reference.updated_at).execute(&mut *tx).await?;
-        Self::insert_dependencies(&mut tx, &reference.goal_id, &reference.id, dependencies).await?;
+        if !reference.goal_id.is_empty() {
+            Self::insert_dependencies(&mut tx, &reference.goal_id, &reference.id, dependencies)
+                .await?;
+        } else if !dependencies.is_empty() {
+            return Err(StoreError::Invalid(
+                "a goal-less task takes no dependencies".into(),
+            ));
+        }
         tx.commit().await?;
-        self.publish_goal_update(&reference.goal_id).await?;
+        if !reference.goal_id.is_empty() {
+            self.publish_goal_update(&reference.goal_id).await?;
+        }
         Ok(())
     }
 
@@ -82,14 +94,17 @@ impl Store {
                 .ok_or_else(|| crate::not_found("source task reference", id))?;
         if reference.worker_id != worker_id
             || cache["id"].as_str() != Some(id)
-            || cache["goal_id"].as_str() != Some(reference.goal_id.as_str())
+            || cache["goal_id"].as_str()
+                != (!reference.goal_id.is_empty()).then_some(reference.goal_id.as_str())
             || cache["execution_context"]["execution_owner"].as_str() != Some(worker_id)
         {
             return Err(StoreError::Conflict(
                 "worker identity or task identity changed; restore the original worker".into(),
             ));
         }
-        if cache["execution_context"]["source_goal"]["daemon_id"].as_str()
+        if cache["execution_context"]["source_goal"]["daemon_id"]
+            .as_str()
+            .or_else(|| cache["execution_context"]["source_daemon_id"].as_str())
             != Some(source_id.as_str())
         {
             return Err(StoreError::Conflict(
@@ -184,7 +199,7 @@ impl Store {
 
     pub async fn request_source_retry(&self, id: &str) -> Result<Task> {
         let mut tx = self.w().begin().await?;
-        let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r JOIN goals g ON g.id=r.goal_id WHERE r.id=? AND r.cancel_requested=0 AND g.status='active' AND json_extract(r.cache,'$.status')='failed')")
+        let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r LEFT JOIN goals g ON g.id=r.goal_id WHERE r.id=? AND r.cancel_requested=0 AND (r.goal_id='' OR g.status='active') AND json_extract(r.cache,'$.status')='failed')")
             .bind(id).fetch_one(&mut *tx).await?;
         if !eligible {
             return Err(StoreError::Conflict(
@@ -219,7 +234,7 @@ impl Store {
     /// Claim authorization after checking source controls in one write transaction.
     pub async fn source_authorization(&self, id: &str, revision: i64) -> Result<bool> {
         let mut tx = self.w().begin().await?;
-        let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r JOIN goals g ON g.id=r.goal_id WHERE r.id=? AND r.cancel_requested=0 AND r.dependency_failure IS NULL AND r.request IS NULL AND g.status='active' AND NOT EXISTS(SELECT 1 FROM task_dependencies d JOIN task_index t ON t.id=d.depends_on_task_id WHERE d.task_id=r.id AND t.status<>'finished'))")
+        let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_task_references r LEFT JOIN goals g ON g.id=r.goal_id WHERE r.id=? AND r.cancel_requested=0 AND r.dependency_failure IS NULL AND r.request IS NULL AND (r.goal_id='' OR g.status='active') AND NOT EXISTS(SELECT 1 FROM task_dependencies d JOIN task_index t ON t.id=d.depends_on_task_id WHERE d.task_id=r.id AND t.status<>'finished'))")
             .bind(id).fetch_one(&mut *tx).await?;
         if eligible {
             sqlx::query("UPDATE source_task_references SET authorization_revision=? WHERE id=?")

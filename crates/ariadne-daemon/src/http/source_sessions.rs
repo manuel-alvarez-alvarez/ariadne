@@ -41,6 +41,7 @@ pub(super) async fn route(
     }
     if request.method() != Method::GET
         && !matches!(suffix, "kill" | "console/cancel")
+        && !reference.goal_id.is_empty()
         && state.store.get_goal(&reference.goal_id).await?.status()
             == ariadne_core::GoalStatus::Cancelled
     {

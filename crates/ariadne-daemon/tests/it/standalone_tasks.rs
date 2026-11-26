@@ -95,7 +95,7 @@ async fn admission_refuses_missing_context_dependencies_and_reserved_workflows()
             "host",
             json!("worker"),
             StatusCode::BAD_REQUEST,
-            "local host",
+            "unknown host",
         ),
         (
             "depends_on",

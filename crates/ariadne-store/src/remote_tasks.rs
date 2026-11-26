@@ -172,7 +172,11 @@ impl Store {
             },
         };
         Ok(Goal {
-            id: ctx.source_goal_id.clone(),
+            id: if ctx.source_goal_id.is_empty() {
+                task.id.clone()
+            } else {
+                ctx.source_goal_id.clone()
+            },
             title: ctx.source_title,
             description: ctx.source_description,
             workflow: ctx.workflow,
@@ -270,9 +274,16 @@ impl Store {
         sqlx::query("INSERT INTO remote_task_contexts (task_id, source_daemon_id, source_goal_id, source_title, source_description, workflow, request) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(&new.id).bind(&new.source_daemon_id).bind(&new.source_goal_id).bind(&new.source_title)
             .bind(&new.source_description).bind(&new.workflow).bind(&new.request).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO tasks (id, goal_id, repo_id, title, description, branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO tasks (id, goal_id, repo_id, title, description, branch, created_at, updated_at) VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)")
             .bind(&new.id).bind(&new.source_goal_id).bind(&new.repo_id).bind(&new.title).bind(&new.description)
             .bind(crate::tasks::branch_name(&new.title, &new.id)).bind(&ts).bind(&ts).execute(&mut *tx).await?;
+        if new.source_goal_id.is_empty() && !new.workflow.is_empty() {
+            sqlx::query("INSERT INTO task_workflows (task_id, workflow) VALUES (?, ?)")
+                .bind(&new.id)
+                .bind(&new.workflow)
+                .execute(&mut *tx)
+                .await?;
+        }
         for step in new.steps {
             sqlx::query("INSERT INTO remote_task_steps (task_id, ordinal, id, title, description, skills, ranks, gate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&new.id).bind(step.ordinal).bind(step.id).bind(step.title).bind(step.description)

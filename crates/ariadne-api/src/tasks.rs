@@ -327,7 +327,11 @@ pub struct TaskWorkflowContext {
 /// Worker context sufficient for task inspection without a local goal.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskExecutionContext {
-    pub source_goal: SourceGoalReference,
+    /// Null for a task that has no goal.
+    pub source_goal: Option<SourceGoalReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Source identity for goal-less work. Goal work uses source_goal.daemon_id.
+    pub source_daemon_id: Option<String>,
     /// Persistent daemon ID of the worker that owns execution.
     pub execution_owner: String,
     pub workflow: TaskWorkflowContext,
@@ -346,7 +350,11 @@ pub struct CreateRemoteTaskRequest {
     pub title: String,
     #[serde(default)]
     pub description: String,
-    pub source_goal: SourceGoalReference,
+    /// Null for a task that has no goal.
+    pub source_goal: Option<SourceGoalReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Source identity for goal-less work. Goal work uses source_goal.daemon_id.
+    pub source_daemon_id: Option<String>,
     pub workflow: TaskWorkflowContext,
     pub agents: Vec<AgentAssignment>,
 }

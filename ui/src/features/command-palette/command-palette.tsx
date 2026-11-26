@@ -573,14 +573,14 @@ function usePaletteEntries(open: boolean): PaletteEntries {
       .filter(
         (task) =>
           task.execution_context &&
-          daemonIds.get(task.host) === task.execution_context.source_goal.daemon_id,
+          daemonIds.get(task.host) === task.execution_context.source_goal?.daemon_id,
       )
       .map((task) => `${task.execution_context?.execution_owner}:${task.id}`),
   )
   const visibleTasks = tasks.rows.filter(
     (task) =>
       !task.execution_context ||
-      daemonIds.get(task.host) === task.execution_context.source_goal.daemon_id ||
+      daemonIds.get(task.host) === task.execution_context.source_goal?.daemon_id ||
       !sourceTasks.has(`${task.execution_context.execution_owner}:${task.id}`),
   )
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })

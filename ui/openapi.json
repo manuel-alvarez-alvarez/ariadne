@@ -6873,7 +6873,6 @@
         "required": [
           "repo_id",
           "title",
-          "source_goal",
           "workflow",
           "agents"
         ],
@@ -6890,8 +6889,23 @@
           "repo_id": {
             "type": "string"
           },
+          "source_daemon_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Source identity for goal-less work. Goal work uses source_goal.daemon_id."
+          },
           "source_goal": {
-            "$ref": "#/components/schemas/SourceGoalReference"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SourceGoalReference",
+                "description": "Null for a task that has no goal."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "title": {
             "type": "string"
@@ -11246,7 +11260,6 @@
         "type": "object",
         "description": "Worker context sufficient for task inspection without a local goal.",
         "required": [
-          "source_goal",
           "execution_owner",
           "workflow",
           "revision",
@@ -11273,8 +11286,23 @@
             "format": "int64",
             "description": "Draft edits advance this revision. Authorization must name this revision."
           },
+          "source_daemon_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Source identity for goal-less work. Goal work uses source_goal.daemon_id."
+          },
           "source_goal": {
-            "$ref": "#/components/schemas/SourceGoalReference"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SourceGoalReference",
+                "description": "Null for a task that has no goal."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "workflow": {
             "$ref": "#/components/schemas/TaskWorkflowContext"

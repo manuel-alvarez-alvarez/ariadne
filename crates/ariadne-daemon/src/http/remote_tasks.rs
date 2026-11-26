@@ -24,7 +24,10 @@ pub(super) fn source_only(headers: &HeaderMap) -> ApiResult<()> {
     responses((status = 200, body = RemoteTaskProtocol)))]
 pub(super) async fn protocol(State(state): State<AppState>) -> ApiResult<Json<RemoteTaskProtocol>> {
     Ok(Json(RemoteTaskProtocol {
-        capabilities: vec![ariadne_api::tasks::SOURCE_DEPENDENCY_CONTROLS.into()],
+        capabilities: vec![
+            ariadne_api::tasks::SOURCE_DEPENDENCY_CONTROLS.into(),
+            "goal-less-tasks-v1".into(),
+        ],
         protocol: "remote-tasks-v1".into(),
         daemon_id: state.store.daemon_id().await?,
     }))
@@ -40,20 +43,26 @@ pub(super) async fn create(
     Json(req): Json<CreateRemoteTaskRequest>,
 ) -> ApiResult<(StatusCode, Json<TaskDto>)> {
     source_only(&headers)?;
+    let source = req.source_goal.clone();
+    let source_daemon = source
+        .as_ref()
+        .map(|s| s.daemon_id.clone())
+        .or(req.source_daemon_id.clone())
+        .unwrap_or_default();
     if id.is_empty()
         || !id.bytes().all(|b| b.is_ascii_alphanumeric())
         || id.len() > 128
         || req.title.trim().is_empty()
-        || req.source_goal.daemon_id.trim().is_empty()
-        || req.source_goal.goal_id.trim().is_empty()
-        || req.workflow.name.trim().is_empty()
-        || req.workflow.steps.is_empty()
+        || source_daemon.trim().is_empty()
+        || source.as_ref().is_some_and(|s| s.goal_id.trim().is_empty())
+        || (source.is_some() && req.workflow.steps.is_empty())
+        || (req.workflow.name.is_empty() != req.workflow.steps.is_empty())
     {
         return Err(ApiError::bad_request(
             "provide task identity, source identity, title, and workflow columns",
         ));
     }
-    if req.source_goal.daemon_id == state.store.daemon_id().await? {
+    if source_daemon == state.store.daemon_id().await? {
         return Err(ApiError::bad_request(
             "a remote task must name another source daemon",
         ));
@@ -86,7 +95,10 @@ pub(super) async fn create(
         .iter()
         .enumerate()
         .map(|(ordinal, step)| GoalStep {
-            goal_id: req.source_goal.goal_id.clone(),
+            goal_id: source
+                .as_ref()
+                .map(|s| s.goal_id.clone())
+                .unwrap_or_default(),
             ordinal: ordinal as i64,
             id: step.id.clone(),
             title: step.title.clone(),
@@ -101,12 +113,21 @@ pub(super) async fn create(
         .create_remote_task(NewRemoteTask {
             id,
             repo_id: req.repo_id,
-            title: req.title,
-            description: req.description,
-            source_daemon_id: req.source_goal.daemon_id,
-            source_goal_id: req.source_goal.goal_id,
-            source_title: req.source_goal.title,
-            source_description: req.source_goal.description,
+            title: req.title.clone(),
+            description: req.description.clone(),
+            source_daemon_id: source_daemon,
+            source_goal_id: source
+                .as_ref()
+                .map(|s| s.goal_id.clone())
+                .unwrap_or_default(),
+            source_title: source
+                .as_ref()
+                .map(|s| s.title.clone())
+                .unwrap_or_else(|| req.title.clone()),
+            source_description: source
+                .as_ref()
+                .map(|s| s.description.clone())
+                .unwrap_or_else(|| req.description.clone()),
             workflow: req.workflow.name,
             steps,
             agents,

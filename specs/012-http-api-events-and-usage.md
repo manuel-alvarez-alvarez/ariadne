@@ -414,7 +414,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 1. `GET /v1/remote-tasks/protocol` returns `{protocol: "remote-tasks-v1", daemon_id}` (037 rule 101).
 2. `PUT /v1/remote-tasks/{id}` accepts `CreateRemoteTaskRequest` from `ariadne-api/src/tasks.rs`.
    The source supplies the stable task ID and the worker repository ID.
-   `source_goal` contains `daemon_id`, `goal_id`, `title`, and `description`.
+   For goal tasks, `source_goal` contains `daemon_id`, `goal_id`, `title`, and `description`.
    `workflow` contains `name` and ordered `WorkflowStepDto` columns. `agents` uses `AgentAssignment`.
    `title` and `description` describe the task.
    New drafts return 201. An identical repeated request returns 200 with the existing task.
