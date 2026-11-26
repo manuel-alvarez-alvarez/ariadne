@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-26
+updated: 2026-11-27
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -91,8 +91,8 @@ Out: the daemon endpoints themselves (012).
    `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
 3. Screens: the goals board (one list of task rows) has Active,
    All and Finished status segments. A status-menu icon holds a custom
-   selection. The rows of one goal are adjacent, and the goal bar over them
-   carries the goal's tokens at the right end (rule 39). The task
+   selection. The rows of one goal are adjacent, and the goal line over them
+   carries the goal's tokens in the token column (rule 39). The task
    panel (facts, diff, history), sessions — Ariadne's own,
    each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
@@ -1001,41 +1001,49 @@ Out: the daemon endpoints themselves (012).
     each matching goal. Progress counts use all tasks.
     A task row shows on one line the facts of the task card: the title, the
     session attention badge, the state badge, the host label, the step track,
-    the token figure, the PR link and the last activity. The columns have
-    fixed widths after the title, so they align from row to row. The row
-    keeps the border colours of the card. It is one link to `?task=` with one
-    tab stop, and the PR link is a real anchor outside it with no tab stop.
-    The rows of one goal are adjacent, in a named group (`<goal>: Tasks`),
-    and a thin rail in the left margin joins them. A gap separates one group
-    from the next. A task with no goal is a group of one row with no rail.
+    the token figure, the PR link and the last activity. The board is one
+    grid and each row takes its columns, so the columns align from row to
+    row. The board has no line of column names. The token column is as wide
+    as the largest token figure, so no board width cuts a figure. The row has
+    no border and no fill. Pointer hover and keyboard focus give it a soft
+    tint. It is one link to `?task=` with one tab stop, and the PR link is a
+    real anchor outside it with no tab stop.
+    Each row has a rail segment at its left edge. The segment takes the
+    colour the card's border has, in the card's order of precedence, and
+    the border colour when the card has none. The rows of one goal are
+    adjacent, in a named group (`<goal>: Tasks`), so their segments join into
+    one rail. A gap separates one group from the next. A task with no goal is
+    a group of one row, with its own segment.
+    The board never scrolls sideways. It is a CSS container, so its own width
+    decides the columns, and a pinned inspector narrows it like a narrow
+    window. Below 60rem the step names hide, below 54rem the last activity,
+    below 48rem the host, and below 42rem the PR link. A hidden column takes
+    no width. The title, the state, the step dots and the tokens stay at
+    every width, and a title that does not fit ends in an ellipsis.
     The groups sort in three bands: the groups that need the user, then the
     live groups, then the finished or cancelled groups. A goal needs the user
     when its orchestrator or one of its agents has an attention flag, or one
     of its tasks failed or stalled. In a band, the group with the newest
     `updated_at` is first. A task with no goal sorts by its own state and its
     own `updated_at`, by the same rule.
-    Pointer hover or keyboard focus on a row of a goal shows a tinted frame
-    around all rows of the goal, and the goal bar on the top edge of the frame.
-    The bar floats over the gap above the first row, so the frame and the bar
-    move no row and hide no row. A task with no goal shows no frame and no bar.
-    The goal bar is one line: a collapse chevron, the title as a link to
-    `?goal=`, the host label by rule 74, the status, `done/total`, the
-    orchestrator attention badge, and the token figure at the right end. The
-    keyboard reaches the chevron and the link. The title's tooltip gives the
-    full title, each repository as `path [base_branch]`, the created time, and
-    the progress as done against failed and stalled. The bar has no progress
-    bar and no repository summary. While the goal's orchestrator has an
-    attention flag, the bar stays shown at rest, in its own line above the
-    rows of the goal.
-    A goal with no shown task is one placeholder row with its rail. The row
-    shows the title, the state text, the status, the orchestrator attention
-    badge and the token figure, and it is one link to `?goal=`. The state text
-    is "Tasks are not loaded" (rule 58), "No tasks yet — the orchestrator is
-    still working" for a planning goal, "No tasks", or "No active tasks" where
-    Active hides every task of the goal.
-    A folded goal is one summary row with its rail: the chevron, the title
-    link, the host label, the status, the one-line summary text, the
-    orchestrator attention badge and the token figure, and no task row.
+    Each goal has one goal line above its rows, visible at rest, with no
+    hover and no focus. The line has no background, no border and no dashed
+    line, and the board draws no frame around the rows of a goal. The goal
+    line is: a fold chevron, the title as a link to `?goal=`, the host label
+    by rule 74, the status, `done/total`, the orchestrator attention badge,
+    and the goal's token figure in the token column, directly above the
+    token figures of its rows. The keyboard reaches the chevron and the
+    link. The title's tooltip gives the full title, each repository as
+    `path [base_branch]`, the created time, and the progress as done against
+    failed and stalled. The line has no progress bar and no repository
+    summary.
+    A goal with no shown task is its goal line, then one muted line with the
+    state text and no border. The state text is "Tasks are not loaded" (rule
+    58), "No tasks yet — the orchestrator is still working" for a planning
+    goal, "No tasks", or "No active tasks" where Active hides every task of
+    the goal. Unfolding to no shown task leaves the keyboard on the chevron.
+    A folded goal is its goal line with the one-line summary text in place
+    of `done/total`, no border and no task row.
     Finished and cancelled goals start folded, and the fold the user picks
     for a goal is kept in `localStorage`.
     A task card is three contained rows, for every status, in the goal
@@ -1060,7 +1068,7 @@ Out: the daemon endpoints themselves (012).
     its description, and its agent's model, effort and skills, with a link to
     the agent's session, or says "none staffed". Row 3 is anchored at the card bottom and is one line: the
     task's token figure (`↑input share ↓output`, including zero, rendered by
-    the goal bar's own `TokenFigure` at every width; its hover names
+    the goal line's own `TokenFigure` at every width; its hover names
     Input and Output and lists one row per workflow step, and it is not a tab
     stop) at the left, then, when the task has a `pr_url`, a compact PR link
     (icon and `#number`; a real anchor outside the card's link with no tab stop,
@@ -2661,22 +2669,38 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
   progress
   (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`,
   `::hides terminal tasks under Active while preserving progress`).
+- The board has no line of column names
+  (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`).
 - A task row is one link to the task panel with one tab stop, its PR link
-  outside the link, and its border in its status colour
+  outside the link
   (`ui/src/features/goals/goal-board.test.tsx::makes a row one link to the task panel with one tab stop, its pull request outside the link`).
+- A task row has no border and no fill, hover and keyboard focus tint it,
+  and its rail segment takes the card's border colour, a goal-less task's
+  too
+  (`ui/src/features/goals/goal-board.test.tsx::draws a row with no border and no fill, its rail segment in the status colour`).
+- The token figures share one column sized to the largest figure, the
+  goal's total directly above its rows', and no cell cuts a figure
+  (`ui/src/features/goals/goal-board.test.tsx::puts the token figures in one column, the goal's total over its rows', never cut`).
+- The board never scrolls sideways and hides whole columns by its own
+  container width: step names, then last activity, host and PR link, all
+  four at a pinned inspector's width; the title, state, step dots and tokens
+  stay, and the title ends in an ellipsis
+  (`ui/src/features/goals/goal-board.test.tsx::hides whole columns by the board's own width: step names, then activity, host and PR link`).
 - The groups sort by band, newest change first, goal-less tasks by the same
   rule
   (`ui/src/features/goals/goal-board.test.tsx::sorts the groups: what needs the user, then live, then finished, newest change first`).
 - Finished, cancelled and failed cards use their status borders
   (`ui/src/features/tasks/task-card.test.tsx::outlines a %s task with its status color`).
-- A goal bar is one line of chevron, title link, status, `done/total` and
-  tokens over the rows of its goal, with no progress bar; it stays shown at
-  rest while the orchestrator wants a person; a folded goal is one summary
-  row; a goal with no shown task is one placeholder row that opens the goal
-  (`ui/src/features/goals/goal-board.test.tsx::puts a goal bar over the rows of its goal: toggle, title link, status, progress and tokens`,
-  `::keeps the goal bar shown at rest while its orchestrator wants a person`,
-  `::folds a finished goal to one summary row`,
-  `::draws a goal with no shown task as one placeholder row that opens the goal`).
+- A goal line is one line of chevron, title link, status, `done/total`,
+  orchestrator badge and tokens over the rows of its goal, shown at rest,
+  with no background, border or frame; a folded goal is the goal line with
+  its summary; a goal with no shown task is the goal line and one muted
+  state line, and unfolding to it leaves the keyboard on the chevron
+  (`ui/src/features/goals/goal-board.test.tsx::puts one goal line over the rows of its goal, shown at rest: toggle, title link, status, progress and tokens`,
+  `::shows the orchestrator's attention badge on the goal line`,
+  `::folds a finished goal to its goal line with the summary, and no border`,
+  `::draws a goal with no shown task as its goal line, then one muted line with the state`,
+  `::hands the keyboard to the fold button when unfolding leaves a goal with no shown task`).
 - The task panel of a stepped task draws one workflow section in place of
   its old Agents fact and step strip: every column on the track, each with
   its agent's skills, model and session under its name, and no description

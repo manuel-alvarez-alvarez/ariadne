@@ -7,7 +7,8 @@
  *
  * The dots sit inside the card's link, so none of them is a tab stop
  * ({@link NOT_A_STOP}): the card's hidden hints line names the current step
- * for a keyboard.
+ * for a keyboard. Each name is marked `data-step-name`, so a narrow goals
+ * board can hide every name and keep the dots.
  */
 
 import { CheckIcon, ChevronRightIcon } from "lucide-react"
@@ -79,6 +80,7 @@ export function StepTrack({ task, steps }: { task: TaskDto; steps: WorkflowStepD
               </TooltipContent>
             </Tooltip>
             <span
+              data-step-name
               className={cn(
                 "min-w-0 truncate",
                 state === "current"

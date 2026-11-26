@@ -2,7 +2,8 @@
 
 Desktop client for `ariadned`. A [Tauri 2](https://v2.tauri.app) window around a
 Vite + React + TypeScript app. The goals board is one list of task rows, the
-rows of a goal joined under a goal bar that shows on hover or focus, and its
+rows of a goal under a goal line that is always shown, with columns that
+hide by the board's own width, and its
 "New" menu creates a goal or a task with no goal. The Workflows screen edits
 the catalog — shipped and
 your own, each with a document editor and a live kanban preview. The
