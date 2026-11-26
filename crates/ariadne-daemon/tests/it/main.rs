@@ -12,6 +12,7 @@ mod common;
 
 mod acp_console;
 mod acp_discovery;
+mod acp_items;
 mod acp_runtime;
 mod acp_terminal;
 mod adapters;

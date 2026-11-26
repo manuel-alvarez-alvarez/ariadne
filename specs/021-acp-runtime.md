@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-24
+updated: 2026-11-26
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -9,6 +9,8 @@ tests:
   - crates/ariadne-daemon/tests/it/place.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/acp_items.rs
+  - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-daemon/tests/it/subagents.rs
   - crates/ariadne-daemon/src/acp_subagents.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
@@ -120,7 +122,8 @@ it leaves nothing to delete.
    of a command the agent last offered, the runtime sends the text alone,
    and the brief waits for the next turn. The first prompt of a launch is
    the one its launch file carries, if any. `user_prompt_submit`
-   carries the whole as `prompt`, the text alone as `text`, and a `source`:
+   carries the whole as `prompt`, the text alone as `text`, the whole as its
+   ACP content blocks in `content` (rule 6), a new `item_id`, and a `source`:
    `console` for console input (008), `daemon` for everything the daemon
    itself says. A daemon prompt that is a lifecycle kind, such as a resume
    nudge, also carries its `prompt_kind` (`agent_resume`,
@@ -140,7 +143,8 @@ it leaves nothing to delete.
    (`handoff.rs::only_the_last_error_stays_and_it_is_cut_to_its_first_line`).
 5. What the agent does becomes agent events on the ingestion path (012):
    `session_start` with the agent's own session id, `user_prompt_submit`,
-   tool calls as `pre_tool_use` and `post_tool_use`, `plan` with the entries
+   tool calls as `pre_tool_use`, `tool_call_update`, `post_tool_use` and
+   `tool_call_abandoned` (rule 7), `plan` with the entries
    of each ACP plan update, the turn's text (rule 6), `stop` with the stop
    reason, `permission_request` and
    `permission.replied`, `session.error`, and `session_end`. Every event
@@ -170,25 +174,66 @@ it leaves nothing to delete.
    that names another `messageId` than the run's, a plan, a tool call or its
    update, a permission request, or the end of the
    turn, and it is stored then, once, whole —
-   `agent_thought` or `agent_message` `{session_id, text}` — before whatever
-   ended it. A turn that speaks around a tool call stores its text before the
-   call and its text after it as two events, and the last run comes before
-   `stop`; a turn that fails stores its last run before the error. Text that
-   arrives between turns is not stored. While the
+   `agent_thought` or `agent_message` `{session_id, item_id, message_id,
+   content, text}` — before whatever ended it. `content` holds each ACP
+   content block of the run, in order. A plain text chunk, with no field but
+   `type` and `text`, goes on with the plain text block before it, so a
+   streamed text is one block. `text` is the run's text alone. `message_id`
+   is the run's `messageId`, and is absent where the agent sent none. A
+   content block larger than 1 MB is stored as a placeholder
+   `{type, mime_type, size, omitted: true}`. Its size is the bytes of its
+   data, its text or its embedded resource, else of the block as compact JSON
+   (`acp_items.rs::a_stored_message_keeps_each_content_block_in_order_and_its_message_id`,
+   `::a_content_block_over_one_megabyte_is_stored_as_a_placeholder`). A
+   replayed `user_message_chunk` run is stored the same way, as
+   `user_prompt_submit`. A turn that speaks around a tool call stores its
+   text before the call and its text after it as two events, and the last
+   run comes before `stop`; a turn that fails stores its last run before the
+   error. Text that arrives between turns is not stored. While the
    turn runs, each chunk goes live to the session's console stream alone
    (008) — `agent_message_chunk` and `agent_thought_chunk`, each
-   `{session_id, text}` — and so does each non-terminal `tool_call_update`
-   as `tool_call_update` `{session_id, tool_call_id, acp}`. None of the
-   three is stored, and none reaches `/v1/events` or `/v1/events/stream`.
+   `{session_id, item_id, text}`, with the `item_id` that the run's stored
+   whole carries
+   (`acp_items.rs::each_live_chunk_and_its_stored_whole_carry_one_item_id`).
+   No chunk is stored, and none reaches `/v1/events` or `/v1/events/stream`.
 7. Tool call updates are merged per `toolCallId`: every field an update sets
    replaces the one on record, `content` included. `pre_tool_use` carries
-   the call as it opened, including its input. `post_tool_use`, on a
-   `completed` or `failed` update, carries the compact merged call under
-   `acp` — `title`, `kind`, `status`, `content`, and `locations` — beside its
-   `tool_name`. It drops `rawInput` and `tool_input`. Where a `content` entry
-   has text, it is the stored output and `rawOutput` is dropped; otherwise
-   `rawOutput` remains. A `content` diff and locations remain. A live
-   `tool_call_update` carries the call merged so far.
+   the call as it opened, including its input. The daemon stores a
+   non-terminal update of a running call as `tool_call_update`
+   `{session_id, tool_call_id, acp}`, with the call merged so far, when
+   `Timeouts::tool_progress` (5 seconds) has passed since the call's last
+   stored event: its `pre_tool_use` or its last stored `tool_call_update`.
+   `GET /v1/events` lists it, and the console reads it from the store
+   (`acp_items.rs::a_running_calls_progress_is_stored_once_its_interval_has_passed`).
+   Inside that interval the update goes live to the console stream alone, in
+   the same shape, and is not stored
+   (`::a_running_calls_progress_inside_its_interval_is_not_stored`). So a
+   call stores at most one update in each interval, and a call that ends
+   within its first interval stores none. `post_tool_use`, on a `completed`
+   or `failed` update, carries `tool_name`, `tool_input` and the merged call
+   under `acp`, `rawOutput` included. `acp` drops only `rawInput`, which
+   `tool_input` holds
+   (`acp_console.rs::post_tool_use_keeps_the_input_and_the_raw_output`).
+   When a turn ends with calls still open, the daemon stores one
+   `tool_call_abandoned` `{session_id, tool_call_id, reason, acp}` for each,
+   in the order they opened, after the last run and before the `stop`.
+   `reason` is `cancelled` where the turn's stop reason is `cancelled`, and
+   `turn_ended` otherwise
+   (`acp_items.rs::a_turn_that_ends_with_open_calls_abandons_each`,
+   `::a_cancelled_turn_abandons_its_open_call_as_cancelled`). A call still
+   open when the agent ends — after a failed turn, a death or a kill whose
+   grace ran out — is stored as `session_ended`, before the `session.error`
+   and the `session_end`
+   (`::an_agent_that_ends_mid_call_abandons_it_as_session_ended`). A console
+   snapshot taken while a turn runs carries each open call, merged so far,
+   as a live `tool_call_update` after the stored events
+   (`::a_console_opened_during_a_call_reads_the_open_call`). Neither
+   `tool_call_update` nor `tool_call_abandoned` moves the session's status
+   or attention
+   (`classify.rs::tests::stored_progress_and_an_abandoned_call_move_nothing`).
+   The metrics read neither, and neither is an ended tool: only
+   `post_tool_use` reports `TurnReport::ToolEnded`. A child's calls carry
+   its `subagent` field on both (rule 15).
 8. A running turn is cancelled with ACP `session/cancel`, sent while the
    `session/prompt` it interrupts is still in flight. The response then ends
    the turn as any other: the text so far stored, and `stop` with
@@ -722,9 +767,28 @@ it leaves nothing to delete.
   (`acp_runtime.rs::an_agent_that_dies_mid_turn_keeps_the_text_it_was_writing`);
   neither `GET /v1/events` nor `/v1/events/stream` carries a chunk
   (`acp_console.rs::the_events_listing_and_the_domain_stream_carry_no_chunk`).
-- `post_tool_use` stores its output once, keeps the opening input on
-  `pre_tool_use`, and is smaller than its uncompact form
-  (`acp_console.rs::post_tool_use_stores_text_once_and_keeps_the_opening_input`).
+- `post_tool_use` keeps the input as `tool_input` and the raw output, and
+  stores the input once
+  (`acp_console.rs::post_tool_use_keeps_the_input_and_the_raw_output`).
+- A stored message, thought and prompt carry their content blocks in order,
+  the message carries its `message_id`, and a block over 1 MB is a placeholder
+  (`acp_items.rs::a_stored_message_keeps_each_content_block_in_order_and_its_message_id`,
+  `::a_content_block_over_one_megabyte_is_stored_as_a_placeholder`).
+- Each live chunk carries the `item_id` of its stored whole
+  (`acp_items.rs::each_live_chunk_and_its_stored_whole_carry_one_item_id`).
+- A running call's progress is stored once its interval has passed, and goes
+  live alone inside it
+  (`acp_items.rs::a_running_calls_progress_is_stored_once_its_interval_has_passed`,
+  `::a_running_calls_progress_inside_its_interval_is_not_stored`).
+- A call that a turn leaves open is abandoned as `turn_ended`, `cancelled` or
+  `session_ended`, and the session still goes idle on the `stop`
+  (`acp_items.rs::a_turn_that_ends_with_open_calls_abandons_each`,
+  `::a_cancelled_turn_abandons_its_open_call_as_cancelled`,
+  `::an_agent_that_ends_mid_call_abandons_it_as_session_ended`). Neither
+  new kind moves the status or the attention
+  (`classify.rs::tests::stored_progress_and_an_abandoned_call_move_nothing`).
+- A console opened during a call reads the open call in its snapshot
+  (`acp_items.rs::a_console_opened_during_a_call_reads_the_open_call`).
 - `user_prompt_submit` carries the typed text and its source
   (`acp_console.rs::console_input_is_reported_as_its_text_from_the_console`).
 - A cancel ends the running turn as `cancelled`
@@ -800,6 +864,8 @@ option is proven only by the refused pin, which takes the same path.
 ## Sources
 
 `crates/ariadne-daemon/src/acp.rs` (the runtime),
+`crates/ariadne-daemon/src/http/classify.rs` (what each stored kind moves),
+`crates/ariadne-daemon/src/timeouts.rs` (`tool_progress`),
 `crates/ariadne-daemon/src/acp_transport.rs` (the agent's pipes as the SDK's
 transport), `crates/ariadne-daemon/src/acp_calls.rs` (the methods it calls),
 `crates/ariadne-daemon/src/acp_schema.rs` (Ariadne's launch types as the

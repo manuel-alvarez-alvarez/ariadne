@@ -118,6 +118,12 @@ pub struct Timeouts {
     /// How often a running turn's transcript is read again for what the
     /// launch has spent, so a long turn's figure moves before it ends.
     pub transcript_poll: Duration,
+    /// The shortest gap between two stored events of one running tool call
+    /// (021, rule 7): its opening `pre_tool_use` or a stored
+    /// `tool_call_update`. Every update still goes live to the console; this
+    /// only keeps a call that reports many times a second from waking the
+    /// scheduler and the activity feed for each report.
+    pub tool_progress: Duration,
     /// How long one session's wakes are folded together before the scheduler
     /// reconciles the task behind them again (`crate::scheduler::coalesce`).
     ///
@@ -185,6 +191,7 @@ impl Default for Timeouts {
             ai_permissions_decision: Duration::from_secs(5),
             failure_diagnosis_decision: Duration::from_secs(5),
             transcript_poll: Duration::from_secs(15),
+            tool_progress: Duration::from_secs(5),
             session_wake: Duration::from_millis(250),
             full_reconcile: Duration::from_secs(5),
             forge_poll: Duration::from_secs(300),

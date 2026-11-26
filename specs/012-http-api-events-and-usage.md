@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-11-24
+updated: 2026-11-26
 areas: [api, daemon, store]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -142,9 +142,10 @@ and the ACP runtime that reports the agent events (021).
    `waiting_permission`; an exhausted `session.error` raises `exhausted`, and
    another `session.error` raises `agent_error`; neither
    reads as liveness. An event that matches nothing — `agent_thought`,
-   `agent_message`, `plan` — is recorded and moves nothing. The live-only
-   console events (021) — `agent_message_chunk`, `agent_thought_chunk`,
-   `tool_call_update` — are never ingested: they reach the session's
+   `agent_message`, `plan`, a stored `tool_call_update`, `tool_call_abandoned`
+   (021, rule 7) — is recorded and moves nothing. The live-only
+   console events (021) — `agent_message_chunk`, `agent_thought_chunk`, and
+   a `tool_call_update` inside its interval — are never ingested: they reach the session's
    console stream alone, and neither `GET /v1/events` nor
    `/v1/events/stream` carries one. What an event moves lands in one order,
    with the status last: the agent's id, the attention and the activity clock
@@ -176,7 +177,7 @@ and the ACP runtime that reports the agent events (021).
     payload when the DTO is built, never stored. A tool call reads as its
     action and its subject — `Bash: cargo nextest run` — off `tool_name` and
     the first field of `tool_input` it carries among `command`, `file_path`,
-    `path`, `pattern`, `url`, `prompt` and `description`; a live
+    `path`, `pattern`, `url`, `prompt` and `description`; a
     `tool_call_update`, which carries only the call under `acp`, reads its
     `title` and `rawInput` the same way. Where the payload
     carries the agent's own words instead — the prompt that began the turn,

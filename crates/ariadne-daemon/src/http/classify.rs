@@ -403,6 +403,18 @@ mod tests {
         assert!(attention_for_event("compaction_update", &json!({})).is_none());
     }
 
+    /// A running call's stored progress and the end of a call a turn left
+    /// open move neither the status nor the attention flag (021, rule 7).
+    #[test]
+    fn stored_progress_and_an_abandoned_call_move_nothing() {
+        for kind in ["tool_call_update", "tool_call_abandoned"] {
+            let payload = json!({"session_id": "stub-session", "tool_call_id": "call-1",
+                                 "reason": "cancelled", "acp": {"title": "Bash"}});
+            assert_eq!(status_for_event(kind), None, "{kind}");
+            assert_eq!(attention_for_event(kind, &payload), None, "{kind}");
+        }
+    }
+
     /// A `session.diagnosis` is an advisory, read well after the session's
     /// own lifecycle: it moves neither the status nor the attention flag,
     /// whatever its category (024).
