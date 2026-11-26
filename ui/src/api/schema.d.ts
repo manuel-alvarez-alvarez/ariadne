@@ -3588,7 +3588,9 @@ export interface components {
             agents: components["schemas"]["AgentAssignment"][];
             description?: string;
             repo_id: string;
-            source_goal: components["schemas"]["SourceGoalReference"];
+            /** @description Source identity for goal-less work. Goal work uses source_goal.daemon_id. */
+            source_daemon_id?: string | null;
+            source_goal?: components["schemas"]["SourceGoalReference"] | null;
             title: string;
             workflow: components["schemas"]["TaskWorkflowContext"];
         };
@@ -5307,7 +5309,9 @@ export interface components {
              * @description Draft edits advance this revision. Authorization must name this revision.
              */
             revision: number;
-            source_goal: components["schemas"]["SourceGoalReference"];
+            /** @description Source identity for goal-less work. Goal work uses source_goal.daemon_id. */
+            source_daemon_id?: string | null;
+            source_goal?: components["schemas"]["SourceGoalReference"] | null;
             workflow: components["schemas"]["TaskWorkflowContext"];
         };
         /**

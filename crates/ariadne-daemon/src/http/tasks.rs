@@ -261,7 +261,18 @@ pub(super) async fn create(
     };
 
     if let Some(host) = &host {
-        return super::source_tasks::create(&state, &goal, &repo_id, host, req).await;
+        let workflow = ariadne_api::tasks::TaskWorkflowContext {
+            name: goal.workflow.clone(),
+            steps: state
+                .store
+                .goal_steps(&goal.id)
+                .await?
+                .into_iter()
+                .map(super::convert::step_dto)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        return super::source_tasks::create(&state, Some(&goal), workflow, &repo_id, host, req)
+            .await;
     }
     let new = NewTask {
         goal_id: goal.id,
@@ -699,12 +710,34 @@ pub(super) async fn create_standalone(
             "only the user may create a goal-less task",
         ));
     }
-    if req.host.as_deref().is_some_and(|host| host != "local") {
-        return Err(ApiError::bad_request(
-            "a goal-less task requires the local host",
-        ));
-    }
     check_staffing_shape(&req.agents, req.workflow.is_some())?;
+    if let Some(host) = req.host.as_deref().filter(|h| *h != "local") {
+        let repo = state.store.get_repository(&req.repo_id).await?;
+        check_host(&state, host, &repo, &req.agents, false).await?;
+        let mut agents = far_agents(&req.agents)?;
+        let steps = state
+            .store
+            .standalone_task_steps(req.workflow.as_deref(), &mut agents)
+            .await?
+            .into_iter()
+            .map(super::convert::step_dto)
+            .collect::<Result<Vec<_>, _>>()?;
+        let workflow = ariadne_api::tasks::TaskWorkflowContext {
+            name: req.workflow.unwrap_or_default(),
+            steps,
+        };
+        let request = CreateTaskRequest {
+            title: req.title,
+            description: req.description,
+            repo_id: Some(req.repo_id.clone()),
+            agents: req.agents,
+            depends_on: Vec::new(),
+            host: req.host.clone(),
+            origin_task_id: None,
+        };
+        return super::source_tasks::create(&state, None, workflow, &req.repo_id, host, request)
+            .await;
+    }
     let agents = resolve_agents(&state, &req.agents, true).await?;
     let task = state
         .store

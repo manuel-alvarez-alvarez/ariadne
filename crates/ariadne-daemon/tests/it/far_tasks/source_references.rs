@@ -882,3 +882,175 @@ async fn a_worker_with_creation_only_v1_requires_a_dependency_control_upgrade() 
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "source", "owner/solo").await;
+    forge_repository(&p.far, "worker", "owner/solo").await;
+    let task: TaskDto = p
+        .local
+        .json(
+            post_json(
+                "/v1/tasks",
+                json!({
+                    "title":"Independent remote work", "repo_id":repo.id, "host":"far",
+                    "agents":[{"model":p.model}]
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert!(task.goal_id.is_none());
+    assert!(task.workflow.is_none());
+    assert!(task.steps.is_empty());
+    eventually(TIMEOUT, "worker authorization", async || {
+        let worker: TaskDto = p.far.get(&format!("/v1/tasks/{}", task.id)).await;
+        assert!(worker.goal_id.is_none());
+        worker.execution_context.unwrap().authorized
+    })
+    .await;
+    p.far
+        .store
+        .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    p.far
+        .store
+        .transition_task(
+            &task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("Worker failed"),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "source failure reason", async || {
+        let t: TaskDto = p.local.get(&format!("/v1/tasks/{}", task.id)).await;
+        t.status == TaskStatus::Failed && t.reason.as_deref() == Some("Worker failed")
+    })
+    .await;
+    p.local
+        .json::<TaskDto>(
+            post(&format!("/v1/tasks/{}/retry", task.id)),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "remote retry", async || {
+        let t: TaskDto = p.far.get(&format!("/v1/tasks/{}", task.id)).await;
+        t.status == TaskStatus::Ready
+    })
+    .await;
+    p.local
+        .json::<TaskDto>(
+            post(&format!("/v1/tasks/{}/cancel", task.id)),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "remote cancellation", async || {
+        let t: TaskDto = p.local.get(&format!("/v1/tasks/{}", task.id)).await;
+        t.status == TaskStatus::Cancelled
+    })
+    .await;
+    assert!(p.far.store.list_goals(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn goal_less_admission_checks_the_host_and_saves_its_workflow() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "source", "owner/solo").await;
+    forge_repository(&p.far, "worker", "owner/solo").await;
+    p.local
+        .store
+        .create_workflow(ariadne_store::NewWorkflow {
+            name: "independent".into(),
+            document: "workflow independent\n  build[Build]\n    Build.\n    gate: committed\n"
+                .into(),
+        })
+        .await
+        .unwrap();
+    let body = json!({"title":"Remote columns", "repo_id":repo.id,"workflow":"independent",
+        "host":"far","agents":[{"step":"build","model":p.model}]});
+    let task: TaskDto = p
+        .local
+        .json(post_json("/v1/tasks", body.clone()), StatusCode::CREATED)
+        .await;
+    let worker: TaskDto = p.far.get(&format!("/v1/tasks/{}", task.id)).await;
+    assert!(worker.goal_id.is_none());
+    assert!(worker.execution_context.unwrap().source_goal.is_none());
+    assert_eq!(worker.workflow.as_deref(), Some("independent"));
+    assert_eq!(worker.steps.len(), 1);
+    assert_eq!(worker.steps[0].id, "build");
+    assert_eq!(
+        worker.steps[0].gate,
+        Some(ariadne_core::workflow::StepGate::Committed)
+    );
+    for host in ["dead", "unknown"] {
+        let mut refused = body.clone();
+        refused["host"] = json!(host);
+        let (status, bytes) = p.local.send(post_json("/v1/tasks", refused)).await;
+        assert!(status.is_client_error());
+        let reason: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(reason["error"]["message"].as_str().unwrap().contains(host));
+    }
+}
+
+#[tokio::test]
+async fn far_goal_less_admission_uses_the_local_workflow_reasons() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "source", "owner/admission").await;
+    forge_repository(&p.far, "worker", "owner/admission").await;
+    p.local
+        .store
+        .create_workflow(ariadne_store::NewWorkflow {
+            name: "admission".into(),
+            document:
+                "workflow admission\n  build[Build]\n    Build.\n  inspect[Inspect]\n    Inspect.\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+    for (workflow, agents, expected) in [
+        (
+            "pr-review",
+            json!([{"step":"review","model":p.model}]),
+            "workflow pr-review runs a pull request operation; a goal cannot use it",
+        ),
+        (
+            "pr-babysit",
+            json!([{"step":"babysit","model":p.model}]),
+            "workflow pr-babysit runs a pull request operation; a goal cannot use it",
+        ),
+        (
+            "admission",
+            json!([{"step":"build","model":p.model}]),
+            "the goal is active, so every column needs an agent; none staffs inspect",
+        ),
+        (
+            "admission",
+            json!([{"step":"unknown","model":p.model}]),
+            "the agent names an unknown column unknown; the columns are build, inspect",
+        ),
+    ] {
+        for host in ["local", "far"] {
+            let reason: Value = p
+                .local
+                .json(
+                    post_json(
+                        "/v1/tasks",
+                        json!({
+                            "title":"Admission", "repo_id":repo.id,"workflow":workflow,
+                            "host":host,"agents":agents
+                        }),
+                    ),
+                    StatusCode::BAD_REQUEST,
+                )
+                .await;
+            assert_eq!(
+                reason["error"]["message"],
+                format!("invalid input: {expected}")
+            );
+        }
+    }
+}

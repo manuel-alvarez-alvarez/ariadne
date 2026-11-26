@@ -593,19 +593,17 @@ function usePaletteEntries(open: boolean): PaletteEntries {
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host))
   const daemonIds = useDaemonIdentities(open)
+  const sourceDaemonOf = (task: (typeof tasks.rows)[number]) =>
+    task.execution_context?.source_goal?.daemon_id ?? task.execution_context?.source_daemon_id
   const sourceTasks = new Set(
     tasks.rows
-      .filter(
-        (task) =>
-          task.execution_context &&
-          daemonIds.get(task.host) === task.execution_context.source_goal.daemon_id,
-      )
+      .filter((task) => task.execution_context && daemonIds.get(task.host) === sourceDaemonOf(task))
       .map((task) => `${task.execution_context?.execution_owner}:${task.id}`),
   )
   const visibleTasks = tasks.rows.filter(
     (task) =>
       !task.execution_context ||
-      daemonIds.get(task.host) === task.execution_context.source_goal.daemon_id ||
+      daemonIds.get(task.host) === sourceDaemonOf(task) ||
       !sourceTasks.has(`${task.execution_context.execution_owner}:${task.id}`),
   )
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })

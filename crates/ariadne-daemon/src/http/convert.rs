@@ -319,15 +319,21 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
         let request: ariadne_api::tasks::CreateRemoteTaskRequest =
             serde_json::from_str(&remote.request)
                 .map_err(|e| StoreError::Invalid(e.to_string()))?;
-        dto.workflow = Some(remote.workflow.clone());
+        dto.workflow = (!remote.workflow.is_empty()).then(|| remote.workflow.clone());
         dto.steps = request.workflow.steps.clone();
         dto.execution_context = Some(ariadne_api::tasks::TaskExecutionContext {
-            source_goal: ariadne_api::tasks::SourceGoalReference {
-                daemon_id: remote.source_daemon_id,
-                goal_id: remote.source_goal_id,
-                title: remote.source_title,
-                description: remote.source_description,
-            },
+            source_daemon_id: remote
+                .source_goal_id
+                .is_empty()
+                .then(|| remote.source_daemon_id.clone()),
+            source_goal: (!remote.source_goal_id.is_empty()).then_some(
+                ariadne_api::tasks::SourceGoalReference {
+                    daemon_id: remote.source_daemon_id,
+                    goal_id: remote.source_goal_id,
+                    title: remote.source_title,
+                    description: remote.source_description,
+                },
+            ),
             execution_owner: store.daemon_id().await?,
             workflow: ariadne_api::tasks::TaskWorkflowContext {
                 name: remote.workflow,

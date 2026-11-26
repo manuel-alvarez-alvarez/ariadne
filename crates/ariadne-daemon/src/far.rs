@@ -486,7 +486,7 @@ impl Follower<'_> {
                         DomainEvent::SessionUpdated(session)
                     };
                     self.ctx.events.publish(BusEvent {
-                        goal_id: Some(reference.goal_id),
+                        goal_id: (!reference.goal_id.is_empty()).then_some(reference.goal_id),
                         task_id: Some(reference.id),
                         recorded: None,
                         event,
@@ -506,7 +506,7 @@ impl Follower<'_> {
                     && self.current()
                 {
                     self.ctx.events.publish(BusEvent {
-                        goal_id: Some(reference.goal_id),
+                        goal_id: (!reference.goal_id.is_empty()).then_some(reference.goal_id),
                         task_id: Some(reference.id),
                         recorded: None,
                         event: DomainEvent::TaskBranchUpdated(branch),
@@ -847,7 +847,7 @@ impl Follower<'_> {
                 continue;
             };
             let goal = store.get_goal(&reference.goal_id).await;
-            let cancel = goal.is_err()
+            let cancel = (!reference.goal_id.is_empty() && goal.is_err())
                 || current_reference.cancel_requested != 0
                 || goal
                     .as_ref()
@@ -927,9 +927,10 @@ impl Follower<'_> {
                     .ok_or(Unsent::Left)??
                 };
             } else if !cancel
-                && goal
-                    .as_ref()
-                    .is_ok_and(|g| g.status() == GoalStatus::Active)
+                && (reference.goal_id.is_empty()
+                    || goal
+                        .as_ref()
+                        .is_ok_and(|g| g.status() == GoalStatus::Active))
                 && current_reference.dependency_failure.is_none()
                 && !far.execution_context.as_ref().is_some_and(|c| c.authorized)
                 && far.status == TaskStatus::Pending
@@ -954,7 +955,7 @@ impl Follower<'_> {
                     .ok_or(Unsent::Left)??;
             }
             self.cache_reference(&reference, &far).await?;
-            if goal.is_err() && far.status.is_terminal() {
+            if !reference.goal_id.is_empty() && goal.is_err() && far.status.is_terminal() {
                 store.remove_source_task_reference(&reference.id).await?;
             }
         }

@@ -5,6 +5,7 @@ updated: 2026-11-26
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
+  - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
   - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-core/src/workflow.rs
@@ -429,7 +430,7 @@ every other kebab-case word in it; the wire spells the same gate
     They use worker prompt templates and worker repository permissions at launch, as local tasks do.
     Every column shares the task worktree. Remote branches start at the fetched remote base (001 rule 16).
 
-13. A goal-less task requires its own named workflow and snapshots its columns at creation.
+13. A goal-less task with a workflow uses its own named workflow and snapshots its columns at creation.
     It requires one agent for each column, with the same staffing checks as goal tasks.
     It walks the saved columns through `complete_step` and `fail_step`, with their saved gates.
     Catalog edits do not change its columns. Its worktree uses `worktrees/tasks/<task-tail>-eng`.
@@ -437,13 +438,19 @@ every other kebab-case word in it; the wire spells the same gate
     Goal tasks carry null and an empty array in these fields and keep their existing behavior.
     The reserved `pr-review` and `pr-babysit` workflows remain on their operation routes.
     Goal-less creation refuses them with the same reason as an ordinary goal.
-14. A goal-less task may have no workflow, with the behavior of 001 rule 26.
+14. A goal-less task on any ready host may have no workflow, with the behavior of 001 rule 26.
     `agents[].step` is optional in the request: a task with a workflow refuses an agent that names none.
     A task of a goal still requires a workflow and keeps rules 1 through 13.
 
 ## Acceptance criteria
 
+- Rule 13: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
+  Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
+  No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
+
 - Rule 14: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_failed_task_with_no_workflow_runs_again_after_a_retry`, `standalone_tasks::a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step`.
+
+- Rule 13: `far_tasks::source_references::far_goal_less_admission_uses_the_local_workflow_reasons` proves shared admission reasons.
 
 - Rule 13: `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`, `standalone_tasks::openapi_describes_goal_less_creation_and_task_columns`.
 

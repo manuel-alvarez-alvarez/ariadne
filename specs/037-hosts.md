@@ -1,7 +1,7 @@
 ---
 id: 037
 status: current
-updated: 2026-11-25
+updated: 2026-11-26
 areas: [api, daemon, client, cli, store, docs, ui]
 commits: []
 tests:
@@ -757,7 +757,21 @@ picker, the Hosts screen and one stream per host — is spec
 110. Goal usage adds each referenced worker task's cached usage once.
      Worker sessions create no source session rows. Existing local and legacy usage remains unchanged.
 
+111. `POST /v1/tasks` accepts a ready host for goal-less work, with or without a workflow.
+     Existing host checks refuse unavailable hosts and name the cause.
+     The source reserves a reference and authorizes its worker draft without goal planning.
+     The worker saves no source goal. The protocol advertises `goal-less-tasks-v1`.
+     Goal-less requests and execution contexts carry null `source_goal` and a separate `source_daemon_id`.
+     An empty workflow name and empty columns represent no workflow in the remote protocol.
+     The source reports worker status, step, and reason through the existing reference cache.
+     Source cancel and retry use the existing worker controls. Goal tasks retain their rules.
+
 ## Acceptance criteria
+
+- Admission: `far_tasks::source_references::goal_less_admission_checks_the_host_and_saves_its_workflow`.
+- Rule 111: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
+  Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
+  No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
 
 - Rules 102 and 105: `far_tasks::source_references::new_remote_tasks_are_worker_drafts_during_source_planning`.
 - Rule 102 restart: `far_tasks::source_references::reopening_the_source_store_recovers_an_unacknowledged_creation_without_a_second_worker_task`.

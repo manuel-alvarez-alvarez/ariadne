@@ -203,7 +203,7 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
     enabled: !task.execution_context && !!task.goal_id,
   })
   const goalId = task.goal_id
-  const sourceHost = useSourceHost(task.execution_context?.source_goal.daemon_id)
+  const sourceHost = useSourceHost(task.execution_context?.source_goal?.daemon_id)
   const executionHost = useSourceHost(task.execution_context?.execution_owner)
   const navigate = useNavigate()
   const status = TASK_STATUS_META[task.status]
@@ -211,10 +211,10 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
   return (
     <PanelHeader
       breadcrumb={
-        !goalId || (task.execution_context && !sourceHost)
+        !goalId || (task.execution_context?.source_goal && !sourceHost)
           ? undefined
           : {
-              label: task.execution_context?.source_goal.title ?? goal.data?.title ?? "Goal",
+              label: task.execution_context?.source_goal?.title ?? goal.data?.title ?? "Goal",
               // Replaces rather than pushes: the goal panel takes this one's place
               // in the pane, not a step stacked over it.
               onClick: () => navigate(paths.goal(goalId, sourceHost ?? host), { replace: true }),
@@ -225,10 +225,10 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
       status={
         <>
           <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
-          {task.execution_context && !sourceHost ? (
+          {task.execution_context?.source_goal && !sourceHost ? (
             <span>
-              {task.execution_context.source_goal.title} (source{" "}
-              {task.execution_context.source_goal.daemon_id} unavailable)
+              {task.execution_context.source_goal?.title} (source{" "}
+              {task.execution_context.source_goal?.daemon_id} unavailable)
             </span>
           ) : null}
           {task.stalled && <StalledBadge />}

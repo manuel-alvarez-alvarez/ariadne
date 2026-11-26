@@ -642,8 +642,10 @@ async fn resolve_task_goal(client: &Client, typed: &str) -> Result<String> {
             let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
             let mut goals = std::collections::BTreeMap::new();
             for task in tasks {
-                if let Some(context) = task.execution_context {
-                    goals.insert(context.source_goal.goal_id, context.source_goal.title);
+                if let Some(context) = task.execution_context
+                    && let Some(source) = context.source_goal
+                {
+                    goals.insert(source.goal_id, source.title);
                 }
             }
             let rows = goals.into_iter().map(|(id, title)| resolve::row(id, title));

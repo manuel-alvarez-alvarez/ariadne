@@ -341,7 +341,7 @@ function SessionsTable({
                 session.goal_id
                   ? (goalsById.get(hostKey(session.host, session.goal_id))?.title ??
                     tasksById.get(hostKey(session.host, session.task_id ?? ""))?.execution_context
-                      ?.source_goal.title)
+                      ?.source_goal?.title)
                   : undefined
               }
               taskTitle={

@@ -5,6 +5,7 @@ updated: 2026-11-26
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
+  - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
   - crates/ariadne-store/tests/standalone_migration.rs
   - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-store/tests/remote_task_migration.rs
@@ -164,10 +165,10 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     loses its `messages` table (018) and no other row. The deletion of a
     goal, of a local task and of a source task works as before.
 
-25. The user can create local work with `POST /v1/tasks` without a goal.
+25. The user can create work with `POST /v1/tasks` without a goal.
     The request requires a registered `repo_id`, a title, a known workflow or none (rule 26), and complete staffing.
-    It accepts no `depends_on` field. It accepts only an absent host or `local`.
-    The task starts `ready`, without planning or an orchestrator.
+    It accepts no `depends_on` field. An absent host or `local` runs here. A ready far host follows 037 rule 111.
+    Local work starts `ready`, without planning or an orchestrator.
     Its nullable `goal_id` stays null in storage, sessions, task responses, and events.
     `GET /v1/tasks?no_goal=true` lists only these tasks.
     Cancel, retry, and completion cleanup use the existing task rules.
@@ -182,6 +183,10 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     What the agent loads and is told is in 006 rule 20. A task of a goal still requires a workflow (030 rule 13).
 
 ## Acceptance criteria
+
+- Rule 25: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
+  Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
+  No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
 
 - Rule 25: `standalone_tasks::a_user_creates_a_ready_task_without_a_goal`, `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`.
   `crates/ariadne-store/tests/standalone_migration.rs::an_upgrade_preserves_goal_tasks_and_accepts_a_null_goal` proves the migration.
