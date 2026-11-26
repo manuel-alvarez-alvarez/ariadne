@@ -254,6 +254,12 @@ export interface paths {
          *     tell a live daemon from a dead one, and a changed `started_at` to tell a
          *     restarted daemon from the one it was talking to.
          *
+         *     A source daemon names itself with `source`, its persistent daemon ID.
+         *     Its stream then also carries `source_post` frames (`SourcePostDto`): the
+         *     posts of worker agents to the orchestrator of that source (039). A post
+         *     goes on the newest open stream of the source alone, at once, and no stream
+         *     gets it again.
+         *
          *     A client that falls too far behind loses events. It is never left silently
          *     stale: the daemon sends a final `resync` event (`{"missed": n}`) and closes
          *     the connection, so an `EventSource` reconnects and takes the refetch path
@@ -431,28 +437,6 @@ export interface paths {
          *     would stop there.
          */
         post: operations["goals_finalize"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/goals/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The messages of a goal: what its agents said that was not about one task.
-         * @description A goal's channel is the orchestrator's inbox. Everything an agent says to
-         *     it about a task is on that task instead, and this is where the rest goes.
-         */
-        get: operations["goals_list_goal_messages"];
-        put?: never;
-        /** Send a message about the goal itself. */
-        post: operations["goals_post_goal_message"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2219,6 +2203,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/remote-tasks/{id}/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put a post of the source orchestrator into the live session of the agent
+         *     of one column of a worker-protocol task on this worker. The worker applies
+         *     the rules of a local post.
+         */
+        post: operations["tasks_post_from_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/remote-tasks/{id}/retry-dependency": {
         parameters: {
             query?: never;
@@ -2465,29 +2470,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sessions/{id}/agent-requests": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The requests of a session that still wait for an answer, oldest first.
-         * @description A console opens on the newest page of events (`GET /console`), and a
-         *     question asked before that page has no opening line in it. The console
-         *     reads this list with each snapshot, and draws every pending question it
-         *     does not already hold, so a reload or a reconnect never hides one.
-         */
-        get: operations["sessions_list_agent_requests"];
-        put?: never;
-        post: operations["sessions_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/sessions/{id}/console": {
         parameters: {
             query?: never;
@@ -2648,6 +2630,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The questions the session's agent waits on, oldest first, each with the
+         *     form the agent sent, unchanged.
+         */
+        get: operations["sessions_list_questions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/questions/{question_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer one question: `accept` with the form content, `decline` or
+         *     `cancel`. The agent reads it as the result of its request. One answer
+         *     closes the question, and a second is refused.
+         */
+        post: operations["sessions_answer_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/resume": {
         parameters: {
             query?: never;
@@ -2689,49 +2712,6 @@ export interface paths {
          *     of a cancelled goal is refused.
          */
         post: operations["sessions_switch_session"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{session_id}/agent-requests/{request_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["sessions_withdraw"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{session_id}/agent-requests/{request_id}/answer": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Answer one request: the option of its question the user picked, or the
-         *     text the user typed.
-         * @description The answer reaches the agent as a fresh console prompt — sent at once if
-         *     the agent is between turns, or queued behind the turn that runs — and is
-         *     never read as the answer to a pending permission. A request that is no
-         *     longer pending (answered, withdrawn, or expired with the turn that asked
-         *     it) is refused with `409` and the code `agent_request_closed`, and sends
-         *     nothing. Where the prompt cannot reach the agent, the request opens again
-         *     so the user can retry.
-         */
-        post: operations["sessions_answer_agent_request"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2806,7 +2786,8 @@ export interface paths {
         /** List tasks. */
         get: operations["tasks_list"];
         put?: never;
-        post?: never;
+        /** Create a local task without a goal. Only the user can create one. */
+        post: operations["tasks_create_standalone"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2879,23 +2860,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/tasks/{id}/messages": {
+    "/v1/tasks/{id}/posts": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** The messages of a task: what its agents have said to each other. */
-        get: operations["tasks_list_task_messages"];
+        get?: never;
         put?: never;
         /**
-         * Send a message about a task.
-         * @description Who it is from is the session header's, never the body's: an agent cannot
-         *     write as somebody else, and a call with no session behind it is the user
-         *     speaking.
+         * Put the body into the live session of the orchestrator or of the agent
+         *     of one column, on one task of this host or a worker-protocol task on
+         *     another.
+         * @description Each refusal is a bad request with the sentence the caller reads.
          */
-        post: operations["tasks_post_task_message"];
+        post: operations["tasks_post_to_session"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3144,11 +3124,6 @@ export interface components {
          */
         AcpDegradation: "no_efforts" | "no_restart_resume";
         /**
-         * @description Who is attempting a transition: a seat, the daemon, or the user.
-         * @enum {string}
-         */
-        Actor: "orchestrator" | "agent" | "daemon" | "user";
-        /**
          * @description One agent to staff on a task: the column it works, the skills it loads,
          *     and what it is to run on.
          *
@@ -3179,7 +3154,8 @@ export interface components {
             model: string;
             /**
              * @description The names of the skills this agent loads, in the order they reach it.
-             *     Omitted or empty = the column's own skills. A name no skill answers
+             *     Omitted or empty = the column's own skills, or none for a task with
+             *     no workflow. A name no skill answers
              *     to is refused.
              * @example [
              *       "coding",
@@ -3190,9 +3166,9 @@ export interface components {
             /**
              * @description The id of the workflow column this agent works, one of the goal's
              *     columns. A task takes one agent per column, and a column named twice
-             *     is refused.
+             *     is refused. Omitted only for the one agent of a task with no workflow.
              */
-            step: string;
+            step?: string | null;
         };
         /**
          * @description How one registry agent is launched, shared by every session that runs on
@@ -3244,46 +3220,6 @@ export interface components {
             summary: string;
             task_id?: string | null;
         };
-        /** @description A question an agent asks the user through `wait_for_user` (031). */
-        AgentQuestion: {
-            /** @description The answers the user can pick. With none, the user types the answer. */
-            options?: components["schemas"]["AgentQuestionOption"][];
-            /**
-             * @description Why the agent recommends that option. It needs
-             *     `recommended_option_id`.
-             */
-            recommendation_reason?: string | null;
-            /** @description The `id` of the option the agent recommends. */
-            recommended_option_id?: string | null;
-            /** @description The question, with the context the user needs to answer it. */
-            text: string;
-        };
-        /** @description One answer the user can pick. */
-        AgentQuestionOption: {
-            /** @description What the answer means, or what it causes. */
-            description?: string | null;
-            /** @description A stable id, unique in the question. */
-            id: string;
-            /** @description The short name of the answer. */
-            label: string;
-        };
-        /**
-         * @description One pending request of a session, as `GET .../agent-requests` lists it:
-         *     what a console restores a question card from when its opening event is
-         *     older than the page the console opened on.
-         */
-        AgentRequestDto: {
-            created_at: string;
-            id: string;
-            question?: components["schemas"]["AgentQuestion"] | null;
-            /** @description The one-line hint. */
-            summary: string;
-        };
-        /**
-         * @description How a request closed, as its `agent_request.resolved` event says.
-         * @enum {string}
-         */
-        AgentRequestResolution: "answered" | "withdrawn" | "expired";
         /**
          * @description What one staffed agent spent on a task, named the way a reader addresses
          *     it: an agent has no name of its own, so its column and its skills are what
@@ -3355,12 +3291,13 @@ export interface components {
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
         };
-        /** @description The user's answer to one request: an option of its question, or text. */
-        AnswerAgentRequest: {
-            /** @description The `id` of the option the user picked. */
-            option_id?: string | null;
-            /** @description The answer the user typed. */
-            text?: string | null;
+        /**
+         * @description Body of `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+         *     `content` is present with `accept` only.
+         */
+        AnswerQuestionRequest: {
+            action: components["schemas"]["QuestionAction"];
+            content?: Record<string, never> | null;
         };
         /**
          * @description Body of
@@ -3604,16 +3541,6 @@ export interface components {
         ConsoleInputRequest: {
             text: string;
         };
-        /** @description An agent's flag that it waits for the user (`wait_for_user`, 013). */
-        CreateAgentRequest: {
-            question?: components["schemas"]["AgentQuestion"] | null;
-            /**
-             * @description One line for the Needs attention list, at most 100 characters. The
-             *     question itself goes in `question`; a summary that runs longer, or
-             *     over more than one line, is refused.
-             */
-            summary: string;
-        };
         CreateDashboardRequest: {
             document: unknown;
             name: string;
@@ -3661,7 +3588,9 @@ export interface components {
             agents: components["schemas"]["AgentAssignment"][];
             description?: string;
             repo_id: string;
-            source_goal: components["schemas"]["SourceGoalReference"];
+            /** @description Source identity for goal-less work. Goal work uses source_goal.daemon_id. */
+            source_daemon_id?: string | null;
+            source_goal?: components["schemas"]["SourceGoalReference"] | null;
             title: string;
             workflow: components["schemas"]["TaskWorkflowContext"];
         };
@@ -3693,6 +3622,19 @@ export interface components {
              * @example api-design
              */
             name: string;
+        };
+        /** @description Create user-owned local work with its own saved columns. */
+        CreateStandaloneTaskRequest: {
+            agents: components["schemas"]["AgentAssignment"][];
+            description?: string;
+            host?: string | null;
+            repo_id: string;
+            title: string;
+            /**
+             * @description The workflow the task runs. Omitted or null = no workflow: `agents`
+             *     holds exactly one agent with no `step`, and its step calls end the task.
+             */
+            workflow?: string | null;
         };
         CreateTaskRequest: {
             /**
@@ -3839,11 +3781,6 @@ export interface components {
             data: components["schemas"]["TaskBranchDto"];
             /** @enum {string} */
             event: "task_branch_updated";
-        } | {
-            /** @description One agent said something to another. */
-            data: components["schemas"]["MessageDto"];
-            /** @enum {string} */
-            event: "message_sent";
         } | {
             data: components["schemas"]["SessionDto"];
             /** @enum {string} */
@@ -4181,6 +4118,13 @@ export interface components {
         /** @description Response of `GET /v1/health`. */
         HealthResponse: {
             /**
+             * Format: int32
+             * @description The process that answered. A daemon from before this field sends
+             *     none: a worker update tells by it whether the service's own process
+             *     answers (037).
+             */
+            pid?: number | null;
+            /**
              * @description Always "ok" when the daemon is able to answer.
              * @example ok
              */
@@ -4431,47 +4375,6 @@ export interface components {
             /** @description Why Ariadne cannot do this, and what to do, in plain words. */
             reason: string;
         };
-        MessageDto: {
-            body: string;
-            created_at: string;
-            /**
-             * @description When it was handed to the recipient's agent, or None while it is still
-             *     waiting for one to be free.
-             */
-            delivered_at?: string | null;
-            from_actor: components["schemas"]["Actor"];
-            /**
-             * @description The staffed agent that sent it, or None for the orchestrator, the
-             *     daemon and the user.
-             */
-            from_agent_id?: string | null;
-            from_session?: string | null;
-            goal_id: string;
-            id: string;
-            kind: components["schemas"]["MessageKind"];
-            /** @description The task it is about, or None for a message about the goal itself. */
-            task_id?: string | null;
-            to_actor: components["schemas"]["Actor"];
-            /** @description The staffed agent it is for, or None for the orchestrator. */
-            to_agent_id?: string | null;
-        };
-        /**
-         * @description What one agent is saying to another.
-         *
-         *     Agents talk to each other through one channel, and one kind carries
-         *     everything they say on it, whether it asks something or answers it. There
-         *     is no `answer` kind and no `reply` tool: an answer is a message to whoever
-         *     asked, addressed the way the question was, so nothing threads. Each
-         *     message reaches its agent as a turn — which is why the tool that sends one
-         *     takes questions and answers and nothing else, no confirmation and no
-         *     thanks.
-         *
-         *     A review used to run on the channel too, as three kinds of its own; a
-         *     workflow column moves a task through the step routes now, and the one
-         *     kind left is what the agents say.
-         * @enum {string}
-         */
-        MessageKind: "message";
         /** @description A local repository a host has no checkout of. */
         MissingRepositoryDto: {
             /** @description `owner/repo` on its forge; null for a repository with no forge. */
@@ -4626,6 +4529,15 @@ export interface components {
             telemetry_rollups_days: number;
             /** Format: int64 */
             telemetry_samples_days: number;
+        };
+        /**
+         * @description Body of `POST /v1/tasks/{id}/posts`: text for the live session of another
+         *     agent, with no stored row. The sender is the session header's.
+         */
+        PostToSessionRequest: {
+            body: string;
+            /** @description `orchestrator`, or the column of a staffed agent of the task. */
+            to: string;
         };
         /**
          * @description The work Ariadne does on one pull request as a goal of its own: one active
@@ -4808,6 +4720,25 @@ export interface components {
             version?: string | null;
         };
         /**
+         * @description What the person did with a question, as ACP names it.
+         * @enum {string}
+         */
+        QuestionAction: "accept" | "decline" | "cancel";
+        /**
+         * @description One open question an agent asks with ACP `elicitation/create` in form
+         *     mode, as `GET /v1/sessions/{id}/questions` lists it (021).
+         */
+        QuestionDto: {
+            created_at: string;
+            id: string;
+            /** @description The agent's own text over the form. */
+            message: string;
+            /** @description The `requestedSchema` of the ACP request, unchanged. */
+            schema: Record<string, never>;
+            /** @description The Ariadne session whose agent asks. */
+            session_id: string;
+        };
+        /**
          * @description One learned permission to write whole, as another daemon pushes it (037).
          *     A row with the same repository, tool name, level and key keeps its id and
          *     `created_at`, and takes everything else from the request.
@@ -4825,6 +4756,24 @@ export interface components {
             target: components["schemas"]["LearnedPermissionTarget"];
             tool_call: unknown;
             tool_name: string;
+        };
+        /**
+         * @description Body of `POST /v1/remote-tasks/{id}/posts`: a post of the source
+         *     orchestrator to a column of a worker-protocol task on this worker.
+         */
+        RemotePostRequest: {
+            /** @description The body of the post, or of the dropped post when `dropped` is set. */
+            body: string;
+            /**
+             * @description Set when this is a notice that the source dropped the post in `body`
+             *     of a worker agent to its orchestrator: the reason. The worker puts a
+             *     notice into the session, not a post, and asks for no answer.
+             */
+            dropped?: string | null;
+            /** @description The persistent daemon ID of the source that sends the post. */
+            source_daemon_id: string;
+            /** @description The column of a staffed agent of the task. */
+            to: string;
         };
         /** @description Explicit protocol negotiation, independent of application version. */
         RemoteTaskProtocol: {
@@ -4904,23 +4853,6 @@ export interface components {
          * @enum {string}
          */
         Seat: "orchestrator" | "agent" | "reviewer" | "keeper";
-        /**
-         * @description Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.
-         *
-         *     Who it is *from* comes from the session header rather than the body: an
-         *     agent cannot send a message as somebody else, and a message with no session
-         *     behind it is the user's.
-         */
-        SendMessageRequest: {
-            body: string;
-            /** @description Who it is for. `orchestrator` needs no agent id — a goal has one. */
-            to_actor: components["schemas"]["Actor"];
-            /**
-             * @description The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.
-             *     Required for `agent`, refused for the orchestrator.
-             */
-            to_agent_id?: string | null;
-        };
         SessionDto: {
             attention_reason?: components["schemas"]["AttentionReason"] | null;
             /** @description When the current `attention_reason` was first raised. */
@@ -5192,6 +5124,18 @@ export interface components {
             title: string;
         };
         /**
+         * @description The `source_post` frame of `GET /v1/events/stream?source=…`: a post of a
+         *     worker agent to the orchestrator of its source goal. The worker sends it
+         *     on one open stream of that source, live, and never again.
+         */
+        SourcePostDto: {
+            body: string;
+            /** @description The column of the sender. */
+            column: string;
+            id: string;
+            task_id: string;
+        };
+        /**
          * @description What a step waits for before the next one may start: the author's commit,
          *     a push, a merge onto the base, or a request merged by a human.
          * @enum {string}
@@ -5268,7 +5212,10 @@ export interface components {
              *     ]
              */
             skills: string[];
-            /** @description The id of the workflow column this agent works. */
+            /**
+             * @description The id of the workflow column this agent works; empty for the agent
+             *     of a task with no workflow.
+             */
             step: string;
         };
         /**
@@ -5280,7 +5227,7 @@ export interface components {
         TaskBranchDto: {
             /** @description The task branch whose head moved. */
             branch: string;
-            goal_id: string;
+            goal_id?: string | null;
             /** @description Full sha of the commit the branch points at now. */
             head: string;
             task_id: string;
@@ -5299,7 +5246,7 @@ export interface components {
             depends_on: string[];
             description: string;
             execution_context?: components["schemas"]["TaskExecutionContext"] | null;
-            goal_id: string;
+            goal_id?: string | null;
             /**
              * @description The host the task runs on: `local` for a task on the goal's own
              *     daemon, else the name of a host (`GET /v1/hosts`).
@@ -5339,10 +5286,12 @@ export interface components {
              *     `in_progress`; null before its first column and once it has ended.
              */
             step?: string | null;
+            steps?: components["schemas"]["WorkflowStepDto"][];
             title: string;
             updated_at: string;
             /** @description What the agents of this task have spent between them. */
             usage: components["schemas"]["TaskUsageDto"];
+            workflow?: string | null;
             worktree_path?: string | null;
         };
         /** @description Worker context sufficient for task inspection without a local goal. */
@@ -5360,7 +5309,9 @@ export interface components {
              * @description Draft edits advance this revision. Authorization must name this revision.
              */
             revision: number;
-            source_goal: components["schemas"]["SourceGoalReference"];
+            /** @description Source identity for goal-less work. Goal work uses source_goal.daemon_id. */
+            source_daemon_id?: string | null;
+            source_goal?: components["schemas"]["SourceGoalReference"] | null;
             workflow: components["schemas"]["TaskWorkflowContext"];
         };
         /**
@@ -6065,6 +6016,12 @@ export interface operations {
                 goal?: string | null;
                 /** @description Only events belonging to this task. */
                 task?: string | null;
+                /**
+                 * @description The persistent daemon ID of a source daemon that follows this stream.
+                 *     The stream also carries `source_post` frames (`SourcePostDto`): the
+                 *     posts of worker agents to the orchestrator of that source.
+                 */
+                source?: string | null;
             };
             header?: never;
             path?: never;
@@ -6072,7 +6029,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. */
+            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. A stream with `source` also carries `source_post` (SourcePostDto). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6442,80 +6399,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GoalDto"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    goals_list_goal_messages: {
-        parameters: {
-            query?: {
-                /** @description Only the messages for this staffed agent. */
-                to_agent_id?: string | null;
-                /** @description Only the ones that have not reached their agent yet. */
-                undelivered?: boolean;
-                /**
-                 * @description Hand the caller its own undelivered messages: narrow the list to the
-                 *     calling session's agent, and stamp every row it returns delivered.
-                 *
-                 *     This is a delivery, not a read. It needs a session behind it, and it
-                 *     is what makes a read of the channel count the same as a prompt: a
-                 *     message handed over here is never handed over again.
-                 */
-                deliver?: boolean;
-            };
-            header?: never;
-            path: {
-                /** @description goal id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"][];
-                };
-            };
-        };
-    };
-    goals_post_goal_message: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description goal id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SendMessageRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"];
                 };
             };
             403: {
@@ -8068,6 +7951,42 @@ export interface operations {
             };
         };
     };
+    tasks_post_from_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemotePostRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     tasks_retry_dependency: {
         parameters: {
             query?: never;
@@ -8631,56 +8550,6 @@ export interface operations {
             };
         };
     };
-    sessions_list_agent_requests: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentRequestDto"][];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateAgentRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     sessions_snapshot: {
         parameters: {
             query?: never;
@@ -8875,6 +8744,76 @@ export interface operations {
             };
         };
     };
+    sessions_list_questions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_answer_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description The answer was sent to the agent */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     sessions_resume: {
         parameters: {
             query?: never;
@@ -8932,69 +8871,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SessionDto"];
                 };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_withdraw: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-                request_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_answer_agent_request: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-                request_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AnswerAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description The answer was recorded and sent to the agent */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             400: {
                 headers: {
@@ -9194,6 +9070,8 @@ export interface operations {
     tasks_list: {
         parameters: {
             query?: {
+                /** @description List tasks without a goal. */
+                no_goal?: boolean;
                 /** @description Filter by goal id. */
                 goal?: string | null;
                 /** @description Filter by status. */
@@ -9217,6 +9095,47 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TaskDto"][];
                 };
+            };
+        };
+    };
+    tasks_create_standalone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateStandaloneTaskRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -9354,43 +9273,7 @@ export interface operations {
             };
         };
     };
-    tasks_list_task_messages: {
-        parameters: {
-            query?: {
-                /** @description Only the messages for this staffed agent. */
-                to_agent_id?: string | null;
-                /** @description Only the ones that have not reached their agent yet. */
-                undelivered?: boolean;
-                /**
-                 * @description Hand the caller its own undelivered messages: narrow the list to the
-                 *     calling session's agent, and stamp every row it returns delivered.
-                 *
-                 *     This is a delivery, not a read. It needs a session behind it, and it
-                 *     is what makes a read of the channel count the same as a prompt: a
-                 *     message handed over here is never handed over again.
-                 */
-                deliver?: boolean;
-            };
-            header?: never;
-            path: {
-                /** @description task id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"][];
-                };
-            };
-        };
-    };
-    tasks_post_task_message: {
+    tasks_post_to_session: {
         parameters: {
             query?: never;
             header?: never;
@@ -9402,25 +9285,23 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SendMessageRequest"];
+                "application/json": components["schemas"]["PostToSessionRequest"];
             };
         };
         responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"];
-                };
-            };
-            403: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            409: {
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

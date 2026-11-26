@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use ariadne_api::dashboards::DashboardDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto, LinkedGoalDto, PullRequestOperationDto};
-use ariadne_api::messages::MessageDto;
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
 };
@@ -22,7 +21,7 @@ use ariadne_api::usage::TokenUsageDto;
 use ariadne_api::workflows::{WorkflowDto, WorkflowStepDto};
 use ariadne_core::models::agent_of;
 use ariadne_core::workflow::WorkflowStep;
-use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
+use ariadne_core::{Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, SessionFilter, Store, StoreError};
 
 /// One conversion per entity: the fields that are not a straight move, then
@@ -144,6 +143,8 @@ dto! {
         operation: Option<ariadne_core::workflow::PrOperation>,
     ) -> TaskDto {
         execution_context: None,
+        workflow: None,
+        steps: Vec::new(),
         status: t.status(),
         operation: operation,
         stalled: t.is_stalled(),
@@ -165,17 +166,6 @@ dto! {
 
     pub(crate) fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
         .. id, from_status, to_status, actor, reason, created_at, from_step, to_step
-    }
-
-    pub(crate) fn message_dto(m: store::Message) -> MessageDto {
-        // A kind or an actor this build does not know is carried rather than
-        // dropped: the body is what somebody typed, and a listing that
-        // silently loses a message is worse than one that shows a `note`.
-        kind: m.kind().unwrap_or(MessageKind::Message),
-        from_actor: m.from_actor().unwrap_or(Actor::Daemon),
-        to_actor: m.to_actor().unwrap_or(Actor::Daemon),
-        .. id, goal_id, task_id, from_agent_id, from_session, to_agent_id,
-           body, delivered_at, created_at
     }
 
     /// `usage` is what this session has spent and `step` is the workflow
@@ -310,18 +300,39 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
         task.pr_url = goal.pr_url;
     }
     let remote = store.remote_task_context(&task.id).await?;
+    let workflow = store.task_workflow(&task.id).await?;
+    let steps = if workflow.is_some() {
+        store
+            .task_steps(&task)
+            .await?
+            .into_iter()
+            .map(step_dto)
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     let mut dto = task_dto(task, agents, sessions, depends_on, usage, reason, operation);
+    dto.workflow = workflow;
+    dto.steps = steps;
     if let Some(remote) = remote {
         let request: ariadne_api::tasks::CreateRemoteTaskRequest =
             serde_json::from_str(&remote.request)
                 .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        dto.workflow = (!remote.workflow.is_empty()).then(|| remote.workflow.clone());
+        dto.steps = request.workflow.steps.clone();
         dto.execution_context = Some(ariadne_api::tasks::TaskExecutionContext {
-            source_goal: ariadne_api::tasks::SourceGoalReference {
-                daemon_id: remote.source_daemon_id,
-                goal_id: remote.source_goal_id,
-                title: remote.source_title,
-                description: remote.source_description,
-            },
+            source_daemon_id: remote
+                .source_goal_id
+                .is_empty()
+                .then(|| remote.source_daemon_id.clone()),
+            source_goal: (!remote.source_goal_id.is_empty()).then_some(
+                ariadne_api::tasks::SourceGoalReference {
+                    daemon_id: remote.source_daemon_id,
+                    goal_id: remote.source_goal_id,
+                    title: remote.source_title,
+                    description: remote.source_description,
+                },
+            ),
             execution_owner: store.daemon_id().await?,
             workflow: ariadne_api::tasks::TaskWorkflowContext {
                 name: remote.workflow,

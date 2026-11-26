@@ -26,8 +26,8 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    dashboard_dto, event_dto, goal_dto_of, message_dto, repository_dto, session_dto_of, skill_dto,
-    task_dto_of, transition_dto, workflow_dto,
+    dashboard_dto, event_dto, goal_dto_of, repository_dto, session_dto_of, skill_dto, task_dto_of,
+    transition_dto, workflow_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -339,7 +339,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
             let (dto, keys) = task_event_of(store, task).await?;
             BusEvent {
                 event: DomainEvent::TaskCreated(dto),
-                goal_id: Some(keys.0),
+                goal_id: keys.0,
                 task_id: Some(keys.1),
                 recorded: None,
             }
@@ -351,17 +351,11 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                     task: dto,
                     transition: transition.map(transition_dto),
                 }),
-                goal_id: Some(keys.0),
+                goal_id: keys.0,
                 task_id: Some(keys.1),
                 recorded: None,
             }
         }
-        Change::MessageSent(message) => BusEvent {
-            goal_id: Some(message.goal_id.clone()),
-            task_id: message.task_id.clone(),
-            recorded: None,
-            event: DomainEvent::MessageSent(message_dto(message)),
-        },
         Change::SessionCreated(session) => {
             session_event(store, session, DomainEvent::SessionCreated).await?
         }
@@ -447,7 +441,7 @@ async fn goal_event(
 async fn task_event_of(
     store: &Store,
     task: Task,
-) -> Result<(ariadne_api::tasks::TaskDto, (String, String))> {
+) -> Result<(ariadne_api::tasks::TaskDto, (Option<String>, String))> {
     let keys = (task.goal_id.clone(), task.id.clone());
     Ok((task_dto_of(store, task).await?, keys))
 }

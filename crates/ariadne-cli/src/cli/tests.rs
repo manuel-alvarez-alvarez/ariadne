@@ -259,7 +259,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("task logs", true),
     ("task ls", true),
     ("task retry", true),
-    ("task messages", true),
     ("task update", true),
     ("version", true),
     ("workflow check", true),
@@ -796,7 +795,11 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     assert_eq!(
         agents
             .iter()
-            .map(|a| (a.step.as_str(), a.skills.join(","), a.model.as_str()))
+            .map(|a| (
+                a.step.as_deref().unwrap(),
+                a.skills.join(","),
+                a.model.as_str()
+            ))
             .collect::<Vec<_>>(),
         [
             (
@@ -936,11 +939,11 @@ fn an_agent_slot_names_its_column_skills_model_and_effort() {
         panic!("task create")
     };
     assert_eq!(agents.len(), 2);
-    assert_eq!(agents[0].step, "develop");
+    assert_eq!(agents[0].step.as_deref(), Some("develop"));
     assert_eq!(agents[0].skills, ["coding"]);
     assert_eq!(agents[0].model, "codex-acp:gpt-5.6-sol");
     assert_eq!(agents[0].effort.as_deref(), Some("xhigh"));
-    assert_eq!(agents[1].step, "review");
+    assert_eq!(agents[1].step.as_deref(), Some("review"));
     assert!(agents[1].skills.is_empty(), "empty means the column's own");
 
     let err = try_parse(&[
@@ -1124,7 +1127,11 @@ fn an_effort_can_be_chosen_beside_every_model() {
     assert_eq!(
         agents
             .iter()
-            .map(|a| (a.step.as_str(), a.model.as_str(), a.effort.as_deref()))
+            .map(|a| (
+                a.step.as_deref().unwrap(),
+                a.model.as_str(),
+                a.effort.as_deref()
+            ))
             .collect::<Vec<_>>(),
         [
             ("develop", "claude-agent-acp:claude-opus-5", Some("xhigh")),
@@ -1271,8 +1278,22 @@ fn an_agent_slot_that_names_no_real_agent_is_a_usage_error() {
     assert!(err.contains("a model is required"), "{err}");
     let err = refused("review@high");
     assert!(err.contains("a model is required"), "{err}");
-    // A model with no column is the other half missing.
-    assert!(refused("=codex-acp:o3").contains("no column"));
+    // A model with no column is how a task with no workflow is staffed, so
+    // `task create` takes it; `task update` still refuses it.
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "task",
+            "create",
+            "--title",
+            "Do it",
+            "--repo",
+            "r",
+            "--agent",
+            "=codex-acp:o3"
+        ])
+        .is_ok()
+    );
     // And the half after the `@`, which the forms in the refusal spell out.
     let err = refused("review=codex-acp:o3@");
     assert!(err.contains("no effort was named"), "{err}");

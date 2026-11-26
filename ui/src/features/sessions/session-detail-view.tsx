@@ -205,7 +205,7 @@ export function SessionDetailView({
       (!session.task_id || !!task.data || task.isError) &&
       !task.data?.execution_context,
   })
-  const sourceHost = useSourceHost(task.data?.execution_context?.source_goal.daemon_id)
+  const sourceHost = useSourceHost(task.data?.execution_context?.source_goal?.daemon_id)
   const taskTo = useTaskPanelTo(session.task_id ?? "", host)
   const switchedFromTo = usePanelSessionTo(session.switched_from ?? "")
   const [search, setSearch] = useSearchParams()
@@ -262,17 +262,17 @@ export function SessionDetailView({
           <FactList dense>
             {context === "goal" || !session.goal_id ? null : (
               <Fact label="Goal">
-                {task.data?.execution_context && !sourceHost ? (
+                {task.data?.execution_context?.source_goal && !sourceHost ? (
                   <span>
-                    {task.data.execution_context.source_goal.title} (source{" "}
-                    {task.data.execution_context.source_goal.daemon_id} unavailable)
+                    {task.data.execution_context.source_goal?.title} (source{" "}
+                    {task.data.execution_context.source_goal?.daemon_id} unavailable)
                   </span>
                 ) : (
                   <Link
                     to={paths.goal(session.goal_id, sourceHost ?? host)}
                     className="block truncate hover:underline"
                   >
-                    {task.data?.execution_context?.source_goal.title ?? goal.data?.title ?? (
+                    {task.data?.execution_context?.source_goal?.title ?? goal.data?.title ?? (
                       <Mono>{session.goal_id}</Mono>
                     )}
                   </Link>

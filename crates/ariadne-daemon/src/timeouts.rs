@@ -9,6 +9,10 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Timeouts {
+    /// How long a stopping daemon lets its open requests finish once its
+    /// listeners are closed and its event streams ended (016). A connection
+    /// still open then is left behind.
+    pub shutdown_drain: Duration,
     /// Fallback interval for repositories without a working webhook.
     pub forge_poll: Duration,
     /// How long one tunnel connection attempt may take (027).
@@ -176,6 +180,7 @@ pub struct Timeouts {
 impl Default for Timeouts {
     fn default() -> Self {
         Self {
+            shutdown_drain: Duration::from_secs(10),
             cancel_grace: Duration::from_secs(5),
             turn_end_grace: Duration::from_secs(30),
             probe: Duration::from_secs(5),

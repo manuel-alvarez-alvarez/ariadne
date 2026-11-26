@@ -170,8 +170,7 @@ reads behind them ([026](026-pull-requests.md)).
 
 12. The keeper seat lists `get_pull_request`, `get_diff`, `list_comments`,
     `get_comment`, `reply_comment`, `escalate_comment`,
-    beside
-    `wait_for_user` and `withdraw_wait_for_user` — the same six request
+    — the same six request
     tools the agent of a task's `pr` column has, and no task tool and no
     message tool: the user reaches the session through its console, as a
     reviewer's. No tool resolves a thread and none submits a review: those

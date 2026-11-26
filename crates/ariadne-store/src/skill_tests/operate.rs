@@ -166,7 +166,7 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
     for route in [
         "A hook that fails is a failed check, not a moved base. Take the first rule that fits.",
         "A failed check that names a file of the task. Call `fail_step` with the check's output.",
-        "A failed check that names no file of the task. Send it to the orchestrator with `send_message`. Land nothing.",
+        "A failed check that names no file of the task. Post it to the orchestrator with `post_to_session`. Land nothing.",
         "Else the base moved: a non-fast-forward rejection, an extra file in `git diff --stat`, or a failed fast-forward. Start again from step 1.",
     ] {
         let found = text[at..]
@@ -430,8 +430,8 @@ fn the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks() {
         "For failed-check fixes, wait for the final rollup. Take the one list of failed checks the news carries. Take the route of the `A failed check` rule for each check in it.",
         "Reproduce each failed check of the list at the head.",
         "Fix every failure the request's own change causes in one batch. Fix no other failure: report it as the two-seats rule says.",
-        "A failure the request did not cause: the task seat sends it to the orchestrator once with `send_message`.",
-        "The keeper asks the user once with `wait_for_user`.",
+        "A failure the request did not cause: the task seat posts it to the orchestrator once with `post_to_session`.",
+        "The keeper asks the user once.",
         "Never push to another branch.",
         "\"The check is red, so I fix the suite.\" -> Fix only what the request's change breaks.",
         "\"The base moved, so I run every check.\" -> The hook runs them at the push.",
@@ -458,7 +458,7 @@ fn the_pr_babysit_skill_names_its_two_seats_once() {
         "Step 1 is the task seat's alone: a keeper's request is already open.",
         "The push: both push `HEAD:<head>`. The keeper's briefing spells that command with its remote; run it as given.",
         "The ending: the keeper has no task tool and no `Repo:` line.",
-        "A failure the request did not cause: the task seat sends it to the orchestrator once with `send_message`. The keeper asks the user once with `wait_for_user`.",
+        "A failure the request did not cause: the task seat posts it to the orchestrator once with `post_to_session`. The keeper asks the user once.",
     ] {
         assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
     }
@@ -529,9 +529,9 @@ fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
 /// room to answer one at a time, which is what this guards against. The
 /// direct question is worded so a "yes" accepts the recommendation,
 /// which is what lets the user agree in one word. The parts go in the
-/// structured fields of `wait_for_user`, which the console draws as a card:
-/// the options and the recommendation with its reason go in their own
-/// fields, so the card shows each of them once.
+/// question tool of the client, which draws a card: the title, the context
+/// and the direct question go in the question text, and each option carries
+/// its consequence, with the recommended option first.
 #[test]
 fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
@@ -546,9 +546,10 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         "A recommendation, with one reason.",
         "One direct question, at the end.",
         "Word it so a \"yes\" accepts the recommendation.",
-        "Put the title, context and question in the text.",
-        "Put each option, with its consequence, in `options`.",
-        "Put the pick in `recommended_option_id`, and the reason in `recommendation_reason`.",
+        "Put the title, the context and the direct question in the question text.",
+        "Give each option its consequence.",
+        "Put the recommended option first. End its label with \"(Recommended)\", and give the reason in its description.",
+        "answer agents with `post_to_session`. A post can be refused. The refusal gives the reason.",
         "\"Two short questions fit in one turn.\" -> Ask one; the user answers each one with its full context.",
     ] {
         assert!(

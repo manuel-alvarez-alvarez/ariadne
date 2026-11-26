@@ -191,6 +191,10 @@ pub(crate) async fn status(
         true => (None, None),
         false => local(client, &root),
     };
+    // The daemon that answered says which process it is. The pidfile is for
+    // a daemon from before that, and it names the last daemon that started,
+    // not the one that answered.
+    let pid = h.pid.or(pid);
     let payload = json!({
         "status": h.status,
         "uptime_secs": h.uptime_secs,

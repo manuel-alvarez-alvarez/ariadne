@@ -46,7 +46,6 @@ So `ariadne.tasks.ended` is `ariadne_tasks_ended_total`, and
 | `ariadne_session_lifetime_seconds` | histogram | `seat`, `model`, `step` | how long a run lived |
 | `ariadne_tokens_total` | counter | `kind`, `model`, `seat`, `repo`, `step` | tokens spent: `input`, `cached_input` (part of `input`) and `output` |
 | `ariadne_switches_total` | counter | `reason`, `automatic`, `same_agent`, `from_model`, `to_model` | model switches |
-| `ariadne_messages_total` | counter | `kind`, `from_actor`, `to_actor` | agent messages |
 | `ariadne_permissions_total` | counter | `decided_by`, `answer`, `tool_name` | permission answers |
 | `ariadne_permission_wait_seconds` | histogram | `decided_by` | how long an agent waited for an answer |
 | `ariadne_attention_raised_total` | counter | `reason` | attention flags raised |

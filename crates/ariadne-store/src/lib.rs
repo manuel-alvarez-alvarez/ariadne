@@ -7,7 +7,6 @@
 
 mod acp_catalogs;
 mod acp_registry;
-mod agent_requests;
 mod agents;
 mod ai_permissions;
 mod attention;
@@ -21,7 +20,6 @@ mod forge;
 mod goal_parts;
 mod goals;
 mod hosts;
-mod messages;
 mod models;
 mod permissions;
 mod pr_operations;
@@ -40,7 +38,6 @@ mod usage;
 mod webhooks;
 mod workflows;
 
-pub use agent_requests::{AgentRequest, ClaimSettlement};
 pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;
 pub use dashboards::NewDashboard;
@@ -51,7 +48,6 @@ pub use forge::{ForgeWrite, SetForgeIntegration};
 pub use goal_parts::{GoalParts, TaskParts};
 pub use goals::{NewGoal, NewPrGoal};
 pub use hosts::StoredHost;
-pub use messages::{MessageFilter, NewMessage};
 pub use permissions::NewLearnedPermission;
 pub use pr_operations::{PrOperationEnd, PrOperationOwner, StartPrOperation};
 pub use pull_request_comments::NewPullRequestComment;

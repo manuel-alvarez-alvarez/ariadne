@@ -11,7 +11,7 @@
  * lane still says.
  */
 
-import type { GoalDto, TaskDto, TaskStatus } from "@/api"
+import type { GoalDto, HostRow, TaskDto, TaskStatus } from "@/api"
 import { plural } from "@/lib/format"
 import { isTerminalGoalStatus } from "./status"
 
@@ -121,4 +121,26 @@ export function laneSummary(tasks: readonly TaskDto[]): string {
   if (counts.waiting > 0) parts.push(`${counts.waiting} waiting`)
   if (counts.cancelled > 0) parts.push(`${counts.cancelled} cancelled`)
   return parts.join(" · ")
+}
+
+/** The id the "No goal" lane keeps its fold state under: a goal's ulid is never this. */
+export const NO_GOAL_LANE = "no-goal"
+
+/**
+ * The tasks of the "No goal" lane, in the order the daemon listed them: every
+ * task with no goal, narrowed by the board's active-only toggle and its title
+ * search the way the goal lanes are.
+ */
+export function goallessTasks<T extends TaskDto>(
+  rows: readonly HostRow<T>[],
+  activeOnly: boolean,
+  query: string,
+): HostRow<T>[] {
+  const needle = query.trim().toLowerCase()
+  return rows.filter(
+    (row) =>
+      !row.goal_id &&
+      (!activeOnly || (row.status !== "finished" && row.status !== "cancelled")) &&
+      (!needle || row.title.toLowerCase().includes(needle)),
+  )
 }

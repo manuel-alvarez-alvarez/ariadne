@@ -191,7 +191,6 @@ function boxSession() {
       [`/v1/sessions/${REMOTE.id}`]: REMOTE,
       [`/v1/goals/${GOAL.id}`]: GOAL,
       [`/v1/tasks/${TASK.id}`]: TASK,
-      [`/v1/sessions/${REMOTE.id}/agent-requests`]: [],
       [`/v1/sessions/${REMOTE.id}/console/input`]: () => new Response(null, { status: 204 }),
       [`/v1/sessions/${REMOTE.id}/console/cancel`]: () => new Response(null, { status: 204 }),
     },
@@ -359,7 +358,6 @@ it("names the host in the title of an activity tab that failed on a named host",
       [`/v1/sessions/${REMOTE.id}`]: REMOTE,
       [`/v1/goals/${GOAL.id}`]: GOAL,
       [`/v1/tasks/${TASK.id}`]: TASK,
-      [`/v1/sessions/${REMOTE.id}/agent-requests`]: [],
       "/v1/events": () => errorResponse(500, "internal", "box is unwell"),
     },
   })
@@ -386,7 +384,6 @@ it("reads the request link of a pull request session on the session's host", asy
     box: {
       [`/v1/sessions/${session.id}`]: session,
       [`/v1/pull-requests/${session.pull_request_id}`]: pull,
-      [`/v1/sessions/${session.id}/agent-requests`]: [],
     },
   })
   renderScreen(

@@ -125,6 +125,10 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let config = Config::load(args.home)?;
+    // Before either database is opened: a daemon that already serves this
+    // home keeps running on them, so this one must not migrate them under
+    // it (016).
+    refuse_a_running_daemon(&config.socket_path).await?;
 
     // Opened, and its OpenTelemetry pipeline built, before the subscriber:
     // the bridge layer below has to exist before `.init()` installs it.
@@ -180,6 +184,7 @@ async fn main() -> Result<()> {
     let events = ariadne_daemon::bus::start(store.clone());
 
     let unix_listener = bind_unix_socket(&config).await?;
+    let socket_file = file_identity(&config.socket_path);
     std::fs::write(&config.pid_file, std::process::id().to_string())
         .with_context(|| format!("writing {}", config.pid_file.display()))?;
 
@@ -301,10 +306,14 @@ async fn main() -> Result<()> {
         tunnel: tunnel.clone(),
         hosts: hosts.clone(),
         reply_locks: Default::default(),
+        source_posts: Default::default(),
+        closing: Default::default(),
     };
     // Far tasks follow the hosts' status from the event bus (037).
     let far = ariadne_daemon::far::start(&state, ariadne_daemon::timeouts::Timeouts::default());
     let acp_shutdown = state.launcher.acp.clone();
+    let closing = state.closing.clone();
+    let drain = ariadne_daemon::timeouts::Timeouts::default().shutdown_drain;
     let ai_permissions_shutdown = state.ai_permissions.clone();
     let unix_app = http::socket_router(state.clone(), &config.tcp_allowed_origins);
 
@@ -312,13 +321,14 @@ async fn main() -> Result<()> {
     // can hold the HTTP drain below for as long as its client stays.
     tokio::spawn(async move {
         shutdown_signal().await;
+        // Open event streams end, so the HTTP drain is not held by them.
+        closing.cancel();
         tunnel.shutdown().await;
         hosts.shutdown().await;
         far.shutdown().await;
         drop(webhook_listen);
         info!("webhook ingress stopped");
     });
-    let shutdown = shutdown_signal();
     let result = match config.tcp_listen {
         Some(addr) => {
             let tcp_listener = TcpListener::bind(addr)
@@ -326,16 +336,11 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("binding tcp {addr}"))?;
             info!(%addr, "tcp listener enabled");
             let tcp_app = http::tcp_router(state, &config.tcp_allowed_origins);
-            let unix_srv =
-                axum::serve(unix_listener, unix_app).with_graceful_shutdown(shutdown_signal());
-            let tcp_srv = axum::serve(tcp_listener, tcp_app).with_graceful_shutdown(shutdown);
-            tokio::try_join!(unix_srv.into_future(), tcp_srv.into_future()).map(|_| ())
+            let unix_srv = http::serve(unix_listener, unix_app, shutdown_signal(), drain);
+            let tcp_srv = http::serve(tcp_listener, tcp_app, shutdown_signal(), drain);
+            tokio::try_join!(unix_srv, tcp_srv).map(|_| ())
         }
-        None => {
-            axum::serve(unix_listener, unix_app)
-                .with_graceful_shutdown(shutdown)
-                .await
-        }
+        None => http::serve(unix_listener, unix_app, shutdown_signal(), drain).await,
     };
 
     // Best-effort cleanup of runtime files.
@@ -348,11 +353,46 @@ async fn main() -> Result<()> {
         .await
         .ok();
     telemetry_store.close().await;
-    let _ = std::fs::remove_file(&config.socket_path);
-    let _ = std::fs::remove_file(&config.pid_file);
+    // Only while they are still this daemon's: one started after these
+    // listeners closed owns the paths now (016).
+    if socket_file.is_some() && file_identity(&config.socket_path) == socket_file {
+        let _ = std::fs::remove_file(&config.socket_path);
+    }
+    if std::fs::read_to_string(&config.pid_file)
+        .is_ok_and(|pid| pid.trim() == std::process::id().to_string())
+    {
+        let _ = std::fs::remove_file(&config.pid_file);
+    }
     info!("ariadned stopped");
 
     result.context("http server error")
+}
+
+/// Refuse to start while another daemon answers on `path`.
+async fn refuse_a_running_daemon(path: &std::path::Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let alive = tokio::time::timeout(Duration::from_secs(1), UnixStream::connect(path))
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false);
+    if alive {
+        bail!(
+            "another ariadned is already listening on {} — stop it first",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// The device and inode of the file at `path`, to tell it from a file
+/// another process put at the same path later.
+fn file_identity(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(path)
+        .ok()
+        .map(|meta| (meta.dev(), meta.ino()))
 }
 
 /// Bind the unix socket, refusing to start if another daemon already answers
@@ -360,16 +400,7 @@ async fn main() -> Result<()> {
 async fn bind_unix_socket(config: &Config) -> Result<UnixListener> {
     let path = &config.socket_path;
     if path.exists() {
-        let alive = tokio::time::timeout(Duration::from_secs(1), UnixStream::connect(path))
-            .await
-            .map(|r| r.is_ok())
-            .unwrap_or(false);
-        if alive {
-            bail!(
-                "another ariadned is already listening on {} — stop it first",
-                path.display()
-            );
-        }
+        refuse_a_running_daemon(path).await?;
         warn!(socket = %path.display(), "removing stale socket file");
         std::fs::remove_file(path)
             .with_context(|| format!("removing stale socket {}", path.display()))?;

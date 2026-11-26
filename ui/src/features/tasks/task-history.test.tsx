@@ -5,7 +5,7 @@ import { beforeEach, expect, it } from "vitest"
 
 import { qk, type TaskTransitionDto } from "@/api"
 import { stubEventSource } from "@/test/event-source"
-import { aGoal, aTask } from "@/test/fixtures"
+import { aGoal, aTask, GOAL_ID } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
 import { TaskPanel } from "./task-panel"
@@ -38,7 +38,7 @@ function stubTransitions(transitions: TaskTransitionDto[]): void {
 }
 
 function renderHistory(): void {
-  const goal = aGoal({ id: TASK.goal_id })
+  const goal = aGoal({ id: GOAL_ID })
   renderScreen(<TaskPanel host="local" taskId={TASK.id} onClose={() => {}} />, {
     route: "/goals?tab=history",
     seed: (client) => {

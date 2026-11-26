@@ -1549,25 +1549,31 @@ mod tests {
         assert_eq!(said, expected, "each line of it once, in order: {history}");
     }
 
-    /// A `wait_for_user` question with two options (031).
+    /// A question the agent asks with its own tool (021): one field of two
+    /// options.
     fn asked() -> AgentEventDto {
         event(
-            "agent_request",
-            "Pick a base",
-            json!({"request_id": "01RQ", "hint": "Pick a base", "question": {
-                "text": "Which base branch?",
-                "options": [{"id": "main", "label": "Main"}, {"id": "next", "label": "Next"}],
-                "recommended_option_id": "main"
+            "question",
+            "question",
+            json!({"session_id": "agent", "question": {
+                "id": "q1", "session_id": "session",
+                "message": "Pick a base",
+                "created_at": "2026-11-25T00:00:00Z",
+                "schema": {"type": "object", "required": ["base"], "properties": {
+                    "base": {"type": "string", "title": "Which base branch?",
+                             "oneOf": [{"const": "main", "title": "Main"},
+                                       {"const": "next", "title": "Next"}]},
+                }},
             }}),
         )
     }
 
     fn resolved() -> AgentEventDto {
         event(
-            "agent_request.resolved",
-            "answered",
-            json!({"request_id": "01RQ", "resolution": "answered",
-                   "answer": {"option_id": "next", "text": "Next"}}),
+            "question.resolved",
+            "question answered",
+            json!({"session_id": "agent", "question_id": "q1", "action": "accept",
+                   "content": {"base": "next"}, "closed_by": "user"}),
         )
     }
 
@@ -1611,8 +1617,9 @@ mod tests {
         let last = screen.len() - usize::from(PINNED) - 1;
         let hint = screen
             .iter()
-            .position(|row| row.contains("waiting for you · Pick a base"))
-            .unwrap_or_else(|| panic!("the question is on the screen: {screen:#?}"));
+            .position(|row| row.contains("Pick a base"))
+            .unwrap_or_else(|| panic!("the question is on the screen: {screen:#?}"))
+            - 1;
         assert!(
             screen[hint - 2].ends_with("after-030") && screen[hint - 1].is_empty(),
             "the later block ends right above the question: {screen:#?}"
@@ -1620,7 +1627,7 @@ mod tests {
         assert!(
             screen[hint..=last]
                 .iter()
-                .any(|row| row.contains("Type a number, or your own answer.")),
+                .any(|row| row.contains("2. Next")),
             "the question ends over the status row: {screen:#?}"
         );
         let scrollback = rows(terminal.backend().under().scrollback());
@@ -1648,8 +1655,8 @@ mod tests {
             &shown,
             &[
                 "before-003",
-                "waiting for you · Pick a base",
-                "answered · Next",
+                "answered",
+                "Which base branch? → Next",
                 "after-001",
             ],
         );
@@ -1663,7 +1670,7 @@ mod tests {
             "the question shows once: {shown}"
         );
         assert!(
-            rows(terminal.backend().under().scrollback()).contains("answered · Next"),
+            rows(terminal.backend().under().scrollback()).contains("Which base branch? → Next"),
             "the closed question is in the scrollback: {shown}"
         );
     }
@@ -1698,8 +1705,9 @@ mod tests {
             let screen = lines(&screen);
             let hint = screen
                 .iter()
-                .position(|row| row.contains("waiting for you · Pick a base"))
-                .unwrap_or_else(|| panic!("{kind}: the question is on the screen: {screen:#?}"));
+                .position(|row| row.contains("Pick a base"))
+                .unwrap_or_else(|| panic!("{kind}: the question is on the screen: {screen:#?}"))
+                - 1;
             assert!(
                 screen[hint - 2].ends_with("part-030") && screen[hint - 1].is_empty(),
                 "{kind}: the block ends right above the question: {screen:#?}"
@@ -1757,14 +1765,19 @@ mod tests {
         let shown = history(&terminal);
         let at = found(
             &shown,
-            &["before-003", "more-002", "answered · Next", "after-001"],
+            &[
+                "before-003",
+                "more-002",
+                "Which base branch? → Next",
+                "after-001",
+            ],
         );
         assert!(
             at[0].0 < at[1].0 && at[1].0 < at[2].0 && at[2].0 < at[3].0,
             "the blocks before the close, the question, then the ones after it: {shown}"
         );
         assert_eq!(
-            found(&shown, &["waiting for you · Pick a base"])[0].1,
+            found(&shown, &["Which base branch? → Next"])[0].1,
             1,
             "the question shows once: {shown}"
         );
@@ -1782,7 +1795,7 @@ mod tests {
         console.close(&mut terminal).unwrap();
 
         let shown = history(&terminal);
-        let at = found(&shown, &["later-002", "waiting for you · Pick a base"]);
+        let at = found(&shown, &["later-002", "Pick a base"]);
         assert!(at[0].0 < at[1].0, "the question comes last: {shown}");
         assert_eq!(at[1].1, 1, "once: {shown}");
     }
@@ -1799,7 +1812,7 @@ mod tests {
         console.show(&mut terminal).unwrap();
 
         let shown = history(&terminal);
-        let at = found(&shown, &["waiting for you · Pick a base", "later-001"]);
+        let at = found(&shown, &["Pick a base", "later-001"]);
         assert!(at[0].0 < at[1].0, "the question keeps its place: {shown}");
     }
 

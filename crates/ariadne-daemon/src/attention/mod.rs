@@ -9,6 +9,7 @@
 
 pub(crate) mod agent_requests;
 pub(crate) mod pull_requests;
+pub(crate) mod questions;
 pub(crate) mod recovery;
 
 use ariadne_api::attention::AttentionListDto;
@@ -21,10 +22,9 @@ use crate::launcher::Launcher;
 /// every registered producer currently finds.
 ///
 /// Registering a producer is adding a call here and extending it, the one
-/// extension point this route gives a later task: [`recovery`] and
-/// [`pull_requests`] are complete; [`agent_requests`] is registered already
-/// but answers empty until a later task gives it its eligibility rules
-/// (009, 026). A producer whose read fails costs the list its `complete`
+/// extension point this route gives a later task: [`recovery`],
+/// [`agent_requests`] (a live session's own flag), [`questions`] and
+/// [`pull_requests`] are complete (031). A producer whose read fails costs the list its `complete`
 /// flag rather than its other producers' items, so a partial read never
 /// answers as if nothing were wrong.
 pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> AttentionListDto {
@@ -40,7 +40,14 @@ pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> Attention
     match agent_requests::items(store).await {
         Ok(found) => items.extend(found),
         Err(error) => {
-            tracing::warn!(%error, "the agent-request attention producer could not read its evidence");
+            tracing::warn!(%error, "the session attention producer could not read its evidence");
+            complete = false;
+        }
+    }
+    match questions::items(store, launcher).await {
+        Ok(found) => items.extend(found),
+        Err(error) => {
+            tracing::warn!(%error, "the question attention producer could not read its evidence");
             complete = false;
         }
     }
@@ -61,7 +68,7 @@ pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> Attention
                         let kind =
                             serde_json::to_value(subject.kind).expect("subject kind serializes");
                         let kind = kind.as_str().expect("subject kind is a string");
-                        let version = if item.id == format!("agent_request:{}", item.occurrence) {
+                        let version = if item.id == format!("question:{}", item.occurrence) {
                             // A question has its own immutable request id. Other session
                             // flags cannot turn it into a new question.
                             0
@@ -116,7 +123,7 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
                 && store
                     .get_task_agent(id)
                     .await
-                    .is_ok_and(|a| Some(a.step.as_str()) == task.step.as_deref())
+                    .is_ok_and(|a| a.step == task.step.as_deref().unwrap_or_default())
         }
         // The goal is the orchestrator's whole job, and it holds that job
         // for the whole goal: the plan is a hand-off, not an ending. It is
@@ -166,7 +173,7 @@ pub(crate) async fn work_is_active_checked(store: &Store, session: &AgentSession
             };
             let agent = store.get_task_agent(id).await?;
             task.status() == TaskStatus::InProgress
-                && Some(agent.step.as_str()) == task.step.as_deref()
+                && agent.step == task.step.as_deref().unwrap_or_default()
         }
         Some(Seat::Orchestrator) => {
             let goal_id = session.goal_id.as_deref().unwrap_or_default();

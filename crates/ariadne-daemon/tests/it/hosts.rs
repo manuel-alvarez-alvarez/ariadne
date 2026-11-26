@@ -1991,7 +1991,7 @@ esac
 struct UpdateFixture {
     h: common::Harness,
     remote: tempfile::TempDir,
-    _ssh: common::ssh::StubSsh,
+    ssh: common::ssh::StubSsh,
 }
 
 impl UpdateFixture {
@@ -2038,11 +2038,7 @@ esac
                 StatusCode::CREATED,
             )
             .await;
-        Self {
-            h,
-            remote,
-            _ssh: ssh,
-        }
+        Self { h, remote, ssh }
     }
 
     fn request(&self) -> serde_json::Value {
@@ -2072,6 +2068,53 @@ esac
         .await;
         self.h.get("/v1/hosts/builder/update").await
     }
+}
+
+/// The index of the first run of the stub whose command contains `text`.
+fn first_run(ssh: &common::ssh::StubSsh, text: &str) -> usize {
+    ssh.runs()
+        .iter()
+        .position(|run| {
+            run.args
+                .last()
+                .is_some_and(|command| command.contains(text))
+        })
+        .unwrap_or_else(|| panic!("no run contains {text:?}"))
+}
+
+#[tokio::test]
+async fn an_update_stops_a_daemon_outside_the_service_before_it_restarts_the_service() {
+    let f = UpdateFixture::new(serde_json::json!({"stray_pid": 999})).await;
+    f.start(f.request()).await;
+    let result = f.terminal().await;
+    assert_eq!(result["state"], "complete", "{result}");
+    assert_eq!(
+        std::fs::read_to_string(f.remote.path().join("stray-stops")).unwrap(),
+        "999\n"
+    );
+    assert!(
+        first_run(&f.ssh, "-o comm=") < first_run(&f.ssh, "systemctl --user restart"),
+        "the stray stops before the service restarts"
+    );
+}
+
+#[tokio::test]
+async fn an_update_fails_its_health_check_while_a_daemon_outside_the_service_answers() {
+    let f = UpdateFixture::new(serde_json::json!({"stray_pid": 999, "stray_stays": true})).await;
+    f.start(f.request()).await;
+    let result = f.terminal().await;
+    assert_ne!(result["state"], "complete", "{result}");
+    let health = result["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "health")
+        .unwrap();
+    let error = health["error"].as_str().unwrap();
+    assert!(
+        error.contains("pid 999") && error.contains("pid 4242"),
+        "{error}"
+    );
 }
 
 #[tokio::test]

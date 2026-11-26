@@ -40,6 +40,8 @@ struct Front {
     health_off: Arc<AtomicBool>,
     protocol_override: Arc<Mutex<Option<Value>>>,
     stream_cut: Arc<watch::Sender<bool>>,
+    /// Frames put into each open stream among the ones the far daemon sends.
+    stream_frames: tokio::sync::broadcast::Sender<&'static str>,
     /// The kinds of request whose next answer is lost, once each, and the
     /// kind to hold from then on.
     lose: Arc<Mutex<Vec<Loss>>>,
@@ -63,14 +65,12 @@ fn kind(method: &axum::http::Method, path: &str) -> &'static str {
     match (method.as_str(), path) {
         ("POST", "/v1/goals") => "create goal",
         ("PUT", path) if path.starts_with("/v1/remote-tasks/") => "create remote task",
-        ("POST", path) if path.ends_with("/relay-message") => "relay message",
         ("POST", path) if path.ends_with("/dependency-failure") => "dependency failure",
         ("POST", path) if path.ends_with("/retry-dependency") => "dependency retry",
         ("POST", path) if path.ends_with("/tasks") => "create task",
         ("GET", "/v1/events/stream") => "stream",
         ("GET", "/v1/remote-tasks/protocol") => "protocol",
         ("GET", "/v1/tasks") => "find task",
-        ("GET", path) if path.ends_with("/messages") => "read messages",
         ("GET", path) if path.starts_with("/v1/tasks/") => "read task",
         ("GET", "/v1/health") => "health",
         _ => "other",
@@ -83,6 +83,7 @@ impl Default for Front {
             health_off: Arc::default(),
             protocol_override: Arc::default(),
             stream_cut: Arc::new(watch::Sender::new(false)),
+            stream_frames: tokio::sync::broadcast::channel(8).0,
             lose: Arc::default(),
             held: Arc::new(watch::Sender::new(Vec::new())),
             held_before: Arc::new(watch::Sender::new(Vec::new())),
@@ -94,6 +95,14 @@ impl Default for Front {
 }
 
 impl Front {
+    /// Put a `resync` frame into each open stream, as the far daemon does
+    /// when a client lags (012).
+    fn resync(&self) {
+        let _ = self
+            .stream_frames
+            .send("event: resync\ndata: {\"missed\":1}\n\n");
+    }
+
     fn set_health_off(&self, off: bool) {
         self.health_off.store(off, Ordering::SeqCst);
     }
@@ -201,15 +210,17 @@ impl Front {
                     if kind == "stream" {
                         use futures_util::StreamExt;
                         let cut = front.stream_cut.subscribe();
+                        let frames = front.stream_frames.subscribe();
                         let (parts, body) = answer.into_parts();
                         let stream = futures_util::stream::unfold(
-                            (body.into_data_stream(), cut),
-                            |(mut body, mut cut)| async move {
+                            (body.into_data_stream(), cut, frames),
+                            |(mut body, mut cut, mut frames)| async move {
                                 let frame = tokio::select! {
                                     frame = body.next() => frame,
+                                    Ok(frame) = frames.recv() => Some(Ok(frame.into())),
                                     _ = cut.wait_for(|cut| *cut) => None,
                                 };
-                                frame.map(|frame| (frame, (body, cut)))
+                                frame.map(|frame| (frame, (body, cut, frames)))
                             },
                         );
                         return axum::response::Response::from_parts(
@@ -421,7 +432,7 @@ async fn create_task(h: &Harness, goal: &GoalDto, body: Value) -> TaskDto {
                     agents: agents
                         .into_iter()
                         .map(|a| ariadne_store::NewTaskAgent {
-                            step: a.step,
+                            step: a.step.unwrap_or_default(),
                             skills: a.skills,
                             pin: ariadne_store::AgentPin {
                                 model: a.model,
@@ -1038,7 +1049,7 @@ async fn one_linked_goal_on_a_host_takes_every_far_task_of_a_goal() {
     assert_eq!(linked[0].title, goal.title);
     assert_eq!(linked[0].status, GoalStatus::Active);
     for far in [&first, &second] {
-        assert_eq!(far.goal_id, linked[0].id);
+        assert_eq!(far.goal_id.as_ref(), Some(&linked[0].id));
         assert_eq!(far.repo_id, theirs.id);
         assert_eq!(far.agents[0].model, p.model);
     }
@@ -1327,7 +1338,7 @@ async fn a_repository_set_up_later_joins_the_same_linked_goal() {
     let second = far_task(&p.far, &goal, "Gadgets").await;
     let linked = linked_goals(&p.far, &goal).await;
     assert_eq!(linked.len(), 1, "{linked:?}");
-    assert_eq!(second.goal_id, linked[0].id);
+    assert_eq!(second.goal_id.as_ref(), Some(&linked[0].id));
     assert_eq!(second.repo_id, far_gadgets.id);
     assert!(linked[0].repos.iter().any(|repo| repo.id == far_gadgets.id));
 }
@@ -1568,7 +1579,7 @@ async fn a_task_the_host_made_is_found_again_after_its_linked_goal_ended() {
     let made = far_task(&p.far, &goal, "Made once").await;
     p.far
         .store
-        .end_goal(&made.goal_id, GoalStatus::Completed)
+        .end_goal(made.goal_id.as_deref().unwrap(), GoalStatus::Completed)
         .await
         .unwrap();
     p.front.release();
@@ -1990,288 +2001,5 @@ async fn a_linked_goal_with_an_admitted_task_cannot_complete() {
     assert_eq!(kept.status, GoalStatus::Active);
 }
 
-struct Conversation {
-    pair: Pair,
-    here: TaskDto,
-    there: TaskDto,
-    orchestrator: ariadne_store::AgentSession,
-    agent: ariadne_store::AgentSession,
-}
-
-impl Conversation {
-    async fn new() -> Self {
-        use ariadne_core::{Seat, SessionStatus};
-        use ariadne_daemon::scheduler;
-
-        let pair = pair_setup(false).await;
-        let repo = forge_repository(&pair.local, "mine", "acme/widgets").await;
-        forge_repository(&pair.far, "theirs", "acme/widgets").await;
-        let goal = goal_on(&pair.local, &repo).await;
-        let here = create_task(
-            &pair.local,
-            &goal,
-            task_body(
-                &goal,
-                "Far conversation",
-                &pair.model,
-                json!({"host": "far"}),
-            ),
-        )
-        .await;
-        let local_goal = pair.local.store.get_goal(&goal.id).await.unwrap();
-        let orchestrator = pair.local.orchestrator_session(&local_goal).await;
-        pair.local.agent_runs(&orchestrator).await;
-        pair.local
-            .set_status(&orchestrator, SessionStatus::Idle)
-            .await;
-        let mut state = pair.local.state.clone();
-        state.sched_tx = Some(scheduler::start(
-            pair.local.store.clone(),
-            pair.local.launcher.clone(),
-            false,
-            pair.local.timeouts,
-        ));
-        ariadne_daemon::far::start(&state, pair.local.timeouts);
-        activate(&pair.local, &goal).await;
-        let there = far_task(&pair.far, &goal, &here.title).await;
-        until_sent(&pair.local, &here, &there).await;
-        let far_goal = pair.far.store.get_goal(&there.goal_id).await.unwrap();
-        let far_task = pair.far.store.get_task(&there.id).await.unwrap();
-        let agent = pair
-            .far
-            .session(&far_goal, Some(&far_task), Seat::Agent, &there.agents[0].id)
-            .await;
-        Self {
-            pair,
-            here,
-            there,
-            orchestrator,
-            agent,
-        }
-    }
-
-    async fn ask(&self, body: &str) {
-        self.pair
-            .far
-            .json::<ariadne_api::messages::MessageDto>(
-                as_session(
-                    &format!("/v1/tasks/{}/messages", self.there.id),
-                    &self.agent.id,
-                    json!({"to_actor": "orchestrator", "body": body}),
-                ),
-                StatusCode::CREATED,
-            )
-            .await;
-    }
-
-    async fn answer(&self, body: &str) {
-        self.pair.local.json::<ariadne_api::messages::MessageDto>(
-            as_session(
-                &format!("/v1/tasks/{}/messages", self.here.id),
-                &self.orchestrator.id,
-                json!({"to_actor": "agent", "to_agent_id": self.here.agents[0].id, "body": body}),
-            ),
-            StatusCode::CREATED,
-        ).await;
-    }
-
-    async fn thread(h: &Harness, task: &TaskDto) -> Vec<ariadne_api::messages::MessageDto> {
-        h.get(&format!("/v1/tasks/{}/messages", task.id)).await
-    }
-}
-
-#[tokio::test]
-async fn a_far_agent_message_reaches_the_orchestrator_as_a_task_turn() {
-    let c = Conversation::new().await;
-    c.ask("Which fixture should I use?").await;
-    eventually(TIMEOUT, "the orchestrator's message turn", || async {
-        let prompt = c.pair.local.prompted(&c.orchestrator);
-        prompt.contains("Which fixture should I use?")
-            && prompt.contains(&format!("task {}", c.here.id))
-            && prompt.contains(&c.here.agents[0].step)
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn a_far_task_thread_shows_both_directions() {
-    let c = Conversation::new().await;
-    c.ask("Which fixture?").await;
-    eventually(TIMEOUT, "the question in the local thread", || async {
-        !Conversation::thread(&c.pair.local, &c.here)
-            .await
-            .is_empty()
-    })
-    .await;
-    c.answer("Use the small fixture.").await;
-    let thread = Conversation::thread(&c.pair.local, &c.here).await;
-    assert_eq!(thread.len(), 2);
-    assert_eq!(thread[0].body, "Which fixture?");
-    assert_eq!(
-        thread[0].from_agent_id.as_deref(),
-        Some(c.here.agents[0].id.as_str())
-    );
-    assert_eq!(thread[1].body, "Use the small fixture.");
-    assert_eq!(
-        thread[1].to_agent_id.as_deref(),
-        Some(c.here.agents[0].id.as_str())
-    );
-}
-
-#[tokio::test]
-async fn messages_wait_for_the_far_host_and_arrive_in_order_even_after_a_lost_answer() {
-    let c = Conversation::new().await;
-    go_away(&c.pair).await;
-    eventually(TIMEOUT, "the far task marked unreachable", || async {
-        task(&c.pair.local, &c.here.id).await.host_unreachable
-    })
-    .await;
-    c.answer("First message").await;
-    c.answer("Second message").await;
-    assert!(Conversation::thread(&c.pair.far, &c.there).await.is_empty());
-    assert_eq!(c.pair.front.count("relay message"), 0);
-
-    c.pair.front.lose_next("relay message");
-    back(&c.pair).await;
-    let thread = eventually_some(TIMEOUT, "both messages on the far host", async || {
-        let thread = Conversation::thread(&c.pair.far, &c.there).await;
-        (thread.len() >= 2).then_some(thread)
-    })
-    .await;
-    assert_eq!(
-        thread.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
-        ["First message", "Second message"]
-    );
-    assert_eq!(c.pair.front.count("relay message"), 3);
-    assert!(thread.iter().all(|m| m.from_actor == Actor::Orchestrator
-        && m.to_agent_id.as_deref() == Some(c.there.agents[0].id.as_str())));
-}
-
-#[tokio::test]
-async fn a_far_message_made_while_away_is_delivered_once_after_reconnect() {
-    let c = Conversation::new().await;
-    go_away(&c.pair).await;
-    eventually(TIMEOUT, "the far task marked unreachable", || async {
-        task(&c.pair.local, &c.here.id).await.host_unreachable
-    })
-    .await;
-    c.ask("Question during the outage").await;
-    assert!(
-        Conversation::thread(&c.pair.local, &c.here)
-            .await
-            .is_empty()
-    );
-    back(&c.pair).await;
-    eventually(TIMEOUT, "the recovered question as a turn", || async {
-        c.pair
-            .local
-            .prompted(&c.orchestrator)
-            .contains("Question during the outage")
-    })
-    .await;
-
-    go_away(&c.pair).await;
-    eventually(TIMEOUT, "the next outage", || async {
-        task(&c.pair.local, &c.here.id).await.host_unreachable
-    })
-    .await;
-    c.pair.front.hold_before("read messages");
-    back(&c.pair).await;
-    eventually(TIMEOUT, "the message history read on reconnect", || async {
-        c.pair.front.waiting() > 0
-    })
-    .await;
-    c.ask("Question after the next reconnect").await;
-    c.pair.front.release();
-    eventually(TIMEOUT, "the next question as a turn", || async {
-        c.pair
-            .local
-            .prompted(&c.orchestrator)
-            .contains("Question after the next reconnect")
-    })
-    .await;
-    // A later event proves the worker has passed the duplicate on the stream.
-    c.ask("Question after the history read").await;
-    eventually(TIMEOUT, "the next turn from the stream", || async {
-        c.pair
-            .local
-            .prompted(&c.orchestrator)
-            .contains("Question after the history read")
-    })
-    .await;
-    let prompted = c.pair.local.prompted(&c.orchestrator);
-    assert_eq!(prompted.matches("Question during the outage").count(), 1);
-    assert_eq!(
-        prompted
-            .matches("Question after the next reconnect")
-            .count(),
-        1
-    );
-    assert_eq!(Conversation::thread(&c.pair.local, &c.here).await.len(), 3);
-}
-
-#[tokio::test]
-async fn a_far_agents_user_question_stays_in_the_hosts_attention_list() {
-    use ariadne_api::attention::AttentionListDto;
-
-    let c = Conversation::new().await;
-    start_on_far(&c.pair.far, &c.there.id).await;
-    c.pair
-        .far
-        .set_status(&c.agent, ariadne_core::SessionStatus::Idle)
-        .await;
-    let _: Value = c
-        .pair
-        .far
-        .json(
-            as_session(
-                &format!("/v1/sessions/{}/agent-requests", c.agent.id),
-                &c.agent.id,
-                json!({"summary": "Which account should I use?"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    let far: AttentionListDto = c.pair.far.get("/v1/attention").await;
-    let local: AttentionListDto = c.pair.local.get("/v1/attention").await;
-    assert!(
-        far.items
-            .iter()
-            .any(|item| item.summary == "Which account should I use?")
-    );
-    assert!(
-        local
-            .items
-            .iter()
-            .all(|item| item.summary != "Which account should I use?")
-    );
-}
-
-#[tokio::test]
-async fn an_orchestrator_message_reaches_the_far_agent_as_a_turn() {
-    use ariadne_core::SessionStatus;
-    use ariadne_daemon::scheduler::{self, SchedEvent};
-
-    let c = Conversation::new().await;
-    start_on_far(&c.pair.far, &c.there.id).await;
-    let far = &c.pair.far;
-    far.agent_runs(&c.agent).await;
-    far.set_status(&c.agent, SessionStatus::Idle).await;
-
-    c.answer("Use the small fixture for this task.").await;
-    eventually(TIMEOUT, "the message stored on the far host", || async {
-        !Conversation::thread(far, &c.there).await.is_empty()
-    })
-    .await;
-    let sched = scheduler::start(far.store.clone(), far.launcher.clone(), false, far.timeouts);
-    sched
-        .send(SchedEvent::TaskChanged(c.there.id.clone()))
-        .unwrap();
-    eventually(TIMEOUT, "the far agent's message turn", || async {
-        far.prompted(&c.agent)
-            .contains("Use the small fixture for this task.")
-    })
-    .await;
-}
-
+mod posts;
 mod source_references;

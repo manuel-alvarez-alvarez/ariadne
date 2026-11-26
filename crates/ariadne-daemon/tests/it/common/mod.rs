@@ -12,6 +12,7 @@
 //!
 
 pub(crate) mod acp;
+pub(crate) mod daemon;
 pub(crate) mod forge;
 pub(crate) mod herdr;
 pub(crate) mod ssh;
@@ -622,6 +623,8 @@ impl HarnessBuilder {
             agent_registry,
             ai_permissions,
             reply_locks: Default::default(),
+            source_posts: Default::default(),
+            closing: Default::default(),
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred
@@ -1140,10 +1143,12 @@ impl Harness {
                     effort: None,
                     resume_session_id: None,
                     mcp_servers: Vec::new(),
+                    plan_mode: false,
                 },
                 repository_id,
                 repository_path: String::new(),
                 permission_mode: PermissionMode::Auto,
+                orchestrated_goal: None,
             })
             .await
             .unwrap();
@@ -1748,7 +1753,7 @@ impl Harness {
             self.flush_scheduler().await;
         }
         self.advance(task, TaskStatus::InProgress).await;
-        let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
+        let steps = self.store.task_steps(task).await.unwrap();
         let wanted = steps
             .iter()
             .position(|s| s.id == step)
@@ -1831,7 +1836,7 @@ impl Harness {
             .find(|a| a.step == step)
             .unwrap_or_else(|| panic!("the task has no agent on column {step}"));
         let session = self.launcher.start_step_agent(&task, &agent).await.unwrap();
-        let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
+        let steps = self.store.task_steps(&task).await.unwrap();
         let column = steps
             .iter()
             .find(|s| s.id == step)
@@ -2223,18 +2228,6 @@ impl Harness {
             query = query.bind(when.clone());
         }
         query.bind(&session.id).execute(&self.db).await.unwrap();
-    }
-
-    /// A message its recipient's agent took `secs` ago.
-    pub(crate) async fn delivered_ago(&self, message_id: &str, secs: i64) {
-        let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        sqlx::query("UPDATE messages SET delivered_at = ? WHERE id = ?")
-            .bind(when)
-            .bind(message_id)
-            .execute(&self.db)
-            .await
-            .unwrap();
     }
 
     /// Make the next write of this goal's confirmed-failures column fail,

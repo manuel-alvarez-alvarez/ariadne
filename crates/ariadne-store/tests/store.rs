@@ -1,8 +1,7 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, PermissionMode, Seat, SessionStatus,
-    TaskStatus, TokenUsage,
+    Actor, AttentionReason, GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus, TokenUsage,
 };
 use ariadne_store::defaults::{DEFAULT_WORKFLOW, PULL_REQUEST_WORKFLOW};
 use ariadne_store::*;
@@ -609,7 +608,10 @@ async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
     if upto == TaskStatus::InProgress {
         return task;
     }
-    let steps = store.goal_steps(&task.goal_id).await.unwrap();
+    let steps = store
+        .goal_steps(task.goal_id.as_deref().unwrap())
+        .await
+        .unwrap();
     let at = steps
         .iter()
         .position(|step| Some(&step.id) == task.step.as_ref())
@@ -624,7 +626,7 @@ async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
     store
         .end_step(
             task_id,
-            last,
+            Some(last),
             TaskStatus::Finished,
             "landed",
             Some(LANDED_AS),
@@ -1161,7 +1163,7 @@ async fn task_happy_path_to_finished() {
     let t = store
         .end_step(
             &w.task.id,
-            "merge",
+            Some("merge"),
             TaskStatus::Finished,
             "fast-forwarded",
             Some("abc123"),
@@ -1281,7 +1283,13 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
     );
     assert!(matches!(
         store
-            .end_step(&task.id, "merge", TaskStatus::Finished, "done", Some("x"))
+            .end_step(
+                &task.id,
+                Some("merge"),
+                TaskStatus::Finished,
+                "done",
+                Some("x")
+            )
             .await,
         Err(StoreError::Conflict(_))
     ));
@@ -1507,72 +1515,6 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     assert_eq!(
         store.list_task_transitions(&task.id).await.unwrap().len(),
         2
-    );
-}
-
-/// A message goes to exactly one recipient and is delivered once: the stamp is
-/// what says which of them have reached their agent, and the claim that puts
-/// it there answers true once and false after.
-#[tokio::test]
-async fn a_message_is_delivered_once_and_the_stamp_says_so() {
-    let w = World::new().await;
-    let (store, task) = (&w.store, &w.task);
-    let developer = agent_of(store, task, "develop").await.id;
-    let reviewer = agent_of(store, task, "review").await.id;
-
-    let asked = store
-        .send_message(NewMessage {
-            goal_id: task.goal_id.clone(),
-            task_id: Some(task.id.clone()),
-            kind: MessageKind::Message,
-            from_actor: Actor::Agent,
-            from_agent_id: Some(reviewer),
-            from_session: None,
-            to_actor: Actor::Agent,
-            to_agent_id: Some(developer),
-            body: "why the retry?".into(),
-        })
-        .await
-        .unwrap();
-    assert!(!asked.is_delivered());
-
-    let waiting = store
-        .list_messages(MessageFilter {
-            task_id: Some(task.id.clone()),
-            undelivered_only: true,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(waiting.len(), 1);
-
-    assert!(
-        store.mark_message_delivered(&asked.id).await.unwrap(),
-        "the first claim is the one that stamps"
-    );
-    let delivered = store.get_message(&asked.id).await.unwrap();
-    let at = delivered.delivered_at.clone().expect("stamped");
-
-    // A second claim loses and keeps the first time: the prompt and the read
-    // race for one row, and only one of them may hand it over.
-    assert!(
-        !store.mark_message_delivered(&asked.id).await.unwrap(),
-        "a claim on a stamped row answers that it lost"
-    );
-    assert_eq!(
-        store.get_message(&asked.id).await.unwrap().delivered_at,
-        Some(at)
-    );
-    assert!(
-        store
-            .list_messages(MessageFilter {
-                task_id: Some(task.id.clone()),
-                undelivered_only: true,
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .is_empty()
     );
 }
 
@@ -3424,10 +3366,9 @@ async fn the_forge_integrations_kind_check_accepts_github_and_rejects_other_kind
 }
 
 /// A fresh database already carries every column the old incremental chain
-/// used to add after the first squash — pull-request readiness,
-/// the `keeper` seat and `agent_requests` — all folded into the one
-/// shipped migration now, so a fresh store needs no later migration to
-/// reach any of them.
+/// used to add after the first squash — pull-request readiness and
+/// the `keeper` seat — all folded into the one shipped migration now, so a
+/// fresh store needs no later migration to reach any of them.
 #[tokio::test]
 async fn a_fresh_database_already_has_every_column_the_old_chain_added() {
     let (store, _dir, pr) = store_with_my_pull_request().await;
@@ -3447,304 +3388,7 @@ async fn a_fresh_database_already_has_every_column_the_old_chain_added() {
         })
         .await
         .unwrap();
-
-    let (_, created) = store
-        .create_agent_request(&session.id, "pick a model", None, None)
-        .await
-        .unwrap();
-    assert!(created);
-}
-
-#[tokio::test]
-async fn answering_a_snapshot_keeps_later_agent_requests_pending() {
-    let (store, _dir, pr) = store_with_my_pull_request().await;
-    let session = store
-        .create_session(NewSession {
-            goal_id: None,
-            task_id: None,
-            seat: Some(Seat::Keeper),
-            task_agent_id: None,
-            model: "stub:m".into(),
-            effort: None,
-            worktree_path: None,
-            pull_request_id: Some(pr.id.clone()),
-        })
-        .await
-        .unwrap();
-    let (opened, created) = store
-        .create_agent_request(&session.id, "First question", None, None)
-        .await
-        .unwrap();
-    assert!(created);
-    let snapshot: Vec<String> = store
-        .pending_session_agent_requests(&session.id)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|request| request.id)
-        .collect();
-    assert_eq!(snapshot, [opened.id]);
-
-    let (later, created) = store
-        .create_agent_request(&session.id, "New question", None, None)
-        .await
-        .unwrap();
-    assert!(created);
-    for id in &snapshot {
-        store
-            .claim_agent_request(id, &session.id, r#"{"text":"main"}"#)
-            .await
-            .unwrap();
-    }
-
-    let pending = store.pending_agent_requests().await.unwrap();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].id, later.id);
-}
-
-async fn keeper_session(store: &Store, pr: &PullRequestRow) -> AgentSession {
-    store
-        .create_session(NewSession {
-            goal_id: None,
-            task_id: None,
-            seat: Some(Seat::Keeper),
-            task_agent_id: None,
-            model: "stub:m".into(),
-            effort: None,
-            worktree_path: None,
-            pull_request_id: Some(pr.id.clone()),
-        })
-        .await
-        .unwrap()
-}
-
-/// A request takes one claim. A second claim, and a claim of a withdrawn
-/// request, find nothing pending; a delivered claim closes it as answered.
-#[tokio::test]
-async fn a_request_takes_one_answer_and_keeps_how_it_closed() {
-    let (store, _dir, pr) = store_with_my_pull_request().await;
-    let session = keeper_session(&store, &pr).await;
-    let question = r#"{"text":"Which base?","options":[{"id":"main","label":"main"}]}"#;
-    let (asked, _) = store
-        .create_agent_request(&session.id, "Pick a base", Some(question), None)
-        .await
-        .unwrap();
-    assert_eq!(asked.question.as_deref(), Some(question));
-
-    let claimed = store
-        .claim_agent_request(
-            &asked.id,
-            &session.id,
-            r#"{"option_id":"main","text":"main"}"#,
-        )
-        .await
-        .unwrap()
-        .expect("the first claim takes the request");
-    assert!(
-        store
-            .claim_agent_request(&asked.id, &session.id, r#"{"text":"next"}"#)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(
-        store
-            .settle_agent_request_claim(&claimed, true)
-            .await
-            .unwrap(),
-        ClaimSettlement::Answered
-    );
-    let row = store
-        .session_agent_request(&asked.id, &session.id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(row.resolution.as_deref(), Some("answered"));
-    assert_eq!(
-        row.answer.as_deref(),
-        Some(r#"{"option_id":"main","text":"main"}"#)
-    );
-
-    let (withdrawn, _) = store
-        .create_agent_request(&session.id, "Another", None, None)
-        .await
-        .unwrap();
-    assert!(
-        store
-            .withdraw_agent_request(&withdrawn.id, &session.id)
-            .await
-            .unwrap()
-    );
-    assert!(
-        store
-            .claim_agent_request(&withdrawn.id, &session.id, r#"{"text":"late"}"#)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    let row = store
-        .session_agent_request(&withdrawn.id, &session.id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(row.resolution.as_deref(), Some("withdrawn"));
-    assert_eq!(row.answer, None);
-}
-
-/// A claim whose answer never reached the agent opens again, unless a turn
-/// ended meanwhile that would have expired the request: then it expires.
-/// A delivered claim stays answered even where a turn ended meanwhile.
-#[tokio::test]
-async fn a_failed_delivery_reopens_a_claim_only_where_no_turn_expired_it() {
-    let (store, _dir, pr) = store_with_my_pull_request().await;
-    let session = keeper_session(&store, &pr).await;
-    let open = |hint: &'static str| {
-        let store = store.clone();
-        let session = session.id.clone();
-        async move {
-            let (row, _) = store
-                .create_agent_request(&session, hint, None, Some("turn-1"))
-                .await
-                .unwrap();
-            store
-                .claim_agent_request(&row.id, &session, r#"{"text":"x"}"#)
-                .await
-                .unwrap()
-                .unwrap()
-        }
-    };
-    let resolution = |id: String| {
-        let store = store.clone();
-        let session = session.id.clone();
-        async move {
-            store
-                .session_agent_request(&id, &session)
-                .await
-                .unwrap()
-                .unwrap()
-                .resolution
-        }
-    };
-
-    let unsent = open("Unsent").await;
-    assert_eq!(
-        store
-            .settle_agent_request_claim(&unsent, false)
-            .await
-            .unwrap(),
-        ClaimSettlement::Reopened
-    );
-    assert_eq!(resolution(unsent.id.clone()).await, None);
-    store
-        .withdraw_agent_request(&unsent.id, &session.id)
-        .await
-        .unwrap();
-
-    let expired = open("Expired meanwhile").await;
-    let closed = store
-        .finish_agent_request_turn(&session.id, "turn-2")
-        .await
-        .unwrap();
-    assert!(
-        closed.is_empty(),
-        "a claim is the claimant's to settle: {closed:?}"
-    );
-    assert_eq!(
-        store
-            .settle_agent_request_claim(&expired, false)
-            .await
-            .unwrap(),
-        ClaimSettlement::Expired
-    );
-    assert_eq!(
-        resolution(expired.id.clone()).await.as_deref(),
-        Some("expired")
-    );
-    assert!(store.pending_agent_requests().await.unwrap().is_empty());
-
-    let delivered = open("Delivered meanwhile").await;
-    store
-        .finish_agent_request_turn(&session.id, "turn-3")
-        .await
-        .unwrap();
-    assert_eq!(
-        store
-            .settle_agent_request_claim(&delivered, true)
-            .await
-            .unwrap(),
-        ClaimSettlement::Answered
-    );
-    assert_eq!(
-        resolution(delivered.id.clone()).await.as_deref(),
-        Some("answered")
-    );
-
-    // The turn that raised the request does not expire its claim.
-    let raised = open("Raised this turn").await;
-    store
-        .finish_agent_request_turn(&session.id, "turn-1")
-        .await
-        .unwrap();
-    assert_eq!(
-        store
-            .settle_agent_request_claim(&raised, false)
-            .await
-            .unwrap(),
-        ClaimSettlement::Reopened
-    );
-}
-
-/// A repeated hint keeps its request and its question. A repeat with no
-/// question raises it as it is; a repeat that adds or changes the question
-/// is a conflict and changes nothing.
-#[tokio::test]
-async fn a_repeated_hint_with_another_question_is_refused() {
-    let (store, _dir, pr) = store_with_my_pull_request().await;
-    let session = keeper_session(&store, &pr).await;
-    let first = r#"{"text":"Which base?","options":[{"id":"main","label":"Main"}]}"#;
-    let changed = r#"{"text":"Which base?","options":[{"id":"next","label":"Next"}]}"#;
-
-    let (hint_only, _) = store
-        .create_agent_request(&session.id, "Pick a base", None, None)
-        .await
-        .unwrap();
-    let added = store
-        .create_agent_request(&session.id, "Pick a base", Some(first), None)
-        .await;
-    assert!(matches!(added, Err(StoreError::Conflict(_))), "{added:?}");
-    store
-        .withdraw_agent_request(&hint_only.id, &session.id)
-        .await
-        .unwrap();
-
-    let (asked, created) = store
-        .create_agent_request(&session.id, "Pick a base", Some(first), Some("t1"))
-        .await
-        .unwrap();
-    assert!(created);
-    let (same, created) = store
-        .create_agent_request(&session.id, "Pick a base", Some(first), Some("t2"))
-        .await
-        .unwrap();
-    assert!(!created);
-    assert_eq!(same.id, asked.id);
-    let (bare, _) = store
-        .create_agent_request(&session.id, "Pick a base", None, Some("t3"))
-        .await
-        .unwrap();
-    assert_eq!(bare.question.as_deref(), Some(first));
-    assert_eq!(bare.last_raised_turn_id.as_deref(), Some("t3"));
-    let other = store
-        .create_agent_request(&session.id, "Pick a base", Some(changed), Some("t4"))
-        .await;
-    assert!(matches!(other, Err(StoreError::Conflict(_))), "{other:?}");
-    let row = store
-        .session_agent_request(&asked.id, &session.id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(row.question.as_deref(), Some(first));
-    assert_eq!(row.last_raised_turn_id.as_deref(), Some("t3"));
+    assert_eq!(session.seat.as_deref(), Some("keeper"));
 }
 
 // -- token usage ------------------------------------------------------------
@@ -4671,7 +4315,7 @@ async fn a_task_agent_cannot_be_staffed_on_the_reviewer_sessions_skill() {
 
 /// An edit replaces the column staffing whole: every column is staffed
 /// with the skills and the pin the edit gave it. An agent already on its
-/// column keeps its row, and with it the sessions and messages that name
+/// column keeps its row, and with it the sessions that name
 /// it; a column staffed for the first time gets a new row, and a column the
 /// edit leaves out loses its agent. A task is edited while it is not running
 /// — pending, ready, or failed and waiting for a retry, which is when the
@@ -4683,23 +4327,8 @@ async fn an_edit_replaces_the_whole_column_staffing() {
     let store = &w.store;
     let before = store.list_task_agents(&w.task.id).await.unwrap();
     assert_eq!(before.len(), 3);
-    // A session of the develop agent, and a message to it: what a re-staffing
-    // has to keep.
+    // A session of the develop agent: what a re-staffing has to keep.
     let develop_session = w.agent_session().await;
-    let said = store
-        .send_message(NewMessage {
-            goal_id: w.goal.id.clone(),
-            task_id: Some(w.task.id.clone()),
-            kind: MessageKind::Message,
-            from_actor: Actor::Orchestrator,
-            from_agent_id: None,
-            from_session: None,
-            to_actor: Actor::Agent,
-            to_agent_id: Some(before[0].id.clone()),
-            body: "Kept across the edit.".into(),
-        })
-        .await
-        .unwrap();
     let restaffed = || {
         vec![
             NewTaskAgent::new(
@@ -4753,10 +4382,6 @@ async fn an_edit_replaces_the_whole_column_staffing() {
             .as_deref(),
         Some(before[0].id.as_str()),
         "and the session that names it stays"
-    );
-    assert_eq!(
-        store.get_message(&said.id).await.unwrap().body,
-        "Kept across the edit."
     );
     assert_eq!(
         staffing(&w.task.id).await,
@@ -4870,14 +4495,10 @@ async fn an_edit_replaces_the_whole_column_staffing() {
         ["review", "merge"]
     );
     // The develop agent kept its row through the edit that dropped the other
-    // two columns; the message to it is still there.
+    // two columns.
     assert_eq!(
         store.list_task_agents(&w.task.id).await.unwrap()[0].id,
         before[0].id
-    );
-    assert_eq!(
-        store.get_message(&said.id).await.unwrap().to_agent_id,
-        Some(before[0].id.clone())
     );
     store
         .update_task(
@@ -4904,7 +4525,7 @@ async fn an_edit_replaces_the_whole_column_staffing() {
             .all(|a| before.iter().all(|b| b.id != a.id))
     );
 
-    // A column whose agent has a session or a message behind it cannot be
+    // A column whose agent has a session behind it cannot be
     // left out: dropping the agent would drop them.
     let review_session = w
         .session(Seat::Agent, Some(&again[1].id), Some(&w.task.id))
@@ -7138,40 +6759,6 @@ async fn repositories_and_comment_marks_have_no_post_supervision_columns() {
                 .await
                 .unwrap();
         assert_eq!(count, 0, "{table}.{column} must be absent");
-    }
-}
-
-/// A turn's expiry and an undelivered claim's settlement, raced, always
-/// leave the request expired: the expiry is one statement, so a claim that
-/// reopens never slips between its halves and stays answerable.
-#[tokio::test]
-async fn a_turn_expiry_racing_an_undelivered_claim_always_expires_it() {
-    let (store, _dir, pr) = store_with_my_pull_request().await;
-    let session = keeper_session(&store, &pr).await;
-    for round in 0..32 {
-        let (row, _) = store
-            .create_agent_request(&session.id, &format!("Round {round}"), None, Some("asked"))
-            .await
-            .unwrap();
-        let claimed = store
-            .claim_agent_request(&row.id, &session.id, r#"{"text":"x"}"#)
-            .await
-            .unwrap()
-            .unwrap();
-        let ended = format!("ended-{round}");
-        let (expired, settled) = tokio::join!(
-            store.finish_agent_request_turn(&session.id, &ended),
-            store.settle_agent_request_claim(&claimed, false),
-        );
-        expired.unwrap();
-        settled.unwrap();
-        let row = store
-            .session_agent_request(&row.id, &session.id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.resolution.as_deref(), Some("expired"), "round {round}");
-        assert!(row.answered_at.is_some(), "round {round}");
     }
 }
 

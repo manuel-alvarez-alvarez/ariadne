@@ -36,6 +36,11 @@ pub struct HealthResponse {
     pub status: String,
     /// Seconds since the daemon started.
     pub uptime_secs: u64,
+    /// The process that answered. A daemon from before this field sends
+    /// none: a worker update tells by it whether the service's own process
+    /// answers (037).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 /// Response of `GET /v1/version`.

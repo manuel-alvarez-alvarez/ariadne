@@ -526,7 +526,7 @@
           "events"
         ],
         "summary": "Subscribe to the live domain-event stream.",
-        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nNot every event is a database write. `task_branch_updated` is published by\nthe daemon's watch on each live task's branch ref, so a commit an agent\nmakes in its worktree — which changes nothing in the store — still says\nthat the task's diff (`GET /v1/tasks/{id}/diff`) is no longer the one you\nhold. It carries the branch and the full sha of its new head.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nBesides the domain events there is a `heartbeat` event (a `HeartbeatDto`:\nthe daemon's `version` and its `started_at`), sent as the connection opens\nand every 15 s an idle connection goes without one. It is a named event\nrather than the SSE comment other streams keep alive with, because a\nbrowser's `EventSource` never surfaces a comment: a client watches it to\ntell a live daemon from a dead one, and a changed `started_at` to tell a\nrestarted daemon from the one it was talking to.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
+        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nNot every event is a database write. `task_branch_updated` is published by\nthe daemon's watch on each live task's branch ref, so a commit an agent\nmakes in its worktree — which changes nothing in the store — still says\nthat the task's diff (`GET /v1/tasks/{id}/diff`) is no longer the one you\nhold. It carries the branch and the full sha of its new head.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nBesides the domain events there is a `heartbeat` event (a `HeartbeatDto`:\nthe daemon's `version` and its `started_at`), sent as the connection opens\nand every 15 s an idle connection goes without one. It is a named event\nrather than the SSE comment other streams keep alive with, because a\nbrowser's `EventSource` never surfaces a comment: a client watches it to\ntell a live daemon from a dead one, and a changed `started_at` to tell a\nrestarted daemon from the one it was talking to.\n\nA source daemon names itself with `source`, its persistent daemon ID.\nIts stream then also carries `source_post` frames (`SourcePostDto`): the\nposts of worker agents to the orchestrator of that source (039). A post\ngoes on the newest open stream of the source alone, at once, and no stream\ngets it again.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
         "operationId": "stream",
         "parameters": [
           {
@@ -552,11 +552,23 @@
                 "null"
               ]
             }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "The persistent daemon ID of a source daemon that follows this stream.\nThe stream also carries `source_post` frames (`SourcePostDto`): the\nposts of worker agents to the orchestrator of that source.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved.",
+            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. A stream with `source` also carries `source_post` (SourcePostDto).",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -964,112 +976,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GoalDto"
-                }
-              }
-            }
-          },
-          "403": {},
-          "409": {}
-        }
-      }
-    },
-    "/v1/goals/{id}/messages": {
-      "get": {
-        "tags": [
-          "goals"
-        ],
-        "summary": "The messages of a goal: what its agents said that was not about one task.",
-        "description": "A goal's channel is the orchestrator's inbox. Everything an agent says to\nit about a task is on that task instead, and this is where the rest goes.",
-        "operationId": "list_goal_messages",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "goal id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "to_agent_id",
-            "in": "query",
-            "description": "Only the messages for this staffed agent.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "undelivered",
-            "in": "query",
-            "description": "Only the ones that have not reached their agent yet.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "deliver",
-            "in": "query",
-            "description": "Hand the caller its own undelivered messages: narrow the list to the\ncalling session's agent, and stamp every row it returns delivered.\n\nThis is a delivery, not a read. It needs a session behind it, and it\nis what makes a read of the channel count the same as a prompt: a\nmessage handed over here is never handed over again.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MessageDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "goals"
-        ],
-        "summary": "Send a message about the goal itself.",
-        "operationId": "post_goal_message",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "goal id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SendMessageRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageDto"
                 }
               }
             }
@@ -3808,6 +3714,41 @@
         }
       }
     },
+    "/v1/remote-tasks/{id}/posts": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Put a post of the source orchestrator into the live session of the agent\nof one column of a worker-protocol task on this worker. The worker applies\nthe rules of a local post.",
+        "operationId": "post_from_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemotePostRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {},
+          "403": {}
+        }
+      }
+    },
     "/v1/remote-tasks/{id}/retry-dependency": {
       "post": {
         "tags": [
@@ -4574,70 +4515,6 @@
         }
       }
     },
-    "/v1/sessions/{id}/agent-requests": {
-      "get": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "The requests of a session that still wait for an answer, oldest first.",
-        "description": "A console opens on the newest page of events (`GET /console`), and a\nquestion asked before that page has no opening line in it. The console\nreads this list with each snapshot, and draws every pending question it\ndoes not already hold, so a reload or a reconnect never hides one.",
-        "operationId": "list_agent_requests",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/AgentRequestDto"
-                  }
-                }
-              }
-            }
-          },
-          "404": {}
-        }
-      },
-      "post": {
-        "tags": [
-          "sessions"
-        ],
-        "operationId": "create",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {}
-        }
-      }
-    },
     "/v1/sessions/{id}/console": {
       "get": {
         "tags": [
@@ -4852,6 +4729,85 @@
         }
       }
     },
+    "/v1/sessions/{id}/questions": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "The questions the session's agent waits on, oldest first, each with the\nform the agent sent, unchanged.",
+        "operationId": "list_questions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QuestionDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/v1/sessions/{id}/questions/{question_id}/answer": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Answer one question: `accept` with the form content, `decline` or\n`cancel`. The agent reads it as the result of its request. One answer\ncloses the question, and a second is refused.",
+        "operationId": "answer_question",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The answer was sent to the agent"
+          },
+          "400": {},
+          "404": {},
+          "409": {}
+        }
+      }
+    },
     "/v1/sessions/{id}/resume": {
       "post": {
         "tags": [
@@ -4924,81 +4880,6 @@
                 }
               }
             }
-          },
-          "400": {},
-          "404": {},
-          "409": {}
-        }
-      }
-    },
-    "/v1/sessions/{session_id}/agent-requests/{request_id}": {
-      "post": {
-        "tags": [
-          "sessions"
-        ],
-        "operationId": "withdraw",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "request_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {}
-        }
-      }
-    },
-    "/v1/sessions/{session_id}/agent-requests/{request_id}/answer": {
-      "post": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "Answer one request: the option of its question the user picked, or the\ntext the user typed.",
-        "description": "The answer reaches the agent as a fresh console prompt — sent at once if\nthe agent is between turns, or queued behind the turn that runs — and is\nnever read as the answer to a pending permission. A request that is no\nlonger pending (answered, withdrawn, or expired with the turn that asked\nit) is refused with `409` and the code `agent_request_closed`, and sends\nnothing. Where the prompt cannot reach the agent, the request opens again\nso the user can retry.",
-        "operationId": "answer_agent_request",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "request_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnswerAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "The answer was recorded and sent to the agent"
           },
           "400": {},
           "404": {},
@@ -5198,6 +5079,15 @@
         "operationId": "list",
         "parameters": [
           {
+            "name": "no_goal",
+            "in": "query",
+            "description": "List tasks without a goal.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "goal",
             "in": "query",
             "description": "Filter by goal id.",
@@ -5251,6 +5141,37 @@
               }
             }
           }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Create a local task without a goal. Only the user can create one.",
+        "operationId": "create_standalone",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateStandaloneTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
+          "404": {}
         }
       }
     },
@@ -5394,76 +5315,14 @@
         }
       }
     },
-    "/v1/tasks/{id}/messages": {
-      "get": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "The messages of a task: what its agents have said to each other.",
-        "operationId": "list_task_messages",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "to_agent_id",
-            "in": "query",
-            "description": "Only the messages for this staffed agent.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "undelivered",
-            "in": "query",
-            "description": "Only the ones that have not reached their agent yet.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "deliver",
-            "in": "query",
-            "description": "Hand the caller its own undelivered messages: narrow the list to the\ncalling session's agent, and stamp every row it returns delivered.\n\nThis is a delivery, not a read. It needs a session behind it, and it\nis what makes a read of the channel count the same as a prompt: a\nmessage handed over here is never handed over again.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MessageDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
+    "/v1/tasks/{id}/posts": {
       "post": {
         "tags": [
           "tasks"
         ],
-        "summary": "Send a message about a task.",
-        "description": "Who it is from is the session header's, never the body's: an agent cannot\nwrite as somebody else, and a call with no session behind it is the user\nspeaking.",
-        "operationId": "post_task_message",
+        "summary": "Put the body into the live session of the orchestrator or of the agent\nof one column, on one task of this host or a worker-protocol task on\nanother.",
+        "description": "Each refusal is a bad request with the sentence the caller reads.",
+        "operationId": "post_to_session",
         "parameters": [
           {
             "name": "id",
@@ -5479,24 +5338,16 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SendMessageRequest"
+                "$ref": "#/components/schemas/PostToSessionRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageDto"
-                }
-              }
-            }
-          },
-          "403": {},
-          "409": {}
+          "204": {},
+          "400": {},
+          "403": {}
         }
       }
     },
@@ -6093,21 +5944,10 @@
           "no_restart_resume"
         ]
       },
-      "Actor": {
-        "type": "string",
-        "description": "Who is attempting a transition: a seat, the daemon, or the user.",
-        "enum": [
-          "orchestrator",
-          "agent",
-          "daemon",
-          "user"
-        ]
-      },
       "AgentAssignment": {
         "type": "object",
         "description": "One agent to staff on a task: the column it works, the skills it loads,\nand what it is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
         "required": [
-          "step",
           "model"
         ],
         "properties": {
@@ -6136,15 +5976,18 @@
             "items": {
               "type": "string"
             },
-            "description": "The names of the skills this agent loads, in the order they reach it.\nOmitted or empty = the column's own skills. A name no skill answers\nto is refused.",
+            "description": "The names of the skills this agent loads, in the order they reach it.\nOmitted or empty = the column's own skills, or none for a task with\nno workflow. A name no skill answers\nto is refused.",
             "example": [
               "coding",
               "documentation"
             ]
           },
           "step": {
-            "type": "string",
-            "description": "The id of the workflow column this agent works, one of the goal's\ncolumns. A task takes one agent per column, and a column named twice\nis refused."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The id of the workflow column this agent works, one of the goal's\ncolumns. A task takes one agent per column, and a column named twice\nis refused. Omitted only for the one agent of a task with no workflow."
           }
         },
         "additionalProperties": false
@@ -6254,105 +6097,6 @@
             ]
           }
         }
-      },
-      "AgentQuestion": {
-        "type": "object",
-        "description": "A question an agent asks the user through `wait_for_user` (031).",
-        "required": [
-          "text"
-        ],
-        "properties": {
-          "options": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AgentQuestionOption"
-            },
-            "description": "The answers the user can pick. With none, the user types the answer."
-          },
-          "recommendation_reason": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Why the agent recommends that option. It needs\n`recommended_option_id`."
-          },
-          "recommended_option_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The `id` of the option the agent recommends."
-          },
-          "text": {
-            "type": "string",
-            "description": "The question, with the context the user needs to answer it."
-          }
-        }
-      },
-      "AgentQuestionOption": {
-        "type": "object",
-        "description": "One answer the user can pick.",
-        "required": [
-          "id",
-          "label"
-        ],
-        "properties": {
-          "description": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What the answer means, or what it causes."
-          },
-          "id": {
-            "type": "string",
-            "description": "A stable id, unique in the question."
-          },
-          "label": {
-            "type": "string",
-            "description": "The short name of the answer."
-          }
-        }
-      },
-      "AgentRequestDto": {
-        "type": "object",
-        "description": "One pending request of a session, as `GET .../agent-requests` lists it:\nwhat a console restores a question card from when its opening event is\nolder than the page the console opened on.",
-        "required": [
-          "id",
-          "summary",
-          "created_at"
-        ],
-        "properties": {
-          "created_at": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "question": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/AgentQuestion"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "summary": {
-            "type": "string",
-            "description": "The one-line hint."
-          }
-        }
-      },
-      "AgentRequestResolution": {
-        "type": "string",
-        "description": "How a request closed, as its `agent_request.resolved` event says.",
-        "enum": [
-          "answered",
-          "withdrawn",
-          "expired"
-        ]
       },
       "AgentUsageDto": {
         "type": "object",
@@ -6499,25 +6243,24 @@
           }
         }
       },
-      "AnswerAgentRequest": {
+      "AnswerQuestionRequest": {
         "type": "object",
-        "description": "The user's answer to one request: an option of its question, or text.",
+        "description": "Body of `POST /v1/sessions/{id}/questions/{question_id}/answer`.\n`content` is present with `accept` only.",
+        "required": [
+          "action"
+        ],
         "properties": {
-          "option_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The `id` of the option the user picked."
+          "action": {
+            "$ref": "#/components/schemas/QuestionAction"
           },
-          "text": {
+          "content": {
             "type": [
-              "string",
+              "object",
               "null"
-            ],
-            "description": "The answer the user typed."
+            ]
           }
-        }
+        },
+        "additionalProperties": false
       },
       "AskBabysitRequest": {
         "type": "object",
@@ -7018,30 +6761,6 @@
         },
         "additionalProperties": false
       },
-      "CreateAgentRequest": {
-        "type": "object",
-        "description": "An agent's flag that it waits for the user (`wait_for_user`, 013).",
-        "required": [
-          "summary"
-        ],
-        "properties": {
-          "question": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/AgentQuestion",
-                "description": "The whole question, which the console shows as a card. Without it,\nthe request is the hint alone."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "summary": {
-            "type": "string",
-            "description": "One line for the Needs attention list, at most 100 characters. The\nquestion itself goes in `question`; a summary that runs longer, or\nover more than one line, is refused."
-          }
-        }
-      },
       "CreateDashboardRequest": {
         "type": "object",
         "required": [
@@ -7154,7 +6873,6 @@
         "required": [
           "repo_id",
           "title",
-          "source_goal",
           "workflow",
           "agents"
         ],
@@ -7171,8 +6889,23 @@
           "repo_id": {
             "type": "string"
           },
+          "source_daemon_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Source identity for goal-less work. Goal work uses source_goal.daemon_id."
+          },
           "source_goal": {
-            "$ref": "#/components/schemas/SourceGoalReference"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SourceGoalReference",
+                "description": "Null for a task that has no goal."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "title": {
             "type": "string"
@@ -7254,6 +6987,46 @@
             "type": "string",
             "description": "Kebab-case, and free: a name Ariadne already ships is refused.",
             "example": "api-design"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateStandaloneTaskRequest": {
+        "type": "object",
+        "description": "Create user-owned local work with its own saved columns.",
+        "required": [
+          "title",
+          "repo_id",
+          "agents"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentAssignment"
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workflow the task runs. Omitted or null = no workflow: `agents`\nholds exactly one agent with no `step`, and its step calls end the task."
           }
         },
         "additionalProperties": false
@@ -7620,26 +7393,6 @@
                 "type": "string",
                 "enum": [
                   "task_branch_updated"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "description": "One agent said something to another.",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/MessageDto",
-                "description": "One agent said something to another."
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "message_sent"
                 ]
               }
             }
@@ -8574,6 +8327,15 @@
           "uptime_secs"
         ],
         "properties": {
+          "pid": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The process that answered. A daemon from before this field sends\nnone: a worker update tells by it whether the service's own process\nanswers (037).",
+            "minimum": 0
+          },
           "status": {
             "type": "string",
             "description": "Always \"ok\" when the daemon is able to answer.",
@@ -9223,82 +8985,6 @@
           }
         }
       },
-      "MessageDto": {
-        "type": "object",
-        "required": [
-          "id",
-          "goal_id",
-          "kind",
-          "from_actor",
-          "to_actor",
-          "body",
-          "created_at"
-        ],
-        "properties": {
-          "body": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "delivered_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "When it was handed to the recipient's agent, or None while it is still\nwaiting for one to be free."
-          },
-          "from_actor": {
-            "$ref": "#/components/schemas/Actor"
-          },
-          "from_agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The staffed agent that sent it, or None for the orchestrator, the\ndaemon and the user."
-          },
-          "from_session": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "goal_id": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/MessageKind"
-          },
-          "task_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The task it is about, or None for a message about the goal itself."
-          },
-          "to_actor": {
-            "$ref": "#/components/schemas/Actor"
-          },
-          "to_agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The staffed agent it is for, or None for the orchestrator."
-          }
-        }
-      },
-      "MessageKind": {
-        "type": "string",
-        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and one kind carries\neverything they say on it, whether it asks something or answers it. There\nis no `answer` kind and no `reply` tool: an answer is a message to whoever\nasked, addressed the way the question was, so nothing threads. Each\nmessage reaches its agent as a turn — which is why the tool that sends one\ntakes questions and answers and nothing else, no confirmation and no\nthanks.\n\nA review used to run on the channel too, as three kinds of its own; a\nworkflow column moves a task through the step routes now, and the one\nkind left is what the agents say.",
-        "enum": [
-          "message"
-        ]
-      },
       "MissingRepositoryDto": {
         "type": "object",
         "description": "A local repository a host has no checkout of.",
@@ -9738,6 +9424,24 @@
         },
         "additionalProperties": false
       },
+      "PostToSessionRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/tasks/{id}/posts`: text for the live session of another\nagent, with no stored row. The sender is the session header's.",
+        "required": [
+          "to",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string",
+            "description": "`orchestrator`, or the column of a staffed agent of the task."
+          }
+        },
+        "additionalProperties": false
+      },
       "PrOperation": {
         "type": "string",
         "description": "The work Ariadne does on one pull request as a goal of its own: one active\ngoal per request and operation, staffed by one task whose single column\nAriadne fixes for that operation, on no workflow of the catalog (029, 030).",
@@ -10152,6 +9856,46 @@
           }
         }
       },
+      "QuestionAction": {
+        "type": "string",
+        "description": "What the person did with a question, as ACP names it.",
+        "enum": [
+          "accept",
+          "decline",
+          "cancel"
+        ]
+      },
+      "QuestionDto": {
+        "type": "object",
+        "description": "One open question an agent asks with ACP `elicitation/create` in form\nmode, as `GET /v1/sessions/{id}/questions` lists it (021).",
+        "required": [
+          "id",
+          "session_id",
+          "message",
+          "schema",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "description": "The agent's own text over the form."
+          },
+          "schema": {
+            "type": "object",
+            "description": "The `requestedSchema` of the ACP request, unchanged."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "The Ariadne session whose agent asks."
+          }
+        }
+      },
       "RecordLearnedPermissionRequest": {
         "type": "object",
         "description": "One learned permission to write whole, as another daemon pushes it (037).\nA row with the same repository, tool name, level and key keeps its id and\n`created_at`, and takes everything else from the request.",
@@ -10201,6 +9945,37 @@
           "tool_call": {},
           "tool_name": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RemotePostRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/remote-tasks/{id}/posts`: a post of the source\norchestrator to a column of a worker-protocol task on this worker.",
+        "required": [
+          "source_daemon_id",
+          "to",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The body of the post, or of the dropped post when `dropped` is set."
+          },
+          "dropped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when this is a notice that the source dropped the post in `body`\nof a worker agent to its orchestrator: the reason. The worker puts a\nnotice into the session, not a post, and asks for no answer."
+          },
+          "source_daemon_id": {
+            "type": "string",
+            "description": "The persistent daemon ID of the source that sends the post."
+          },
+          "to": {
+            "type": "string",
+            "description": "The column of a staffed agent of the task."
           }
         },
         "additionalProperties": false
@@ -10372,31 +10147,6 @@
           "reviewer",
           "keeper"
         ]
-      },
-      "SendMessageRequest": {
-        "type": "object",
-        "description": "Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.\n\nWho it is *from* comes from the session header rather than the body: an\nagent cannot send a message as somebody else, and a message with no session\nbehind it is the user's.",
-        "required": [
-          "to_actor",
-          "body"
-        ],
-        "properties": {
-          "body": {
-            "type": "string"
-          },
-          "to_actor": {
-            "$ref": "#/components/schemas/Actor",
-            "description": "Who it is for. `orchestrator` needs no agent id — a goal has one."
-          },
-          "to_agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.\nRequired for `agent`, refused for the orchestrator."
-          }
-        },
-        "additionalProperties": false
       },
       "SessionDto": {
         "type": "object",
@@ -11180,6 +10930,31 @@
         },
         "additionalProperties": false
       },
+      "SourcePostDto": {
+        "type": "object",
+        "description": "The `source_post` frame of `GET /v1/events/stream?source=…`: a post of a\nworker agent to the orchestrator of its source goal. The worker sends it\non one open stream of that source, live, and never again.",
+        "required": [
+          "id",
+          "task_id",
+          "column",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string",
+            "description": "The column of the sender."
+          },
+          "id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          }
+        }
+      },
       "StepGate": {
         "type": "string",
         "description": "What a step waits for before the next one may start: the author's commit,\na push, a merge onto the base, or a request merged by a human.",
@@ -11299,7 +11074,7 @@
           },
           "step": {
             "type": "string",
-            "description": "The id of the workflow column this agent works."
+            "description": "The id of the workflow column this agent works; empty for the agent\nof a task with no workflow."
           }
         }
       },
@@ -11308,7 +11083,6 @@
         "description": "Payload of `task_branch_updated`: where a task's branch points now.\n\nA commit in the task's worktree changes nothing in the store, so no\nother event says the task's diff is no longer the one a client fetched.",
         "required": [
           "task_id",
-          "goal_id",
           "branch",
           "head"
         ],
@@ -11318,7 +11092,10 @@
             "description": "The task branch whose head moved."
           },
           "goal_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "head": {
             "type": "string",
@@ -11333,7 +11110,6 @@
         "type": "object",
         "required": [
           "id",
-          "goal_id",
           "repo_id",
           "title",
           "description",
@@ -11383,7 +11159,10 @@
             ]
           },
           "goal_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "host": {
             "type": "string",
@@ -11447,6 +11226,12 @@
             ],
             "description": "The column of its goal's workflow the task is in while it is\n`in_progress`; null before its first column and once it has ended."
           },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            }
+          },
           "title": {
             "type": "string"
           },
@@ -11456,6 +11241,12 @@
           "usage": {
             "$ref": "#/components/schemas/TaskUsageDto",
             "description": "What the agents of this task have spent between them."
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "worktree_path": {
             "type": [
@@ -11469,7 +11260,6 @@
         "type": "object",
         "description": "Worker context sufficient for task inspection without a local goal.",
         "required": [
-          "source_goal",
           "execution_owner",
           "workflow",
           "revision",
@@ -11496,8 +11286,23 @@
             "format": "int64",
             "description": "Draft edits advance this revision. Authorization must name this revision."
           },
+          "source_daemon_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Source identity for goal-less work. Goal work uses source_goal.daemon_id."
+          },
           "source_goal": {
-            "$ref": "#/components/schemas/SourceGoalReference"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SourceGoalReference",
+                "description": "Null for a task that has no goal."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "workflow": {
             "$ref": "#/components/schemas/TaskWorkflowContext"

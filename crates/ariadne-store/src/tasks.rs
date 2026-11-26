@@ -137,7 +137,7 @@ impl Store {
 
     /// Claim a column entry only while it is still current.
     pub async fn claim_step_briefing(&self, transition: &str) -> Result<bool> {
-        Ok(sqlx::query("UPDATE task_transitions SET step_briefed_at = ? WHERE id = ? AND step_briefed_at IS NULL AND id = (SELECT tr.id FROM task_transitions tr WHERE tr.task_id = task_transitions.task_id ORDER BY tr.id DESC LIMIT 1) AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_transitions.task_id AND t.status = 'in_progress' AND t.step = task_transitions.to_step)")
+        Ok(sqlx::query("UPDATE task_transitions SET step_briefed_at = ? WHERE id = ? AND step_briefed_at IS NULL AND id = (SELECT tr.id FROM task_transitions tr WHERE tr.task_id = task_transitions.task_id ORDER BY tr.id DESC LIMIT 1) AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_transitions.task_id AND t.status = 'in_progress' AND t.step IS task_transitions.to_step)")
             .bind(now()).bind(transition).execute(self.w()).await?.rows_affected() == 1)
     }
 
@@ -176,6 +176,15 @@ impl Store {
         agents: &mut [NewTaskAgent],
         status: Option<&str>,
     ) -> Result<()> {
+        // A task with no workflow has no column: one agent works all of it.
+        if steps.is_empty() {
+            return match agents {
+                [agent] if agent.step.is_empty() => Ok(()),
+                _ => Err(StoreError::Invalid(
+                    "a task with no workflow takes exactly one agent with no step".into(),
+                )),
+            };
+        }
         let mut staffed = HashSet::new();
         for agent in agents.iter_mut() {
             let step = steps.iter().find(|s| s.id == agent.step).ok_or_else(|| {
@@ -232,7 +241,9 @@ impl Store {
                 .flatten()
                 .filter_map(|a| a["step"].as_str().map(str::to_owned))
                 .collect();
-            let steps = self.goal_steps(&task.goal_id).await?;
+            let steps = self
+                .goal_steps(task.goal_id.as_deref().unwrap_or_default())
+                .await?;
             return Ok(unstaffed_columns(&steps, &staffed)
                 .into_iter()
                 .map(str::to_owned)
@@ -261,7 +272,7 @@ impl Store {
     pub async fn end_step(
         &self,
         task_id: &str,
-        from_step: &str,
+        from_step: Option<&str>,
         to: TaskStatus,
         reason: &str,
         merge_commit: Option<&str>,
@@ -269,7 +280,7 @@ impl Store {
         let mut tx = self.w().begin().await?;
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
         if task.status() != TaskStatus::InProgress
-            || task.step.as_deref() != Some(from_step)
+            || task.step.as_deref() != from_step
             || !matches!(to, TaskStatus::Finished | TaskStatus::Failed)
         {
             return Err(StoreError::Conflict(
@@ -536,6 +547,11 @@ impl Store {
                 "dependencies cannot change after authorization or source cancellation".into(),
             ));
         }
+        if task.goal_id.is_none() && !depends_on.is_empty() {
+            return Err(StoreError::Invalid(
+                "a goal-less task takes no dependencies".into(),
+            ));
+        }
         if !depends_on.is_empty()
             && sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM remote_task_contexts WHERE task_id = ?)",
@@ -558,7 +574,13 @@ impl Store {
             .bind(task_id)
             .execute(&mut *tx)
             .await?;
-        Self::insert_dependencies(&mut tx, &task.goal_id, task_id, depends_on).await?;
+        Self::insert_dependencies(
+            &mut tx,
+            task.goal_id.as_deref().unwrap_or_default(),
+            task_id,
+            depends_on,
+        )
+        .await?;
         // A task that was already ready may need to wait again.
         let transition = if task.status() == TaskStatus::Ready
             && !depends_on.is_empty()
@@ -683,7 +705,7 @@ impl Store {
         if let Some(agents) = &mut update.agents {
             // Re-staffing is the whole staffing again, column by column: an
             // agent already on a column keeps its row — and with it the
-            // sessions, messages and usage that name it — on the skills and
+            // sessions and usage that name it — on the skills and
             // the pin the edit gives it; a column staffed for the first time
             // gets a new row, and a column the edit leaves out loses its
             // agent. The task is not running, so no live agent session is

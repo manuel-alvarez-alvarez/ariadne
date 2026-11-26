@@ -119,9 +119,8 @@ Four things differ:
   command with its remote; run it as given.
 - The ending: the keeper has no task tool and no `Repo:` line. On a merge
   or a close it skips step 12 and ends its turn: Ariadne ends its session.
-- A failure the request did not cause: the task seat sends it to the
-  orchestrator once with `send_message`. The keeper asks the user once with
-  `wait_for_user`.
+- A failure the request did not cause: the task seat posts it to the
+  orchestrator once with `post_to_session`. The keeper asks the user once.
 
 ### Names
 
