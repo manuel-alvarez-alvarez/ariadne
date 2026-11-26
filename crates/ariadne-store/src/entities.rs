@@ -472,7 +472,7 @@ pub struct Task {
     /// first column and once it has ended.
     pub step: Option<String>,
     pub id: String,
-    pub goal_id: String,
+    pub goal_id: Option<String>,
     pub repo_id: String,
     pub title: String,
     pub description: String,

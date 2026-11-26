@@ -339,8 +339,15 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             // The goal carries the columns the task runs through, titles and
             // all; the task alone names only the id of the one it is in.
-            let goal: Option<GoalDto> = if t.execution_context.is_none() {
-                Some(client.get_json(&format!("/v1/goals/{}", t.goal_id)).await?)
+            let goal: Option<GoalDto> = if t.execution_context.is_none() && t.goal_id.is_some() {
+                Some(
+                    client
+                        .get_json(&format!(
+                            "/v1/goals/{}",
+                            t.goal_id.as_deref().unwrap_or_default()
+                        ))
+                        .await?,
+                )
             } else {
                 None
             };
@@ -550,6 +557,7 @@ async fn listing(
     let path = query_path(
         "/v1/tasks",
         &TaskListQuery {
+            no_goal: false,
             goal,
             status,
             origin_task_id: None,
@@ -656,16 +664,18 @@ fn visible(
 /// every column in column order; the goal is what carries the columns, since
 /// a task pending its first column has no `step` of its own yet.
 fn inspect_pairs(t: &TaskDto, g: Option<&GoalDto>) -> Vec<(&'static str, Kv)> {
+    let own_workflow = t.workflow.clone().unwrap_or_default();
     let (workflow, steps) = match &t.execution_context {
         Some(context) => (&context.workflow.name, &context.workflow.steps),
-        None => {
-            let goal = g.expect("local task has a goal");
-            (&goal.workflow, &goal.steps)
-        }
+        None => match g {
+            Some(goal) => (&goal.workflow, &goal.steps),
+            // A goal-less task keeps its own workflow and columns.
+            None => (&own_workflow, &t.steps),
+        },
     };
     let mut pairs = vec![
         ("id", Kv::id(t.id.clone())),
-        ("goal", Kv::id(t.goal_id.clone())),
+        ("goal", Kv::id(t.goal_id.clone().unwrap_or_default())),
         ("title", Kv::title(t.title.clone())),
         ("status", Kv::status(t.status.as_str())),
         ("workflow", workflow.clone().into()),
@@ -945,6 +955,17 @@ mod tests {
     /// escapes and nothing else — strip them and the block reads exactly as
     /// it does with `--color never`, and everything this task leaves plain
     /// (branch, tokens, …) is untouched either way.
+    #[test]
+    fn a_goal_less_task_inspects_its_own_workflow_and_columns() {
+        let t = TaskDto {
+            goal_id: None,
+            workflow: Some("solo".into()),
+            ..dto()
+        };
+        let block = kv_block(&inspect_pairs(&t, None), &View::plain());
+        assert!(block.contains("solo"), "{block}");
+    }
+
     #[test]
     fn the_inspect_block_types_its_id_title_and_status() {
         let t = TaskDto {

@@ -6,7 +6,7 @@ import { expect, it, onTestFinished, vi } from "vitest"
 import { qk } from "@/api"
 import { EventStreamProvider } from "@/events/provider"
 import { latestSource, stubEventSource } from "@/test/event-source"
-import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
+import { aGoal, aSession, aSessionPage, aTask, GOAL_ID } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
 
@@ -24,7 +24,7 @@ it("offers no messages tab and no message input, and reads no message route", as
     route: "/goals?tab=messages",
     seed: (client) => {
       client.setQueryData(qk.tasks.detail("local", task.id), task)
-      client.setQueryData(qk.goals.detail("local", task.goal_id), aGoal({ id: task.goal_id }))
+      client.setQueryData(qk.goals.detail("local", GOAL_ID), aGoal({ id: GOAL_ID }))
     },
   })
 
@@ -62,7 +62,7 @@ it("changes no view and logs no error when the stream carries a message_sent eve
     {
       seed: (client) => {
         client.setQueryData(qk.tasks.detail("local", task.id), task)
-        client.setQueryData(qk.goals.detail("local", task.goal_id), aGoal({ id: task.goal_id }))
+        client.setQueryData(qk.goals.detail("local", GOAL_ID), aGoal({ id: GOAL_ID }))
       },
     },
   )
@@ -80,7 +80,7 @@ it("changes no view and logs no error when the stream carries a message_sent eve
   act(() =>
     stream.emit("message_sent", {
       id: "01JMESSAGE0000000000000001",
-      goal_id: task.goal_id,
+      goal_id: GOAL_ID,
       task_id: task.id,
       body: "Said by an agent.",
       created_at: "2026-01-01T00:00:00Z",
@@ -130,6 +130,24 @@ it("shows workflow agents by column", async () => {
   expect(await screen.findByText("Build")).toBeTruthy()
   expect(screen.getByText("Test")).toBeTruthy()
   expect(screen.queryByText("Agents")).toBeNull()
+})
+
+it("draws a goal-less task by its own columns and reads no goal", async () => {
+  const task = aTask({
+    goal_id: null,
+    workflow: "solo",
+    step: "build",
+    steps: [{ id: "build", title: "Saved build", description: "", skills: [], ranks: [] }],
+    agents: [{ id: "agent-build", step: "build", skills: ["coding"], model: "codex-acp:o3" }],
+  })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  expect(await screen.findByText("Saved build")).toBeTruthy()
+  const requested = daemonFetch.mock.calls.map(
+    ([input]: unknown[]) => new URL(input instanceof Request ? input.url : String(input)).pathname,
+  )
+  expect(requested.some((path) => path.startsWith("/v1/goals/"))).toBe(false)
 })
 
 it("explains a pending task by the dependencies it waits for", async () => {

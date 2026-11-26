@@ -223,7 +223,7 @@ impl BranchWatchers {
 /// What one watch is about.
 struct Followed {
     task_id: String,
-    goal_id: String,
+    goal_id: Option<String>,
     branch: String,
     /// The repository the branch lives in — the checkout registered with the
     /// daemon, not the task's worktree.
@@ -277,7 +277,7 @@ async fn follow(
         debug!(task = %task_id, branch = %branch, head = %tip, "the task branch moved");
         head = Some(tip.clone());
         events.publish(BusEvent {
-            goal_id: Some(goal_id.clone()),
+            goal_id: goal_id.clone(),
             task_id: Some(task_id.clone()),
             recorded: None,
             event: DomainEvent::TaskBranchUpdated(TaskBranchDto {
@@ -465,7 +465,7 @@ mod tests {
         Task {
             step: None,
             id: "task-1".into(),
-            goal_id: "goal-1".into(),
+            goal_id: Some("goal-1".into()),
             repo_id: "repo-1".into(),
             title: "work".into(),
             description: String::new(),

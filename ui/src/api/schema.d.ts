@@ -2786,7 +2786,8 @@ export interface paths {
         /** List tasks. */
         get: operations["tasks_list"];
         put?: never;
-        post?: never;
+        /** Create a local task without a goal. Only the user can create one. */
+        post: operations["tasks_create_standalone"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3618,6 +3619,15 @@ export interface components {
              * @example api-design
              */
             name: string;
+        };
+        /** @description Create user-owned local work with its own saved columns. */
+        CreateStandaloneTaskRequest: {
+            agents: components["schemas"]["AgentAssignment"][];
+            description?: string;
+            host?: string | null;
+            repo_id: string;
+            title: string;
+            workflow: string;
         };
         CreateTaskRequest: {
             /**
@@ -5207,7 +5217,7 @@ export interface components {
         TaskBranchDto: {
             /** @description The task branch whose head moved. */
             branch: string;
-            goal_id: string;
+            goal_id?: string | null;
             /** @description Full sha of the commit the branch points at now. */
             head: string;
             task_id: string;
@@ -5226,7 +5236,7 @@ export interface components {
             depends_on: string[];
             description: string;
             execution_context?: components["schemas"]["TaskExecutionContext"] | null;
-            goal_id: string;
+            goal_id?: string | null;
             /**
              * @description The host the task runs on: `local` for a task on the goal's own
              *     daemon, else the name of a host (`GET /v1/hosts`).
@@ -5266,10 +5276,12 @@ export interface components {
              *     `in_progress`; null before its first column and once it has ended.
              */
             step?: string | null;
+            steps?: components["schemas"]["WorkflowStepDto"][];
             title: string;
             updated_at: string;
             /** @description What the agents of this task have spent between them. */
             usage: components["schemas"]["TaskUsageDto"];
+            workflow?: string | null;
             worktree_path?: string | null;
         };
         /** @description Worker context sufficient for task inspection without a local goal. */
@@ -9047,6 +9059,8 @@ export interface operations {
     tasks_list: {
         parameters: {
             query?: {
+                /** @description List tasks without a goal. */
+                no_goal?: boolean;
                 /** @description Filter by goal id. */
                 goal?: string | null;
                 /** @description Filter by status. */
@@ -9070,6 +9084,47 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TaskDto"][];
                 };
+            };
+        };
+    };
+    tasks_create_standalone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateStandaloneTaskRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

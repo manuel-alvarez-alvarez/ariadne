@@ -913,8 +913,9 @@ impl AriadneMcp {
     /// Read a task with its saved remote columns or its local goal columns.
     async fn task_with_steps(&self, named: Option<String>) -> Result<CallToolResult, McpError> {
         let mut task: serde_json::Value = self.get(&self.task_path(named, "")?).await?;
-        task["goal_steps"] = if let Some(steps) = task.pointer("/execution_context/workflow/steps")
-        {
+        task["goal_steps"] = if task["goal_id"].is_null() {
+            task["steps"].clone()
+        } else if let Some(steps) = task.pointer("/execution_context/workflow/steps") {
             steps.clone()
         } else {
             let goal: serde_json::Value = self
@@ -1686,6 +1687,28 @@ mod tests {
     #[tokio::test]
     async fn reading_a_remote_task_uses_its_saved_columns_without_reading_a_goal() {
         let (endpoint, seen) = recording_daemon_answering(r#"{"goal_id":"source-goal","execution_context":{"workflow":{"steps":[{"id":"saved-column","gate":"committed"}]}}}"#).await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let result = mcp
+            .get_task(Parameters(TaskIdOpt { task_id: None }))
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(
+            body["goal_steps"],
+            serde_json::json!([{"id":"saved-column","gate":"committed"}])
+        );
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].path, "/v1/tasks/01TASK");
+    }
+
+    #[tokio::test]
+    async fn reading_a_goal_less_task_uses_its_saved_columns_without_reading_a_goal() {
+        let (endpoint, seen) = recording_daemon_answering(r#"{"goal_id":null,"workflow":"solo","steps":[{"id":"saved-column","gate":"committed"}]}"#).await;
         let mcp = server_at(
             McpSeat::Agent,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),

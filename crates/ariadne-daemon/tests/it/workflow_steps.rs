@@ -76,7 +76,7 @@ async fn a_sessions_step_is_its_staffed_agents_column() {
     let session = h
         .store
         .create_session(NewSession {
-            goal_id: Some(task.goal_id.clone()),
+            goal_id: task.goal_id.clone(),
             task_id: Some(task.id.clone()),
             seat: Some(Seat::Agent),
             task_agent_id: Some(agent.id.clone()),
@@ -103,7 +103,7 @@ async fn a_sessions_step_is_its_staffed_agents_column() {
     let orchestrator = h
         .store
         .create_session(NewSession {
-            goal_id: Some(task.goal_id.clone()),
+            goal_id: task.goal_id.clone(),
             task_id: None,
             seat: Some(Seat::Orchestrator),
             task_agent_id: None,
@@ -687,7 +687,11 @@ async fn another_column_and_the_orchestrator_cannot_move_a_step() {
         .await
         .unwrap();
     h.store.start_first_step(&task.id).await.unwrap();
-    let goal = h.store.get_goal(&task.goal_id).await.unwrap();
+    let goal = h
+        .store
+        .get_goal(task.goal_id.as_deref().unwrap())
+        .await
+        .unwrap();
     let review = h
         .store
         .list_task_agents(&task.id)
@@ -1309,7 +1313,9 @@ async fn any_column_can_fail_the_task_and_usage_and_facts_name_the_column() {
         .find(|a| a["step"] == "review")
         .unwrap();
     assert_eq!(usage["usage"]["input_tokens"], 12);
-    let goal: Value = h.get(&format!("/v1/goals/{}", task.goal_id)).await;
+    let goal: Value = h
+        .get(&format!("/v1/goals/{}", task.goal_id.as_deref().unwrap()))
+        .await;
     assert!(goal["usage"]["agents"].as_array().unwrap().contains(usage));
     let failed: Value = h
         .json(
@@ -1415,7 +1421,11 @@ async fn the_orchestrator_reads_the_workflow_and_agents_load_their_own_skills() 
         )
         .await
         .unwrap();
-    let orchestrator = h.launcher.spawn_orchestrator(&task.goal_id).await.unwrap();
+    let orchestrator = h
+        .launcher
+        .spawn_orchestrator(task.goal_id.as_deref().unwrap())
+        .await
+        .unwrap();
     let briefing = h
         .launch_file(&orchestrator.id)
         .unwrap()
@@ -1505,7 +1515,7 @@ async fn invalid_stored_columns_return_goal_errors() {
             .bind(skills).bind(ranks).bind(gate).bind(&task.goal_id).execute(&mut db).await.unwrap();
         let refused = h
             .error(
-                crate::common::get(&format!("/v1/goals/{}", task.goal_id)),
+                crate::common::get(&format!("/v1/goals/{}", task.goal_id.as_deref().unwrap())),
                 StatusCode::BAD_REQUEST,
             )
             .await;
@@ -1753,7 +1763,10 @@ async fn a_cancelled_goal_kills_its_running_turn_at_once() {
     let (task, session, _release) = held_in_its_turn(&h).await;
     let _: Value = h
         .json(
-            post_json(&format!("/v1/goals/{}/cancel", task.goal_id), json!({})),
+            post_json(
+                &format!("/v1/goals/{}/cancel", task.goal_id.as_deref().unwrap()),
+                json!({}),
+            ),
             StatusCode::OK,
         )
         .await;

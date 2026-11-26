@@ -633,7 +633,11 @@ impl Follower<'_> {
         if task.far_task_id.is_some() || task.status() != TaskStatus::Pending {
             return Ok(false);
         }
-        let goal = self.ctx.store.get_goal(&task.goal_id).await?;
+        let goal = self
+            .ctx
+            .store
+            .get_goal(task.goal_id.as_deref().unwrap_or_default())
+            .await?;
         Ok(goal.status() == GoalStatus::Active
             && self.ctx.store.task_dependencies_merged(&task.id).await?)
     }
@@ -664,7 +668,9 @@ impl Follower<'_> {
     /// Create the task on the host, in the linked goal of its goal there.
     async fn dispatch(&self, task: &Task) -> Result<(), Unsent> {
         let store = &self.ctx.store;
-        let goal = store.get_goal(&task.goal_id).await?;
+        let goal = store
+            .get_goal(task.goal_id.as_deref().unwrap_or_default())
+            .await?;
         let local = store
             .list_repositories()
             .await?
@@ -764,7 +770,11 @@ impl Follower<'_> {
         }
         self.ctx
             .store
-            .set_far_task(&task.id, &far.goal_id, &far.id)
+            .set_far_task(
+                &task.id,
+                far.goal_id.as_deref().unwrap_or_default(),
+                &far.id,
+            )
             .await?;
         self.mirror(&task.id, far).await;
         Ok(())

@@ -82,7 +82,11 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
 /// worktree it cuts for the task.
 async fn started(h: &Harness, task: &TaskDto) -> AgentSession {
     let stored = h.store.get_task(&task.id).await.unwrap();
-    let goal = h.store.get_goal(&task.goal_id).await.unwrap();
+    let goal = h
+        .store
+        .get_goal(task.goal_id.as_deref().unwrap())
+        .await
+        .unwrap();
     h.activate(&goal).await;
     h.advance(&stored, TaskStatus::InProgress).await;
     h.notify(&task.id);

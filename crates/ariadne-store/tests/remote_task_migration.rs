@@ -57,7 +57,7 @@ async fn remote_execution_migration_keeps_existing_tasks_and_their_children() {
             .as_deref(),
         Some("source-task")
     );
-    assert!(store.remote_tasks().await.unwrap().is_empty());
+    assert!(store.tasks_without_local_goals().await.unwrap().is_empty());
     assert_eq!(
         store
             .list_sessions(SessionFilter::default())

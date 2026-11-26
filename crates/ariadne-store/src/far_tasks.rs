@@ -112,8 +112,13 @@ impl Store {
     pub async fn mirror_far_task(&self, task_id: &str, state: &FarTaskState) -> Result<bool> {
         let mut tx = self.w().begin().await?;
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
-        let goal: crate::Goal =
-            Self::fetch_by_in_tx(&mut tx, "goal", "goals", &task.goal_id).await?;
+        let goal: crate::Goal = Self::fetch_by_in_tx(
+            &mut tx,
+            "goal",
+            "goals",
+            task.goal_id.as_deref().unwrap_or_default(),
+        )
+        .await?;
         if is_final(&task, &goal) {
             return Ok(false);
         }

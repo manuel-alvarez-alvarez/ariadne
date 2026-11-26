@@ -144,6 +144,8 @@ dto! {
         operation: Option<ariadne_core::workflow::PrOperation>,
     ) -> TaskDto {
         execution_context: None,
+        workflow: None,
+        steps: Vec::new(),
         status: t.status(),
         operation: operation,
         stalled: t.is_stalled(),
@@ -299,11 +301,26 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
         task.pr_url = goal.pr_url;
     }
     let remote = store.remote_task_context(&task.id).await?;
+    let workflow = store.task_workflow(&task.id).await?;
+    let steps = if workflow.is_some() {
+        store
+            .task_steps(&task)
+            .await?
+            .into_iter()
+            .map(step_dto)
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     let mut dto = task_dto(task, agents, sessions, depends_on, usage, reason, operation);
+    dto.workflow = workflow;
+    dto.steps = steps;
     if let Some(remote) = remote {
         let request: ariadne_api::tasks::CreateRemoteTaskRequest =
             serde_json::from_str(&remote.request)
                 .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        dto.workflow = Some(remote.workflow.clone());
+        dto.steps = request.workflow.steps.clone();
         dto.execution_context = Some(ariadne_api::tasks::TaskExecutionContext {
             source_goal: ariadne_api::tasks::SourceGoalReference {
                 daemon_id: remote.source_daemon_id,

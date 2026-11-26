@@ -15,7 +15,11 @@ pub struct TaskDto {
     /// `in_progress`; null before its first column and once it has ended.
     pub step: Option<String>,
     pub id: String,
-    pub goal_id: String,
+    pub goal_id: Option<String>,
+    #[serde(default)]
+    pub workflow: Option<String>,
+    #[serde(default)]
+    pub steps: Vec<crate::workflows::WorkflowStepDto>,
     /// The pull request operation the task's goal runs (029), or null for an
     /// ordinary task.
     #[serde(default)]
@@ -266,6 +270,9 @@ pub struct TaskTransitionDto {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 pub struct TaskListQuery {
+    /// List tasks without a goal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_goal: bool,
     /// Filter by goal id.
     pub goal: Option<String>,
     /// Filter by status.
@@ -376,3 +383,16 @@ pub struct RetryRemoteDependencyRequest {
 
 /// Both fenced source dependency operations are required for new source references.
 pub const SOURCE_DEPENDENCY_CONTROLS: &str = "source-dependency-controls-v1";
+
+/// Create user-owned local work with its own saved columns.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateStandaloneTaskRequest {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub repo_id: String,
+    pub workflow: String,
+    pub agents: Vec<AgentAssignment>,
+    pub host: Option<String>,
+}

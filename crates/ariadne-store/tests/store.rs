@@ -608,7 +608,10 @@ async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
     if upto == TaskStatus::InProgress {
         return task;
     }
-    let steps = store.goal_steps(&task.goal_id).await.unwrap();
+    let steps = store
+        .goal_steps(task.goal_id.as_deref().unwrap())
+        .await
+        .unwrap();
     let at = steps
         .iter()
         .position(|step| Some(&step.id) == task.step.as_ref())

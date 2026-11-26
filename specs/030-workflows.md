@@ -5,6 +5,7 @@ updated: 2026-11-25
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
+  - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-core/src/workflow.rs
   - crates/ariadne-core/src/state_machine.rs
@@ -428,7 +429,18 @@ every other kebab-case word in it; the wire spells the same gate
     They use worker prompt templates and worker repository permissions at launch, as local tasks do.
     Every column shares the task worktree. Remote branches start at the fetched remote base (001 rule 16).
 
+13. A goal-less task requires its own named workflow and snapshots its columns at creation.
+    It requires one agent for each column, with the same staffing checks as goal tasks.
+    It walks the saved columns through `complete_step` and `fail_step`, with their saved gates.
+    Catalog edits do not change its columns. Its worktree uses `worktrees/tasks/<task-tail>-eng`.
+    `TaskDto.workflow` names its saved workflow. `TaskDto.steps` carries its saved columns.
+    Goal tasks carry null and an empty array in these fields and keep their existing behavior.
+    The reserved `pr-review` and `pr-babysit` workflows remain on their operation routes.
+    Goal-less creation refuses them with the same reason as an ordinary goal.
+
 ## Acceptance criteria
+
+- Rule 13: `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`, `standalone_tasks::openapi_describes_goal_less_creation_and_task_columns`.
 
 - Rule 12: `remote_tasks.rs::saved_columns_keep_their_gates_and_a_failed_task_can_retry`
   proves saved columns, the commit gate, column returns, and retries. It waits for both

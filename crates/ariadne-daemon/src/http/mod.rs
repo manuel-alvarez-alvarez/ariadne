@@ -181,7 +181,7 @@ impl AppState {
         permissions::test,
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
-        tasks::create, tasks::list, tasks::get, tasks::update,
+        tasks::create, tasks::create_standalone, tasks::list, tasks::get, tasks::update,
         remote_tasks::protocol, remote_tasks::create, remote_tasks::authorize, remote_tasks::dependency_failure, remote_tasks::retry_dependency,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         posts::post_to_session, posts::post_from_source, channel::diff,
@@ -414,7 +414,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/goals/{id}/complete", post(goals::complete))
         .route("/v1/goals/{goal_id}/tasks", post(tasks::create))
         // tasks
-        .route("/v1/tasks", get(tasks::list))
+        .route("/v1/tasks", get(tasks::list).post(tasks::create_standalone))
         .route("/v1/tasks/{id}", get(tasks::get).patch(tasks::update))
         .route("/v1/remote-tasks/protocol", get(remote_tasks::protocol))
         .route("/v1/remote-tasks/{id}", put(remote_tasks::create))

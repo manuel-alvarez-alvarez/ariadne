@@ -232,7 +232,9 @@ impl Store {
                 .flatten()
                 .filter_map(|a| a["step"].as_str().map(str::to_owned))
                 .collect();
-            let steps = self.goal_steps(&task.goal_id).await?;
+            let steps = self
+                .goal_steps(task.goal_id.as_deref().unwrap_or_default())
+                .await?;
             return Ok(unstaffed_columns(&steps, &staffed)
                 .into_iter()
                 .map(str::to_owned)
@@ -536,6 +538,11 @@ impl Store {
                 "dependencies cannot change after authorization or source cancellation".into(),
             ));
         }
+        if task.goal_id.is_none() && !depends_on.is_empty() {
+            return Err(StoreError::Invalid(
+                "a goal-less task takes no dependencies".into(),
+            ));
+        }
         if !depends_on.is_empty()
             && sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM remote_task_contexts WHERE task_id = ?)",
@@ -558,7 +565,13 @@ impl Store {
             .bind(task_id)
             .execute(&mut *tx)
             .await?;
-        Self::insert_dependencies(&mut tx, &task.goal_id, task_id, depends_on).await?;
+        Self::insert_dependencies(
+            &mut tx,
+            task.goal_id.as_deref().unwrap_or_default(),
+            task_id,
+            depends_on,
+        )
+        .await?;
         // A task that was already ready may need to wait again.
         let transition = if task.status() == TaskStatus::Ready
             && !depends_on.is_empty()

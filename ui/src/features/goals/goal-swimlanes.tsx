@@ -384,6 +384,8 @@ function groupByGoal(
   const lanes = new Map<string, GoalTasks>()
   const shown = new Set(goals.map((goal) => laneKey(goal.host, goal.id)))
   for (const task of tasks) {
+    // A task with no goal has no lane.
+    if (!task.goal_id) continue
     const key = laneKey(task.host, task.goal_id)
     // Only the goals the board shows get a lane.
     if (!shown.has(key)) continue

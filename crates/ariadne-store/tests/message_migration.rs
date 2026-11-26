@@ -57,12 +57,12 @@ async fn pool(path: &std::path::Path) -> sqlx::SqlitePool {
         .unwrap()
 }
 
-/// The row count of every table but `messages` and the migration log.
+/// Count the original tables, except the messages that this upgrade drops.
 async fn row_counts(path: &std::path::Path) -> Vec<(String, i64)> {
     let pool = pool(path).await;
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table'
-         AND name NOT IN ('messages', '_sqlx_migrations') ORDER BY name",
+         AND name NOT IN ('messages', '_sqlx_migrations', 'task_workflows') ORDER BY name",
     )
     .fetch_all(&pool)
     .await

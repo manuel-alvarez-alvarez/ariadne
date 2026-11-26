@@ -31,9 +31,81 @@ pub struct NewRemoteTask {
     pub agents: Vec<NewTaskAgent>,
 }
 
-const TASK_STEPS: &str = "SELECT ? AS goal_id, ordinal, id, title, description, skills, ranks, gate FROM remote_task_steps WHERE task_id = ? UNION ALL SELECT goal_id, ordinal, id, title, description, skills, ranks, gate FROM goal_steps WHERE goal_id = ? AND NOT EXISTS (SELECT 1 FROM remote_task_contexts WHERE task_id = ?) ORDER BY ordinal";
+const TASK_STEPS: &str = "SELECT COALESCE(?, '') AS goal_id, ordinal, id, title, description, skills, ranks, gate FROM remote_task_steps WHERE task_id = ? UNION ALL SELECT goal_id, ordinal, id, title, description, skills, ranks, gate FROM goal_steps WHERE goal_id = ? AND NOT EXISTS (SELECT 1 FROM remote_task_steps WHERE task_id = ?) ORDER BY ordinal";
 
 impl Store {
+    /// The workflow saved on a goal-less task.
+    pub async fn task_workflow(&self, id: &str) -> Result<Option<String>> {
+        Ok(
+            sqlx::query_scalar("SELECT workflow FROM task_workflows WHERE task_id = ?")
+                .bind(id)
+                .fetch_optional(self.r())
+                .await?,
+        )
+    }
+
+    /// Create local work and freeze its columns and staffing in one transaction.
+    pub async fn create_standalone_task(
+        &self,
+        repo_id: &str,
+        title: &str,
+        description: &str,
+        workflow: &str,
+        mut agents: Vec<NewTaskAgent>,
+    ) -> Result<Task> {
+        self.get_repository(repo_id).await?;
+        if title.trim().is_empty() {
+            return Err(StoreError::Invalid("provide a task title".into()));
+        }
+        if crate::defaults::pr_operation_of(workflow).is_some() {
+            return Err(StoreError::Invalid(format!(
+                "workflow {workflow} runs a pull request operation; a goal cannot use it"
+            )));
+        }
+        let mut tx = self.w().begin().await?;
+        let saved: crate::Workflow = sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
+            .bind(workflow)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| crate::not_found("workflow", workflow))?;
+        let steps: Vec<GoalStep> = saved
+            .steps()
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, step)| GoalStep {
+                goal_id: String::new(),
+                ordinal: ordinal as i64,
+                id: step.id,
+                title: step.title,
+                description: step.description,
+                skills: serde_json::to_string(&step.skills).expect("skills serialize"),
+                ranks: serde_json::to_string(&step.ranks).expect("ranks serialize"),
+                gate: step.gate.map(|gate| gate.as_str().to_string()),
+            })
+            .collect();
+        Self::check_step_staffing(&steps, &mut agents, Some("active"))?;
+        let id = new_id();
+        let ts = now();
+        sqlx::query("INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch, created_at, updated_at) VALUES (?, NULL, ?, ?, ?, 'ready', ?, ?, ?)")
+            .bind(&id).bind(repo_id).bind(title).bind(description)
+            .bind(crate::tasks::branch_name(title, &id)).bind(&ts).bind(&ts).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO task_workflows (task_id, workflow) VALUES (?, ?)")
+            .bind(&id)
+            .bind(workflow)
+            .execute(&mut *tx)
+            .await?;
+        for step in steps {
+            sqlx::query("INSERT INTO remote_task_steps (task_id, ordinal, id, title, description, skills, ranks, gate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(&id).bind(step.ordinal).bind(step.id).bind(step.title).bind(step.description)
+                .bind(step.skills).bind(step.ranks).bind(step.gate).execute(&mut *tx).await?;
+        }
+        Self::staff_agents_in_tx(&mut tx, &id, &agents).await?;
+        tx.commit().await?;
+        let task = self.get_task(&id).await?;
+        self.publish(Change::TaskCreated(task.clone()));
+        Ok(task)
+    }
+
     /// The persistent identity of this database, independent of connection aliases.
     pub async fn daemon_id(&self) -> Result<String> {
         if let Some(id) = sqlx::query_scalar("SELECT id FROM daemon_identity WHERE singleton = 1")
@@ -64,8 +136,24 @@ impl Store {
 
     /// Local context or a task's saved source context. This never creates a goal.
     pub async fn task_goal(&self, task: &Task) -> Result<Goal> {
-        let Some(ctx) = self.remote_task_context(&task.id).await? else {
-            return self.get_goal(&task.goal_id).await;
+        let ctx = match self.remote_task_context(&task.id).await? {
+            Some(ctx) => ctx,
+            None if task.goal_id.is_some() => {
+                return self
+                    .get_goal(task.goal_id.as_deref().expect("goal exists"))
+                    .await;
+            }
+            None => RemoteTaskContext {
+                task_id: task.id.clone(),
+                source_daemon_id: String::new(),
+                source_goal_id: task.id.clone(),
+                source_title: task.title.clone(),
+                source_description: task.description.clone(),
+                workflow: self.task_workflow(&task.id).await?.unwrap_or_default(),
+                request: String::new(),
+                revision: 1,
+                authorized_revision: Some(1),
+            },
         };
         Ok(Goal {
             id: ctx.source_goal_id.clone(),
@@ -80,7 +168,7 @@ impl Store {
             .as_str()
             .into(),
             orchestrated: false,
-            origin_goal_id: Some(ctx.source_goal_id),
+            origin_goal_id: task.goal_id.as_ref().map(|_| ctx.source_goal_id),
             model: String::new(),
             effort: None,
             issue_url: None,
@@ -127,9 +215,9 @@ impl Store {
             .await?)
     }
 
-    pub async fn remote_tasks(&self) -> Result<Vec<Task>> {
+    pub async fn tasks_without_local_goals(&self) -> Result<Vec<Task>> {
         Ok(sqlx::query_as(
-            "SELECT t.* FROM tasks t JOIN remote_task_contexts r ON r.task_id = t.id ORDER BY t.id",
+            "SELECT t.* FROM tasks t WHERE t.goal_id IS NULL OR EXISTS (SELECT 1 FROM remote_task_contexts r WHERE r.task_id = t.id) ORDER BY t.id",
         )
         .fetch_all(self.r())
         .await?)
