@@ -230,7 +230,7 @@ export function GoalsListPage() {
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title="No goals match"
-          description="Nothing matches this search. Clear it to see more."
+          description="No goal matches this search. Clear it to see more."
         />
       ) : null}
 
@@ -253,7 +253,7 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {shown.length || (!goals.isPending && !failedEverywhere) ? (
+      {shown.length || !goals.isPending ? (
         <GoalSwimlanes
           hosts={hosts}
           goals={shown}

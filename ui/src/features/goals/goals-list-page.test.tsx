@@ -278,8 +278,13 @@ it("keeps the outdated notice when the cached goals were an empty list", async (
 })
 
 it("shows a load failure, not a refresh warning, when nothing was ever cached", async () => {
-  daemonFetch.mockImplementation(() =>
-    Promise.resolve(errorResponse(503, "unavailable", "daemon is busy")),
+  daemonFetch.mockImplementation((input: Request | string | URL) =>
+    Promise.resolve(
+      new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url)
+        .pathname === "/v1/goals"
+        ? errorResponse(503, "unavailable", "daemon is busy")
+        : jsonResponse([]),
+    ),
   )
   renderBoard("/goals")
 
@@ -304,7 +309,7 @@ it("narrows the board by title, and names only the search when nothing matches",
   expect(screen.queryByLabelText("Collapse Write docs")).toBeNull()
 
   await user.type(screen.getByLabelText("Search goals by title"), "zzz")
-  await screen.findByText("Nothing matches this search. Clear it to see more.")
+  await screen.findByText("No goal matches this search. Clear it to see more.")
 })
 
 it("matches the title alone, not a repository path", async () => {
@@ -318,7 +323,7 @@ it("matches the title alone, not a repository path", async () => {
 
   await screen.findByLabelText("Collapse Fix login")
   await user.type(screen.getByLabelText("Search goals by title"), "webshop")
-  await screen.findByText("Nothing matches this search. Clear it to see more.")
+  await screen.findByText("No goal matches this search. Clear it to see more.")
   expect(screen.queryByLabelText("Collapse Fix login")).toBeNull()
 })
 
@@ -423,4 +428,47 @@ it("keeps an empty No goal lane on a board with no goals and no tasks", async ()
   expect(await screen.findByText("No goals yet")).toBeTruthy()
   const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
   expect(within(lane).getByText("No tasks")).toBeTruthy()
+})
+
+it("keeps the No goal lane when the goals request fails", async () => {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      url.pathname === "/v1/goals"
+        ? errorResponse(503, "unavailable", "daemon is busy")
+        : jsonResponse(
+            url.pathname === "/v1/tasks"
+              ? [aTask({ goal_id: null, title: "Loose task", steps: [] })]
+              : [],
+          ),
+    )
+  })
+  renderBoard("/goals")
+
+  await screen.findByText("Could not load goals")
+  const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
+  expect(await within(lane).findByText("Loose task")).toBeTruthy()
+})
+
+it("shows a matching goal-less task beside the goal-only no-match notice", async () => {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      jsonResponse(
+        url.pathname === "/v1/goals"
+          ? [aGoal({ id: "g1", title: "Write docs" })]
+          : url.pathname === "/v1/tasks"
+            ? [aTask({ goal_id: null, title: "Repair printer", steps: [] })]
+            : [],
+      ),
+    )
+  })
+  renderBoard("/goals?q=printer")
+
+  expect(await screen.findByText("Repair printer")).toBeTruthy()
+  expect(screen.getByText("No goal matches this search. Clear it to see more.")).toBeTruthy()
 })
