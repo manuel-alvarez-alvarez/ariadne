@@ -118,7 +118,7 @@ async fn admission_refuses_missing_context_dependencies_and_reserved_workflows()
         assert_eq!(actual, status, "{field}: {text}");
         assert!(text.contains(reason), "{field}: {text}");
     }
-    for field in ["repo_id", "workflow"] {
+    for field in ["repo_id"] {
         let mut body = valid.clone();
         body.as_object_mut().unwrap().remove(field);
         let (status, _) = h.send(post_json("/v1/tasks", body)).await;
@@ -377,7 +377,7 @@ async fn openapi_describes_goal_less_creation_and_task_columns() {
     assert!(properties["workflow"].is_object());
     assert_eq!(properties["steps"]["type"], "array");
     let request = &doc["components"]["schemas"]["CreateStandaloneTaskRequest"];
-    for field in ["title", "repo_id", "workflow", "agents"] {
+    for field in ["title", "repo_id", "agents"] {
         assert!(
             request["required"]
                 .as_array()
@@ -385,6 +385,19 @@ async fn openapi_describes_goal_less_creation_and_task_columns() {
                 .contains(&json!(field))
         );
     }
+    assert!(
+        !request["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("workflow"))
+    );
+    let assignment = &doc["components"]["schemas"]["AgentAssignment"];
+    assert!(
+        !assignment["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("step"))
+    );
     assert!(request["properties"].get("depends_on").is_none());
     assert!(
         doc["paths"]["/v1/tasks"]["get"]["parameters"]
@@ -392,5 +405,197 @@ async fn openapi_describes_goal_less_creation_and_task_columns() {
             .unwrap()
             .iter()
             .any(|p| p["name"] == "no_goal")
+    );
+}
+
+/// A task with no workflow has no column: its one agent is briefed with the
+/// task and the two calls that end it, loads the skills it was given (none),
+/// and its `complete_step` finishes the task and cleans up its worktree.
+#[tokio::test]
+async fn a_task_with_no_workflow_is_finished_by_its_agents_complete_step() {
+    use crate::common::{TIMEOUT, as_session, eventually, eventually_some};
+    let h = harness().scheduler().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let created: Value = h
+        .json(
+            post_json(
+                "/v1/tasks",
+                json!({"title":"Plain work", "repo_id":repo.id, "workflow":null,
+                    "agents":[{"model":test_pin().model}]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert!(created["workflow"].is_null());
+    assert_eq!(created["steps"], json!([]));
+    let id = created["id"].as_str().unwrap();
+    let path = format!("/v1/tasks/{id}");
+    let running = eventually_some(TIMEOUT, "the one agent", async || {
+        let task: Value = h.get(&path).await;
+        assert_ne!(task["status"], "failed", "{task}");
+        (task["agents"][0]["session_id"].is_string() && task["worktree_path"].is_string())
+            .then_some(task)
+    })
+    .await;
+    assert_eq!(running["status"], "in_progress");
+    assert!(running["step"].is_null());
+    assert_eq!(running["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(running["agents"][0]["skills"], json!([]));
+    let session_id = running["agents"][0]["session_id"].as_str().unwrap();
+    let session = h.store.get_session(session_id).await.unwrap();
+    eventually(TIMEOUT, "the briefing", async || {
+        !h.prompts_to(&session).is_empty()
+    })
+    .await;
+    let prompted = h.prompted(&session);
+    // The seat's system layer comes first; the briefing starts at the title.
+    let briefing = &prompted[prompted.find("# Plain work").expect("the briefing")..];
+    assert!(briefing.contains("Plain work"), "{briefing}");
+    assert!(
+        briefing.contains("`complete_step`") && briefing.contains("finishes the task"),
+        "{briefing}"
+    );
+    assert!(
+        briefing.contains("`fail_step`") && briefing.contains("fails the task"),
+        "{briefing}"
+    );
+    assert!(!briefing.contains("column"), "{briefing}");
+    let launch = h.launch_file(session_id).unwrap();
+    assert!(
+        !launch.system_prompt.contains("Your skills."),
+        "{}",
+        launch.system_prompt
+    );
+    let worktree = std::path::Path::new(running["worktree_path"].as_str().unwrap());
+    let ended: Value = h
+        .json(
+            as_session(
+                &format!("{path}/step/complete"),
+                session_id,
+                json!({"reason":"Done."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(ended["status"], "finished");
+    eventually(TIMEOUT, "worktree cleanup", async || !worktree.exists()).await;
+    eventually(TIMEOUT, "branch cleanup", async || {
+        !std::process::Command::new("git")
+            .args([
+                "show-ref",
+                "--verify",
+                &format!("refs/heads/{}", running["branch"].as_str().unwrap()),
+            ])
+            .current_dir(&repo.path)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    })
+    .await;
+}
+
+/// `fail_step` fails the task and keeps its worktree; retry runs it again and
+/// cancel ends it.
+#[tokio::test]
+async fn a_task_with_no_workflow_fails_by_fail_step_and_takes_retry_and_cancel() {
+    use crate::common::{TIMEOUT, as_session, eventually_some};
+    let h = harness().scheduler().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let created: Value = h
+        .json(
+            post_json(
+                "/v1/tasks",
+                json!({"title":"Hard work", "repo_id":repo.id,
+                    "agents":[{"model":test_pin().model}]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let id = created["id"].as_str().unwrap();
+    let path = format!("/v1/tasks/{id}");
+    let running = eventually_some(TIMEOUT, "the agent", async || {
+        let task: Value = h.get(&path).await;
+        (task["agents"][0]["session_id"].is_string() && task["worktree_path"].is_string())
+            .then_some(task)
+    })
+    .await;
+    let worktree = std::path::Path::new(running["worktree_path"].as_str().unwrap());
+    let failed: Value = h
+        .json(
+            as_session(
+                &format!("{path}/step/fail"),
+                running["agents"][0]["session_id"].as_str().unwrap(),
+                json!({"reason":"Cannot."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(failed["status"], "failed");
+    h.flush_scheduler().await;
+    assert!(worktree.exists());
+    let retried: Value = h
+        .json(
+            post_json(&format!("{path}/retry"), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(retried["status"], "ready");
+    let cancelled: Value = h
+        .json(
+            post_json(&format!("{path}/cancel"), json!({"reason":"Stop."})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(cancelled["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("repo")).await;
+    let model = test_pin().model;
+    for (agents, reason) in [
+        (json!([]), "exactly one agent"),
+        (
+            json!([{"model":model}, {"model":model}]),
+            "exactly one agent",
+        ),
+        (json!([{"step":"develop","model":model}]), "no step"),
+    ] {
+        let (status, bytes) = h
+            .send(post_json(
+                "/v1/tasks",
+                json!({"title":"Work","repo_id":repo.id,"agents":agents}),
+            ))
+            .await;
+        let text = String::from_utf8_lossy(&bytes);
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+        assert!(text.contains(reason), "{text}");
+    }
+    let (status, bytes) = h
+        .send(post_json(
+            "/v1/tasks",
+            json!({"title":"Work","repo_id":repo.id,"workflow":"develop-review-merge",
+                "agents":[{"model":model}]}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(String::from_utf8_lossy(&bytes).contains("names no step"));
+    let goal = h.goal_on(&repo, test_pin()).await;
+    let (status, bytes) = h
+        .send(post_json(
+            &format!("/v1/goals/{}/tasks", goal.id),
+            json!({"title":"Work","repo_id":repo.id,"agents":[{"model":model}]}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(String::from_utf8_lossy(&bytes).contains("names no step"));
+    assert!(
+        h.store
+            .list_tasks(Default::default())
+            .await
+            .unwrap()
+            .is_empty()
     );
 }

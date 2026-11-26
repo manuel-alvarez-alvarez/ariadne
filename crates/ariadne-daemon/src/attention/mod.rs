@@ -123,7 +123,7 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
                 && store
                     .get_task_agent(id)
                     .await
-                    .is_ok_and(|a| Some(a.step.as_str()) == task.step.as_deref())
+                    .is_ok_and(|a| a.step == task.step.as_deref().unwrap_or_default())
         }
         // The goal is the orchestrator's whole job, and it holds that job
         // for the whole goal: the plan is a hand-off, not an ending. It is
@@ -173,7 +173,7 @@ pub(crate) async fn work_is_active_checked(store: &Store, session: &AgentSession
             };
             let agent = store.get_task_agent(id).await?;
             task.status() == TaskStatus::InProgress
-                && Some(agent.step.as_str()) == task.step.as_deref()
+                && agent.step == task.step.as_deref().unwrap_or_default()
         }
         Some(Seat::Orchestrator) => {
             let goal_id = session.goal_id.as_deref().unwrap_or_default();

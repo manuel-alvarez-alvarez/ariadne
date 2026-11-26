@@ -626,7 +626,7 @@ async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
     store
         .end_step(
             task_id,
-            last,
+            Some(last),
             TaskStatus::Finished,
             "landed",
             Some(LANDED_AS),
@@ -1163,7 +1163,7 @@ async fn task_happy_path_to_finished() {
     let t = store
         .end_step(
             &w.task.id,
-            "merge",
+            Some("merge"),
             TaskStatus::Finished,
             "fast-forwarded",
             Some("abc123"),
@@ -1283,7 +1283,13 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
     );
     assert!(matches!(
         store
-            .end_step(&task.id, "merge", TaskStatus::Finished, "done", Some("x"))
+            .end_step(
+                &task.id,
+                Some("merge"),
+                TaskStatus::Finished,
+                "done",
+                Some("x")
+            )
             .await,
         Err(StoreError::Conflict(_))
     ));

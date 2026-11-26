@@ -287,7 +287,7 @@ pub(super) struct SubmitReviewReq {
 /// that column.
 fn assignment(agent: AgentReq) -> AgentAssignment {
     AgentAssignment {
-        step: agent.step,
+        step: Some(agent.step),
         skills: agent.skills.unwrap_or_default(),
         model: agent.model,
         effort: agent.effort,

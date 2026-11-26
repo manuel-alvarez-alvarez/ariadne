@@ -707,6 +707,14 @@ impl Launcher {
         ))
     }
 
+    /// The first briefing of a task with no workflow: the task and the two
+    /// calls that end it.
+    pub async fn task_first_briefing(&self, task: &Task) -> Result<String> {
+        let task = self.store.get_task(&task.id).await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        Ok(prompts::task_briefing(&task, &repo))
+    }
+
     /// The task's one worktree, checked out on its branch: created on the
     /// first column's first launch, and created again whenever it has been
     /// cleaned up under a task that is still going. Every column works in it
@@ -1070,10 +1078,10 @@ impl Launcher {
             .context("session has no staffed agent")?;
         let agent = self.store.get_task_agent(agent_id).await?;
         let steps = self.store.task_steps(&task).await?;
-        let step = steps
-            .iter()
-            .find(|s| s.id == agent.step)
-            .context("the agent's column is not one of the task's")?;
+        let step = steps.iter().find(|s| s.id == agent.step);
+        if step.is_none() && !steps.is_empty() {
+            anyhow::bail!("the agent's column is not one of the task's");
+        }
         let repo = self.store.get_repository(&task.repo_id).await?;
         let worktree = self
             .task_worktree(
@@ -1088,7 +1096,10 @@ impl Launcher {
         Ok(SwitchPlan {
             worktree: Some(worktree.display().to_string()),
             cwd: worktree,
-            briefing: Some(self.step_first_briefing(&task, step, "").await?),
+            briefing: Some(match step {
+                Some(step) => self.step_first_briefing(&task, step, "").await?,
+                None => self.task_first_briefing(&task).await?,
+            }),
             resume: None,
         })
     }

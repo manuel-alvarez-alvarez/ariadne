@@ -456,7 +456,7 @@ async fn check_active_staffing(
         return Ok(());
     }
     let steps = store.goal_steps(&goal.id).await?;
-    let staffed: Vec<String> = agents.iter().map(|a| a.step.clone()).collect();
+    let staffed: Vec<String> = agents.iter().filter_map(|a| a.step.clone()).collect();
     let missing = ariadne_store::unstaffed_columns(&steps, &staffed);
     if !missing.is_empty() {
         return Err(ApiError::conflict(format!(

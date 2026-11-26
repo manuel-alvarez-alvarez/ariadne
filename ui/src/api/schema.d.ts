@@ -3154,7 +3154,8 @@ export interface components {
             model: string;
             /**
              * @description The names of the skills this agent loads, in the order they reach it.
-             *     Omitted or empty = the column's own skills. A name no skill answers
+             *     Omitted or empty = the column's own skills, or none for a task with
+             *     no workflow. A name no skill answers
              *     to is refused.
              * @example [
              *       "coding",
@@ -3165,9 +3166,9 @@ export interface components {
             /**
              * @description The id of the workflow column this agent works, one of the goal's
              *     columns. A task takes one agent per column, and a column named twice
-             *     is refused.
+             *     is refused. Omitted only for the one agent of a task with no workflow.
              */
-            step: string;
+            step?: string | null;
         };
         /**
          * @description How one registry agent is launched, shared by every session that runs on
@@ -3627,7 +3628,11 @@ export interface components {
             host?: string | null;
             repo_id: string;
             title: string;
-            workflow: string;
+            /**
+             * @description The workflow the task runs. Omitted or null = no workflow: `agents`
+             *     holds exactly one agent with no `step`, and its step calls end the task.
+             */
+            workflow?: string | null;
         };
         CreateTaskRequest: {
             /**
@@ -5205,7 +5210,10 @@ export interface components {
              *     ]
              */
             skills: string[];
-            /** @description The id of the workflow column this agent works. */
+            /**
+             * @description The id of the workflow column this agent works; empty for the agent
+             *     of a task with no workflow.
+             */
             step: string;
         };
         /**

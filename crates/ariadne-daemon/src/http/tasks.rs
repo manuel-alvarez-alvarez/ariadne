@@ -110,7 +110,7 @@ fn far_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
             let model: ariadne_core::models::ModelRef =
                 assignment.model.parse().map_err(ApiError::bad_request)?;
             Ok(NewTaskAgent {
-                step: assignment.step.clone(),
+                step: assignment.step.clone().unwrap_or_default(),
                 skills: assignment.skills.clone(),
                 pin: ariadne_store::AgentPin {
                     model: model.to_string(),
@@ -125,6 +125,25 @@ fn far_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
         .collect()
 }
 
+/// Refuse a staffing whose shape does not fit the task: an agent per column
+/// for a task with a workflow, exactly one agent with no `step` for a task
+/// with none.
+fn check_staffing_shape(assignments: &[AgentAssignment], workflow: bool) -> ApiResult<()> {
+    if workflow {
+        if let Some(agent) = assignments.iter().find(|agent| agent.step.is_none()) {
+            return Err(ApiError::bad_request(format!(
+                "the agent on {} names no step; name the column it works",
+                agent.model
+            )));
+        }
+    } else if assignments.len() != 1 || assignments[0].step.is_some() {
+        return Err(ApiError::bad_request(
+            "a task with no workflow takes exactly one agent, with no step",
+        ));
+    }
+    Ok(())
+}
+
 /// The agents an assignment list asks for, in the order it names them.
 ///
 /// An agent has nothing behind it to fall back to: every assignment names its
@@ -137,7 +156,7 @@ pub(super) async fn resolve_agents(
     let mut agents = Vec::with_capacity(assignments.len());
     for assignment in assignments {
         agents.push(NewTaskAgent {
-            step: assignment.step.clone(),
+            step: assignment.step.clone().unwrap_or_default(),
             skills: assignment.skills.clone(),
             pin: if manual {
                 pins::chosen(
@@ -208,6 +227,7 @@ pub(super) async fn create(
              linked goal runs on this daemon",
         ));
     }
+    check_staffing_shape(&req.agents, true)?;
     let repos = state.store.list_goal_repositories(&goal.id).await?;
     let repo_id = match &req.repo_id {
         Some(id) => {
@@ -373,6 +393,10 @@ pub(super) async fn update(
         return Err(ApiError::bad_request(
             "a goal-less task takes no dependencies",
         ));
+    }
+    if let Some(a) = &req.agents {
+        let workflowless = state.store.task_has_no_workflow(&current).await?;
+        check_staffing_shape(a, !workflowless)?;
     }
     let agents = match &req.agents {
         Some(a) if current.host.is_some() => Some(far_agents(a)?),
@@ -680,6 +704,7 @@ pub(super) async fn create_standalone(
             "a goal-less task requires the local host",
         ));
     }
+    check_staffing_shape(&req.agents, req.workflow.is_some())?;
     let agents = resolve_agents(&state, &req.agents, true).await?;
     let task = state
         .store
@@ -687,7 +712,7 @@ pub(super) async fn create_standalone(
             &req.repo_id,
             &req.title,
             &req.description,
-            &req.workflow,
+            req.workflow.as_deref(),
             agents,
         )
         .await?;
