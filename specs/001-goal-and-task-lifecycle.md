@@ -179,14 +179,14 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
     The agent's `complete_step` ends the task `finished`, and its `fail_step` ends it `failed`.
     A finished task gets the cleanup of a goal task, and a failed task keeps its worktree and branch.
     Retry and cancel work on it.
-    The agent loads the skills it was given, and none when none are given. A task of a goal still requires a workflow (030 rule 13).
+    What the agent loads and is told is in 006 rule 20. A task of a goal still requires a workflow (030 rule 13).
 
 ## Acceptance criteria
 
 - Rule 25: `standalone_tasks::a_user_creates_a_ready_task_without_a_goal`, `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`.
   `crates/ariadne-store/tests/standalone_migration.rs::an_upgrade_preserves_goal_tasks_and_accepts_a_null_goal` proves the migration.
 
-- Rule 26: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_failed_task_with_no_workflow_runs_again_after_a_retry`, `standalone_tasks::a_running_task_with_no_workflow_takes_a_cancel`, `standalone_tasks::the_agent_of_a_task_with_no_workflow_loads_its_supplied_skill`, `standalone_tasks::a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step`, `standalone_tasks::openapi_describes_goal_less_creation_and_task_columns`.
+- Rule 26: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_failed_task_with_no_workflow_runs_again_after_a_retry`, `standalone_tasks::a_running_task_with_no_workflow_takes_a_cancel`, `standalone_tasks::a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step`, `standalone_tasks::openapi_describes_goal_less_creation_and_task_columns`.
 
 - Rule 24: `crates/ariadne-store/tests/message_migration.rs::an_upgrade_drops_the_messages_and_keeps_every_other_row`
   and `::a_goal_and_a_task_still_delete_after_the_upgrade`.
