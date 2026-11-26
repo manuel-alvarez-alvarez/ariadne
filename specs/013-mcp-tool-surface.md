@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-11-25
+updated: 2026-11-26
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -236,8 +236,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     Its step tools retain their usual gates and permissions.
     `post_to_session` refuses an orchestrator recipient for a goal-less task.
     MCP `create_task` still requires the orchestrator's goal and creates only goal tasks.
+22. The agent of a task with no workflow calls `complete_step` and `fail_step` with no column (001 rule 26).
 
 ## Acceptance criteria
+
+- Rule 22: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_failed_task_with_no_workflow_runs_again_after_a_retry`.
 
 - Rule 21: `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`.
   `tools.rs::reading_a_goal_less_task_uses_its_saved_columns_without_reading_a_goal` proves the MCP read.

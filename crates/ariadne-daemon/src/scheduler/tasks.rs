@@ -154,6 +154,9 @@ impl super::Scheduler {
             return Ok(());
         }
         let steps = self.store.task_steps(&task).await?;
+        if steps.is_empty() {
+            return self.run_without_workflow(&task).await;
+        }
         let step = steps
             .iter()
             .find(|s| Some(&s.id) == task.step.as_ref())
@@ -341,6 +344,107 @@ impl super::Scheduler {
             // An agent that keeps an open request waits on the forge between
             // its news (030): idle there is not quiet, and it is never nudged
             // for it. Only a turn that never ends is watched.
+            self.check_session_quiet(
+                &session,
+                entry.id.clone(),
+                &resume,
+                Some(PromptKind::AgentResume),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Keep the one agent of a task with no workflow at work: start it when it
+    /// has no live session, brief it once, and nudge it when it goes quiet.
+    /// The task has no column, so its agent's step calls end the task.
+    async fn run_without_workflow(&mut self, task: &Task) -> anyhow::Result<()> {
+        let transitions = self.store.list_task_transitions(&task.id).await?;
+        let entry = transitions
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("task has no entry transition"))?;
+        if entry.to_status != "in_progress" {
+            return Ok(());
+        }
+        let agent = self
+            .store
+            .list_task_agents(&task.id)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("task has no agent"))?;
+        let sessions = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                ..Default::default()
+            })
+            .await?;
+        let live = sessions.iter().rev().find(|s| {
+            s.task_agent_id.as_ref() == Some(&agent.id) && self.launcher.acp.is_running(&s.id)
+        });
+        let launched = live.is_none();
+        let session = match live {
+            Some(session) => {
+                self.spent_on_a_dead_launch(&agent.id, &task.id, session);
+                session.clone()
+            }
+            None => {
+                if let Some(last) = sessions
+                    .iter()
+                    .rev()
+                    .find(|s| s.task_agent_id.as_ref() == Some(&agent.id))
+                {
+                    if last.attention_reason() == Some(AttentionReason::Exhausted) {
+                        return Ok(());
+                    }
+                    if self.spent_on_a_dead_launch(&agent.id, &task.id, last)
+                        && self
+                            .record_spawn_failure(
+                                &task.id,
+                                "its agent stopped as soon as it started",
+                            )
+                            .await
+                    {
+                        return Ok(());
+                    }
+                }
+                info!(task = %task.id, "the task has no live agent, starting one");
+                match self.launcher.start_step_agent(task, &agent).await {
+                    Ok(session) => session,
+                    Err(e) => {
+                        self.flag_last_disconnected(task, &agent.id).await;
+                        return Err(e);
+                    }
+                }
+            }
+        };
+        if !self.store.step_briefed(&entry.id).await? {
+            let mut briefing = self.launcher.task_first_briefing(task).await?;
+            if let Some(brief) = &agent.brief {
+                briefing.push_str("\n\n");
+                briefing.push_str(brief);
+            }
+            let handed = self
+                .launcher
+                .acp
+                .send_step(&session.id, &entry.id, briefing);
+            self.handed(&session, handed);
+            return Ok(());
+        }
+        let resume = prompts::task_resume(task);
+        if launched {
+            self.keep_waiting_user(&session, None).await?;
+            if sessions.iter().any(|s| s.id == session.id) {
+                self.hand_nudge(&session, resume, PromptKind::AgentResume);
+            } else {
+                let resume = format!(
+                    "{}\n\n{resume}",
+                    self.launcher.task_first_briefing(task).await?
+                );
+                self.hand_prompt(&session, resume);
+            }
+        } else {
             self.check_session_quiet(
                 &session,
                 entry.id.clone(),

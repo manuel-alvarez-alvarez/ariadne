@@ -137,7 +137,7 @@ impl Store {
 
     /// Claim a column entry only while it is still current.
     pub async fn claim_step_briefing(&self, transition: &str) -> Result<bool> {
-        Ok(sqlx::query("UPDATE task_transitions SET step_briefed_at = ? WHERE id = ? AND step_briefed_at IS NULL AND id = (SELECT tr.id FROM task_transitions tr WHERE tr.task_id = task_transitions.task_id ORDER BY tr.id DESC LIMIT 1) AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_transitions.task_id AND t.status = 'in_progress' AND t.step = task_transitions.to_step)")
+        Ok(sqlx::query("UPDATE task_transitions SET step_briefed_at = ? WHERE id = ? AND step_briefed_at IS NULL AND id = (SELECT tr.id FROM task_transitions tr WHERE tr.task_id = task_transitions.task_id ORDER BY tr.id DESC LIMIT 1) AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = task_transitions.task_id AND t.status = 'in_progress' AND t.step IS task_transitions.to_step)")
             .bind(now()).bind(transition).execute(self.w()).await?.rows_affected() == 1)
     }
 
@@ -176,6 +176,15 @@ impl Store {
         agents: &mut [NewTaskAgent],
         status: Option<&str>,
     ) -> Result<()> {
+        // A task with no workflow has no column: one agent works all of it.
+        if steps.is_empty() {
+            return match agents {
+                [agent] if agent.step.is_empty() => Ok(()),
+                _ => Err(StoreError::Invalid(
+                    "a task with no workflow takes exactly one agent with no step".into(),
+                )),
+            };
+        }
         let mut staffed = HashSet::new();
         for agent in agents.iter_mut() {
             let step = steps.iter().find(|s| s.id == agent.step).ok_or_else(|| {
@@ -263,7 +272,7 @@ impl Store {
     pub async fn end_step(
         &self,
         task_id: &str,
-        from_step: &str,
+        from_step: Option<&str>,
         to: TaskStatus,
         reason: &str,
         merge_commit: Option<&str>,
@@ -271,7 +280,7 @@ impl Store {
         let mut tx = self.w().begin().await?;
         let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
         if task.status() != TaskStatus::InProgress
-            || task.step.as_deref() != Some(from_step)
+            || task.step.as_deref() != from_step
             || !matches!(to, TaskStatus::Finished | TaskStatus::Failed)
         {
             return Err(StoreError::Conflict(

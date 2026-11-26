@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-11-25
+updated: 2026-11-26
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -23,6 +23,7 @@ tests:
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
+  - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/tests/it/seat_brief.rs
   - crates/ariadne-cli/src/commands/mcp.rs
@@ -283,8 +284,20 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     agent (`TaskAgent.brief`) is plain too — the orchestrator plans
     alongside the user, not against it, so its brief is read the same as
     the user's own words, not fenced as another agent's would be.
+20. The agent of a task with no workflow (001 rule 26) has no column, so its
+    briefing and its nudge name none. The briefing gives the task, its
+    worktree and branch, and says that `complete_step` finishes the task and
+    `fail_step` fails it. Both texts are constants of the code, in
+    Simplified Technical English. The agent loads the skills of its staffing,
+    and none when none are given.
 
 ## Acceptance criteria
+
+- Rule 20: `prompts.rs::a_task_with_no_workflow_is_briefed_without_a_column`
+  and `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`
+  (the briefing as sent, and no skill index when none is given), and
+  `standalone_tasks::the_agent_of_a_task_with_no_workflow_loads_its_supplied_skill`
+  (a supplied skill is in the index and in the run directory).
 
 - Every default text obeys the two readable STE rules
   (`defaults.rs::every_default_text_is_simplified_technical_english`), and

@@ -171,7 +171,7 @@ async fn deliver(
     };
     let current = match agents
         .iter()
-        .find(|a| task.step.as_deref() == Some(a.step.as_str()))
+        .find(|a| task.step.as_deref().unwrap_or_default() == a.step)
     {
         Some(agent) => live_session(
             state,

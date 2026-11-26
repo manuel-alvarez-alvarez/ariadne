@@ -392,6 +392,32 @@ pub(crate) fn step_briefing(
     )
 }
 
+/// The briefing of the one agent of a task with no workflow: the task, where it
+/// works, and the two calls that end it. The task has no column, so the text
+/// names none.
+pub(crate) fn task_briefing(task: &Task, repo: &Repository) -> String {
+    render(
+        "# {task_title}\n{task_description}\nWorktree: {worktree_path}\nBranch: {branch}\nBase: {base_branch}\nRepo: {repo_path}\nDo this task now. Call `complete_step` when it is done: that finishes the task. Call `fail_step` when you cannot do it: that fails the task.",
+        &[
+            ("task_title", &task.title),
+            ("task_description", &task.description),
+            ("worktree_path", task.worktree_path.as_deref().unwrap_or("")),
+            ("branch", &task.branch),
+            ("base_branch", &repo.base_branch),
+            ("repo_path", &repo.path),
+        ],
+    )
+}
+
+/// What the agent of a task with no workflow is nudged with when it has gone
+/// quiet.
+pub(crate) fn task_resume(task: &Task) -> String {
+    render(
+        "Not a new request: continue \"{task_title}\". Check if the work is done. Call `complete_step` to finish the task, `fail_step` to fail it, or go on. Write no reply about this nudge.",
+        &[("task_title", &task.title)],
+    )
+}
+
 /// What a column's agent is briefed with when the task comes back to its
 /// column: which way it came, and why. `direction` is `back`, `forward` or
 /// `retry`, and is written out as one sentence.
@@ -1166,6 +1192,31 @@ mod tests {
         let attention =
             goal_attention_briefing(default(PromptKind::GoalAttention), &goal, "- one failed");
         assert!(!attention.contains("<<<untrusted>>>"), "{attention}");
+    }
+
+    /// The briefing and the nudge of a task with no workflow name no column,
+    /// say what each step call does to the task, and are Simplified
+    /// Technical English (006 rule 20).
+    #[test]
+    fn a_task_with_no_workflow_is_briefed_without_a_column() {
+        use ariadne_store::defaults::ste;
+
+        let briefing = task_briefing(&task(), &repo());
+        let nudge = task_resume(&task());
+        assert!(briefing.starts_with("# Render prompts from the database\n"));
+        assert!(briefing.contains("Worktree: /worktrees/task-eng\n"));
+        assert!(briefing.contains("Call `complete_step` when it is done: that finishes the task."));
+        assert!(briefing.contains("Call `fail_step` when you cannot do it: that fails the task."));
+        for text in [&briefing, &nudge] {
+            assert!(!text.to_lowercase().contains("column"), "{text}");
+            assert_eq!(ste::banned_word(text), None, "{text}");
+            for sentence in ste::sentences(text) {
+                assert!(
+                    sentence.split_whitespace().count() <= ste::MAX_WORDS,
+                    "{sentence}"
+                );
+            }
+        }
     }
 
     /// The line that names the request body closing an issue goal is

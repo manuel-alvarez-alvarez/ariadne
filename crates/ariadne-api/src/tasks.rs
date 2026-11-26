@@ -114,7 +114,8 @@ pub struct AgentUsageDto {
 /// changes that.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskAgentDto {
-    /// The id of the workflow column this agent works.
+    /// The id of the workflow column this agent works; empty for the agent
+    /// of a task with no workflow.
     pub step: String,
     pub id: String,
     /// The skills this agent loads, in the order they reach it.
@@ -148,10 +149,12 @@ pub struct TaskAgentDto {
 pub struct AgentAssignment {
     /// The id of the workflow column this agent works, one of the goal's
     /// columns. A task takes one agent per column, and a column named twice
-    /// is refused.
-    pub step: String,
+    /// is refused. Omitted only for the one agent of a task with no workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
     /// The names of the skills this agent loads, in the order they reach it.
-    /// Omitted or empty = the column's own skills. A name no skill answers
+    /// Omitted or empty = the column's own skills, or none for a task with
+    /// no workflow. A name no skill answers
     /// to is refused.
     #[serde(default)]
     #[schema(example = json!(["coding", "documentation"]))]
@@ -180,7 +183,7 @@ impl AgentAssignment {
         model: impl Into<String>,
     ) -> Self {
         Self {
-            step: step.into(),
+            step: Some(step.into()),
             skills: skills.into_iter().map(Into::into).collect(),
             model: model.into(),
             effort: None,
@@ -392,7 +395,10 @@ pub struct CreateStandaloneTaskRequest {
     #[serde(default)]
     pub description: String,
     pub repo_id: String,
-    pub workflow: String,
+    /// The workflow the task runs. Omitted or null = no workflow: `agents`
+    /// holds exactly one agent with no `step`, and its step calls end the task.
+    #[serde(default)]
+    pub workflow: Option<String>,
     pub agents: Vec<AgentAssignment>,
     pub host: Option<String>,
 }

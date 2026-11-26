@@ -75,7 +75,7 @@ pub(crate) fn parse_agent_slot(s: &str) -> Result<AgentAssignment, String> {
     }
     let model = parse_model(model).map_err(|e| format!("in \"{s}\": {e}"))?;
     Ok(AgentAssignment {
-        step: step.to_string(),
+        step: Some(step.to_string()),
         skills,
         model,
         effort,
@@ -225,14 +225,14 @@ mod tests {
     #[test]
     fn an_agent_slot_names_its_column_skills_model_and_effort() {
         let full = parse_agent_slot("review:code-review=codex-acp:o3@high").expect("a full slot");
-        assert_eq!(full.step, "review");
+        assert_eq!(full.step.as_deref(), Some("review"));
         assert_eq!(full.skills, ["code-review"]);
         assert_eq!(full.model, "codex-acp:o3");
         assert_eq!(full.effort.as_deref(), Some("high"));
         assert_eq!(full.brief, None, "the brief is the MCP tools' alone");
 
         let bare = parse_agent_slot("review=codex-acp:o3").expect("no skills named");
-        assert_eq!(bare.step, "review");
+        assert_eq!(bare.step.as_deref(), Some("review"));
         assert!(bare.skills.is_empty(), "empty means the column's own");
         assert_eq!(bare.model, "codex-acp:o3");
         assert_eq!(bare.effort, None, "no effort at all is the agent's own");
@@ -356,7 +356,11 @@ mod tests {
         assert_eq!(
             req.agents.as_ref().map(|agents| agents
                 .iter()
-                .map(|a| (a.step.as_str(), a.model.as_str(), a.effort.as_deref()))
+                .map(|a| (
+                    a.step.as_deref().unwrap(),
+                    a.model.as_str(),
+                    a.effort.as_deref()
+                ))
                 .collect::<Vec<_>>()),
             Some(vec![
                 ("develop", "codex-acp:o3", None),

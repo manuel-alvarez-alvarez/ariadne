@@ -703,7 +703,7 @@ impl Follower<'_> {
             .agents
             .iter()
             .map(|agent| AgentAssignment {
-                step: agent.step.clone(),
+                step: Some(agent.step.clone()).filter(|step| !step.is_empty()),
                 skills: agent.skills.clone(),
                 model: agent.model.clone(),
                 effort: agent.effort.clone(),

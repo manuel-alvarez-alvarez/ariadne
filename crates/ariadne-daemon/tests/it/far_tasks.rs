@@ -432,7 +432,7 @@ async fn create_task(h: &Harness, goal: &GoalDto, body: Value) -> TaskDto {
                     agents: agents
                         .into_iter()
                         .map(|a| ariadne_store::NewTaskAgent {
-                            step: a.step,
+                            step: a.step.unwrap_or_default(),
                             skills: a.skills,
                             pin: ariadne_store::AgentPin {
                                 model: a.model,

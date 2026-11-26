@@ -5948,7 +5948,6 @@
         "type": "object",
         "description": "One agent to staff on a task: the column it works, the skills it loads,\nand what it is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
         "required": [
-          "step",
           "model"
         ],
         "properties": {
@@ -5977,15 +5976,18 @@
             "items": {
               "type": "string"
             },
-            "description": "The names of the skills this agent loads, in the order they reach it.\nOmitted or empty = the column's own skills. A name no skill answers\nto is refused.",
+            "description": "The names of the skills this agent loads, in the order they reach it.\nOmitted or empty = the column's own skills, or none for a task with\nno workflow. A name no skill answers\nto is refused.",
             "example": [
               "coding",
               "documentation"
             ]
           },
           "step": {
-            "type": "string",
-            "description": "The id of the workflow column this agent works, one of the goal's\ncolumns. A task takes one agent per column, and a column named twice\nis refused."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The id of the workflow column this agent works, one of the goal's\ncolumns. A task takes one agent per column, and a column named twice\nis refused. Omitted only for the one agent of a task with no workflow."
           }
         },
         "additionalProperties": false
@@ -6981,7 +6983,6 @@
         "required": [
           "title",
           "repo_id",
-          "workflow",
           "agents"
         ],
         "properties": {
@@ -7007,7 +7008,11 @@
             "type": "string"
           },
           "workflow": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workflow the task runs. Omitted or null = no workflow: `agents`\nholds exactly one agent with no `step`, and its step calls end the task."
           }
         },
         "additionalProperties": false
@@ -11055,7 +11060,7 @@
           },
           "step": {
             "type": "string",
-            "description": "The id of the workflow column this agent works."
+            "description": "The id of the workflow column this agent works; empty for the agent\nof a task with no workflow."
           }
         }
       },
