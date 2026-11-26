@@ -9,7 +9,8 @@ use serde_json::json;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::{
-    AgentAssignment, CreateTaskRequest, LOCAL_HOST, TaskDto, TaskListQuery, TaskTransitionDto,
+    AgentAssignment, CreateStandaloneTaskRequest, CreateTaskRequest, LOCAL_HOST, TaskDto,
+    TaskListQuery, TaskTransitionDto,
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_api::workflows::WorkflowStepDto;
@@ -20,6 +21,7 @@ use super::follow;
 use super::resolve::{self, Kind};
 use super::{Subject, agent_label, agent_pin_label, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
+use crate::error::Failure;
 use crate::output::listing::Listing;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, local_time, moment, ok_id_line,
@@ -27,7 +29,7 @@ use crate::output::{
     yes_no,
 };
 use ariadne_console::transcript::{Filters, Since};
-use edit::{Edits, parse_agent_slot, resolve_repo, update_request};
+use edit::{Edits, parse_agent_slot, parse_create_agent_slot, resolve_repo, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push the status off-screen.
@@ -98,6 +100,15 @@ Examples:
       --agent develop=codex-acp:gpt-5.6-sol@xhigh \\
       --agent review=claude-acp:claude-opus-5@high \\
       --agent merge=claude-acp:claude-haiku-4-5
+
+  # no goal: a task of its own, in a repository, on a workflow of your choice
+  ariadne task create --title \"Fix the flaky test\" --repo ~/projects/api \\
+      --workflow default --agent develop=codex-acp:gpt-5.6-sol \\
+      --agent review=claude-acp:claude-opus-5 --agent merge=claude-acp:claude-haiku-4-5
+
+  # no goal and no workflow: one agent does it all, and on a ready host
+  ariadne task create --title \"Bump the lockfile\" --repo ~/projects/api \\
+      --agent :coding=claude-acp:claude-sonnet-5 --host build
 ";
 
 /// What `task update --help` ends with.
@@ -111,16 +122,20 @@ Examples:
 
 #[derive(Subcommand)]
 pub(crate) enum TaskCommand {
-    /// Create a task in a goal
+    /// Create a task, in a goal or on its own
     ///
     /// What the orchestrator does through its MCP tools, from the terminal: the
     /// task starts out `pending` and is picked up once the goal is active and
     /// the tasks it depends on have finished. Prints the new task id.
+    ///
+    /// With no goal, the task is its own: `--repo` is required, `--workflow`
+    /// is optional, `--host` names the ready host it runs on (this machine
+    /// when left out) and `--depends-on` is refused.
     #[command(after_help = CREATE_EXAMPLES)]
     Create {
-        /// Goal id the task belongs to
+        /// Goal id the task belongs to; leave it out for a task of its own
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
-        goal: String,
+        goal: Option<String>,
         /// Short task title (what the agents are asked to do)
         #[arg(long)]
         title: String,
@@ -132,14 +147,20 @@ pub(crate) enum TaskCommand {
         /// `=MODEL`, the agent and model it runs on, required, and optionally
         /// `@EFFORT` to say how deeply it reasons there
         /// (`--agent review:code-review=codex-acp:gpt-5.6-luna@high`).
-        /// Repeatable, one per column of the goal's workflow
-        #[arg(long = "agent", required = true, value_name = "STEP[:SKILLS]=MODEL[@EFFORT]", value_parser = parse_agent_slot)]
+        /// Repeatable, one per column of the goal's (or `--workflow`'s)
+        /// workflow. A task with no goal and no workflow takes exactly one,
+        /// with no column: `--agent =MODEL` or `--agent :SKILLS=MODEL@EFFORT`
+        #[arg(long = "agent", required = true, value_name = "[STEP][:SKILLS]=MODEL[@EFFORT]", value_parser = parse_create_agent_slot)]
         agents: Vec<AgentAssignment>,
+        /// With no goal, the workflow the task runs; left out, it has none
+        #[arg(long)]
+        workflow: Option<String>,
         /// Id of a task that must finish before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         depends_on: Vec<String>,
-        /// Which of the goal's repositories the task works in, by id or by
-        /// its registered path (only needed when the goal has several)
+        /// Which repository the task works in, by id or by its registered
+        /// path. With a goal: one of the goal's, only needed when it has
+        /// several. With no goal: required
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repositories))]
         repo: Option<String>,
     },
@@ -179,6 +200,9 @@ pub(crate) enum TaskCommand {
         /// Filter by goal id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
+        /// List only the tasks that have no goal
+        #[arg(long, conflicts_with = "goal")]
+        no_goal: bool,
         /// Filter by status; repeatable and comma-separated, and a task in
         /// any of the named statuses is listed. Names the statuses precisely,
         /// so it replaces the unfinished/finished split --all makes
@@ -265,36 +289,79 @@ pub(crate) enum TaskCommand {
     },
 }
 
-pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(
+    client: &Client,
+    cmd: TaskCommand,
+    host: Option<&str>,
+    format: Format,
+) -> Result<()> {
     match cmd {
         TaskCommand::Create {
             goal,
             title,
             description,
             agents,
+            workflow,
             depends_on,
             repo,
         } => {
-            let goal = resolve::id(client, Kind::Goal, &goal).await?;
-            let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
-            let repo_id = match repo {
-                Some(spec) => Some(resolve_repo(client, &goal, &spec).await?),
-                None => None,
-            };
-            let t: TaskDto = client
-                .post_json(
-                    &format!("/v1/goals/{goal}/tasks"),
-                    &CreateTaskRequest {
+            let t: TaskDto = match goal {
+                Some(goal) => {
+                    if workflow.is_some() {
+                        return Err(Failure::usage(
+                            "--workflow is for a task with no goal; a goal's tasks run its workflow",
+                        )
+                        .err());
+                    }
+                    if agents.iter().any(|a| a.step.is_none()) {
+                        return Err(Failure::usage(
+                            "every --agent of a goal's task names its column: STEP[:SKILLS]=MODEL",
+                        )
+                        .err());
+                    }
+                    let goal = resolve::id(client, Kind::Goal, &goal).await?;
+                    let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
+                    let repo_id = match repo {
+                        Some(spec) => Some(resolve_repo(client, &goal, &spec).await?),
+                        None => None,
+                    };
+                    client
+                        .post_json(
+                            &format!("/v1/goals/{goal}/tasks"),
+                            &CreateTaskRequest {
+                                title,
+                                description,
+                                repo_id,
+                                agents,
+                                depends_on,
+                                host: None,
+                                origin_task_id: None,
+                            },
+                        )
+                        .await?
+                }
+                None => {
+                    let body = standalone_request(
                         title,
                         description,
-                        repo_id,
                         agents,
-                        depends_on,
-                        host: None,
-                        origin_task_id: None,
-                    },
-                )
-                .await?;
+                        workflow,
+                        &depends_on,
+                        repo,
+                        host,
+                    )?;
+                    let repo_spec = body.repo_id.clone();
+                    let repo_id = super::goal::resolve_repositories(client, &[repo_spec])
+                        .await?
+                        .remove(0);
+                    client
+                        .post_json(
+                            "/v1/tasks",
+                            &CreateStandaloneTaskRequest { repo_id, ..body },
+                        )
+                        .await?
+                }
+            };
             print(format, &t, || {
                 outln!(
                     "{}",
@@ -329,11 +396,15 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
         }
         TaskCommand::Ls {
             goal,
+            no_goal,
             statuses,
             all,
             step,
             watch,
-        } => ls(client, goal, statuses, all, step, watch, format).await?,
+        } => {
+            let scope = Scope { goal, no_goal };
+            ls(client, scope, statuses, all, step, watch, format).await?
+        }
         TaskCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
@@ -432,6 +503,53 @@ pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Re
     Ok(())
 }
 
+/// The body of `POST /v1/tasks`, checked the way the daemon will, so the
+/// refusal comes before a round trip. `repo_id` still holds what was typed.
+fn standalone_request(
+    title: String,
+    description: String,
+    agents: Vec<AgentAssignment>,
+    workflow: Option<String>,
+    depends_on: &[String],
+    repo: Option<String>,
+    host: Option<&str>,
+) -> Result<CreateStandaloneTaskRequest> {
+    if !depends_on.is_empty() {
+        return Err(Failure::usage(
+            "--depends-on needs a goal: a task with no goal has no other task to wait for",
+        )
+        .err());
+    }
+    let Some(repo_id) = repo else {
+        return Err(Failure::usage("a task with no goal needs --repo")
+            .hint("ariadne repo ls lists the registered repositories")
+            .err());
+    };
+    match &workflow {
+        Some(_) if agents.iter().any(|a| a.step.is_none()) => {
+            return Err(Failure::usage(
+                "with --workflow, every --agent names its column: STEP[:SKILLS]=MODEL",
+            )
+            .err());
+        }
+        None if agents.len() != 1 || agents[0].step.is_some() => {
+            return Err(Failure::usage(
+                "with no --workflow, the task takes exactly one --agent and no column: =MODEL or :SKILLS=MODEL",
+            )
+            .err());
+        }
+        _ => {}
+    }
+    Ok(CreateStandaloneTaskRequest {
+        title,
+        description,
+        repo_id,
+        workflow,
+        agents,
+        host: host.filter(|h| *h != "local").map(str::to_owned),
+    })
+}
+
 fn task_path(id: &str) -> String {
     format!("/v1/tasks/{id}")
 }
@@ -445,11 +563,18 @@ fn relevant(frame: &SseEvent) -> bool {
     )
 }
 
+/// Which tasks `task ls` asks for by goal: one goal's, the goal-less ones, or
+/// (both unset) every task.
+struct Scope {
+    goal: Option<String>,
+    no_goal: bool,
+}
+
 /// `task ls [--watch]`: the table, and with `--watch` the table again every
 /// time a task moves.
 async fn ls(
     client: &Client,
-    goal: Option<String>,
+    Scope { goal, no_goal }: Scope,
     statuses: Vec<TaskStatus>,
     all: bool,
     step: Option<String>,
@@ -459,7 +584,7 @@ async fn ls(
     // Resolved once rather than per redraw: what the caller typed names the
     // same goal every time round, and a watch is not a new question.
     if !watch {
-        return list(client, goal, &statuses, all, step.as_deref())
+        return list(client, goal, no_goal, &statuses, all, step.as_deref())
             .await?
             .print(format);
     }
@@ -481,6 +606,7 @@ async fn ls(
         render(
             client,
             goal.clone(),
+            no_goal,
             &statuses,
             all,
             step.as_deref(),
@@ -496,6 +622,7 @@ async fn ls(
 pub(crate) async fn list(
     client: &Client,
     goal: Option<String>,
+    no_goal: bool,
     statuses: &[TaskStatus],
     all: bool,
     step: Option<&str>,
@@ -504,7 +631,7 @@ pub(crate) async fn list(
         Some(goal) => Some(resolve_task_goal(client, &goal).await?),
         None => None,
     };
-    listing(client, goal, statuses, all, step).await
+    listing(client, goal, no_goal, statuses, all, step).await
 }
 
 /// Resolve a source goal saved on a worker when that worker has no goal row.
@@ -530,12 +657,13 @@ async fn resolve_task_goal(client: &Client, typed: &str) -> Result<String> {
 async fn render(
     client: &Client,
     goal: Option<String>,
+    no_goal: bool,
     statuses: &[TaskStatus],
     all: bool,
     step: Option<&str>,
     format: Format,
 ) -> Result<()> {
-    listing(client, goal, statuses, all, step)
+    listing(client, goal, no_goal, statuses, all, step)
         .await?
         .print(format)
 }
@@ -546,18 +674,19 @@ async fn render(
 async fn listing(
     client: &Client,
     goal: Option<String>,
+    no_goal: bool,
     statuses: &[TaskStatus],
     all: bool,
     step: Option<&str>,
 ) -> Result<Listing> {
-    let filtered = goal.is_some() || !statuses.is_empty() || step.is_some();
+    let filtered = goal.is_some() || no_goal || !statuses.is_empty() || step.is_some();
     // `GET /v1/tasks` takes one status, so one is asked for and the rest is
     // narrowed on the answer — with the live/finished split.
     let status = one_of(statuses);
     let path = query_path(
         "/v1/tasks",
         &TaskListQuery {
-            no_goal: false,
+            no_goal,
             goal,
             status,
             origin_task_id: None,
