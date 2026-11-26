@@ -71,7 +71,7 @@ import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
 import { taskListQueryOptions } from "@/features/tasks"
 import { CreateStandaloneTaskDialog } from "@/features/tasks/create-standalone-task-dialog"
-import { useDaemonIdentities } from "@/features/tasks/source-host"
+import { useDaemonIdentities, withoutWorkerCopies } from "@/features/tasks/source-host"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { workflowsQueryOptions } from "@/features/workflows/queries"
 import { useConnection } from "@/hooks/use-connection"
@@ -593,19 +593,7 @@ function usePaletteEntries(open: boolean): PaletteEntries {
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host))
   const daemonIds = useDaemonIdentities(open)
-  const sourceDaemonOf = (task: (typeof tasks.rows)[number]) =>
-    task.execution_context?.source_goal?.daemon_id ?? task.execution_context?.source_daemon_id
-  const sourceTasks = new Set(
-    tasks.rows
-      .filter((task) => task.execution_context && daemonIds.get(task.host) === sourceDaemonOf(task))
-      .map((task) => `${task.execution_context?.execution_owner}:${task.id}`),
-  )
-  const visibleTasks = tasks.rows.filter(
-    (task) =>
-      !task.execution_context ||
-      daemonIds.get(task.host) === sourceDaemonOf(task) ||
-      !sourceTasks.has(`${task.execution_context.execution_owner}:${task.id}`),
-  )
+  const visibleTasks = withoutWorkerCopies(tasks.rows, daemonIds)
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const workflows = useQuery({ ...workflowsQueryOptions("local"), enabled: open })
   const repositories = useQuery({ ...repositoriesQueryOptions("local"), enabled: open })

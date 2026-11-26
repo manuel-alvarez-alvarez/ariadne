@@ -1692,7 +1692,9 @@ Out: the daemon endpoints themselves (012).
     It stays on the board while empty and says "No tasks", also on a board with no
     goal, where it sits beside the empty state. A
     `task_created` or `task_updated` event moves it with the goal lanes, with no
-    reload. A goal task and the goal task dialog do not change.
+    reload. A goal task and the goal task dialog do not change. A far task
+    with no goal is in the lane once: where the board reads its source host
+    and its worker host, it shows the source's row and not the worker's copy.
 85. The board header has a "New task" action, and the command palette has a
     "New task" entry. Both open the task dialog for a task with no goal. Where a
     goal is open, the goal's own "New task" keeps its name and the palette's
@@ -1719,6 +1721,8 @@ Out: the daemon endpoints themselves (012).
 
 - The "No goal" lane holds every goal-less task and no goal's task, and is empty, and says so,
   while none exists (`ui/src/features/goals/goal-swimlanes.test.tsx::holds every goal-less task in one No goal lane, apart from the goal lanes`; `::keeps the No goal lane, empty, while every task has a goal`).
+- A far goal-less task that its source and its worker both list is in the "No goal" lane once
+  (`ui/src/features/goals/goal-swimlanes.test.tsx::shows a far goal-less task once, though its source and its worker both list it`).
 - A `task_created` event adds a goal-less task to the "No goal" lane
   (`ui/src/features/goals/goal-swimlanes.test.tsx::adds a goal-less task to the No goal lane when its task_created event arrives`).
 - The board shows the "No goal" lane with no goal, and its header offers New task
