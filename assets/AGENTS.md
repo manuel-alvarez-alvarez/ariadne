@@ -117,7 +117,3 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
 Install the UI dependencies with `npm ci` in `ui/` before recording.
 Keep port 1420 free for the recording's Vite server.
 The model picker search box has the accessible name "Search models".
-The old placeholder "Search models, or type an id…" stopped matching after
-b65f6b8f. The board change ee235ae7 repaired that selector.
-The unchanged script completed on that revision with one idle orchestrator
-session. The reported duplicate sessions and disabled input did not recur.
