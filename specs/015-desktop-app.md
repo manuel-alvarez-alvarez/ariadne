@@ -1075,7 +1075,9 @@ Out: the daemon endpoints themselves (012).
     `ui/src/features/tasks/task-action-feedback.test.tsx::reports cancellation response %s`,
     `::reports retry response %s`,
     `::reports a retry request awaiting worker acknowledgment`). Worker
-    drafts use their saved workflow. Remote cancellation waits for the daemon
+    drafts use their saved workflow without reading the goal. Their disabled
+    repository picker shows the assigned repository from the worker catalog.
+    Remote cancellation waits for the daemon
     (`ui/src/features/tasks/hosts.test.tsx::opens the source goal from a worker task through the matching daemon identity`,
     `::edits a worker draft using its saved workflow without a goal`,
     `ui/src/features/sessions/hosts.test.tsx::links a worker session to its source goal without reading a worker goal`,
@@ -1087,6 +1089,14 @@ Out: the daemon endpoints themselves (012).
     picker, and sends `agents`, seat `agent` and the column's `step` each, on
     create and on edit, where an edit replaces the whole list; a goal with no
     steps gets no staffing row at all.
+The goal and task forms start with title and Markdown description. They place host,
+repositories, workflow, agent settings, and dependencies in that order where applicable.
+The repository picker searches paths. Goals retain pick order; a new task picks one
+repository, and an edited task shows its assigned repository without allowing changes.
+Required model pickers name the agent that needs a model and prevent submission until
+all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows the sole repository and names agents that need models`,
+`::selects one repository and closes the search`).
+
 42. The goal dialog has a workflow picker over the catalog, defaulted to the
     first picked repository's `default_workflow`, and sends `workflow` in
     place of a landing, or nothing where none is picked; it has no landing
