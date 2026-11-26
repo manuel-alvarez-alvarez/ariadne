@@ -26,7 +26,7 @@ import userEvent from "@testing-library/user-event"
 import { type NavigateFunction, useNavigate } from "react-router-dom"
 import { expect, it } from "vitest"
 import { qk } from "@/api"
-import { GoalSwimlanes } from "@/features/goals/goal-swimlanes"
+import { GoalBoard } from "@/features/goals/goal-board"
 import { paths } from "@/routes/paths"
 import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -129,7 +129,7 @@ it("floats a goal over the board, and a click on its scrim closes the goal", asy
   const { location } = renderScreen(
     <>
       <main>
-        <GoalSwimlanes
+        <GoalBoard
           hosts={["local"]}
           goals={[first, second].map((goal) => ({ ...goal, host: "local" }))}
         />

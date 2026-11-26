@@ -295,7 +295,7 @@ export function TaskCard({
  * The one state badge of a card, or none: a task under way with no stall says
  * nothing, because its step track already says where it is.
  */
-function cardState(task: TaskDto): CardState | null {
+export function cardState(task: TaskDto): CardState | null {
   if (task.stalled) {
     return { label: STALLED_META.label, hint: STALLED_META.hint, tone: STALLED_META.badge }
   }
@@ -334,7 +334,7 @@ function cardState(task: TaskDto): CardState | null {
  * that have simply not started; then the stall, which is a flag on top of
  * whatever status the task is parked in.
  */
-function cardBorder(task: TaskDto, attention?: SessionAttention | null): string | undefined {
+export function cardBorder(task: TaskDto, attention?: SessionAttention | null): string | undefined {
   if (["finished", "cancelled", "failed"].includes(task.status))
     return TASK_STATUS_META[task.status].border
   if (attention) return SESSION_ATTENTION_META[attention].border
@@ -347,7 +347,7 @@ function cardBorder(task: TaskDto, attention?: SessionAttention | null): string 
  * Compared by label rather than by naming the one pair that collides today:
  * two vocabularies that share a word will share it again.
  */
-function repeatsCard(attention: SessionAttention, state: CardState | null): boolean {
+export function repeatsCard(attention: SessionAttention, state: CardState | null): boolean {
   return state?.label === SESSION_ATTENTION_META[attention].label
 }
 
@@ -356,7 +356,7 @@ function repeatsCard(attention: SessionAttention, state: CardState | null): bool
  * say, since none of them can be focused: the state, the current step, the
  * pull request and when the task was updated.
  */
-function cardHints(
+export function cardHints(
   task: TaskDto,
   {
     state,

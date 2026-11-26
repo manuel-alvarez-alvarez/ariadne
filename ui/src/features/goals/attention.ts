@@ -2,7 +2,7 @@
  * The shared daemon list supplies the attention rows, counts and board badges.
  * Goal, task and session queries keep their loading and retry state, but raw
  * statuses cannot restore an item that the daemon omitted. The SSE dispatcher
- * keeps these shared queries current. The board's filters narrow its lanes,
+ * keeps these shared queries current. The board's filters narrow its groups,
  * never this list.
  */
 
@@ -58,7 +58,7 @@ function useAttentionLists(hosts: readonly Host[]) {
 export type AttentionReason = "failed" | "stalled"
 
 /**
- * The lane ordering's fallback for a task's bare status: `failed` only.
+ * The board ordering's fallback for a task's bare status: `failed` only.
  * This does not create an attention row. `stalled` is never reported here:
  * it is a flag raised while automatic recovery (a nudge, then a relaunch)
  * is still working the agent, and reporting it immediately would be
@@ -267,7 +267,7 @@ function sessionAttentionAt(session: SessionDto): string {
  * was working on.
  *
  * The strip answers "what is waiting for me"; this answers the same question
- * where the work itself is, so a blocked task is recognisable in its lane
+ * where the work itself is, so a blocked task is recognisable in its row
  * without reading the list above it. It is the sessions query the strip
  * already holds — same shared key, so the board costs no extra request and
  * goes live off the same SSE invalidation — narrowed to the one thing a card
@@ -279,7 +279,7 @@ export interface BoardAttention {
   /**
    * Goal id → why its orchestrator wants a person. Kept apart from `byTask`
    * because an orchestrator session belongs to no task and so has no card of its
-   * own; its lane header is the only place it can be seen.
+   * own; its goal bar is the only place it can be seen.
    */
   byGoal: Map<string, SessionAttention>
   /** Task id → the latest `last_activity_at` of any of its sessions, previous ones included. */
@@ -347,10 +347,10 @@ function collectBoardAttention(
     const reason = sessionAttention(session)
     if (!reason) continue
     const at = sessionAttentionAt(session)
-    // A session with no task is an orchestrator's, and lands on its goal's lane.
+    // A session with no task is an orchestrator's, and lands on its goal's bar.
     const index = session.task_id ? byTask : byGoal
     const key = session.task_id ?? session.goal_id ?? ""
-    // A pull request's session has no card and no lane.
+    // A pull request's session has no row and no goal bar.
     if (!key) continue
     const held = index.get(key)
     if (!held || held.at.localeCompare(at) < 0) index.set(key, { reason, at })

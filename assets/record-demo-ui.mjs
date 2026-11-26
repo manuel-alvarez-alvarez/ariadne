@@ -215,7 +215,10 @@ async function main() {
   await page.getByRole("heading", { name: "Goals" }).waitFor()
   await page.waitForTimeout(3_000)
 
-  await page.getByRole("banner").getByRole("button", { name: "New goal" }).click()
+  await page.getByRole("banner").getByRole("button", { name: "New", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Goal" }).waitFor()
+  await page.waitForTimeout(2_000)
+  await page.getByRole("menuitem", { name: "Goal" }).click()
   await page.getByRole("dialog", { name: "New goal" }).waitFor()
   await page.waitForTimeout(2_000)
   // Typed at a visible speed, like assets/demo.tape's own typing, rather than
@@ -230,9 +233,12 @@ async function main() {
   await page.waitForTimeout(2_000)
 
   await page.getByRole("button", { name: "Orchestrator runs on" }).click()
-  await page.getByPlaceholder("Search models, or type an id…").fill(ORCHESTRATOR_MODEL)
+  await page.getByRole("searchbox", { name: "Search models" }).fill(ORCHESTRATOR_MODEL)
   await page.waitForTimeout(2_000)
-  await page.getByRole("option", { name: ORCHESTRATOR_MODEL }).click()
+  await page
+    .getByRole("listbox", { name: "Models" })
+    .getByRole("option", { name: ORCHESTRATOR_MODEL })
+    .click()
   // A pick does not close the popover by itself (ui/src/features/models/pin-picker.tsx
   // only closes it on an outside press or Escape); Escape is the one that
   // cannot also close the dialog underneath, since the picker's own listener

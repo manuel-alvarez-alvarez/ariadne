@@ -89,10 +89,10 @@ Out: the daemon endpoints themselves (012).
    On Linux (WebKitGTK) every scroll area gets a thin scrollbar in theme
    colours, light and dark, from one rule in `index.css` keyed on a
    `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
-3. Screens: the goals board (swimlanes) has Active,
+3. Screens: the goals board (one list of task rows) has Active,
    All and Finished status segments. A status-menu icon holds a custom
-   selection. Each goal is one slim lane under two global column headers; its
-   one-line row carries the goal's tokens at the right end (rule 39). The task
+   selection. The rows of one goal are adjacent, and the goal bar over them
+   carries the goal's tokens at the right end (rule 39). The task
    panel (facts, diff, history), sessions — Ariadne's own,
    each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
@@ -995,26 +995,53 @@ Out: the daemon endpoints themselves (012).
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 39. The goals board shows one global "Tasks" heading with the number of
-    visible tasks across listed goals, including folded goals. Each goal has
-    one task area with a subtle dotted outline. Active hides finished and
-    cancelled tasks; All, Finished and custom filters show every task in each
-    matching goal. Progress counts use all tasks. Finished cards have green
-    borders, cancelled cards gray borders, and failed cards red borders.
-    Cards wrap into rows as needed. The goal's workflow steps make no columns.
-    The lane's row is one line: a collapse
-    chevron, the title as a link to `?goal=`, the goal status dot, `done/total`,
-    the orchestrator attention badge, and the token figure at the right end.
-    The title's tooltip gives the full title, each repository as
-    `path [base_branch]`, the created time, and the progress as done against
-    failed and stalled. The row has no progress bar and no repository
-    summary. A collapsed lane shows the one-line summary text and no cells.
-    Lanes keep their order: attention first, then live, then terminal goals.
-    Each card stays one tab stop, and each task area is a named group
-    (`<goal>: Tasks`).
-    A task card is three contained rows, for every status, on the board
-    and in the goal panel. Its target minimum width is 18rem (about 288px):
-    the board fits fewer cards across, and a card shrinks inside a narrower
-    panel. The card is a CSS `@container`, so its own width decides what is
+    shown task rows, the tasks of folded goals included. The board is one
+    list, and each shown task is one full-width row. Active hides finished
+    and cancelled tasks; All, Finished and custom filters show every task in
+    each matching goal. Progress counts use all tasks.
+    A task row shows on one line the facts of the task card: the title, the
+    session attention badge, the state badge, the host label, the step track,
+    the token figure, the PR link and the last activity. The columns have
+    fixed widths after the title, so they align from row to row. The row
+    keeps the border colours of the card. It is one link to `?task=` with one
+    tab stop, and the PR link is a real anchor outside it with no tab stop.
+    The rows of one goal are adjacent, in a named group (`<goal>: Tasks`),
+    and a thin rail in the left margin joins them. A gap separates one group
+    from the next. A task with no goal is a group of one row with no rail.
+    The groups sort in three bands: the groups that need the user, then the
+    live groups, then the finished or cancelled groups. A goal needs the user
+    when its orchestrator or one of its agents has an attention flag, or one
+    of its tasks failed or stalled. In a band, the group with the newest
+    `updated_at` is first. A task with no goal sorts by its own state and its
+    own `updated_at`, by the same rule.
+    Pointer hover or keyboard focus on a row of a goal shows a tinted frame
+    around all rows of the goal, and the goal bar on the top edge of the frame.
+    The bar floats over the gap above the first row, so the frame and the bar
+    move no row and hide no row. A task with no goal shows no frame and no bar.
+    The goal bar is one line: a collapse chevron, the title as a link to
+    `?goal=`, the host label by rule 74, the status, `done/total`, the
+    orchestrator attention badge, and the token figure at the right end. The
+    keyboard reaches the chevron and the link. The title's tooltip gives the
+    full title, each repository as `path [base_branch]`, the created time, and
+    the progress as done against failed and stalled. The bar has no progress
+    bar and no repository summary. While the goal's orchestrator has an
+    attention flag, the bar stays shown at rest, in its own line above the
+    rows of the goal.
+    A goal with no shown task is one placeholder row with its rail. The row
+    shows the title, the state text, the status, the orchestrator attention
+    badge and the token figure, and it is one link to `?goal=`. The state text
+    is "Tasks are not loaded" (rule 58), "No tasks yet — the orchestrator is
+    still working" for a planning goal, "No tasks", or "No active tasks" where
+    Active hides every task of the goal.
+    A folded goal is one summary row with its rail: the chevron, the title
+    link, the host label, the status, the one-line summary text, the
+    orchestrator attention badge and the token figure, and no task row.
+    Finished and cancelled goals start folded, and the fold the user picks
+    for a goal is kept in `localStorage`.
+    A task card is three contained rows, for every status, in the goal
+    panel. Finished cards have green borders, cancelled cards gray borders,
+    and failed cards red borders. Its target minimum width is 18rem (about
+    288px), and a card shrinks inside a narrower panel. The card is a CSS `@container`, so its own width decides what is
     drawn, and no row overflows. Row 1 is the title (two lines with an
     ellipsis, long unbroken text wrapped), the session attention badge and
     one state badge: "Waits for N tasks" for a pending or ready task with
@@ -1033,7 +1060,7 @@ Out: the daemon endpoints themselves (012).
     its description, and its agent's model, effort and skills, with a link to
     the agent's session, or says "none staffed". Row 3 is anchored at the card bottom and is one line: the
     task's token figure (`↑input share ↓output`, including zero, rendered by
-    the goal lane header's own `TokenFigure` at every width; its hover names
+    the goal bar's own `TokenFigure` at every width; its hover names
     Input and Output and lists one row per workflow step, and it is not a tab
     stop) at the left, then, when the task has a `pr_url`, a compact PR link
     (icon and `#number`; a real anchor outside the card's link with no tab stop,
@@ -1064,7 +1091,7 @@ Out: the daemon endpoints themselves (012).
     worker goal exists. A host that cannot be reached marks progress as
     potentially stale (`ui/src/features/tasks/task-panel.test.tsx::shows the saved source and workflow when the worker has no goal`,
     `ui/src/features/tasks/task-card.test.tsx::shows the colored remote host and its unreachable state`,
-    `ui/src/features/goals/goal-swimlanes.test.tsx::shows the execution host of a projected task in its source lane`,
+    `ui/src/features/goals/goal-board.test.tsx::shows the execution host of a projected task in its row`,
     `ui/src/features/command-palette/hosts.test.tsx::shows a source projection and worker response as one task`).
     Source navigation and worker labels match daemon identities to configured
     hosts; an unmatched worker is labelled unconfigured. Cancellation and
@@ -1340,10 +1367,9 @@ Out: the daemon endpoints themselves (012).
     `local`.
 57. `useHostLists` runs one list query per selected host. It returns the rows
     tagged with `host`, and one error per host that failed.
-58. The goals board merges the goals of the selected hosts, newest first, and
-    each lane names its host by rule 74. A lane of a host whose tasks did not
-    load, or have not loaded yet, says "Tasks are not loaded" and never "No
-    tasks". The board also follows rule 80. A goal's panel
+58. The goals board merges the goals of the selected hosts, and each goal
+    names its host by rule 74. A goal of a host whose tasks did not load, or
+    have not loaded yet, says "Tasks are not loaded" and never "No tasks". The board also follows rule 80. A goal's panel
     opens on its host, with its tasks and orchestrator sessions read there. A
     goal lives on one host. The goal dialog shows a host select once there is
     more than one listed host. The select defaults to the picked host when the
@@ -1686,19 +1712,21 @@ Out: the daemon endpoints themselves (012).
     long host name is truncated in the label, so the task title keeps its
     room, and the description holds the full name. The label follows
     `task_updated` through the goal task list without a reload.
-84. The goals board has one "No goal" lane after the goal lanes. It holds every
-    task whose `goal_id` is null, from every host the board reads, and the
-    "Active" toggle and the title search narrow it as they narrow a goal lane.
-    It stays on the board while empty and says "No tasks", also on a board with no
-    goal, where it sits beside the empty state. A
-    `task_created` or `task_updated` event moves it with the goal lanes, with no
-    reload. A goal task and the goal task dialog do not change. A far task
-    with no goal is in the lane once: where the board reads its source host
-    and its worker host, it shows the source's row and not the worker's copy.
-85. The board header has a "New task" action, and the command palette has a
-    "New task" entry. Both open the task dialog for a task with no goal. Where a
-    goal is open, the goal's own "New task" keeps its name and the palette's
-    entry for a task with no goal is "Add a task outside any goal".
+84. The goals board shows each task whose `goal_id` is null, from every host
+    the board reads, as a group of one row (rule 39). The "Active" toggle and
+    the title search narrow these rows as they narrow the goals. A board with
+    no goal and no task shows the empty state alone, with its "New goal"
+    action. A `task_created` or `task_updated` event adds or moves a row, also
+    for a task with no goal, with no reload. A goal task and the goal task
+    dialog do not change. A far task with no goal is on the board once: where
+    the board reads its source host and its worker host, it shows the
+    source's row and not the worker's copy.
+85. The board header has one "New" button with a menu of two items. "Goal"
+    opens the goal dialog and shows the `N` hint. "Task" opens the task dialog
+    for a task with no goal. The command palette has a "New task" entry, which
+    opens the same task dialog. Where a goal is open, the goal's own "New
+    task" keeps its name and the palette's entry for a task with no goal is
+    "Add a task outside any goal".
 86. The dialog for a task with no goal asks for a repository, and refuses to
     create the task without one. Its workflow picker starts on "No workflow",
     its first entry. With a workflow it shows one staffing row for each column
@@ -1719,14 +1747,16 @@ Out: the daemon endpoints themselves (012).
 - A goal task list follows a `task_updated` change to its host and reachability
   without a reload (`ui/src/features/tasks/task-card.test.tsx::updates the goal task host label from task_updated without a reload`).
 
-- The "No goal" lane holds every goal-less task and no goal's task, and is empty, and says so,
-  while none exists (`ui/src/features/goals/goal-swimlanes.test.tsx::holds every goal-less task in one No goal lane, apart from the goal lanes`; `::keeps the No goal lane, empty, while every task has a goal`).
-- A far goal-less task that its source and its worker both list is in the "No goal" lane once
-  (`ui/src/features/goals/goal-swimlanes.test.tsx::shows a far goal-less task once, though its source and its worker both list it`).
-- A `task_created` event adds a goal-less task to the "No goal" lane
-  (`ui/src/features/goals/goal-swimlanes.test.tsx::adds a goal-less task to the No goal lane when its task_created event arrives`).
-- The board shows the "No goal" lane with no goal, and its header offers New task
-  (`ui/src/features/goals/goals-list-page.test.tsx::shows the No goal lane on a board with no goals at all`; `::keeps an empty No goal lane on a board with no goals and no tasks`; `::offers New task in the board header, which opens the goal-less task dialog`).
+- Each goal-less task is a group of one row, in no goal's group
+  (`ui/src/features/goals/goal-board.test.tsx::draws each goal-less task as a group of one row, in no goal's group`).
+- A far goal-less task that its source and its worker both list is on the board once
+  (`ui/src/features/goals/goal-board.test.tsx::shows a far goal-less task once, though its source and its worker both list it`).
+- A `task_created` event adds a goal-less task's row, and a `task_updated` event moves a row into its goal
+  (`ui/src/features/goals/goal-board.test.tsx::adds a goal-less task's row when its task_created event arrives`; `::moves a task's row into its goal when its task_updated event arrives`).
+- The board shows goal-less rows with no goal, keeps them when the goals request fails, and shows the empty state alone with no goal and no task
+  (`ui/src/features/goals/goals-list-page.test.tsx::shows the rows of goal-less tasks on a board with no goals at all`; `::keeps the rows of goal-less tasks when the goals request fails`; `::shows only the empty state on a board with no goals and no tasks`; `ui/src/features/goals/goal-board.test.tsx::shows only the empty state when the board has no goal and no task`).
+- The header has one New menu: Goal opens the goal dialog and shows the `N` hint, and Task opens the goal-less task dialog
+  (`ui/src/features/goals/goals-list-page.test.tsx::offers one New menu: Goal opens the goal dialog with its N hint, Task the goal-less task dialog`; `::opens the goal-less task dialog from the Task item of the New menu`).
 - The palette offers New task for a task with no goal, and a distinct entry beside a goal's own
   (`ui/src/features/command-palette/command-palette.test.tsx::offers a task with no goal over a screen with no goal open, and opens its dialog`; `::offers the goal-less task beside the goal's own when a goal is open`).
 - The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine
@@ -1768,12 +1798,12 @@ Out: the daemon endpoints themselves (012).
   `::keeps the host on rows when a named host goes down`,
   `::counts a saved pick the daemon no longer lists as All`,
   `::shows no host on rows or panels with only local listed`).
-- The goal lanes follow rule 74
-  (`ui/src/features/goals/hosts.test.tsx::merges the goals of every host under All, each lane naming its host`,
-  `::reads only the picked host, and names no host on its lanes`,
-  `::names each lane's host under a saved pick the daemon no longer lists`,
-  `::keeps the host of the lanes that stay when a named host goes down`,
-  `::names no host on the lanes with only local listed`).
+- The goals on the board follow rule 74
+  (`ui/src/features/goals/hosts.test.tsx::merges the goals of every host under All, each goal naming its host`,
+  `::reads only the picked host, and names no host on its goals`,
+  `::names each goal's host under a saved pick the daemon no longer lists`,
+  `::keeps the host of the goals that stay when a named host goes down`,
+  `::names no host on the goals with only local listed`).
 - The goals board and the sessions screen say which hosts are absent or
   still loading (rule 80)
   (`ui/src/features/goals/hosts.test.tsx::says which listed host is not shown and why`,
@@ -1786,10 +1816,10 @@ Out: the daemon endpoints themselves (012).
   `::takes the host of a goal picked in a row, and Clear filters removes both chips`).
 - The board says the tasks of a host are not loaded, and its warning names the
   host (rules 58 and 75)
-  (`ui/src/features/goals/hosts.test.tsx::says the tasks of a host are not loaded in its lanes, and names the host, local too`,
+  (`ui/src/features/goals/hosts.test.tsx::says the tasks of a host are not loaded in its goals, and names the host, local too`,
   `::says the last read may be outdated only while one is on screen`,
-  `::keeps the lanes and says tasks are not loaded when every host's task read fails`,
-  `::shows the lanes as not loaded while every task read is pending`).
+  `::keeps the goals and says tasks are not loaded when every host's task read fails`,
+  `::shows the goals as not loaded while every task read is pending`).
 - The attention rows name their host (rule 59)
   (`ui/src/features/goals/hosts.test.tsx::names local on a local attention row under All`,
   `::lists the attention rows of every host under one picked host, each naming its host`).
@@ -2616,17 +2646,27 @@ Out: the daemon endpoints themselves (012).
   `::shows a field error on invalid JSON and disables Test`). These typing
   proofs wait for the dialog's opening focus to reach Examples before editing,
   so its deferred focus cannot interrupt the simulated keystrokes under load.
-- The board shows one task area and counts visible tasks; Active hides terminal
-  tasks without changing progress
-  (`ui/src/features/goals/goal-swimlanes.test.tsx::shows all tasks in one area and counts them`,
+- The board draws each task as one row of one list, the rows of a goal in its
+  group, and counts them; Active hides terminal tasks without changing
+  progress
+  (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`,
   `::hides terminal tasks under Active while preserving progress`).
+- A task row is one link to the task panel with one tab stop, its PR link
+  outside the link, and its border in its status colour
+  (`ui/src/features/goals/goal-board.test.tsx::makes a row one link to the task panel with one tab stop, its pull request outside the link`).
+- The groups sort by band, newest change first, goal-less tasks by the same
+  rule
+  (`ui/src/features/goals/goal-board.test.tsx::sorts the groups: what needs the user, then live, then finished, newest change first`).
 - Finished, cancelled and failed cards use their status borders
   (`ui/src/features/tasks/task-card.test.tsx::outlines a %s task with its status color`).
-- A goal's lane is one line of chevron, title link, status, `done/total` and
-  tokens, with no progress bar, and a folded lane shows its summary and no
-  cells
-  (`ui/src/features/goals/goal-swimlanes.test.tsx::draws a goal as one line: toggle, title link, status, progress and tokens`,
-  `::shows the lane summary in place of the cells once folded`).
+- A goal bar is one line of chevron, title link, status, `done/total` and
+  tokens over the rows of its goal, with no progress bar; it stays shown at
+  rest while the orchestrator wants a person; a folded goal is one summary
+  row; a goal with no shown task is one placeholder row that opens the goal
+  (`ui/src/features/goals/goal-board.test.tsx::puts a goal bar over the rows of its goal: toggle, title link, status, progress and tokens`,
+  `::keeps the goal bar shown at rest while its orchestrator wants a person`,
+  `::folds a finished goal to one summary row`,
+  `::draws a goal with no shown task as one placeholder row that opens the goal`).
 - The task panel of a stepped task draws one workflow section in place of
   its old Agents fact and step strip: every column on the track, each with
   its agent's skills, model and session under its name, and no description
@@ -2788,8 +2828,8 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/api/host-lists.test.tsx::tags each host's rows with the host, and reports the host that failed on its own`,
   `::keeps the other hosts' rows when one host answers with an error`); the
   board, the panel, the dialog and the attention round trip
-  (`ui/src/features/goals/hosts.test.tsx::merges the goals of every host under All, each lane naming its host`,
-  `::reads only the picked host, and names no host on its lanes`,
+  (`ui/src/features/goals/hosts.test.tsx::merges the goals of every host under All, each goal naming its host`,
+  `::reads only the picked host, and names no host on its goals`,
   `::opens a goal's panel on the host its link names`,
   `::defaults the goal dialog to the picked host, and reloads its lists when the host changes`,
   `::opens the goal dialog on local under All`,
@@ -2882,7 +2922,7 @@ screen, the task card, the goal actions and the attention list
 have no `*.test.tsx`
 or `*.test.ts` of their own: what they draw is exercised only incidentally,
 through `detail-panels.test.tsx`, `pane-focus.test.tsx` and
-`goal-swimlanes.test.tsx` mounting the screens that hold them. Rule 19's
+`goal-board.test.tsx` mounting the screens that hold them. Rule 19's
 account of the sessions screen in particular rests on reading
 `sessions-page.tsx` rather than on a test asserting it, apart from the host
 behaviour of rule 61.

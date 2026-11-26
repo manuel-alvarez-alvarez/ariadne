@@ -1,22 +1,31 @@
 /**
- * What order the board's lanes go in, and what each lane's header counts.
+ * What order the board's groups go in, and what each goal's bar counts.
  *
  * Both are the board's answer to the same complaint: it was ordered by id
- * alone, so an old active goal sat under every finished one, and a lane said
+ * alone, so an old active goal sat under every finished one, and a goal said
  * only how many tasks it had — which is the one number that never changes once
  * the orchestrator is done.
  *
- * Pure, and apart from `goal-swimlanes.tsx`, because the ordering is the
- * board's whole reading order and the counters are the only thing a folded
- * lane still says.
+ * Pure, and apart from `goal-board.tsx`, because the ordering is the board's
+ * whole reading order and the counters are the only thing a folded goal still
+ * says.
  */
 
-import type { GoalDto, HostRow, TaskDto, TaskStatus } from "@/api"
+import type { HostRow, TaskDto, TaskStatus } from "@/api"
 import { plural } from "@/lib/format"
-import { isTerminalGoalStatus } from "./status"
+
+/** What the board orders a group by: one goal with its tasks, or one task with no goal. */
+export interface GroupOrder {
+  /** It asks for a person: a flagged agent, a failed or a stalled task. */
+  needsAttention: boolean
+  /** A finished or cancelled goal, or a task with no goal in one of those states. */
+  terminal: boolean
+  updatedAt: string
+  id: string
+}
 
 /**
- * Which band a lane belongs to, lowest first: what is asking for a person,
+ * Which band a group belongs to, lowest first: what is asking for a person,
  * then what is still moving, then what is done with.
  *
  * A band rather than a full ordering because the three answer different
@@ -24,37 +33,38 @@ import { isTerminalGoalStatus } from "./status"
  * running", the third "what happened" — and only the first two are why the
  * board is open.
  */
-function laneBand(goal: GoalDto, needsAttention: boolean): number {
-  if (needsAttention) return 0
-  return isTerminalGoalStatus(goal.status) ? 2 : 1
+function band(order: GroupOrder): number {
+  if (order.needsAttention) return 0
+  return order.terminal ? 2 : 1
 }
 
 /**
- * The goals in the order the board lays them out: by band, then by when each
+ * The groups in the order the board lays them out: by band, then by when each
  * one last moved, newest first.
  *
  * `updated_at` rather than the id the list arrives sorted by: a goal that just
  * went active, and a goal that just finished, are both more interesting than
  * one created after them and untouched since. The id breaks the ties, so the
- * order is total and two renders of the same board agree.
+ * order is total and two renders of the same board agree. A task with no goal
+ * takes the same rule by its own state.
  */
-export function orderLanes<G extends GoalDto>(
-  goals: readonly G[],
-  needsAttention: (goal: G) => boolean,
-): G[] {
+export function orderGroups<G>(groups: readonly G[], orderOf: (group: G) => GroupOrder): G[] {
   // By the row itself: two hosts may each have a goal of one id.
-  const bands = new Map(goals.map((goal) => [goal, laneBand(goal, needsAttention(goal))]))
-  return [...goals].sort((a, b) => {
-    const band = (bands.get(a) ?? 0) - (bands.get(b) ?? 0)
-    if (band !== 0) return band
-    return b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id)
+  const orders = new Map(groups.map((group) => [group, orderOf(group)]))
+  return [...groups].sort((a, b) => {
+    const x = orders.get(a)
+    const y = orders.get(b)
+    if (!x || !y) return 0
+    const byBand = band(x) - band(y)
+    if (byBand !== 0) return byBand
+    return y.updatedAt.localeCompare(x.updatedAt) || y.id.localeCompare(x.id)
   })
 }
 
-/** What a lane header says about its tasks, and what a folded lane says at all. */
-interface LaneCounts {
+/** What a goal bar says about its tasks, and what a folded goal says at all. */
+interface GoalCounts {
   /**
-   * Everything that is in the pipeline or has been through it — the whole lane
+   * Everything that is in the pipeline or has been through it — the whole goal
    * minus what was cancelled, which is what "N finished of how many" is out of.
    * A cancelled task was taken out of the count on purpose, so leaving it in
    * would mean a finished goal never reads as finished.
@@ -72,8 +82,8 @@ interface LaneCounts {
 
 const WAITING_STATUSES: readonly TaskStatus[] = ["pending", "ready"]
 
-export function laneCounts(tasks: readonly TaskDto[]): LaneCounts {
-  const counts: LaneCounts = {
+export function goalCounts(tasks: readonly TaskDto[]): GoalCounts {
+  const counts: GoalCounts = {
     pipeline: 0,
     finished: 0,
     failed: 0,
@@ -96,16 +106,16 @@ export function laneCounts(tasks: readonly TaskDto[]): LaneCounts {
 }
 
 /**
- * The lane in one line: "3/7 finished · 1 failed · 1 waiting" while it is
+ * The goal in one line: "3/7 finished · 1 failed · 1 waiting" while it is
  * running, "7 tasks finished · 1 cancelled" once it is done.
  *
- * Only what is worth saying: a lane with nothing failed does not say "0
- * failed", and a lane that is all the way through says so in words rather than
- * as a fraction of itself. It is the whole of a folded lane's header, so it
- * has to read as a sentence about the goal and not as a row of counters.
+ * Only what is worth saying: a goal with nothing failed does not say "0
+ * failed", and a goal that is all the way through says so in words rather than
+ * as a fraction of itself. It is the whole of a folded goal's row, so it has
+ * to read as a sentence about the goal and not as a row of counters.
  */
-export function laneSummary(tasks: readonly TaskDto[]): string {
-  const counts = laneCounts(tasks)
+export function goalSummary(tasks: readonly TaskDto[]): string {
+  const counts = goalCounts(tasks)
   if (counts.pipeline === 0 && counts.cancelled === 0) return "No tasks"
 
   const parts: string[] = []
@@ -123,13 +133,10 @@ export function laneSummary(tasks: readonly TaskDto[]): string {
   return parts.join(" · ")
 }
 
-/** The id the "No goal" lane keeps its fold state under: a goal's ulid is never this. */
-export const NO_GOAL_LANE = "no-goal"
-
 /**
- * The tasks of the "No goal" lane, in the order the daemon listed them: every
- * task with no goal, narrowed by the board's active-only toggle and its title
- * search the way the goal lanes are.
+ * The tasks with no goal, in the order the daemon listed them, each a group
+ * of one row: narrowed by the board's active-only toggle and its title search
+ * the way the goals are.
  */
 export function goallessTasks<T extends TaskDto>(
   rows: readonly HostRow<T>[],
