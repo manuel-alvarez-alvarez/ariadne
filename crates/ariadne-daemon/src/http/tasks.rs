@@ -369,6 +369,11 @@ pub(super) async fn update(
     }
     let current = state.store.get_task(&id).await?;
     check_unsent_host(&state, &current).await?;
+    if current.goal_id.is_none() && req.depends_on.as_ref().is_some_and(|d| !d.is_empty()) {
+        return Err(ApiError::bad_request(
+            "a goal-less task takes no dependencies",
+        ));
+    }
     let agents = match &req.agents {
         Some(a) if current.host.is_some() => Some(far_agents(a)?),
         Some(a) => Some(resolve_agents(&state, a, ctx.actor == Actor::User).await?),

@@ -664,12 +664,14 @@ fn visible(
 /// every column in column order; the goal is what carries the columns, since
 /// a task pending its first column has no `step` of its own yet.
 fn inspect_pairs(t: &TaskDto, g: Option<&GoalDto>) -> Vec<(&'static str, Kv)> {
+    let own_workflow = t.workflow.clone().unwrap_or_default();
     let (workflow, steps) = match &t.execution_context {
         Some(context) => (&context.workflow.name, &context.workflow.steps),
-        None => {
-            let goal = g.expect("local task has a goal");
-            (&goal.workflow, &goal.steps)
-        }
+        None => match g {
+            Some(goal) => (&goal.workflow, &goal.steps),
+            // A goal-less task keeps its own workflow and columns.
+            None => (&own_workflow, &t.steps),
+        },
     };
     let mut pairs = vec![
         ("id", Kv::id(t.id.clone())),
@@ -953,6 +955,17 @@ mod tests {
     /// escapes and nothing else — strip them and the block reads exactly as
     /// it does with `--color never`, and everything this task leaves plain
     /// (branch, tokens, …) is untouched either way.
+    #[test]
+    fn a_goal_less_task_inspects_its_own_workflow_and_columns() {
+        let t = TaskDto {
+            goal_id: None,
+            workflow: Some("solo".into()),
+            ..dto()
+        };
+        let block = kv_block(&inspect_pairs(&t, None), &View::plain());
+        assert!(block.contains("solo"), "{block}");
+    }
+
     #[test]
     fn the_inspect_block_types_its_id_title_and_status() {
         let t = TaskDto {

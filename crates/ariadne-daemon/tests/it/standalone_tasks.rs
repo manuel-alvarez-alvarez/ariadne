@@ -1,5 +1,5 @@
 //! Tasks that own a workflow without a goal.
-use crate::common::{harness, post_json, test_pin};
+use crate::common::{harness, patch_json, post_json, test_pin};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -133,6 +133,30 @@ async fn admission_refuses_missing_context_dependencies_and_reserved_workflows()
 }
 
 #[tokio::test]
+async fn a_refused_dependency_edit_leaves_the_rest_of_the_patch_unsaved() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("repo")).await;
+    let body = json!({"title":"Original", "repo_id":repo.id,
+        "workflow":"develop-review-merge", "agents":[
+            {"step":"develop","model":test_pin().model},
+            {"step":"review","model":test_pin().model},
+            {"step":"merge","model":test_pin().model}]});
+    let created: Value = h
+        .json(post_json("/v1/tasks", body), StatusCode::CREATED)
+        .await;
+    let path = format!("/v1/tasks/{}", created["id"].as_str().unwrap());
+    let (status, _) = h
+        .send(patch_json(
+            &path,
+            json!({"title":"Changed", "depends_on":["other"]}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let task: Value = h.get(&path).await;
+    assert_eq!(task["title"], "Original");
+}
+
+#[tokio::test]
 async fn saved_columns_run_without_a_goal_and_cleanup_after_finish() {
     use crate::common::{
         TIMEOUT, as_session, eventually, eventually_some, get, sh, with_forge_enabled,
@@ -154,7 +178,8 @@ async fn saved_columns_run_without_a_goal_and_cleanup_after_finish() {
     let running = eventually_some(TIMEOUT, "independent agent", async || {
         let task: Value = h.get(&path).await;
         assert_ne!(task["status"], "failed", "{task}");
-        task["agents"][0]["session_id"].is_string().then_some(task)
+        (task["agents"][0]["session_id"].is_string() && task["worktree_path"].is_string())
+            .then_some(task)
     })
     .await;
     assert_eq!(h.send(get(&format!("{path}/diff"))).await.0, StatusCode::OK);
