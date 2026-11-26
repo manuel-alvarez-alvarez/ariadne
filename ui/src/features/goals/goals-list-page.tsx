@@ -9,9 +9,9 @@
  * without a refresh.
  */
 
-import { FilterIcon, PlusIcon, SearchIcon, TargetIcon } from "lucide-react"
+import { FilterIcon, ListPlusIcon, PlusIcon, SearchIcon, TargetIcon } from "lucide-react"
 import { useMemo, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
 import { LOCAL_HOST, useHostLists } from "@/api"
 import { EmptyState } from "@/components/empty-state"
@@ -28,9 +28,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { CreateStandaloneTaskDialog } from "@/features/tasks/create-standalone-task-dialog"
 import { useHostSelection } from "@/hooks/use-host-filter"
 import { useRowsShowHost } from "@/hooks/use-host-label"
-import { HOST_PARAM } from "@/routes/paths"
+import { HOST_PARAM, taskPanelFrom } from "@/routes/paths"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
   DEFAULT_GOAL_STATUS_FILTER,
@@ -76,6 +77,9 @@ export function GoalsListPage() {
   const [search, setSearch] = useSearchParams()
   const { statuses, filterBy } = useStatusFilter()
   const [createOpen, setCreateOpen] = useState(false)
+  const [createTaskOpen, setCreateTaskOpen] = useState(false)
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
   const query = search.get("q") ?? ""
   function setQuery(value: string) {
     const next = new URLSearchParams(search)
@@ -195,6 +199,10 @@ export function GoalsListPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </ButtonGroup>
+            <Button variant="outline" onClick={() => setCreateTaskOpen(true)}>
+              <ListPlusIcon />
+              New task
+            </Button>
             <Button onClick={() => setCreateOpen(true)}>
               <PlusIcon />
               New goal
@@ -222,7 +230,7 @@ export function GoalsListPage() {
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title="No goals match"
-          description="Nothing matches this search. Clear it to see more."
+          description="No goal matches this search. Clear it to see more."
         />
       ) : null}
 
@@ -245,9 +253,24 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {shown.length ? (
-        <GoalSwimlanes hosts={hosts} goals={shown} activeOnly={active} showHost={showHost} />
+      {shown.length || !goals.isPending ? (
+        <GoalSwimlanes
+          hosts={hosts}
+          goals={shown}
+          activeOnly={active}
+          query={query}
+          showHost={showHost}
+        />
       ) : null}
+
+      <CreateStandaloneTaskDialog
+        open={createTaskOpen}
+        onOpenChange={setCreateTaskOpen}
+        onCreated={(task) => {
+          const target = taskPanelFrom(pathname, search, task.id)
+          void navigate(target, { replace: target.replace })
+        }}
+      />
 
       <CreateGoalDialog
         open={createOpen}

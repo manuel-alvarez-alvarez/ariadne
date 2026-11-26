@@ -25,7 +25,7 @@ import {
   useBoardAttention,
 } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
-import { laneCounts, laneSummary, orderLanes } from "./lanes"
+import { goallessTasks, laneCounts, laneSummary, NO_GOAL_LANE, orderLanes } from "./lanes"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
 const BOARD_WIDTH = "min-w-[20rem]"
@@ -67,24 +67,32 @@ const BOARD_BOX = "h-full rounded-lg border contain-paint"
  */
 const BOARD_FRAME = "relative min-h-0 flex-1"
 
+/** Every task of the hosts the board reads, goal-less ones too. */
+function useBoardTasks(hosts: readonly Host[]) {
+  return useHostLists(hosts, (host) => ({
+    ...taskListQueryOptions(host, {}),
+    select: (rows: TaskDto[]) =>
+      rows.map((row) => ({ ...row, executionHost: row.host ?? "local" })),
+  }))
+}
+
 export function GoalSwimlanes({
   hosts,
   goals,
   activeOnly = false,
+  query = "",
   showHost = false,
 }: {
   /** The hosts the board reads; each goal's tasks are read on its own host. */
   hosts: readonly Host[]
   goals: HostRow<GoalDto>[]
   activeOnly?: boolean
+  /** The title search, which narrows the "No goal" lane's tasks too. */
+  query?: string
   /** Name each lane's host: the board shows goals of more than one. */
   showHost?: boolean
 }) {
-  const tasks = useHostLists(hosts, (host) => ({
-    ...taskListQueryOptions(host, {}),
-    select: (rows: TaskDto[]) =>
-      rows.map((row) => ({ ...row, executionHost: row.host ?? "local" })),
-  }))
+  const tasks = useBoardTasks(hosts)
   const byGoal = useMemo(() => groupByGoal(tasks.rows, goals), [tasks.rows, goals])
   // Which cards — and which lanes — are asking for a person, off the sessions
   // query the attention strip above the board already holds. The board is
@@ -121,11 +129,16 @@ export function GoalSwimlanes({
   )
   const visible = (task: TaskDto) =>
     !activeOnly || (task.status !== "finished" && task.status !== "cancelled")
-  const total = goals.reduce(
-    (count, goal) =>
-      count + (byGoal.get(laneKey(goal.host, goal.id))?.all.filter(visible).length ?? 0),
-    0,
+  const noGoal = useMemo(
+    () => goallessTasks(tasks.rows, activeOnly, query),
+    [tasks.rows, activeOnly, query],
   )
+  const total =
+    goals.reduce(
+      (count, goal) =>
+        count + (byGoal.get(laneKey(goal.host, goal.id))?.all.filter(visible).length ?? 0),
+      0,
+    ) + noGoal.length
 
   // A host whose tasks failed or are still loading keeps its lanes and says
   // they are not loaded; a failure has a warning of its own, also when every
@@ -181,6 +194,12 @@ export function GoalSwimlanes({
                 />
               )
             })}
+            <NoGoalLane
+              rows={noGoal}
+              attentionOf={attention}
+              collapsed={isCollapsed(NO_GOAL_LANE, false)}
+              onToggle={() => setCollapsed(NO_GOAL_LANE, !isCollapsed(NO_GOAL_LANE, false))}
+            />
           </div>
         </section>
         <ScrollEdge side="start" show={board.overflow.start} />
@@ -320,6 +339,67 @@ function Lane({
               lastActivityAt={attention.lastActivity.get(task.id)}
             />
           ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** The lane that holds every task with no goal, which has no goal row to name it. */
+function NoGoalLane({
+  rows,
+  attentionOf,
+  collapsed,
+  onToggle,
+}: {
+  rows: HostRow<TaskDto & { executionHost: string }>[]
+  attentionOf: (host: Host) => BoardAttention
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const tasks = rows.map((row) => ({ ...row, host: row.executionHost }))
+  const counts = laneCounts(tasks)
+  return (
+    <section className="mx-2 mb-2 rounded-sm border border-dotted border-border/70 bg-background">
+      <header className={cn("flex items-center gap-2 px-3", collapsed ? "py-1.5" : "pt-2 pb-1")}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? "Show" : "Hide"} the tasks with no goal`}
+          onClick={onToggle}
+        >
+          {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+        </Button>
+        <span className="min-w-0 truncate text-sm font-medium">No goal</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
+          {counts.finished}/{counts.pipeline}
+        </span>
+        {collapsed ? (
+          <span className="min-w-0 truncate whitespace-nowrap text-xs text-muted-foreground">
+            {laneSummary(tasks)}
+          </span>
+        ) : null}
+      </header>
+      {collapsed ? null : (
+        // biome-ignore lint/a11y/useSemanticElements: this group is not a form control
+        <div className={cn(CELL_GRID, "px-3 pt-1 pb-2.5")} role="group" aria-label="No goal: Tasks">
+          {rows.length === 0 ? (
+            <p className="col-span-full text-xs text-muted-foreground">No tasks</p>
+          ) : null}
+          {rows.map((row) => {
+            const attention = attentionOf(row.host)
+            return (
+              <TaskCard
+                key={laneKey(row.host, row.id)}
+                host={row.host}
+                task={{ ...row, host: row.executionHost }}
+                steps={row.steps ?? []}
+                attention={attention.byTask.get(row.id)}
+                lastActivityAt={attention.lastActivity.get(row.id)}
+              />
+            )
+          })}
         </div>
       )}
     </section>

@@ -148,6 +148,17 @@ it("draws a goal-less task by its own columns and reads no goal", async () => {
     ([input]: unknown[]) => new URL(input instanceof Request ? input.url : String(input)).pathname,
   )
   expect(requested.some((path) => path.startsWith("/v1/goals/"))).toBe(false)
+  expect(screen.queryByRole("button", { name: /goal/i })).toBeNull()
+})
+
+it("shows no columns for a goal-less task with no workflow", async () => {
+  const task = aTask({ goal_id: null, workflow: null, step: null, steps: [], agents: [] })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  await screen.findByRole("tab", { name: "Description" })
+  expect(screen.queryByText("Build")).toBeNull()
+  expect(screen.queryByRole("list", { name: /column|step/i })).toBeNull()
 })
 
 it("explains a pending task by the dependencies it waits for", async () => {

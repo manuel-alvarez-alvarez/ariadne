@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-25
+updated: 2026-11-26
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1686,6 +1686,29 @@ Out: the daemon endpoints themselves (012).
     long host name is truncated in the label, so the task title keeps its
     room, and the description holds the full name. The label follows
     `task_updated` through the goal task list without a reload.
+84. The goals board has one "No goal" lane after the goal lanes. It holds every
+    task whose `goal_id` is null, from every host the board reads, and the
+    "Active" toggle and the title search narrow it as they narrow a goal lane.
+    It stays on the board while empty and says "No tasks", also on a board with no
+    goal, where it sits beside the empty state. A
+    `task_created` or `task_updated` event moves it with the goal lanes, with no
+    reload. A goal task and the goal task dialog do not change.
+85. The board header has a "New task" action, and the command palette has a
+    "New task" entry. Both open the task dialog for a task with no goal. Where a
+    goal is open, the goal's own "New task" keeps its name and the palette's
+    entry for a task with no goal is "Add a task outside any goal".
+86. The dialog for a task with no goal asks for a repository, and refuses to
+    create the task without one. Its workflow picker starts on "No workflow",
+    its first entry. With a workflow it shows one staffing row for each column
+    of that workflow. With "No workflow" it shows one staffing row with no
+    column, and sends one agent with no `step` and no `workflow`. It has no
+    `depends_on` field.
+87. The dialog's host picker lists the `ready` hosts and starts on `local`, this
+    machine. It posts to `POST /v1/tasks` of the settings daemon, with `host`
+    only for a host other than `local`, and shows the daemon's reason where the
+    daemon refuses the host.
+88. The panel of a task with no goal has no goal breadcrumb and reads no goal.
+    It shows the task's own `steps`, or no columns for a task with no workflow.
 
 ## Acceptance criteria
 
@@ -1693,6 +1716,21 @@ Out: the daemon endpoints themselves (012).
   cannot be reached, in the label and in the card description (`ui/src/features/tasks/task-card.test.tsx::shows the colored remote host and its unreachable state`).
 - A goal task list follows a `task_updated` change to its host and reachability
   without a reload (`ui/src/features/tasks/task-card.test.tsx::updates the goal task host label from task_updated without a reload`).
+
+- The "No goal" lane holds every goal-less task and no goal's task, and is empty, and says so,
+  while none exists (`ui/src/features/goals/goal-swimlanes.test.tsx::holds every goal-less task in one No goal lane, apart from the goal lanes`; `::keeps the No goal lane, empty, while every task has a goal`).
+- A `task_created` event adds a goal-less task to the "No goal" lane
+  (`ui/src/features/goals/goal-swimlanes.test.tsx::adds a goal-less task to the No goal lane when its task_created event arrives`).
+- The board shows the "No goal" lane with no goal, and its header offers New task
+  (`ui/src/features/goals/goals-list-page.test.tsx::shows the No goal lane on a board with no goals at all`; `::keeps an empty No goal lane on a board with no goals and no tasks`; `::offers New task in the board header, which opens the goal-less task dialog`).
+- The palette offers New task for a task with no goal, and a distinct entry beside a goal's own
+  (`ui/src/features/command-palette/command-palette.test.tsx::offers a task with no goal over a screen with no goal open, and opens its dialog`; `::offers the goal-less task beside the goal's own when a goal is open`).
+- The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine
+  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`).
+- The dialog posts the repository, the one agent and no workflow, and refuses a missing repository
+  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::creates the task in the repository with no workflow, on this machine`; `::asks for a repository before it creates anything`; `::shows the daemon's reason when it refuses the host`).
+- The panel of a goal-less task has no goal breadcrumb or goal query, and no columns without a workflow
+  (`ui/src/features/tasks/task-panel.test.tsx::draws a goal-less task by its own columns and reads no goal`; `::shows no columns for a goal-less task with no workflow`).
 
 - Settings shows the configured address, stream state and recovery guidance: `ui/src/components/settings-dialog.test.tsx::shows the saved address and live connection state with recovery guidance`; `::announces stream changes without moving focus and gives neutral failure guidance`.
 - Pinning reserves space without a scrim, and mode changes preserve content

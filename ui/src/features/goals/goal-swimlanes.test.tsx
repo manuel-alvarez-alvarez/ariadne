@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { screen, within } from "@testing-library/react"
+import { act, screen, within } from "@testing-library/react"
 import { expect, it } from "vitest"
 
+import { dispatchDomainEvent } from "@/events/dispatch"
 import { aGoal, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalSwimlanes } from "./goal-swimlanes"
@@ -89,4 +90,55 @@ it("shows the execution host of a projected task in its source lane", async () =
   renderScreen(<GoalSwimlanes hosts={["local"]} goals={[{ ...goal, host: "local" }]} />)
   expect(await screen.findByText("Remote work")).toBeTruthy()
   expect(screen.getByText("worker")).toBeTruthy()
+})
+
+it("holds every goal-less task in one No goal lane, apart from the goal lanes", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  daemonFetch.mockResolvedValue(
+    jsonResponse([
+      aTask({ id: "g1", goal_id: goal.id, title: "In a goal" }),
+      aTask({ id: "n1", goal_id: null, title: "Loose one", steps: [] }),
+      aTask({ id: "n2", goal_id: null, title: "Loose two", steps: [] }),
+    ]),
+  )
+  renderScreen(
+    <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
+  )
+  const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
+  expect(await within(lane).findByText("Loose one")).toBeTruthy()
+  expect(within(lane).getByText("Loose two")).toBeTruthy()
+  expect(within(lane).queryByText("In a goal")).toBeNull()
+  expect(screen.getAllByRole("group", { name: "No goal: Tasks" })).toHaveLength(1)
+  expect(
+    within(screen.getByRole("group", { name: `${GOAL_TITLE}: Tasks` })).queryByText("Loose one"),
+  ).toBeNull()
+})
+
+it("keeps the No goal lane, empty, while every task has a goal", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  daemonFetch.mockResolvedValue(jsonResponse([aTask({ goal_id: goal.id })]))
+  renderScreen(
+    <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
+  )
+  await screen.findByRole("group", { name: `${GOAL_TITLE}: Tasks` })
+  const lane = screen.getByRole("group", { name: "No goal: Tasks" })
+  expect(within(lane).getByText("No tasks")).toBeTruthy()
+  expect(screen.getAllByRole("group", { name: "No goal: Tasks" })).toHaveLength(1)
+})
+
+it("adds a goal-less task to the No goal lane when its task_created event arrives", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  const loose = aTask({ id: "n1", goal_id: null, title: "Fresh and loose", steps: [] })
+  daemonFetch.mockResolvedValueOnce(jsonResponse([aTask({ goal_id: goal.id })]))
+  const { queryClient } = renderScreen(
+    <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
+  )
+  await screen.findByRole("group", { name: `${GOAL_TITLE}: Tasks` })
+  expect(screen.queryByText("Fresh and loose")).toBeNull()
+
+  daemonFetch.mockResolvedValue(jsonResponse([aTask({ goal_id: goal.id }), loose]))
+  act(() => dispatchDomainEvent(queryClient, "local", { event: "task_created", data: loose }))
+
+  const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
+  expect(within(lane).getByText("Fresh and loose")).toBeTruthy()
 })

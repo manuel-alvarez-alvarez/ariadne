@@ -33,6 +33,7 @@ export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]
 export type TaskTransitionDto = Schemas["TaskTransitionDto"]
 export type CreateTaskRequest = Schemas["CreateTaskRequest"]
+export type CreateStandaloneTaskRequest = Schemas["CreateStandaloneTaskRequest"]
 export type UpdateTaskRequest = Schemas["UpdateTaskRequest"]
 
 export type SessionDto = Schemas["SessionDto"]
