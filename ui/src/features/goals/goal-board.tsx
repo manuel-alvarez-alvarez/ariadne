@@ -190,7 +190,7 @@ export function GoalBoard({
   // The empty state says the board read nothing: it waits for the task reads, and
   // a failed one keeps its warning and its Retry instead.
   if (groups.length === 0 && empty) {
-    if (tasks.isPending) return null
+    if (!tasks.isSettled) return null
     return tasks.errors.length > 0 ? warnings : <>{empty}</>
   }
 
@@ -320,6 +320,7 @@ function GoalGroup({
           state={placeholderText(goal, tasks, unread)}
           showHost={showHost}
           orchestrator={orchestrator}
+          refocus={refocus}
         />
       </div>
     )
@@ -492,15 +493,26 @@ function PlaceholderRow({
   state,
   showHost,
   orchestrator,
+  refocus,
 }: {
   goal: HostRow<GoalDto>
   state: string
   showHost: boolean
   orchestrator?: SessionAttention
+  refocus: RefObject<string | null>
 }) {
   const stateId = useId()
+  const link = useRef<HTMLAnchorElement>(null)
+  // A goal unfolded to no shown task has no fold button: its row, the only
+  // control left where the fold button was, takes the keyboard.
+  useEffect(() => {
+    if (refocus.current !== goal.id) return
+    refocus.current = null
+    link.current?.focus()
+  })
   return (
     <Link
+      ref={link}
       to={paths.goal(goal.id, goal.host)}
       aria-label={goal.title}
       aria-describedby={stateId}

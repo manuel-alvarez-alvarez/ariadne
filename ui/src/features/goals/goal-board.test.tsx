@@ -372,3 +372,16 @@ it("hands the keyboard to the fold button that replaces the one that was activat
   const expand = await screen.findByRole("button", { name: `Expand ${GOAL_TITLE}` })
   expect(document.activeElement).toBe(expand)
 })
+
+it("hands the keyboard to the placeholder row when unfolding leaves a goal with no shown task", async () => {
+  const goal = aGoal({ title: GOAL_TITLE, status: "cancelled" })
+  stubDaemon([aTask({ id: "t1", goal_id: goal.id, status: "cancelled" })])
+  board([goal], { activeOnly: true })
+
+  const expand = await screen.findByRole("button", { name: `Expand ${GOAL_TITLE}` })
+  expand.focus()
+  fireEvent.click(expand)
+  const row = await screen.findByRole("link", { name: GOAL_TITLE })
+  expect(row.hasAttribute("data-goal-placeholder")).toBe(true)
+  expect(document.activeElement).toBe(row)
+})
