@@ -20,8 +20,10 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { goalQueryOptions } from "@/features/goals/queries"
+import { RepositoryCombobox } from "@/features/goals/repository-combobox"
 import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
+import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
 import { SkillsInput } from "@/features/skills/skills-input"
 import { taskListQueryOptions, useCreateTask, useUpdateTask } from "./queries"
@@ -78,10 +80,11 @@ function TaskFormDialog({
   const goalId = goal?.id ?? editing?.goal_id ?? ""
   const detail = useQuery({
     ...goalQueryOptions(host, goalId),
-    enabled: open && !goal && !editing?.execution_context,
+    enabled: open && !goal,
   })
   const actualGoal = goal ?? detail.data
   const steps = editing?.execution_context?.workflow.steps ?? actualGoal?.steps ?? []
+  const repositories = useQuery({ ...repositoriesQueryOptions(host), enabled: open && !!editing })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const models = useQuery({ ...modelsQueryOptions(host), enabled: open })
   const tasks = useQuery({ ...taskListQueryOptions(host, { goal: goalId }), enabled: open })
@@ -89,7 +92,10 @@ function TaskFormDialog({
   const update = useUpdateTask(host, editing?.id ?? "")
   const submit = editing ? update : create
   const multiRepo = (actualGoal?.repos.length ?? 0) > 1
-  const schema = useMemo(() => makeTaskFormSchema({ requireRepo: multiRepo }), [multiRepo])
+  const schema = useMemo(
+    () => makeTaskFormSchema({ requireRepo: multiRepo && !editing }),
+    [multiRepo, editing],
+  )
   const defaults = useMemo(() => taskToFormValues(editing, steps), [editing, steps])
   const form = useForm<TaskFormValues>({ resolver: zodResolver(schema), defaultValues: defaults })
   const dependencies = useFieldArray({ control: form.control, name: "depends_on" })
@@ -101,7 +107,6 @@ function TaskFormDialog({
     () => (skills.data ?? []).filter((skill) => skill.seat === "task").map((skill) => skill.name),
     [skills.data],
   )
-  const repoItems = (actualGoal?.repos ?? []).map((repo) => ({ label: repo.path, value: repo.id }))
   const taskItems = (tasks.data ?? [])
     .filter((task) => task.id !== editing?.id)
     .map((task) => ({ label: task.title, value: task.id }))
@@ -166,6 +171,31 @@ function TaskFormDialog({
             )}
           />
           <Field>
+            <FieldLabel htmlFor="task-repo">Repository</FieldLabel>
+            <Controller
+              control={form.control}
+              name="repo_id"
+              render={({ field }) => (
+                <RepositoryCombobox
+                  id="task-repo"
+                  repositories={actualGoal?.repos ?? repositories.data ?? []}
+                  value={
+                    editing
+                      ? [editing.repo_id]
+                      : field.value
+                        ? [field.value]
+                        : actualGoal?.repos.length === 1
+                          ? [actualGoal.repos[0]!.id]
+                          : []
+                  }
+                  onChange={(ids) => field.onChange(ids[0] ?? "")}
+                  single
+                  disabled={!!editing}
+                />
+              )}
+            />
+          </Field>
+          <Field>
             <FieldLabel>Workflow agents</FieldLabel>
             <div className="flex flex-col gap-3">
               {steps.map((step, index) => (
@@ -177,40 +207,35 @@ function TaskFormDialog({
                     ariaLabel={`${step.title} skills`}
                     suggestions={skillNames}
                   />
-                  <Controller
-                    control={form.control}
-                    name={`agents.${index}.model`}
-                    render={({ field }) => (
-                      <PinPicker
-                        host={host}
-                        label={`${step.title} runs on`}
-                        model={field.value}
-                        effort={agentValues[index]?.effort ?? ""}
-                        onChange={(pin) => {
-                          field.onChange(pin.model)
-                          form.setValue(`agents.${index}.effort`, pin.effort, { shouldDirty: true })
-                        }}
-                        models={models.data}
-                      />
-                    )}
-                  />
+                  <div>
+                    <Controller
+                      control={form.control}
+                      name={`agents.${index}.model`}
+                      render={({ field }) => (
+                        <PinPicker
+                          host={host}
+                          label={`${step.title} runs on`}
+                          model={field.value}
+                          effort={agentValues[index]?.effort ?? ""}
+                          onChange={(pin) => {
+                            field.onChange(pin.model)
+                            form.setValue(`agents.${index}.effort`, pin.effort, {
+                              shouldDirty: true,
+                            })
+                          }}
+                          models={models.data}
+                        />
+                      )}
+                    />
+                    {!agentValues[index]?.model.trim() ? (
+                      <FieldDescription>Choose a model for {step.title}.</FieldDescription>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
             <FieldDescription>Each row staffs one workflow column.</FieldDescription>
           </Field>
-          {multiRepo ? (
-            <Field>
-              <FieldLabel htmlFor="task-repo">Repository</FieldLabel>
-              <FormSelect
-                control={form.control}
-                name="repo_id"
-                id="task-repo"
-                options={repoItems}
-                placeholder="Select a repository"
-              />
-            </Field>
-          ) : null}
           {taskItems.length > 0 ? (
             <Field>
               <FieldLabel>Depends on</FieldLabel>

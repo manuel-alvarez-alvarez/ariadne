@@ -40,6 +40,8 @@ export function RepositoryCombobox({
   value,
   onChange,
   invalid,
+  single = false,
+  disabled = false,
 }: {
   /** The trigger's id, for the field's `<label for>`. */
   id: string
@@ -49,6 +51,8 @@ export function RepositoryCombobox({
   value: string[]
   onChange: (ids: string[]) => void
   invalid?: boolean
+  single?: boolean
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const fieldRef = useRef<HTMLDivElement>(null)
@@ -63,6 +67,11 @@ export function RepositoryCombobox({
   const picked = value.map((one) => byId.get(one)).filter((one) => one !== undefined)
 
   function toggle(repositoryId: string) {
+    if (single) {
+      onChange([repositoryId])
+      setOpen(false)
+      return
+    }
     onChange(
       value.includes(repositoryId)
         ? value.filter((one) => one !== repositoryId)
@@ -84,18 +93,21 @@ export function RepositoryCombobox({
             className="max-w-full gap-1 pr-1 font-mono"
           >
             <span className="truncate">{repository.path}</span>
-            <button
-              type="button"
-              aria-label={`Remove ${repository.path}`}
-              onClick={() => toggle(repository.id)}
-              className="rounded-full opacity-60 transition-opacity outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <XIcon />
-            </button>
+            {!disabled && !single ? (
+              <button
+                type="button"
+                aria-label={`Remove ${repository.path}`}
+                onClick={() => toggle(repository.id)}
+                className="rounded-full opacity-60 transition-opacity outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <XIcon />
+              </button>
+            ) : null}
           </Badge>
         ))}
         <Popover.Trigger
           id={id}
+          disabled={disabled}
           role="combobox"
           aria-haspopup="listbox"
           aria-invalid={invalid ? true : undefined}
@@ -103,7 +115,13 @@ export function RepositoryCombobox({
           // is what the box would do if it were the control it looks like.
           className="flex min-w-32 flex-1 items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground"
         >
-          {picked.length > 0 ? "Add another…" : "Select repositories…"}
+          {single
+            ? picked.length
+              ? ""
+              : "Select a repository…"
+            : picked.length > 0
+              ? "Add another…"
+              : "Select repositories…"}
           <ChevronsUpDownIcon className="size-4 shrink-0 opacity-50" />
         </Popover.Trigger>
       </div>
