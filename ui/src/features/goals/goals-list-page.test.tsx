@@ -413,6 +413,6 @@ it("shows the No goal lane on a board with no goals at all", async () => {
   renderBoard("/goals")
 
   const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
-  expect(within(lane).getByText("Only a loose task")).toBeTruthy()
+  expect(await within(lane).findByText("Only a loose task")).toBeTruthy()
   expect(screen.queryByText("No goals yet")).toBeNull()
 })

@@ -1689,7 +1689,8 @@ Out: the daemon endpoints themselves (012).
 84. The goals board has one "No goal" lane after the goal lanes. It holds every
     task whose `goal_id` is null, from every host the board reads, and the
     "Active" toggle and the title search narrow it as they narrow a goal lane.
-    It shows only while it has a task to show, also on a board with no goal. A
+    It stays on the board while empty and says "No tasks". On a board with no
+    goal it shows while it has a task to show. A
     `task_created` or `task_updated` event moves it with the goal lanes, with no
     reload. A goal task and the goal task dialog do not change.
 85. The board header has a "New task" action, and the command palette has a
@@ -1716,8 +1717,8 @@ Out: the daemon endpoints themselves (012).
 - A goal task list follows a `task_updated` change to its host and reachability
   without a reload (`ui/src/features/tasks/task-card.test.tsx::updates the goal task host label from task_updated without a reload`).
 
-- The "No goal" lane holds every goal-less task and no goal's task, and is absent
-  while none exists (`ui/src/features/goals/goal-swimlanes.test.tsx::holds every goal-less task in one No goal lane, apart from the goal lanes`; `::shows no No goal lane while every task has a goal`).
+- The "No goal" lane holds every goal-less task and no goal's task, and is empty, and says so,
+  while none exists (`ui/src/features/goals/goal-swimlanes.test.tsx::holds every goal-less task in one No goal lane, apart from the goal lanes`; `::keeps the No goal lane, empty, while every task has a goal`).
 - A `task_created` event adds a goal-less task to the "No goal" lane
   (`ui/src/features/goals/goal-swimlanes.test.tsx::adds a goal-less task to the No goal lane when its task_created event arrives`).
 - The board shows the "No goal" lane with no goal, and its header offers New task
@@ -1727,7 +1728,7 @@ Out: the daemon endpoints themselves (012).
 - The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`).
 - The dialog posts the repository, the one agent and no workflow, and refuses a missing repository
-  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::creates the task in the repository with no workflow, on this machine`; `::asks for a repository before it creates anything`).
+  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::creates the task in the repository with no workflow, on this machine`; `::asks for a repository before it creates anything`; `::shows the daemon's reason when it refuses the host`).
 - The panel of a goal-less task has no goal breadcrumb or goal query, and no columns without a workflow
   (`ui/src/features/tasks/task-panel.test.tsx::draws a goal-less task by its own columns and reads no goal`; `::shows no columns for a goal-less task with no workflow`).
 

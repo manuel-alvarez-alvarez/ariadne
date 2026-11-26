@@ -194,14 +194,12 @@ export function GoalSwimlanes({
                 />
               )
             })}
-            {noGoal.length > 0 ? (
-              <NoGoalLane
-                rows={noGoal}
-                attentionOf={attention}
-                collapsed={isCollapsed(NO_GOAL_LANE, false)}
-                onToggle={() => setCollapsed(NO_GOAL_LANE, !isCollapsed(NO_GOAL_LANE, false))}
-              />
-            ) : null}
+            <NoGoalLane
+              rows={noGoal}
+              attentionOf={attention}
+              collapsed={isCollapsed(NO_GOAL_LANE, false)}
+              onToggle={() => setCollapsed(NO_GOAL_LANE, !isCollapsed(NO_GOAL_LANE, false))}
+            />
           </div>
         </section>
         <ScrollEdge side="start" show={board.overflow.start} />
@@ -368,7 +366,7 @@ function NoGoalLane({
           variant="ghost"
           size="icon-xs"
           aria-expanded={!collapsed}
-          aria-label={`${collapsed ? "Expand" : "Collapse"} No goal`}
+          aria-label={`${collapsed ? "Show" : "Hide"} the tasks with no goal`}
           onClick={onToggle}
         >
           {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
@@ -386,6 +384,9 @@ function NoGoalLane({
       {collapsed ? null : (
         // biome-ignore lint/a11y/useSemanticElements: this group is not a form control
         <div className={cn(CELL_GRID, "px-3 pt-1 pb-2.5")} role="group" aria-label="No goal: Tasks">
+          {rows.length === 0 ? (
+            <p className="col-span-full text-xs text-muted-foreground">No tasks</p>
+          ) : null}
           {rows.map((row) => {
             const attention = attentionOf(row.host)
             return (

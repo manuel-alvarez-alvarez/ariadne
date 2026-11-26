@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
 
 import { aModel, anEffort, aRepository, aTask, aWorkflow } from "@/test/fixtures"
-import { jsonResponse, renderScreen } from "@/test/harness"
+import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, LOCAL, stubHosts } from "@/test/hosts"
 import { CreateStandaloneTaskDialog } from "./create-standalone-task-dialog"
 
@@ -141,4 +141,41 @@ it("asks for a repository before it creates anything", async () => {
 
   expect(await screen.findByText("Choose a repository.")).toBeTruthy()
   expect(seen.some((one) => one.method === "POST")).toBe(false)
+})
+
+it("shows the daemon's reason when it refuses the host", async () => {
+  stubHosts(
+    {
+      local: {
+        "/v1/repositories": [REPO],
+        "/v1/workflows": [WORKFLOW],
+        "/v1/models": [MODEL],
+        "/v1/skills": [],
+        "/v1/acp-agents": [],
+        "/v1/tasks": (_url: URL, request: Request) =>
+          request.method === "POST"
+            ? errorResponse(400, "bad_request", "a goal-less task requires the local host")
+            : undefined,
+      },
+    },
+    [LOCAL, BOX],
+  )
+  const onCreated = vi.fn()
+  const user = userEvent.setup()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} onCreated={onCreated} />)
+
+  await user.type(await screen.findByLabelText("Title"), "Far task")
+  await user.click(screen.getByRole("combobox", { name: "Repository" }))
+  await user.click(await screen.findByRole("option", { name: "/work/ariadne" }))
+  await user.click(screen.getByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "box" }))
+  await user.click(screen.getByRole("button", { name: "Agent runs on" }))
+  await user.click(
+    within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
+  )
+  await user.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
+  await user.click(screen.getByRole("button", { name: "Create task" }))
+
+  expect(await screen.findByText(/a goal-less task requires the local host/)).toBeTruthy()
+  expect(onCreated).not.toHaveBeenCalled()
 })

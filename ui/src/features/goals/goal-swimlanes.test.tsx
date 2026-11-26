@@ -105,7 +105,7 @@ it("holds every goal-less task in one No goal lane, apart from the goal lanes", 
     <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
   )
   const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
-  expect(within(lane).getByText("Loose one")).toBeTruthy()
+  expect(await within(lane).findByText("Loose one")).toBeTruthy()
   expect(within(lane).getByText("Loose two")).toBeTruthy()
   expect(within(lane).queryByText("In a goal")).toBeNull()
   expect(screen.getAllByRole("group", { name: "No goal: Tasks" })).toHaveLength(1)
@@ -114,14 +114,16 @@ it("holds every goal-less task in one No goal lane, apart from the goal lanes", 
   ).toBeNull()
 })
 
-it("shows no No goal lane while every task has a goal", async () => {
+it("keeps the No goal lane, empty, while every task has a goal", async () => {
   const goal = aGoal({ title: GOAL_TITLE })
   daemonFetch.mockResolvedValue(jsonResponse([aTask({ goal_id: goal.id })]))
   renderScreen(
     <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />,
   )
   await screen.findByRole("group", { name: `${GOAL_TITLE}: Tasks` })
-  expect(screen.queryByRole("group", { name: "No goal: Tasks" })).toBeNull()
+  const lane = screen.getByRole("group", { name: "No goal: Tasks" })
+  expect(within(lane).getByText("No tasks")).toBeTruthy()
+  expect(screen.getAllByRole("group", { name: "No goal: Tasks" })).toHaveLength(1)
 })
 
 it("adds a goal-less task to the No goal lane when its task_created event arrives", async () => {
