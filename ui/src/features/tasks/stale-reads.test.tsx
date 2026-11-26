@@ -13,7 +13,7 @@ import { qk } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { GoalTasks } from "@/features/goals/goal-tasks"
 import { stubEventSource } from "@/test/event-source"
-import { aGoal, aTask } from "@/test/fixtures"
+import { aGoal, aTask, GOAL_ID } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 
 import { taskListQueryOptions } from "./queries"
@@ -37,13 +37,10 @@ function answerEveryRead(body: unknown): void {
 
 it("keeps an empty goal task list under the warning, and clears it on a successful retry", async () => {
   const user = userEvent.setup()
-  const { queryClient } = renderScreen(
-    <GoalTasks host="local" goalId={TASK.goal_id} steps={[]} />,
-    {
-      seed: (client) =>
-        client.setQueryData(taskListQueryOptions("local", { goal: TASK.goal_id }).queryKey, []),
-    },
-  )
+  const { queryClient } = renderScreen(<GoalTasks host="local" goalId={GOAL_ID} steps={[]} />, {
+    seed: (client) =>
+      client.setQueryData(taskListQueryOptions("local", { goal: GOAL_ID }).queryKey, []),
+  })
   await screen.findByText("No tasks yet")
 
   failEveryRead()
@@ -60,7 +57,7 @@ it("keeps an empty goal task list under the warning, and clears it on a successf
 it("keeps the cached task and its empty history under warnings, and a retry clears them", async () => {
   const empty = "The task has not moved yet"
   const user = userEvent.setup()
-  const goal = aGoal({ id: TASK.goal_id })
+  const goal = aGoal({ id: GOAL_ID })
   const { queryClient } = renderScreen(
     <TaskPanel host="local" taskId={TASK.id} onClose={() => {}} />,
     {

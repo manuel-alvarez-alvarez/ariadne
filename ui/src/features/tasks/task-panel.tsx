@@ -190,14 +190,15 @@ export function TaskPanel({
  * actions, and the dense line of its status, id and when it last moved.
  *
  * The breadcrumb is the task's own `goal_id`, not where the panel was opened
- * from — every task has one, whatever opened this panel — and clicking it
+ * from — a task with a goal has one, whatever opened this panel — and clicking it
  * replaces this panel with the goal's in the same pane.
  */
 function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
   const goal = useQuery({
-    ...goalQueryOptions(host, task.goal_id),
-    enabled: !task.execution_context,
+    ...goalQueryOptions(host, task.goal_id ?? ""),
+    enabled: !task.execution_context && !!task.goal_id,
   })
+  const goalId = task.goal_id
   const sourceHost = useSourceHost(task.execution_context?.source_goal.daemon_id)
   const executionHost = useSourceHost(task.execution_context?.execution_owner)
   const navigate = useNavigate()
@@ -206,14 +207,13 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
   return (
     <PanelHeader
       breadcrumb={
-        task.execution_context && !sourceHost
+        !goalId || (task.execution_context && !sourceHost)
           ? undefined
           : {
               label: task.execution_context?.source_goal.title ?? goal.data?.title ?? "Goal",
               // Replaces rather than pushes: the goal panel takes this one's place
               // in the pane, not a step stacked over it.
-              onClick: () =>
-                navigate(paths.goal(task.goal_id, sourceHost ?? host), { replace: true }),
+              onClick: () => navigate(paths.goal(goalId, sourceHost ?? host), { replace: true }),
             }
       }
       title={task.title}
