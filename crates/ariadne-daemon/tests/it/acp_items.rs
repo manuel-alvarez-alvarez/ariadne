@@ -751,12 +751,21 @@ async fn a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update(
         progress["payload"]["acp"]["rawInput"],
         json!({"command": "ls"})
     );
+    // The snapshot holds the stored progress and, after it, a live entry of
+    // its own for the call still open.
     let shown = t.snapshot().await;
-    let open = shown
+    let of_call: Vec<&Value> = shown
         .iter()
-        .rfind(|e| e["kind"] == "tool_call_update")
-        .expect("the call shows open once its progress is stored");
-    assert_eq!(open["payload"]["tool_call_id"], "call-9");
+        .filter(|e| e["kind"] == "tool_call_update" && e["payload"]["tool_call_id"] == "call-9")
+        .collect();
+    assert_eq!(of_call.len(), 2, "{of_call:?}");
+    assert_eq!(
+        of_call[0]["id"], progress["id"],
+        "the stored progress first"
+    );
+    assert_ne!(of_call[1]["id"], progress["id"], "then the open call, live");
+    assert_eq!(of_call[1]["payload"]["acp"]["status"], "in_progress");
+    assert_eq!(of_call[1]["payload"]["acp"]["title"], "Bash");
 
     std::fs::write(&file, "1").unwrap();
     let done = eventually_some(TIMEOUT, "the call's end", || async {

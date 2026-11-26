@@ -258,8 +258,9 @@ it leaves nothing to delete.
    so far, as a live `tool_call_update` after the stored events
    (`::a_console_opened_during_a_call_reads_the_open_call`). A call's state
    changes, and its events are stored or published, under the turn lock a
-   snapshot reads it under: a snapshot never holds a call whose
-   `pre_tool_use` is not stored yet. Neither `tool_call_update` nor
+   snapshot reads it under: a snapshot holds a call only from the first
+   stored event about it, its `pre_tool_use` or, where the store refused
+   that, its first stored `tool_call_update`. Neither `tool_call_update` nor
    `tool_call_abandoned` moves the session's status or attention
    (`classify.rs::tests::stored_progress_and_an_abandoned_call_move_nothing`),
    and neither stamps the activity clock a stall is measured from (009)
