@@ -86,9 +86,13 @@ export function TaskPanel({
   // the same detail entry the header's breadcrumb reads.
   const goal = useQuery({
     ...goalQueryOptions(host, task.data?.goal_id ?? ""),
-    enabled: task.data !== undefined && !task.data.execution_context,
+    enabled: task.data !== undefined && !task.data.execution_context && !!task.data.goal_id,
   })
-  const steps = task.data?.execution_context?.workflow.steps ?? goal.data?.steps ?? []
+  // A task with no goal keeps its own columns.
+  const steps =
+    task.data?.execution_context?.workflow.steps ??
+    (task.data && !task.data.goal_id ? task.data.steps : goal.data?.steps) ??
+    []
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)

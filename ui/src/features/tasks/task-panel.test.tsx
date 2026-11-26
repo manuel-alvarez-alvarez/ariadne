@@ -132,6 +132,24 @@ it("shows workflow agents by column", async () => {
   expect(screen.queryByText("Agents")).toBeNull()
 })
 
+it("draws a goal-less task by its own columns and reads no goal", async () => {
+  const task = aTask({
+    goal_id: null,
+    workflow: "solo",
+    step: "build",
+    steps: [{ id: "build", title: "Saved build", description: "", skills: [], ranks: [] }],
+    agents: [{ id: "agent-build", step: "build", skills: ["coding"], model: "codex-acp:o3" }],
+  })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  expect(await screen.findByText("Saved build")).toBeTruthy()
+  const requested = daemonFetch.mock.calls.map(
+    ([input]: unknown[]) => new URL(input instanceof Request ? input.url : String(input)).pathname,
+  )
+  expect(requested.some((path) => path.startsWith("/v1/goals/"))).toBe(false)
+})
+
 it("explains a pending task by the dependencies it waits for", async () => {
   const dependency = aTask({ id: "dep-1", title: "Lay the schema", status: "in_progress" })
   const task = aTask({ status: "pending", step: null, depends_on: [dependency.id] })

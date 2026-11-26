@@ -403,7 +403,11 @@ pub(super) async fn update(
             },
         )
         .await?;
-    if let Some(deps) = req.depends_on {
+    // A goal-less task has no dependencies to clear.
+    if let Some(deps) = req
+        .depends_on
+        .filter(|d| current.goal_id.is_some() || !d.is_empty())
+    {
         state.store.set_task_dependencies(&id, &deps).await?;
     }
     let task = state.store.get_task(&task.id).await?;

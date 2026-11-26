@@ -154,6 +154,15 @@ async fn a_refused_dependency_edit_leaves_the_rest_of_the_patch_unsaved() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let task: Value = h.get(&path).await;
     assert_eq!(task["title"], "Original");
+    let (status, _) = h
+        .send(patch_json(
+            &path,
+            json!({"title":"Renamed", "depends_on":[]}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let task: Value = h.get(&path).await;
+    assert_eq!(task["title"], "Renamed");
 }
 
 #[tokio::test]
