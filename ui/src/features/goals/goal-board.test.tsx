@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { act, screen, within } from "@testing-library/react"
+import { act, fireEvent, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
 import type { AttentionListDto, GoalDto, SessionDto, TaskDto } from "@/api"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
-import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { forgetHosts, stubHosts } from "@/test/hosts"
 import { GoalBoard } from "./goal-board"
 
@@ -344,4 +344,31 @@ it("shows only the empty state when the board has no goal and no task", async ()
 
   expect(await screen.findByText("Nothing here")).toBeTruthy()
   expect(screen.queryByRole("heading", { name: /Tasks/ })).toBeNull()
+})
+
+it("keeps the task warning and its Retry instead of the empty state when the tasks fail", async () => {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    if (url.pathname === "/v1/tasks")
+      return Promise.resolve(errorResponse(503, "unavailable", "down"))
+    return Promise.resolve(jsonResponse([]))
+  })
+  renderScreen(<GoalBoard hosts={["local"]} goals={[]} empty={<p>Nothing here</p>} />)
+
+  expect(await screen.findByRole("button", { name: /retry/i })).toBeTruthy()
+  expect(screen.queryByText("Nothing here")).toBeNull()
+})
+
+it("hands the keyboard to the fold button that replaces the one that was activated", async () => {
+  const goal = aGoal({ title: GOAL_TITLE, status: "active" })
+  stubDaemon([aTask({ id: "t1", goal_id: goal.id, status: "in_progress" })])
+  board([goal])
+
+  const collapse = await screen.findByRole("button", { name: `Collapse ${GOAL_TITLE}` })
+  collapse.focus()
+  fireEvent.click(collapse)
+  const expand = await screen.findByRole("button", { name: `Expand ${GOAL_TITLE}` })
+  expect(document.activeElement).toBe(expand)
 })

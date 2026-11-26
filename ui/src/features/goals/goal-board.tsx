@@ -12,7 +12,7 @@
  */
 
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import { type ReactNode, useId, useMemo } from "react"
+import { type ReactNode, type RefObject, useEffect, useId, useMemo, useRef } from "react"
 import { Link } from "react-router-dom"
 
 import { type GoalDto, type Host, type HostRow, type TaskDto, useHostLists } from "@/api"
@@ -134,6 +134,9 @@ export function GoalBoard({
     [tasks.errors, tasks.pending],
   )
   const { isCollapsed, setCollapsed } = useCollapsedLanes()
+  // Folding swaps the goal's rows for its summary, so the fold button is mounted
+  // again: the goal it was on takes the keyboard back.
+  const refocus = useRef<string | null>(null)
   const board = useHorizontalOverflow<HTMLElement>()
   const visible = (task: TaskDto) =>
     !activeOnly || (task.status !== "finished" && task.status !== "cancelled")
@@ -165,15 +168,8 @@ export function GoalBoard({
       0,
     ) + noGoal.length
 
-  if (groups.length === 0 && empty) return tasks.isPending ? null : <>{empty}</>
-
-  // A host whose tasks failed or are still loading keeps its goals and says
-  // they are not loaded; a failure has a warning of its own, also when every
-  // host failed.
-  return (
+  const warnings = (
     <>
-      {/* Outside the frame: the board fills the frame's whole height, so a
-          warning inside it would push the board past the frame's bottom edge. */}
       {tasks.errors.map(({ host, error, cached }) => (
         <RefreshWarning
           key={host}
@@ -188,6 +184,24 @@ export function GoalBoard({
           className="shrink-0"
         />
       ))}
+    </>
+  )
+
+  // The empty state says the board read nothing: it waits for the task reads, and
+  // a failed one keeps its warning and its Retry instead.
+  if (groups.length === 0 && empty) {
+    if (tasks.isPending) return null
+    return tasks.errors.length > 0 ? warnings : <>{empty}</>
+  }
+
+  // A host whose tasks failed or are still loading keeps its goals and says
+  // they are not loaded; a failure has a warning of its own, also when every
+  // host failed.
+  return (
+    <>
+      {/* Outside the frame: the board fills the frame's whole height, so a
+          warning inside it would push the board past the frame's bottom edge. */}
+      {warnings}
       <div className={BOARD_FRAME}>
         {/* A named region the keyboard can put focus into: the board scrolls both
           ways, and a scrollport nothing can focus only scrolls under a pointer. */}
@@ -235,6 +249,7 @@ export function GoalBoard({
                     visible={visible}
                     attention={attention(goal.host)}
                     collapsed={collapsed}
+                    refocus={refocus}
                     onToggle={() => setCollapsed(goal.id, !collapsed)}
                   />
                 )
@@ -257,6 +272,7 @@ function GoalGroup({
   attention,
   visible,
   collapsed,
+  refocus,
   onToggle,
 }: {
   goal: HostRow<GoalDto>
@@ -268,6 +284,7 @@ function GoalGroup({
   attention: BoardAttention
   visible: (task: TaskDto) => boolean
   collapsed: boolean
+  refocus: RefObject<string | null>
   onToggle: () => void
 }) {
   // An orchestrator belongs to no task, so it has no row to be flagged on: the
@@ -283,7 +300,7 @@ function GoalGroup({
       <div role="group" aria-label={label} className="relative pt-2">
         <span aria-hidden className={cn(RAIL, "top-2")} />
         <div data-goal-folded className={cn(GOAL_LINE, "rounded-md border border-dashed")}>
-          <FoldToggle goal={goal} collapsed onToggle={onToggle} />
+          <FoldToggle goal={goal} collapsed refocus={refocus} onToggle={onToggle} />
           <GoalTitle goal={goal} tasks={tasks} />
           <GoalFacts goal={goal} showHost={showHost} orchestrator={orchestrator}>
             <span className="min-w-0 truncate text-muted-foreground">{goalSummary(tasks)}</span>
@@ -334,7 +351,7 @@ function GoalGroup({
             : "absolute inset-x-0 top-0 opacity-0 transition-opacity group-focus-within/goal:pointer-events-auto group-focus-within/goal:opacity-100 group-hover/goal:pointer-events-auto group-hover/goal:opacity-100",
         )}
       >
-        <FoldToggle goal={goal} collapsed={false} onToggle={onToggle} />
+        <FoldToggle goal={goal} collapsed={false} refocus={refocus} onToggle={onToggle} />
         <GoalTitle goal={goal} tasks={tasks} />
         <GoalFacts goal={goal} showHost={showHost} orchestrator={orchestrator}>
           <span className="text-muted-foreground">
@@ -361,19 +378,32 @@ function GoalGroup({
 function FoldToggle({
   goal,
   collapsed,
+  refocus,
   onToggle,
 }: {
   goal: GoalDto
   collapsed: boolean
+  refocus: RefObject<string | null>
   onToggle: () => void
 }) {
+  const button = useRef<HTMLButtonElement>(null)
+  // Runs after each render: the button of the other state is the one mounted now.
+  useEffect(() => {
+    if (refocus.current !== goal.id) return
+    refocus.current = null
+    button.current?.focus()
+  })
   return (
     <Button
+      ref={button}
       variant="ghost"
       size="icon-xs"
       aria-expanded={!collapsed}
       aria-label={`${collapsed ? "Expand" : "Collapse"} ${goal.title}`}
-      onClick={onToggle}
+      onClick={() => {
+        refocus.current = goal.id
+        onToggle()
+      }}
     >
       {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
     </Button>
