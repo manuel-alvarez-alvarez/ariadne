@@ -933,8 +933,8 @@ Out: the daemon endpoints themselves (012).
     `::keeps the fields in a scroll region between the header and
     footer`, `::uses a wide dialog and lets Input resize vertically`,
     `::the example picker > fills every field of the %s example`, `::sends
-    the example's locations, options and workspace`, `::sends a typed title,
-    kind, options and locations one per line, edited by hand`,
+    the example's locations, options and workspace`, `::sends manually edited
+    title, kind, options and locations one per line`,
     `::runs the test when Cmd or Ctrl+Enter is pressed`, `::shows the label and danger in the polite footer
     result`, `::shows the allow and deny probabilities in the footer result`,
     `::shows the operation and each risk tag in the footer result`,
@@ -1922,14 +1922,14 @@ Out: the daemon endpoints themselves (012).
 - Opening a goal from the board and then its task keeps focus inside the new pane
   (`ui/src/components/pane-focus.test.tsx::keeps focus in the task pane after opening a goal from the board`).
 - Closing a replacement task or returning through its goal breadcrumb preserves the first board opener
-  (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing the replacement task`,
-  `::returns focus to the board opener after closing the replacement goal breadcrumb`).
+  (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing the replacement %s`,
+  run for `task` and for `goal breadcrumb`).
 - Removing an action or closing an expanded view restores focus inside the pane
-  (`ui/src/components/pane-focus.test.tsx::keeps focus in the pane after confirming Cancel goal`,
-  `::keeps focus in the pane after confirming Cancel task`,
+  (`ui/src/components/pane-focus.test.tsx::keeps focus in the pane after confirming %s`,
+  run for `Cancel goal` and for `Cancel task`,
   `::keeps focus in the pane after Retry task removes its button`,
-  `::keeps focus in the pane after collapsing the console`,
-  `::keeps focus in the pane after collapsing the diff`).
+  `::keeps focus in the pane after collapsing the %s`, run for `console` and
+  for `diff`).
 - A pointer drag clamps and persists the pane width across a remount, and
   writes settings once, on release
   (`ui/src/components/panel-sheet.test.tsx::clamps a dragged pane width and restores it from settings on remount`,
@@ -1966,8 +1966,8 @@ Out: the daemon endpoints themselves (012).
   none, and opens the default dashboard`, `::opens the dashboard the URL
   names`); the picker lists every dashboard and switches the iframe on a
   pick
-  (`::lists every dashboard in the picker, and switches the iframe on a
-  pick`); Reset is disabled on the shipped document and enabled once
+  (`::lists display names in the picker, falls back to metadata names, and
+  keeps the id in the iframe`); Reset is disabled on the shipped document and enabled once
   something was saved over it, and a confirmed reset sends
   `POST /v1/dashboards/{name}/reset`
   (`::disables Reset on the shipped document, and enables it once something
@@ -2236,7 +2236,7 @@ Out: the daemon endpoints themselves (012).
   replaces its transcript, says it reconnects and takes the fresh snapshot
   without duplicates, and closes its stream when it leaves the screen
   (`ui/src/features/sessions/console/session-console.test.tsx::reads the console stream and draws the snapshot as blocks`,
-  `::marks a prompt the daemon sent`,
+  `::keeps developer prompts expanded and identifies their role`,
   `::extends the transcript with each event and replaces it with a new snapshot`,
   `::says it reconnects after a resync and takes the fresh snapshot without duplicates`,
   `::closes the stream when it leaves the screen`).
@@ -2642,7 +2642,7 @@ Out: the daemon endpoints themselves (012).
 - Editing a test request sends the typed values, trims and drops empty option
   and location lines, and sends `null` for an empty Kind or Workspace;
   invalid JSON shows a field error and disables Test
-  (`ui/src/features/permissions/ai-test-panel.test.tsx::sends a typed title, kind, options and locations one per line, edited by hand`,
+  (`ui/src/features/permissions/ai-test-panel.test.tsx::sends manually edited title, kind, options and locations one per line`,
   `::shows a field error on invalid JSON and disables Test`). These typing
   proofs wait for the dialog's opening focus to reach Examples before editing,
   so its deferred focus cannot interrupt the simulated keystrokes under load.

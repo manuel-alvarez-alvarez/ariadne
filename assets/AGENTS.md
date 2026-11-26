@@ -79,8 +79,10 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
 - `record-demo-ui.mjs`: `node assets/record-demo-ui.mjs`. It builds the
   release binaries, creates an isolated Ariadne home with a two-second inert
   `cli_bin` (the scheduler can create metadata rows for the demo, but it
-  cannot start a real agent process) and `demo-orchestrator-agent.py`
-  registered as its orchestrator agent, seeds its own scratch repository with
+  cannot start a real agent process), `session_place = "none"` (so the stub
+  runs as the daemon's own child, never in a herdr or tmux server the
+  machine runs) and `demo-orchestrator-agent.py` registered as its
+  orchestrator agent, seeds its own scratch repository with
   `seed-demo-repo.sh`, fills the New goal form in the UI with the same goal
   `demo.tape` types — typed at a visible speed rather than filled in one
   frame — and the orchestrator pinned to that same stub, opens its console

@@ -143,7 +143,10 @@ async function main() {
   const orchestratorAgentScript = join(root, "assets", "demo-orchestrator-agent.py")
   await writeFile(
     join(home, "config.toml"),
+    // `session_place = "none"`: agents run as the daemon's own children, never
+    // in a herdr or tmux server the machine already runs.
     `tcp_listen = "127.0.0.1:${port}"\ncli_bin = "${inertCli}"\nprevent_sleep = false\n` +
+      `session_place = "none"\n` +
       `[[acp_agents]]\nid = "demo-orchestrator"\ncommand = ["python3", "${orchestratorAgentScript}"]\n`,
   )
   await run("git", ["init", "-q", "-b", "main", repositoryPath])
@@ -290,15 +293,17 @@ async function main() {
   // The session view took over the whole panel, breadcrumb and tabs
   // included (see ui/src/features/goals/goal-sessions.tsx), so the way to
   // the goal panel's own Tasks tab is back through that breadcrumb first.
-  // Its own task list is the one row that also names its column, which is
-  // what picks the task out from the attention strip's same-named link
-  // behind the scrim.
+  // Its own task list is read inside the pane, which picks the task out from
+  // the board's row and the attention strip's link of the same name behind
+  // the scrim.
   await page.getByRole("button", { name: GOAL_TITLE, exact: true }).click()
   await page.waitForTimeout(2_000)
   await page.getByRole("tab", { name: /^Tasks/ }).click()
 
   const limiterTask = "Add the rate limiter middleware"
-  const taskRow = page.getByRole("link", { name: `${limiterTask} Develop` })
+  const taskRow = page
+    .locator('[data-slot="docked-pane"]')
+    .getByRole("link", { name: new RegExp(`^${limiterTask}`) })
   await taskRow.waitFor()
   await page.waitForTimeout(3_000)
 
