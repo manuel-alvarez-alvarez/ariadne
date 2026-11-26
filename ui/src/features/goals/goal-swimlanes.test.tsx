@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { act, screen, within } from "@testing-library/react"
-import { expect, it } from "vitest"
+import { afterEach, expect, it } from "vitest"
 
 import { dispatchDomainEvent } from "@/events/dispatch"
-import { aGoal, aTask } from "@/test/fixtures"
+import { aGoal, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { forgetHosts, stubHosts } from "@/test/hosts"
 import { GoalSwimlanes } from "./goal-swimlanes"
 
 const GOAL_TITLE = "Ship the board"
+
+afterEach(() => forgetHosts())
 
 it("shows all tasks in one area and counts them", async () => {
   const goal = aGoal({ title: GOAL_TITLE })
@@ -112,6 +115,41 @@ it("holds every goal-less task in one No goal lane, apart from the goal lanes", 
   expect(
     within(screen.getByRole("group", { name: `${GOAL_TITLE}: Tasks` })).queryByText("Loose one"),
   ).toBeNull()
+})
+
+it("shows a far goal-less task once, though its source and its worker both list it", async () => {
+  const task = aTask({
+    id: "far-task",
+    goal_id: null,
+    title: "Far loose task",
+    execution_context: {
+      source_goal: null,
+      source_daemon_id: "source",
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  const EMPTY = { "/v1/attention": { items: [], complete: true }, "/v1/sessions": aSessionPage([]) }
+  stubHosts({
+    local: {
+      ...EMPTY,
+      "/v1/tasks": [task],
+      "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "source" },
+    },
+    box: {
+      ...EMPTY,
+      "/v1/tasks": [task],
+      "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "worker" },
+    },
+  })
+  renderScreen(<GoalSwimlanes hosts={["local", "box"]} goals={[]} />)
+  const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
+  expect(await within(lane).findByText("Far loose task")).toBeTruthy()
+  expect(await screen.findByRole("heading", { name: "Tasks (1)" })).toBeTruthy()
+  expect(within(lane).getAllByText("Far loose task")).toHaveLength(1)
 })
 
 it("keeps the No goal lane, empty, while every task has a goal", async () => {

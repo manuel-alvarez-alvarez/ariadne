@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { TaskCard, taskListQueryOptions } from "@/features/tasks"
+import { useDaemonIdentities, withoutWorkerCopies } from "@/features/tasks/source-host"
 import { stepTitle } from "@/features/tasks/steps"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { cn, formatAbsolute } from "@/lib/format"
@@ -129,9 +130,12 @@ export function GoalSwimlanes({
   )
   const visible = (task: TaskDto) =>
     !activeOnly || (task.status !== "finished" && task.status !== "cancelled")
+  // A far task with no goal is listed by its source and by its worker, both
+  // with no goal: the lane shows the source's copy alone.
+  const daemonIds = useDaemonIdentities(true)
   const noGoal = useMemo(
-    () => goallessTasks(tasks.rows, activeOnly, query),
-    [tasks.rows, activeOnly, query],
+    () => goallessTasks(withoutWorkerCopies(tasks.rows, daemonIds), activeOnly, query),
+    [tasks.rows, daemonIds, activeOnly, query],
   )
   const total =
     goals.reduce(
