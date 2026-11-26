@@ -238,11 +238,15 @@ it leaves nothing to delete.
    grace ran out — is stored as `session_ended`, before the `session.error`
    and the `session_end`
    (`::an_agent_that_ends_mid_call_abandons_it_as_session_ended`). A call is
-   open only once an event about it is stored, its `pre_tool_use` or a
-   `tool_call_update`, and only while it runs: a call whose opener the store
-   refused, or one that opens `completed` or `failed`, is never shown open
-   and never abandoned
-   (`::a_call_that_opens_already_ended_is_never_abandoned`). A call stays
+   open only once an event about it is stored, and only while it runs. A
+   call that opens `completed` or `failed` is never open
+   (`::a_call_that_opens_already_ended_is_never_abandoned`). A call whose
+   `pre_tool_use` the store refused is kept, so the updates that follow merge
+   into its opening, but no snapshot shows it and no turn's end abandons it.
+   Its first update, stored at once whatever the interval, carries the call
+   merged from its opening, and from then the call is open; its
+   `post_tool_use` keeps the opening's input
+   (`::a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update`). A call stays
    open until the store holds its `tool_call_abandoned`. A write the store
    refuses, or that a kill cuts off, is tried again at the next turn's start
    and when the agent ends, with its first reason, and the call is out of
@@ -817,6 +821,9 @@ it leaves nothing to delete.
 - An abandonment the store refused is tried again as it was, and a call
   with no stored event is never shown open
   (`acp.rs::tests::a_call_whose_abandonment_the_store_refused_is_stored_on_the_next_try`).
+- A call whose opener the store refused opens at its first stored update,
+  with its merged opening, and its end keeps the input
+  (`acp_items.rs::a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update`).
 - A limit response abandons its open call as `session_ended`, and a call
   that opens already ended is never abandoned
   (`acp_items.rs::a_limit_response_abandons_its_open_call_as_session_ended`,

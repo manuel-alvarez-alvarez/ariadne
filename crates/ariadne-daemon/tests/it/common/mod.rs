@@ -2257,6 +2257,25 @@ impl Harness {
         .unwrap();
     }
 
+    /// Make every write of an agent event of `kind` fail, the way a
+    /// transient database error would, while the rest of the store goes on
+    /// working.
+    pub(crate) async fn reject_events_of_kind(&self, kind: &str) {
+        assert!(
+            kind.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+            "{kind} is used in an identifier"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TRIGGER reject_events_{kind}
+             BEFORE INSERT ON agent_events
+             WHEN NEW.kind = '{kind}'
+             BEGIN SELECT RAISE(ABORT, 'rejected for test'); END;"
+        )))
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
     /// Undo [`Self::reject_goal_confirm`]: the next write of this goal's
     /// confirmed-failures column succeeds again.
     pub(crate) async fn stop_rejecting_goal_confirm(&self, goal_id: &str) {

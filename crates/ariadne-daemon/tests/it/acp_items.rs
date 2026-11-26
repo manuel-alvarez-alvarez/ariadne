@@ -16,7 +16,10 @@ use ariadne_core::SessionStatus;
 use ariadne_daemon::timeouts::Timeouts;
 
 use common::acp::{StubAcpAgent, registry_home, script, stub_acp_agent};
-use common::{Harness, RUNS_OUT, TIMEOUT, eventually, expect_sse, get, harness, post, post_json};
+use common::{
+    Harness, RUNS_OUT, TIMEOUT, eventually, eventually_some, expect_sse, get, harness, post,
+    post_json,
+};
 
 /// A session on the stub, idle after its first turn, whose second turn is
 /// `turn`, started from the console.
@@ -690,4 +693,86 @@ async fn a_call_that_opens_already_ended_is_never_abandoned() {
         second_turn_kinds(&events),
         ["user_prompt_submit", "pre_tool_use", "stop"]
     );
+}
+
+/// A call whose opener the store refused is kept for its updates, out of
+/// every snapshot, until one of them is stored: that update carries the call
+/// merged from its opening, the call shows open from then, and its end keeps
+/// the input the opening gave and the raw output the end gave.
+#[tokio::test]
+async fn a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update() {
+    let trigger = tempfile::tempdir().unwrap();
+    let file = trigger.path().join("next");
+    let dir = tempfile::tempdir().unwrap();
+    let mut scripted = second_turn(
+        dir.path(),
+        json!([{"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "Bash",
+                "kind": "execute", "status": "pending", "rawInput": {"command": "ls"}}]),
+        true,
+    );
+    scripted["prompts"][1]["updates_on_trigger"] = json!({
+        "file": file.display().to_string(),
+        "updates": [
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-9", "status": "in_progress"},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-9", "status": "completed",
+             "rawOutput": {"stdout": "README.md\n"}},
+        ],
+    });
+    let stub = stub_acp_agent(dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned("stub:test-model").await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the first turn to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let t = Turned {
+        dir,
+        stub,
+        h,
+        session,
+    };
+    t.h.reject_events_of_kind("pre_tool_use").await;
+    t.begin().await;
+    let reached = t.dir.path().join("release.reached");
+    eventually(TIMEOUT, "the held turn", || async { reached.exists() }).await;
+
+    std::fs::write(&file, "1").unwrap();
+    let progress = eventually_some(TIMEOUT, "the progress to be stored", || async {
+        of_kind(&t.stored().await, "tool_call_update")
+            .first()
+            .map(|e| (*e).clone())
+    })
+    .await;
+    assert_eq!(progress["payload"]["acp"]["status"], "in_progress");
+    assert_eq!(progress["payload"]["acp"]["title"], "Bash");
+    assert_eq!(
+        progress["payload"]["acp"]["rawInput"],
+        json!({"command": "ls"})
+    );
+    let shown = t.snapshot().await;
+    let open = shown
+        .iter()
+        .rfind(|e| e["kind"] == "tool_call_update")
+        .expect("the call shows open once its progress is stored");
+    assert_eq!(open["payload"]["tool_call_id"], "call-9");
+
+    std::fs::write(&file, "1").unwrap();
+    let done = eventually_some(TIMEOUT, "the call's end", || async {
+        of_kind(&t.stored().await, "post_tool_use")
+            .iter()
+            .find(|e| e["payload"]["acp"]["toolCallId"] == "call-9")
+            .map(|e| (*e).clone())
+    })
+    .await;
+    assert_eq!(done["payload"]["tool_input"], json!({"command": "ls"}));
+    assert_eq!(
+        done["payload"]["acp"]["rawOutput"],
+        json!({"stdout": "README.md\n"})
+    );
+    assert_eq!(done["payload"]["acp"]["kind"], "execute");
+    t.release();
+    t.ended().await;
+    assert!(of_kind(&t.stored().await, "tool_call_abandoned").is_empty());
 }

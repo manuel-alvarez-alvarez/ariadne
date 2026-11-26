@@ -540,8 +540,9 @@ struct OpenToolCall {
     /// to store its end. A retry stores it under the same reason.
     abandoning: Option<&'static str>,
     /// Whether an event about the call is stored: its `pre_tool_use`, or a
-    /// `tool_call_update` of a call the agent never opened. Only such a call
-    /// shows in a snapshot, and only such a call is abandoned.
+    /// later `tool_call_update` where the store refused the opener or the
+    /// agent sent none. Only such a call shows in a snapshot, and only such
+    /// a call is abandoned.
     opened: bool,
 }
 
@@ -3033,10 +3034,12 @@ impl RuntimeIncoming {
                         tagged(tool_payload(session_id, &call), subagent),
                     )
                     .await;
-                // Only a call whose opener is stored, and that is still
-                // running, is open: a snapshot shows it and a turn's end
-                // abandons it. A call that opens already ended never is.
-                if !stored || terminal_tool_status(&call) {
+                // A call that opens already ended is never open. One whose
+                // opener the store refused is kept for the updates that
+                // merge into it, and is open — shown in a snapshot, and
+                // abandoned at a turn's end — only once one of them is
+                // stored.
+                if terminal_tool_status(&call) {
                     return Ok(());
                 }
                 let order = turn.next_tool;
@@ -3051,10 +3054,10 @@ impl RuntimeIncoming {
                         // The opening counts as the call's first stored
                         // event: a call that ends within the interval stores
                         // no progress.
-                        stored_at: Some(Instant::now()),
+                        stored_at: stored.then(Instant::now),
                         identity: self.sink.identity(),
                         abandoning: None,
-                        opened: true,
+                        opened: stored,
                     },
                 );
             }
