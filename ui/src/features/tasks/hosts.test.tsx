@@ -13,7 +13,7 @@ import { DetailPanels } from "@/components/detail-panels"
 import { EventStreamProvider } from "@/events/provider"
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
-import { aGoal, aSessionPage, aTask } from "@/test/fixtures"
+import { aGoal, aRepository, aSessionPage, aTask } from "@/test/fixtures"
 import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { forgetHosts, type SeenRequest, stubHosts } from "@/test/hosts"
 import { byContent } from "@/test/text-content"
@@ -247,6 +247,7 @@ it("edits a worker draft using its saved workflow without a goal", async () => {
   const seen = stubHosts({
     box: {
       [`/v1/tasks/${TASK.id}`]: remote,
+      "/v1/repositories": [aRepository({ id: remote.repo_id, path: "/worker/repo" })],
       "/v1/sessions": aSessionPage([]),
       [`/v1/tasks/${TASK.id}/messages`]: [],
     },
@@ -255,6 +256,8 @@ it("edits a worker draft using its saved workflow without a goal", async () => {
   await user.click(await screen.findByRole("button", { name: "Edit task" }))
   expect(await screen.findByRole("dialog", { name: "Edit task" })).toBeTruthy()
   expect(screen.getAllByText("Saved build").length).toBeGreaterThan(0)
+  expect(await screen.findByText("/worker/repo")).toBeTruthy()
+  expect(screen.getByRole("combobox", { name: "Repository" }).hasAttribute("disabled")).toBe(true)
   expect(onBox(seen, "GET", `/v1/goals/${GOAL.id}`)).toHaveLength(0)
 })
 

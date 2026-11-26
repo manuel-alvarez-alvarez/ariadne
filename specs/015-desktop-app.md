@@ -1074,7 +1074,9 @@ Out: the daemon endpoints themselves (012).
     `ui/src/features/tasks/task-action-feedback.test.tsx::reports cancellation response %s`,
     `::reports retry response %s`,
     `::reports a retry request awaiting worker acknowledgment`). Worker
-    drafts use their saved workflow. Remote cancellation waits for the daemon
+    drafts use their saved workflow without reading the goal. Their disabled
+    repository picker shows the assigned repository from the worker catalog.
+    Remote cancellation waits for the daemon
     (`ui/src/features/tasks/hosts.test.tsx::opens the source goal from a worker task through the matching daemon identity`,
     `::edits a worker draft using its saved workflow without a goal`,
     `ui/src/features/sessions/hosts.test.tsx::links a worker session to its source goal without reading a worker goal`,

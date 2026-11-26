@@ -80,7 +80,7 @@ function TaskFormDialog({
   const goalId = goal?.id ?? editing?.goal_id ?? ""
   const detail = useQuery({
     ...goalQueryOptions(host, goalId),
-    enabled: open && !goal,
+    enabled: open && !goal && !editing?.execution_context,
   })
   const actualGoal = goal ?? detail.data
   const steps = editing?.execution_context?.workflow.steps ?? actualGoal?.steps ?? []
@@ -107,6 +107,7 @@ function TaskFormDialog({
     () => (skills.data ?? []).filter((skill) => skill.seat === "task").map((skill) => skill.name),
     [skills.data],
   )
+  const soleRepository = actualGoal?.repos.length === 1 ? actualGoal.repos[0] : undefined
   const taskItems = (tasks.data ?? [])
     .filter((task) => task.id !== editing?.id)
     .map((task) => ({ label: task.title, value: task.id }))
@@ -184,8 +185,8 @@ function TaskFormDialog({
                       ? [editing.repo_id]
                       : field.value
                         ? [field.value]
-                        : actualGoal?.repos.length === 1
-                          ? [actualGoal.repos[0]!.id]
+                        : soleRepository
+                          ? [soleRepository.id]
                           : []
                   }
                   onChange={(ids) => field.onChange(ids[0] ?? "")}
