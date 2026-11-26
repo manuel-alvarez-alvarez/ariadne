@@ -327,6 +327,16 @@ impl Sink for Posts {
             .map_err(|error| error.body.error.message)
     }
 
+    async fn answer(
+        &mut self,
+        question_id: &str,
+        answer: ariadne_api::sessions::AnswerQuestionRequest,
+    ) -> Result<(), String> {
+        super::questions::take_answer(&self.state, &self.id, question_id, &answer)
+            .await
+            .map_err(|error| error.body.error.message)
+    }
+
     async fn cancel(&mut self) {
         // A turn that ended between the key and the cancel has nothing to
         // cancel, and says so with a conflict: not a failure of the console.
@@ -364,25 +374,12 @@ fn frames(state: AppState, id: String) -> impl Stream<Item = Result<Frame>> {
         let id = id.clone();
         async move {
             match link {
-                Link::Fresh => {
-                    let opened = match open_console(&state, id.clone()).await {
-                        Ok((snapshot, merge)) => super::agent_requests::with_pending_questions(
-                            &state.store,
-                            &state.launcher.acp,
-                            &id,
-                            snapshot,
-                        )
-                        .await
-                        .map(|snapshot| (snapshot, merge)),
-                        Err(error) => Err(error),
-                    };
-                    match opened {
-                        Ok((snapshot, merge)) => {
-                            Some((Ok(Frame::Snapshot(snapshot)), Link::Open(merge)))
-                        }
-                        Err(error) => Some((Err(error.into()), Link::Ended)),
+                Link::Fresh => match open_console(&state, id.clone()).await {
+                    Ok((snapshot, merge)) => {
+                        Some((Ok(Frame::Snapshot(snapshot)), Link::Open(merge)))
                     }
-                }
+                    Err(error) => Some((Err(error.into()), Link::Ended)),
+                },
                 Link::Open(mut merge) => match merge.next().await {
                     Some(Ok(dto)) => Some((Ok(Frame::Event(dto)), Link::Open(merge))),
                     Some(Err(_)) => Some((Ok(Frame::Dropped), Link::Fresh)),

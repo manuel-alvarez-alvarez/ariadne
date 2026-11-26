@@ -23,7 +23,8 @@ pub(super) async fn current_agent(state: &AppState, ctx: &CallCtx, task: &Task) 
         .store
         .get_task_agent(session.task_agent_id.as_deref().ok_or_else(refused)?)
         .await?;
-    if task.step.as_deref() != Some(agent.step.as_str()) || agent.task_id != task.id {
+    // A task with no workflow has no column, and its one agent has no step.
+    if task.step.as_deref().unwrap_or_default() != agent.step || agent.task_id != task.id {
         return Err(refused());
     }
     Ok(())
@@ -53,6 +54,21 @@ pub(super) async fn complete(
         return Err(invalid_merge_commit(sha));
     }
     let steps = state.store.task_steps(&task).await?;
+    // With no workflow there is no column and no gate: the call ends the task.
+    if steps.is_empty() {
+        let task = state
+            .store
+            .end_step(
+                &id,
+                None,
+                TaskStatus::Finished,
+                &req.reason,
+                req.merge_commit.as_deref(),
+            )
+            .await?;
+        state.notify_scheduler(&id);
+        return Ok(Json(task_dto_of(&state.store, task).await?));
+    }
     let at = steps
         .iter()
         .position(|s| Some(&s.id) == task.step.as_ref())
@@ -174,7 +190,7 @@ pub(super) async fn complete(
             .store
             .end_step(
                 &id,
-                &steps[at].id,
+                Some(&steps[at].id),
                 TaskStatus::Finished,
                 &req.reason,
                 verified_merge_commit
@@ -202,6 +218,14 @@ pub(super) async fn fail(
     current_agent(&state, &ctx, &task).await?;
     working(&task, &req.reason)?;
     let steps = state.store.task_steps(&task).await?;
+    if steps.is_empty() {
+        let task = state
+            .store
+            .end_step(&id, None, TaskStatus::Failed, &req.reason, None)
+            .await?;
+        state.notify_scheduler(&id);
+        return Ok(Json(task_dto_of(&state.store, task).await?));
+    }
     let at = steps
         .iter()
         .position(|s| Some(&s.id) == task.step.as_ref())
@@ -209,7 +233,13 @@ pub(super) async fn fail(
     let task = if at == 0 {
         state
             .store
-            .end_step(&id, &steps[at].id, TaskStatus::Failed, &req.reason, None)
+            .end_step(
+                &id,
+                Some(&steps[at].id),
+                TaskStatus::Failed,
+                &req.reason,
+                None,
+            )
             .await?
     } else {
         state

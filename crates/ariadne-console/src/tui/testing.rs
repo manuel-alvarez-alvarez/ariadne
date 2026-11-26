@@ -106,6 +106,8 @@ pub(super) struct Stub {
     cancels: usize,
     /// The subagent id of every `cancel_subagent` post, in order.
     subagent_cancels: Vec<String>,
+    /// Every answer to a question, in order.
+    pub(super) answers: Vec<(String, ariadne_api::sessions::AnswerQuestionRequest)>,
     /// A session that will take no more input, which is the `409` a
     /// finished one gives.
     refuses: bool,
@@ -119,6 +121,7 @@ impl Stub {
             deltas: Vec::new(),
             on_input: Vec::new(),
             on_cancel: Vec::new(),
+            answers: Vec::new(),
             after: Vec::new(),
             outbox,
             inbox: Some(inbox),
@@ -189,6 +192,15 @@ impl Sink for Stub {
             true => Err("409 Conflict: the session takes no more input".into()),
             false => Ok(()),
         }
+    }
+
+    async fn answer(
+        &mut self,
+        question_id: &str,
+        answer: ariadne_api::sessions::AnswerQuestionRequest,
+    ) -> Result<(), String> {
+        self.answers.push((question_id.to_string(), answer));
+        Ok(())
     }
 
     async fn cancel(&mut self) {

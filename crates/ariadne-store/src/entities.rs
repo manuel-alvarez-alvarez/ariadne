@@ -5,8 +5,7 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    Actor, AttentionReason, ForgeKind, GoalStatus, MessageKind, PermissionMode, Seat,
-    SessionStatus, TaskStatus,
+    AttentionReason, ForgeKind, GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus,
 };
 
 use crate::defaults::{
@@ -473,7 +472,7 @@ pub struct Task {
     /// first column and once it has ended.
     pub step: Option<String>,
     pub id: String,
-    pub goal_id: String,
+    pub goal_id: Option<String>,
     pub repo_id: String,
     pub title: String,
     pub description: String,
@@ -619,57 +618,6 @@ impl AgentSession {
     /// this launch, and from one still starting that it is over.
     pub fn died_on_arrival(&self) -> bool {
         self.launched_at.is_some() && !self.status().is_live() && !self.heard_from()
-    }
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct Message {
-    pub id: String,
-    pub goal_id: String,
-    /// The task it is about, or None for a message about the goal itself.
-    pub task_id: Option<String>,
-    /// [`MessageKind`], as the wire spells it. Read through [`Message::kind`].
-    pub kind: String,
-    pub from_actor: String,
-    /// The staffed agent that sent it, or None for the orchestrator, the
-    /// daemon and the user.
-    pub from_agent_id: Option<String>,
-    /// The session it was sent from. None for a message the daemon wrote, and
-    /// for one whose session has since been deleted.
-    pub from_session: Option<String>,
-    pub to_actor: String,
-    /// The staffed agent it is for, or None for the orchestrator.
-    pub to_agent_id: Option<String>,
-    pub body: String,
-    /// When it was handed to the recipient's agent, or None while it is still
-    /// waiting for one to take it.
-    pub delivered_at: Option<String>,
-    pub created_at: String,
-}
-
-impl Message {
-    /// What this message is, or None for a row written by a build that knows
-    /// a kind this one does not. Such a row is carried and shown — the one
-    /// place a spelling this build does not know must not panic, since a
-    /// message is what an agent typed about.
-    pub fn kind(&self) -> Option<MessageKind> {
-        MessageKind::from_str(&self.kind).ok()
-    }
-
-    /// Who sent it, or None for a row spelling an actor this build does not
-    /// know.
-    pub fn from_actor(&self) -> Option<Actor> {
-        Actor::from_str(&self.from_actor).ok()
-    }
-
-    /// Who it is for.
-    pub fn to_actor(&self) -> Option<Actor> {
-        Actor::from_str(&self.to_actor).ok()
-    }
-
-    /// Whether it is still waiting for the recipient's agent.
-    pub fn is_delivered(&self) -> bool {
-        self.delivered_at.is_some()
     }
 }
 

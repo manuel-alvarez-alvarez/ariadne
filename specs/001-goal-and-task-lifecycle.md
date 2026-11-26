@@ -1,11 +1,15 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-11-24
+updated: 2026-11-26
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
+  - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
+  - crates/ariadne-store/tests/standalone_migration.rs
+  - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-store/tests/remote_task_migration.rs
+  - crates/ariadne-store/tests/message_migration.rs
   - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-core/src/state_machine.rs
   - crates/ariadne-store/tests/store.rs
@@ -157,8 +161,40 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
 23. New remote tasks use source references under 037 rules 102 through 110.
     Workers record dependency failure and recovery through the source-controlled protocol in 012.
     Existing mirrors keep rules 19 through 21.
+24. A database of the release before migration 0025 upgrades in place. It
+    loses its `messages` table (018) and no other row. The deletion of a
+    goal, of a local task and of a source task works as before.
+
+25. The user can create work with `POST /v1/tasks` without a goal.
+    The request requires a registered `repo_id`, a title, a known workflow or none (rule 26), and complete staffing.
+    It accepts no `depends_on` field. An absent host or `local` runs here. A ready far host follows 037 rule 111.
+    Local work starts `ready`, without planning or an orchestrator.
+    Its nullable `goal_id` stays null in storage, sessions, task responses, and events.
+    `GET /v1/tasks?no_goal=true` lists only these tasks.
+    Cancel, retry, and completion cleanup use the existing task rules.
+    Migration 0026 preserves existing task records and accepts null goal references.
+26. The `workflow` of that request is optional, and a null one counts as absent.
+    With no workflow, `agents` holds exactly one agent with no `step`, and any other staffing is refused with a reason.
+    The task has no column: `TaskDto.workflow` is null, `TaskDto.steps` is empty and `TaskDto.step` stays null.
+    When it starts, the scheduler launches its one agent. No gate applies.
+    The agent's `complete_step` ends the task `finished`, and its `fail_step` ends it `failed`.
+    A finished task gets the cleanup of a goal task, and a failed task keeps its worktree and branch.
+    Retry and cancel work on it.
+    What the agent loads and is told is in 006 rule 20. A task of a goal still requires a workflow (030 rule 13).
 
 ## Acceptance criteria
+
+- Rule 25: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
+  Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
+  No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
+
+- Rule 25: `standalone_tasks::a_user_creates_a_ready_task_without_a_goal`, `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`.
+  `crates/ariadne-store/tests/standalone_migration.rs::an_upgrade_preserves_goal_tasks_and_accepts_a_null_goal` proves the migration.
+
+- Rule 26: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_failed_task_with_no_workflow_runs_again_after_a_retry`, `standalone_tasks::a_running_task_with_no_workflow_takes_a_cancel`, `standalone_tasks::a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step`, `standalone_tasks::openapi_describes_goal_less_creation_and_task_columns`.
+
+- Rule 24: `crates/ariadne-store/tests/message_migration.rs::an_upgrade_drops_the_messages_and_keeps_every_other_row`
+  and `::a_goal_and_a_task_still_delete_after_the_upgrade`.
 
 - Rule 23: `far_tasks::source_references::dependency_failure_and_retry_preserve_one_authoritative_worker_draft`
   and `::source_cancellation_waits_for_worker_acknowledgment_after_reconnection`.

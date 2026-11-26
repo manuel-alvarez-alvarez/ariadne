@@ -31,9 +31,9 @@ Use `research` when the user asks a question and wants no plan.
    - One direct question, at the end. Word it so a "yes" accepts the
      recommendation.
 
-   Put the title, context and question in the text. Put each option, with
-   its consequence, in `options`. Put the pick in `recommended_option_id`,
-   and the reason in `recommendation_reason`.
+   Put the title, the context and the direct question in the question text. Give each option
+   its consequence. Put the recommended option first. End its label with
+   "(Recommended)", and give the reason in its description.
 
    Ask nothing a column settles, such as review or landing.
 
@@ -83,7 +83,7 @@ Use `research` when the user asks a question and wants no plan.
 
    Done when the plan is finalized.
 9. Stay up until the goal ends. Answer the user, and answer agents with
-   `send_message`.
+   `post_to_session`. A post can be refused. The refusal gives the reason.
 
    Done when every task has ended.
 10. When a task fails, retry it, rewrite it with `update_task`, or cancel
@@ -97,8 +97,6 @@ Use `research` when the user asks a question and wants no plan.
 
 ## Rules
 
-- When a turn starts and your question has no answer, handle the turn's
-  cause. Then ask the same question again with `wait_for_user`.
 - A task that is a conversation with the user holds one open question in
   the console. Chain such tasks with `depends_on`, so the user holds one
   at a time.

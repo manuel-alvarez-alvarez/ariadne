@@ -8,7 +8,7 @@
 use tracing::{info, warn};
 
 use ariadne_core::{Actor, AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus};
-use ariadne_store::{AgentSession, MessageFilter, Store};
+use ariadne_store::{AgentSession, Store};
 
 use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_BUDGET};
 
@@ -86,38 +86,16 @@ impl super::Scheduler {
         ) {
             return Ok(());
         }
-        let Some(mut since) = self.last_heard_from(session) else {
+        // An agent waiting on its own question (021) is blocked on a person
+        // too, inside its turn or not.
+        if self.launcher.acp.question_open(&session.id) {
+            return Ok(());
+        }
+        let Some(since) = self.last_heard_from(session) else {
             return Ok(());
         };
-        if (chrono::Utc::now() - since).num_seconds() < QUIET_NUDGE_SECS {
-            return Ok(());
-        }
-        // An agent that asked the orchestrator something and ended its turn
-        // waits on that answer. The silence is not its own until its
-        // question has reached the orchestrator, and from then the clock
-        // counts from the delivery: an orchestrator that was down for hours
-        // does not make the agent that asked it wedged.
-        match self.question_to_orchestrator(session).await? {
-            Some(None) if self.between_turns(session).await => return Ok(()),
-            Some(Some(delivered)) => since = since.max(delivered),
-            _ => {}
-        }
         let quiet_secs = (chrono::Utc::now() - since).num_seconds();
         if quiet_secs < QUIET_NUDGE_SECS {
-            return Ok(());
-        }
-        // An agent that asked the user a question and ended its turn is
-        // waiting on the answer, as a planning orchestrator is: the question
-        // is a pending request row, not an attention reason, so the row is
-        // what is read. A turn that never ends is still watched, question or
-        // not.
-        if self.between_turns(session).await
-            && !self
-                .store
-                .pending_session_agent_requests(&session.id)
-                .await?
-                .is_empty()
-        {
             return Ok(());
         }
         let done = self.quiet.entry(session.id.clone()).or_default();
@@ -175,37 +153,6 @@ impl super::Scheduler {
     async fn between_turns(&self, session: &AgentSession) -> bool {
         session.status() != SessionStatus::Running
             || self.launcher.acp.in_turn(&session.id).await == Some(false)
-    }
-
-    /// The latest message this session sent the orchestrator, if any: `None`
-    /// inside while it still waits for the orchestrator to take it, and when
-    /// it was delivered once it has.
-    async fn question_to_orchestrator(
-        &self,
-        session: &AgentSession,
-    ) -> anyhow::Result<Option<Option<chrono::DateTime<chrono::Utc>>>> {
-        let Some(goal_id) = session.goal_id.clone() else {
-            return Ok(None);
-        };
-        let latest = self
-            .store
-            .list_messages(MessageFilter {
-                goal_id: Some(goal_id),
-                task_id: session.task_id.clone(),
-                to_actor: Some(Actor::Orchestrator),
-                ..Default::default()
-            })
-            .await?
-            .into_iter()
-            .filter(|message| message.from_session.as_deref() == Some(session.id.as_str()))
-            .max_by(|a, b| a.created_at.cmp(&b.created_at));
-        Ok(latest.map(|message| {
-            message
-                .delivered_at
-                .as_deref()
-                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-                .map(|at| at.with_timezone(&chrono::Utc))
-        }))
     }
 
     /// The one clock: when this session was last heard from at all.

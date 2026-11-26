@@ -173,7 +173,7 @@ src/
     command-palette/ ⌘K: search over every entity, plus the actions
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
-    tasks/         the task panel: facts, steps, diff, messages, sessions, history
+    tasks/         the task panel: facts, steps, diff, sessions, history
     dashboard/     the Dashboards screen's data layer: the dashboard picker's list,
                    and the reset mutation — the iframe itself is `ui/dashboard/`
                    (see "The dashboard package")
@@ -294,9 +294,9 @@ the host first; below, the host is left out of each key for brevity:
 ```
 ["goals",        "list", filters]   ["goals",    "detail", id]
 ["tasks",        "list", filters]   ["tasks",    "detail", id]
-["tasks",        "detail", id, "messages" | "transitions" | "diff"]
+["tasks",        "detail", id, "transitions" | "diff"]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
-["sessions",     "detail", id, "agent-requests"]
+["sessions",     "detail", id, "questions"]
 ["hosts",        "list", {}]         (always under "local")
 ["skills",       "list", filters]   ["skills",   "detail", name]
 ["workflows",    "list", {}]        ["workflows", "detail", name]
@@ -338,8 +338,8 @@ filtered, with nothing the app opens on one id alone.
 The pull-requests list is a key the daemon pages: the cursor stays out of the
 key, because the pages of one filter are the pages of one infinite query.
 
-Sub-resources hang off their detail key: `["tasks", "detail", id, "messages"]`,
-`… "transitions"`, `… "diff"`. Two consequences the event dispatcher
+Sub-resources hang off their detail key: `["tasks", "detail", id, "transitions"]`,
+`… "diff"`. Two consequences the event dispatcher
 depends on: invalidating `qk.tasks.lists()` refetches every task list without
 disturbing an open detail view, and invalidating a detail key also invalidates
 that entity's sub-resources.
@@ -415,7 +415,7 @@ event's row into each cached list it belongs in, newest activity first.
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `attention.lists`; a transition on the event also invalidates `tasks.transitions` and `tasks.diff` — a transition can be the task landing, and the diff answers for the merge commit once there is one |
 | `task_branch_updated` | invalidate `tasks.diff` for the task — a commit in the author's worktree, with nothing about the task row itself changed |
-| `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
+| `message_sent` | nothing: no view reads a message |
 | `session_created` | patch `sessions.detail`, patch the row into every cached `sessions.lists` entry it belongs in (refetch one whose read is under way); a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `session_updated` | patch `sessions.detail` and the cached `sessions.lists` the same way, invalidate `attention.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
@@ -502,12 +502,11 @@ stream (008). It lives in `src/features/sessions/console/`:
   the view bar, the stream and history lines and a failed send. A prompt and a permission pick both post `{"text"}` to
   `POST /v1/sessions/{id}/console/input`. A cancel posts
   `POST /v1/sessions/{id}/console/cancel` with no body. A failed post is kept
-  in the transcript with Retry and Edit. `questions.tsx` draws a `wait_for_user` question as a card,
-  and posts its answer to the request's own
-  `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`, never to the
-  input route; a failed answer shows on the card. With every snapshot it
-  reads `GET /v1/sessions/{id}/agent-requests` and restores a card for a
-  pending question older than the snapshot's page. A session with subagents
+  in the transcript with Retry and Edit. `form-card.tsx` draws a question the agent asks with its own tool
+  (an ACP form elicitation) as a card; `form-questions.ts` reads its schema, folds the
+  `question` and `question.resolved` events with `GET /v1/sessions/{id}/questions`,
+  and posts to `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+  A session with subagents
   shows a bar of views, as the CLI
   attach pane does (008 rules 30 to 36). the arrow keys switch the view
   inside the bar, which is one Tab stop, and a child's view is read-only. Escape there goes back to `main`, or

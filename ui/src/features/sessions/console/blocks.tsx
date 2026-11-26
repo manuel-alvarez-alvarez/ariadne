@@ -64,7 +64,7 @@ function duration(from: string | undefined, to: string | undefined): string | un
  * where it does not fit, and shows that full text on hover; `startRef` hands
  * the cut element out, for a caller that measures it.
  */
-export function SummaryLine({
+function SummaryLine({
   start,
   end,
   title,
@@ -183,8 +183,8 @@ export const BlockView = memo(function BlockView({
     raw: FileTextIcon,
     prompt: TerminalIcon,
   } as const
-  const Icon = block.type === "tool" || block.type === "question" ? null : icons[block.type]
-  const decorated = !["question", "prompt", "message", "tool"].includes(block.type)
+  const Icon = block.type === "tool" ? null : icons[block.type]
+  const decorated = !["prompt", "message", "tool"].includes(block.type)
   const labels: Record<string, string> = {
     note: "Info",
     child: "Subagent",
@@ -346,8 +346,6 @@ function BlockBody({
         </Foldable>
       )
     }
-    case "question":
-      return picker
     case "note":
       return <span className="font-mono text-xs text-muted-foreground">{block.text}</span>
     case "child":

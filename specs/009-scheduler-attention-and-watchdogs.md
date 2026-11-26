@@ -1,14 +1,13 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-11-21
+updated: 2026-11-25
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
   - crates/ariadne-daemon/src/scheduler/coalesce.rs
-  - crates/ariadne-daemon/tests/it/agent_messages.rs
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
@@ -32,7 +31,7 @@ scheduler hands an agent a prompt, the quiet watchdog and its timeline,
 attention reasons, the sweeps over every session, and what a launch that
 dies on arrival costs.
 
-Out: what a resumed agent is told (006), how a message is carried (018), and
+Out: what a resumed agent is told (006), how a post is carried (039), and
 the ACP runtime that takes a prompt (021).
 
 ## Behavior
@@ -62,24 +61,22 @@ the ACP runtime that takes a prompt (021).
    briefed on entry to the column and resumed where it went away, and the
    cleanup its ending owes (001, 030). The agents of the other columns are
    left idle until their column is current: nothing is wanted of them, so
-   nothing is sent to them and no clock watches them.
-6. Everything the scheduler says to an agent — a nudge, a step briefing, an
-   agent message — is handed to the session's ACP agent as a
+   nothing is sent to them and no clock watches them. Every agent of a task
+   stays up until the task is over. The agent of a column the task has left
+   sits idle and is not killed, since the current column's agent may still
+   post to it (039).
+6. Everything the scheduler says to an agent — a nudge, a step briefing, a
+   goal's attention — is handed to the session's ACP agent as a
    `session/prompt` (021). The runtime sends it at once to an agent between
-   turns and queues it behind a running turn. An agent message is handed
-   with its id, and the scheduler stamps nothing: the stamp is the driver's,
-   when the prompt goes out (018). A step entry is handed the same way: the
+   turns and queues it behind a running turn. A step entry is handed the same way: the
    transition that moved the task owns its delivery mark, and the runtime
    claims it right before the prompt is written (030). The nudge's wording
    is the `AgentResume` template's alone (006 rule 10): a turn a nudge buys
    for narration is a turn the task did not need.
 7. A pass never waits on a delivery: the runtime queues each prompt, so a
    pass with several agents to nudge hands them all their prompt at once.
-   A message still unstamped is handed again on every pass, and the runtime
-   queues it once.
 8. A prompt the runtime refuses, because no agent runs for the session, gives
-   the nudge it was spent on back, so the next pass sends it again. A
-   message it refuses stays unstamped, and the next pass hands it again.
+   the nudge it was spent on back, so the next pass sends it again.
 9. One clock governs a quiet agent: how long since the session was heard
    from at all. On that clock sit a nudge at 180 s, the user at 600 s, and at
    1800 s the agent killed and put back on its feet (`QUIET_NUDGE_SECS`,
@@ -234,8 +231,7 @@ the ACP runtime that takes a prompt (021).
     briefs it on its request again. So is the idle agent of a `pr` column
     whose request is open, which keeps that request until a human merges it
     (030). The news of a request is handed as any other prompt is (rules 4
-    and 6): once, and queued behind a running turn. Its messages are agent
-    messages (018).
+    and 6): once, and queued behind a running turn.
 42. An agent that ends by itself wakes the scheduler once more, after the
     runtime has let it go. The wake names its launch, so an old event cannot
     retire a session a new launch already resumed. The wakes its last events send can each be
@@ -244,21 +240,17 @@ the ACP runtime that takes a prompt (021).
     window (rule 32), so its session is retired and the seat is filled, or the
     death counted, without a tick or a window end. An agent that a kill or a
     relaunch took down sends no such wake: the daemon did that itself.
-43. An agent between turns with a pending `wait_for_user` request (031 rule
-    11) is waiting on the user's answer, as an idle planning orchestrator is
-    (rule 31). It is never nudged, never flagged stalled and never
-    relaunched. The watchdog reads the request row, since the question sets
-    no attention reason. Between turns is the test of rule 11: the row reads
-    idle, or the runtime says no turn is in flight. A turn that never ends
-    with a question pending is still flagged and relaunched. Once the
-    request is answered, withdrawn or expired, the quiet clock applies again.
-44. An agent between turns whose latest message to the orchestrator (018)
-    has not reached it waits on the orchestrator, as rule 43's agent waits
-    on the user. It is never nudged, never flagged stalled and never
-    relaunched: an orchestrator down for hours on a usage limit does not
-    make the agents that asked it wedged. Once the message is delivered,
-    the quiet clock counts from the delivery where that is later than the
-    agent's own last report.
+43. No pending `wait_for_user` request shelters an agent from the quiet
+    clock: Ariadne holds none (031 rule 12). Rule 45 answers for an agent
+    that waits on its own open question.
+44. No message to the orchestrator shelters an agent from the quiet clock:
+    Ariadne stores none (039). An agent that waits for an answer is
+    measured by the quiet clock alone.
+45. An agent that waits on its own open question (021 rule 21) waits on a
+    person, inside its turn or not. It is never nudged, never flagged
+    stalled and never relaunched. The watchdog asks the runtime, since the
+    question sets no attention reason. Once the question closes, the quiet
+    clock applies again.
 
 ## Acceptance criteria
 
@@ -285,7 +277,8 @@ the ACP runtime that takes a prompt (021).
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries`).
 - An idle column agent past the threshold is raised on its session and its
   task (`scheduler_attention.rs::a_step_agent_stall_flags_the_task_and_its_session`).
-- Only the current column is nudged, and an idle column raises no attention
+- Only the current column is nudged, an idle column raises no attention,
+  and the agent of a column the task has left stays up until the task ends
   (`workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
 - An idle orchestrator in planning is waiting on the user, not silent, so it
   is never nudged or flagged stalled, however long it sits idle
@@ -311,20 +304,11 @@ the ACP runtime that takes a prompt (021).
   of that task resumes the same session with its relaunches back, so its
   next silence is relaunched, not failed
   (`::a_retried_task_gets_its_relaunches_back`).
-- An idle agent with a pending question is not nudged, flagged or
-  relaunched past the relaunch threshold, and once the question is
-  withdrawn the same silence is relaunched
-  (`::an_idle_agent_with_a_pending_question_is_left_alone_until_it_closes`).
-  An agent stuck inside a turn with a pending question is still relaunched
-  (`::an_agent_stuck_in_a_turn_with_a_pending_question_is_still_relaunched`).
-- An idle agent whose question has not reached the orchestrator is not
-  nudged, flagged or relaunched, and one whose question was delivered a
-  minute ago is measured from the delivery
-  (`::an_idle_agent_whose_question_has_not_reached_the_orchestrator_is_left_alone`).
-  One silent long after the delivery is relaunched
-  (`::an_agent_silent_long_after_its_question_was_delivered_is_relaunched`).
 - An orchestrator of a finished goal raises no attention
   (`events.rs::an_orchestrator_of_a_finished_goal_raises_no_attention`).
+- An agent that waits on its own question is not nudged, flagged or
+  relaunched, however long it is silent
+  (`scheduler_attention.rs::an_agent_waiting_on_its_question_is_left_alone`).
 - A session waiting on a person is never nudged or relaunched
   (`scheduler_attention.rs::a_session_waiting_on_a_person_is_never_nudged`,
   `::a_running_agent_waiting_on_a_person_is_never_relaunched`), and an agent
@@ -449,5 +433,5 @@ the ACP runtime that takes a prompt (021).
 ## Sources
 
 `crates/ariadne-daemon/src/scheduler/` (`mod`, `goals`, `tasks`, `sweeps`,
-`quiet`, `messages`, `pull_requests`), `crates/ariadne-daemon/src/attention.rs`,
+`quiet`, `pull_requests`), `crates/ariadne-daemon/src/attention.rs`,
 `crates/ariadne-daemon/src/http/events.rs`.

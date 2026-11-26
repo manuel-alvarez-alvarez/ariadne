@@ -136,14 +136,14 @@ const EXAMPLES: Example[] = [
     { query: "tokio select cancellation safety" },
     ["Yes", "Yes, and don't ask again for WebSearch commands", "No"],
   ),
-  example("Read the task messages", "mcp__ariadne__read_messages", "other", {}, [
+  example("Read the task", "mcp__ariadne__get_task", "other", {}, [
     "Yes",
-    "Yes, and don't ask again for Read Messages commands",
+    "Yes, and don't ask again for Get Task commands",
     "No",
   ]),
-  example("Finish the task", "mcp__ariadne__finish_task", "other", {}, [
+  example("Complete the step", "mcp__ariadne__complete_step", "other", {}, [
     "Yes",
-    "Yes, and don't ask again for Finish Task commands",
+    "Yes, and don't ask again for Complete Step commands",
     "No",
   ]),
   example(

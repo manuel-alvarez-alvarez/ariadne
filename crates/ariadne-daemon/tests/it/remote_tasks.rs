@@ -91,19 +91,6 @@ async fn authorization_starts_one_saved_workflow_without_a_source_connection() {
     let observed: Value = h.get(&format!("/v1/sessions/{session}")).await;
     assert_eq!(observed["task_id"], TASK);
     assert_eq!(observed["goal_id"], GOAL);
-    h.json::<Value>(as_session(&format!("/v1/tasks/{TASK}/messages"), session,
-        json!({"to_actor":"orchestrator", "body":"Source is unavailable; retain this question."})), StatusCode::CREATED).await;
-    h.flush_scheduler().await;
-    let messages: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/messages")).await;
-    assert_eq!(messages.len(), 1);
-    assert!(messages[0]["delivered_at"].is_null());
-    for _ in 0..2 {
-        h.json::<Value>(post_json(&format!("/v1/tasks/{TASK}/relay-message"), json!({
-            "id":"source-message", "origin_task_id":TASK, "column":"develop", "body":"The source reconnected."
-        })), StatusCode::OK).await;
-    }
-    let reconnected: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/messages")).await;
-    assert_eq!(reconnected.len(), 2);
     h.store
         .upsert_session_usage(
             session,
@@ -199,7 +186,7 @@ async fn simultaneous_creation_and_authorization_keep_one_task_and_one_start() {
     assert_eq!(second.0, StatusCode::OK);
     let history: Vec<Value> = h.get(&format!("/v1/tasks/{TASK}/transitions")).await;
     assert_eq!(history.len(), 1);
-    assert_eq!(h.store.remote_tasks().await.unwrap().len(), 1);
+    assert_eq!(h.store.tasks_without_local_goals().await.unwrap().len(), 1);
     let mut conflicting = draft(&repo.id);
     conflicting["title"] = json!("Another task");
     h.json::<Value>(put_json(&path, conflicting), StatusCode::CONFLICT)
@@ -254,10 +241,24 @@ async fn an_incomplete_draft_can_be_staffed_and_authorized_after_restart() {
 
 #[tokio::test]
 async fn saved_columns_keep_their_gates_and_a_failed_task_can_retry() {
+    saved_columns(false).await;
+}
+
+#[tokio::test]
+async fn goal_less_remote_columns_keep_their_gates_and_can_retry() {
+    saved_columns(true).await;
+}
+
+async fn saved_columns(goal_less: bool) {
     let h = harness().scheduler().await;
     let repo = h.repository(&h.git_repo("repo")).await;
     with_forge_enabled(&h, &repo, false).await;
     let mut body = draft(&repo.id);
+    if goal_less {
+        body["source_goal"] = Value::Null;
+        body["source_daemon_id"] = json!("source-daemon");
+    }
+
     body["workflow"]["steps"][0]["gate"] = json!("committed");
     body["workflow"]["steps"].as_array_mut().unwrap().push(json!({
         "id":"inspect", "title":"Inspect", "description":"Inspect the saved change", "skills":["code-review"], "ranks":[], "gate":null}));
@@ -611,4 +612,50 @@ async fn a_dependency_retry_remains_blocked_without_new_source_authorization() {
     assert_eq!(task["execution_context"]["authorized"], false);
     assert!(task["worktree_path"].is_null());
     assert!(task["agents"][0]["session_id"].is_null());
+}
+
+#[tokio::test]
+async fn a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call() {
+    for operation in ["complete", "fail"] {
+        let h = harness().scheduler().await;
+        let repo = h.repository(&h.git_repo("repo")).await;
+        with_forge_enabled(&h, &repo, false).await;
+        let body = json!({"repo_id":repo.id,"title":"Independent work", "source_goal":null,
+            "source_daemon_id":"source-daemon", "workflow":{"name":"","steps":[]},
+            "agents":[{"model":test_pin().model}]});
+        let path = format!("/v1/remote-tasks/{TASK}");
+        let draft: Value = h.json(put_json(&path, body), StatusCode::CREATED).await;
+        assert!(draft["goal_id"].is_null());
+        assert!(draft["execution_context"]["source_goal"].is_null());
+        assert!(draft["workflow"].is_null());
+        h.json::<Value>(
+            post_json(&format!("{path}/authorize"), json!({"revision":1})),
+            StatusCode::OK,
+        )
+        .await;
+        let session = eventually_some(TIMEOUT, "independent worker session", async || {
+            let t: Value = h.get(&format!("/v1/tasks/{TASK}")).await;
+            t["agents"][0]["session_id"].as_str().map(str::to_owned)
+        })
+        .await;
+        let ended: Value = h
+            .json(
+                as_session(
+                    &format!("/v1/tasks/{TASK}/step/{operation}"),
+                    &session,
+                    json!({"reason":"Work ended"}),
+                ),
+                StatusCode::OK,
+            )
+            .await;
+        assert_eq!(
+            ended["status"],
+            if operation == "complete" {
+                "finished"
+            } else {
+                "failed"
+            }
+        );
+        assert!(ended["step"].is_null());
+    }
 }

@@ -134,7 +134,9 @@ what the row says. The count starts again with each turn and is not
 shown between turns; attaching in the middle of a turn counts from its prompt.
 
 The footer shows the keys you can press now on the left — to send, to answer
-a permission question (`up/down or 1-9 choose · enter answer`), or to confirm that
+a permission question (`up/down or 1-9 choose · enter answer`), to answer an
+agent's question field by field (`up/down or 1-9 choose · space check · enter
+next · esc decline`), or to confirm that
 you want to leave after one Ctrl-C — and on the right the tokens the session
 has spent, read (`↑`) and written (`↓`), such as `↑ 12.4k ↓ 3.1k`. The counts
 are the whole session's, every launch of it included, and they move each time
@@ -396,29 +398,26 @@ permission request, the console shows the call it asks about — its head line,
 the rest of the command or the diff under it — and then its choices; pick one
 with the arrow keys or its number key. The rest of the command draws in your
 terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
-When an agent asks you a question, it calls `wait_for_user` with a one-line
-hint and the question: its text, the options you can pick, the option it
-recommends, and why. The hint is what the Needs attention list shows. The
-console draws the question under `waiting for you · <hint>`, with each option
-by its number and `(recommended)` and the reason beside the agent's pick:
+When an agent asks you a question, it uses the question tool of its own
+client: the question, the options you can pick, the option it recommends
+first, and why. The console draws the question as a form above the input,
+one field at a time, under a `question` rule:
 
 ```
-● waiting for you · Pick a base branch
-  Which base branch should the task land on?
-    1. Main — Land on the trunk. (recommended) · The trunk is green.
+─ question ─────────────────────────────────────
+Pick a base branch
+❯ 1/1 Which base branch should the task land on? · pick one
+  ❯ 1. Main (Recommended) — Land on the trunk. The trunk is green.
     2. Next
-  Type a number, or your own answer.
+────────────────────────────────────────────────
 ```
 
-Type a number, an option's id or its label to pick that option; the agent
-reads the option and what it means. Anything else you type is your own
-answer. Your input answers the newest open question alone, and that
-question then shows how it closed: `answered · <answer>`, `question
-withdrawn` or `question expired`. While a permission request is open, your
-input answers the permission and leaves the question open. The daemon
-refuses a hint over 100 characters or over more than one line. A later turn
-keeps a question only when it calls `wait_for_user` again with its hint.
-Otherwise, the turn ending ends the wait.
+Pick a choice with the arrows or its number key, check several with Space,
+and press Enter to take a field. On a text field, type the answer in the
+box. The last Enter sends the answer, and Esc declines the question. Text you
+type on a choice field is a prompt: it waits for the turn to end and leaves
+the question open. While a permission request is open, your input answers
+the permission and leaves the question open.
 
 ```
 ─ permission ───────────────────────────────────
@@ -485,7 +484,6 @@ ariadne attention dismiss <item-id>       # dismiss one attention occurrence
 ariadne task ls --goal <goal-id>          # current tasks
 ariadne session ls --attention            # only sessions waiting for input
 ariadne task inspect <task-id>            # task, agents, diff, and history
-ariadne task messages <task-id> --full    # agent conversation about the task
 ariadne task diff <task-id>               # proposed change
 ```
 
@@ -788,6 +786,18 @@ ariadne task update <task-id> --agent develop=codex-acp:<other-model-id>
 
 Leaving the `:SKILLS` half out stages the column's own skills. `task update
 --agent` replaces the whole staffing.
+
+A task needs no goal. Leave the goal out and give `--repo`, a repository id or
+registered path. `--workflow NAME` is optional; `--host NAME` names a ready
+host, and the task runs on this machine without it. `--depends-on` is refused,
+since no other task is there to wait for. With a workflow, `--agent` staffs each
+column as above. Without one, give exactly one `--agent` with no column:
+
+```sh
+ariadne task create --title "Bump the lockfile" --repo ~/projects/api \
+    --agent :coding=codex-acp:<model-id>@high --host build
+ariadne task ls --no-goal
+```
 
 New tasks assigned to a remote host become blocked worker drafts during planning.
 The source goal keeps their references and cached progress. The worker owns their execution and staffing.
@@ -1204,7 +1214,7 @@ the built-in help screen.
 | `workflow` | `ls`, `show NAME`, `check [--file FILE]`, `create NAME [--file FILE]`, `update NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
 | `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--workflow`, and `--forge on\|off`; update also uses `--path`. |
 | `goal` | `create --model AGENT:MODEL [--title] [-d\|--description] [--from-issue] [--repo]... [--effort] [--workflow]`; `ls [--status STATUS,...] [-a] [--watch]`; `inspect`, `complete`, `cancel [-y]`, `rm [-y]`, and `attach` take an ID. |
-| `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `messages [--full]`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
+| `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
 | `session` | `ls` accepts `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `-a`, and `--watch`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
 | `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer\|keeper]`. |
 | `query` | `query EXPR [--at RFC3339\|SPAN \| --since RFC3339\|SPAN [--step SPAN]]`; evaluates the supported PromQL subset at now, at `--at`, or as a range from `--since`. |

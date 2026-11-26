@@ -1,10 +1,12 @@
 ---
 id: workflows
 status: current
-updated: 2026-11-23
+updated: 2026-11-26
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
+  - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
+  - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-daemon/tests/it/remote_tasks.rs
   - crates/ariadne-core/src/workflow.rs
   - crates/ariadne-core/src/state_machine.rs
@@ -164,7 +166,7 @@ every other kebab-case word in it; the wire spells the same gate
    applying: a failed check — a hook that fails is one, never a moved base
    — that names a file of the task goes back to the previous column
    through `fail_step` with the check's output; a failed check that names
-   no file of the task goes to the orchestrator through `send_message`,
+   no file of the task goes to the orchestrator through `post_to_session`,
    and nothing lands; else the base moved — a push rejected as not a
    fast-forward, a `git diff --stat` that lists a file the task did not
    touch, or a fast-forward that fails — and the agent starts again from
@@ -233,7 +235,7 @@ every other kebab-case word in it; the wire spells the same gate
    planned, left that way when the goal went active — fails before it
    starts, naming the column, and spends no launch. `update_task.agents` replaces the complete staffing while the
    task is `pending`, `ready` or `failed`: an agent already on its column
-   keeps its row, and with it the sessions, messages and usage that name it;
+   keeps its row, and with it the sessions and usage that name it;
    a column staffed for the first time gets a new row; two rows on one
    column fold into the first; a column the edit leaves out loses its agent
    only while nothing names it, and is refused by name otherwise. A session
@@ -247,8 +249,7 @@ every other kebab-case word in it; the wire spells the same gate
    in the first column and stays `in_progress` between columns: the column
    it is on is `TaskDto.step`. Only the current column's agent receives work
    or watchdog attention (009 rule 5). Other column agents remain idle until
-   their column becomes current, and a message to one waits for its column
-   (018 rule 9).
+   their column becomes current.
 4. `POST /v1/tasks/{id}/step/complete` takes `reason` and optional
    `merge_commit`. It moves forward one column, or finishes the task from
    the last column. `POST /v1/tasks/{id}/step/fail` takes `reason`. It moves
@@ -320,7 +321,7 @@ every other kebab-case word in it; the wire spells the same gate
    `repositories.default_workflow` is `NOT NULL DEFAULT
    'develop-review-merge'`. `task_agents` keys an agent by `step`, not by a
    seat; `agent_sessions.seat` is `orchestrator`, `agent` or `reviewer`;
-   `messages.kind` is `message` alone; `task_transitions.actor` is
+   there is no `messages` table (0025); `task_transitions.actor` is
    `orchestrator`, `agent`, `daemon` or `user`. There is no `task_picks`
    table, no `tasks.picked_agent_id` and no `goal_repositories.goal_branch`.
    A database on a schema this release does not ship — the fixed
@@ -359,8 +360,8 @@ every other kebab-case word in it; the wire spells the same gate
     and fixes every failure the request's own change causes in one batch;
     any other
     failure — the base, a flaky test, the forge — is fixed by nobody
-    here: the task's agent sends it to the orchestrator once through
-    `send_message`, and a keeper asks the user once (032). Repository
+    here: the task's agent posts it to the orchestrator once through
+    `post_to_session`, and a keeper asks the user once (032). Repository
     history rules choose its branch update, allowed inside a fix batch, for confirmed base conflicts or when news says the forge requires it, done
     before the batch's checks run: where they require a linear request
     branch in words it rebases; otherwise it merges. A rebase or merge
@@ -429,7 +430,29 @@ every other kebab-case word in it; the wire spells the same gate
     They use worker prompt templates and worker repository permissions at launch, as local tasks do.
     Every column shares the task worktree. Remote branches start at the fetched remote base (001 rule 16).
 
+13. A goal-less task with a workflow uses its own named workflow and snapshots its columns at creation.
+    It requires one agent for each column, with the same staffing checks as goal tasks.
+    It walks the saved columns through `complete_step` and `fail_step`, with their saved gates.
+    Catalog edits do not change its columns. Its worktree uses `worktrees/tasks/<task-tail>-eng`.
+    `TaskDto.workflow` names its saved workflow. `TaskDto.steps` carries its saved columns.
+    Goal tasks carry null and an empty array in these fields and keep their existing behavior.
+    The reserved `pr-review` and `pr-babysit` workflows remain on their operation routes.
+    Goal-less creation refuses them with the same reason as an ordinary goal.
+14. A goal-less task on any ready host may have no workflow, with the behavior of 001 rule 26.
+    `agents[].step` is optional in the request: a task with a workflow refuses an agent that names none.
+    A task of a goal still requires a workflow and keeps rules 1 through 13.
+
 ## Acceptance criteria
+
+- Rule 13: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
+  Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
+  No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
+
+- Rule 14: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_failed_task_with_no_workflow_runs_again_after_a_retry`, `standalone_tasks::a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step`.
+
+- Rule 13: `far_tasks::source_references::far_goal_less_admission_uses_the_local_workflow_reasons` proves shared admission reasons.
+
+- Rule 13: `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`, `standalone_tasks::openapi_describes_goal_less_creation_and_task_columns`.
 
 - Rule 12: `remote_tasks.rs::saved_columns_keep_their_gates_and_a_failed_task_can_retry`
   proves saved columns, the commit gate, column returns, and retries. It waits for both
@@ -512,8 +535,8 @@ every other kebab-case word in it; the wire spells the same gate
 - A staffing names the goal's columns once each, inherits skills, refuses an
   unknown or doubled column by name, may leave columns for later while the
   goal is planned, and is refused by name once the goal is active; an edit
-  replaces the whole staffing and keeps the row, the sessions and the
-  messages of an agent already on its column
+  replaces the whole staffing and keeps the row and the sessions of an
+  agent already on its column
   (`store.rs::a_staffing_names_the_goals_columns_once_each_and_may_leave_some_for_later`,
   `::an_edit_replaces_the_whole_column_staffing`,
   `tools.rs::a_workflow_task_staffs_one_agent_for_each_column`).

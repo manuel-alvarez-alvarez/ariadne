@@ -22,7 +22,7 @@ software that exists. Use `research` when the goal asks which option to pick.
    there are none, add the path and the format to your questions.
 
    Done when you can name the format, or the question that settles it.
-3. Send every open question to the orchestrator in one `send_message`.
+3. Post every open question to the orchestrator in one `post_to_session`.
    Give each question its options and your pick. The orchestrator asks the
    user.
 
@@ -40,7 +40,7 @@ software that exists. Use `research` when the goal asks which option to pick.
    part.
 
    Done when every criterion names a test and every unbuilt test is marked.
-7. Send the finished spec to the orchestrator with `send_message`. Ask
+7. Post the finished spec to the orchestrator with `post_to_session`. Ask
    it to agree.
 
    Done when the orchestrator has agreed to the spec.

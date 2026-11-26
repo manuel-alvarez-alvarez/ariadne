@@ -449,7 +449,7 @@ const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its br
 - Call `fail_step` when the previous column must fix something.
 - Call `fail_task` when nobody can do the task as written.
 - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.
-- After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."#;
+- After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -470,14 +470,12 @@ const STEP_RETURN: &str = "Resume \"{task_title}\" at {step_title}. {direction}\
 /// What the agent of the current column is nudged with when it has gone
 /// quiet with the task still in front of it.
 ///
-/// Five things, and no more: this is not a new request, so there is nothing
+/// Four things, and no more: this is not a new request, so there is nothing
 /// to plan or narrate; check whether the work the column owes is already
-/// done; make the call that ends the column, or go on with the work; ask an
-/// open question again, since the nudge starts a turn and a turn that ends
-/// without `wait_for_user` closes every question an earlier turn raised
-/// (031); and write no reply about the nudge itself, since a reply over the
-/// nudge is a turn spent on nothing the task needed.
-const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Ask an open question again. Write no reply about this nudge.";
+/// done; make the call that ends the column, or go on with the work; and
+/// write no reply about the nudge itself, since a reply over the nudge is a
+/// turn spent on nothing the task needed.
+const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 /// Seat text of a reviewer pull request session (029): what the seat owes,
 /// and nothing a layer it already reads says. How to review is the skill's,
@@ -541,7 +539,10 @@ Workflow: {workflow}
 {columns}
 
 ## Repositories
-{repositories}"#;
+{repositories}
+
+## Plan mode
+In planning, you run in plan mode if your agent has one. The Ariadne tools are permitted in plan mode. `finalize_plan` ends plan mode. Do not call `ExitPlanMode`."#;
 
 /// What an orchestrator that has gone quiet is picked up with, in both
 /// situations there are.
@@ -556,11 +557,7 @@ Workflow: {workflow}
 /// Once the goal is active the orchestrator is the one agent that outlives
 /// its own hand-off, and what it is woken for is on the tasks: one that
 /// failed, one that has gone quiet, or a goal with nothing left to do.
-///
-/// In either situation a question can be open, and the nudge starts a turn:
-/// a turn that ends without `wait_for_user` closes every question an
-/// earlier turn raised (031), so the nudge says to ask it again.
-const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}". Ask an open question again. Before an explicit yes, continue the plan conversation. After the yes, call `finalize_plan`. When the goal is under way, read `list_tasks`."#;
+const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}". Before an explicit yes, continue the plan conversation. After the yes, call `finalize_plan`. When the goal is under way, read `list_tasks`."#;
 
 /// What the orchestrator of a goal under way is woken with.
 ///
@@ -579,7 +576,7 @@ const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
 
 {tasks}
 
-Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Send a message to the agent of a quiet task, or switch its model. Call `complete_goal` when every task is done."#;
+Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Post to the agent of a quiet task with `post_to_session`, or switch its model. A post can be refused. The refusal gives the reason. Call `complete_goal` when every task is done."#;
 
 /// What one agent said to another, as it reaches the recipient's agent.
 ///
@@ -1053,6 +1050,10 @@ pub(crate) mod tests {
                 "`submit_verdict`",
                 "`pick_winner`",
                 "`finish_task`",
+                "`wait_for_user`",
+                "`withdraw_wait_for_user`",
+                "`send_message`",
+                "`read_messages`",
             ] {
                 assert!(!text.contains(gone), "the {name} names {gone}");
             }
@@ -1075,7 +1076,7 @@ pub(crate) mod tests {
              - Call `fail_step` when the previous column must fix something.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
              - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.\n\
-             - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."
+             - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason."
         );
         assert_eq!(
             default_system_prompt(Seat::Reviewer),
@@ -1090,7 +1091,7 @@ pub(crate) mod tests {
             "Message from {from}:\n\n{body}\n\nIf the message asks a question, answer it{answer_to}. Then go on with your work."
         );
         assert!(default_prompt_text(PromptKind::GoalAttention).ends_with(
-            "Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Send a message to the agent of a quiet task, or switch its model. Call `complete_goal` when every task is done."
+            "Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Post to the agent of a quiet task with `post_to_session`, or switch its model. A post can be refused. The refusal gives the reason. Call `complete_goal` when every task is done."
         ));
         assert_eq!(
             exhausted_switch_notice(),
@@ -1098,17 +1099,16 @@ pub(crate) mod tests {
         );
     }
 
-    /// The quiet nudge says five things, and the agent seat text is the one
+    /// The quiet nudge says four things, and the agent seat text is the one
     /// place a column's agent is told to stop after three failed attempts
     /// at one fix.
     #[test]
-    fn the_quiet_nudge_says_five_things_and_the_stop_rule_has_one_owner() {
+    fn the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner() {
         let nudge = default_prompt_text(PromptKind::AgentResume);
         for rule in [
             "Not a new request",
             "Check if the work is done.",
             "Make the call that ends the column, or go on.",
-            "Ask an open question again.",
             "Write no reply about this nudge.",
         ] {
             assert!(nudge.contains(rule), "the quiet nudge and \"{rule}\"");
@@ -1194,13 +1194,11 @@ pub(crate) mod tests {
     /// there are two: a plan being agreed, and a goal under way. A resume
     /// that asked for `finalize_plan` alone would push an orchestrator past a
     /// plan the user never saw; one that named the conversation alone would
-    /// leave a running goal unattended. In both, a question can be open, and
-    /// the nudge's own turn would close it unless it is asked again.
+    /// leave a running goal unattended.
     #[test]
     fn the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way() {
         let resume = default_prompt_text(PromptKind::OrchestratorResume);
         for phase in [
-            "Ask an open question again.",
             "When the goal is under way, read `list_tasks`",
             "Before an explicit yes, continue the plan conversation",
             "After the yes, call `finalize_plan`",
@@ -1220,7 +1218,7 @@ pub(crate) mod tests {
         for rule in [
             "Read them with `list_tasks`.",
             "Retry, rewrite or cancel each failed task.",
-            "Send a message to the agent of a quiet task, or switch its model.",
+            "Post to the agent of a quiet task with `post_to_session`, or switch its model. A post can be refused. The refusal gives the reason.",
             "Call `complete_goal` when every task is done.",
         ] {
             assert!(text.contains(rule), "the goal attention and \"{rule}\"");
@@ -1292,6 +1290,22 @@ pub(crate) mod tests {
         );
         for gone in ["landing", "Landing", "author", "reviewer"] {
             assert!(!briefing.contains(gone), "{briefing}");
+        }
+    }
+
+    /// The orchestrator is told that it plans in plan mode, that the
+    /// Ariadne tools are permitted there, that `finalize_plan` ends it, and
+    /// not to call `ExitPlanMode` (003 rule 18).
+    #[test]
+    fn the_orchestrator_briefing_explains_plan_mode() {
+        let briefing = default_prompt_text(PromptKind::OrchestratorBriefing);
+        for line in [
+            "In planning, you run in plan mode if your agent has one.",
+            "The Ariadne tools are permitted in plan mode.",
+            "`finalize_plan` ends plan mode.",
+            "Do not call `ExitPlanMode`.",
+        ] {
+            assert!(briefing.contains(line), "{line} is missing from {briefing}");
         }
     }
 

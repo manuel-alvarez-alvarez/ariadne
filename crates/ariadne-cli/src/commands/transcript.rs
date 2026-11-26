@@ -6,14 +6,14 @@
 
 /// Terminal rendering for [`TranscriptItem`].
 pub(crate) mod render {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use anstyle::{AnsiColor, Color, Style};
     use ariadne_api::events::AgentEventDto;
 
     use ariadne_console::transcript::{
-        Filters, ItemMeta, PermissionOption, TranscriptItem, fold, permission_answer, text,
-        tool_is_terminal,
+        Filters, FormClosed, FormField, ItemMeta, PermissionOption, TranscriptItem, closed_lines,
+        fold, permission_answer, text, tool_is_terminal,
     };
 
     use crate::output::{pager, style};
@@ -100,11 +100,11 @@ pub(crate) mod render {
             TranscriptItem::SystemNote { meta, text } => {
                 text_block(meta, "SYSTEM", DIM, text, DIM, width, color)
             }
-            TranscriptItem::UserQuestion { meta, .. } => text_block(
+            TranscriptItem::FormQuestion { meta, .. } => text_block(
                 meta,
                 "QUESTION",
                 DIM,
-                &item.question_lines().join("\n"),
+                &item.form_lines().join("\n"),
                 Style::default(),
                 width,
                 color,
@@ -294,6 +294,9 @@ pub(crate) mod render {
         active_agent: Option<&'static str>,
         open_tools: HashSet<String>,
         pending_permission: Option<Vec<PermissionOption>>,
+        /// The fields of each open question, by id: what its close is
+        /// read with.
+        open_questions: HashMap<String, Vec<FormField>>,
     }
 
     impl StreamRenderer {
@@ -304,6 +307,21 @@ pub(crate) mod render {
                 active_agent: None,
                 open_tools: HashSet::new(),
                 pending_permission: None,
+                open_questions: HashMap::new(),
+            }
+        }
+
+        /// Hold an open question's fields until it closes.
+        fn remember_question(&mut self, item: &TranscriptItem) {
+            if let TranscriptItem::FormQuestion {
+                question_id,
+                fields,
+                closed: None,
+                ..
+            } = item
+            {
+                self.open_questions
+                    .insert(question_id.clone(), fields.clone());
             }
         }
 
@@ -312,7 +330,9 @@ pub(crate) mod render {
             self.active_agent = None;
             self.open_tools.clear();
             self.pending_permission = None;
+            self.open_questions.clear();
             for item in &items {
+                self.remember_question(item);
                 match item {
                     TranscriptItem::ToolCall { tool, .. }
                         if !tool_is_terminal(tool.status.as_deref()) =>
@@ -370,6 +390,31 @@ pub(crate) mod render {
                 "post_tool_use" if filters.allows_kind(&event.kind) => self.tool_end(event),
                 "permission_request" if filters.allows_kind(&event.kind) => {
                     self.permission_start(event)
+                }
+                "question" if filters.allows_kind(&event.kind) => {
+                    if let Some(item) = fold(std::slice::from_ref(event)).first() {
+                        self.remember_question(item);
+                    }
+                    self.render_if_allowed(event, filters)
+                }
+                // A close draws how the question closed, under the question.
+                "question.resolved" if filters.allows_kind(&event.kind) => {
+                    let id = event
+                        .payload
+                        .get("question_id")
+                        .and_then(|id| id.as_str())
+                        .unwrap_or_default();
+                    match self.open_questions.remove(id) {
+                        Some(fields) => {
+                            let mut out = self.close_agent();
+                            for line in closed_lines(&FormClosed::of(&event.payload), &fields) {
+                                out.push_str(&format!("  {line}\n"));
+                            }
+                            out.push('\n');
+                            out
+                        }
+                        None => String::new(),
+                    }
                 }
                 "permission.replied" if filters.allows_kind(&event.kind) => {
                     if let Some(options) = self.pending_permission.take() {
@@ -580,6 +625,69 @@ mod tests {
             summary: "summary".into(),
             created_at: "2026-09-11T12:34:56Z".into(),
         }
+    }
+
+    /// A question an agent asked with its own tool (021): the three field
+    /// shapes each adapter sends.
+    fn asked() -> AgentEventDto {
+        event(
+            "question",
+            "question",
+            json!({"session_id": "agent", "question": {
+                "id": "q1", "session_id": "session", "created_at": "2026-11-25T00:00:00Z",
+                "message": "Codex needs your input to continue.",
+                "schema": {"type": "object", "required": ["base"], "properties": {
+                    "base": {"type": "string", "title": "Which base branch?",
+                             "oneOf": [{"const": "main", "title": "Main"},
+                                       {"const": "next", "title": "Next — the *release* line",
+                                        "description": "Cut on Fridays"}]},
+                    "checks": {"type": "array", "title": "Which checks?",
+                               "items": {"anyOf": [{"const": "fmt", "title": "Format"},
+                                                   {"const": "clippy", "title": "Clippy"}]}},
+                    "note": {"type": "string", "title": "Anything else?"},
+                }},
+            }}),
+        )
+    }
+
+    fn answered() -> AgentEventDto {
+        event(
+            "answered",
+            "question.resolved",
+            json!({"session_id": "agent", "question_id": "q1", "action": "accept",
+                   "closed_by": "user",
+                   "content": {"base": "next", "checks": ["fmt", "clippy"], "note": "ship it"}}),
+        )
+    }
+
+    #[test]
+    fn a_question_draws_each_field_with_its_options_as_written_and_its_answers() {
+        let items = fold(&[asked(), answered()]);
+        let output = render::transcript(&items, Some(72), false);
+
+        for line in [
+            "  Which base branch? → Next — the *release* line",
+            "  Which checks? → Format, Clippy",
+            "  Anything else? → ship it",
+        ] {
+            assert!(
+                output.lines().any(|row| row.trim() == line.trim()),
+                "{line:?} in {output}"
+            );
+        }
+        assert!(!output.contains("Answer it in the console."), "{output}");
+    }
+
+    #[test]
+    fn a_followed_question_draws_its_close_under_it() {
+        let mut renderer = render::StreamRenderer::new(None, false);
+        let asked = renderer.event(&asked(), &Filters::default());
+        assert!(asked.contains("Answer it in the console."), "{asked}");
+        let closed = renderer.event(&answered(), &Filters::default());
+        assert!(
+            closed.contains("Which checks? → Format, Clippy"),
+            "{closed}"
+        );
     }
 
     #[test]

@@ -83,7 +83,6 @@ export function Composer({
   draft,
   live,
   running,
-  question,
   child,
   suggestions,
   picked,
@@ -100,9 +99,6 @@ export function Composer({
   draft: string
   live: boolean
   running: boolean
-  /** A permission question waits for a pick. */
-  /** A `wait_for_user` question waits for an answer. */
-  question: boolean
   /** The child whose view is shown; none for `main`. */
   child: { cancellable: boolean } | undefined
   suggestions: AgentCommand[] | undefined
@@ -158,11 +154,7 @@ export function Composer({
           disabled={!live}
           rows={1}
           placeholder={
-            !live
-              ? undefined
-              : question
-                ? "Answer the question. Enter sends your answer."
-                : "Message the agent. Enter sends, Shift+Enter adds a line."
+            !live ? undefined : "Message the agent. Enter sends, Shift+Enter adds a line."
           }
           onChange={(event) => onChange(event.target.value, event.target.selectionStart)}
           onSelect={(event) => onSelect(event.currentTarget.selectionStart)}

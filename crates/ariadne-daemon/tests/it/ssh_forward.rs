@@ -560,20 +560,17 @@ async fn an_event_stream_and_a_post_both_cross_a_ready_forward() {
     });
     read_until(&mut stream, "published-after-open").await;
 
-    // A goal message posted through the forward lands on the far daemon.
+    // A goal cancel posted through the forward lands on the far daemon.
     let (goal, _) = far.goal().await;
     let posted = client
-        .post(format!("{endpoint}/v1/goals/{}/messages", goal.id))
-        .header("content-type", "application/json")
-        .body(json!({"to_actor": "orchestrator", "body": "Sent through ssh."}).to_string())
+        .post(format!("{endpoint}/v1/goals/{}/cancel", goal.id))
         .send()
         .await
         .unwrap();
-    assert_eq!(posted.status(), reqwest::StatusCode::CREATED);
-    let messages: serde_json::Value = far.get(&format!("/v1/goals/{}/messages", goal.id)).await;
-    assert!(
-        messages.to_string().contains("Sent through ssh."),
-        "{messages}"
+    assert_eq!(posted.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        far.store.get_goal(&goal.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Cancelled
     );
 }
 

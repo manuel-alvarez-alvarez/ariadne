@@ -1,5 +1,5 @@
 //! Remote execution preserves local and linked task records during migration.
-use ariadne_store::{MessageFilter, SessionFilter, Store};
+use ariadne_store::{SessionFilter, Store};
 
 #[tokio::test]
 async fn remote_execution_migration_keeps_existing_tasks_and_their_children() {
@@ -57,7 +57,7 @@ async fn remote_execution_migration_keeps_existing_tasks_and_their_children() {
             .as_deref(),
         Some("source-task")
     );
-    assert!(store.remote_tasks().await.unwrap().is_empty());
+    assert!(store.tasks_without_local_goals().await.unwrap().is_empty());
     assert_eq!(
         store
             .list_sessions(SessionFilter::default())
@@ -78,18 +78,8 @@ async fn remote_execution_migration_keeps_existing_tasks_and_their_children() {
             .len(),
         1
     );
-    let messages = store.list_messages(MessageFilter::default()).await.unwrap();
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].body, "Retained question");
     store.delete_goal("linked").await.unwrap();
     assert!(store.get_task("linked-task").await.is_err());
     assert!(store.get_session("session").await.is_err());
-    assert!(
-        store
-            .list_messages(MessageFilter::default())
-            .await
-            .unwrap()
-            .is_empty()
-    );
     assert!(store.get_task("local-task").await.is_ok());
 }
