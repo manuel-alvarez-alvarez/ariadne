@@ -14,6 +14,7 @@ tests:
   - crates/ariadne-cli/src/commands/session.rs
   - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/tests/task_hosts.rs
+  - crates/ariadne-cli/tests/task_create.rs
   - crates/ariadne-cli/src/error.rs
   - crates/ariadne-cli/src/telemetry.rs
   - crates/ariadne-cli/src/complete.rs
@@ -522,6 +523,22 @@ same binary also serves (013).
     the daemon that answered and `task_host` the task's own host. A source
     projection and its worker response appear once, under the source host
     (`tests/task_hosts.rs::all_hosts_show_a_projected_task_once`).
+62. `task create` takes its goal as an optional argument. With no goal it
+    posts to `POST /v1/tasks` and creates a goal-less task; with a goal it
+    creates the task in that goal as before.
+63. With no goal, `--repo` (an id or a registered path) is required, and
+    `--depends-on` is refused as a usage error that says a task with no goal
+    has no other task to wait for. Nothing reaches the daemon.
+64. With no goal, `--workflow NAME` is optional. With it, each `--agent
+    STEP[:SKILLS]=MODEL[@EFFORT]` staffs one column, as with a goal. Without
+    it, the task has no workflow and takes exactly one `--agent` with no
+    column, written `=MODEL[@EFFORT]` or `:SKILLS=MODEL[@EFFORT]`. Any other
+    count or an agent that names a column is a usage error.
+65. With no goal, a named `--host` is sent in the request body to the local
+    daemon, which runs the task there; without one, or with `local`, the body
+    names no host. `--host all` is refused, as for any write.
+66. `task ls --no-goal` lists only the tasks that have no goal, and conflicts
+    with `--goal`.
 
 ## Known gap
 
@@ -942,6 +959,22 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`crates/ariadne-cli/tests/task_hosts.rs::all_hosts_keep_the_daemon_host_first_and_name_each_task_host_second`).
 - With `--host all`, JSON keeps the task's own host as `task_host`, rule 61
   (`crates/ariadne-cli/src/output/listing.rs::tests::json_keeps_the_host_an_item_already_names`).
+
+- `task create` with no goal and no workflow posts one agent with no column
+  and no host, rule 62 to 64
+  (`crates/ariadne-cli/tests/task_create.rs::a_task_with_no_goal_and_no_workflow_is_staffed_by_one_stepless_agent`).
+- With a workflow and `--host`, the body carries both, rules 64 and 65
+  (`crates/ariadne-cli/tests/task_create.rs::a_workflow_staffs_each_column_and_a_host_goes_in_the_body`).
+- A goal-less create refuses a missing `--repo`, `--depends-on`, a wrong agent
+  count and a column with no workflow, and sends nothing, rules 63 and 64
+  (`crates/ariadne-cli/tests/task_create.rs::a_task_with_no_goal_refuses_what_it_cannot_take`).
+- A create with a goal is unchanged, rule 62
+  (`crates/ariadne-cli/tests/task_create.rs::a_task_in_a_goal_is_created_as_before`).
+- The `--agent` of `task create` may omit the column; that of `task update`
+  may not, rule 64
+  (`crates/ariadne-cli/src/commands/task/edit.rs::tests::a_create_agent_may_leave_the_column_out_and_an_update_agent_may_not`).
+- `task ls --no-goal` asks for the goal-less tasks, rule 66
+  (`crates/ariadne-cli/tests/task_create.rs::ls_no_goal_asks_for_the_goal_less_tasks`).
 
 ## Sources
 

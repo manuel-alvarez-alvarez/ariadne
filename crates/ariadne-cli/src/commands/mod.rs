@@ -124,12 +124,23 @@ pub(crate) async fn listing(
             command:
                 task::TaskCommand::Ls {
                     goal,
+                    no_goal,
                     statuses,
                     all,
                     step,
                     watch: _,
                 },
-        } => task::list(client, goal.clone(), statuses, *all, step.as_deref()).await,
+        } => {
+            task::list(
+                client,
+                goal.clone(),
+                *no_goal,
+                statuses,
+                *all,
+                step.as_deref(),
+            )
+            .await
+        }
         Command::Workflow {
             command: workflow::WorkflowCommand::Ls,
         } => workflow::ls(client).await,

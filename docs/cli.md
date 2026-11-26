@@ -787,6 +787,18 @@ ariadne task update <task-id> --agent develop=codex-acp:<other-model-id>
 Leaving the `:SKILLS` half out stages the column's own skills. `task update
 --agent` replaces the whole staffing.
 
+A task needs no goal. Leave the goal out and give `--repo`, a repository id or
+registered path. `--workflow NAME` is optional; `--host NAME` names a ready
+host, and the task runs on this machine without it. `--depends-on` is refused,
+since no other task is there to wait for. With a workflow, `--agent` staffs each
+column as above. Without one, give exactly one `--agent` with no column:
+
+```sh
+ariadne task create --title "Bump the lockfile" --repo ~/projects/api \
+    --agent :coding=codex-acp:<model-id>@high --host build
+ariadne task ls --no-goal
+```
+
 New tasks assigned to a remote host become blocked worker drafts during planning.
 The source goal keeps their references and cached progress. The worker owns their execution and staffing.
 Execution starts after plan finalization and dependency completion across hosts.

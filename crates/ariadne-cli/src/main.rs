@@ -265,7 +265,9 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             commands::permissions::run(&client, command, format).await
         }
         Command::Goal { command } => commands::goal::run(&client, command, format).await,
-        Command::Task { command } => commands::task::run(&client, command, format).await,
+        Command::Task { command } => {
+            commands::task::run(&client, command, cli.host.as_deref(), format).await
+        }
         Command::Session { command } => commands::session::run(&client, command, format).await,
         Command::Models { command } => commands::models::run(&client, command, format).await,
         Command::Query {
