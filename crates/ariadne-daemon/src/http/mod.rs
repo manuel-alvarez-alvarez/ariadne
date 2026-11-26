@@ -2,7 +2,6 @@
 
 pub use events::{ingest_event, ingest_relay_event};
 
-pub(crate) mod agent_requests;
 mod attention;
 mod caller;
 mod catalog;
@@ -22,8 +21,11 @@ mod issues;
 mod logs;
 mod permissions;
 mod pins;
+mod posts;
+pub(crate) use posts::agent_sender;
 mod pull_requests;
 mod query;
+mod questions;
 use query::QueryRoutes;
 mod remote_tasks;
 mod repositories;
@@ -49,6 +51,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
+use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa::OpenApi;
@@ -99,7 +102,13 @@ pub struct AppState {
     /// the once check through the forge call, so two replies racing for the
     /// same comment cannot both read it unanswered before either is stored.
     pub reply_locks: pull_requests::ReplyLocks,
-    /// The trajectory hub of each session that someone follows (039).
+    /// The open event streams of source daemons, which carry the posts of
+    /// worker agents to the source orchestrator (039).
+    pub source_posts: crate::source_posts::SourcePosts,
+    /// Cancelled when shutdown starts: every open event stream ends then, so
+    /// the HTTP drain does not wait on a client that never hangs up (016).
+    pub closing: tokio_util::sync::CancellationToken,
+    /// The trajectory hub of each session that someone follows (040).
     pub trajectories: trajectory::Trajectories,
 }
 
@@ -175,17 +184,16 @@ impl AppState {
         permissions::test,
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
-        tasks::create, tasks::list, tasks::get, tasks::update,
+        tasks::create, tasks::create_standalone, tasks::list, tasks::get, tasks::update,
         remote_tasks::protocol, remote_tasks::create, remote_tasks::authorize, remote_tasks::dependency_failure, remote_tasks::retry_dependency,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        channel::list_task_messages, channel::post_task_message,
-        goals::list_goal_messages, goals::post_goal_message, channel::diff,
+        posts::post_to_session, posts::post_from_source, channel::diff,
         channel::open_pull_request, steps::complete, steps::fail,
         sessions::list,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
+        questions::list, questions::answer,
         trajectory::snapshot, trajectory::stream, trajectory::steps,
-        agent_requests::create, agent_requests::list, agent_requests::withdraw, agent_requests::answer,
         terminal::terminal,
         events::list, stream::stream,
         models::list,
@@ -197,7 +205,7 @@ impl AppState {
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
-        ariadne_api::stream::HeartbeatDto,
+        ariadne_api::stream::HeartbeatDto, ariadne_api::messages::SourcePostDto,
         ariadne_api::hosts::HostColor, hosts::CreateHost, hosts::PatchHost,
         ariadne_api::hosts::HostDto, ariadne_api::hosts::HostKind, ariadne_api::hosts::HostStatus,
         ariadne_api::hosts::ConfigSyncDto, ariadne_api::hosts::PortableConfigDto,
@@ -210,9 +218,8 @@ impl AppState {
         ariadne_api::attention::AttentionProducer, ariadne_api::attention::AttentionCause,
         ariadne_api::attention::AttentionSubjectDto,
         ariadne_api::attention::AttentionSubjectKind, ariadne_api::attention::AttentionTarget,
-        ariadne_api::attention::CreateAgentRequest, ariadne_api::attention::AgentQuestion,
-        ariadne_api::attention::AgentQuestionOption, ariadne_api::attention::AnswerAgentRequest,
-        ariadne_api::attention::AgentRequestResolution, ariadne_api::attention::AgentRequestDto,
+        ariadne_api::sessions::QuestionDto, ariadne_api::sessions::QuestionAction,
+        ariadne_api::sessions::AnswerQuestionRequest,
         ariadne_api::trajectory::TrajectorySnapshotDto, ariadne_api::trajectory::TrajectoryUpdateDto,
         ariadne_api::trajectory::TrajectoryOpDto, ariadne_api::trajectory::TrajectoryStepsDto,
         ariadne_api::trajectory::StepDto, ariadne_api::trajectory::ContentBlockDto,
@@ -412,13 +419,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/goals/{id}/cancel", post(goals::cancel))
         .route("/v1/goals/{id}/finalize", post(goals::finalize))
         .route("/v1/goals/{id}/complete", post(goals::complete))
-        .route(
-            "/v1/goals/{id}/messages",
-            get(goals::list_goal_messages).post(goals::post_goal_message),
-        )
         .route("/v1/goals/{goal_id}/tasks", post(tasks::create))
         // tasks
-        .route("/v1/tasks", get(tasks::list))
+        .route("/v1/tasks", get(tasks::list).post(tasks::create_standalone))
         .route("/v1/tasks/{id}", get(tasks::get).patch(tasks::update))
         .route("/v1/remote-tasks/protocol", get(remote_tasks::protocol))
         .route("/v1/remote-tasks/{id}", put(remote_tasks::create))
@@ -440,14 +443,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/tasks/{id}/cancel", post(tasks::cancel))
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
-        .route(
-            "/v1/tasks/{id}/messages",
-            get(channel::list_task_messages).post(channel::post_task_message),
-        )
-        .route(
-            "/v1/tasks/{id}/relay-message",
-            post(channel::relay_task_message),
-        )
+        .route("/v1/tasks/{id}/posts", post(posts::post_to_session))
+        .route("/v1/remote-tasks/{id}/posts", post(posts::post_from_source))
         .route("/v1/tasks/{id}/diff", get(channel::diff))
         .route("/v1/tasks/{id}/step/complete", post(steps::complete))
         .route("/v1/tasks/{id}/step/fail", post(steps::fail))
@@ -464,6 +461,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/console", get(console::snapshot))
         .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))
+        .route("/v1/sessions/{id}/questions", get(questions::list))
         .route("/v1/sessions/{id}/trajectory", get(trajectory::snapshot))
         .route(
             "/v1/sessions/{id}/trajectory/stream",
@@ -474,16 +472,8 @@ pub fn router(state: AppState) -> Router {
             get(trajectory::steps),
         )
         .route(
-            "/v1/sessions/{id}/agent-requests",
-            post(agent_requests::create).get(agent_requests::list),
-        )
-        .route(
-            "/v1/sessions/{session_id}/agent-requests/{request_id}",
-            post(agent_requests::withdraw),
-        )
-        .route(
-            "/v1/sessions/{session_id}/agent-requests/{request_id}/answer",
-            post(agent_requests::answer),
+            "/v1/sessions/{id}/questions/{question_id}/answer",
+            post(questions::answer),
         )
         .route("/v1/sessions/{id}/console/cancel", post(console::cancel))
         .route(
@@ -512,8 +502,71 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             source_tasks::forward,
         ))
+        .layer(middleware::from_fn_with_state(
+            state.closing.clone(),
+            end_streams_on_close,
+        ))
         .with_state(state)
         .layer(middleware::from_fn(record_request_duration))
+}
+
+/// End an event stream when shutdown starts. Its body otherwise lasts as
+/// long as its client stays, and the HTTP drain waits on every open body.
+/// A response that is not a stream is left whole.
+async fn end_streams_on_close(
+    State(closing): State<tokio_util::sync::CancellationToken>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let response = next.run(request).await;
+    let stream = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    if !stream {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let body = body
+        .into_data_stream()
+        .take_until(closing.cancelled_owned());
+    Response::from_parts(parts, axum::body::Body::from_stream(body))
+}
+
+/// Serve `app` on `listener` until `shutdown` resolves, then let the open
+/// requests finish for at most `drain`. A connection still open then is
+/// left behind, so a client that never hangs up cannot keep the daemon
+/// from stopping (016).
+pub async fn serve<L>(
+    listener: L,
+    app: Router,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    drain: std::time::Duration,
+) -> std::io::Result<()>
+where
+    L: axum::serve::Listener,
+    L::Addr: std::fmt::Debug,
+{
+    let stop = tokio_util::sync::CancellationToken::new();
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(stop.clone().cancelled_owned())
+        .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => return result,
+        () = shutdown => stop.cancel(),
+    }
+    match tokio::time::timeout(drain, server).await {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!(
+                ?drain,
+                "connections still open after the drain; stopping without them"
+            );
+            Ok(())
+        }
+    }
 }
 
 /// Measure normal HTTP routes after routing selected their template. Long
@@ -663,6 +716,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".into(),
         uptime_secs: state.started_at.elapsed().as_secs(),
+        pid: Some(std::process::id()),
     })
 }
 

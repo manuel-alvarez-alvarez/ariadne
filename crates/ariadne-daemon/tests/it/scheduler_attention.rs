@@ -298,23 +298,6 @@ impl World {
             .id
     }
 
-    /// The agent asks the orchestrator a question about its task, as
-    /// `send_message` does. Answers the message id.
-    async fn ask_the_orchestrator(&self, session: &AgentSession) -> String {
-        let task = session.task_id.as_deref().expect("a task agent");
-        let sent: serde_json::Value = self
-            .json(
-                common::as_session(
-                    &format!("/v1/tasks/{task}/messages"),
-                    &session.id,
-                    serde_json::json!({"to_actor": "orchestrator", "body": "Can I retry the push?"}),
-                ),
-                axum::http::StatusCode::CREATED,
-            )
-            .await;
-        sent["id"].as_str().expect("a message id").to_string()
-    }
-
     /// The scheduler, started over everything seeded so far. Its first tick is
     /// immediate, so a test that only needs the sweep need send nothing.
     fn scheduler(&self) -> Sched {
@@ -371,7 +354,7 @@ impl Sched {
 
 /// The agent's resume template, rendered for the world's task on its first
 /// column: the words the daemon nudges an idle column agent with.
-const RESUME: &str = "Not a new request: continue \"task\" at Develop. Check if the work is done. Make the call that ends the column, or go on. Ask an open question again. Write no reply about this nudge.";
+const RESUME: &str = "Not a new request: continue \"task\" at Develop. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 // -- the timeline -----------------------------------------------------------
 
@@ -604,6 +587,63 @@ async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
         None,
         "nor is it raised for the user this early"
     );
+}
+
+/// An agent waiting on its own question (021) waits on a person: however
+/// long it is silent, no watchdog nudges it, flags it or relaunches it.
+#[tokio::test]
+async fn an_agent_waiting_on_its_question_is_left_alone() {
+    let w = World::active().await;
+    let mut script = common::acp::script();
+    script["prompts"] = serde_json::json!([{
+        "elicitation": {"message": "Which base branch?",
+                        "requestedSchema": {"type": "object", "properties": {
+                            "base": {"type": "string"}}}},
+        "updates": [],
+    }]);
+    w.agent.reprogram(script);
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.launcher
+        .acp
+        .send_prompt(&session.id, "Work on it.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the agent to ask its question", async || {
+        !w.launcher.acp.open_questions(&session.id).await.is_empty()
+    })
+    .await;
+    w.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    let launched = w.launched_at(&session).await;
+
+    // A second task's author, idle in the same silence: its nudge is what
+    // says the pass the asking one went through is over.
+    let control_task = w.extra_task("control").await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
+    w.idle_for(&control, NUDGE_SECS + 60).await;
+
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    sched.task(&control_task);
+    eventually(TIMEOUT, "the idle author to be nudged", async || {
+        !w.prompts_to(&control).is_empty()
+    })
+    .await;
+
+    assert_eq!(
+        w.prompts_to(&session).len(),
+        1,
+        "the asking agent was nudged"
+    );
+    assert_eq!(
+        w.attention(&session).await,
+        None,
+        "the asking agent was flagged"
+    );
+    assert_eq!(
+        w.launched_at(&session).await,
+        launched,
+        "the asking agent was relaunched"
+    );
+    assert_eq!(w.launcher.acp.open_questions(&session.id).await.len(), 1);
 }
 
 /// An agent that came up and was never handed a prompt reads `running` from
@@ -2099,217 +2139,6 @@ async fn a_retried_task_gets_its_relaunches_back() {
         w.store.get_task(&w.task.id).await.unwrap().status(),
         TaskStatus::InProgress,
         "the retried task is not failed at its first silence"
-    );
-}
-
-/// An agent that asked the user a question and ended its turn is waiting on
-/// the answer, not wedged. The question is a pending request row and no
-/// attention reason, so the watchdog reads the row: the agent is not nudged,
-/// not flagged and not relaunched, however long the user takes. Once the
-/// question closes, the same silence is watched again.
-#[tokio::test]
-async fn an_idle_agent_with_a_pending_question_is_left_alone_until_it_closes() {
-    let w = World::active().await;
-    let asked = w.agent_on(&w.task, TaskStatus::InProgress).await;
-    w.make_resumable(&w.task, &asked).await;
-    let opened: serde_json::Value = w
-        .json(
-            common::as_session(
-                &format!("/v1/sessions/{}/agent-requests", asked.id),
-                &asked.id,
-                serde_json::json!({"summary": "Agree the purpose first."}),
-            ),
-            axum::http::StatusCode::OK,
-        )
-        .await;
-    let request_id = opened["id"].as_str().expect("a request id").to_string();
-    w.idle_for(&asked, RELAUNCH_SECS + 60).await;
-    // A second task's agent, idle as long and asking nothing: its relaunch
-    // says the pass over the asking one is over.
-    let control_task = w.extra_task("control").await;
-    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
-    w.make_resumable(&control_task, &control).await;
-    w.idle_for(&control, RELAUNCH_SECS + 60).await;
-    let launched = [w.launched_at(&asked).await, w.launched_at(&control).await];
-
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    sched.task(&control_task);
-    eventually(
-        TIMEOUT,
-        "the agent asking nothing to be relaunched",
-        async || w.relaunched(&control, &launched[1]).await,
-    )
-    .await;
-    assert_eq!(
-        w.prompts_to(&asked).len(),
-        0,
-        "an agent waiting on the user's answer is not nudged"
-    );
-    assert_eq!(w.attention(&asked).await, None, "nor flagged stalled");
-    assert_eq!(
-        w.launched_at(&asked).await,
-        launched[0],
-        "nor killed out from under its question"
-    );
-
-    // The agent withdraws the question, and the silence is its own again.
-    let (status, body) = w
-        .send(common::as_session(
-            &format!("/v1/sessions/{}/agent-requests/{request_id}", asked.id),
-            &asked.id,
-            serde_json::json!({}),
-        ))
-        .await;
-    assert_eq!(
-        status,
-        axum::http::StatusCode::NO_CONTENT,
-        "{}",
-        String::from_utf8_lossy(&body)
-    );
-    w.idle_for(&asked, RELAUNCH_SECS + 60).await;
-    sched.task(&w.task);
-    eventually(
-        TIMEOUT,
-        "the agent with no question left to be relaunched",
-        async || w.relaunched(&asked, &launched[0]).await,
-    )
-    .await;
-}
-
-/// An agent that asked the orchestrator something and ended its turn waits on
-/// the answer. While its question has not reached the orchestrator, the
-/// silence is not its own: it is not nudged, flagged or relaunched. Once the
-/// question is delivered, the clock counts from the delivery.
-#[tokio::test]
-async fn an_idle_agent_whose_question_has_not_reached_the_orchestrator_is_left_alone() {
-    let w = World::active().await;
-    let asked = w.agent_on(&w.task, TaskStatus::InProgress).await;
-    w.make_resumable(&w.task, &asked).await;
-    w.ask_the_orchestrator(&asked).await;
-    w.idle_for(&asked, RELAUNCH_SECS + 60).await;
-    // A second agent, as silent, whose question reached the orchestrator a
-    // minute ago: a minute is not long enough to nudge it.
-    let answered_task = w.extra_task("delivered").await;
-    let delivered = w.agent_on(&answered_task, TaskStatus::InProgress).await;
-    w.make_resumable(&answered_task, &delivered).await;
-    let message = w.ask_the_orchestrator(&delivered).await;
-    w.delivered_ago(&message, 60).await;
-    w.idle_for(&delivered, RELAUNCH_SECS + 60).await;
-    // A third, as silent, that asked nothing: its relaunch says the pass
-    // over the other two is over.
-    let control_task = w.extra_task("control").await;
-    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
-    w.make_resumable(&control_task, &control).await;
-    w.idle_for(&control, RELAUNCH_SECS + 60).await;
-    let launched = [
-        w.launched_at(&asked).await,
-        w.launched_at(&delivered).await,
-        w.launched_at(&control).await,
-    ];
-
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    sched.task(&answered_task);
-    sched.task(&control_task);
-    eventually(
-        TIMEOUT,
-        "the agent that asked nothing to be relaunched",
-        async || w.relaunched(&control, &launched[2]).await,
-    )
-    .await;
-    for (session, launched) in [(&asked, &launched[0]), (&delivered, &launched[1])] {
-        assert_eq!(
-            w.prompts_to(session).len(),
-            0,
-            "an agent waiting on the orchestrator is not nudged"
-        );
-        assert_eq!(w.attention(session).await, None, "nor flagged stalled");
-        assert_eq!(
-            &w.launched_at(session).await,
-            launched,
-            "nor killed while its question waits"
-        );
-    }
-}
-
-/// Once the orchestrator has the question, the clock counts from the
-/// delivery, and a silence long past it is the agent's own again.
-#[tokio::test]
-async fn an_agent_silent_long_after_its_question_was_delivered_is_relaunched() {
-    let w = World::active().await;
-    let asked = w.agent_on(&w.task, TaskStatus::InProgress).await;
-    w.make_resumable(&w.task, &asked).await;
-    let message = w.ask_the_orchestrator(&asked).await;
-    w.delivered_ago(&message, RELAUNCH_SECS + 60).await;
-    w.idle_for(&asked, RELAUNCH_SECS + 60).await;
-    let launched = w.launched_at(&asked).await;
-
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    eventually(
-        TIMEOUT,
-        "the agent silent since the delivery to be relaunched",
-        async || w.relaunched(&asked, &launched).await,
-    )
-    .await;
-}
-
-/// A question does not shelter a turn that never ends. An agent that asked
-/// the user something and then sat inside its turn, silent, is wedged, and
-/// the relaunch threshold still answers for it.
-#[tokio::test]
-async fn an_agent_stuck_in_a_turn_with_a_pending_question_is_still_relaunched() {
-    let w = World::active().await;
-    // The agent holds the turn it is handed open until the test ends. Both
-    // scripts keep the conversation the relaunch resumes.
-    let resumable = || {
-        let mut script = common::acp::script();
-        script["stored_sessions"] = serde_json::json!(["uuid-1234", "stub-session"]);
-        script
-    };
-    let hold = w.dir.path().join("held-turn");
-    let mut script = resumable();
-    script["prompts"] =
-        serde_json::json!([{"wait_for": hold.display().to_string(), "updates": []}]);
-    w.agent.reprogram(script);
-    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
-    w.make_resumable(&w.task, &session).await;
-    w.launcher
-        .acp
-        .send_prompt(&session.id, "Work on it.".into())
-        .unwrap();
-    eventually(TIMEOUT, "the agent inside its turn", async || {
-        hold.with_extension("reached").exists()
-    })
-    .await;
-    // The question is raised inside the turn that then never ends.
-    let _: serde_json::Value = w
-        .json(
-            common::as_session(
-                &format!("/v1/sessions/{}/agent-requests", session.id),
-                &session.id,
-                serde_json::json!({"summary": "Agree the purpose first."}),
-            ),
-            axum::http::StatusCode::OK,
-        )
-        .await;
-    // The agent put back on its feet ends its turns, so its report is what
-    // says the relaunch is done.
-    w.agent.reprogram(resumable());
-    w.launched_ago(&session, RELAUNCH_SECS + 60).await;
-    let launched = w.launched_at(&session).await;
-
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    eventually(TIMEOUT, "the wedged agent to be relaunched", async || {
-        w.relaunched(&session, &launched).await
-    })
-    .await;
-    assert_eq!(
-        w.store.get_task(&w.task.id).await.unwrap().status(),
-        TaskStatus::InProgress,
-        "a first relaunch is a remedy, not the end of the task"
     );
 }
 
@@ -4028,7 +3857,7 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
 }
 
 /// `reconcile_goal` fetches the goal once, at the top, and carries that copy
-/// through `keep_orchestrator`, `deliver_goal_messages` and `list_tasks`
+/// through `keep_orchestrator` and `list_tasks`
 /// before `tell_orchestrator` ever reads it: a pass that started before a
 /// failure's turn confirmed, and only reaches that read afterward, used to
 /// answer from the stale copy — "not confirmed yet" — and find the now-idle

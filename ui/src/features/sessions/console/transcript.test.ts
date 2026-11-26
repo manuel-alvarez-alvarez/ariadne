@@ -12,10 +12,8 @@ import {
   applyEvent,
   applySnapshot,
   type Block,
-  blocksText,
   collapseRuns,
   dequeuePrompt,
-  displayBlocks,
   elapsed,
   emptyTranscript,
   oldestEventId,
@@ -57,36 +55,6 @@ it("folds a prompt, marking one the daemon sent", () => {
     ["Resume", true],
     ["(prompt text not recorded)", false],
   ])
-})
-
-it("draws no prompt block for the prompt that delivers an answer", () => {
-  const blocks = fold([
-    event("user_prompt_submit", { text: "Fix the bug", source: "console" }),
-    event("user_prompt_submit", {
-      text: "The user answered your question.",
-      source: "console",
-      request_id: "req-1",
-      prompt_kind: "answer_delivery",
-    }),
-  ])
-
-  expect(blocks.map((block) => block.type === "prompt" && block.text)).toEqual(["Fix the bug"])
-  expect(blocksText(blocks)).toBe("> Fix the bug")
-})
-
-it("keeps a queued prompt when a delivery prompt carries the same text", () => {
-  let transcript = queuePrompt(emptyTranscript(), "Main", "queued:1")
-  transcript = applyEvent(
-    transcript,
-    event("user_prompt_submit", { text: "Main", source: "console", request_id: "req-1" }),
-  )
-  expect(transcript.queuedPrompts).toHaveLength(1)
-
-  transcript = applyEvent(
-    transcript,
-    event("user_prompt_submit", { text: "Main", source: "console" }),
-  )
-  expect(transcript.queuedPrompts).toHaveLength(0)
 })
 
 it("folds the agent's message and thought, and a plan with its statuses", () => {
@@ -163,14 +131,13 @@ it("reads a tool call's diff from a patch or from its old and new text", () => {
   expect(blocks[1]).toMatchObject({ tool: { diff: "--- b.txt\n+++ b.txt\n one\n-two\n+2" } })
 })
 
-it("notes a session's start and end, a stop other than end_turn, compaction and a request", () => {
+it("notes a session's start and end, a stop other than end_turn, and compaction", () => {
   const blocks = fold([
     event("session_start"),
     event("stop", { stop_reason: "end_turn" }),
     event("stop", { stop_reason: "cancelled" }),
     event("stop", { stop_reason: "max_tokens" }),
     event("compaction_update"),
-    event("agent_request", { hint: "pick a database" }),
     event("session_end"),
   ])
 
@@ -179,7 +146,6 @@ it("notes a session's start and end, a stop other than end_turn, compaction and 
     "turn cancelled",
     "turn stopped: token limit reached",
     "context compacted",
-    "waiting for you · pick a database",
     "session ended",
   ])
 })
@@ -200,6 +166,22 @@ it("reads a diagnosis onto the error it names, and an unknown kind as its summar
     diagnosis: "session.diagnosis summary",
   })
   expect(blocks[1]).toMatchObject({ type: "raw", kind: "mystery", summary: "mystery summary" })
+})
+
+it("draws an old agent request and its close as plain event lines, with no card", () => {
+  const blocks = fold([
+    event("agent_request", {
+      request_id: "01RQ",
+      hint: "Pick a base",
+      question: { text: "Which base branch?", options: [{ id: "main", label: "Main" }] },
+    }),
+    event("agent_request.resolved", { request_id: "01RQ", resolution: "answered" }),
+  ])
+
+  expect(blocks).toEqual([
+    expect.objectContaining({ type: "raw", kind: "agent_request" }),
+    expect.objectContaining({ type: "raw", kind: "agent_request.resolved" }),
+  ])
 })
 
 it("builds one open block from live chunks, closed by the stored whole without repeating it", () => {
@@ -660,67 +642,6 @@ it("leaves no stale entry when an echo takes a failed send's entry before its fa
   expect(dequeuePrompt(echoed, "q1", "again").queuedPrompts).toEqual([])
 })
 
-const QUESTION = {
-  text: "Which base branch?",
-  options: [
-    { id: "main", label: "Main", description: "Land on the trunk." },
-    { id: "next", label: "Next" },
-  ],
-  recommended_option_id: "main",
-}
-
-it("folds a structured question into one card that its resolution closes", () => {
-  const blocks = fold([
-    event("agent_request", { request_id: "01RQ", hint: "Pick a base", question: QUESTION }),
-    event("agent_request.resolved", {
-      request_id: "01RQ",
-      resolution: "answered",
-      answer: { option_id: "next", text: "Next" },
-    }),
-  ])
-
-  expect(blocks).toHaveLength(1)
-  expect(blocks[0]).toMatchObject({
-    type: "question",
-    requestId: "01RQ",
-    hint: "Pick a base",
-    question: QUESTION,
-    resolution: { state: "answered", answer: "Next" },
-  })
-})
-
-it("keeps the reason for a question's recommendation", () => {
-  const question = { ...QUESTION, recommendation_reason: "The trunk is green." }
-  const blocks = fold([
-    event("agent_request", { request_id: "01RQ", hint: "Pick a base", question }),
-  ])
-
-  expect(blocks[0]).toMatchObject({ type: "question", question })
-})
-
-it("keeps a hint-only request a note, and a resolution of it adds no block", () => {
-  const blocks = fold([
-    event("agent_request", { request_id: "01RQ", hint: "Approve the plan?" }),
-    event("agent_request.resolved", { request_id: "01RQ", resolution: "expired" }),
-  ])
-
-  expect(blocks).toEqual([
-    expect.objectContaining({ type: "note", text: "waiting for you · Approve the plan?" }),
-  ])
-})
-
-it("replays a withdrawn question closed, so it is never answerable again", () => {
-  const events = [
-    event("agent_request", { request_id: "01RQ", hint: "Pick a base", question: QUESTION }),
-    event("agent_request.resolved", { request_id: "01RQ", resolution: "withdrawn" }),
-  ]
-  const replayed = applySnapshot(applySnapshot(emptyTranscript(), events), events)
-
-  expect(replayed.blocks).toEqual([
-    expect.objectContaining({ type: "question", resolution: { state: "withdrawn" } }),
-  ])
-})
-
 function call(
   acp: Record<string, unknown>,
   at = "2026-11-14T10:00:00Z",
@@ -872,34 +793,6 @@ it("keeps the time of the first terminal update as the end", () => {
     call({ status: "completed" }, "2026-11-14T10:00:09Z"),
   ])
   expect(blocks[0]?.type === "tool" && blocks[0].tool.endedAt).toBe("2026-11-14T10:00:05Z")
-})
-
-it("hides only a successful question call with its matching card", () => {
-  const events = [
-    event("pre_tool_use", { tool_name: "mcp__ariadne__wait_for_user", tool_call_id: "a" }),
-    event("post_tool_use", {
-      tool_call_id: "a",
-      acp: { toolCallId: "a", status: "completed", rawOutput: '{"id":"req-1"}' },
-    }),
-    event("agent_request", { request_id: "req-1", hint: "Pick", question: QUESTION }),
-    event("pre_tool_use", { tool_name: "mcp__ariadne__wait_for_user", tool_call_id: "b" }),
-    event("post_tool_use", {
-      tool_call_id: "b",
-      acp: { toolCallId: "b", status: "failed", rawOutput: '{"id":"req-1"}' },
-    }),
-    event("pre_tool_use", { tool_name: "mcp__ariadne__wait_for_user", tool_call_id: "c" }),
-    event("post_tool_use", {
-      tool_call_id: "c",
-      acp: { toolCallId: "c", status: "completed", rawOutput: '{"id":"other"}' },
-    }),
-  ]
-  const blocks = fold(events)
-  expect(
-    displayBlocks(blocks, blocks).map((block) =>
-      block.type === "tool" ? block.tool.id : block.type,
-    ),
-  ).toEqual(["question", "b", "c"])
-  expect(blocks).toHaveLength(4)
 })
 
 function row(id: string, type: "note" | "error" | "prompt"): Block {

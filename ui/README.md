@@ -1,8 +1,10 @@
 # Ariadne Desktop
 
 Desktop client for `ariadned`. A [Tauri 2](https://v2.tauri.app) window around a
-Vite + React + TypeScript app. The goals board draws a stepped task in its
-workflow's column, and the Workflows screen edits the catalog — shipped and
+Vite + React + TypeScript app. The goals board is one list of task rows, the
+rows of a goal joined under a goal bar that shows on hover or focus, and its
+"New" menu creates a goal or a task with no goal. The Workflows screen edits
+the catalog — shipped and
 your own, each with a document editor and a live kanban preview. The
 Dashboards screen embeds a Perses dashboard, over the daemon's own Prometheus and Loki
 APIs — [`dashboard/`](dashboard) is its own package, on React 18, built

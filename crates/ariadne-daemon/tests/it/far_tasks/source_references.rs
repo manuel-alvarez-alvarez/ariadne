@@ -18,7 +18,7 @@ async fn new_remote_tasks_are_worker_drafts_during_source_planning() {
         .await;
     let worker: TaskDto = p.far.get(&format!("/v1/tasks/{}", created.id)).await;
     assert_eq!(worker.repo_id, worker_repo.id);
-    assert_eq!(worker.goal_id, goal.id);
+    assert_eq!(worker.goal_id.as_ref(), Some(&goal.id));
     assert!(!worker.execution_context.as_ref().unwrap().authorized);
     assert_eq!(created.id, worker.id);
     assert_eq!(created.host, "far");
@@ -293,49 +293,6 @@ async fn source_sessions_history_diffs_and_usage_resolve_the_worker_identity() {
             .unwrap()
             .is_empty()
     );
-}
-
-#[tokio::test]
-async fn source_messages_survive_disconnection_without_local_staffing() {
-    let (p, goal) = setup().await;
-    let source = draft(&p, &goal, "Conversation", &[]).await;
-    let stored_goal = p.local.store.get_goal(&goal.id).await.unwrap();
-    let orchestrator = p.local.orchestrator_session(&stored_goal).await;
-    go_away(&p).await;
-    p.local.json::<Value>(as_session(&format!("/v1/tasks/{}/messages",source.id), &orchestrator.id,
-        json!({"to_actor":"agent", "to_agent_id":source.agents[0].id, "body":"Continue after reconnection"})), StatusCode::CREATED).await;
-    back(&p).await;
-    eventually(TIMEOUT, "queued worker message", async || {
-        let messages: Vec<Value> = p
-            .far
-            .get(&format!("/v1/tasks/{}/messages", source.id))
-            .await;
-        messages.len() == 1
-    })
-    .await;
-    p.far
-        .store
-        .send_message(ariadne_store::NewMessage {
-            goal_id: goal.id.clone(),
-            task_id: Some(source.id.clone()),
-            kind: ariadne_core::MessageKind::Message,
-            from_actor: Actor::Agent,
-            from_agent_id: Some(source.agents[0].id.clone()),
-            from_session: None,
-            to_actor: Actor::Orchestrator,
-            to_agent_id: None,
-            body: "Worker question".into(),
-        })
-        .await
-        .unwrap();
-    eventually(TIMEOUT, "worker question at source", async || {
-        let messages: Vec<Value> = p
-            .local
-            .get(&format!("/v1/tasks/{}/messages", source.id))
-            .await;
-        messages.len() == 2 && messages[1]["from_agent_id"] == source.agents[0].id
-    })
-    .await;
 }
 
 #[tokio::test]
@@ -819,65 +776,6 @@ async fn worker_session_creation_refreshes_source_progress_without_a_usage_repor
 }
 
 #[tokio::test]
-async fn worker_messages_reach_the_source_orchestrator_with_the_worker_column_address() {
-    let p = pair_setup(false).await;
-    let repo = forge_repository(&p.local, "source", "owner/message-address").await;
-    forge_repository(&p.far, "worker", "owner/message-address").await;
-    let goal = goal_on(&p.local, &repo).await;
-    let source = draft(&p, &goal, "Addressed conversation", &[]).await;
-    let source_goal = p.local.store.get_goal(&goal.id).await.unwrap();
-    let orchestrator = p.local.orchestrator_session(&source_goal).await;
-    p.local.agent_runs(&orchestrator).await;
-    p.local
-        .set_status(&orchestrator, ariadne_core::SessionStatus::Idle)
-        .await;
-    let mut state = p.local.state.clone();
-    state.sched_tx = Some(ariadne_daemon::scheduler::start(
-        p.local.store.clone(),
-        p.local.launcher.clone(),
-        false,
-        p.local.timeouts,
-    ));
-    ariadne_daemon::far::start(&state, p.local.timeouts);
-    activate(&p.local, &goal).await;
-    let worker_task = p.far.store.get_task(&source.id).await.unwrap();
-    let worker_goal = p.far.store.task_goal(&worker_task).await.unwrap();
-    let agent = p
-        .far
-        .session(
-            &worker_goal,
-            Some(&worker_task),
-            ariadne_core::Seat::Agent,
-            &source.agents[0].id,
-        )
-        .await;
-    p.far
-        .json::<Value>(
-            as_session(
-                &format!("/v1/tasks/{}/messages", source.id),
-                &agent.id,
-                json!({"to_actor":"orchestrator","body":"Which source fixture applies?"}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    eventually(TIMEOUT, "source orchestrator message turn", async || {
-        p.local
-            .prompted(&orchestrator)
-            .contains("Which source fixture applies?")
-    })
-    .await;
-    let prompt = p.local.prompted(&orchestrator);
-    assert!(
-        prompt.contains(&format!(
-            "Message from the {} agent of task {}",
-            source.agents[0].step, source.id
-        )),
-        "{prompt}"
-    );
-}
-
-#[tokio::test]
 async fn reopening_the_source_store_recovers_an_unacknowledged_creation_without_a_second_worker_task()
  {
     let p = pair_setup(false).await;
@@ -1062,4 +960,176 @@ async fn a_worker_with_creation_only_v1_requires_a_dependency_control_upgrade() 
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "source", "owner/solo").await;
+    forge_repository(&p.far, "worker", "owner/solo").await;
+    let task: TaskDto = p
+        .local
+        .json(
+            post_json(
+                "/v1/tasks",
+                json!({
+                    "title":"Independent remote work", "repo_id":repo.id, "host":"far",
+                    "agents":[{"model":p.model}]
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert!(task.goal_id.is_none());
+    assert!(task.workflow.is_none());
+    assert!(task.steps.is_empty());
+    eventually(TIMEOUT, "worker authorization", async || {
+        let worker: TaskDto = p.far.get(&format!("/v1/tasks/{}", task.id)).await;
+        assert!(worker.goal_id.is_none());
+        worker.execution_context.unwrap().authorized
+    })
+    .await;
+    p.far
+        .store
+        .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    p.far
+        .store
+        .transition_task(
+            &task.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("Worker failed"),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "source failure reason", async || {
+        let t: TaskDto = p.local.get(&format!("/v1/tasks/{}", task.id)).await;
+        t.status == TaskStatus::Failed && t.reason.as_deref() == Some("Worker failed")
+    })
+    .await;
+    p.local
+        .json::<TaskDto>(
+            post(&format!("/v1/tasks/{}/retry", task.id)),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "remote retry", async || {
+        let t: TaskDto = p.far.get(&format!("/v1/tasks/{}", task.id)).await;
+        t.status == TaskStatus::Ready
+    })
+    .await;
+    p.local
+        .json::<TaskDto>(
+            post(&format!("/v1/tasks/{}/cancel", task.id)),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "remote cancellation", async || {
+        let t: TaskDto = p.local.get(&format!("/v1/tasks/{}", task.id)).await;
+        t.status == TaskStatus::Cancelled
+    })
+    .await;
+    assert!(p.far.store.list_goals(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn goal_less_admission_checks_the_host_and_saves_its_workflow() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "source", "owner/solo").await;
+    forge_repository(&p.far, "worker", "owner/solo").await;
+    p.local
+        .store
+        .create_workflow(ariadne_store::NewWorkflow {
+            name: "independent".into(),
+            document: "workflow independent\n  build[Build]\n    Build.\n    gate: committed\n"
+                .into(),
+        })
+        .await
+        .unwrap();
+    let body = json!({"title":"Remote columns", "repo_id":repo.id,"workflow":"independent",
+        "host":"far","agents":[{"step":"build","model":p.model}]});
+    let task: TaskDto = p
+        .local
+        .json(post_json("/v1/tasks", body.clone()), StatusCode::CREATED)
+        .await;
+    let worker: TaskDto = p.far.get(&format!("/v1/tasks/{}", task.id)).await;
+    assert!(worker.goal_id.is_none());
+    assert!(worker.execution_context.unwrap().source_goal.is_none());
+    assert_eq!(worker.workflow.as_deref(), Some("independent"));
+    assert_eq!(worker.steps.len(), 1);
+    assert_eq!(worker.steps[0].id, "build");
+    assert_eq!(
+        worker.steps[0].gate,
+        Some(ariadne_core::workflow::StepGate::Committed)
+    );
+    for host in ["dead", "unknown"] {
+        let mut refused = body.clone();
+        refused["host"] = json!(host);
+        let (status, bytes) = p.local.send(post_json("/v1/tasks", refused)).await;
+        assert!(status.is_client_error());
+        let reason: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(reason["error"]["message"].as_str().unwrap().contains(host));
+    }
+}
+
+#[tokio::test]
+async fn far_goal_less_admission_uses_the_local_workflow_reasons() {
+    let p = pair().await;
+    let repo = forge_repository(&p.local, "source", "owner/admission").await;
+    forge_repository(&p.far, "worker", "owner/admission").await;
+    p.local
+        .store
+        .create_workflow(ariadne_store::NewWorkflow {
+            name: "admission".into(),
+            document:
+                "workflow admission\n  build[Build]\n    Build.\n  inspect[Inspect]\n    Inspect.\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+    for (workflow, agents, expected) in [
+        (
+            "pr-review",
+            json!([{"step":"review","model":p.model}]),
+            "workflow pr-review runs a pull request operation; a goal cannot use it",
+        ),
+        (
+            "pr-babysit",
+            json!([{"step":"babysit","model":p.model}]),
+            "workflow pr-babysit runs a pull request operation; a goal cannot use it",
+        ),
+        (
+            "admission",
+            json!([{"step":"build","model":p.model}]),
+            "the goal is active, so every column needs an agent; none staffs inspect",
+        ),
+        (
+            "admission",
+            json!([{"step":"unknown","model":p.model}]),
+            "the agent names an unknown column unknown; the columns are build, inspect",
+        ),
+    ] {
+        for host in ["local", "far"] {
+            let reason: Value = p
+                .local
+                .json(
+                    post_json(
+                        "/v1/tasks",
+                        json!({
+                            "title":"Admission", "repo_id":repo.id,"workflow":workflow,
+                            "host":host,"agents":agents
+                        }),
+                    ),
+                    StatusCode::BAD_REQUEST,
+                )
+                .await;
+            assert_eq!(
+                reason["error"]["message"],
+                format!("invalid input: {expected}")
+            );
+        }
+    }
 }

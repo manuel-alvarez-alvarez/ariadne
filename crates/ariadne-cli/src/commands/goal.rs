@@ -260,6 +260,7 @@ pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Re
                 .get_json(&query_path(
                     "/v1/tasks",
                     &TaskListQuery {
+                        no_goal: false,
                         goal: Some(id.clone()),
                         status: None,
                         origin_task_id: None,
@@ -453,7 +454,9 @@ pub(crate) async fn list(client: &Client, statuses: &[GoalStatus], all: bool) ->
                 g.title.clone(),
                 g.status.as_str().into(),
                 task_cell(task_counts(
-                    tasks.iter().filter(|task| task.goal_id == g.id),
+                    tasks
+                        .iter()
+                        .filter(|task| task.goal_id.as_ref() == Some(&g.id)),
                 )),
                 age(&g.created_at, now),
                 usage_cell(&g.usage.total),
@@ -537,6 +540,7 @@ async fn rm_question(client: &Client, goal: &GoalDto, subject: &Subject) -> Stri
 /// daemon that will not list them still gets asked about the goal.
 async fn goal_tasks(client: &Client, goal_id: &str) -> Vec<TaskDto> {
     let query = TaskListQuery {
+        no_goal: false,
         goal: Some(goal_id.to_string()),
         status: None,
         origin_task_id: None,
@@ -1032,7 +1036,11 @@ mod tests {
             },
         ];
 
-        let counts = task_counts(tasks.iter().filter(|task| task.goal_id == "01GOAL"));
+        let counts = task_counts(
+            tasks
+                .iter()
+                .filter(|task| task.goal_id.as_deref() == Some("01GOAL")),
+        );
         assert_eq!(counts.finished, 1);
         assert_eq!(counts.total, 5);
         assert_eq!(counts.failed, 1);

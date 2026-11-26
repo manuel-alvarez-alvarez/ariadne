@@ -379,7 +379,6 @@ const KINDS: &[(&str, Kind)] = &[
     ("task inspect", Kind::ReadOne),
     ("task logs", Kind::Stream),
     ("task ls", Kind::List),
-    ("task messages", Kind::ReadOne),
     ("task retry", Kind::Write),
     ("task update", Kind::Write),
     ("version", Kind::ReadEach),
@@ -556,6 +555,16 @@ pub(crate) async fn run(cli: Cli, local: Arc<Client>, path: &str) -> Result<Exit
         && let Some(message) = synced_flag(&cli.command)
     {
         return Err(Failure::usage(message).err());
+    }
+    // A task with no goal is created by the local daemon, which sends it to
+    // the host the body names; the host never sees the request itself.
+    if matches!(
+        cli.command,
+        Command::Task {
+            command: commands::task::TaskCommand::Create { goal: None, .. }
+        }
+    ) {
+        return crate::run(cli, local).await;
     }
     let selected = client(host, &local)?;
     crate::run(cli, selected).await

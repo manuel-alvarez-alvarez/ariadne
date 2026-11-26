@@ -197,11 +197,21 @@ it("replaces the open goal with a task picked from the palette, and Escape empti
   )
 })
 
-it("has no task to offer over a screen with no goal open", async () => {
+it("offers a task with no goal over a screen with no goal open, and opens its dialog", async () => {
+  const user = userEvent.setup()
   renderPalette()
 
-  await screen.findByText("Actions")
-  expect(screen.queryByText("New task")).toBeNull()
+  await user.click(await screen.findByText("New task"))
+
+  expect(await screen.findByRole("dialog", { name: "New task" })).toBeTruthy()
+  expect(await screen.findByRole("combobox", { name: "Repository" })).toBeTruthy()
+})
+
+it("offers the goal-less task beside the goal's own when a goal is open", async () => {
+  renderPalette(`/goals?goal=${GOAL.id}`)
+
+  expect(await screen.findByText("New task")).toBeTruthy()
+  expect(screen.getByText("Add a task outside any goal")).toBeTruthy()
 })
 
 it("offers the attach command for the session the screen has open", async () => {

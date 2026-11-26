@@ -290,20 +290,15 @@ pub enum TranscriptItem {
         meta: ItemMeta,
         text: String,
     },
-    /// A question the agent asked through `wait_for_user` (031), with the
-    /// options the user can pick and, once it closed, how.
-    UserQuestion {
+    /// A question the agent asked with its own tool, an ACP
+    /// `elicitation/create` (021): its form and, once it closed, how.
+    FormQuestion {
         meta: ItemMeta,
-        request_id: String,
-        hint: String,
-        question: String,
-        options: Vec<QuestionChoice>,
-        recommended: Option<String>,
-        /// Why the agent recommends that option.
-        recommendation_reason: Option<String>,
-        /// How it closed: `answered · <answer>`, `question withdrawn` or
-        /// `question expired`. None while it waits for an answer.
-        closed: Option<String>,
+        question_id: String,
+        message: String,
+        fields: Vec<FormField>,
+        /// How it closed. None while it waits for an answer.
+        closed: Option<FormClosed>,
     },
     Error {
         meta: ItemMeta,
@@ -333,71 +328,300 @@ impl TranscriptItem {
             | Self::ToolCall { meta, .. }
             | Self::PermissionQuestion { meta, .. }
             | Self::SystemNote { meta, .. }
-            | Self::UserQuestion { meta, .. }
+            | Self::FormQuestion { meta, .. }
             | Self::Error { meta, .. }
             | Self::Raw { meta, .. } => meta,
         }
     }
 }
 
-/// One answer a question offers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QuestionChoice {
-    pub id: String,
-    pub label: String,
+/// One field of a question's form, read off its `requestedSchema`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormField {
+    /// The property name, which the answer's content is keyed by.
+    pub key: String,
+    /// The field's `title`, else its key.
+    pub title: String,
+    pub description: Option<String>,
+    pub required: bool,
+    pub kind: FieldKind,
+}
+
+/// What a field takes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldKind {
+    /// One of the choices: a `string` with `oneOf` or `enum`, or a boolean.
+    Single(Vec<FormChoice>),
+    /// Any of the choices: an `array` with `items.anyOf` or `items.enum`.
+    Multi(Vec<FormChoice>),
+    /// Free text.
+    Text,
+    /// A number, typed.
+    Number { integer: bool },
+}
+
+/// One choice of a field: the value the answer carries, and its text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormChoice {
+    pub value: Value,
+    pub title: String,
     pub description: Option<String>,
 }
 
+/// How a form question closed, as its `question.resolved` event says.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormClosed {
+    /// `accept`, `decline` or `cancel`.
+    pub action: String,
+    pub content: serde_json::Map<String, Value>,
+    /// Who closed it: `user`, `agent` or `session`.
+    pub closed_by: Option<String>,
+}
+
+impl FormClosed {
+    /// How a `question.resolved` event says the question closed.
+    pub fn of(payload: &Value) -> Self {
+        Self {
+            action: string_at(payload, "/action").unwrap_or_else(|| "cancel".into()),
+            content: payload
+                .get("content")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            closed_by: string_at(payload, "/closed_by"),
+        }
+    }
+}
+
+impl FormField {
+    /// The text of each choice `value` names, as the agent wrote it.
+    fn answer_text(&self, value: &Value) -> String {
+        let choices = match &self.kind {
+            FieldKind::Single(choices) | FieldKind::Multi(choices) => choices.as_slice(),
+            _ => &[],
+        };
+        let one = |value: &Value| {
+            choices
+                .iter()
+                .find(|choice| &choice.value == value)
+                .map(|choice| choice.title.clone())
+                .unwrap_or_else(|| match value {
+                    Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                })
+        };
+        match value {
+            Value::Array(values) if values.is_empty() => "(none)".into(),
+            Value::Array(values) => values.iter().map(one).collect::<Vec<_>>().join(", "),
+            value => one(value),
+        }
+    }
+}
+
+/// Pair only an adjacent plain string companion with its choice question.
+pub(crate) fn companion<'a>(fields: &'a [FormField], field: &FormField) -> Option<&'a FormField> {
+    let at = fields.iter().position(|f| f.key == field.key)?;
+    let next = fields.get(at + 1)?;
+    (matches!(field.kind, FieldKind::Single(_) | FieldKind::Multi(_))
+        && next.key == format!("{}_custom", field.key)
+        && matches!(next.kind, FieldKind::Text))
+    .then_some(next)
+}
+
+pub(crate) fn questions(fields: &[FormField]) -> Vec<FormField> {
+    fields
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| *at == 0 || companion(fields, &fields[*at - 1]).is_none())
+        .map(|(_, field)| field.clone())
+        .collect()
+}
+
+/// The fields of a form, in the order the schema lists them.
+fn form_fields(schema: &Value, message: &str) -> Vec<FormField> {
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(key, property)| FormField {
+            key: key.clone(),
+            title: string_at(property, "/title").unwrap_or_else(|| message.to_string()),
+            description: string_at(property, "/description"),
+            required: required.contains(&key.as_str()),
+            kind: field_kind(property),
+        })
+        .collect()
+}
+
+fn field_kind(property: &Value) -> FieldKind {
+    match property.get("type").and_then(Value::as_str) {
+        Some("array") => FieldKind::Multi(choices(property.get("items").unwrap_or(&Value::Null))),
+        Some("boolean") => FieldKind::Single(vec![
+            FormChoice {
+                value: Value::Bool(true),
+                title: "Yes".into(),
+                description: None,
+            },
+            FormChoice {
+                value: Value::Bool(false),
+                title: "No".into(),
+                description: None,
+            },
+        ]),
+        Some(kind @ ("number" | "integer")) => FieldKind::Number {
+            integer: kind == "integer",
+        },
+        _ => match choices(property) {
+            choices if choices.is_empty() => FieldKind::Text,
+            choices => FieldKind::Single(choices),
+        },
+    }
+}
+
+/// The choices of a schema: `oneOf` or `anyOf` with `const` and `title`, or
+/// a plain `enum`, with `enumNames` where it gives them.
+fn choices(schema: &Value) -> Vec<FormChoice> {
+    let titled = ["oneOf", "anyOf"]
+        .iter()
+        .find_map(|key| schema.get(*key).and_then(Value::as_array));
+    if let Some(titled) = titled {
+        return titled
+            .iter()
+            .filter_map(|choice| {
+                let value = choice.get("const")?.clone();
+                Some(FormChoice {
+                    title: string_at(choice, "/title").unwrap_or_else(|| match &value {
+                        Value::String(text) => text.clone(),
+                        other => other.to_string(),
+                    }),
+                    description: string_at(choice, "/description"),
+                    value,
+                })
+            })
+            .collect();
+    }
+    let names = schema.get("enumNames").and_then(Value::as_array);
+    schema
+        .get("enum")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(at, value)| FormChoice {
+            title: names
+                .and_then(|names| names.get(at))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| match value {
+                    Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                }),
+            description: None,
+            value: value.clone(),
+        })
+        .collect()
+}
+
 impl TranscriptItem {
-    /// A question as the lines a person reads: the hint, the question, each
-    /// option by its number with the recommendation and its reason, and how
-    /// to answer or how it closed.
-    pub fn question_lines(&self) -> Vec<String> {
-        let Self::UserQuestion {
-            hint,
-            question,
-            options,
-            recommended,
-            recommendation_reason,
+    /// A form question as the lines a person reads: the agent's message,
+    /// each field with its choices as the agent wrote them, and how to
+    /// answer or how it closed.
+    pub fn form_lines(&self) -> Vec<String> {
+        let Self::FormQuestion {
+            message,
+            fields,
             closed,
             ..
         } = self
         else {
             return Vec::new();
         };
-        let mut lines = vec![format!("waiting for you · {hint}")];
-        lines.extend(question.lines().map(str::to_string));
-        for (index, option) in options.iter().enumerate() {
-            let mut line = format!("  {}. {}", index + 1, option.label);
-            if let Some(description) = &option.description {
-                line.push_str(&format!(" — {description}"));
-            }
-            if recommended.as_deref() == Some(option.id.as_str()) {
-                line.push_str(" (recommended)");
-                if let Some(reason) = recommendation_reason {
-                    line.push_str(&format!(" · {reason}"));
-                }
-            }
-            lines.push(line);
+        if let Some(closed) = closed {
+            return closed_lines(closed, fields);
         }
-        lines.push(match closed {
-            Some(closed) => closed.clone(),
-            None if options.is_empty() => "Type your answer.".into(),
-            None => "Type a number, or your own answer.".into(),
-        });
+        let mut lines = vec!["question".to_string()];
+        lines.extend(message.lines().map(str::to_string));
+        for (at, field) in fields.iter().enumerate() {
+            lines.extend(field_lines(at, field));
+        }
+        match closed {
+            None => lines.push("Answer it in the console.".into()),
+            Some(closed) => lines.extend(closed_lines(closed, fields)),
+        }
         lines
     }
 }
 
-/// How a request closed, as its `agent_request.resolved` event says.
-fn resolution_note(payload: &Value) -> String {
-    match string_at(payload, "/resolution").as_deref() {
-        Some("answered") => match string_at(payload, "/answer/text") {
-            Some(answer) => format!("answered · {answer}"),
-            None => "answered".into(),
-        },
-        Some(other) => format!("question {other}"),
-        None => "question closed".into(),
+/// One field: its number and title, its description, and its choices.
+fn field_lines(at: usize, field: &FormField) -> Vec<String> {
+    let mut head = format!("{}. {}", at + 1, field.title);
+    match &field.kind {
+        FieldKind::Single(_) => head.push_str(" (pick one)"),
+        FieldKind::Multi(_) => head.push_str(" (pick any)"),
+        FieldKind::Text | FieldKind::Number { .. } => {}
+    }
+    if !field.required {
+        head.push_str(" (optional)");
+    }
+    let mut lines = vec![head];
+    if let Some(description) = &field.description {
+        lines.push(format!("   {description}"));
+    }
+    if let FieldKind::Single(choices) | FieldKind::Multi(choices) = &field.kind {
+        for choice in choices {
+            lines.push(match &choice.description {
+                Some(description) => format!("   - {} — {description}", choice.title),
+                None => format!("   - {}", choice.title),
+            });
+        }
+    }
+    lines
+}
+
+/// How a form question closed: each answer under its field's title, or the
+/// way it closed without one.
+pub fn closed_lines(closed: &FormClosed, fields: &[FormField]) -> Vec<String> {
+    match closed.action.as_str() {
+        "accept" => {
+            let mut lines = vec!["answered".to_string()];
+            for field in questions(fields) {
+                let mut answers = Vec::new();
+                if let Some(value) = closed.content.get(&field.key) {
+                    answers.push(field.answer_text(value));
+                }
+                if let Some(custom) = companion(fields, &field)
+                    .and_then(|custom| closed.content.get(&custom.key))
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                {
+                    answers.push(custom.to_string());
+                }
+                lines.push(format!(
+                    "  {} → {}",
+                    field.title,
+                    if answers.is_empty() {
+                        "(no answer)".into()
+                    } else {
+                        answers.join(", ")
+                    }
+                ));
+            }
+            lines
+        }
+        "decline" => vec!["question declined".into()],
+        _ => vec![match closed.closed_by.as_deref() {
+            Some("agent") => "question withdrawn by the agent".into(),
+            Some("session") => "question closed: the session ended".into(),
+            _ => "question cancelled".into(),
+        }],
     }
 }
 
@@ -480,43 +704,18 @@ impl From<&AgentEventDto> for TranscriptItem {
                 meta,
                 text: "context compacted".into(),
             },
-            // The agent flagged that it waits for the user (031). The
-            // question is the agent's text that follows this line; the hint
-            // is the one the Needs attention list shows, so the two read as one.
-            "agent_request" if event.payload.get("question").is_some_and(Value::is_object) => {
-                Self::UserQuestion {
-                    meta,
-                    request_id: string_at(&event.payload, "/request_id").unwrap_or_default(),
-                    hint: string_at(&event.payload, "/hint").unwrap_or_default(),
-                    question: string_at(&event.payload, "/question/text").unwrap_or_default(),
-                    options: event
-                        .payload
-                        .pointer("/question/options")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|option| {
-                            Some(QuestionChoice {
-                                id: string_at(option, "/id")?,
-                                label: string_at(option, "/label")?,
-                                description: string_at(option, "/description"),
-                            })
-                        })
-                        .collect(),
-                    recommended: string_at(&event.payload, "/question/recommended_option_id"),
-                    recommendation_reason: string_at(
-                        &event.payload,
-                        "/question/recommendation_reason",
-                    ),
-                    closed: None,
-                }
-            }
-            "agent_request" => Self::SystemNote {
+            "question" => Self::FormQuestion {
                 meta,
-                text: match string_at(&event.payload, "/hint") {
-                    Some(hint) => format!("waiting for you · {hint}"),
-                    None => "waiting for you".into(),
-                },
+                question_id: string_at(&event.payload, "/question/id").unwrap_or_default(),
+                message: string_at(&event.payload, "/question/message").unwrap_or_default(),
+                fields: form_fields(
+                    event
+                        .payload
+                        .pointer("/question/schema")
+                        .unwrap_or(&Value::Null),
+                    &string_at(&event.payload, "/question/message").unwrap_or_default(),
+                ),
+                closed: None,
             },
             "session_end" => Self::SystemNote {
                 meta,
@@ -643,17 +842,25 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         meta.kinds.push(event.kind.clone());
         return;
     }
-    // A request that closed closes its question's card, and adds no block:
-    // a replay draws the card closed, never open again.
-    if event.kind == "agent_request.resolved" {
-        let request = string_at(&event.payload, "/request_id");
-        if let Some(TranscriptItem::UserQuestion { closed, meta, .. }) =
+    // A `wait_for_user` request that an older release recorded adds no
+    // block: the request is gone, and its lines are history only.
+    if matches!(
+        event.kind.as_str(),
+        "agent_request" | "agent_request.resolved"
+    ) {
+        return;
+    }
+    // A question that closed closes its form, and adds no block: a replay
+    // draws it closed, never open again.
+    if event.kind == "question.resolved" {
+        let question = string_at(&event.payload, "/question_id");
+        if let Some(TranscriptItem::FormQuestion { closed, meta, .. }) =
             items.iter_mut().rev().find(|previous| {
-                matches!(previous, TranscriptItem::UserQuestion { request_id, .. }
-                    if Some(request_id) == request.as_ref())
+                matches!(previous, TranscriptItem::FormQuestion { question_id, .. }
+                    if Some(question_id) == question.as_ref())
             })
         {
-            *closed = Some(resolution_note(&event.payload));
+            *closed = Some(FormClosed::of(&event.payload));
             meta.kinds.push(event.kind.clone());
         }
         return;
@@ -694,7 +901,7 @@ fn daemon_allowed(payload: &Value, options: &[PermissionOption]) -> bool {
 }
 
 /// Whether a call is one of Ariadne's own MCP tools, by the name the agent's
-/// client gives it: `mcp__ariadne__wait_for_user` from Claude Code, and the
+/// client gives it: `mcp__ariadne__complete_step` from Claude Code, and the
 /// server's name in some other spelling from another client.
 fn is_ariadne_tool(name: &str) -> bool {
     name.to_ascii_lowercase().contains("ariadne")
@@ -1064,92 +1271,35 @@ mod tests {
         assert_eq!(tool.output.as_deref(), Some("built"));
     }
 
-    /// The daemon's own line for a wait the agent flagged (031): the hint
-    /// as one note above the question the agent then writes, so the line the
-    /// Needs attention list shows and the question read together.
+    /// A `wait_for_user` request and its close, as an older release
+    /// recorded them, draw no block between the lines around them.
     #[test]
-    fn an_agent_request_reads_as_a_waiting_note_with_its_hint() {
-        let events = [event(
-            "request",
-            "agent_request",
-            json!({"request_id": "01RQ", "hint": "Approve the plan?"}),
-        )];
+    fn an_old_agent_request_draws_no_block() {
+        let events = [
+            event("before", "agent_message", json!({"text": "Before."})),
+            event(
+                "request",
+                "agent_request",
+                json!({"request_id": "01RQ", "hint": "Pick a base", "question": {
+                    "text": "Which base branch?",
+                    "options": [{"id": "main", "label": "Main"}]
+                }}),
+            ),
+            event(
+                "resolved",
+                "agent_request.resolved",
+                json!({"request_id": "01RQ", "resolution": "answered",
+                       "answer": {"option_id": "main", "text": "Main"}}),
+            ),
+            event("after", "agent_message", json!({"text": "After."})),
+        ];
         let items = fold(&events);
+        assert_eq!(items.len(), 2, "{items:?}");
         assert!(
-            matches!(&items[0], TranscriptItem::SystemNote { text, .. }
-                if text == "waiting for you · Approve the plan?"),
+            items
+                .iter()
+                .all(|item| matches!(item, TranscriptItem::AgentText { .. })),
             "{items:?}"
-        );
-    }
-
-    /// A structured question reads as text: the hint, the question, each
-    /// option by its number with the recommendation marked, and how to
-    /// answer. Its resolution closes it in place and adds no block.
-    #[test]
-    fn a_question_reads_as_numbered_choices_and_closes_in_place() {
-        let mut events = vec![event(
-            "request",
-            "agent_request",
-            json!({"request_id": "01RQ", "hint": "Pick a base", "question": {
-                "text": "Which base branch?",
-                "options": [
-                    {"id": "main", "label": "Main", "description": "Land on the trunk."},
-                    {"id": "next", "label": "Next"}
-                ],
-                "recommended_option_id": "main"
-            }}),
-        )];
-        let items = fold(&events);
-        assert_eq!(
-            items[0].question_lines(),
-            [
-                "waiting for you · Pick a base",
-                "Which base branch?",
-                "  1. Main — Land on the trunk. (recommended)",
-                "  2. Next",
-                "Type a number, or your own answer.",
-            ]
-        );
-        events.push(event(
-            "resolved",
-            "agent_request.resolved",
-            json!({"request_id": "01RQ", "resolution": "answered",
-                   "answer": {"option_id": "next", "text": "Next"}}),
-        ));
-        let items = fold(&events);
-        assert_eq!(items.len(), 1, "{items:?}");
-        assert_eq!(
-            items[0].question_lines().last().map(String::as_str),
-            Some("answered · Next")
-        );
-    }
-
-    /// The reason for a recommendation follows `(recommended)` on the line
-    /// of the option it recommends, and adds no line.
-    #[test]
-    fn a_recommendation_reason_follows_the_recommended_option() {
-        let items = fold(&[event(
-            "request",
-            "agent_request",
-            json!({"request_id": "01RQ", "hint": "Pick a base", "question": {
-                "text": "Which base branch?",
-                "options": [
-                    {"id": "main", "label": "Main", "description": "Land on the trunk."},
-                    {"id": "next", "label": "Next"}
-                ],
-                "recommended_option_id": "main",
-                "recommendation_reason": "The trunk is green."
-            }}),
-        )]);
-        assert_eq!(
-            items[0].question_lines(),
-            [
-                "waiting for you · Pick a base",
-                "Which base branch?",
-                "  1. Main — Land on the trunk. (recommended) · The trunk is green.",
-                "  2. Next",
-                "Type a number, or your own answer.",
-            ]
         );
     }
 
@@ -1181,13 +1331,13 @@ mod tests {
         };
 
         let auto = fold(&[
-            asked("ask-1", "mcp__ariadne__wait_for_user"),
+            asked("ask-1", "mcp__ariadne__complete_step"),
             replied("reply-1", "auto"),
         ]);
         assert!(auto.is_empty(), "{auto:?}");
 
         let by_hand = fold(&[
-            asked("ask-2", "mcp__ariadne__wait_for_user"),
+            asked("ask-2", "mcp__ariadne__complete_step"),
             replied("reply-2", "console"),
         ]);
         assert!(
@@ -1246,7 +1396,7 @@ mod tests {
         assert_eq!(kept_answer(&learned_reject), "Reject");
 
         let cancelled = fold(&[
-            asked("ask-6", "mcp__ariadne__wait_for_user"),
+            asked("ask-6", "mcp__ariadne__complete_step"),
             event(
                 "reply-6",
                 "permission.replied",

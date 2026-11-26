@@ -23,7 +23,9 @@ use tokio::time::{Instant, sleep_until};
 
 use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
-use ariadne_api::sessions::{ConsoleCancelRequest, ConsoleInputRequest, SessionDto};
+use ariadne_api::sessions::{
+    AnswerQuestionRequest, ConsoleCancelRequest, ConsoleInputRequest, SessionDto,
+};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent, SseStream};
 use ariadne_console::{Console, Frame, Header, Sink, drive, open};
@@ -223,6 +225,21 @@ impl Sink for Posts<'_> {
                 http::Method::POST,
                 &format!("/v1/sessions/{}/console/input", self.id),
                 Some(&ConsoleInputRequest { text }),
+            )
+            .await
+            .map_err(|e| e.human())
+    }
+
+    async fn answer(
+        &mut self,
+        question_id: &str,
+        answer: AnswerQuestionRequest,
+    ) -> Result<(), String> {
+        self.client
+            .send_no_content(
+                http::Method::POST,
+                &format!("/v1/sessions/{}/questions/{question_id}/answer", self.id),
+                Some(&answer),
             )
             .await
             .map_err(|e| e.human())
@@ -615,6 +632,10 @@ mod tests {
 
     impl Sink for Quiet {
         async fn send(&mut self, _: String) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn answer(&mut self, _: &str, _: AnswerQuestionRequest) -> Result<(), String> {
             Ok(())
         }
 

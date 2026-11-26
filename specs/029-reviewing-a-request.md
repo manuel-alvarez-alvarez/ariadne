@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-11-21
+updated: 2026-11-26
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -145,10 +145,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     required to ask and is checked against the catalog as any pin is; a
     missing or unknown one answers 400. Each skill must be one a task agent
     is staffed on (017), else 400; `pr-reviewer` is loaded anyway and is not
-    stored. `model` must have a rank the `pr-review` workflow's `review`
-    column allows (030 rule 11): an unranked model, or one of another rank,
-    answers 400 naming the band — the band of the open goal's snapshot where
-    one is open, else of the workflow as it stands. It answers the request,
+    stored. `model` must have a rank the fixed `review` column allows (030
+    rule 11): an unranked model, or one of another rank, answers 400 naming
+    the band — the band of the open goal's snapshot where one is open, else
+    of the fixed column. It answers the request,
     and wakes the fetch and the scheduler.
     Authorship and GitHub review assignments do not restrict the ask.
     The row keeps its actual authorship role: `author` for the integration
@@ -178,8 +178,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
       `goals.pr_operation`, `pr_repository_id`, `pr_number` and `pr_url`: the
       request's own row goes when Ariadne stops working on it, and the goal
       stays as history. A partial unique index keeps the one.
-    - The goal runs on `pr-review`, snapshotted into `goal_steps` as any
-      goal's workflow is (030 rule 1), is `active` at once and has no
+    - The goal runs on the fixed `review` column (030 rule 11), snapshotted
+      into `goal_steps` as any goal's columns are, and records `pr-review` as
+      its workflow name, is `active` at once and has no
       orchestrator (`orchestrated` is false). It has one task, already
       `in_progress` on the `review` column, and one agent: the pin of the
       ask and the column's skills with the picked ones. No orchestrator
@@ -419,7 +420,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   stops it on explicit stop:
   `pull_request_reviews.rs::an_unassigned_dependabot_request_is_reviewed_until_stopped`.
 - A review ask makes one active goal with no orchestrator, on a snapshot of
-  `pr-review`, with one task in its `review` column and one agent whose
+  the fixed `review` column, with one task in its `review` column and one agent whose
   session is the review; the goal, the task and the request name each other;
   a repeated ask keeps them:
   `store.rs::a_review_start_makes_one_active_goal_with_one_staffed_task`,

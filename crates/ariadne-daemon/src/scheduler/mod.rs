@@ -15,7 +15,6 @@
 pub(crate) mod auto_switch;
 mod coalesce;
 mod goals;
-mod messages;
 mod pull_requests;
 mod quiet;
 mod sweeps;
@@ -379,17 +378,6 @@ impl Scheduler {
         self.handed(session, handed)
     }
 
-    /// [`Self::hand_prompt`] for an agent message: the runtime stamps it
-    /// when the prompt goes out, and queues it once however many passes
-    /// hand it.
-    fn hand_message(&mut self, session: &AgentSession, message_id: &str, text: String) {
-        let handed = self
-            .launcher
-            .acp
-            .send_message(&session.id, message_id, text);
-        self.handed(session, handed);
-    }
-
     /// Whether the runtime took a prompt, with a refused one's nudge given
     /// back.
     pub(super) fn handed(&mut self, session: &AgentSession, handed: anyhow::Result<()>) -> bool {
@@ -505,13 +493,13 @@ impl Scheduler {
 
     /// Every goal, and every task of the active ones, reconciled in turn.
     async fn reconcile_entities(&mut self) {
-        match self.store.remote_tasks().await {
+        match self.store.tasks_without_local_goals().await {
             Ok(tasks) => {
                 for task in tasks {
                     self.reconcile(Target::Task(&task.id)).await;
                 }
             }
-            Err(error) => warn!(%error, "reconcile: listing remote tasks failed"),
+            Err(error) => warn!(%error, "reconcile: listing tasks without local goals failed"),
         }
         let goals = match self.store.list_goals(&[]).await {
             Ok(goals) => goals,
@@ -539,8 +527,7 @@ impl Scheduler {
                 };
                 // Tasks with live sessions are reconciled even when
                 // terminal, so a crash between merge/cancel and cleanup
-                // still converges on the next tick. A far task can still
-                // have messages for the orchestrator after it ends.
+                // still converges on the next tick.
                 let live_task_ids: std::collections::HashSet<String> = self
                     .store
                     .list_sessions(SessionFilter {
@@ -556,8 +543,6 @@ impl Scheduler {
                 for task in tasks {
                     if !task.status().is_terminal() || live_task_ids.contains(&task.id) {
                         self.reconcile(Target::Task(&task.id)).await;
-                    } else if task.is_far() {
-                        self.deliver_task_messages(&task).await;
                     }
                 }
             }

@@ -15,7 +15,6 @@ use crate::dashboards::DashboardDto;
 use crate::events::AgentEventSummaryDto;
 use crate::goals::GoalDto;
 use crate::hosts::HostDto;
-use crate::messages::MessageDto;
 use crate::permissions::{AiPermissionsStatusDto, LearnedPermissionDto};
 use crate::repositories::RepositoryDto;
 use crate::sessions::SessionDto;
@@ -40,7 +39,7 @@ pub struct TaskUpdatedDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskBranchDto {
     pub task_id: String,
-    pub goal_id: String,
+    pub goal_id: Option<String>,
     /// The task branch whose head moved.
     pub branch: String,
     /// Full sha of the commit the branch points at now.
@@ -97,8 +96,6 @@ pub enum DomainEvent {
     /// Covers commits made in the task's worktree: the branch head moved, so
     /// the task's diff against its base is no longer the one a client holds.
     TaskBranchUpdated(TaskBranchDto),
-    /// One agent said something to another.
-    MessageSent(MessageDto),
     SessionCreated(SessionDto),
     /// Covers status changes: kill, resume, exit, activity.
     SessionUpdated(SessionDto),
@@ -158,7 +155,6 @@ impl DomainEvent {
             Self::TaskCreated(_) => "task_created",
             Self::TaskUpdated(_) => "task_updated",
             Self::TaskBranchUpdated(_) => "task_branch_updated",
-            Self::MessageSent(_) => "message_sent",
             Self::SessionCreated(_) => "session_created",
             Self::SessionUpdated(_) => "session_updated",
             Self::AgentEvent(_) => "agent_event",
@@ -201,7 +197,6 @@ impl DomainEvent {
             Self::TaskCreated(t) => json(t),
             Self::TaskUpdated(t) => json(t),
             Self::TaskBranchUpdated(b) => json(b),
-            Self::MessageSent(m) => json(m),
             Self::SessionCreated(s) | Self::SessionUpdated(s) => json(s),
             Self::AgentEvent(e) => json(e),
             Self::SkillCreated(s) | Self::SkillUpdated(s) => json(s),
@@ -231,4 +226,8 @@ pub struct EventStreamQuery {
     pub goal: Option<String>,
     /// Only events belonging to this task.
     pub task: Option<String>,
+    /// The persistent daemon ID of a source daemon that follows this stream.
+    /// The stream also carries `source_post` frames (`SourcePostDto`): the
+    /// posts of worker agents to the orchestrator of that source.
+    pub source: Option<String>,
 }

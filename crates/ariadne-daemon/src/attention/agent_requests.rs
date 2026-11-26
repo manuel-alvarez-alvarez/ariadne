@@ -1,6 +1,6 @@
-//! The agent-request producer: a session's own question to the user.
+//! The session producer: a live session's own flag for the user.
 //!
-//! Explicit questions and pending human permission prompts.
+//! Pending human permission prompts, input, waits and errors.
 
 use ariadne_api::attention::{
     AttentionCause, AttentionItemDto, AttentionProducer, AttentionSubjectDto, AttentionSubjectKind,
@@ -11,31 +11,7 @@ use ariadne_store::SessionFilter;
 use ariadne_store::{Result, Store};
 
 pub(crate) async fn items(store: &Store) -> Result<Vec<AttentionItemDto>> {
-    store.expire_dead_agent_requests().await?;
     let mut items = Vec::new();
-    for request in store.pending_agent_requests().await? {
-        let session = store.get_session(&request.session_id).await?;
-        if !session.status().is_live() || !super::work_is_active_checked(store, &session).await? {
-            continue;
-        }
-        items.push(AttentionItemDto {
-            occurrence: request.id.clone(),
-            id: format!("agent_request:{}", request.id),
-            producer: AttentionProducer::AgentRequest,
-            reason: AttentionCause::Unknown,
-            summary: request.summary,
-            required_action: "Answer the agent in its console.".into(),
-            since: request.created_at,
-            affected: vec![AttentionSubjectDto {
-                kind: AttentionSubjectKind::Session,
-                id: session.id.clone(),
-                label: session.model.clone(),
-            }],
-            target: AttentionTarget::Console {
-                session_id: session.id,
-            },
-        });
-    }
     for session in store
         .list_sessions(SessionFilter {
             attention_only: true,
@@ -58,9 +34,6 @@ pub(crate) async fn items(store: &Store) -> Result<Vec<AttentionItemDto>> {
             AttentionReason::AgentError => "The agent reported an error.",
             _ => continue,
         };
-        if reason == AttentionReason::WaitingUser && items.iter().any(|item| {
-            matches!(&item.target, AttentionTarget::Console { session_id } if session_id == &session.id)
-        }) { continue; }
         let since = session
             .attention_since
             .clone()

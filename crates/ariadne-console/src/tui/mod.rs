@@ -38,7 +38,7 @@ use ratatui::widgets::{Paragraph, Widget};
 use tokio::time::{Instant, interval};
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::sessions::SessionDto;
+use ariadne_api::sessions::{AnswerQuestionRequest, QuestionAction, SessionDto};
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::Seat;
 
@@ -49,6 +49,7 @@ mod banner;
 mod blocks;
 mod chrome;
 mod commands;
+mod form;
 mod input;
 mod picker;
 mod subagents;
@@ -63,6 +64,7 @@ pub use viewport::{Anchored, Screen, open};
 
 use blocks::block;
 use commands::Command;
+use form::FormState;
 use input::Input;
 use subagents::{SUBAGENT_UPDATE, Subagent, child_at, child_of};
 
@@ -82,6 +84,11 @@ pub enum Action {
     /// Post this text to the session's console input: a typed prompt, or the
     /// id of the option a permission question was answered with.
     Send(String),
+    /// Answer the agent's question of this id (021).
+    Answer {
+        question_id: String,
+        answer: AnswerQuestionRequest,
+    },
     /// Cancel the running turn.
     Cancel,
     /// Cancel this subagent's turn (021): the child advertised the
@@ -259,6 +266,8 @@ pub struct Console {
     parked: Vec<TranscriptItem>,
     /// The child whose permission question waits, where one does.
     asking_child: Option<String>,
+    /// How far the person is through the open question being answered.
+    form: FormState,
 }
 
 #[derive(Default)]
@@ -316,6 +325,7 @@ impl Console {
             view: 0,
             parked: Vec::new(),
             asking_child: None,
+            form: FormState::default(),
         }
     }
 
@@ -505,8 +515,8 @@ impl Console {
         self.pin_questions();
     }
 
-    /// Keep each open `wait_for_user` question of the session's own after
-    /// every later block (031): it waits on the user, so it draws in the live
+    /// Keep each open question of the session's own after every later
+    /// block (021): it waits on the user, so it draws in the live
     /// area right over the input, and the blocks written after it go above
     /// it and into the scrollback. A question that closes stays where it
     /// is then, after the blocks before its close. A session that has ended
@@ -685,11 +695,11 @@ impl Console {
         self.invalidate_blocks();
         // A typed prompt the daemon refused is never confirmed: it is no
         // longer queued, and holds nothing after it out of the scrollback.
-        if self.pending.back().is_some_and(|at| {
-            self.items[at + 1..]
-                .iter()
-                .all(|item| matches!(item, TranscriptItem::UserQuestion { closed: None, .. }))
-        }) {
+        if self
+            .pending
+            .back()
+            .is_some_and(|at| self.items[at + 1..].iter().all(is_waiting))
+        {
             self.pending.pop_back();
         }
         self.items.push(TranscriptItem::Error {
@@ -755,6 +765,206 @@ impl Console {
         });
         self.asking.set(Some(asking));
         asking
+    }
+
+    /// The open question the form answers: the oldest one still waiting,
+    /// while no permission question waits before it.
+    fn open_form(&self) -> Option<usize> {
+        if self.has_ended() || self.in_child() || self.question().is_some() {
+            return None;
+        }
+        self.items
+            .iter()
+            .position(|item| matches!(item, TranscriptItem::FormQuestion { closed: None, .. }))
+    }
+
+    /// The form's state for the question at `at`: fresh for a question it
+    /// has not seen.
+    fn form_state(&self, at: usize) -> FormState {
+        match &self.items[at] {
+            TranscriptItem::FormQuestion { question_id, .. }
+                if *question_id == self.form.question_id =>
+            {
+                self.form.clone()
+            }
+            TranscriptItem::FormQuestion { question_id, .. } => FormState::new(question_id),
+            _ => FormState::default(),
+        }
+    }
+
+    /// One key on the open question at `at`, or `None` where the key is the
+    /// input box's: text typed on a choice field is a prompt.
+    fn form_key(&mut self, at: usize, key: KeyEvent) -> Option<Action> {
+        let TranscriptItem::FormQuestion {
+            question_id,
+            fields,
+            ..
+        } = &self.items[at]
+        else {
+            return None;
+        };
+        let (question_id, all_fields) = (question_id.clone(), fields.clone());
+        let fields = transcript::questions(&all_fields);
+        let mut state = self.form_state(at);
+        if key.code == KeyCode::Esc {
+            self.form = FormState::default();
+            self.invalidate_blocks();
+            return Some(Action::Answer {
+                question_id,
+                answer: AnswerQuestionRequest {
+                    action: QuestionAction::Decline,
+                    content: None,
+                },
+            });
+        }
+        if fields.is_empty() {
+            // A form with no fields has nothing to take: Enter accepts it.
+            if key.code == KeyCode::Enter && key.modifiers.is_empty() && self.input.is_empty() {
+                self.form = FormState::default();
+                self.invalidate_blocks();
+                return Some(Action::Answer {
+                    question_id,
+                    answer: AnswerQuestionRequest {
+                        action: QuestionAction::Accept,
+                        content: Some(Default::default()),
+                    },
+                });
+            }
+            return None;
+        }
+        let field = fields.get(state.field)?;
+        if matches!(key.code, KeyCode::Tab | KeyCode::Left | KeyCode::Right)
+            && key.modifiers.is_empty()
+            && self.input.is_empty()
+        {
+            state.field = if key.code == KeyCode::Left {
+                (state.field + fields.len() - 1) % fields.len()
+            } else {
+                (state.field + 1) % fields.len()
+            };
+            state.picked = 0;
+            state.chosen.clear();
+            let target = &fields[state.field];
+            if let Some(value) = state.content.get(&target.key) {
+                match &target.kind {
+                    transcript::FieldKind::Single(choices) => {
+                        state.picked = choices.iter().position(|c| &c.value == value).unwrap_or(0);
+                    }
+                    transcript::FieldKind::Multi(choices) => {
+                        for (index, choice) in choices.iter().enumerate() {
+                            if value
+                                .as_array()
+                                .is_some_and(|values| values.contains(&choice.value))
+                            {
+                                state.chosen.insert(index);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            self.form = state;
+            self.invalidate_blocks();
+            return Some(Action::None);
+        }
+        let custom = transcript::companion(&all_fields, field);
+        let count = form::choice_count(field) + usize::from(custom.is_some());
+        let typing = count == 0;
+        let boxed = !self.input.is_empty();
+        match key.code {
+            KeyCode::Up if !typing && !boxed => {
+                state.picked = state.picked.saturating_sub(1);
+            }
+            KeyCode::Down if !typing && !boxed => {
+                state.picked = (state.picked + 1).min(count.saturating_sub(1));
+            }
+            KeyCode::Char(digit @ '1'..='9') if !typing && !boxed => {
+                let index = digit as usize - '1' as usize;
+                if index < count {
+                    state.picked = index;
+                    if matches!(field.kind, transcript::FieldKind::Single(_))
+                        && index < form::choice_count(field)
+                    {
+                        self.form = state;
+                        return self
+                            .form_key(at, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                }
+            }
+            KeyCode::Char(' ')
+                if !boxed && matches!(field.kind, transcript::FieldKind::Multi(_)) =>
+            {
+                if !state.chosen.remove(&state.picked) {
+                    state.chosen.insert(state.picked);
+                }
+            }
+            KeyCode::Enter
+                if key.modifiers.is_empty() && (typing || !boxed || custom.is_some()) =>
+            {
+                let typed = if typing || custom.is_some() {
+                    self.input.take()
+                } else {
+                    None
+                };
+                let custom_text = custom.zip(typed.as_deref());
+                let result = if let Some((custom, text)) = custom_text {
+                    state.content.insert(
+                        custom.key.clone(),
+                        serde_json::Value::String(text.to_string()),
+                    );
+                    if matches!(field.kind, transcript::FieldKind::Single(_))
+                        || state.chosen.is_empty()
+                    {
+                        state.content.remove(&field.key);
+                        Ok(None)
+                    } else {
+                        form::take_value(field, &state, None)
+                    }
+                } else if custom.is_some() && state.picked == count - 1 {
+                    Err("Type your own answer in the box.".into())
+                } else {
+                    if let Some(custom) = custom {
+                        state.content.remove(&custom.key);
+                    }
+                    form::take_value(field, &state, typed.as_deref())
+                };
+                match result {
+                    Ok(value) => {
+                        if let Some(value) = value {
+                            state.content.insert(field.key.clone(), value);
+                        }
+                        state.next();
+                    }
+                    Err(problem) => state.problem = Some(problem),
+                }
+                if state.field >= fields.len()
+                    && let Some((index, missing)) = fields.iter().enumerate().find(|(_, field)| {
+                        field.required
+                            && !state.content.contains_key(&field.key)
+                            && !transcript::companion(&all_fields, field)
+                                .is_some_and(|custom| state.content.contains_key(&custom.key))
+                    })
+                {
+                    state.field = index;
+                    state.problem = Some(format!("{} needs an answer.", missing.title));
+                }
+                if state.field >= fields.len() {
+                    self.form = FormState::default();
+                    self.invalidate_blocks();
+                    return Some(Action::Answer {
+                        question_id,
+                        answer: AnswerQuestionRequest {
+                            action: QuestionAction::Accept,
+                            content: Some(state.content),
+                        },
+                    });
+                }
+            }
+            _ => return None,
+        }
+        self.form = state;
+        self.invalidate_blocks();
+        Some(Action::None)
     }
 
     fn options(&self, at: usize) -> &[PermissionOption] {
@@ -831,6 +1041,13 @@ impl Console {
                 }
                 _ => {}
             }
+        }
+
+        if let Some(at) = self.open_form()
+            && let Some(action) = self.form_key(at, key)
+        {
+            self.edited();
+            return action;
         }
 
         if let Some(action) = self.suggest_key(key) {
@@ -935,7 +1152,7 @@ impl Console {
                 TranscriptItem::PermissionQuestion { answer, .. } => answer.is_none(),
                 // An open question waits over the input (031). It is pinned
                 // after every block, so it holds back no other block.
-                TranscriptItem::UserQuestion { closed: None, .. } => !self.has_ended(),
+                TranscriptItem::FormQuestion { closed: None, .. } => !self.has_ended(),
                 TranscriptItem::ToolCall { tool, .. } => {
                     self.view_running() && !transcript::tool_is_terminal(tool.status.as_deref())
                 }
@@ -1308,9 +1525,10 @@ fn absorb(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
     }
 }
 
-/// Whether a block is a `wait_for_user` question that waits for an answer.
+/// Whether a block is a question the agent asked with its own tool that
+/// waits for an answer.
 fn is_waiting(item: &TranscriptItem) -> bool {
-    matches!(item, TranscriptItem::UserQuestion { closed: None, .. })
+    matches!(item, TranscriptItem::FormQuestion { closed: None, .. })
 }
 
 /// Where the run of open questions at the end of `items` starts.
@@ -1329,7 +1547,7 @@ fn waiting_at(items: &[TranscriptItem]) -> usize {
 /// close looks among the questions, for the one it closes, which then
 /// stays where it is.
 fn absorb_over_questions(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
-    if event.kind == "agent_request.resolved" {
+    if event.kind == "question.resolved" {
         absorb(items, event);
         return;
     }
@@ -1343,8 +1561,7 @@ fn absorb_over_questions(items: &mut Vec<TranscriptItem>, event: &AgentEventDto)
     items.extend(asked);
 }
 
-/// Move each `wait_for_user` question from `from` on that waits for an
-/// answer after every other block, in its order. `pending` keeps pointing
+/// Move each question from `from` on that waits for an answer after every other block, in its order. `pending` keeps pointing
 /// at the prompts it pointed at.
 fn pin_questions(items: &mut Vec<TranscriptItem>, from: usize, pending: &mut VecDeque<usize>) {
     let mut pinned = Vec::new();
@@ -1409,6 +1626,14 @@ pub trait Sink {
     /// was answered with. The error is what the transcript says about a post
     /// that did not happen, in words a person reads.
     fn send(&mut self, text: String) -> impl Future<Output = Result<(), String>> + Send;
+
+    /// Answer the agent's question `question_id` (021). The error is what
+    /// the transcript says about an answer that did not arrive.
+    fn answer(
+        &mut self,
+        question_id: &str,
+        answer: AnswerQuestionRequest,
+    ) -> impl Future<Output = Result<(), String>> + Send;
 
     /// Cancel the running turn. A turn that ended between the key and the
     /// post has nothing to cancel, and that is not a failure of the console.
@@ -1502,6 +1727,14 @@ where
                     // itself on one bad post would take a half-typed
                     // conversation with it.
                     if let Err(reason) = sink.send(text).await {
+                        console.failed(&reason);
+                    }
+                }
+                Action::Answer {
+                    question_id,
+                    answer,
+                } => {
+                    if let Err(reason) = sink.answer(&question_id, answer).await {
                         console.failed(&reason);
                     }
                 }

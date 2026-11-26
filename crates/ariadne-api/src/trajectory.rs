@@ -1,4 +1,4 @@
-//! A session's trajectory: its events folded into typed turns (039).
+//! A session's trajectory: its events folded into typed turns (040).
 //!
 //! `GET /v1/sessions/{id}/trajectory` answers a [`TrajectorySnapshotDto`],
 //! and `/trajectory/stream` opens on one and follows it with

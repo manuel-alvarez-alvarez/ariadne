@@ -101,7 +101,7 @@ export function dispatchDomainEvent(
       const { task, transition } = event.data
       queryClient.setQueryData(qk.tasks.detail(host, task.id), task)
       void queryClient.invalidateQueries({ queryKey: qk.tasks.lists(host) })
-      if (task.execution_context) {
+      if (task.execution_context && task.goal_id) {
         void queryClient.invalidateQueries({ queryKey: qk.goals.detail(host, task.goal_id) })
         void queryClient.invalidateQueries({ queryKey: qk.goals.lists(host) })
       }
@@ -120,15 +120,6 @@ export function dispatchDomainEvent(
       // A commit in the author's worktree. Nothing about the task row itself
       // changed — only the diff it would answer with.
       void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(host, event.data.task_id) })
-      break
-    }
-    case "message_sent": {
-      // A message about the goal itself belongs to no task's channel.
-      if (event.data.task_id) {
-        void queryClient.invalidateQueries({
-          queryKey: qk.tasks.messages(host, event.data.task_id),
-        })
-      }
       break
     }
     case "session_created": {

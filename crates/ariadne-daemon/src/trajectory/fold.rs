@@ -1,5 +1,5 @@
 //! The fold: a session's events, one at a time, into turns and the ops that
-//! say what each event changed (039).
+//! say what each event changed (040).
 
 use std::collections::BTreeSet;
 

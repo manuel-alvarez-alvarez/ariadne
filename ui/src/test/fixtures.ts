@@ -36,7 +36,7 @@ type SessionPageDto = components["schemas"]["SessionPageDto"]
 /** The instant everything the daemon holds was created and last touched. */
 const STAMP = "2026-01-01T00:00:00Z"
 
-const GOAL_ID = "01JGOAL0000000000000000001"
+export const GOAL_ID = "01JGOAL0000000000000000001"
 const TASK_ID = "01JTASK0000000000000000001"
 const SESSION_ID = "01JSESS0000000000000000001"
 const AUTHOR_ID = "01JAGENT0000000000000AUTH"

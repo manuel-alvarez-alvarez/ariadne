@@ -1,4 +1,4 @@
-//! Which stored events a fold opens on (039).
+//! Which stored events a fold opens on (040).
 //!
 //! A session that ran for a day holds tens of thousands of events, and a
 //! tool end averages ten kilobytes. So a read counts and lists ids first,

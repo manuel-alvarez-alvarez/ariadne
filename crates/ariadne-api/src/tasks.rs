@@ -15,7 +15,11 @@ pub struct TaskDto {
     /// `in_progress`; null before its first column and once it has ended.
     pub step: Option<String>,
     pub id: String,
-    pub goal_id: String,
+    pub goal_id: Option<String>,
+    #[serde(default)]
+    pub workflow: Option<String>,
+    #[serde(default)]
+    pub steps: Vec<crate::workflows::WorkflowStepDto>,
     /// The pull request operation the task's goal runs (029), or null for an
     /// ordinary task.
     #[serde(default)]
@@ -110,7 +114,8 @@ pub struct AgentUsageDto {
 /// changes that.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskAgentDto {
-    /// The id of the workflow column this agent works.
+    /// The id of the workflow column this agent works; empty for the agent
+    /// of a task with no workflow.
     pub step: String,
     pub id: String,
     /// The skills this agent loads, in the order they reach it.
@@ -144,10 +149,12 @@ pub struct TaskAgentDto {
 pub struct AgentAssignment {
     /// The id of the workflow column this agent works, one of the goal's
     /// columns. A task takes one agent per column, and a column named twice
-    /// is refused.
-    pub step: String,
+    /// is refused. Omitted only for the one agent of a task with no workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
     /// The names of the skills this agent loads, in the order they reach it.
-    /// Omitted or empty = the column's own skills. A name no skill answers
+    /// Omitted or empty = the column's own skills, or none for a task with
+    /// no workflow. A name no skill answers
     /// to is refused.
     #[serde(default)]
     #[schema(example = json!(["coding", "documentation"]))]
@@ -176,7 +183,7 @@ impl AgentAssignment {
         model: impl Into<String>,
     ) -> Self {
         Self {
-            step: step.into(),
+            step: Some(step.into()),
             skills: skills.into_iter().map(Into::into).collect(),
             model: model.into(),
             effort: None,
@@ -266,6 +273,9 @@ pub struct TaskTransitionDto {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 pub struct TaskListQuery {
+    /// List tasks without a goal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_goal: bool,
     /// Filter by goal id.
     pub goal: Option<String>,
     /// Filter by status.
@@ -317,7 +327,11 @@ pub struct TaskWorkflowContext {
 /// Worker context sufficient for task inspection without a local goal.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskExecutionContext {
-    pub source_goal: SourceGoalReference,
+    /// Null for a task that has no goal.
+    pub source_goal: Option<SourceGoalReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Source identity for goal-less work. Goal work uses source_goal.daemon_id.
+    pub source_daemon_id: Option<String>,
     /// Persistent daemon ID of the worker that owns execution.
     pub execution_owner: String,
     pub workflow: TaskWorkflowContext,
@@ -336,7 +350,11 @@ pub struct CreateRemoteTaskRequest {
     pub title: String,
     #[serde(default)]
     pub description: String,
-    pub source_goal: SourceGoalReference,
+    /// Null for a task that has no goal.
+    pub source_goal: Option<SourceGoalReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Source identity for goal-less work. Goal work uses source_goal.daemon_id.
+    pub source_daemon_id: Option<String>,
     pub workflow: TaskWorkflowContext,
     pub agents: Vec<AgentAssignment>,
 }
@@ -376,3 +394,19 @@ pub struct RetryRemoteDependencyRequest {
 
 /// Both fenced source dependency operations are required for new source references.
 pub const SOURCE_DEPENDENCY_CONTROLS: &str = "source-dependency-controls-v1";
+
+/// Create user-owned local work with its own saved columns.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateStandaloneTaskRequest {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub repo_id: String,
+    /// The workflow the task runs. Omitted or null = no workflow: `agents`
+    /// holds exactly one agent with no `step`, and its step calls end the task.
+    #[serde(default)]
+    pub workflow: Option<String>,
+    pub agents: Vec<AgentAssignment>,
+    pub host: Option<String>,
+}

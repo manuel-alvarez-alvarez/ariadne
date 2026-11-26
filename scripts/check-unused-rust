@@ -51,9 +51,6 @@ IGNORED = {
     "crates/ariadne-api/src/pull_requests.rs: FailedCheckDto": (
         "the element type of the public field `PullRequestDto::failed_checks`; utoipa names it"
     ),
-    "crates/ariadne-console/src/transcript.rs: QuestionChoice": (
-        "the element type of `TranscriptItem::UserQuestion::options`; its renderers read it"
-    ),
     "crates/ariadne-store/src/defaults.rs: BuiltinSkill": (
         "the element type of the public `BUILTIN_SKILLS`; its callers read the fields"
     ),
@@ -61,10 +58,10 @@ IGNORED = {
         "the element type of the public `BUILTIN_WORKFLOWS`; its callers read the fields"
     ),
     "crates/ariadne-api/src/trajectory.rs: ModeDto": (
-        "the element type of the public field `ModeStateDto::available`; utoipa names it (039)"
+        "the element type of the public field `ModeStateDto::available`; utoipa names it (040)"
     ),
     "crates/ariadne-api/src/trajectory.rs: ConfigValueDto": (
-        "the element type of the public field `ConfigOptionDto::values`; utoipa names it (039)"
+        "the element type of the public field `ConfigOptionDto::values`; utoipa names it (040)"
     ),
     "crates/ariadne-console/src/transcript.rs: Location": (
         "the element type of the public field `Tool::locations`"

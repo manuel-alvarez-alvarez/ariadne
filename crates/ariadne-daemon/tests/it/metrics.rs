@@ -582,32 +582,6 @@ async fn a_scheduler_pass_is_timed() {
     .await;
 }
 
-/// A message is counted by its kind and the actors at its two ends.
-#[tokio::test]
-async fn a_message_is_counted_by_its_actors() {
-    let h = harness().await;
-    let cast = h.cast().await;
-    let (status, _) = h
-        .send(post_json(
-            &format!("/v1/goals/{}/messages", cast.goal.id),
-            json!({"to_actor": "orchestrator", "body": "Look at the plan."}),
-        ))
-        .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(
-        h.metric(
-            "ariadne.messages",
-            &[
-                ("kind", "message"),
-                ("from_actor", "user"),
-                ("to_actor", "orchestrator"),
-            ],
-        )
-        .await,
-        1.0
-    );
-}
-
 /// A follower of the event stream is counted while its connection is open.
 #[tokio::test]
 async fn an_event_stream_follower_is_counted_while_it_follows() {

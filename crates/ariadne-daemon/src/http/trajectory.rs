@@ -1,4 +1,4 @@
-//! A session's trajectory over HTTP (039): the snapshot, its stream, the
+//! A session's trajectory over HTTP (040): the snapshot, its stream, the
 //! pages of older turns and of a turn's steps.
 //!
 //! Every subscriber of a session shares one [`Hub`]: one console merge

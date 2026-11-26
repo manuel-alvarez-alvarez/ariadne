@@ -65,15 +65,23 @@ attention and watchdogs](../specs/009-scheduler-attention-and-watchdogs.md)
 for the rules, and [Needs attention](../specs/031-needs-attention.md) for
 the item shape and the producers that fill it.
 
-When an agent needs a human decision, it calls `wait_for_user` with a
-one-line hint and the question: its text, the options to pick from, the
-option it recommends, and why. Needs attention shows that hint and the agent console.
-In Ariadne Desktop, the console draws the question as a card: click an option
-to answer at once, or type an answer of your own. In the terminal, run the
-listed `ariadne attach <session-id>` command, then type an option's number or
-your own answer. Your input answers the newest open question of that session alone. A
-later turn keeps a question only when it calls `wait_for_user` again;
-otherwise, ending the turn ends the wait, and the card closes for good.
+When an agent needs a human decision, it asks with the question tool of
+its own client: the question, the options to pick from, the option it
+recommends first, and why. Needs attention shows the question and the agent
+console.
+
+The question tool is `AskUserQuestion` in
+Claude, `request_user_input` in Codex, or `question` in opencode. Ariadne
+holds the question open until you answer it, in every permission mode, and
+Needs attention lists it with its session's console. In the terminal, run
+`ariadne attach <session-id>`. The console draws the question as a form
+above the input, one field at a time. Pick a choice with the arrows or its
+number, check several with Space, or type the answer of a text field in the
+box. Enter takes a field, and the last Enter sends the answer. Esc declines
+the question. Text you type on a choice field is a prompt, and it waits for
+the turn to end. `ariadne session logs <session-id>` shows the question and
+its answer. See [ACP runtime](../specs/021-acp-runtime.md) rule 21 for the
+rules.
 
 `attach` revives an ended Ariadne session before it opens the console.
 The session keeps its work and conversation. [Resuming a
@@ -105,10 +113,24 @@ Merge main into published PR branches and push normally. Never rebase their publ
 Never force-push main. Require current GitHub CI before a GitHub squash merge.
 Other repositories retain their explicit landing policies.
 
-On the desktop Goals board, each goal has one task area. The Active filter
-hides finished and cancelled tasks. All, Finished, and custom filters show
-all tasks in matching goals. The heading counts visible tasks; goal progress
-counts include hidden tasks. See [the desktop specification](../specs/015-desktop-app.md).
+The desktop Goals board is one list of task rows. Each row shows the task's
+state, host, steps, tokens, pull request and last activity on one line, and
+opens the task panel. The rows of one goal sit together, joined by a thin
+rail. A task with no goal is a row of its own.
+
+- Point at a row, or move the keyboard to it, to see its goal. A frame
+  surrounds the rows of the goal, and the goal bar shows above them.
+- The goal bar names the goal, its status, its progress and its tokens. Its
+  chevron folds the goal to one summary row.
+- The goal bar stays shown while the goal's orchestrator waits for you.
+- A goal with no task to show takes one row that says why, and opens the goal.
+
+Goals and tasks that need you come first, then the work that runs, then the
+finished work. The **New** menu in the header creates a goal or a task with
+no goal. The Active filter hides finished and cancelled tasks. All, Finished,
+and custom filters show all tasks in matching goals. The heading counts the
+shown task rows; goal progress counts include hidden tasks. See [the desktop
+specification](../specs/015-desktop-app.md).
 
 ## Dismiss an attention reminder
 

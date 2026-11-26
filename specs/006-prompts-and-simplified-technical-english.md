@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-11-17
+updated: 2026-11-26
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -18,11 +18,12 @@ tests:
   - crates/ariadne-daemon/src/scheduler/tasks.rs
   - crates/ariadne-daemon/src/launcher.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
-  - crates/ariadne-daemon/tests/it/agent_messages.rs
+  - crates/ariadne-daemon/tests/it/posts.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
+  - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/tests/it/seat_brief.rs
   - crates/ariadne-cli/src/commands/mcp.rs
@@ -68,7 +69,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    - the **lifecycle briefing**, which carries the values of one goal, task
      or column and whatever is only true of this moment: the column's
      instructions and the summary of the column before it (030), who sent a
-     relayed message, the task it names and where to answer it (018).
+     post, the task it names and where to answer it (039).
 2. A turn carries its own text alone, except the first turn of a launch and
    the first turn after a model switch: those carry the system prompt ahead
    of their own text. A session switch and a relaunch are new launches, so
@@ -112,15 +113,15 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    The launcher hands the index to the MCP server as `ARIADNE_SKILL_INDEX`.
    How each CLI is pointed at those files is 007.
 5. A rule every seat shares has one owner, and no other text repeats it:
-   - asking the user: the session rules, picked by seat, with a short form
-     in the `wait_for_user` description;
+   - asking the user: the session rules, picked by seat, with no tool
+     description repeats it;
    - working in the task's worktree and on the current column: the `agent`
      seat text alone; no column's skill repeats it;
    - planning the goal with the user, writing no code, and deciding no
      open point alone: the `orchestrator` seat text alone; the
      `orchestration` skill states its phases, never these three;
    - ending the turn after a call: the `complete_step`, `fail_step` and
-     `send_message` descriptions;
+     `post_to_session` descriptions;
    - how a check runs — in the foreground, split by crate, logged outside
      the worktree, its failures alone printed, never polled: the session
      rules. A skill says only which checks it runs: the checks of what it
@@ -183,14 +184,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    an agent any more — every text is the code's — so the check runs over the
    defaults rather than at a save. The kinds are the orchestrator's briefing,
    resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
-   `AgentResume` (`ariadne_core::PromptKind`). `AgentResume`, the quiet nudge
-   of a column's agent (009), says five things only: this is not a new
+   `AgentResume` (`ariadne_core::PromptKind`). `IncomingMessage` tags the
+   prompt of a post (039). A post writes its own text, so no builder
+   renders that kind's template. `AgentResume`, the quiet nudge
+   of a column's agent (009), says four things only: this is not a new
    request, to check whether the work is done, to make the call that ends
-   the column or go on, to ask an open question again, and to write no
-   reply about the nudge itself. `OrchestratorResume` says to ask an open
-   question again too: either nudge starts a turn, and a turn that ends
-   without `wait_for_user` closes every question an earlier turn raised
-   (031 rule 12).
+   the column or go on, and to write no reply about the nudge itself.
+   `OrchestratorResume` does not say to ask an open question again.
 11. Default texts, shipped skills, workflow documents, session rules and tool
     descriptions use ASD-STE100 Simplified Technical English: one instruction
     to a sentence, the imperative for an instruction, the active voice, at
@@ -268,7 +268,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     URL, head and base branch names, head sha and reviewed sha, a
     comment's id, author, path and first line, a failed check's name,
     conclusion and URL, the rolled-up checks, the review decision and the
-    state a news line reports, an agent message's body, and a step's
+    state a news line reports, a post's body, and a step's
     return reason or completion summary. One line is the exception: an
     issue goal's `Closes <url>` instruction carries the raw URL, never
     fenced, since GitHub only closes the issue on that exact text; the
@@ -278,14 +278,26 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     fenced, since they are the user's own words — unless the goal came
     from an issue, where rule 18 already fences them as the forge's own
     text. A task's title and description are plain the same way,
-    wherever a briefing, a message or a nudge names
+    wherever a briefing, a post or a nudge names
     the task: whoever opens a task is Ariadne's own user or orchestrator,
     never a third party. The orchestrator's own brief for a column's
     agent (`TaskAgent.brief`) is plain too — the orchestrator plans
     alongside the user, not against it, so its brief is read the same as
     the user's own words, not fenced as another agent's would be.
+20. The agent of a task with no workflow (001 rule 26) has no column, so its
+    briefing and its nudge name none. The briefing gives the task, its
+    worktree and branch, and says that `complete_step` finishes the task and
+    `fail_step` fails it. Both texts are constants of the code, in
+    Simplified Technical English. The agent loads the skills of its staffing,
+    and none when none are given.
 
 ## Acceptance criteria
+
+- Rule 20: `prompts.rs::a_task_with_no_workflow_is_briefed_without_a_column`
+  and `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`
+  (the briefing as sent, and no skill index when none is given), and
+  `standalone_tasks::the_agent_of_a_task_with_no_workflow_loads_its_supplied_skill`
+  (a supplied skill is in the index and in the run directory).
 
 - Every default text obeys the two readable STE rules
   (`defaults.rs::every_default_text_is_simplified_technical_english`), and
@@ -390,12 +402,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   No skill repeats any of it
   (`skill_tests/template.rs::each_rule_is_stated_in_exactly_one_briefing`).
 - The quiet nudge says this is not a new request, to check whether the work
-  is done, to make the call that ends the column or go on, to ask an open
-  question again, and to write no reply about the nudge; the stop rule has
-  the agent seat text as its one owner
-  (`defaults.rs::the_quiet_nudge_says_five_things_and_the_stop_rule_has_one_owner`).
-  The orchestrator nudge says to ask an open question again too, beside
-  the conversation and the goal under way
+  is done, to make the call that ends the column or go on, and to write no
+  reply about the nudge; the stop rule has the agent seat text as its one
+  owner
+  (`defaults.rs::the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner`).
+  The orchestrator nudge does not say to ask an open question again. It
+  fits the conversation and the goal under way
   (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`).
 - `coding` adds a new commit on a return and amends nothing, and no skill
   divides a task
@@ -475,11 +487,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   the orchestrator's own first briefing does
   (`prompts.rs::an_issue_goals_title_stays_fenced_everywhere_it_is_named`,
   `::a_user_typed_goals_title_stays_plain_everywhere_it_is_named`).
-  A task's title and description reach a briefing, a nudge or a relayed
-  message plain, never fenced, proved through the
+  A task's title and description reach a briefing, a nudge or a post
+  plain, never fenced, proved through the
   daemon's own rendering, not a hand-built string
-  (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`,
-  `::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`,
+  (`posts.rs::a_post_reaches_the_live_session_as_a_prompt_and_writes_no_row`,
   `prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`,
   `::a_return_and_a_nudge_assemble_word_for_word`,
   `scheduler_attention.rs::an_agent_up_and_never_prompted_is_nudged`,

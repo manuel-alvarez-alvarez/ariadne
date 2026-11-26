@@ -1,7 +1,7 @@
 ---
 id: metrics
 status: current
-updated: 2026-11-13
+updated: 2026-11-25
 areas: [daemon, store, docs]
 commits: []
 tests:
@@ -94,7 +94,6 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 | `ariadne.session.lifetime` | histogram | s | `seat`, `model`, `step` | the same, from the launch (or the creation) to the end |
 | `ariadne.tokens` | counter | | `kind` (`input`, `cached_input`, `output`), `model`, `seat`, `repo`, `step` | each usage write, ACP and ingestion, by the delta it adds |
 | `ariadne.switches` | counter | | `reason`, `automatic`, `same_agent`, `from_model`, `to_model` | `Launcher::switch_session`, before the pin moves |
-| `ariadne.messages` | counter | | `kind`, `from_actor`, `to_actor` | each stored message of the channel |
 | `ariadne.permissions` | counter | | `decided_by`, `answer`, `tool_name` | each ACP permission answer, by its stable tool identity |
 | `ariadne.permission.wait` | histogram | s | `decided_by` | the same, from the request to the answer |
 | `ariadne.attention.raised` | counter | | `reason` | change hook, a flag raised |
@@ -214,8 +213,6 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 - A request is timed under its route template, and no label holds its path
   (`metrics.rs::a_request_is_timed_under_its_route_template`).
 - A scheduler pass is timed (`metrics.rs::a_scheduler_pass_is_timed`).
-- A message is counted by its kind and actors
-  (`metrics.rs::a_message_is_counted_by_its_actors`).
 - A follower of the event stream is counted while it follows
   (`metrics.rs::an_event_stream_follower_is_counted_while_it_follows`), and a
   lagged one counts a resync

@@ -438,7 +438,7 @@ async fn a_live_cleanup_policy_keeps_the_finished_worktree() {
     h.store
         .end_step(
             &cast.task.id,
-            "develop",
+            Some("develop"),
             TaskStatus::Finished,
             "finished for cleanup",
             None,

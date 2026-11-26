@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-11-21
+updated: 2026-11-25
 areas: [daemon, cli, ui]
 commits: [e4816cf6, 39937143, a69b953f, 7880c022, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -16,6 +16,8 @@ tests:
   - crates/ariadne-console/src/tui/blocks.rs
   - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-console/src/tui/subagents.rs
+  - crates/ariadne-console/src/tui/form.rs
+  - crates/ariadne-cli/src/commands/transcript.rs
 ---
 
 # Sessions, terminals and logs
@@ -70,7 +72,32 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 34. The parent view shows a line per child announcement, `◇ subagent <title> · <task>`, and a line per end state, `<mark> subagent <title> <state> · <elapsed>`, timed from the announcement; a child whose first update already ends it gets both lines. A child's own events stay out of it, and a child's command list never replaces the session's suggestion list. A child's permission question is asked in the parent view, since the session answers it, and names the child: `<tool> · asked by subagent <title>`.
 35. The status row says `running N subagents` while any child is in state `running`.
 36. `POST /v1/sessions/{id}/console/cancel` takes an optional body, `{"subagent_id"}`. Named, it cancels that subagent's turn (021 rule 16) instead of the session's own, which is left as it is; the body omitted, or `subagent_id` omitted, cancels the session's own turn as before. It refuses with `409` a subagent that is unknown, has already ended, or was never said to be cancellable.
-37. An open `wait_for_user` question (031 rule 11) of a live session draws in the live area right above the input, and stays there while the blocks written after it go above it and into the scrollback. A question that closes is written to the scrollback once, after the blocks that came before its close. The text the agent writes under an open question streams into one block, as it does with no question. A reconnect's replay keeps the place of a close that came while the stream was down. A question still open when the console exits is written to the scrollback once, after every block. A finished session draws its questions in event order, and a child's view has none of its own.
+37. An open question that the agent asks with its own tool (021 rule 21) of a live session draws in the live area right above the input, and stays there while the blocks written after it go above it and into the scrollback. A question that closes is written to the scrollback once, after the blocks that came before its close. The text the agent writes under an open question streams into one block, as it does with no question. A reconnect's replay keeps the place of a close that came while the stream was down. A question still open when the console exits is written to the scrollback once, after every block. A finished session draws its questions in event order, and a child's view has none of its own.
+38. An agent form uses one question per step above the input.
+    The header shows its title, or "question", its position when multiple questions exist, and answer marks.
+    The question text precedes numbered choices. Descriptions use the dim style.
+    A case-insensitive "(Recommended)" suffix becomes an accent "recommended" tag.
+    - An Other companion is a plain string field after its choice field, with key `<choice key>_custom`.
+      Claude sends `question_N` and `question_N_custom`. Codex and OpenCode send no companion.
+      A question combines that pair, or contains one field.
+    - Picks remain in `content[key]`. Typed answers remain in `content[key_custom]`.
+      A typed single answer sends only its companion key.
+      A typed multi-select answer with no checked choices also sends only its companion key.
+      The answer endpoint remains `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+    - The companion appears as the last choice, "Type your own answer…".
+      Enter takes text from the input. The companion has no separate step.
+    - Up and Down move between choices. Single-select numbers 1–9 or Enter answer and advance.
+      Multi-select Space checks a choice, and Enter advances.
+      The last step sends the form only when every required question has an answer.
+      Otherwise, it returns to the first missing required question and shows "<title> needs an answer."
+      A companion answer satisfies its required choice question. Tab and Left/Right move between questions only while the input box is empty; with text in it they belong to the box.
+      Esc declines. The footer names these keys.
+    - Other field types retain one step per field and their existing validation.
+      Empty forms accept Enter. Permission questions take keys first.
+    - Closed forms show compact summaries in the console and transcript output.
+      Each question shows "<field title, else the message> → <answer>", with custom text merged.
+      Declined, withdrawn and cancelled forms show one line.
+      Followed logs draw the close when it arrives.
 
 ## Acceptance criteria
 
@@ -95,6 +122,17 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 19. An open question stays above the input, a closed one goes into the scrollback once after the blocks before its close, one open at the exit is written once, and a finished session keeps event order (`ariadne-console::tui::viewport::tests::an_open_question_stays_over_the_input_while_later_blocks_go_into_the_scrollback`, `::a_closed_question_goes_into_the_scrollback_once_after_the_blocks_before_its_close`, `::a_question_open_at_the_close_is_written_once_after_every_block`, `::a_finished_session_draws_its_questions_in_event_order`); chunks under an open question make one block, and a replay keeps a close's place (`ariadne-console::tui::viewport::tests::chunks_under_an_open_question_make_one_block_that_is_written_whole`, `::a_question_closed_while_the_stream_was_down_keeps_its_close_position`).
 
 20. A session place survives a store restart (`crates/ariadne-store/tests/session_place.rs::the_session_place_survives_a_store_restart`).
+21. A question draws its fields above the input with the option text as written, the keys answer it field by field, Esc declines it, a form with no fields is accepted, text typed on a choice field without a companion is a prompt, a required field is not left empty, and a closed question shows each answer (`ariadne-console::tui::form::tests::an_open_question_draws_its_fields_and_the_option_text_as_written_above_the_input`, `::the_keys_answer_each_field_and_the_last_enter_sends_the_content`, `::escape_declines_the_question`, `::enter_accepts_a_form_without_fields_with_empty_content`, `::text_typed_on_a_choice_field_is_sent_as_a_prompt`, `::a_required_field_with_no_choice_left_is_not_taken`, `::left_with_text_in_the_box_does_not_change_the_question`, `::skipped_required_questions_block_submission_until_answered`, `::a_closed_question_shows_each_answer_by_the_option_text`).
+22.  `ariadne session logs` draws compact answers for closed questions, and a followed log draws the close under it (`ariadne-cli::commands::transcript::tests::a_question_draws_each_field_with_its_options_as_written_and_its_answers`, `::a_followed_question_draws_its_close_under_it`).
+
+23. Stepper acceptance: paired Claude fields and typed single/multi answers use
+`ariadne-console::tui::form::tests::claude_companions_are_one_step_and_custom_answers_merge`.
+Number fields use `ariadne-console::tui::form::tests::a_number_field_remains_a_single_step_and_sends_its_value`.
+Number selection and question navigation use
+`ariadne-console::tui::form::tests::numbers_answer_and_navigation_preserves_answers`.
+
+24. Required multi-select custom answers contain no unchecked choices
+(`ariadne-console::tui::form::tests::required_multi_custom_answers_do_not_add_unselected_choices`).
 
 ## Sources
 

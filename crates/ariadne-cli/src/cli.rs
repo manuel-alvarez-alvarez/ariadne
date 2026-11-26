@@ -109,7 +109,7 @@ const TASK_EXAMPLES: &str = "\
 Examples:
   ariadne task ls --goal <goal-id>
   ariadne task ls --status in-progress,failed
-  ariadne task inspect <task-id>           # and: diff, messages, history
+  ariadne task inspect <task-id>           # and: diff, history
   ariadne task attach <task-id>            # the current column's console
   ariadne task attach <task-id> --step review
 ";
@@ -447,8 +447,8 @@ pub(crate) enum Command {
     ///
     /// A task is one unit of a goal, worked through the columns of the
     /// goal's workflow by one agent per column, all of them in one worktree
-    /// of its own from its first commit to the end. Its diff, its messages
-    /// and its history are all here.
+    /// of its own from its first commit to the end. Its diff and its
+    /// history are here.
     #[command(after_help = TASK_EXAMPLES)]
     Task {
         #[command(subcommand)]
@@ -618,7 +618,6 @@ const LISTINGS: &[&str] = &[
     "query",
     "task history",
     "task ls",
-    "task messages",
     "workflow ls",
 ];
 
@@ -655,7 +654,6 @@ const QUIET_OUTPUT: &[&str] = &[
     "task create",
     "task history",
     "task ls",
-    "task messages",
     "task retry",
     "task update",
     "workflow create",
@@ -665,15 +663,8 @@ const QUIET_OUTPUT: &[&str] = &[
     "workflow update",
 ];
 
-/// Subcommands that print something long enough to page. `task messages`
-/// only does so with `--full`, but that is still what `--no-pager` is for.
-const PAGED: &[&str] = &[
-    "session logs",
-    "task diff",
-    "task logs",
-    "task messages",
-    "workflow show",
-];
+/// Subcommands that print something long enough to page.
+const PAGED: &[&str] = &["session logs", "task diff", "task logs", "workflow show"];
 
 /// Subcommands whose table is a picture of live state and so take `--watch`:
 /// each declares the flag itself rather than through a global, since (unlike

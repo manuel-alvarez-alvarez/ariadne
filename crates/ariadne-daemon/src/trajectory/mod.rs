@@ -1,4 +1,4 @@
-//! A session's trajectory: its events folded into typed turns (039).
+//! A session's trajectory: its events folded into typed turns (040).
 //!
 //! [`Fold`] is the pure part: one event in, the next state and the ops that
 //! say what changed out, with no store and no clock. [`read`] picks the

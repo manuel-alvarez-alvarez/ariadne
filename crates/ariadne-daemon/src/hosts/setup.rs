@@ -987,6 +987,16 @@ printf '%s\n' "$HOME"
         }
         self.populate(name, request, &service_path).await?;
         self.begin(name, "service")?;
+        // A daemon that answers on the worker socket but is not the service's
+        // own process would keep the socket from the daemon the service
+        // starts, which then cannot start at all (037, rule 49).
+        if let Some(stray) = self.answering_pid(request, &worker_cli, &remote).await
+            && Some(stray) != self.service_pid(request, lines[0]).await?
+        {
+            self.ssh(request, &stop_script(stray), None).await.map_err(|_| {
+                format!("ariadned pid {stray} answers on the worker socket outside the user service and did not stop; stop it on the worker")
+            })?;
+        }
         self.ssh(request, &service_script(home, lines[0], &service_path), None).await.map_err(|_| -> String { if lines[0] == "Linux" { "user service unavailable; ask the administrator to install systemd user services and enable lingering".into() } else { "launchd user service unavailable; check the user's launchd session".into() } })?;
         self.checkpoint(name, "service")?;
         self.begin(name, "health")?;
@@ -1000,6 +1010,28 @@ printf '%s\n' "$HOME"
             None,
         )
         .await?;
+        // Any daemon answers the check above, the one the update replaces too:
+        // only the service's own process proves the new programs run.
+        let service = self.service_pid(request, lines[0]).await?;
+        match (
+            self.answering_pid(request, &worker_cli, &remote).await,
+            service,
+        ) {
+            (Some(answering), Some(service)) if answering == service => {}
+            (Some(answering), Some(service)) => {
+                return Err(format!(
+                    "ariadned pid {answering} answers on the worker socket, not the user service's pid {service}; stop pid {answering} on the worker"
+                ));
+            }
+            (Some(answering), None) => {
+                return Err(format!(
+                    "ariadned pid {answering} answers on the worker socket, but the user service runs no process"
+                ));
+            }
+            (None, _) => {
+                return Err("the daemon that answers on the worker socket reports no pid, so it is not the installed build".into());
+            }
+        }
         self.checkpoint(name, "health")?;
         self.setup_repositories(name, request, home, &remote, &service_path)
             .await?;
@@ -1038,6 +1070,34 @@ printf '%s\n' "$HOME"
         let mut records = self.0.setup.lock().unwrap();
         records.get_mut(name).unwrap().progress.state = SetupState::Complete;
         save(&self.0.cfg.root, &records)
+    }
+
+    /// The pid of the daemon that answers on `remote`, as the worker CLI
+    /// reports it, or `None` while none answers.
+    async fn answering_pid(&self, request: &SetupRequest, cli: &str, remote: &str) -> Option<u32> {
+        let output = self
+            .ssh(
+                request,
+                &format!(
+                    "{} --endpoint {} --format json daemon status",
+                    quote(cli),
+                    quote(remote)
+                ),
+                None,
+            )
+            .await
+            .ok()?;
+        serde_json::from_str::<serde_json::Value>(&output)
+            .ok()?
+            .get("pid")?
+            .as_u64()
+            .and_then(|pid| u32::try_from(pid).ok())
+    }
+
+    /// The pid of the user service's process, or `None` while it runs none.
+    async fn service_pid(&self, request: &SetupRequest, os: &str) -> Result<Option<u32>, String> {
+        let output = self.ssh(request, &service_pid_script(os), None).await?;
+        Ok(output.trim().parse::<u32>().ok().filter(|pid| *pid != 0))
     }
 
     async fn maintenance(
@@ -1252,6 +1312,43 @@ fn xml_text(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+/// Print the pid of the user service's process: `0` or nothing while it runs
+/// none.
+fn service_pid_script(os: &str) -> String {
+    if os == "Linux" {
+        r#"export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+systemctl --user show -p MainPID --value ariadned.service 2>/dev/null || true
+"#
+        .into()
+    } else {
+        r#"domain="user/$(id -u)"
+if launchctl print "gui/$(id -u)/dev.ariadne.daemon" >/dev/null 2>&1; then domain="gui/$(id -u)"; fi
+launchctl print "$domain/dev.ariadne.daemon" 2>/dev/null | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\).*/\1/p' | head -n 1
+"#
+        .into()
+    }
+}
+
+/// Stop the `ariadned` with this pid: SIGTERM, then SIGKILL once it has had
+/// 30 seconds. A pid that is not an `ariadned` is left alone. Fails while
+/// the process is still there.
+fn stop_script(pid: u32) -> String {
+    format!(
+        r#"set -u
+pid={pid}
+case "$(ps -p "$pid" -o comm= 2>/dev/null)" in *ariadned) ;; *) exit 0;; esac
+kill -TERM "$pid" 2>/dev/null || exit 0
+waited=0
+while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -eq 30 ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+    if [ "$waited" -ge 35 ]; then exit 1; fi
+    sleep 1
+    waited=$((waited + 1))
+done
+"#
+    )
 }
 
 fn service_script(home: &str, os: &str, path: &str) -> String {

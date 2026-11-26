@@ -79,13 +79,13 @@ impl Store {
     }
 
     /// Staff a task again, column by column, keeping the row of an agent
-    /// already on its column: its sessions, its messages and its usage name
+    /// already on its column: its sessions and its usage name
     /// that row, and an edit that staffs a column the task lacked is no
     /// reason to lose them. Where two rows sit on one column — a database
     /// from before workflows put every reviewer on `review` (0023) — the
-    /// first keeps the column and the others' sessions and messages move to
+    /// first keeps the column and the others' sessions move to
     /// it before they go. A column the new staffing leaves out loses its
-    /// agent only while nothing names it; one with sessions or messages
+    /// agent only while nothing names it; one with sessions
     /// behind it is refused, since dropping it would drop them.
     pub(crate) async fn restaff_agents_in_tx(
         tx: &mut Transaction<'_, Sqlite>,
@@ -112,7 +112,7 @@ impl Store {
                 _ => {
                     if Self::agent_has_history_in_tx(tx, id).await? {
                         return Err(StoreError::Conflict(format!(
-                            "column {step} has sessions or messages behind it; staff it again \
+                            "column {step} has sessions behind it; staff it again \
                              rather than leave it out"
                         )));
                     }
@@ -172,40 +172,30 @@ impl Store {
         Ok(())
     }
 
-    /// Whether a session or a message names this agent.
+    /// Whether a session names this agent.
     async fn agent_has_history_in_tx(
         tx: &mut Transaction<'_, Sqlite>,
         agent_id: &str,
     ) -> Result<bool> {
-        let named: i64 = sqlx::query_scalar(
-            "SELECT (SELECT COUNT(*) FROM agent_sessions WHERE task_agent_id = ?)
-                  + (SELECT COUNT(*) FROM messages WHERE from_agent_id = ? OR to_agent_id = ?)",
-        )
-        .bind(agent_id)
-        .bind(agent_id)
-        .bind(agent_id)
-        .fetch_one(&mut **tx)
-        .await?;
+        let named: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_sessions WHERE task_agent_id = ?")
+                .bind(agent_id)
+                .fetch_one(&mut **tx)
+                .await?;
         Ok(named > 0)
     }
 
-    /// Hand one agent's sessions and messages to another of the same column.
+    /// Hand one agent's sessions to another of the same column.
     async fn move_agent_history_in_tx(
         tx: &mut Transaction<'_, Sqlite>,
         from: &str,
         to: &str,
     ) -> Result<()> {
-        for sql in [
-            "UPDATE agent_sessions SET task_agent_id = ? WHERE task_agent_id = ?",
-            "UPDATE messages SET from_agent_id = ? WHERE from_agent_id = ?",
-            "UPDATE messages SET to_agent_id = ? WHERE to_agent_id = ?",
-        ] {
-            sqlx::query(sql)
-                .bind(to)
-                .bind(from)
-                .execute(&mut **tx)
-                .await?;
-        }
+        sqlx::query("UPDATE agent_sessions SET task_agent_id = ? WHERE task_agent_id = ?")
+            .bind(to)
+            .bind(from)
+            .execute(&mut **tx)
+            .await?;
         Ok(())
     }
 

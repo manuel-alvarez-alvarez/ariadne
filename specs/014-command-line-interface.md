@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-11-23
+updated: 2026-11-25
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -14,6 +14,7 @@ tests:
   - crates/ariadne-cli/src/commands/session.rs
   - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/tests/task_hosts.rs
+  - crates/ariadne-cli/tests/task_create.rs
   - crates/ariadne-cli/src/error.rs
   - crates/ariadne-cli/src/telemetry.rs
   - crates/ariadne-cli/src/complete.rs
@@ -106,10 +107,7 @@ same binary also serves (013).
    given: 030), how each task is staffed (`--agent`, rule 38), and whether
    the goal is over (`goal complete`) or cancelled outright, with every task
    under it (`goal cancel`), behind the usual confirmation.
-10. What the agents said to each other is readable from here: `task messages`
-    lists the whole channel of a task, oldest first (018); `--full` prints
-    each one whole, through `$PAGER`, since the table cuts a body to its
-    opening.
+10. Removed: `task messages` is gone with the agent messages (018).
 11. `task history` is a table too: each row is one transition, `from` and
     `to` painted with the same status glyphs every other status cell carries.
 12. `ariadne events` prints one line per event, `time · kind · subject ·
@@ -299,7 +297,7 @@ same binary also serves (013).
     skill` manages skills: `ls` lists every workflow, shipped and written,
     its `name` column marked `builtin` with the shared `yes_no` wording and
     its `columns` column the titles of its steps joined with ` → `; `show`
-    prints the document whole, through `$PAGER` as `task messages --full`
+    prints the document whole, through `$PAGER` as `task diff`
     does, and `--format json` prints the DTO; `create --file <path>|-` and
     `update --file <path>|-` read the document from `--file`, or from stdin
     where none is named or where `-` names it, and send `{document}`; `reset`
@@ -525,6 +523,22 @@ same binary also serves (013).
     the daemon that answered and `task_host` the task's own host. A source
     projection and its worker response appear once, under the source host
     (`tests/task_hosts.rs::all_hosts_show_a_projected_task_once`).
+62. `task create` takes its goal as an optional argument. With no goal it
+    posts to `POST /v1/tasks` and creates a goal-less task; with a goal it
+    creates the task in that goal as before.
+63. With no goal, `--repo` (an id or a registered path) is required, and
+    `--depends-on` is refused as a usage error that says a task with no goal
+    has no other task to wait for. Nothing reaches the daemon.
+64. With no goal, `--workflow NAME` is optional. With it, each `--agent
+    STEP[:SKILLS]=MODEL[@EFFORT]` staffs one column, as with a goal. Without
+    it, the task has no workflow and takes exactly one `--agent` with no
+    column, written `=MODEL[@EFFORT]` or `:SKILLS=MODEL[@EFFORT]`. Any other
+    count or an agent that names a column is a usage error.
+65. With no goal, a named `--host` is sent in the request body to the local
+    daemon, which runs the task there; without one, or with `local`, the body
+    names no host. `--host all` is refused, as for any write.
+66. `task ls --no-goal` lists only the tasks that have no goal, and conflicts
+    with `--goal`.
 
 ## Known gap
 
@@ -621,9 +635,6 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   transition with no reason
   (`commands/task.rs::history_paints_the_from_and_to_statuses`,
   `::a_history_row_carries_the_transition_and_a_dash_for_no_reason`).
-- `task messages --full` prints a message's header and its whole body, every
-  message of the channel, not just the first
-  (`commands/task.rs::a_full_message_carries_its_header_and_its_whole_body`).
 - A failure is one line, attach hints stay on that line, and JSON keeps the
   envelope (`error.rs::a_bare_message_is_the_whole_line`,
   `::an_attach_failure_is_one_line_with_recovery_commands`,
@@ -948,6 +959,27 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`crates/ariadne-cli/tests/task_hosts.rs::all_hosts_keep_the_daemon_host_first_and_name_each_task_host_second`).
 - With `--host all`, JSON keeps the task's own host as `task_host`, rule 61
   (`crates/ariadne-cli/src/output/listing.rs::tests::json_keeps_the_host_an_item_already_names`).
+
+- `task create` with no goal and no workflow posts one agent with no column
+  and no host, rule 62 to 64
+  (`crates/ariadne-cli/tests/task_create.rs::a_task_with_no_goal_and_no_workflow_is_staffed_by_one_stepless_agent`).
+- With a workflow and `--host`, the body carries both, rules 64 and 65
+  (`crates/ariadne-cli/tests/task_create.rs::a_workflow_staffs_each_column_and_a_host_goes_in_the_body`).
+- A goal-less create refuses a missing `--repo`, `--depends-on`, a wrong agent
+  count, a column named with no workflow, and a workflow with a column-less
+  agent, and sends nothing, rules 63 and 64
+  (`crates/ariadne-cli/tests/task_create.rs::a_task_with_no_goal_refuses_what_it_cannot_take`).
+- A create with a goal is unchanged, rule 62
+  (`crates/ariadne-cli/tests/task_create.rs::a_task_in_a_goal_is_created_as_before`).
+- The `--agent` of `task create` may omit the column; that of `task update`
+  may not, rule 64
+  (`crates/ariadne-cli/src/commands/task/edit.rs::tests::a_create_agent_may_leave_the_column_out_and_an_update_agent_may_not`).
+- `task ls --no-goal` asks for the goal-less tasks, rule 66
+  (`crates/ariadne-cli/tests/task_create.rs::ls_no_goal_asks_for_the_goal_less_tasks`).
+- `task ls --goal G --no-goal` is a usage error, rule 66
+  (`crates/ariadne-cli/tests/task_create.rs::ls_refuses_a_goal_together_with_no_goal`).
+- With `--host local`, the create body names no host, rule 65
+  (`crates/ariadne-cli/tests/task_create.rs::the_local_host_sends_no_host_in_the_body`).
 
 ## Sources
 

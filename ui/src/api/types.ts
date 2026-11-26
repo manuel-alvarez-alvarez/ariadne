@@ -32,9 +32,8 @@ export type AgentAssignment = Schemas["AgentAssignment"]
 export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]
 export type TaskTransitionDto = Schemas["TaskTransitionDto"]
-export type MessageDto = Schemas["MessageDto"]
-export type SendMessageRequest = Schemas["SendMessageRequest"]
 export type CreateTaskRequest = Schemas["CreateTaskRequest"]
+export type CreateStandaloneTaskRequest = Schemas["CreateStandaloneTaskRequest"]
 export type UpdateTaskRequest = Schemas["UpdateTaskRequest"]
 
 export type SessionDto = Schemas["SessionDto"]
@@ -103,5 +102,4 @@ export type DomainEventKind = DomainEvent["event"]
 
 export type PullRequestDto = components["schemas"]["PullRequestDto"]
 
-export type AgentQuestion = Schemas["AgentQuestion"]
-export type AgentRequestDto = Schemas["AgentRequestDto"]
+export type QuestionDto = Schemas["QuestionDto"]

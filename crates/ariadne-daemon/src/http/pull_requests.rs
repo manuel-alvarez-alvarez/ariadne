@@ -1193,8 +1193,8 @@ async fn hold_review_comments(
 /// Ask Ariadne to review any open request on the model the user picks,
 /// or stop asking (029). Authorship and GitHub review assignments do not
 /// restrict the ask. Asking starts one active goal for the review, with one
-/// staffed task and no orchestrator, on the `pr-review` workflow: the model
-/// must be ranked inside that workflow's band, else 400. Asking again keeps
+/// staffed task and no orchestrator, in one `review` column that Ariadne
+/// fixes: the model must be ranked inside that column's band, else 400. Asking again keeps
 /// the open goal and moves its pin and skills. The session waits while the
 /// request is a draft. A review of the user's own request posts as a
 /// comment; other reviews may request changes. The goal completes when the
@@ -1370,8 +1370,8 @@ async fn end_operation_goal(
 }
 
 /// Refuse a model outside the capability band of an operation's column: the
-/// band of the open goal's snapshot, else of the workflow as it stands. A
-/// model the user has not ranked has no band to be in.
+/// band of the open goal's snapshot, else of the column Ariadne fixes for
+/// the operation. A model the user has not ranked has no band to be in.
 async fn check_operation_band(
     state: &AppState,
     repository_id: &str,
@@ -1379,7 +1379,7 @@ async fn check_operation_band(
     operation: PrOperation,
     model: &str,
 ) -> ApiResult<()> {
-    let workflow = ariadne_store::defaults::pr_operation_workflow(operation);
+    let fixed = ariadne_store::defaults::pr_operation_step(operation);
     let band: Vec<ModelRank> = match state
         .store
         .active_pr_goal(repository_id, number, operation)
@@ -1392,15 +1392,7 @@ async fn check_operation_band(
             .first()
             .and_then(|step| serde_json::from_str(&step.ranks).ok())
             .unwrap_or_default(),
-        None => state
-            .store
-            .get_workflow(workflow)
-            .await?
-            .steps()
-            .into_iter()
-            .next()
-            .map(|step| step.ranks)
-            .unwrap_or_default(),
+        None => fixed.ranks,
     };
     let ranks = state.store.model_ranks().await?;
     let rank = ranks.get(model).copied();
@@ -1413,8 +1405,9 @@ async fn check_operation_band(
         PrOperation::Babysit => "a babysit",
     };
     Err(ApiError::bad_request(format!(
-        "model {model} is {}: the {workflow} workflow allows {} for {verb}",
+        "model {model} is {}: the {} column allows {} for {verb}",
         rank.map_or("unranked", |rank| rank.as_str()),
+        fixed.id,
         allowed.join(" and ")
     )))
 }
@@ -1422,8 +1415,8 @@ async fn check_operation_band(
 /// Ask Ariadne to keep any open request by hand on the model the user
 /// picks, or stop asking (032), regardless of its author. Asking starts one
 /// active goal for the babysit, with one staffed task and no orchestrator,
-/// on the `pr-babysit` workflow: the model must be ranked inside that
-/// workflow's band, else 400. Asking again keeps the open goal and moves its
+/// in one `babysit` column that Ariadne fixes: the model must be ranked
+/// inside that column's band, else 400. Asking again keeps the open goal and moves its
 /// pin and skills. A request a task already keeps is refused to avoid
 /// competing keepers. The goal completes when the request merges; its task fails on close.
 /// Stopping cancels the goal and its task and ends only the keeper session,

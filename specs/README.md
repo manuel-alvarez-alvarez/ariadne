@@ -27,9 +27,9 @@ test that proves it. Conventions for writing and changing one are in
 | 013 | [MCP tool surface](013-mcp-tool-surface.md) | the tools each seat sees, remote task context, and writes to far tasks |
 | 014 | [Command-line interface](014-command-line-interface.md) | the command tree, flags, failures, completions, `doctor` |
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, reusable workload views, its conversation workspace, and CLI parity, remote task inspection and host identity |
-| 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, Dependabot, CI build caches, the migration policy |
+| 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, how the daemon starts and stops, release-please, Dependabot, CI build caches, the migration policy |
 | 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and the agent of each column; eleven skills and one document template |
-| 018 | [Agent messages](018-agent-messages.md) | agent messages, turn delivery, and relay between hosts |
+| 018 | [Agent messages](018-agent-messages.md) | superseded by 039: agents post to each other's live sessions, and no message is stored |
 | 021 | [ACP runtime](021-acp-runtime.md) | ACP agents in direct children or relay panes: selection, protocol, events, kill |
 | 022 | [The `ai` permission mode](022-ai-permission-mode.md) | the fourth mode, the AI permission model's settings and prompts, the Python check and the install |
 | 023 | [Stats](023-stats.md) | superseded by 035 |
@@ -40,7 +40,7 @@ test that proves it. Conventions for writing and changing one are in
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
 | 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on any explicitly requested PR, its detached worktree, its news, one review by priority, asking by hand regardless of authorship or review assignment, no Ariadne approval of its own, and no forge approval |
 | 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, and the `pr` column; saved remote task workflows |
-| 031 | [Needs attention](031-needs-attention.md) | persistent individual dismissal with independent cause revisions, daemon-only partial reads, valid recovery targets, the shared item shape, `GET /v1/attention`, the producer registry, the recovery producer, the agent-request producer (a turn-scoped `wait_for_user` hint, its structured question and the answer route), and the pull-request producer: an unassigned review request, a confirmed-ready request to merge and each escalated review thread |
+| 031 | [Needs attention](031-needs-attention.md) | persistent individual dismissal with independent cause revisions, daemon-only partial reads, valid recovery targets, the shared item shape, `GET /v1/attention`, the producer registry, the recovery producer, the session producer (a pending permission, input, a wait or an error), the question producer, the removal of the `wait_for_user` request, and the pull-request producer: an unassigned review request, a confirmed-ready request to merge and each escalated review thread |
 | 032 | [Babysitting a request by hand](032-babysitting-a-request-by-hand.md) | the `keeper` seat, its goal and task, its worktree and branch, asking by hand on any open request, ending it on the merge or the close, and the desktop panel |
 | 033 | [Telemetry](033-telemetry.md) | operational log and metric sources, their OpenTelemetry pipeline, retention, and log routes |
 | 034 | [Telemetry query APIs](034-telemetry-query.md) | the Prometheus and Loki routes over the telemetry store, the name translation, the supported PromQL and LogQL, and `ariadne query` |
@@ -48,4 +48,5 @@ test that proves it. Conventions for writing and changing one are in
 | 036 | [Dashboards](036-dashboards.md) | editable Perses dashboard documents, their catalog routes, events and CLI |
 | 037 | [Hosts](037-hosts.md) | database hosts and colours, CRUD routes and events, SSH worker inspection and review in three setup groups, resumable setup, explicit idle updates and repository population, catalog and portable configuration synchronization, idle maintenance restarts, host query routes, and new remote task references, legacy mirrors, durable worker identity, and source coordination |
 | 038 | [Agent relay](038-agent-relay.md) | `ariadned relay`, session paths, versioned durable replay, acknowledgments, stop, exit reporting, upgrades, and terminal status |
-| 039 | [Trajectory](039-trajectory.md) | a session folded into typed turns and steps: the snapshot, its update stream, the pages of older turns and of a turn's steps, subagent lanes, attention, and the bounded read |
+| 039 | [Posts to a session](039-posts-to-a-session.md) | `post_to_session`: text put straight into the live session of the orchestrator or of the current column's agent, on one host or across hosts, with no stored row |
+| 040 | [Trajectory](040-trajectory.md) | a session folded into typed turns and steps: the snapshot, its update stream, the pages of older turns and of a turn's steps, subagent lanes, attention, and the bounded read |

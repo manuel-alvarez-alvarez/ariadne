@@ -93,7 +93,8 @@ and the ACP runtime that reports the agent events (021).
    that caused it, whether it came through HTTP or from the scheduler.
 5. The stream is SSE. It opens with a heartbeat, honours per-client filters,
    and signals a resync and closes when a client lags rather than silently
-   dropping events.
+   dropping events. A stream that names a `source` daemon also carries the
+   `source_post` frames of that source (039 rule 15).
 6. CORS, on TCP and on the socket, allows only the app's allowed origins, its HTTP methods, and its
    request headers. A refused Host or Origin answers `403` in the normal
    `forbidden` envelope and includes no CORS allow headers, for every route,
@@ -112,7 +113,7 @@ and the ACP runtime that reports the agent events (021).
    008), and its console (`/v1/sessions/{id}/console`, `/console/input`,
    `/console/stream`, `/console/cancel`, 008, 021), and its trajectory
    (`GET /v1/sessions/{id}/trajectory`, `/trajectory/stream` and
-   `/trajectory/turns/{turn_id}/steps`, 039). The one WebSocket,
+   `/trajectory/turns/{turn_id}/steps`, 040). The one WebSocket,
    `/console/terminal` (008), serves that same console drawn as terminal
    bytes for an emulator, and reads the emulator's keys and size; its
    messages are DTOs of `ariadne-api` like every other. No endpoint types
@@ -361,6 +362,19 @@ and the ACP runtime that reports the agent events (021).
     A configured list replaces it whole.
 28. Session attention also has `exhausted`, for active work whose current
     model accepts no more work.
+29. Two routes serve the questions an agent asks with its own tool (021
+    rule 21). They use no route under `/agent-requests`.
+    `GET /v1/sessions/{id}/questions` answers the open questions of the
+    session, oldest first, as `QuestionDto`: `id`, `session_id`, `message`,
+    `schema` and `created_at`. `schema` is the agent's `requestedSchema`,
+    unchanged. An unknown session is 404.
+    `POST /v1/sessions/{id}/questions/{question_id}/answer` takes
+    `AnswerQuestionRequest`, `{"action": "accept" | "decline" | "cancel",
+    "content": {...}}`, and answers 204. `content` is present with `accept`
+    only, else the answer is 400. The agent reads the answer as the result
+    of its request. One answer closes one question: a second answer is 409
+    `question_closed`. A question the session does not hold open is 404.
+    The terminal console the daemon hosts answers through the same code.
 
 ## Pull request events (026)
 
@@ -403,7 +417,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 1. `GET /v1/remote-tasks/protocol` returns `{protocol: "remote-tasks-v1", daemon_id}` (037 rule 101).
 2. `PUT /v1/remote-tasks/{id}` accepts `CreateRemoteTaskRequest` from `ariadne-api/src/tasks.rs`.
    The source supplies the stable task ID and the worker repository ID.
-   `source_goal` contains `daemon_id`, `goal_id`, `title`, and `description`.
+   For goal tasks, `source_goal` contains `daemon_id`, `goal_id`, `title`, and `description`.
    `workflow` contains `name` and ordered `WorkflowStepDto` columns. `agents` uses `AgentAssignment`.
    `title` and `description` describe the task.
    New drafts return 201. An identical repeated request returns 200 with the existing task.
@@ -417,7 +431,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
    `revision` describes draft freshness. `authorized_revision` retains the exact source authorization through retries.
    Existing task fields retain their meanings. Remote `goal_id` names the source goal.
    Existing task timestamps and events expose subsequent execution changes.
-   Reads, transitions, messages, usage, sessions, and diffs require no worker goal.
+   Reads, transitions, usage, sessions, and diffs require no worker goal.
 
 5. `RemoteTaskProtocol.capabilities` advertises `source-dependency-controls-v1` for both source dependency operations.
    New source creation requires this capability. Older `remote-tasks-v1` workers without it require an upgrade.
@@ -441,6 +455,11 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 
 ## Acceptance criteria
 
+- The question routes list the open questions with their forms, refuse a
+  malformed, unknown or second answer, and answer 404 for an unknown session
+  (`questions.rs::a_question_waits_for_a_person_in_every_permission_mode`,
+  `::a_malformed_or_unknown_answer_is_refused`,
+  `::the_questions_of_an_unknown_session_are_not_found`).
 - Dependency controls: `remote_tasks.rs::source_dependency_controls_are_audited_repeatable_and_fenced_by_draft_revision`,
   `::dependency_controls_keep_agent_restrictions_and_generic_user_permissions`,
   `::failure_racing_authorization_admits_exactly_one_draft_outcome`, and
@@ -449,7 +468,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 
 
 - `remote_tasks.rs::the_remote_protocol_and_context_are_in_the_published_schema` proves the additive API contract.
-  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves task reads, history, messages, usage, and diffs.
+  `::authorization_starts_one_saved_workflow_without_a_source_connection` proves task reads, history, usage, and diffs.
 
 
 - `POST /v1/sessions/{id}/switch` is in the OpenAPI document with
@@ -550,7 +569,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   and the usage it carries is kept
   (`acp_console.rs::a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent`).
 - The trajectory routes answer the snapshot, its stream and the pages of
-  turns and steps (039), and are in the OpenAPI document
+  turns and steps (040), and are in the OpenAPI document
   (`trajectory.rs::the_stream_sends_a_snapshot_then_updates_and_text_as_appends`,
   `docs.rs::the_committed_api_pair_holds_every_trajectory_type`).
 - The live-only console events reach neither the events listing nor the

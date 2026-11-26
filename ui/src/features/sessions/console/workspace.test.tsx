@@ -167,32 +167,6 @@ it("uses the same selectable details in an expanded console", () => {
   expect(within(log()).queryByText("first output")).toBeNull()
 })
 
-it("reveals a subagent question and sends its answer through the request route", async () => {
-  const child = { id: "child", title: "Explorer" }
-  renderConsole([
-    tool("Build"),
-    event("subagent_update", { subagent: child, state: "running" }),
-    event("agent_request", {
-      request_id: "question-1",
-      hint: "Choose a base",
-      question: { text: "Which base?", options: [{ id: "main", label: "Main branch" }] },
-      subagent: child,
-    }),
-  ])
-  fireEvent.click(screen.getByRole("button", { name: /Pending request/ }))
-  within(log()).getByText("Which base?")
-  const answer = screen.getByRole("button", { name: "Main branch" })
-  expect(document.activeElement).toBe(answer)
-  const posted: string[] = []
-  daemonFetch.mockImplementation(async (input: Request) => {
-    if (input.method === "GET") return Response.json([])
-    posted.push(`${input.method} ${new URL(input.url).pathname} ${await input.text()}`)
-    return new Response(null, { status: 204 })
-  })
-  await userEvent.click(answer)
-  expect(posted[0]).toContain('/agent-requests/question-1/answer {"option_id":"main"}')
-})
-
 it("returns from a child view to answer its pending permission in details", async () => {
   const child = { id: "child", title: "Explorer" }
   renderConsole([
@@ -306,28 +280,6 @@ it("keeps user developer and assistant messages always visible", () => {
     "Assistant message in full",
   ])
     within(log()).getByText(text)
-})
-
-it("keeps the question and chosen option in an answered question summary", () => {
-  renderConsole([
-    event("agent_request", {
-      request_id: "q",
-      hint: "Choose",
-      question: {
-        text: "Which branch should receive this change?",
-        options: [{ id: "main", label: "Main" }],
-      },
-    }),
-    event("agent_request.resolved", {
-      request_id: "q",
-      resolution: "answered",
-      answer: { option_id: "main", text: "Main" },
-    }),
-  ])
-  const summary = within(log()).getByRole("button", {
-    name: /Which branch should receive this change/,
-  })
-  expect(summary.textContent).toContain("Answered · Main")
 })
 
 it("opens permission response controls in details and keeps the conversation compact", async () => {

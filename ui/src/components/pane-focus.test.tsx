@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 import { qk } from "@/api"
-import { GoalSwimlanes } from "@/features/goals/goal-swimlanes"
+import { GoalBoard } from "@/features/goals/goal-board"
 import { stubEventSource } from "@/test/event-source"
 import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -34,7 +34,7 @@ beforeEach(() => {
 function mount(route: string, status = task.status) {
   return renderScreen(
     <>
-      <GoalSwimlanes hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />
+      <GoalBoard hosts={["local"]} goals={[goal].map((goal) => ({ ...goal, host: "local" }))} />
       <DetailPanels />
     </>,
     {
