@@ -495,11 +495,11 @@ async fn a_task_with_no_workflow_is_finished_by_its_agents_complete_step() {
     .await;
 }
 
-/// `fail_step` fails the task and keeps its worktree; retry runs it again and
-/// cancel ends it.
+/// `fail_step` fails the task and keeps its worktree. A retry starts the agent
+/// again with a new briefing, and its `complete_step` then finishes the task.
 #[tokio::test]
-async fn a_task_with_no_workflow_fails_by_fail_step_and_takes_retry_and_cancel() {
-    use crate::common::{TIMEOUT, as_session, eventually_some};
+async fn a_failed_task_with_no_workflow_runs_again_after_a_retry() {
+    use crate::common::{TIMEOUT, as_session, eventually, eventually_some};
     let h = harness().scheduler().await;
     let repo = h.repository(&h.git_repo("repo")).await;
     let created: Value = h
@@ -534,6 +534,14 @@ async fn a_task_with_no_workflow_fails_by_fail_step_and_takes_retry_and_cancel()
     assert_eq!(failed["status"], "failed");
     h.flush_scheduler().await;
     assert!(worktree.exists());
+    let prompts = async || {
+        let mut total = 0;
+        for session in h.sessions_of(id).await {
+            total += h.prompts_to(&session).len();
+        }
+        total
+    };
+    let before = prompts().await;
     let retried: Value = h
         .json(
             post_json(&format!("{path}/retry"), json!({})),
@@ -541,6 +549,51 @@ async fn a_task_with_no_workflow_fails_by_fail_step_and_takes_retry_and_cancel()
         )
         .await;
     assert_eq!(retried["status"], "ready");
+    let again = eventually_some(TIMEOUT, "the agent runs again", async || {
+        let task: Value = h.get(&path).await;
+        (task["status"] == "in_progress"
+            && task["agents"][0]["session_id"].is_string()
+            && prompts().await > before)
+            .then_some(task)
+    })
+    .await;
+    let ended: Value = h
+        .json(
+            as_session(
+                &format!("{path}/step/complete"),
+                again["agents"][0]["session_id"].as_str().unwrap(),
+                json!({"reason":"Done."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(ended["status"], "finished");
+    eventually(TIMEOUT, "worktree cleanup", async || !worktree.exists()).await;
+}
+
+/// The user's cancel ends a running task with no workflow.
+#[tokio::test]
+async fn a_running_task_with_no_workflow_takes_a_cancel() {
+    use crate::common::{TIMEOUT, eventually_some};
+    let h = harness().scheduler().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let created: Value = h
+        .json(
+            post_json(
+                "/v1/tasks",
+                json!({"title":"Stopped work", "repo_id":repo.id,
+                    "agents":[{"model":test_pin().model}]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let path = format!("/v1/tasks/{}", created["id"].as_str().unwrap());
+    eventually_some(TIMEOUT, "the agent", async || {
+        let task: Value = h.get(&path).await;
+        (task["status"] == "in_progress" && task["agents"][0]["session_id"].is_string())
+            .then_some(())
+    })
+    .await;
     let cancelled: Value = h
         .json(
             post_json(&format!("{path}/cancel"), json!({"reason":"Stop."})),
@@ -548,6 +601,54 @@ async fn a_task_with_no_workflow_fails_by_fail_step_and_takes_retry_and_cancel()
         )
         .await;
     assert_eq!(cancelled["status"], "cancelled");
+}
+
+/// The agent of a task with no workflow loads the skills it was given, and
+/// the skill index names them.
+#[tokio::test]
+async fn the_agent_of_a_task_with_no_workflow_loads_its_supplied_skill() {
+    use crate::common::{TIMEOUT, eventually_some};
+    let h = harness().scheduler().await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+    let created: Value = h
+        .json(
+            post_json(
+                "/v1/tasks",
+                json!({"title":"Skilled work", "repo_id":repo.id,
+                    "agents":[{"model":test_pin().model, "skills":["coding"]}]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created["agents"][0]["skills"], json!(["coding"]));
+    let path = format!("/v1/tasks/{}", created["id"].as_str().unwrap());
+    let running = eventually_some(TIMEOUT, "the agent", async || {
+        let task: Value = h.get(&path).await;
+        task["agents"][0]["session_id"].is_string().then_some(task)
+    })
+    .await;
+    let session_id = running["agents"][0]["session_id"].as_str().unwrap();
+    let launch = eventually_some(TIMEOUT, "the launch", async || h.launch_file(session_id)).await;
+    assert!(
+        launch.system_prompt.contains("Your skills."),
+        "{}",
+        launch.system_prompt
+    );
+    assert!(
+        launch.system_prompt.contains("coding"),
+        "{}",
+        launch.system_prompt
+    );
+    assert!(
+        h.launcher
+            .cfg
+            .run_dir
+            .join(session_id)
+            .join("skills")
+            .join("coding")
+            .join("SKILL.md")
+            .exists()
+    );
 }
 
 #[tokio::test]

@@ -437,15 +437,13 @@ every other kebab-case word in it; the wire spells the same gate
     Goal tasks carry null and an empty array in these fields and keep their existing behavior.
     The reserved `pr-review` and `pr-babysit` workflows remain on their operation routes.
     Goal-less creation refuses them with the same reason as an ordinary goal.
-14. A goal-less task may have no workflow (001 rule 26). It has no column and no saved steps,
-    and `TaskDto.workflow` and `TaskDto.step` are null.
-    Its one agent has no `step`. The agent's `complete_step` finishes the task and its `fail_step` fails it,
-    and no gate applies. A task of a goal still requires a workflow and keeps rules 1 through 13.
+14. A goal-less task may have no workflow, with the behavior of 001 rule 26.
     `agents[].step` is optional in the request: a task with a workflow refuses an agent that names none.
+    A task of a goal still requires a workflow and keeps rules 1 through 13.
 
 ## Acceptance criteria
 
-- Rule 14: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_task_with_no_workflow_fails_by_fail_step_and_takes_retry_and_cancel`, `standalone_tasks::a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step`.
+- Rule 14: `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`, `standalone_tasks::a_failed_task_with_no_workflow_runs_again_after_a_retry`, `standalone_tasks::a_no_workflow_task_refuses_any_staffing_but_one_agent_with_no_step`.
 
 - Rule 13: `standalone_tasks::admission_refuses_missing_context_dependencies_and_reserved_workflows`, `standalone_tasks::saved_columns_run_without_a_goal_and_cleanup_after_finish`, `standalone_tasks::retry_cancel_and_saved_columns_survive_a_restart`, `standalone_tasks::openapi_describes_goal_less_creation_and_task_columns`.
 

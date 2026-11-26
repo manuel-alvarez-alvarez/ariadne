@@ -295,7 +295,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 
 - Rule 20: `prompts.rs::a_task_with_no_workflow_is_briefed_without_a_column`
   and `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`
-  (the briefing as sent, and no skill index).
+  (the briefing as sent, and no skill index when none is given), and
+  `standalone_tasks::the_agent_of_a_task_with_no_workflow_loads_its_supplied_skill`
+  (a supplied skill is in the index and in the run directory).
 
 - Every default text obeys the two readable STE rules
   (`defaults.rs::every_default_text_is_simplified_technical_english`), and
