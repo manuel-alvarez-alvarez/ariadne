@@ -9,9 +9,9 @@
  * without a refresh.
  */
 
-import { FilterIcon, PlusIcon, SearchIcon, TargetIcon } from "lucide-react"
+import { FilterIcon, ListPlusIcon, PlusIcon, SearchIcon, TargetIcon } from "lucide-react"
 import { useMemo, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
 import { LOCAL_HOST, useHostLists } from "@/api"
 import { EmptyState } from "@/components/empty-state"
@@ -28,9 +28,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { CreateStandaloneTaskDialog } from "@/features/tasks/create-standalone-task-dialog"
 import { useHostSelection } from "@/hooks/use-host-filter"
 import { useRowsShowHost } from "@/hooks/use-host-label"
-import { HOST_PARAM } from "@/routes/paths"
+import { HOST_PARAM, taskPanelFrom } from "@/routes/paths"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
   DEFAULT_GOAL_STATUS_FILTER,
@@ -41,7 +42,8 @@ import {
   serializeStatusFilter,
   toggleStatusFilter,
 } from "./filters"
-import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
+import { BoardSkeleton, GoalSwimlanes, useBoardTasks } from "./goal-swimlanes"
+import { goallessTasks } from "./lanes"
 import { goalsQueryOptions } from "./queries"
 import { GOAL_STATUS_META, GOAL_STATUSES, isTerminalGoalStatus } from "./status"
 import { useStatusFilter } from "./use-status-filter"
@@ -76,6 +78,9 @@ export function GoalsListPage() {
   const [search, setSearch] = useSearchParams()
   const { statuses, filterBy } = useStatusFilter()
   const [createOpen, setCreateOpen] = useState(false)
+  const [createTaskOpen, setCreateTaskOpen] = useState(false)
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
   const query = search.get("q") ?? ""
   function setQuery(value: string) {
     const next = new URLSearchParams(search)
@@ -94,6 +99,9 @@ export function GoalsListPage() {
     [goals.rows],
   )
   const shown = useMemo(() => searchGoals(merged, query), [merged, query])
+  // The same read the board makes, so it costs no request: it says whether the
+  // "No goal" lane has anything to show.
+  const tasks = useBoardTasks(hosts)
   const showHost = useRowsShowHost()
   const failedEverywhere = goals.errors.length > 0 && goals.errors.length === hosts.length
   const empty = emptyBoardCopy(statuses)
@@ -101,6 +109,10 @@ export function GoalsListPage() {
   const all = statuses.length === 0
   const finished = sameFilter(statuses, FINISHED_FILTER)
   const custom = !active && !all && !finished
+  const hasNoGoalTasks = useMemo(
+    () => goallessTasks(tasks.rows, active, query).length > 0,
+    [tasks.rows, active, query],
+  )
 
   /** The goal just created opens its own panel, on its host — no hunting for it on the board. */
   function openGoal(goalId: string, host: string) {
@@ -195,6 +207,10 @@ export function GoalsListPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </ButtonGroup>
+            <Button variant="outline" onClick={() => setCreateTaskOpen(true)}>
+              <ListPlusIcon />
+              New task
+            </Button>
             <Button onClick={() => setCreateOpen(true)}>
               <PlusIcon />
               New goal
@@ -218,7 +234,7 @@ export function GoalsListPage() {
 
       {goals.isPending ? <BoardSkeleton /> : null}
 
-      {merged.length && shown.length === 0 ? (
+      {merged.length && shown.length === 0 && !hasNoGoalTasks ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title="No goals match"
@@ -229,7 +245,8 @@ export function GoalsListPage() {
       {!goals.isPending &&
       goals.pending.length === 0 &&
       !failedEverywhere &&
-      merged.length === 0 ? (
+      merged.length === 0 &&
+      !hasNoGoalTasks ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title={empty.title}
@@ -245,9 +262,24 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {shown.length ? (
-        <GoalSwimlanes hosts={hosts} goals={shown} activeOnly={active} showHost={showHost} />
+      {shown.length || hasNoGoalTasks ? (
+        <GoalSwimlanes
+          hosts={hosts}
+          goals={shown}
+          activeOnly={active}
+          query={query}
+          showHost={showHost}
+        />
       ) : null}
+
+      <CreateStandaloneTaskDialog
+        open={createTaskOpen}
+        onOpenChange={setCreateTaskOpen}
+        onCreated={(task) => {
+          const target = taskPanelFrom(pathname, search, task.id)
+          void navigate(target, { replace: target.replace })
+        }}
+      />
 
       <CreateGoalDialog
         open={createOpen}

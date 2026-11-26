@@ -70,6 +70,7 @@ import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
 import { taskListQueryOptions } from "@/features/tasks"
+import { CreateStandaloneTaskDialog } from "@/features/tasks/create-standalone-task-dialog"
 import { useDaemonIdentities } from "@/features/tasks/source-host"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { workflowsQueryOptions } from "@/features/workflows/queries"
@@ -145,6 +146,10 @@ export function CommandPalette({
   // command would be for. The goal is read on its own host, whatever the pick.
   const openGoal = useOpenGoal(open, search.get("goal"), panelHost)
   const attachTo = search.get("session") ?? search.get("task")
+  // A screen with a goal open already has a "New task" for it, so the one for
+  // a task outside any goal goes by another name there. Read off the URL, not
+  // off the goal's own query, so the name does not change as that loads.
+  const standaloneLabel = search.get("goal") ? "Add a task outside any goal" : "New task"
   /**
    * The goal the create-task dialog is open for. Held here rather than by the
    * shell, which knows nothing about which goal is on screen — and held as the
@@ -152,6 +157,8 @@ export function CommandPalette({
    * closes.
    */
   const [newTaskGoal, setNewTaskGoal] = useState<HostRow<GoalDto> | null>(null)
+  /** Whether the dialog for a task with no goal is open. */
+  const [newStandaloneTask, setNewStandaloneTask] = useState(false)
 
   /** A pick always closes the palette; what it then does is the argument. */
   function run(action: () => void) {
@@ -220,6 +227,16 @@ export function CommandPalette({
                   </CommandShortcut>
                 </CommandItem>
               ) : null}
+              {/* A task with no goal can be made from any screen. Beside a
+                  goal's own "New task" it says what it is. */}
+              <CommandItem
+                value={standaloneLabel}
+                keywords={["new task", "create", "add", "standalone", "goal-less"]}
+                onSelect={() => run(() => setNewStandaloneTask(true))}
+              >
+                <ListPlusIcon />
+                {standaloneLabel}
+              </CommandItem>
               {attachTo ? (
                 // The id is on its way into a terminal, which is the one place
                 // the app cannot take the user: `ariadne attach <id>` is what
@@ -323,6 +340,14 @@ export function CommandPalette({
       </CommandDialog>
       {/* Outside the palette, which is gone by the time this opens: the pick
           closes it and hands the dialog the goal it was made against. */}
+      <CreateStandaloneTaskDialog
+        open={newStandaloneTask}
+        onOpenChange={setNewStandaloneTask}
+        onCreated={(task) => {
+          const target = taskPanelFrom(pathname, search, task.id)
+          void navigate(target, { replace: target.replace })
+        }}
+      />
       {newTaskGoal ? (
         <CreateTaskDialog
           host={newTaskGoal.host}

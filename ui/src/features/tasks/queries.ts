@@ -11,9 +11,11 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 
 import {
   api,
+  type CreateStandaloneTaskRequest,
   type CreateTaskRequest,
   cacheRow,
   type Host,
+  LOCAL_HOST,
   qk,
   type TaskDto,
   type TaskStatus,
@@ -96,6 +98,20 @@ export function useCreateTask(host: Host, goalId: string) {
         }),
       ),
     onSuccess: (task) => cacheRow(queryClient, qk.tasks, host, task),
+  })
+}
+
+/**
+ * `POST /v1/tasks` — a task with no goal. The local daemon takes it, runs it
+ * on the `host` the body names, and owns the validation, so a refusal (a far host it cannot run on yet)
+ * surfaces as the `ApiError` the dialog renders.
+ */
+export function useCreateStandaloneTask() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateStandaloneTaskRequest) =>
+      unwrap(api(LOCAL_HOST).POST("/v1/tasks", { body })),
+    onSuccess: (task) => cacheRow(queryClient, qk.tasks, LOCAL_HOST, task),
   })
 }
 

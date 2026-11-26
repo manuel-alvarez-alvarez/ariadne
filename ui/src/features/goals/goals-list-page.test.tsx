@@ -13,7 +13,7 @@
  * mounted board shows any of it.
  */
 
-import { cleanup, screen, waitFor } from "@testing-library/react"
+import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
@@ -385,4 +385,34 @@ it("shows terminal tasks when leaving the Active filter", async () => {
   expect(screen.queryByText("Completed task")).toBeNull()
   await userEvent.click(screen.getByRole("button", { name: "All" }))
   expect(await screen.findByText("Completed task")).toBeTruthy()
+})
+
+it("offers New task in the board header, which opens the goal-less task dialog", async () => {
+  const user = userEvent.setup()
+  renderBoard("/goals")
+
+  await user.click(await screen.findByRole("button", { name: "New task" }))
+
+  expect(await screen.findByRole("dialog", { name: "New task" })).toBeTruthy()
+  expect(await screen.findByRole("combobox", { name: "Repository" })).toBeTruthy()
+})
+
+it("shows the No goal lane on a board with no goals at all", async () => {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      jsonResponse(
+        url.pathname === "/v1/tasks"
+          ? [aTask({ goal_id: null, title: "Only a loose task", steps: [] })]
+          : [],
+      ),
+    )
+  })
+  renderBoard("/goals")
+
+  const lane = await screen.findByRole("group", { name: "No goal: Tasks" })
+  expect(within(lane).getByText("Only a loose task")).toBeTruthy()
+  expect(screen.queryByText("No goals yet")).toBeNull()
 })
