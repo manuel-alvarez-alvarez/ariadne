@@ -118,12 +118,9 @@ every other kebab-case word in it; the wire spells the same gate
    with the same `develop` and `review` bands and gates, then `pr[Pull request]`
    (`balanced`, `frontier`; `request-merged`). `merge` stages `merge`, `pr` stages
    `pr-babysit`, and `develop-review-merge` is the default of every repository
-   that names none (`DEFAULT_WORKFLOW`). A third workflow, `pr-review`, is
-   the review operation's (rule 11 below): one `review[Review]` column that
-   stages `pr-reviewer`, with the `balanced` and `frontier` ranks and no
-   gate. A fourth, `pr-babysit`, is the babysit operation's: one
-   `babysit[Babysit]` column that stages `pr-babysit`, with the `balanced` and
-   `frontier` ranks and no gate. The orchestrator assesses each task
+   that names none (`DEFAULT_WORKFLOW`). Ariadne ships no other workflow: a
+   pull request operation runs on no workflow of the catalog (rule 11
+   below). The orchestrator assesses each task
    case by case, chooses the smallest capable eligible model, and chooses a
    more powerful eligible model only where the task demands justify it.
 3. A save — a create or a document write — parses the document and refuses a
@@ -133,9 +130,8 @@ every other kebab-case word in it; the wire spells the same gate
    orchestrator's skill (`orchestration`) or the one a reviewer pull request
    session loads (`pr-reviewer`) — neither staffs a task agent, which is
    what a workflow column does. `pr-babysit` is allowed: the `pr` column of
-   `develop-review-pr` stages it, and `pr-babysit` is the one column of
-   `pr-babysit`; `pr-review` refuses it. `pr-reviewer` is allowed in
-   `pr-review` alone, where rule 11 requires it.
+   `develop-review-pr` stages it. A create under `pr-review` or
+   `pr-babysit` is refused as a reserved name (rule 11).
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`). Its agent lands the
    reviewed task or returns it, and fixes no code: it never changes a file
@@ -194,9 +190,6 @@ every other kebab-case word in it; the wire spells the same gate
    - `POST /v1/workflows/parse` — parse a document without saving it
      anywhere; 200 with its name and steps, or 400 `workflow_invalid` with
      `details.line` and the message.
-
-   `WorkflowDto.operation` is `review` for `pr-review`, `babysit` for
-   `pr-babysit`, and null for every other workflow.
 
    `WorkflowDto.document` is the effective text: the override, or the
    shipped one. Every write publishes a fat domain event —
@@ -404,23 +397,24 @@ every other kebab-case word in it; the wire spells the same gate
     removes the worktree and branch, and removes the request row and its
     marks.
 
-11. A workflow that serves a pull request operation is named by the
-    operation (`defaults::pr_operation_of`); `pr-review` serves `review`
-    and `pr-babysit` serves `babysit`. Its definition shows in the catalog
-    and is edited like any other, and its shape is checked at every save
-    (`defaults::pr_operation_shape_error`): exactly one column with the `request-merged` gate,
-    that loads the operation's own skill, and whose `ranks` name only what
-    the operation allows. For `review` the column is `review`, the skill is
-    `pr-reviewer` and the ranks are `balanced`, `frontier` or both. For
-    `babysit` the column is `babysit`, the skill is `pr-babysit` and the
-    ranks are `fast`, `balanced` or both. The column's
-    title, description, extra skills and band stay editable; a save that
-    breaks the shape answers 400 naming the rule. No ordinary goal and no
-    repository default can name an operation workflow: a goal create or a
-    repository write that does answers 400. A goal of the operation, and
-    its one task, are 029's to start and to end, for a babysit as for a
-    review (032 rule 7b). An upgrade adds the gate to custom operation
-    workflows and active goal snapshots, preserving completed snapshots
+11. A pull request operation runs on no workflow of the catalog. Ariadne
+    fixes the one column of each operation in code
+    (`defaults::pr_operation_step`): for `review` the column is
+    `review[Review]` and loads `pr-reviewer`; for `babysit` the column is
+    `babysit[Babysit]` and loads `pr-babysit`. Both columns allow the
+    `balanced` and `frontier` ranks and wait on the `request-merged` gate.
+    The goal of an operation snapshots that column and records `pr-review`
+    or `pr-babysit` as its workflow name
+    (`defaults::pr_operation_workflow`). Those two names are reserved: a
+    workflow create under either is refused, and no goal or repository
+    default can name either, since no catalog row has it. A goal of the
+    operation, and its one task, are 029's to start and to end, for a
+    babysit as for a review (032 rule 7b). An upgrade drops both catalog
+    rows, with any edit the user wrote over them
+    (`migrations/0028_drop_pr_operation_workflows.sql`). An open goal keeps
+    the columns it snapshotted. An older upgrade added the gate to custom
+    operation workflows and to active goal snapshots, and preserved
+    completed snapshots
     (`store.rs::operation_gate_upgrade_preserves_custom_settings_and_history`).
 
 12. A remote worker task saves its source workflow name and all workflow columns per task.
@@ -502,18 +496,14 @@ every other kebab-case word in it; the wire spells the same gate
   `::a_missing_workflow_is_a_404_naming_workflow_not_found`,
   `::a_taken_name_is_a_409_and_a_built_in_refuses_delete_and_a_user_one_refuses_reset`,
   `::resetting_a_built_in_drops_the_override`).
-- The `pr-review` workflow is shipped with its one column, its shape is
-  checked at every save, and it is closed to ordinary goals and repository
-  defaults while its definition shows in the catalog
-  (`defaults.rs::the_shipped_review_workflow_has_the_shape_its_operation_requires`,
-  `store.rs::the_review_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it`,
-  `tests/it/workflows.rs::the_pr_review_workflow_is_listed_edited_in_its_shape_and_closed_to_ordinary_goals`).
-- The `pr-babysit` workflow is shipped with its one column, its shape is
-  checked at every save, and it is closed to ordinary goals and repository
-  defaults while its definition shows in the catalog
-  (`defaults.rs::the_shipped_babysit_workflow_has_the_shape_its_operation_requires`,
-  `store.rs::the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it`,
-  `tests/it/workflows.rs::the_pr_babysit_workflow_is_listed_edited_in_its_shape_and_closed_to_ordinary_goals`).
+- A pull request operation runs on one fixed column and on no workflow of
+  the catalog: the catalog lists neither operation name, a create under
+  either name is refused, no goal or repository default names either, each
+  operation's goal snapshots its fixed column, and the upgrade drops both
+  rows (`defaults.rs::each_pr_operation_runs_one_fixed_column_and_no_shipped_workflow`,
+  `store.rs::pull_request_operations_run_on_no_workflow_of_the_catalog`,
+  `::the_upgrade_drops_both_pull_request_operation_workflows`,
+  `tests/it/workflows.rs::the_catalog_holds_no_pull_request_operation_workflow`).
 - Every shipped workflow parses, stages shipped skills, and carries its
   approved rank bands. The `merge` skill passes the shipped-skill tests:
   named once, describes itself, STE, within its cap, lands in order and merges

@@ -77,10 +77,7 @@ export function CreateStandaloneTaskDialog({
   const errors = form.formState.errors
   const agentValues = form.watch("agents")
   const workflow = form.watch("workflow")
-  const catalog = useMemo(
-    () => (workflows.data ?? []).filter((one) => !one.operation),
-    [workflows.data],
-  )
+  const catalog = workflows.data ?? []
   const skillNames = useMemo(
     () => (skills.data ?? []).filter((skill) => skill.seat === "task").map((skill) => skill.name),
     [skills.data],

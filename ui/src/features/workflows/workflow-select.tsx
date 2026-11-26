@@ -1,7 +1,5 @@
 /**
- * A form's workflow picker: every ordinary workflow in the catalog, by name.
- * A workflow that serves a pull request operation (`operation` set) is left
- * out: the daemon refuses it to goals and to a repository default (029).
+ * A form's workflow picker: every workflow in the catalog, by name.
  *
  * Every goal and repository now runs a workflow, so there is no "no
  * workflow" choice left to offer. A goal's own pick may still be left on
@@ -57,9 +55,7 @@ export function WorkflowSelect<V extends FieldValues>({
   const workflows = useQuery({ ...workflowsQueryOptions(host), enabled })
   const options = [
     ...(allowInherit ? [{ value: INHERIT, label: "Repository default" }] : []),
-    ...(workflows.data ?? [])
-      .filter((workflow) => !workflow.operation)
-      .map((workflow) => ({ value: workflow.name, label: workflow.name })),
+    ...(workflows.data ?? []).map((workflow) => ({ value: workflow.name, label: workflow.name })),
   ]
   return (
     <FormSelect
