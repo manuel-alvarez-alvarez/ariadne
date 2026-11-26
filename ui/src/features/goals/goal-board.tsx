@@ -190,8 +190,8 @@ export function GoalBoard({
   // The empty state says the board read nothing: it waits for the task reads, and
   // a failed one keeps its warning and its Retry instead.
   if (groups.length === 0 && empty) {
-    if (!tasks.isSettled) return null
-    return tasks.errors.length > 0 ? warnings : <>{empty}</>
+    if (tasks.errors.length > 0) return warnings
+    return tasks.isSettled ? <>{empty}</> : null
   }
 
   // A host whose tasks failed or are still loading keeps its goals and says
