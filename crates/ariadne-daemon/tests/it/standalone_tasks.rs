@@ -1,5 +1,6 @@
 //! Tasks that own a workflow without a goal.
 use crate::common::{harness, patch_json, post_json, test_pin};
+use ariadne_core::{Actor, TaskStatus};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -154,6 +155,17 @@ async fn a_refused_dependency_edit_leaves_the_rest_of_the_patch_unsaved() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let task: Value = h.get(&path).await;
     assert_eq!(task["title"], "Original");
+    // A failed task takes no dependency change, so an empty list must not reach it.
+    h.store
+        .transition_task(
+            created["id"].as_str().unwrap(),
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("Test edit."),
+            None,
+        )
+        .await
+        .unwrap();
     let (status, _) = h
         .send(patch_json(
             &path,
@@ -296,7 +308,6 @@ async fn saved_columns_run_without_a_goal_and_cleanup_after_finish() {
 
 #[tokio::test]
 async fn retry_cancel_and_saved_columns_survive_a_restart() {
-    use ariadne_core::{Actor, TaskStatus};
     let h = harness().await;
     h.store
         .create_workflow(ariadne_store::NewWorkflow {
