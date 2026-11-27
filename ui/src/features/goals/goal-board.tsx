@@ -17,6 +17,7 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import {
   type CSSProperties,
+  Fragment,
   type ReactNode,
   type RefObject,
   useEffect,
@@ -48,11 +49,13 @@ import { stepTitle } from "@/features/tasks/steps"
 import { cn, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import {
+  type AttentionItem,
   type BoardAttention,
   NO_BOARD_ATTENTION,
   taskAttentionReason,
   useBoardAttention,
 } from "./attention"
+import { AttentionBlock } from "./attention-block"
 import { useCollapsedLanes } from "./collapsed-lanes"
 import { type GroupOrder, goalCounts, goallessTasks, goalSummary, orderGroups } from "./groups"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
@@ -242,15 +245,24 @@ export function GoalBoard({
               if (group.kind === "task") {
                 const { row } = group
                 const own = attention(row.host)
-                return (
+                const blocks = own.blocksByTask.get(row.id)
+                const taskRow = (
                   <TaskRow
-                    key={group.key}
                     host={row.host}
                     task={{ ...row, host: row.executionHost }}
                     steps={row.steps ?? []}
                     attention={own.byTask.get(row.id)}
                     lastActivityAt={own.lastActivity.get(row.id)}
                   />
+                )
+                // A task with no goal is a group of one: its blocks stay with its row.
+                return blocks ? (
+                  <div key={group.key} className={BOARD_LINE}>
+                    {taskRow}
+                    <AttentionBlocks items={blocks} />
+                  </div>
+                ) : (
+                  <Fragment key={group.key}>{taskRow}</Fragment>
                 )
               }
               const { goal } = group
@@ -328,6 +340,8 @@ function GoalGroup({
           </span>
         )}
       </GoalLine>
+      {/* A folded goal shows no block: its line keeps the badge. */}
+      {collapsed ? null : <AttentionBlocks items={attention.blocksByGoal.get(goal.id)} />}
       {collapsed ? null : shown.length === 0 ? (
         <p
           data-goal-placeholder
@@ -337,17 +351,35 @@ function GoalGroup({
         </p>
       ) : (
         shown.map((task) => (
-          <TaskRow
-            key={task.id}
-            host={goal.host}
-            task={task}
-            steps={goal.steps}
-            attention={attention.byTask.get(task.id)}
-            lastActivityAt={attention.lastActivity.get(task.id)}
-          />
+          <Fragment key={task.id}>
+            <TaskRow
+              host={goal.host}
+              task={task}
+              steps={goal.steps}
+              attention={attention.byTask.get(task.id)}
+              lastActivityAt={attention.lastActivity.get(task.id)}
+            />
+            <AttentionBlocks items={attention.blocksByTask.get(task.id)} />
+          </Fragment>
         ))
       )}
     </div>
+  )
+}
+
+/**
+ * The items that name one task or goal, each a block over the board's whole
+ * width, directly below its row or line. `min-w-0` and the block's own wrapping
+ * keep a long summary from widening the board past its floor.
+ */
+function AttentionBlocks({ items }: { items: readonly AttentionItem[] | undefined }) {
+  if (!items || items.length === 0) return null
+  return (
+    <ul data-attention-blocks className="col-span-full min-w-0 pl-3">
+      {items.map((item) => (
+        <AttentionBlock key={`${item.host}\n${item.id}`} item={item} expanded />
+      ))}
+    </ul>
   )
 }
 

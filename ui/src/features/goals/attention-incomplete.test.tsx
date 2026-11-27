@@ -126,7 +126,8 @@ it("retains known items and their board badges while reporting an incomplete rea
   )
   fireEvent.click(await screen.findByRole("button", { name: "Needs attention, 1 items" }))
   expect(await screen.findByText(/Some items could not load/)).not.toBeNull()
-  expect(screen.getByText("Permission approval needed")).not.toBeNull()
+  // The popover row and the board's block below the goal line.
+  expect(screen.getAllByText("Permission approval needed")).toHaveLength(2)
   expect(screen.getByText("Waiting for permission")).not.toBeNull()
 })
 
