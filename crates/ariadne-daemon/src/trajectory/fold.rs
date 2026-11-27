@@ -17,42 +17,23 @@ use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::trajectory::{
     ActivityDto, CompactionStatus, CompactionStepDto, ContentBlockDto, ContextWindowDto,
-    ErrorStepDto, MAIN_LANE, NoteSeverity, NoteStepDto, PermissionAnswerDto, PermissionOptionDto,
-    PermissionState, PermissionStepDto, PermissionToolDto, PlanDto, PlanEntryDto, PlanVariant,
-    PromptDto, QuestionOptionDto, QuestionState, QuestionStepDto, SessionStateDto, StepDto,
-    SubagentRefDto, SubagentStepDto, ToolCallStatus, TrajectoryOpDto, TrajectorySnapshotDto,
-    TurnDto, TurnState,
+    ErrorStepDto, MAIN_LANE, NoteSeverity, NoteStepDto, PermissionAnswerDto, PermissionState,
+    PermissionStepDto, PermissionToolDto, PlanDto, PlanEntryDto, PlanVariant, PromptDto,
+    QuestionOptionDto, QuestionState, QuestionStepDto, SessionStateDto, StepDto, SubagentStepDto,
+    ToolCallStatus, TrajectoryOpDto, TrajectorySnapshotDto, TurnDto, TurnState,
 };
 use ariadne_core::event_facts::{EventFacts, facts_of, lane_of as event_lane};
 use ariadne_store::EventHead;
 
 use super::steps::{
     append_text, blocks_of, commands_of, content_of, is_terminal, lane_of, locations_of,
-    merge_call, new_call, step_id, string_at, subject_of, text_step,
+    merge_call, new_call, permission_options, step_id, string_at, subagent_ref, subject_of,
+    text_step,
 };
 
-/// The kinds the ACP runtime stores only after it stored the run of text
-/// before them (021, rule 6): a run of text starts after the newest of them.
-/// Kinds stored without that end — a reply, a resolution, a diagnosis, a
-/// switch — can land while a run streams.
-const RUN_BOUNDARIES: &[&str] = &[
-    "user_prompt_submit",
-    "agent_message",
-    "agent_thought",
-    "pre_tool_use",
-    "post_tool_use",
-    "tool_call_update",
-    "tool_call_abandoned",
-    "plan",
-    "permission_request",
-    "subagent_update",
-    "question",
-    "stop",
-    "session.error",
-    "session_start",
-    "session_end",
-    "compaction_update",
-];
+/// How many errors a turn's `attention` holds, the newest first: a screen of
+/// them. `attention_more` counts the rest, and the steps route returns them.
+const ATTENTION_ERRORS: usize = 20;
 
 /// How many of its last steps a running turn carries. Fifty steps are about
 /// one screen of a client; the rest are a page of the steps route away.
@@ -76,9 +57,6 @@ pub(crate) struct Fold {
     pending: Vec<Pending>,
     /// The open questions, by question or request id: the turn and the step.
     questions: HashMap<String, (String, String)>,
-    /// The newest stored event of a kind that ends a run of text: what a
-    /// run that has no `item_id` is named after while it streams.
-    boundary: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -234,7 +212,6 @@ impl Fold {
             session,
             pending: Vec::new(),
             questions: HashMap::new(),
-            boundary: None,
         }
     }
 
@@ -257,7 +234,6 @@ impl Fold {
         };
         let mut ops = Ops::default();
         self.step(&input, &mut ops);
-        self.mark_boundary(&input);
         self.finish(ops)
     }
 
@@ -273,7 +249,6 @@ impl Fold {
             stored: true,
         };
         self.step(&input, &mut Ops::default());
-        self.mark_boundary(&input);
     }
 
     /// Pair a permission or a question outside the turns the fold reads:
@@ -429,8 +404,8 @@ impl Fold {
             turns: turns[skip..]
                 .iter()
                 .map(|turn| match subagent {
-                    Some(lane) => turn.dto_with(lane),
-                    None => turn.dto(),
+                    Some(lane) => turn.dto_with(lane, self.waiting_in(&turn.id)),
+                    None => turn.dto(self.waiting_in(&turn.id)),
                 })
                 .collect(),
             has_older: self.has_older || skip > 0,
@@ -466,7 +441,7 @@ impl Fold {
                 .chain(&self.outside)
                 .find(|turn| turn.id == id)
             {
-                let mut header = turn.dto();
+                let mut header = turn.dto(self.waiting_in(&turn.id));
                 header.steps.clear();
                 out.push(TrajectoryOpDto::TurnUpsert { turn: header });
             }
@@ -474,10 +449,17 @@ impl Fold {
         out
     }
 
-    fn mark_boundary(&mut self, input: &Input) {
-        if input.stored && RUN_BOUNDARIES.contains(&input.kind) {
-            self.boundary = Some(input.id.to_string());
-        }
+    /// How many permissions and questions of a turn wait, held or not.
+    fn waiting_in(&self, turn_id: &str) -> usize {
+        self.pending
+            .iter()
+            .filter(|pending| pending.turn == turn_id)
+            .count()
+            + self
+                .questions
+                .values()
+                .filter(|(owner, _)| owner == turn_id)
+                .count()
     }
 
     fn session_op(&self) -> TrajectoryOpDto {
@@ -756,11 +738,9 @@ impl Fold {
         }
         // A run with no `item_id` is named after the stored event before it,
         // which every open of the session reads the same while it streams.
-        // A run with no `item_id` is named after the stored event it began
-        // after, and its lane: every open of the session reads the same one
-        // while the run streams, whatever else is stored meanwhile.
-        let after = self.boundary.clone().unwrap_or_else(|| turn.id.clone());
-        let id = item.unwrap_or_else(|| format!("{after}~{}", input.lane));
+        // A run streams under its `item_id`. A run with none takes the id of
+        // the chunk that opened it, which holds for this open alone.
+        let id = item.unwrap_or_else(|| input.id.to_string());
         let step = text_step(
             thought,
             id.clone(),
@@ -983,64 +963,41 @@ impl Fold {
     fn permission(&mut self, input: &Input, ops: &mut Ops) {
         let index = self.turn_for(input, ops);
         let turn_id = self.turns[index].id.clone();
-        // The step comes from the facts, so a read shows every permission
-        // that waits whatever the payload budget. A loaded payload adds what
-        // the call is about and the AI permission model's note.
-        let facts = &input.facts;
-        let subagent = facts.asker.clone().map(|id| SubagentRefDto {
-            title: facts.asker_title.clone().unwrap_or_else(|| id.clone()),
-            id,
+        let subagent = input.full.and_then(|event| subagent_ref(&event.payload));
+        let step = input.full.map(|event| {
+            let payload = &event.payload;
+            let acp = payload.get("acp").unwrap_or(payload);
+            let title = string_at(payload, "/tool_name")
+                .or_else(|| string_at(acp, "/title"))
+                .unwrap_or_else(|| event.summary.clone());
+            let kind = string_at(acp, "/kind");
+            let tool_input = payload
+                .get("tool_input")
+                .or_else(|| acp.get("rawInput"))
+                .unwrap_or(&Value::Null);
+            StepDto::Permission(PermissionStepDto {
+                id: event.id.clone(),
+                turn_id: turn_id.clone(),
+                lane: MAIN_LANE.into(),
+                created_at: event.created_at.clone(),
+                tool_call_id: input.facts.call.clone().unwrap_or_default(),
+                tool: PermissionToolDto {
+                    subject: subject_of(kind.as_deref(), tool_input, &locations_of(acp)),
+                    title: title.clone(),
+                    kind,
+                },
+                question: match &subagent {
+                    Some(child) => format!("{title} · asked by subagent {}", child.title),
+                    None => title,
+                },
+                options: permission_options(payload),
+                state: PermissionState::Pending,
+                answer: None,
+                ai: ariadne_api::permissions::ai_permission_note(payload),
+                learned: None,
+                subagent: subagent.clone(),
+            })
         });
-        let title = facts
-            .title
-            .clone()
-            .or_else(|| input.full.map(|event| event.summary.clone()))
-            .unwrap_or_else(|| "permission".into());
-        let (subject, ai) = match input.full {
-            Some(event) => {
-                let payload = &event.payload;
-                let acp = payload.get("acp").unwrap_or(payload);
-                let tool_input = payload
-                    .get("tool_input")
-                    .or_else(|| acp.get("rawInput"))
-                    .unwrap_or(&Value::Null);
-                (
-                    subject_of(facts.tool_kind.as_deref(), tool_input, &locations_of(acp)),
-                    ariadne_api::permissions::ai_permission_note(payload),
-                )
-            }
-            None => (None, None),
-        };
-        let step = Some(StepDto::Permission(PermissionStepDto {
-            id: input.id.to_string(),
-            turn_id: turn_id.clone(),
-            lane: MAIN_LANE.into(),
-            created_at: input.created_at.to_string(),
-            tool_call_id: facts.call.clone().unwrap_or_default(),
-            tool: PermissionToolDto {
-                subject,
-                title: title.clone(),
-                kind: facts.tool_kind.clone(),
-            },
-            question: match &subagent {
-                Some(child) => format!("{title} · asked by subagent {}", child.title),
-                None => title,
-            },
-            options: facts
-                .choices
-                .iter()
-                .map(|choice| PermissionOptionDto {
-                    id: choice.id.clone(),
-                    name: choice.label.clone(),
-                    kind: choice.kind.clone(),
-                })
-                .collect(),
-            state: PermissionState::Pending,
-            answer: None,
-            ai,
-            learned: None,
-            subagent: subagent.clone(),
-        }));
         self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.pending.push(Pending {
             id: input.id.to_string(),
@@ -1163,7 +1120,10 @@ impl Fold {
     fn question(&mut self, input: &Input, ops: &mut Ops) {
         let asks = input.kind == "question" || input.facts.asks;
         if !asks {
-            let text = match input.facts.hint.clone() {
+            let text = match input
+                .full
+                .and_then(|event| string_at(&event.payload, "/hint"))
+            {
                 Some(hint) => format!("waiting for you · {hint}"),
                 None => "waiting for you".into(),
             };
@@ -1178,7 +1138,9 @@ impl Fold {
             .clone()
             .or(input.facts.request.clone())
             .unwrap_or_else(|| input.id.to_string());
-        let step = Some(StepDto::Question(question_step(input, &turn_id, &key)));
+        let step = input
+            .full
+            .map(|event| StepDto::Question(question_step(event, &turn_id, &key)));
         self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.questions.insert(key, (turn_id, input.id.to_string()));
     }
@@ -1545,7 +1507,7 @@ impl Turn {
 
     /// The turn as a client reads it: a running turn with its last steps,
     /// a closed one with none.
-    fn dto(&self) -> TurnDto {
+    fn dto(&self, waiting: usize) -> TurnDto {
         let main = self.main();
         let held: Vec<&StepDto> = self
             .steps
@@ -1556,7 +1518,7 @@ impl Turn {
             TurnState::Running => held.len().min(STEP_WINDOW),
             _ => 0,
         };
-        let mut dto = self.header(&main);
+        let mut dto = self.header(&main, waiting);
         dto.steps = held[held.len() - carried..]
             .iter()
             .map(|step| (*step).clone())
@@ -1566,8 +1528,8 @@ impl Turn {
     }
 
     /// The turn with the last steps of one subagent's lane.
-    fn dto_with(&self, lane: &str) -> TurnDto {
-        let mut dto = self.header(&self.main());
+    fn dto_with(&self, lane: &str, waiting: usize) -> TurnDto {
+        let mut dto = self.header(&self.main(), waiting);
         let held: Vec<&StepDto> = self
             .steps
             .iter()
@@ -1583,8 +1545,18 @@ impl Turn {
         dto
     }
 
-    fn header(&self, main: &Lane) -> TurnDto {
+    /// The turn without its steps. `waiting` is how many permissions and
+    /// questions of the turn wait, held or not.
+    fn header(&self, main: &Lane, waiting: usize) -> TurnDto {
         let held = self.steps.iter().filter(|step| lane_of(step) == MAIN_LANE);
+        let waits: Vec<&StepDto> = held.clone().filter(|step| waits(step)).rev().collect();
+        let errors: Vec<&StepDto> = held
+            .clone()
+            .filter(|step| matches!(step, StepDto::Error(_)))
+            .rev()
+            .collect();
+        let shown_errors = errors.len().min(ATTENTION_ERRORS);
+        let attention_more = waiting.saturating_sub(waits.len()) + errors.len() - shown_errors;
         TurnDto {
             id: self.id.clone(),
             lane: MAIN_LANE.into(),
@@ -1596,11 +1568,12 @@ impl Turn {
             activity: main.activity(),
             steps: Vec::new(),
             earlier_steps: 0,
-            attention: held
-                .clone()
-                .filter(|step| waits_or_failed(step))
+            attention: waits
+                .into_iter()
+                .chain(errors.into_iter().take(shown_errors))
                 .cloned()
                 .collect(),
+            attention_more: attention_more as u64,
             answer: held
                 .filter_map(|step| match step {
                     StepDto::Message(message) if Some(&message.id) == main.answer.as_ref() => {
@@ -1655,10 +1628,15 @@ fn add(a: ActivityDto, b: ActivityDto) -> ActivityDto {
 }
 
 fn waits_or_failed(step: &StepDto) -> bool {
+    waits(step) || matches!(step, StepDto::Error(_))
+}
+
+/// Whether a step waits on a person: a pending permission or an open
+/// question.
+fn waits(step: &StepDto) -> bool {
     match step {
         StepDto::Permission(permission) => permission.state == PermissionState::Pending,
         StepDto::Question(question) => question.state == QuestionState::Open,
-        StepDto::Error(_) => true,
         _ => false,
     }
 }
@@ -1676,38 +1654,73 @@ fn status_of(status: &str) -> Option<ToolCallStatus> {
 }
 
 /// A question step: a native `question` (021, rule 21), or a legacy
-/// `agent_request` with a question. It comes from the facts, so a read shows
-/// every open question whatever the payload budget; a loaded legacy payload
-/// adds its recommendation.
-fn question_step(input: &Input, turn_id: &str, key: &str) -> QuestionStepDto {
-    let facts = &input.facts;
-    let legacy = input
-        .full
-        .filter(|event| event.kind == "agent_request")
-        .and_then(|event| event.payload.get("question"));
-    QuestionStepDto {
-        id: input.id.to_string(),
+/// `agent_request` with a question.
+fn question_step(event: &AgentEventDto, turn_id: &str, key: &str) -> QuestionStepDto {
+    let payload = &event.payload;
+    let mut step = QuestionStepDto {
+        id: event.id.clone(),
         turn_id: turn_id.to_string(),
         lane: MAIN_LANE.into(),
-        created_at: input.created_at.to_string(),
+        created_at: event.created_at.clone(),
         request_id: key.to_string(),
-        hint: facts.hint.clone().unwrap_or_default(),
-        question: facts.message.clone().unwrap_or_default(),
-        options: facts
-            .choices
-            .iter()
-            .map(|choice| QuestionOptionDto {
-                id: choice.id.clone(),
-                label: choice.label.clone(),
-                description: choice.description.clone(),
-            })
-            .collect(),
-        recommended: legacy.and_then(|question| string_at(question, "/recommended_option_id")),
-        recommendation_reason: legacy
-            .and_then(|question| string_at(question, "/recommendation_reason")),
+        hint: String::new(),
+        question: String::new(),
+        options: Vec::new(),
+        recommended: None,
+        recommendation_reason: None,
         state: QuestionState::Open,
         answer: None,
+    };
+    let question = payload.get("question").unwrap_or(&Value::Null);
+    if event.kind == "question" {
+        step.question = string_at(question, "/message").unwrap_or_default();
+        // The first field that offers choices is the one the step lists.
+        let choices = question
+            .pointer("/schema/properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .find_map(|(_, field)| {
+                let options = field
+                    .get("oneOf")
+                    .or_else(|| field.pointer("/items/anyOf"))?
+                    .as_array()?;
+                Some((field, options))
+            });
+        if let Some((field, options)) = choices {
+            step.hint = string_at(field, "/title").unwrap_or_default();
+            step.options = options
+                .iter()
+                .filter_map(|option| {
+                    let id = string_at(option, "/const")?;
+                    Some(QuestionOptionDto {
+                        label: string_at(option, "/title").unwrap_or_else(|| id.clone()),
+                        description: string_at(option, "/description"),
+                        id,
+                    })
+                })
+                .collect();
+        }
+        return step;
     }
+    step.question = string_at(question, "/text").unwrap_or_default();
+    step.hint = string_at(payload, "/hint").unwrap_or_default();
+    step.options = question
+        .get("options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            Some(QuestionOptionDto {
+                id: string_at(option, "/id")?,
+                label: string_at(option, "/label")?,
+                description: string_at(option, "/description"),
+            })
+        })
+        .collect();
+    step.recommended = string_at(question, "/recommended_option_id");
+    step.recommendation_reason = string_at(question, "/recommendation_reason");
+    step
 }
 
 /// The answer a resolution carries, in words: the legacy answer text, or
@@ -2108,50 +2121,6 @@ mod tests {
         assert!(!bare.is_empty(), "a message with no text is still a step");
     }
 
-    /// A run with no `item_id` streams under one id however often the
-    /// session is opened, and takes the id of its stored whole when it
-    /// ends: the id a read of the store gives it.
-    #[test]
-    fn a_legacy_run_keeps_one_identity_across_opens_and_takes_its_wholes_id() {
-        let mut live = Session::new();
-        let turn = live.prompt("Go");
-        let (_, opened) = live.event("agent_message_chunk", json!({"text": "Half "}));
-        let streaming = match &opened[0] {
-            TrajectoryOpDto::ItemUpsert { step } => step_id(step).to_string(),
-            other => panic!("the run opens: {other:?}"),
-        };
-        // A second open reads the same stored events and the text so far,
-        // under a fresh id of its own.
-        let mut again = Session::new();
-        again.prompt("Go");
-        again.next = 40;
-        again.event("agent_message_chunk", json!({"text": "Half "}));
-        let reopened = again.fold.snapshot(0, 20, None).turns[0].steps[0].clone();
-        assert_eq!(step_id(&reopened), streaming, "the same id on each open");
-
-        let (whole, closed) = live.event("agent_message", json!({"text": "Half done."}));
-        assert!(
-            closed.contains(&TrajectoryOpDto::ItemRemove {
-                turn_id: turn,
-                item_id: streaming.clone(),
-            }),
-            "the streaming id goes: {closed:?}"
-        );
-        let live_step = live.fold.snapshot(0, 20, None).turns[0].steps[0].clone();
-        assert_eq!(step_id(&live_step), whole, "and the whole's id comes");
-
-        let mut replay = Session::new();
-        replay.prompt("Go");
-        replay.next = 2;
-        let (stored, _) = replay.event("agent_message", json!({"text": "Half done."}));
-        assert_eq!(stored, whole, "both folds give the whole the same id");
-        assert_eq!(
-            replay.fold.snapshot(0, 20, None).turns[0].steps[0],
-            live_step,
-            "a replay holds the step the stream ended on"
-        );
-    }
-
     /// A call's step previews its output and counts the lines of its diffs
     /// (rule 13).
     #[test]
@@ -2459,62 +2428,39 @@ mod tests {
         );
     }
 
-    /// A stored event that opens no step does not move the name of a run
-    /// that streams: a reopen after it names the run the same.
+    /// A run with no `item_id` streams under the id of the chunk that opened
+    /// it, with no promise across a new open, and takes the id of its stored
+    /// whole when it ends: the id a read of the store gives it (rule 20).
     #[test]
-    fn an_unrelated_stored_event_does_not_rename_a_streaming_run() {
+    fn a_run_without_an_item_id_takes_its_wholes_id_when_it_ends() {
         let mut live = Session::new();
-        live.prompt("Go");
-        let (_, opened) = live.event("agent_message_chunk", json!({"text": "Half "}));
-        let TrajectoryOpDto::ItemUpsert { step } = &opened[0] else {
-            panic!("{opened:?}");
-        };
-        let streaming = step_id(step).to_string();
-        live.event("session.diagnosis", json!({"error_event_id": "none"}));
-
-        // A reopen reads the prompt and the unrelated event, then the text.
-        let mut again = Session::new();
-        again.prompt("Go");
-        again.event("session.diagnosis", json!({"error_event_id": "none"}));
-        again.event("agent_message_chunk", json!({"text": "Half "}));
-
-        let reopened = again.fold.snapshot(0, 20, None).turns[0].steps[0].clone();
-        assert_eq!(step_id(&reopened), streaming);
-    }
-
-    /// A reply, a resolution or a switch stored while a run streams does not
-    /// end the run, so it does not rename it: a reopen after them names the
-    /// run as the stream did.
-    #[test]
-    fn a_reply_stored_while_a_run_streams_does_not_rename_it() {
-        let mut live = Session::new();
-        live.prompt("Go");
-        live.event(
-            "permission_request",
-            json!({"acp": {"toolCallId": "c-1"}, "options": []}),
-        );
-        let (_, opened) = live.event("agent_message_chunk", json!({"text": "Half "}));
-        let TrajectoryOpDto::ItemUpsert { step } = &opened[0] else {
-            panic!("{opened:?}");
-        };
-        let streaming = step_id(step).to_string();
-        live.event("permission.replied", json!({"option_id": "yes"}));
-        live.event("session.switched", json!({}));
-
-        let mut again = Session::new();
-        again.prompt("Go");
-        again.event(
-            "permission_request",
-            json!({"acp": {"toolCallId": "c-1"}, "options": []}),
-        );
-        again.event("permission.replied", json!({"option_id": "yes"}));
-        again.event("session.switched", json!({}));
-        let (_, reopened) = again.event("agent_message_chunk", json!({"text": "Half "}));
-
+        let turn = live.prompt("Go");
+        let (chunk, opened) = live.event("agent_message_chunk", json!({"text": "Half "}));
         assert!(
-            reopened.iter().any(|op| matches!(op,
-                TrajectoryOpDto::ItemUpsert { step } if step_id(step) == streaming)),
-            "{reopened:?}"
+            opened.iter().any(|op| matches!(op,
+                TrajectoryOpDto::ItemUpsert { step } if step_id(step) == chunk)),
+            "{opened:?}"
+        );
+
+        let (whole, closed) = live.event("agent_message", json!({"text": "Half done."}));
+        assert!(
+            closed.contains(&TrajectoryOpDto::ItemRemove {
+                turn_id: turn,
+                item_id: chunk,
+            }),
+            "the chunk's id goes: {closed:?}"
+        );
+        let live_step = live.fold.snapshot(0, 20, None).turns[0].steps[0].clone();
+        assert_eq!(step_id(&live_step), whole);
+
+        let mut replay = Session::new();
+        replay.prompt("Go");
+        replay.next = 2;
+        let (stored, _) = replay.event("agent_message", json!({"text": "Half done."}));
+        assert_eq!(stored, whole);
+        assert_eq!(
+            replay.fold.snapshot(0, 20, None).turns[0].steps[0],
+            live_step
         );
     }
 

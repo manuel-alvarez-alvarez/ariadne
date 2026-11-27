@@ -5947,10 +5947,18 @@ export interface components {
             /** @description The last message of the session's own agent in the turn. */
             answer: components["schemas"]["ContentBlockDto"][];
             /**
-             * @description What waits on a person, and the errors: a pending permission, an open
-             *     question and an error, whatever the state of the turn.
+             * @description What waits on a person, and the errors, whatever the state of the
+             *     turn: the pending permissions and open questions the read loaded,
+             *     newest first, then the newest 20 errors, newest first.
              */
             attention: components["schemas"]["StepDto"][];
+            /**
+             * Format: int64
+             * @description How many attention steps of the turn `attention` does not hold: the
+             *     waiting steps past the read's limit, and the errors past 20. The
+             *     steps route of the turn returns each of them.
+             */
+            attention_more: number;
             /**
              * Format: int64
              * @description How many steps come before `steps`: the steps route pages them.

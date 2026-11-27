@@ -211,7 +211,7 @@ fn attention(turn: &TurnIndex) -> Vec<Vec<String>> {
     let Some(lane) = turn.lanes.get(MAIN_LANE) else {
         return Vec::new();
     };
-    turn.actions.iter().map(|id| lane.rows(id)).collect()
+    turn.actions.iter().rev().map(|id| lane.rows(id)).collect()
 }
 
 /// The last `STEP_WINDOW` steps of a lane, newest first, each with the rows
@@ -1302,11 +1302,11 @@ mod tests {
         assert_eq!(plans[0].entries[0].status, "completed");
     }
 
-    /// A turn with more errors than the budget keeps its prompt, its answer
-    /// and every error: an error's step comes from its facts, and loads no
-    /// payload (rules 25, 38).
+    /// A turn with more than 20 errors holds the newest 20 in `attention`,
+    /// counts the rest in `attention_more`, and the steps route returns
+    /// them; an error's step loads no payload (rules 25, 38).
     #[tokio::test]
-    async fn a_turn_of_many_errors_keeps_its_prompt_answer_and_every_error() {
+    async fn a_turn_of_many_errors_holds_the_newest_twenty_and_counts_the_rest() {
         let (store, session, _dir) = session().await;
         let turn = prompt(&store, &session).await;
         commit(
@@ -1334,20 +1334,79 @@ mod tests {
         let shown = &fold.snapshot(0, 20, None).turns[0];
         assert_eq!(shown.id, turn);
         assert_eq!(
-            shown.prompt.as_ref().unwrap().content,
-            vec![ariadne_api::trajectory::ContentBlockDto::Text { text: "Go".into() }]
-        );
-        assert_eq!(
             shown.answer,
             vec![ariadne_api::trajectory::ContentBlockDto::Text {
                 text: "Trying.".into()
             }]
         );
-        assert_eq!(shown.attention.len(), 30, "every error");
-        assert!(
-            matches!(&shown.attention[29], StepDto::Error(e) if e.text == "boom 29"),
-            "{:?}",
-            shown.attention[29]
+        let texts: Vec<String> = shown
+            .attention
+            .iter()
+            .map(|step| match step {
+                StepDto::Error(error) => error.text.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        let newest: Vec<String> = (10..30).rev().map(|n| format!("boom {n}")).collect();
+        assert_eq!(texts, newest, "the newest twenty, newest first");
+        assert_eq!(shown.attention_more, 10);
+
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, None, 50, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        let fold = folded(&session, page.read);
+        let errors = fold
+            .held_steps(&turn, MAIN_LANE)
+            .into_iter()
+            .filter(|step| matches!(step, StepDto::Error(_)))
+            .count();
+        assert_eq!(errors, 30, "the steps route returns every error");
+    }
+
+    /// More waiting questions than the read loads: `attention` holds those
+    /// it loaded, newest first, `attention_more` counts the rest, and the
+    /// steps route returns them (rule 38).
+    #[tokio::test]
+    async fn waiting_questions_past_the_limit_are_counted_and_paged() {
+        let (store, session, _dir) = session().await;
+        let turn = prompt(&store, &session).await;
+        let mut questions = Vec::new();
+        for n in 0..20 {
+            questions.push(
+                commit(
+                    &store,
+                    &session,
+                    "question",
+                    json!({"question": {"id": format!("q-{n}"), "message": format!("Which {n}?"),
+                                        "schema": {}}}),
+                )
+                .await,
+            );
+        }
+
+        let read = read_turns(&store, &session, None, 20, None, 6)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 6, "{}", read.loaded());
+        let fold = folded(&session, read);
+        let shown = &fold.snapshot(0, 20, None).turns[0];
+        let held: Vec<&str> = shown
+            .attention
+            .iter()
+            .map(crate::trajectory::step_id)
+            .collect();
+        let newest: Vec<&str> = questions.iter().rev().take(5).map(String::as_str).collect();
+        assert_eq!(held, newest, "the prompt and the five newest questions fit");
+        assert_eq!(shown.attention_more, 15);
+
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, None, 50, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            page.page, questions,
+            "the steps route returns every question"
         );
     }
 
@@ -1564,65 +1623,5 @@ mod tests {
             "a prompt and nine subagents of two rows each"
         );
         assert_eq!(page.earlier, 21);
-    }
-
-    /// More open questions and pending permissions than the budget all stay
-    /// in their turn's attention: their steps come from their facts (rule 24,
-    /// 27, 38).
-    #[tokio::test]
-    async fn every_waiting_question_and_permission_stays_past_the_budget() {
-        let (store, session, _dir) = session().await;
-        let turn = prompt(&store, &session).await;
-        for n in 0..20 {
-            commit(
-                &store,
-                &session,
-                "question",
-                json!({"question": {"id": format!("q-{n}"), "message": format!("Which {n}?"),
-                                    "schema": {"type": "object", "properties": {
-                                        "pick": {"type": "string", "title": "Pick",
-                                                 "oneOf": [{"const": "a", "title": "A"}]}}}}}),
-            )
-            .await;
-            commit(
-                &store,
-                &session,
-                "permission_request",
-                json!({"tool_name": "Bash", "acp": {"toolCallId": format!("c-{n}"), "kind": "execute"},
-                       "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}]}),
-            )
-            .await;
-        }
-
-        let read = read_turns(&store, &session, None, 20, None, 5)
-            .await
-            .unwrap();
-        assert!(read.loaded() <= 5, "{}", read.loaded());
-        let fold = folded(&session, read);
-        let shown = &fold.snapshot(0, 20, None).turns[0];
-        assert_eq!(shown.id, turn);
-        let questions: Vec<&ariadne_api::trajectory::QuestionStepDto> = shown
-            .attention
-            .iter()
-            .filter_map(|step| match step {
-                StepDto::Question(question) => Some(question),
-                _ => None,
-            })
-            .collect();
-        let permissions: Vec<&ariadne_api::trajectory::PermissionStepDto> = shown
-            .attention
-            .iter()
-            .filter_map(|step| match step {
-                StepDto::Permission(permission) => Some(permission),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(questions.len(), 20, "every open question");
-        assert_eq!(permissions.len(), 20, "every pending permission");
-        assert_eq!(questions[19].question, "Which 19?");
-        assert_eq!(questions[19].hint, "Pick");
-        assert_eq!(questions[19].options[0].label, "A");
-        assert_eq!(permissions[19].tool.title, "Bash");
-        assert_eq!(permissions[19].options[0].name, "Allow");
     }
 }

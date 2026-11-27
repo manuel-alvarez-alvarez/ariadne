@@ -52,13 +52,10 @@ Out:
    session's lane whoever they name: the session answers and announces them.
 3. `facts` holds what a read counts by: a tool call's id, status, kind and
    paths; a message's `item_id`; a subagent announcement's id and state; a
-   question's or a legacy request's id, its text cut to its first 2000
-   characters, its hint, and the choices of its first field that offers
-   choices; an error's message, cut to its first 2000 characters; a
-   diagnosis's error, category and percent; a stop's reason; a compaction's
-   id; a permission request's tool title and kind, the subagent that asks,
-   its choices and whether it names an Ariadne tool; and a reply's option,
-   decider and label.
+   question's or a legacy request's id; an error's message, cut to its first
+   2000 characters; a diagnosis's error, category and percent; a stop's
+   reason; a compaction's id; a permission request's options and whether it
+   names an Ariadne tool; and a reply's option, decider and label.
 4. The store derives both columns from the kind and the payload at insert,
    so the code that emits an event does not know them. A stored
    `tool_call_update` `{session_id, tool_call_id, acp}` and a
@@ -99,9 +96,15 @@ Out:
     rest. Fifty steps are about one screen of a client.
 15. `answer` is the content of the newest message of the session's own agent
     in the turn.
-16. `attention` holds the pending permissions, the open questions and the
-    errors of a turn, open or closed. An answer to a permission or a question
-    takes it out.
+16. `attention` holds, open turn or closed, the waiting permissions and the
+    open questions of the turn, newest first, up to the read limit (rule
+    38), and then the newest 20 errors of the turn, newest first, and no
+    more. `attention_more` counts each attention step of the turn that
+    `attention` does not hold: the waiting steps past the read limit and the
+    errors past 20. No read leaves an attention step out without this count,
+    and the steps route of the turn returns each step `attention` does not
+    hold. An answer to a permission or a question takes it out. The user
+    decided this rule, through the orchestrator.
 17. `activity` counts the session's own lane of the turn, every event of it:
     - `tool_calls` counts the distinct tool call ids, and `steps` those and
       the subagents.
@@ -119,18 +122,14 @@ Out:
     `streaming` true. Each later chunk of the run is a `text_append` op. The
     stored whole replaces the content and ends `streaming`. Anything else in
     the same lane also ends `streaming`.
-20. A run with no `item_id` streams under the id `<anchor>~<lane>`. The
-    anchor is the newest stored event of a kind the ACP runtime stores only
-    after it stored the run of text before it (021, rule 6): a prompt, a
-    whole message or thought, a call and its stored updates, a plan, a
-    permission request, a subagent update, a question, a stop, an error, a
-    session start or end, and a compaction. A run starts after that event, so
-    every open of the session reads the same anchor while the run streams. A
-    reply, a resolution, a diagnosis and a switch are stored without ending a
-    run, and move no anchor. When its whole is
-    stored, the step takes the whole's id and time: an `item_remove` of the
-    streaming id and an `item_upsert` of the whole's id. A read of the store
-    names the step by the whole's id too.
+20. A run that streams has its `item_id` as its id on every open, and after
+    it ends: its chunks and its stored whole carry the same `item_id` (021,
+    rule 6). A run with no `item_id` — from a daemon before that field —
+    streams under the id of the chunk that opened it, and has no promise of
+    one id across a new open. When its whole is stored, it takes the whole's
+    id and time: an `item_remove` of the chunk's id and an `item_upsert` of
+    the whole's id, the id a read of the store gives it. The user decided
+    this rule, through the orchestrator.
 21. `pre_tool_use` opens a `tool_call` step. A `tool_call_update`, live or
     stored, a `post_tool_use` and a `tool_call_abandoned` change the open call
     of the same lane and tool call id. Each change adds one to `detail_rev`.
@@ -146,23 +145,17 @@ Out:
     call it asks about names it in `permission`. `permission.replied` answers
     the newest pending permission of the session. A daemon allow of one of
     Ariadne's own tools removes the step with an `item_remove`, as in 008.
-    The step comes from the request's facts: its title, its kind, the
-    subagent that asks and its options. A loaded payload adds the call's
-    `subject` and the AI permission model's note.
 24. A native `question` (021, rule 21) opens a `question` step. Its
     `question` is the message, and its `hint` and `options` are the title and
     the choices of the form's first field that offers choices.
     `question.resolved` closes it: `accept` is `answered`, with each field of
     the content as `field: value` in `answer`; `decline` is `declined`; and
     `cancel` is `cancelled`. A legacy `agent_request` with a question folds
-    the same way, and one with no question is a `note`. The step comes from
-    the question's facts; a loaded legacy payload adds its recommendation.
-    So a read shows every permission and question that waits, however many
-    there are, and loads none of their payloads to do so.
+    the same way, and one with no question is a `note`.
 25. `session.error` is an `error` step, and `session.diagnosis` sets the
     `diagnosis` of the error it names (024). Both come from the event's facts
-    alone, so a read shows every error of a turn and loads none of their
-    payloads.
+    alone, so a read holds every error of a turn, for its count and its
+    steps, and loads none of their payloads.
 26. `session_start`, `session_end`, `session.switched` and
     `session.pin_fallback` are `note` steps. A pin fallback is a warning.
 27. `compaction_update` opens a `compaction` step by `compaction_id`, and a
@@ -218,8 +211,8 @@ Out:
       lane if it runs, each with its newest change, newest step first;
     - each older turn's prompt and answer, newest turn first. The first turn
       whose prompt and answer do not fit, and every older one, is not shown;
-    - the payload of each step that waits on a person, one step at a time,
-      newest turn first, for its subject and its notes;
+    - each permission and question that waits, one step at a time, newest
+      turn first and newest step first: the read limit of rule 16;
     - the first and the newest plan of each lane;
     - the first event and the newest update of each subagent.
 39. A read also holds the older turns with attention, outside the turns it
@@ -285,10 +278,11 @@ Out:
    then consecutive revisions (rules 19, 45):
    `fold.rs::streamed_text_arrives_as_appends` and
    `tests/it/trajectory.rs::the_stream_sends_a_snapshot_then_updates_and_text_as_appends`.
-7. A run with no `item_id` keeps one id across opens and ends on its
-   whole's id, in the stream and in the steps route (rule 20):
-   `fold.rs::a_legacy_run_keeps_one_identity_across_opens_and_takes_its_wholes_id`
-   and `tests/it/trajectory.rs::a_streamed_run_keeps_its_id_across_opens_and_ends_on_its_stored_id`.
+7. A streamed run keeps its `item_id` across opens and after it ends, in the
+   stream and in the steps route; a run with no `item_id` takes its whole's
+   id when it ends (rule 20):
+   `tests/it/trajectory.rs::a_streamed_run_keeps_its_id_across_opens_and_ends_on_its_stored_id`
+   and `fold.rs::a_run_without_an_item_id_takes_its_wholes_id_when_it_ends`.
 8. An `item_id` names one item (rule 18):
    `fold.rs::an_item_id_names_the_message_its_chunks_and_whole_belong_to`.
 9. A closed turn carries its prompt, activity and answer, and no steps
@@ -353,15 +347,13 @@ Out:
 33. A message whose `item_id` is not its event's id keeps its answer and
     pages by its place (rules 34, 44):
     `read.rs::a_message_with_its_own_item_id_reads_and_pages_by_it`.
-34. An unrelated stored event, a reply or a switch does not rename a run that
-    streams (rule 20):
-    `fold.rs::an_unrelated_stored_event_does_not_rename_a_streaming_run` and
-    `::a_reply_stored_while_a_run_streams_does_not_rename_it`.
+34. A stored whole reads its chunks as one text (rule 28):
+    `fold.rs::a_stored_whole_reads_its_chunks_as_one_text`.
 35. A cold read names a plan by its first event (rules 32, 38):
     `read.rs::a_cold_read_names_a_plan_by_its_first_event`.
-36. A turn of more errors than the budget keeps its prompt, its answer and
-    every error (rules 3, 25, 38):
-    `read.rs::a_turn_of_many_errors_keeps_its_prompt_answer_and_every_error`
+36. A turn of more than 20 errors holds the newest 20, counts the rest in
+    `attention_more`, and the steps route returns them (rules 3, 16, 25):
+    `read.rs::a_turn_of_many_errors_holds_the_newest_twenty_and_counts_the_rest`
     and `event_facts.rs::an_error_and_its_diagnosis_keep_what_their_steps_show`.
 37. The running turn's window comes before the subagents (rule 38):
     `read.rs::the_running_turns_window_comes_before_the_subagents`.
@@ -375,11 +367,9 @@ Out:
     `read.rs::a_query_for_a_subagent_the_session_never_had_is_empty`.
 42. A page of an interrupted turn shows its call interrupted (rule 44):
     `read.rs::a_page_of_an_interrupted_turn_shows_its_call_interrupted`.
-43. Every waiting question and permission stays past the budget
-    (rules 3, 23, 24, 38):
-    `read.rs::every_waiting_question_and_permission_stays_past_the_budget`.
-44. A stored whole reads its chunks as one text (rule 28):
-    `fold.rs::a_stored_whole_reads_its_chunks_as_one_text`.
+43. Waiting questions past the read limit are counted in `attention_more`
+    and paged by the steps route (rules 16, 38):
+    `read.rs::waiting_questions_past_the_limit_are_counted_and_paged`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and
@@ -389,9 +379,9 @@ their calls.
 
 ## Known gap
 
-A read with more steps that wait on a person than its budget holds shows
-each of them, and loads the payloads of as many as fit: the rest show no
-`subject` and no AI permission note until a page of their turn loads them.
+An agent may hold more questions open at once than a read loads
+(`acp_questions.rs` allows it). The read shows the newest that fit and
+counts the rest in `attention_more` (rule 16); the steps route shows them.
 
 A diagnosis of an error older than the 20 turns with an error that a hub
 holds changes no step the stream sends. A page that holds the error shows the

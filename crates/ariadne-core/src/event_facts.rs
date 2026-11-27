@@ -7,6 +7,8 @@
 //! alone, and load the payloads of a bounded few events. The daemon's fold
 //! takes its own step decisions from the same facts, so the two agree.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -51,32 +53,19 @@ pub struct EventFacts {
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub percent: Option<i64>,
-    /// A `session.error`'s message, or a question's text, at most
-    /// [`MESSAGE_CHARS`] characters.
+    /// A `session.error`'s message, at most [`MESSAGE_CHARS`] characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<String>,
-    /// Whether a permission request is about one of Ariadne's own tools.
+    /// Whether a permission request is about one of Ariadne's own tools,
+    /// and the ACP kind of each option it offers, by option id.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ariadne: bool,
-    /// What a permission request asks about: its tool's title.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// The subagent that asks a permission, by id and title.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub asker: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub asker_title: Option<String>,
-    /// The choices of a permission request or a question, in order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub choices: Vec<Choice>,
-    /// What a question's choices are about: the title of the form field
-    /// that offers them, or a legacy request's hint.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hint: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, String>,
     /// What a permission reply chose, who chose it, and the AI's label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub option: Option<String>,
@@ -84,18 +73,6 @@ pub struct EventFacts {
     pub decided_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-}
-
-/// One choice of a permission request or a question.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Choice {
-    pub id: String,
-    pub label: String,
-    /// A permission option's ACP kind, such as `allow_once`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
 }
 
 /// How much of an error's message its facts keep: a step shows that much,
@@ -145,59 +122,11 @@ pub fn facts_of(kind: &str, payload: &Value) -> EventFacts {
             facts.subagent = text(payload, "/subagent/id");
             facts.state = text(payload, "/state");
         }
-        "question" => {
-            let question = payload.get("question").unwrap_or(&Value::Null);
-            facts.question = text(question, "/id");
-            facts.message = text(question, "/message").map(cut);
-            // The first field that offers choices is the one a step lists.
-            let field = question
-                .pointer("/schema/properties")
-                .and_then(Value::as_object)
-                .into_iter()
-                .flatten()
-                .find_map(|(_, field)| {
-                    let options = field
-                        .get("oneOf")
-                        .or_else(|| field.pointer("/items/anyOf"))?
-                        .as_array()?;
-                    Some((field, options))
-                });
-            if let Some((field, options)) = field {
-                facts.hint = text(field, "/title");
-                facts.choices = options
-                    .iter()
-                    .filter_map(|option| {
-                        let id = text(option, "/const")?;
-                        Some(Choice {
-                            label: text(option, "/title").unwrap_or_else(|| id.clone()),
-                            description: text(option, "/description"),
-                            kind: None,
-                            id,
-                        })
-                    })
-                    .collect();
-            }
-        }
+        "question" => facts.question = text(payload, "/question/id"),
         "question.resolved" => facts.question = text(payload, "/question_id"),
         "agent_request" => {
             facts.request = text(payload, "/request_id");
             facts.asks = payload.get("question").is_some_and(Value::is_object);
-            facts.hint = text(payload, "/hint");
-            facts.message = text(payload, "/question/text").map(cut);
-            facts.choices = payload
-                .pointer("/question/options")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|option| {
-                    Some(Choice {
-                        id: text(option, "/id")?,
-                        label: text(option, "/label")?,
-                        description: text(option, "/description"),
-                        kind: None,
-                    })
-                })
-                .collect();
         }
         "agent_request.resolved" => facts.request = text(payload, "/request_id"),
         "session.diagnosis" => {
@@ -214,33 +143,25 @@ pub fn facts_of(kind: &str, payload: &Value) -> EventFacts {
             facts.message = text(payload, "/error/data/message")
                 .or_else(|| text(payload, "/error/message"))
                 .or_else(|| text(payload, "/message"))
-                .map(cut);
+                .map(|message| message.chars().take(MESSAGE_CHARS).collect());
         }
         "stop" => facts.stop_reason = text(payload, "/stop_reason"),
         "compaction_update" => facts.compaction = text(payload, "/compaction_id"),
         "permission_request" => {
             facts.call = text(acp, "/toolCallId");
             let title = text(payload, "/tool_name").or_else(|| text(acp, "/title"));
-            facts.ariadne = title
-                .as_ref()
-                .is_some_and(|title| title.to_ascii_lowercase().contains("ariadne"));
-            facts.title = title;
-            facts.tool_kind = text(acp, "/kind");
-            facts.asker = text(payload, "/subagent/id");
-            facts.asker_title = text(payload, "/subagent/title");
-            facts.choices = payload
+            facts.ariadne =
+                title.is_some_and(|title| title.to_ascii_lowercase().contains("ariadne"));
+            facts.options = payload
                 .get("options")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
                 .filter_map(|option| {
-                    let id = text(option, "/optionId")?;
-                    Some(Choice {
-                        label: text(option, "/name").unwrap_or_else(|| id.clone()),
-                        kind: text(option, "/kind"),
-                        description: None,
-                        id,
-                    })
+                    Some((
+                        text(option, "/optionId")?,
+                        text(option, "/kind").unwrap_or_default(),
+                    ))
                 })
                 .collect();
         }
@@ -265,12 +186,7 @@ impl EventFacts {
         if self.decided_by.as_deref() == Some("console") || self.label.as_deref() == Some("deny") {
             return false;
         }
-        match request
-            .choices
-            .iter()
-            .find(|choice| &choice.id == option)
-            .and_then(|choice| choice.kind.as_deref())
-        {
+        match request.options.get(option).map(String::as_str) {
             Some("") | None => true,
             Some(kind) => kind.starts_with("allow"),
         }
@@ -300,11 +216,6 @@ fn paths_of(acp: &Value) -> Vec<String> {
         }
     }
     paths
-}
-
-/// A message cut to its first [`MESSAGE_CHARS`] characters.
-fn cut(message: String) -> String {
-    message.chars().take(MESSAGE_CHARS).collect()
 }
 
 fn text(value: &Value, pointer: &str) -> Option<String> {

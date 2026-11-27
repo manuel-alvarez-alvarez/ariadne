@@ -13468,6 +13468,7 @@
           "steps",
           "earlier_steps",
           "attention",
+          "attention_more",
           "answer"
         ],
         "properties": {
@@ -13486,7 +13487,13 @@
             "items": {
               "$ref": "#/components/schemas/StepDto"
             },
-            "description": "What waits on a person, and the errors: a pending permission, an open\nquestion and an error, whatever the state of the turn."
+            "description": "What waits on a person, and the errors, whatever the state of the\nturn: the pending permissions and open questions the read loaded,\nnewest first, then the newest 20 errors, newest first."
+          },
+          "attention_more": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many attention steps of the turn `attention` does not hold: the\nwaiting steps past the read's limit, and the errors past 20. The\nsteps route of the turn returns each of them.",
+            "minimum": 0
           },
           "earlier_steps": {
             "type": "integer",

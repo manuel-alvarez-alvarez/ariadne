@@ -163,9 +163,14 @@ pub struct TurnDto {
     pub steps: Vec<StepDto>,
     /// How many steps come before `steps`: the steps route pages them.
     pub earlier_steps: u64,
-    /// What waits on a person, and the errors: a pending permission, an open
-    /// question and an error, whatever the state of the turn.
+    /// What waits on a person, and the errors, whatever the state of the
+    /// turn: the pending permissions and open questions the read loaded,
+    /// newest first, then the newest 20 errors, newest first.
     pub attention: Vec<StepDto>,
+    /// How many attention steps of the turn `attention` does not hold: the
+    /// waiting steps past the read's limit, and the errors past 20. The
+    /// steps route of the turn returns each of them.
+    pub attention_more: u64,
     /// The last message of the session's own agent in the turn.
     pub answer: Vec<ContentBlockDto>,
 }
