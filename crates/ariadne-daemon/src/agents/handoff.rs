@@ -2,27 +2,25 @@
 //!
 //! The text is the history a new agent reads before it goes on with a
 //! session its predecessor cannot carry across: the events of the old
-//! session, folded into the same blocks the console reads
-//! ([`ariadne_console::transcript`]), and written out as one fenced entry
-//! per block.
+//! session, folded into the typed turns of the trajectory
+//! ([`crate::trajectory::Fold`], 040), and written out as one fenced entry
+//! per prompt, step or plan.
 
-use serde_json::Value;
-
-use ariadne_console::transcript::{PlanEntry, Tool, TranscriptItem, fold, tool_is_terminal};
-use ariadne_core::PromptKind;
+use ariadne_api::trajectory::{
+    ContentBlockDto, PermissionStepDto, PlanEntryDto, QuestionState, QuestionStepDto, StepDto,
+    ToolCallStatus, ToolCallStepDto,
+};
+use ariadne_core::{PromptKind, SessionStatus};
 use ariadne_store::AgentEvent;
 
 use crate::http::convert::event_dto;
+use crate::trajectory::{Fold, Moment};
 
 /// Opens and closes every entry's fence. Reserved: stripped from an entry's
 /// own text first, so nothing a tool printed or a diff carried can forge one
 /// of these and close the block early.
 const FENCE_OPEN: char = '⟪';
 const FENCE_CLOSE: char = '⟫';
-
-/// A tool's output or a diff is folded to its last lines, with a count of
-/// the hidden ones, the same as the console (008 rule 25).
-const BODY_FOLD: usize = 10;
 
 /// A prompt the daemon sent keeps its first lines, with a count of the rest
 /// (008 rule 24).
@@ -38,26 +36,33 @@ const INTRO: &str =
 ///
 /// Leave out the first briefing; preserve history from an earlier switch.
 pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
-    let dtos: Vec<_> = events.iter().cloned().map(event_dto).collect();
-    let items = fold(&dtos);
-    let first_briefing = items
+    let mut fold = Fold::new(
+        "handoff",
+        crate::trajectory::blank_session(SessionStatus::Exited),
+    );
+    for event in events {
+        fold.apply(&event_dto(event.clone()), true);
+    }
+    let moments = fold.history();
+    let first_briefing = moments
         .iter()
         .position(is_daemon_prompt)
-        .filter(|index| !carries_handoff(&items[*index]));
-    let last_error = items
+        .filter(|index| !carries_handoff(&moments[*index]));
+    let last_error = moments
         .iter()
-        .rposition(|item| matches!(item, TranscriptItem::Error { .. }));
-    let entries: Vec<_> = items
+        .rposition(|moment| matches!(moment, Moment::Step(StepDto::Error(_))));
+    let entries: Vec<_> = moments
         .iter()
         .enumerate()
-        .filter(|(index, item)| {
+        .filter(|(index, moment)| {
             Some(*index) != first_briefing
-                && !is_resume_nudge(item)
-                && (!matches!(item, TranscriptItem::Error { .. }) || Some(*index) == last_error)
+                && !is_resume_nudge(moment)
+                && (!matches!(moment, Moment::Step(StepDto::Error(_)))
+                    || Some(*index) == last_error)
         })
-        .filter_map(|(_, item)| {
-            render_entry(item).map(|text| RankedEntry {
-                priority: priority(item, &text),
+        .filter_map(|(_, moment)| {
+            render_entry(moment).map(|text| RankedEntry {
+                priority: priority(moment, &text),
                 text,
             })
         })
@@ -65,24 +70,36 @@ pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
     apply_budget(entries, budget)
 }
 
+/// The text blocks of a message or a prompt, one per line.
+fn text_of(content: &[ContentBlockDto]) -> String {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlockDto::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// A prompt the daemon sent, not the user.
-fn is_daemon_prompt(item: &TranscriptItem) -> bool {
-    matches!(item, TranscriptItem::UserPrompt { source, .. } if source.as_deref() == Some("daemon"))
+fn is_daemon_prompt(moment: &Moment) -> bool {
+    matches!(moment, Moment::Prompt(prompt) if prompt.source.as_deref() == Some("daemon"))
 }
 
 /// A prompt that holds the handoff of an earlier switch: the first prompt of
 /// a switched session. Its history is not in any briefing, so it stays.
-fn carries_handoff(item: &TranscriptItem) -> bool {
-    matches!(item, TranscriptItem::UserPrompt { text, .. } if text.contains(INTRO.trim_end()))
+fn carries_handoff(moment: &Moment) -> bool {
+    matches!(moment, Moment::Prompt(prompt) if text_of(&prompt.content).contains(INTRO.trim_end()))
 }
 
 /// A nudge that woke a quiet agent, found by the prompt kind the runtime
 /// recorded and never by its text.
-fn is_resume_nudge(item: &TranscriptItem) -> bool {
-    matches!(item, TranscriptItem::UserPrompt { prompt_kind: Some(kind), .. }
-        if [PromptKind::AgentResume, PromptKind::OrchestratorResume]
+fn is_resume_nudge(moment: &Moment) -> bool {
+    matches!(moment, Moment::Prompt(prompt) if prompt.prompt_kind.as_deref().is_some_and(|kind|
+        [PromptKind::AgentResume, PromptKind::OrchestratorResume]
             .iter()
-            .any(|nudge| nudge.as_str() == kind))
+            .any(|nudge| nudge.as_str() == kind)))
 }
 
 /// A rendered block and the priority that its genuine transcript role and
@@ -100,31 +117,27 @@ struct RankedEntry {
 /// model: user corrections, user prompts, unfinished plans, decisions,
 /// blockers, file changes, and decisive tool results. Routine text has no
 /// evidence value and uses the old recency policy.
-fn priority(item: &TranscriptItem, rendered: &str) -> u8 {
-    match item {
-        TranscriptItem::UserPrompt { text, source, .. } if source.as_deref() != Some("daemon") => {
-            if correction(text) {
+fn priority(moment: &Moment, rendered: &str) -> u8 {
+    match moment {
+        Moment::Prompt(prompt) if prompt.source.as_deref() != Some("daemon") => {
+            if correction(&text_of(&prompt.content)) {
                 100
             } else {
                 90
             }
         }
-        TranscriptItem::Plan { entries, .. }
-            if entries.iter().any(|entry| entry.status != "completed") =>
-        {
-            80
-        }
-        TranscriptItem::Error { .. } => 70,
-        TranscriptItem::ToolCall { tool, .. } if tool.status.as_deref() == Some("failed") => 70,
-        TranscriptItem::AgentText { .. } if blocker(rendered) => 70,
-        TranscriptItem::AgentText { .. } if decision(rendered) => 60,
-        TranscriptItem::ToolCall { tool, .. }
-            if matches!(tool.kind.as_deref(), Some("edit" | "delete" | "move"))
-                || tool.diff.is_some() =>
+        Moment::Plan(plan) if plan.entries.iter().any(|entry| entry.status != "completed") => 80,
+        Moment::Step(StepDto::Error(_)) => 70,
+        Moment::Step(StepDto::ToolCall(call)) if call.status == ToolCallStatus::Failed => 70,
+        Moment::Step(StepDto::Message(_)) if blocker(rendered) => 70,
+        Moment::Step(StepDto::Message(_)) if decision(rendered) => 60,
+        Moment::Step(StepDto::ToolCall(call))
+            if matches!(call.kind.as_deref(), Some("edit" | "delete" | "move"))
+                || call.diff_stat.is_some() =>
         {
             50
         }
-        TranscriptItem::ToolCall { tool, .. } if decisive_result(tool, rendered) => 40,
+        Moment::Step(StepDto::ToolCall(call)) if decisive_result(call, rendered) => 40,
         _ => 0,
     }
 }
@@ -147,35 +160,46 @@ fn blocker(text: &str) -> bool {
     text.contains("blocked") || text.contains("cannot proceed") || text.contains("unresolved")
 }
 
-fn decisive_result(tool: &Tool, rendered: &str) -> bool {
-    tool.kind.as_deref() == Some("execute")
-        && tool_is_terminal(tool.status.as_deref())
+fn decisive_result(call: &ToolCallStepDto, rendered: &str) -> bool {
+    call.kind.as_deref() == Some("execute")
+        && is_ended(call)
         && !rendered.to_ascii_lowercase().contains("failed")
         && (rendered.contains("test result: ok")
             || rendered.contains("test result: passed")
             || rendered.contains("tests passed"))
 }
 
-/// One transcript item as a fenced entry, or `None` for a kind the handoff
-/// leaves out: a thought, and the notes for `stop`, `session_start` and
-/// `session_end`.
-fn render_entry(item: &TranscriptItem) -> Option<String> {
-    let body = match item {
-        TranscriptItem::UserPrompt { text, source, .. } => {
-            user_prompt_body(text, source.as_deref(), carries_handoff(item))
-        }
-        TranscriptItem::AgentText { text, .. } => format!("agent\n{text}"),
-        TranscriptItem::Thought { .. } => return None,
-        TranscriptItem::Plan { entries, .. } => plan_body(entries),
-        TranscriptItem::ToolCall { tool, .. } => tool_body(tool),
-        TranscriptItem::PermissionQuestion { tool, answer, .. } => {
-            permission_body(tool, answer.as_deref())
-        }
-        TranscriptItem::Error { text, .. } => {
-            format!("error\n{}", text.lines().next().unwrap_or_default())
-        }
-        TranscriptItem::FormQuestion { .. } => item.form_lines().join("\n"),
-        TranscriptItem::SystemNote { .. } | TranscriptItem::Raw { .. } => return None,
+/// A call that gave its result back: it completed or failed.
+fn is_ended(call: &ToolCallStepDto) -> bool {
+    matches!(
+        call.status,
+        ToolCallStatus::Completed | ToolCallStatus::Failed
+    )
+}
+
+/// One prompt, step or plan as a fenced entry, or `None` for a kind the
+/// handoff leaves out: a thought, a note, a subagent and a compaction.
+fn render_entry(moment: &Moment) -> Option<String> {
+    let body = match moment {
+        Moment::Prompt(prompt) => user_prompt_body(
+            &text_of(&prompt.content),
+            prompt.source.as_deref(),
+            carries_handoff(moment),
+        ),
+        Moment::Plan(plan) => plan_body(&plan.entries),
+        Moment::Step(step) => match step {
+            StepDto::Message(message) => format!("agent\n{}", text_of(&message.content)),
+            StepDto::ToolCall(call) => tool_body(call),
+            StepDto::Permission(permission) => permission_body(permission),
+            StepDto::Error(error) => {
+                format!("error\n{}", error.text.lines().next().unwrap_or_default())
+            }
+            StepDto::Question(question) => question_body(question),
+            StepDto::Thought(_)
+            | StepDto::Note(_)
+            | StepDto::Subagent(_)
+            | StepDto::Compaction(_) => return None,
+        },
     };
     Some(fenced(body))
 }
@@ -200,9 +224,9 @@ fn user_prompt_body(text: &str, source: Option<&str>, whole: bool) -> String {
     }
 }
 
-/// A plan, as the console's checklist: a head that counts the completed
-/// entries, then one glyph and line per entry.
-fn plan_body(entries: &[PlanEntry]) -> String {
+/// A plan, as a checklist: a head that counts the completed entries, then
+/// one glyph and line per entry.
+fn plan_body(entries: &[PlanEntryDto]) -> String {
     let completed = entries
         .iter()
         .filter(|entry| entry.status == "completed")
@@ -219,61 +243,11 @@ fn plan_body(entries: &[PlanEntry]) -> String {
     body
 }
 
-/// A tool call: the head line the console draws for it, then its output and
-/// its diff, each folded to their last lines with a count of what is
-/// hidden. A call with no end — its last known status is not `completed` or
-/// `failed` — renders its head alone: what it gave back is not known yet.
-fn tool_body(tool: &Tool) -> String {
-    let mut body = format!("tool\n{}", subject(tool));
-    if tool_is_terminal(tool.status.as_deref()) {
-        if let Some(output) = &tool.output {
-            body.push('\n');
-            body.push_str(&tail_fold(output, BODY_FOLD));
-        }
-        if let Some(diff) = &tool.diff {
-            body.push('\n');
-            body.push_str(&tail_fold(diff, BODY_FOLD));
-        }
-    }
-    body
-}
-
-/// A permission request, as one line: the head of the call it asks about,
-/// and the option the console chose.
-fn permission_body(tool: &Tool, answer: Option<&str>) -> String {
-    format!(
-        "permission\n{} — {}",
-        subject(tool),
-        answer.unwrap_or("not yet answered")
-    )
-}
-
-/// What a tool call is about, from its input: the command for `execute`, the
-/// path and line for `read`, `edit`, `delete` and `move`, the pattern and
-/// where it is looked for for `search`, the URL for `fetch`, and the call's
-/// title where the kind names nothing. A location the result does not
-/// already name follows it. This is the console's own head line (008 rule
-/// 25), without the glyph and the elapsed time a terminal draws it with.
-fn subject(tool: &Tool) -> String {
-    let input = &tool.input;
-    let named =
-        match tool.kind.as_deref() {
-            Some("execute") => tool_command(input)
-                .map(|command| command.lines().next().unwrap_or_default().to_string()),
-            Some("read" | "edit" | "delete" | "move") => place(tool),
-            Some("search") => field(input, &["pattern", "query", "regex"]).map(|pattern| {
-                match field(input, &["path", "file_path", "directory", "cwd"])
-                    .or_else(|| tool.locations.first().map(|location| location.path.clone()))
-                {
-                    Some(path) => format!("{pattern} in {path}"),
-                    None => pattern,
-                }
-            }),
-            Some("fetch") => field(input, &["url"]),
-            _ => None,
-        };
-    let mut head = named.unwrap_or_else(|| tool.name.clone());
-    let elsewhere: Vec<String> = tool
+/// What a call is about: its subject where the fold found one, else its
+/// title.
+fn subject(call: &ToolCallStepDto) -> String {
+    let mut head = call.subject.clone().unwrap_or_else(|| call.title.clone());
+    let elsewhere: Vec<String> = call
         .locations
         .iter()
         .filter(|location| !head.contains(&location.path))
@@ -288,45 +262,55 @@ fn subject(tool: &Tool) -> String {
     head
 }
 
-/// The command an `execute` call runs: one string, or the argument list some
-/// agents send it as.
-fn tool_command(input: &Value) -> Option<String> {
-    if let Value::String(text) = input {
-        return Some(text.clone());
+/// A tool call: its head line, then the start of what it gave back and the
+/// size of its diff. The fold already cuts the output to a few lines. A
+/// call with no end — its status is not `completed` or `failed` — renders
+/// its head alone: what it gave back is not known yet.
+fn tool_body(call: &ToolCallStepDto) -> String {
+    let mut body = format!("tool\n{}", subject(call));
+    if is_ended(call) {
+        if let Some(preview) = &call.preview {
+            body.push('\n');
+            body.push_str(preview.trim_end_matches('\n'));
+        }
+        if let Some(stat) = &call.diff_stat {
+            let noun = if stat.files == 1 { "file" } else { "files" };
+            body.push_str(&format!(
+                "\ndiff: {} {noun}, +{} -{}",
+                stat.files, stat.added, stat.removed
+            ));
+        }
     }
-    match input.get("command")? {
-        Value::String(text) => Some(text.clone()),
-        Value::Array(words) => Some(
-            words
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(" "),
-        ),
-        _ => None,
-    }
+    body
 }
 
-/// The file a call is on, and the line where one is named: `path:line`.
-fn place(tool: &Tool) -> Option<String> {
-    let first = tool.locations.first();
-    let path = field(&tool.input, &["path", "file_path", "filePath", "file"])
-        .or_else(|| first.map(|location| location.path.clone()))?;
-    let line = tool
-        .input
-        .get("line")
-        .and_then(Value::as_u64)
-        .or_else(|| first.filter(|location| location.path == path)?.line);
-    Some(match line {
-        Some(line) => format!("{path}:{line}"),
-        None => path,
-    })
+/// A permission request, as one line: the call it asks about, and the
+/// option chosen.
+fn permission_body(permission: &PermissionStepDto) -> String {
+    let tool = permission
+        .tool
+        .subject
+        .clone()
+        .unwrap_or_else(|| permission.tool.title.clone());
+    let answer = permission
+        .answer
+        .as_ref()
+        .map_or("not yet answered", |answer| answer.label.as_str());
+    format!("permission\n{tool} — {answer}")
 }
 
-/// The first of `keys` the input carries as a string.
-fn field(input: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| input.get(key)?.as_str().map(str::to_string))
+/// A question the agent asked, with its answer where it has one.
+fn question_body(question: &QuestionStepDto) -> String {
+    let mut body = format!("question\n{}", question.question);
+    for option in &question.options {
+        body.push_str(&format!("\n- {}", option.label));
+    }
+    match (&question.state, &question.answer) {
+        (QuestionState::Answered, Some(answer)) => body.push_str(&format!("\nanswer: {answer}")),
+        (QuestionState::Open, _) => {}
+        (state, _) => body.push_str(&format!("\n{state:?}").to_lowercase()),
+    }
+    body
 }
 
 /// `text`'s first `limit` lines, and the count of the lines after them.
@@ -336,22 +320,6 @@ fn head_fold(text: &str, limit: usize) -> (String, usize) {
         return (text.to_string(), 0);
     }
     (lines[..limit].join("\n"), lines.len() - limit)
-}
-
-/// `text`'s last `limit` lines, with a count of the hidden ones ahead of
-/// them. Trailing blank lines are dropped first, since they say nothing.
-fn tail_fold(text: &str, limit: usize) -> String {
-    let trimmed = text.trim_end_matches('\n');
-    let lines: Vec<&str> = trimmed.lines().collect();
-    if lines.len() <= limit {
-        return trimmed.to_string();
-    }
-    let hidden = lines.len() - limit;
-    let noun = if hidden == 1 { "line" } else { "lines" };
-    format!(
-        "… {hidden} more {noun}\n{}",
-        lines[lines.len() - limit..].join("\n")
-    )
 }
 
 /// Wrap `body` in the one fence every entry uses, its own fence characters
@@ -497,7 +465,7 @@ fn omitted_note(dropped: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
 
@@ -571,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_folded_output() {
+    fn a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_start_of_the_output() {
         let output_lines: Vec<String> = (1..=14).map(|n| format!("line {n}")).collect();
         let events = [
             event(
@@ -593,13 +561,12 @@ mod tests {
 
         assert_eq!(out.matches(FENCE_OPEN).count(), 1, "{out}");
         assert!(out.contains("do the thing"), "{out}");
-        assert!(out.contains("line 14"), "{out}");
-        assert!(!out.contains("line 1\n"), "{out}");
-        assert!(out.contains("… 4 more lines"), "{out}");
+        assert!(out.contains("line 1"), "{out}");
+        assert!(!out.contains("line 14"), "{out}");
     }
 
     #[test]
-    fn a_diff_is_folded_the_same_way_as_output() {
+    fn a_diff_renders_as_its_size_and_never_as_its_lines() {
         let hunk: Vec<String> = (1..=14).map(|n| format!("+line{n}")).collect();
         let patch = format!("@@ -0,0 +1,14 @@\n{}\n", hunk.join("\n"));
         let events = [event(
@@ -613,9 +580,8 @@ mod tests {
 
         let out = handoff_text(&events, 10_000);
 
-        assert!(out.contains("+line14"), "{out}");
-        assert!(!out.contains("+line1\n"), "{out}");
-        assert!(out.contains("… 7 more lines"), "{out}");
+        assert!(out.contains("diff: 1 file, +14 -0"), "{out}");
+        assert!(!out.contains("+line14"), "{out}");
     }
 
     #[test]
@@ -876,8 +842,8 @@ mod tests {
             ),
             event(
                 "middle",
-                "agent_message",
-                json!({"text": "unimportant chatter ".repeat(20)}),
+                "post_tool_use",
+                json!({"tool_name": "Bash", "acp": {"toolCallId": "1", "kind": "execute", "status": "completed", "rawInput": {"command": "ls"}, "rawOutput": "unimportant chatter ".repeat(20)}}),
             ),
             event(
                 "late",
