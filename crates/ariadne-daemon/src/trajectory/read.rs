@@ -1327,6 +1327,15 @@ mod tests {
                            "rawInput": {"path": "config.json"}}}),
         )
         .await;
+        for _ in 0..11 {
+            commit(
+                &store,
+                &session,
+                "tool_call_update",
+                json!({"acp": {"toolCallId": "c1", "status": "in_progress"}}),
+            )
+            .await;
+        }
         commit(
             &store,
             &session,
@@ -1350,7 +1359,7 @@ mod tests {
         assert_eq!(call.title, "Read config");
         assert_eq!(call.kind.as_deref(), Some("read"));
         assert_eq!(call.subject.as_deref(), Some("config.json"));
-        assert_eq!(call.detail_rev, 2);
+        assert_eq!(call.detail_rev, 13);
     }
 
     /// A cold read holds the commands the agent offered before the shown

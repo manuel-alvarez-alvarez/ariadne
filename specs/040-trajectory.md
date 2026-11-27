@@ -148,7 +148,8 @@ Out:
     of the same lane and tool call id. Each change adds one to `detail_rev`.
     An update with no open call opens a step.
 22. A call keeps the fields that an update does not send again, in a cold
-    read too: it loads the call's first three and newest five updates. Its
+    read too: it loads the call's updates, the first 8 and the newest 56 of a call with
+    more. Its
     `preview` is the first five lines, and at most 400 characters, of its
     output text, else of its `rawOutput`: a row shows that much. Its
     `diff_stat` counts the files of its diffs, and the `+` and `-` lines of a

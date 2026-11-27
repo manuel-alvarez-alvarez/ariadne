@@ -105,9 +105,10 @@ pub(crate) struct Lane {
     pub(crate) updates: HashMap<String, Vec<String>>,
 }
 
-/// How many of a call's updates a read loads: the first and the newest.
-const CALL_UPDATES_HEAD: usize = 3;
-const CALL_UPDATES_TAIL: usize = 5;
+/// How many updates of one call a read loads. A call with more loads its
+/// first and its newest ones.
+const CALL_UPDATES_HEAD: usize = 8;
+const CALL_UPDATES_TAIL: usize = 56;
 
 /// One step a lane opened: its id on the wire, and the stored row that
 /// opened it. A step a live event opened has no row until one is stored.
