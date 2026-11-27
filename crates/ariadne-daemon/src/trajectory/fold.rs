@@ -369,6 +369,90 @@ impl Fold {
         self.apply(event, true);
     }
 
+    /// The rows of the attention steps the fold counts in its turns and
+    /// does not hold: within each turn's newest `ATTENTION_WAITS` waiting
+    /// permissions and questions and its newest `ATTENTION_ERRORS` errors,
+    /// those no full event built, with an error's diagnosis. A hub loads
+    /// them and fills them in, so its `attention` stays the window a cold
+    /// read holds.
+    pub(crate) fn missing_attention(&self) -> Vec<String> {
+        let mut rows = Vec::new();
+        for turn in &self.turns {
+            let held = |id: &str| turn.steps.iter().any(|step| step_id(step) == id);
+            let mut waiting: Vec<&str> = self
+                .pending
+                .iter()
+                .filter(|pending| pending.turn == turn.id)
+                .map(|pending| pending.id.as_str())
+                .chain(
+                    self.questions
+                        .values()
+                        .filter(|(owner, _)| owner == &turn.id)
+                        .map(|(_, step)| step.as_str()),
+                )
+                .collect();
+            waiting.sort_unstable_by(|a, b| b.cmp(a));
+            rows.extend(
+                waiting
+                    .into_iter()
+                    .take(ATTENTION_WAITS)
+                    .filter(|id| !held(id))
+                    .map(str::to_string),
+            );
+            if let Some(lane) = turn.lanes.get(MAIN_LANE) {
+                for error in lane.errors.iter().rev().take(ATTENTION_ERRORS) {
+                    if !held(error) {
+                        rows.extend(lane.rows(error));
+                    }
+                }
+            }
+        }
+        rows
+    }
+
+    /// Build the step of a stored event the index already counts, from its
+    /// payload, in its place: what [`Self::missing_attention`] named. A
+    /// diagnosis reads onto its error. The index does not change.
+    pub(crate) fn fill(&mut self, event: &AgentEventDto) -> Vec<TrajectoryOpDto> {
+        if event.kind == "session.diagnosis" {
+            return self.apply(event, true);
+        }
+        let facts = facts_of(&event.kind, &event.payload);
+        let Some(turn) = self.turns.iter_mut().find(|turn| {
+            turn.lanes
+                .get(MAIN_LANE)
+                .is_some_and(|lane| lane.openers.iter().any(|opener| opener.step == event.id))
+        }) else {
+            return Vec::new();
+        };
+        if turn.steps.iter().any(|step| step_id(step) == event.id) {
+            return Vec::new();
+        }
+        let step = match event.kind.as_str() {
+            "permission_request" => permission_step(event, &turn.id, &facts),
+            "session.error" => error_step(event, &turn.id),
+            "question" | "agent_request" => {
+                let key = facts
+                    .question
+                    .clone()
+                    .or(facts.request.clone())
+                    .unwrap_or_else(|| event.id.clone());
+                StepDto::Question(question_step(event, &turn.id, &key))
+            }
+            _ => return Vec::new(),
+        };
+        let at = turn
+            .steps
+            .iter()
+            .position(|kept| step_id(kept) > event.id.as_str())
+            .unwrap_or(turn.steps.len());
+        turn.steps.insert(at, step.clone());
+        let mut ops = Ops::default();
+        ops.push(TrajectoryOpDto::ItemUpsert { step });
+        ops.touch(&turn.id.clone());
+        self.finish(ops)
+    }
+
     /// The steps of a turn's lane that the fold holds, oldest first.
     pub(crate) fn held_steps(&self, turn_id: &str, lane: &str) -> Vec<StepDto> {
         self.turns
@@ -982,40 +1066,9 @@ impl Fold {
         let index = self.turn_for(input, ops);
         let turn_id = self.turns[index].id.clone();
         let subagent = input.full.and_then(|event| subagent_ref(&event.payload));
-        let step = input.full.map(|event| {
-            let payload = &event.payload;
-            let acp = payload.get("acp").unwrap_or(payload);
-            let title = string_at(payload, "/tool_name")
-                .or_else(|| string_at(acp, "/title"))
-                .unwrap_or_else(|| event.summary.clone());
-            let kind = string_at(acp, "/kind");
-            let tool_input = payload
-                .get("tool_input")
-                .or_else(|| acp.get("rawInput"))
-                .unwrap_or(&Value::Null);
-            StepDto::Permission(PermissionStepDto {
-                id: event.id.clone(),
-                turn_id: turn_id.clone(),
-                lane: MAIN_LANE.into(),
-                created_at: event.created_at.clone(),
-                tool_call_id: input.facts.call.clone().unwrap_or_default(),
-                tool: PermissionToolDto {
-                    subject: subject_of(kind.as_deref(), tool_input, &locations_of(acp)),
-                    title: title.clone(),
-                    kind,
-                },
-                question: match &subagent {
-                    Some(child) => format!("{title} · asked by subagent {}", child.title),
-                    None => title,
-                },
-                options: permission_options(payload),
-                state: PermissionState::Pending,
-                answer: None,
-                ai: ariadne_api::permissions::ai_permission_note(payload),
-                learned: None,
-                subagent: subagent.clone(),
-            })
-        });
+        let step = input
+            .full
+            .map(|event| permission_step(event, &turn_id, &input.facts));
         self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.pending.push(Pending {
             id: input.id.to_string(),
@@ -1207,20 +1260,8 @@ impl Fold {
     /// loaded or not.
     fn error(&mut self, input: &Input, ops: &mut Ops) {
         let index = self.turn_for(input, ops);
-        let step = input.full.map(|event| {
-            let payload = &event.payload;
-            StepDto::Error(ErrorStepDto {
-                id: event.id.clone(),
-                turn_id: self.turns[index].id.clone(),
-                lane: MAIN_LANE.into(),
-                created_at: event.created_at.clone(),
-                text: string_at(payload, "/error/data/message")
-                    .or_else(|| string_at(payload, "/error/message"))
-                    .or_else(|| string_at(payload, "/message"))
-                    .unwrap_or_else(|| event.summary.clone()),
-                diagnosis: None,
-            })
-        });
+        let turn_id = self.turns[index].id.clone();
+        let step = input.full.map(|event| error_step(event, &turn_id));
         self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.turns[index]
             .lanes
@@ -1677,6 +1718,59 @@ fn status_of(status: &str) -> Option<ToolCallStatus> {
         "cancelled" => ToolCallStatus::Cancelled,
         "interrupted" => ToolCallStatus::Interrupted,
         _ => return None,
+    })
+}
+
+/// A permission step, from its request's payload.
+fn permission_step(event: &AgentEventDto, turn_id: &str, facts: &EventFacts) -> StepDto {
+    let payload = &event.payload;
+    let acp = payload.get("acp").unwrap_or(payload);
+    let title = string_at(payload, "/tool_name")
+        .or_else(|| string_at(acp, "/title"))
+        .unwrap_or_else(|| event.summary.clone());
+    let kind = string_at(acp, "/kind");
+    let tool_input = payload
+        .get("tool_input")
+        .or_else(|| acp.get("rawInput"))
+        .unwrap_or(&Value::Null);
+    let subagent = subagent_ref(payload);
+    StepDto::Permission(PermissionStepDto {
+        id: event.id.clone(),
+        turn_id: turn_id.to_string(),
+        lane: MAIN_LANE.into(),
+        created_at: event.created_at.clone(),
+        tool_call_id: facts.call.clone().unwrap_or_default(),
+        tool: PermissionToolDto {
+            subject: subject_of(kind.as_deref(), tool_input, &locations_of(acp)),
+            title: title.clone(),
+            kind,
+        },
+        question: match &subagent {
+            Some(child) => format!("{title} · asked by subagent {}", child.title),
+            None => title,
+        },
+        options: permission_options(payload),
+        state: PermissionState::Pending,
+        answer: None,
+        ai: ariadne_api::permissions::ai_permission_note(payload),
+        learned: None,
+        subagent,
+    })
+}
+
+/// An error step, from its payload.
+fn error_step(event: &AgentEventDto, turn_id: &str) -> StepDto {
+    let payload = &event.payload;
+    StepDto::Error(ErrorStepDto {
+        id: event.id.clone(),
+        turn_id: turn_id.to_string(),
+        lane: MAIN_LANE.into(),
+        created_at: event.created_at.clone(),
+        text: string_at(payload, "/error/data/message")
+            .or_else(|| string_at(payload, "/error/message"))
+            .or_else(|| string_at(payload, "/message"))
+            .unwrap_or_else(|| event.summary.clone()),
+        diagnosis: None,
     })
 }
 

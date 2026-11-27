@@ -104,7 +104,10 @@ Out:
     The limits hold on every path: a cold read, a warm hub's snapshot, and a
     `turn_upsert`. A hundred waiting steps are five screens, and with the 20
     errors and a running turn's window they fit the payload budget of one
-    read, so a cold read and a warm hub hold the same steps. `attention_more` counts each attention step of the turn that
+    read, so a cold read and a warm hub hold the same steps. When an answer
+    or a new step changes which steps the limits hold, the hub loads the
+    payloads of the steps its `attention` lacks, at most 500 at a time and
+    each once, and fills them in with an `item_upsert` and a `turn_upsert`. `attention_more` counts each attention step of the turn that
     `attention` does not hold: the waiting steps past the read limit and the
     errors past 20. No read leaves an attention step out without this count,
     and the steps route of the turn returns each step `attention` does not
@@ -214,13 +217,16 @@ Out:
     stops at it.
 38. A read folds the heads of the turns it shows, then loads the rows a
     client sees, in this order, as far as the budget goes:
-    - the newest turn's prompt and answer, then the last 50 steps of its
-      lane if it runs, each with its newest change, newest step first;
-    - each older turn's prompt and answer, newest turn first. The first turn
-      whose prompt and answer do not fit, and every older one, is not shown;
-    - the newest 100 permissions and questions that wait in each turn, then
-      the newest 20 errors of each turn with their diagnoses, one step at a
-      time, newest turn first and newest step first: the limits of rule 16;
+    - each shown turn whole, newest turn first: its prompt, its answer, its
+      newest 100 permissions and questions that wait, and its newest 20
+      errors with their diagnoses, the limits of rule 16. The first turn
+      whose whole does not fit is not shown, nor any older one, so each shown
+      turn holds the `attention` a warm hub holds. The newest turn shows its
+      prompt and answer even where its whole does not fit;
+    - the last 50 steps of the newest turn's lane if it runs, each with its
+      newest change, newest step first;
+    - the attention of the older turns that a read holds outside the shown
+      ones (rule 39), one step at a time;
     - the first and the newest plan of each lane;
     - the first event and the newest update of each subagent.
 39. A read also holds the older turns with attention, outside the turns it
@@ -383,6 +389,12 @@ Out:
 45. A warm fold and a cold read hold the same `attention` and
     `attention_more`, and a `turn_upsert` carries them (rule 16):
     `read.rs::a_warm_fold_and_a_cold_read_hold_the_same_attention`.
+46. An answer after a cold read refills the attention window as a new cold
+    read holds it (rule 16):
+    `read.rs::an_answer_refills_the_attention_window_as_a_cold_read_holds_it`.
+47. Each shown turn holds its whole attention, errors included, within the
+    cap (rule 38):
+    `read.rs::each_shown_turn_holds_its_whole_attention_within_the_cap`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

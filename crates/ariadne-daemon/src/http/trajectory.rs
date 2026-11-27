@@ -74,6 +74,9 @@ struct HubState {
     fold: Fold,
     rev: u64,
     ended: bool,
+    /// The attention rows the hub loaded to fill its window: each is loaded
+    /// once, so a row the fold cannot fill costs one read and no more.
+    filled: std::collections::HashSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -202,6 +205,7 @@ impl Hub {
                     fold,
                     rev: 0,
                     ended: false,
+                    filled: Default::default(),
                 }),
                 frames,
                 left: Notify::new(),
@@ -246,6 +250,36 @@ impl Hub {
             ops,
         };
         let _ = self.frames.send(Frame::Update(Arc::new(update)));
+    }
+
+    /// Load the attention rows the fold counts and does not hold, and fill
+    /// them in: an answer that takes a step out of a full `attention` brings
+    /// the next one in, as a cold read would hold it (040, rule 16).
+    async fn refill(&self, state: &AppState) {
+        let missing: Vec<String> = {
+            let mut hub = self.state.lock().expect("trajectory hub");
+            let missing: Vec<String> = hub
+                .fold
+                .missing_attention()
+                .into_iter()
+                .filter(|row| !hub.filled.contains(row))
+                .take(READ_EVENTS)
+                .collect();
+            hub.filled.extend(missing.iter().cloned());
+            missing
+        };
+        if missing.is_empty() {
+            return;
+        }
+        let Ok(events) = state.store.events_by_ids(&missing).await else {
+            return;
+        };
+        self.apply(|fold| {
+            events
+                .into_iter()
+                .flat_map(|event| fold.fill(&super::convert::event_dto(event)))
+                .collect()
+        });
     }
 
     fn end(&self, frame: Option<Frame>) {
@@ -295,7 +329,8 @@ impl Hub {
                 tokio::select! {
                     next = inputs.recv() => match next {
                         Some(Input::Event(event, stored)) => {
-                            self.apply(|fold| fold.apply(&event, stored))
+                            self.apply(|fold| fold.apply(&event, stored));
+                            self.refill(&state).await;
                         }
                         Some(Input::Resync(missed)) => {
                             self.end(Some(Frame::Resync(missed)));

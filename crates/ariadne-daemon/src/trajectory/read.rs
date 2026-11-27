@@ -332,14 +332,21 @@ pub(crate) async fn read_turns_upto(
         ids: BTreeSet::new(),
         budget,
     };
-    // The newest turn first, with its step window reserved: then each older
-    // turn's prompt and answer, as far as the budget goes.
+    // Each shown turn whole, newest first: its prompt and answer, and the
+    // waiting steps and the errors its `attention` holds, so a cold read
+    // holds what a warm hub holds. A turn that does not fit is not shown, nor
+    // any older one. The newest turn's step window comes after them.
     let mut first_shown = None;
     for (rank, &at) in shown.iter().rev().enumerate() {
         let Some(turn) = index.get(&starts[at].id) else {
             continue;
         };
-        if !picks.take(mandatory(turn, prompt(at))) {
+        let essentials: Vec<String> = mandatory(turn, prompt(at))
+            .into_iter()
+            .chain(attention(turn, false).into_iter().flatten())
+            .chain(attention(turn, true).into_iter().flatten())
+            .collect();
+        if !picks.take(essentials) && !(rank == 0 && picks.take(mandatory(turn, prompt(at)))) {
             break;
         }
         match lane {
@@ -352,10 +359,14 @@ pub(crate) async fn read_turns_upto(
         first_shown = Some(at);
     }
     let first_shown = first_shown.unwrap_or(shown[shown.len() - 1]);
-    // What waits on a person, then the errors, each step on its own, newest
-    // turn first, up to the limits of `attention`.
+    // The attention of the turns outside the shown ones, as far as the
+    // budget goes, for the answers that may still come.
     for errors in [false, true] {
-        for turn in index.values().rev() {
+        for turn in index
+            .values()
+            .rev()
+            .filter(|turn| turn.id < starts[first_shown].id)
+        {
             for rows in attention(turn, errors) {
                 picks.take(rows);
             }
@@ -1682,5 +1693,115 @@ mod tests {
             .expect("the last question updates its turn");
         assert_eq!(update.attention.len(), super::ATTENTION_WAITS);
         assert_eq!(update.attention_more, 20);
+    }
+
+    /// After a cold read, an answer to one of the 100 waiting steps that
+    /// `attention` holds takes it out, and the hub's refill brings the next
+    /// one in: the warm `attention` stays the one a new cold read holds
+    /// (rule 16).
+    #[tokio::test]
+    async fn an_answer_refills_the_attention_window_as_a_cold_read_holds_it() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        for n in 0..=super::ATTENTION_WAITS {
+            commit(
+                &store,
+                &session,
+                "question",
+                json!({"question": {"id": format!("q-{n}"), "message": "Which?", "schema": {}}}),
+            )
+            .await;
+        }
+        let mut warm = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(warm.snapshot(0, 20, None).turns[0].attention_more, 1);
+
+        let answer = store
+            .create_event(NewAgentEvent {
+                session_id: Some(session.clone()),
+                task_id: None,
+                kind: "question.resolved".into(),
+                payload: json!({"question_id": format!("q-{}", super::ATTENTION_WAITS),
+                                "action": "decline"}),
+            })
+            .await
+            .unwrap();
+        warm.apply(&crate::http::convert::event_dto(answer), true);
+        let missing = warm.missing_attention();
+        assert_eq!(missing.len(), 1, "the one question the window lacks");
+        let mut ops = Vec::new();
+        for event in store.events_by_ids(&missing).await.unwrap() {
+            ops.extend(warm.fill(&crate::http::convert::event_dto(event)));
+        }
+
+        let cold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        let warm_turn = warm.snapshot(0, 20, None).turns[0].clone();
+        let cold_turn = cold.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(warm_turn.attention.len(), super::ATTENTION_WAITS);
+        assert_eq!(warm_turn.attention_more, 0);
+        assert_eq!(warm_turn.attention, cold_turn.attention);
+        assert!(
+            ops.iter().any(|op| matches!(op,
+                TrajectoryOpDto::TurnUpsert { turn } if turn.attention.len() == super::ATTENTION_WAITS)),
+            "the fill updates the turn"
+        );
+    }
+
+    /// Five turns that each hold 100 waiting questions and 20 errors: each
+    /// shown turn holds its whole `attention`, errors included, and the
+    /// turns that do not fit are older, not short (rule 38).
+    #[tokio::test]
+    async fn each_shown_turn_holds_its_whole_attention_within_the_cap() {
+        let (store, session, _dir) = session().await;
+        for turn in 0..5 {
+            prompt(&store, &session).await;
+            for n in 0..super::ATTENTION_WAITS {
+                commit(
+                    &store,
+                    &session,
+                    "question",
+                    json!({"question": {"id": format!("q-{turn}-{n}"), "message": "Which?",
+                                        "schema": {}}}),
+                )
+                .await;
+            }
+            for _ in 0..20 {
+                commit(
+                    &store,
+                    &session,
+                    "session.error",
+                    json!({"message": "boom"}),
+                )
+                .await;
+            }
+        }
+
+        let read = read_turns(&store, &session, None, 20, None, 500)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 500);
+        let fold = folded(&session, read);
+        let snapshot = fold.snapshot(0, 20, None);
+        assert!(snapshot.has_older, "the oldest turns do not fit");
+        assert!(!snapshot.turns.is_empty());
+        for turn in &snapshot.turns {
+            let errors = turn
+                .attention
+                .iter()
+                .filter(|step| matches!(step, StepDto::Error(_)))
+                .count();
+            assert_eq!(errors, 20, "turn {}", turn.id);
+            assert_eq!(turn.attention.len(), super::ATTENTION_WAITS + 20);
+            assert_eq!(turn.attention_more, 0);
+        }
     }
 }
