@@ -69,6 +69,7 @@ import { useSourceHost } from "@/features/tasks/source-host"
 import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
+import { TAB_ICONS } from "@/lib/tab-icons"
 import { paths, usePanelSessionTo, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
 import { SessionActions } from "./session-actions"
@@ -364,8 +365,8 @@ export function SessionDetailView({
         className="flex min-h-0 flex-1 flex-col"
       >
         <TabsList>
-          <TabsTrigger value="terminal">Console</TabsTrigger>
-          <TabsTrigger value="activity">Agent activity</TabsTrigger>
+          <TabsTrigger value="terminal" icon={<TAB_ICONS.console />} label="Console" />
+          <TabsTrigger value="activity" icon={<TAB_ICONS.activity />} label="Agent activity" />
         </TabsList>
         <TabsContent value="terminal" className="min-h-0 flex flex-1 flex-col pt-3">
           <TrajectoryConsole

@@ -46,6 +46,7 @@ import { useFocusReturn } from "@/hooks/use-focus-return"
 import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { goalCopyEntries } from "@/lib/clipboard"
 import { folderName } from "@/lib/format"
+import { TAB_ICONS } from "@/lib/tab-icons"
 import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -246,16 +247,14 @@ function GoalView({
 
         <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
           <TabsList>
-            <TabsTrigger value="description">Description</TabsTrigger>
-            <TabsTrigger value="tasks">
-              Tasks
+            <TabsTrigger value="description" icon={<TAB_ICONS.description />} label="Description" />
+            <TabsTrigger value="tasks" icon={<TAB_ICONS.tasks />} label="Tasks">
               <TabCount count={tasks.data?.length} noun="task" />
             </TabsTrigger>
             {/* The goal's own sessions: its orchestrator, once per resume or
               restart. The sessions its tasks have run are each task panel's,
               which is why the count here is a small number. */}
-            <TabsTrigger value="sessions">
-              Sessions
+            <TabsTrigger value="sessions" icon={<TAB_ICONS.sessions />} label="Sessions">
               <TabCount count={sessions.data?.length} noun="session" />
             </TabsTrigger>
           </TabsList>

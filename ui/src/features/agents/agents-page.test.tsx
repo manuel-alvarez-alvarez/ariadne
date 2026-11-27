@@ -414,12 +414,15 @@ describe("the models under each agent", () => {
   it("counts each agent's catalog on its tab", async () => {
     renderScreen(<AgentsPage />)
 
-    // The pill's own `aria-label` runs straight on after the agent's name, which
-    // is how every tab strip in the app already reads.
-    expect(await screen.findByRole("tab", { name: /^claude-agent-acp\s*1 model$/ })).toBeDefined()
-    expect(screen.getByRole("tab", { name: /^opencode-acp\s*1 model$/ })).toBeDefined()
+    // A tab's name is its word alone; the pill beside it carries the count.
+    const count = async (agent: string) =>
+      within(await screen.findByRole("tab", { name: agent }))
+        .getByLabelText(/models?$/)
+        .getAttribute("aria-label")
+    expect(await count("claude-agent-acp")).toBe("1 model")
+    expect(await count("opencode-acp")).toBe("1 model")
     // An agent the catalog has nothing for still says so, rather than nothing.
-    expect(screen.getByRole("tab", { name: /^codex-acp\s*0 models$/ })).toBeDefined()
+    expect(await count("codex-acp")).toBe("0 models")
   })
 
   it("shows whether each one can be staffed on", async () => {

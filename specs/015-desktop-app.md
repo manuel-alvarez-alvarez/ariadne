@@ -90,7 +90,7 @@ Out: the daemon endpoints themselves (012).
    colours, light and dark, from one rule in `index.css` keyed on a
    `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
 3. Screens: the goals board (one list of task rows) has Active,
-   All and Finished status segments. A status-menu icon holds a custom
+   All and Finished status tabs (rule 110). A status-menu icon holds a custom
    selection. The rows of one goal are adjacent, and the goal line over them
    carries the goal's tokens in the token column (rule 39). The task
    panel (facts, diff, history), sessions — Ariadne's own,
@@ -1930,6 +1930,34 @@ view.
 109. The step detail and the full view use the app's tokens alone, as rule
      98 says of the whole turn console
      (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`).
+
+110. Every tab trigger shows an icon before its word. One tab concept has one
+    icon in the whole app, kept in `ui/src/lib/tab-icons.tsx`: Description,
+    History, Diff, Tasks, Sessions, Console, Agent activity, Pull requests,
+    Issues, Learned, AI, Write, Preview, and the goals board's Active, All and
+    Finished. Sessions is the same icon in the task, goal and pull request
+    panes. A tab the sidebar also names has the sidebar's icon: Sessions and
+    Forge's Pull requests. The agents screen's tabs show the agent's own icon.
+    The goals board's status filter is the same `Tabs` component as the panes.
+    In a pane narrower than 26rem (the `pane` container of the pane body: a
+    docked pane of 24rem to about 28rem) the word leaves the layout: the tab
+    shows its icon and its count, its accessible name is the word alone (a count is not part of it), and
+    the word is its tooltip. The tooltip opens only while the word is hidden.
+    A tab outside a pane never narrows. A browser probe at pane widths from 22
+    to 34rem found the word at 1px up to 24.9rem and at its full width from
+    27.9rem, with no overflow of the tab list in either state
+    (`ui/src/components/ui/tabs.test.tsx::draws the icon before the word, keeps the word as the name, and keeps the count`;
+    `::names the word in a tooltip when the word is hidden`;
+    `::hides the word in a narrow pane and keeps it otherwise`;
+    `ui/src/components/pane-tabs.test.tsx::names each task pane tab by its word and draws its icon, count included`;
+    `::names each goal pane tab by its word and draws its icon, count included`;
+    `::names each pull request pane tab by its word and draws its icon`;
+    `::names each session pane tab by its word and draws its icon`;
+    `ui/src/features/agents/agents-page.test.tsx::counts each agent's catalog on its tab`;
+    `ui/src/components/ui/tabs.test.tsx::gives each tab concept one icon, on every screen that has the tab`;
+    `::uses the sidebar's icon for a tab the sidebar names`;
+    `::shows an icon on the Forge, Permissions and markdown tabs`;
+    `ui/src/features/goals/goals-list-page.test.tsx::leaves every status tab unselected for a custom selection`).
 
 ## Acceptance criteria
 

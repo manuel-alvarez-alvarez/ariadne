@@ -59,15 +59,13 @@ beforeEach(() => {
   useSettingsStore.setState({ goalStatusFilter: "" })
 })
 
-it("leaves every segment unpressed for a custom selection", async () => {
+it("leaves every status tab unselected for a custom selection", async () => {
   renderBoard("/goals?status=completed,active")
 
   await waitFor(() => expect(goalRequests()).toContain("active,completed"))
-  expect(screen.getByRole("button", { name: "Active" }).getAttribute("aria-pressed")).toBe("false")
-  expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("false")
-  expect(screen.getByRole("button", { name: "Finished" }).getAttribute("aria-pressed")).toBe(
-    "false",
-  )
+  expect(screen.getByRole("tab", { name: "Active" }).getAttribute("aria-selected")).toBe("false")
+  expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("false")
+  expect(screen.getByRole("tab", { name: "Finished" }).getAttribute("aria-selected")).toBe("false")
   expect(statusMenu().getAttribute("aria-pressed")).toBe("true")
 })
 
@@ -76,15 +74,15 @@ it("sets each named segment in the URL and remembered filter", async () => {
   const seen = renderBoard("/goals")
   await waitFor(() => expect(goalRequests()).toContain(null))
 
-  await user.click(screen.getByRole("button", { name: "All" }))
+  await user.click(screen.getByRole("tab", { name: "All" }))
   await waitFor(() => expect(seen.url).toBe("/goals"))
   expect(statusMenu().getAttribute("aria-pressed")).toBe("false")
 
-  await user.click(screen.getByRole("button", { name: "Finished" }))
+  await user.click(screen.getByRole("tab", { name: "Finished" }))
   await waitFor(() => expect(seen.url).toBe("/goals?status=completed%2Ccancelled"))
   await waitFor(() => expect(goalRequests()).toContain("completed,cancelled"))
 
-  await user.click(screen.getByRole("button", { name: "Active" }))
+  await user.click(screen.getByRole("tab", { name: "Active" }))
   await waitFor(() => expect(seen.url).toBe("/goals?status=planning%2Cactive"))
   await waitFor(() =>
     expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}")).toMatchObject({
@@ -99,7 +97,7 @@ it("ignores a status the daemon does not define", async () => {
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
   expect(goalRequests()).not.toContain("nonsense")
   expect(goalRequests().every((status) => status === null)).toBe(true)
-  expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true")
+  expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true")
 })
 
 it("puts a checked status in the URL and in the next request", async () => {
@@ -128,7 +126,7 @@ it("clears back to all statuses, dropping the param", async () => {
   await user.click(await screen.findByRole("menuitemcheckbox", { name: "All statuses" }))
 
   await waitFor(() => expect(seen.url).toBe("/goals"))
-  expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true")
+  expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true")
 })
 
 it("opens and toggles from the keyboard", async () => {
@@ -196,7 +194,7 @@ it("leaves a cleared filter cleared", async () => {
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
   expect(seen.url).toBe("/goals")
   expect(goalRequests()).not.toContain("active")
-  expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true")
+  expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true")
 })
 
 it("shows what an explicit ?status= asks for, not what is remembered", async () => {
@@ -353,7 +351,7 @@ it("narrows by the title search within the selected statuses", async () => {
   expect(screen.queryByRole("link", { name: "Write docs" })).toBeNull()
   expect(screen.queryByRole("link", { name: "Fix billing" })).toBeNull()
 
-  await user.click(screen.getByRole("button", { name: "All" }))
+  await user.click(screen.getByRole("tab", { name: "All" }))
   await screen.findByRole("link", { name: "Fix billing" })
   expect(screen.getByRole("link", { name: "Fix login" })).toBeTruthy()
   expect(screen.queryByRole("link", { name: "Write docs" })).toBeNull()
@@ -388,7 +386,7 @@ it("shows terminal tasks when leaving the Active filter", async () => {
   renderBoard("/goals?status=planning,active")
   expect(await screen.findByRole("heading", { name: "Tasks (0)" })).toBeTruthy()
   expect(screen.queryByText("Completed task")).toBeNull()
-  await userEvent.click(screen.getByRole("button", { name: "All" }))
+  await userEvent.click(screen.getByRole("tab", { name: "All" }))
   expect(await screen.findByText("Completed task")).toBeTruthy()
 })
 

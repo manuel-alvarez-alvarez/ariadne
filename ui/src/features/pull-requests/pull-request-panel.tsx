@@ -65,6 +65,7 @@ import { HostSessionsList } from "@/features/sessions/sessions-list"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { shortId, shortSha } from "@/lib/format"
+import { TAB_ICONS } from "@/lib/tab-icons"
 import { hostOf, paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 
 import {
@@ -215,8 +216,8 @@ function PullRequestBody({
         <PullRequestFacts pull={pull} host={host} copies={copies} />
         <Tabs value={tab} onValueChange={(value) => onTab(value as Tab)}>
           <TabsList>
-            <TabsTrigger value="description">Description</TabsTrigger>
-            <TabsTrigger value="sessions">Sessions</TabsTrigger>
+            <TabsTrigger value="description" icon={<TAB_ICONS.description />} label="Description" />
+            <TabsTrigger value="sessions" icon={<TAB_ICONS.sessions />} label="Sessions" />
           </TabsList>
           <TabsContent value="description" className="pt-3">
             {pull.body?.trim() ? (
