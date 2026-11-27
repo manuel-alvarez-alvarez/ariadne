@@ -464,8 +464,8 @@ Type in the input box at the bottom: Enter sends, and Shift+Enter adds a
 line. While a turn runs, the Stop button or Escape in the console cancels it.
 A permission request is a card above the input: ↑, ↓ or a number key selects
 an option, and Enter or a click answers. The answered call shows the option
-chosen and who decided. A question the agent asks is a form card above the
-input. A warning note and a compaction always show in their turn. If the
+chosen and who decided. A question the agent asks is a form card inside the
+turn that asked it. A warning note and a compaction always show in their turn. If the
 daemon goes away mid-session, the console says it is reconnecting, and shows
 the session afresh once it is back. The agent receives the same input
 whichever console you use.
