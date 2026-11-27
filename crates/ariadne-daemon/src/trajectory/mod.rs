@@ -7,6 +7,7 @@
 //! shares one fold between the subscribers of a session are in
 //! `crate::http::trajectory`.
 
+pub(crate) mod detail;
 mod fold;
 pub(crate) mod read;
 mod steps;

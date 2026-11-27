@@ -177,7 +177,10 @@ pub(super) async fn route(
         .await
         .map_err(|e| super::tasks::far_error(&reference.host, e))?;
     let mut body = response.body;
+    // A blob is the bytes of a block, whatever they are, and never JSON
+    // that names the session.
     if (200..300).contains(&response.status)
+        && !suffix.starts_with("trajectory/blobs/")
         && let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body)
     {
         rewrite(&mut value, &reference.id, session_id);
@@ -210,6 +213,14 @@ fn rewrite(value: &mut serde_json::Value, task: &str, session: &str) {
         serde_json::Value::Array(values) => {
             for value in values {
                 rewrite(value, task, session);
+            }
+        }
+        // A blob URL of a trajectory names the session by its alias, so a
+        // client reads the bytes through this forwarder as well.
+        serde_json::Value::String(text) => {
+            let prefix = format!("/v1/sessions/{session}/trajectory/blobs/");
+            if let Some(rest) = text.strip_prefix(&prefix) {
+                *text = format!("/v1/sessions/far~{task}~{session}/trajectory/blobs/{rest}");
             }
         }
         _ => {}

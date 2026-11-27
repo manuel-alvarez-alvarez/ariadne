@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-store/src/events.rs
   - crates/ariadne-daemon/src/trajectory/fold.rs
   - crates/ariadne-daemon/src/trajectory/read.rs
+  - crates/ariadne-daemon/src/trajectory/detail.rs
   - crates/ariadne-daemon/src/http/trajectory.rs
   - crates/ariadne-daemon/tests/it/trajectory.rs
   - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
@@ -33,8 +34,7 @@ Out:
 
 - The events themselves and their payloads. They are the ACP runtime's (021).
 - The console routes and the two consoles that read them (008).
-- The item detail route and the blob route. A later task adds them, and the
-  types of the detail.
+- How a console draws the detail of a call.
 - The fold of event kinds that do not exist yet, such as a mode, a config
   option or a session title. The types hold them; a later task folds them.
 
@@ -284,6 +284,59 @@ Out:
 48. A session on a remote host serves the same routes through the
     forwarder, with the session named by its alias (037).
 
+### The detail of a call
+
+49. `GET /v1/sessions/{id}/trajectory/items/{item_id}` answers the
+    `ToolCallDetailDto` of the `tool_call` step `item_id`: its id, its tool
+    call id, title, kind, status, `detail_rev` and `detail`. The call's
+    events are those the fold joins to the step (rule 21): from its opener
+    on, the events of its lane and its tool call id, up to the event that
+    ends the call, the next `pre_tool_use` of that id, or the end of its
+    turn. The end of its turn leaves an open call `cancelled` for a stop
+    reason `cancelled` and `interrupted` for every other end, as rule 12
+    does. The route loads at most 500 of those payloads, the opener and the
+    newest, and `detail_rev` counts every update. The ACP runtime stores
+    each update with the whole call so far (021), so the newest holds it.
+50. `detail` is tagged by `type`, by the call's kind. A later field of the
+    call replaces an earlier one, as an ACP update does:
+    - `execute` is `command`: the whole command, else the title; `cwd`, the
+      input's `cwd`, `workdir` or `working_directory`; `output`, the text of
+      its content, else its `rawOutput` (rule 22); `exit_code`, the
+      `rawOutput`'s `exit_code`, `exitCode` or `metadata.exit`, else
+      `_meta.terminal_exit.exit_code`; and `truncated`. An output longer
+      than one megabyte keeps its last megabyte, where the result and the
+      errors are, and `truncated` is true.
+    - `edit` is `diff`: for each `diff` entry, its path, `old_text`,
+      `new_text`, `unified` and `language`. `unified` is the agent's patch,
+      under a file header from the entry's path where it has none, else the
+      hunks between the old and the new text with three lines of context.
+    - `read` is `file`: the path, the number of the first line, the
+      language and the text. A text whose lines sit in a fence after a
+      number and a tab loses them, and the first number is the line.
+    - `search` is `search`: the input's `pattern`, `query` or `regex`, and
+      the output text. `fetch` is `fetch`: the input's `url`, and the
+      output text.
+    - Every other kind is `generic`: the call's content blocks, with a
+      `blob` URL that names the event that last set the content.
+    - `language` is the name the web console's highlighter knows for the
+      file's extension, such as `rust` or `typescript`, or none.
+    These are the rules of the two consoles' folds (Sources).
+51. With `raw=true`, the answer adds `raw`: the call's raw input and raw
+    output. Without it, the answer has no `raw`.
+52. A running call shows the newest stored update of it. Progress that the
+    ACP runtime has not stored yet is in the stream alone (021).
+53. `GET /v1/sessions/{id}/trajectory/blobs/{event_id}/{index}` answers the
+    bytes of one image, audio or resource block of the session's stored
+    event `event_id`, with its MIME type, else `application/octet-stream`.
+    `index` is the place of the block in the event's `content`, in a call's
+    `content` entries, or in a compaction's `summary`: the place a `blob`
+    URL names (rule 28).
+54. An `item_id` that opens no call of the session, and a blob that names
+    no event of the session or no block with bytes, are a 404.
+55. A session on a remote host serves both routes through the forwarder
+    (rule 48). The forwarder passes a blob's bytes as they are, and gives
+    every blob URL the session's alias.
+
 ## Acceptance criteria
 
 1. The facts of an event, its lane, and the daemon's own allow
@@ -416,6 +469,28 @@ Out:
 49. A failed refill leaves its rows to load again (rule 16):
     `http/trajectory.rs::a_failed_refill_leaves_its_rows_to_load_again`.
 
+50. A call's detail gives its command, its directory, its latest stored
+    progress, its output and its exit code, and its raw data only with
+    `raw=true`, over HTTP (rules 49 to 52):
+    `tests/it/trajectory.rs::a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand`.
+51. An edit, a read, a search and a fetch each give their shape (rule 50):
+    `detail.rs::an_edit_gives_each_file_its_texts_its_diff_and_its_language`,
+    `detail.rs::a_read_gives_its_path_first_line_language_and_text` and
+    `detail.rs::a_search_and_a_fetch_give_their_subject_and_their_result`.
+52. A call's events end with its turn and leave out other calls, and a
+    long call loads its opener and its newest updates (rule 49):
+    `detail.rs::a_call_ends_at_the_end_of_its_turn_and_skips_other_calls` and
+    `detail.rs::a_long_call_loads_its_opener_and_its_newest_updates`.
+53. Another call gives its content blocks, a blob answers its bytes and
+    MIME type, and an unknown item or blob is a 404 (rules 50, 53, 54):
+    `tests/it/trajectory.rs::a_blob_answers_the_bytes_of_its_block_and_unknown_ids_are_not_found`.
+54. A remote session serves a call's detail and a blob through the
+    forwarder, and the blob URL names the alias (rule 55):
+    `far_tasks/source_references.rs::source_trajectory_routes_reach_the_worker_session`.
+55. `ui/openapi.json` and `ui/src/api/schema.d.ts` hold every detail type,
+    every detail kind and both routes:
+    `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
+
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and
 `read.rs::a_running_turns_window_is_its_last_steps_whatever_follows_them`
@@ -437,6 +512,10 @@ the stream, and not yet in a page.
 
 A page with `before` holds the subagents and plans of its own read.
 
+A call of more than 500 stored events shows the fields of its opener and its
+newest 499. An agent that sends each field only once, and not the whole call
+in each update, can lose a field of an update between them.
+
 ## Sources
 
 `crates/ariadne-api/src/trajectory.rs`,
@@ -448,5 +527,6 @@ A page with `before` holds the subagents and plans of its own read.
 `crates/ariadne-daemon/src/http/trajectory.rs`,
 `crates/ariadne-daemon/src/http/console.rs` (`Merge`, `open_console`),
 `crates/ariadne-daemon/src/http/source_sessions.rs`, and the two folds it
-replaces for a client: `crates/ariadne-console/src/transcript.rs` and
-`ui/src/features/sessions/console/transcript.ts`.
+replaces for a client: `crates/ariadne-console/src/transcript.rs` (`Tool`)
+and `ui/src/features/sessions/console/transcript.ts` (`toolOf`,
+`toolOutput` and `toolDiff`).

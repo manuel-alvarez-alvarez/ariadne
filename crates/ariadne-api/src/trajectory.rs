@@ -4,6 +4,8 @@
 //! and `/trajectory/stream` opens on one and follows it with
 //! [`TrajectoryUpdateDto`] frames. Every item names the stored event that
 //! opened it, so an update finds what it changes by id.
+//! `/trajectory/items/{item_id}` answers the [`ToolCallDetailDto`] of one
+//! call, on demand.
 
 use ariadne_core::{AttentionReason, SessionStatus};
 use serde::{Deserialize, Serialize};
@@ -583,6 +585,120 @@ pub struct TrajectoryStepsDto {
     pub steps: Vec<StepDto>,
     /// How many steps come before these.
     pub earlier_steps: u64,
+}
+
+/// Query of `GET /v1/sessions/{id}/trajectory/items/{item_id}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct TrajectoryItemQuery {
+    /// Add the call's raw input and raw output as `raw`.
+    #[serde(default)]
+    pub raw: bool,
+}
+
+/// The full detail of one `tool_call` step: what
+/// `GET /v1/sessions/{id}/trajectory/items/{item_id}` answers. A change of
+/// the step's `detail_rev` tells a client to read it again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ToolCallDetailDto {
+    /// The id of the step: the stored event that opened the call.
+    pub id: String,
+    pub tool_call_id: String,
+    pub title: String,
+    pub kind: Option<String>,
+    pub status: ToolCallStatus,
+    /// The `detail_rev` of the step this detail stands at.
+    pub detail_rev: u64,
+    pub detail: ToolDetailDto,
+    /// The raw input and the raw output, only with `raw=true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<RawToolDto>,
+}
+
+/// The detail of a call by its kind, tagged by `type`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolDetailDto {
+    /// An `execute` call.
+    Command(CommandDetailDto),
+    /// An `edit` call.
+    Diff(DiffDetailDto),
+    /// A `read` call.
+    File(FileDetailDto),
+    /// A `search` call.
+    Search(SearchDetailDto),
+    /// A `fetch` call.
+    Fetch(FetchDetailDto),
+    /// Every other call.
+    Generic(GenericDetailDto),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct CommandDetailDto {
+    /// The whole command, else the call's title.
+    pub command: String,
+    /// The working directory, where the input names one.
+    pub cwd: Option<String>,
+    /// What the command gave back, as far as it ran.
+    pub output: Option<String>,
+    pub exit_code: Option<i64>,
+    /// The output was longer than a detail carries: `output` holds its end.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DiffDetailDto {
+    pub files: Vec<DiffFileDto>,
+}
+
+/// The change of one file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DiffFileDto {
+    pub path: String,
+    /// The text before the change: none for a new file, or where the agent
+    /// sent a patch.
+    pub old_text: Option<String>,
+    /// The text after the change: none where the agent sent a patch.
+    pub new_text: Option<String>,
+    /// The change as a unified diff under its file header.
+    pub unified: String,
+    /// The language of the file, by its extension.
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct FileDetailDto {
+    pub path: Option<String>,
+    /// The number of the first line of `text`.
+    pub line: Option<u64>,
+    pub language: Option<String>,
+    /// The text read, without the agent's line-number prefixes.
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SearchDetailDto {
+    pub query: Option<String>,
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct FetchDetailDto {
+    pub url: Option<String>,
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct GenericDetailDto {
+    /// The call's content blocks. A block with bytes carries a `blob` URL.
+    pub content: Vec<ContentBlockDto>,
+}
+
+/// A call's raw input and raw output, as the agent sent them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct RawToolDto {
+    pub input: Option<serde_json::Value>,
+    pub output: Option<serde_json::Value>,
 }
 
 #[cfg(test)]

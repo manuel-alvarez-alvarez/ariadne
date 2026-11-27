@@ -194,6 +194,7 @@ impl AppState {
         console::snapshot, console::stream, console::input, console::cancel,
         questions::list, questions::answer,
         trajectory::snapshot, trajectory::stream, trajectory::steps,
+        trajectory::item, trajectory::blob,
         terminal::terminal,
         events::list, stream::stream,
         models::list,
@@ -223,6 +224,7 @@ impl AppState {
         ariadne_api::trajectory::TrajectorySnapshotDto, ariadne_api::trajectory::TrajectoryUpdateDto,
         ariadne_api::trajectory::TrajectoryOpDto, ariadne_api::trajectory::TrajectoryStepsDto,
         ariadne_api::trajectory::StepDto, ariadne_api::trajectory::ContentBlockDto,
+        ariadne_api::trajectory::ToolCallDetailDto, ariadne_api::trajectory::ToolDetailDto,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
@@ -470,6 +472,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/sessions/{id}/trajectory/turns/{turn_id}/steps",
             get(trajectory::steps),
+        )
+        .route(
+            "/v1/sessions/{id}/trajectory/items/{item_id}",
+            get(trajectory::item),
+        )
+        .route(
+            "/v1/sessions/{id}/trajectory/blobs/{event_id}/{index}",
+            get(trajectory::blob),
         )
         .route(
             "/v1/sessions/{id}/questions/{question_id}/answer",
