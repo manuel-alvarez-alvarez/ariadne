@@ -239,7 +239,13 @@ if [ -f "$dir/ssh-fast.env" ]; then
             *repo*) slow=$repo_fixture;;
         esac
         if [ $slow = 0 ]; then
-            printf '#%s %s\n' "$$" "$(printf '%s\0' "$@" | od -An -v -tx1 | tr -d ' \n')" >> "$dir/ssh-runs.jsonl"
+            # od's bytes come back in words split by spaces and newlines: the shell
+            # splits them and joins them again, so no second process strips them.
+            hex=$(printf '%s\0' "$@" | od -An -v -tx1)
+            set -- $hex
+            ifs=$IFS; IFS=
+            printf '#%s %s\n' "$$" "$*" >> "$dir/ssh-runs.jsonl"
+            IFS=$ifs
             case $last in
                 *MainPID*|*"pid = "*) echo "$service_pid"; exit 0;;
                 *"daemon status"*) printf '{"status": "ok", "pid": %s}\n' "$service_pid"; exit 0;;

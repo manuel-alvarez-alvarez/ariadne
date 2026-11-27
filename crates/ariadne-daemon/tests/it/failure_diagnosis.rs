@@ -583,26 +583,29 @@ async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
         true,
         &server,
         Timeouts {
-            failure_diagnosis_decision: Duration::from_secs(2),
+            failure_diagnosis_decision: Duration::from_millis(200),
             ..Timeouts::default()
         },
         true,
     )
     .await;
 
-    eventually(TIMEOUT, "the request to reach the model", || async {
-        !server.requests.lock().unwrap().is_empty()
+    // The model never answers, so the bound is the only thing that ends the
+    // request: the end is waited for, not guessed at from a clock a loaded
+    // machine stretches. A request that is cut before it reaches the model
+    // ended by the bound too, so that race is no part of what is proved.
+    eventually(TIMEOUT, "the bound to end the diagnosis", || async {
+        h.failure_diagnosis.ended() == 1
     })
     .await;
-    // The bound ends the request by dropping its connection, which frees the
-    // one worker the hanging handler holds: the end is seen, not guessed at
-    // from a clock a loaded machine stretches. A timed-out request reports
-    // nothing, so no later event marks it — only the continued absence of
-    // a diagnosis proves it never arrived.
-    eventually(TIMEOUT, "the bound to end the request", || async {
+    // Where the request did reach the model, its connection ended with it,
+    // which frees the one worker the hanging handler holds.
+    eventually(TIMEOUT, "the model to see the request end", || async {
         server.worker.available_permits() == 1
     })
     .await;
+    // A timed-out request reports nothing, so no later event marks it: only
+    // the continued absence of a diagnosis proves it never arrived.
     tokio::time::sleep(QUIET).await;
     assert!(
         events_of(&h, &agent.id, "session.diagnosis")

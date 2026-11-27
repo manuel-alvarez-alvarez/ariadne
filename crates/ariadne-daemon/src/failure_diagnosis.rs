@@ -14,7 +14,7 @@
 //! cannot run now — the model is off, busy, or silent — simply does not
 //! run, and the original error stands on its own, exactly as it does today.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -79,6 +79,8 @@ struct Inner {
     /// runs at a time: a request that finds one already running is skipped
     /// rather than queued.
     busy: AtomicBool,
+    /// How many diagnosis requests have ended, whichever way they did.
+    ended: AtomicUsize,
     /// The one diagnosis task in flight, if any — aborted at daemon
     /// shutdown so none outlives it.
     current: Mutex<Option<JoinHandle<()>>>,
@@ -94,6 +96,7 @@ struct BusyGuard(Arc<Inner>);
 impl Drop for BusyGuard {
     fn drop(&mut self) {
         self.0.busy.store(false, Ordering::Release);
+        self.0.ended.fetch_add(1, Ordering::Release);
         self.0.ai_permissions.clear_diagnosis_request();
     }
 }
@@ -112,6 +115,7 @@ impl FailureDiagnosis {
                 store,
                 timeout,
                 busy: AtomicBool::new(false),
+                ended: AtomicUsize::new(0),
                 current: Mutex::new(None),
             }),
         }
@@ -178,6 +182,13 @@ impl FailureDiagnosis {
             .ai_permissions
             .register_diagnosis_request(handle.abort_handle());
         *self.inner.current.lock().expect("failure diagnosis lock") = Some(handle);
+    }
+
+    /// How many diagnosis requests have ended, whichever way they did. Tests
+    /// wait on it, to see a bound end a request that a model never answers.
+    #[doc(hidden)]
+    pub fn ended(&self) -> usize {
+        self.inner.ended.load(Ordering::Acquire)
     }
 
     /// Cancel the one diagnosis task in flight, if any, so it does not
