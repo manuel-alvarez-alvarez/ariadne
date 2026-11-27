@@ -112,7 +112,7 @@ IFS= read -r parent < \"$dir/ssh-parent-pid\"\n\
 exec python3 -S \"$dir/ssh-stub.py\" \"$parent\" \"$dir\" \"$@\"\n";
 
 const STUB: &str = r#"
-import json, os, socket, sys, threading, time
+import json, os, sys, threading, time
 
 parent, dir, args = int(sys.argv[1]), sys.argv[2], sys.argv[3:]
 def orphaned():
@@ -161,7 +161,6 @@ if "-G" in args:
     sys.exit(0)
 
 if "-T" in args and script.get("setup"):
-    import subprocess
     setup = script["setup"]
     command = args[-1]
     if "runtime_bash" in setup:
@@ -243,13 +242,15 @@ if "-T" in args and script.get("setup"):
            "ARIADNE_SETUP_ARCH": setup.get("arch", "x86_64"),
            "ARIADNE_SETUP_SERVICE_FAIL": setup.get("fail_service", "")}
     if setup.get("runtime_disconnect") and "bounded provide" in command:
+        import subprocess
         child = subprocess.Popen(command, shell=True, env=env, stdin=subprocess.PIPE)
         # Model remote stdin closing after the test observes an active download.
         with open(setup["runtime_disconnect"], "rb") as gate:
             gate.read()
         child.stdin.close()
         sys.exit(child.wait())
-    sys.exit(subprocess.run(command, shell=True, env=env).returncode)
+    # The shell takes this process over, so a call costs one start, not two.
+    os.execve("/bin/sh", ["sh", "-c", command], env)
 
 if "-L" not in args and ("home" in script or script.get("home_hang")):
     sys.stderr.write(script.get("home_stderr", ""))
@@ -264,6 +265,9 @@ if "-L" not in args and ("home" in script or script.get("home_hang")):
 if not script.get("forward"):
     end()
 
+# Only a forward needs sockets; importing them costs more than the rest of
+# the start, and every ssh call of a setup pays that.
+import socket
 bind, port, remote = args[args.index("-L") + 1].split(":", 2)
 listener = socket.socket()
 listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
