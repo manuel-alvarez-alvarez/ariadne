@@ -1724,7 +1724,8 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     `ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`).
 99c1. Where `notices_more` is above zero, one row gives the count, open fold
     or closed, as `N more notices`. It is a disclosure with `aria-expanded`,
-    and it opens the steps of the turn
+    and it opens the steps of the turn. A warning or a compaction among the
+    steps read shows as a line of the turn too, once, in time order
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::counts the notices of a turn that its notices do not hold in one row, which opens the steps of the turn`).
 99d. An answered permission is a mark on the row of its call, found by the
     call's `permission` id or by its tool call id, and not a row of its own

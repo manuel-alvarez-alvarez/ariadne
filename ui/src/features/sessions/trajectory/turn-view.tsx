@@ -125,6 +125,12 @@ export const TurnView = memo(function TurnView({
   const lastRows = liveRows.slice(-LIVE_STEPS).filter((step) => !marked(step, lastCalls))
   for (const step of lastRows) shownIds.add(step.id)
   const errors = turn.attention.filter((step) => step.type === "error" && !shownIds.has(step.id))
+  // The turn's own notices, and the ones among the steps the console has read:
+  // the opened steps hold the notices `notices_more` counts.
+  const held = new Set(turn.notices.map((step) => step.id))
+  const notices = [...turn.notices, ...fold.steps.filter((step) => !held.has(step.id))]
+    .filter(isNotice)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
   const asked = turn.attention.filter(
     (step): step is QuestionStep => step.type === "question" && step.state === "open",
   )
@@ -193,7 +199,7 @@ export const TurnView = memo(function TurnView({
           <StepDetail host={host} sessionId={sessionId} step={step} now={now} />
         </div>
       ))}
-      {turn.notices.filter(isNotice).map((step) => (
+      {notices.map((step) => (
         <NoticeLine key={step.id} step={step} />
       ))}
       {turn.notices_more > 0 ? (

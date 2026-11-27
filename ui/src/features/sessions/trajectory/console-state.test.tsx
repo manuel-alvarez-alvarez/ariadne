@@ -492,8 +492,10 @@ it("counts the notices of a turn that its notices do not hold in one row, which 
   await user.click(within(drawn).getByRole("button", { name: "2 more notices" }))
 
   expect(activityLine(turn).getAttribute("aria-expanded")).toBe("true")
-  const rows = await within(drawn).findByRole("list", { name: "Steps of the turn" })
-  expect(rows).toBeTruthy()
+  await within(drawn).findByRole("list", { name: "Steps of the turn" })
+  // The notice the turn's own list left out shows once its steps are read, once.
+  await within(drawn).findByText("Pin fell back to sonnet")
+  expect(within(drawn).getAllByText("Rate limited · retrying")).toHaveLength(1)
   expect(requests.filter((one) => one.path.endsWith(`/turns/${turn.id}/steps`))).toHaveLength(1)
 })
 
