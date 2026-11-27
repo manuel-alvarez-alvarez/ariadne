@@ -64,7 +64,7 @@ pub(crate) fn turn(id: &str, state: &str, extra: Value) -> Value {
             "state": state, "stop_reason": null, "started_at": AT,
             "ended_at": if state == "running" { Value::Null } else { json!(AT) },
             "activity": activity(), "steps": [], "earlier_steps": 0,
-            "attention": [], "attention_more": 0, "answer": []
+            "attention": [], "attention_more": 0, "notices": [], "notices_more": 0, "answer": []
         }),
         extra,
     )

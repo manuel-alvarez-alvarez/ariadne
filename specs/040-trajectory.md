@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-core/src/event_facts.rs
   - crates/ariadne-store/src/events.rs
   - crates/ariadne-store/tests/plan_facts_migration.rs
+  - crates/ariadne-store/tests/notice_facts_migration.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/src/trajectory/fold.rs
   - crates/ariadne-daemon/src/trajectory/read.rs
@@ -58,7 +59,8 @@ Out:
    reads (a command's first line, a path, a line, a pattern, a URL), and
    whether it gives a preview and carries diffs, never the output itself; a message's `item_id`; a subagent announcement's id and state; a
    question's or a legacy request's id; a diagnosis's error; a stop's
-   reason; a compaction's id; a plan event's ACP `plan_id`; a permission request's options and whether it
+   reason; a compaction's id; a plan event's ACP `plan_id`; a notice's
+   severity; a permission request's options and whether it
    names an Ariadne tool; and a reply's option, decider and label. Facts are
    ids, states and kinds alone: no attention step's content is copied there,
    so a permission, a question and an error show from their payloads. The
@@ -76,7 +78,8 @@ Out:
    a store with that row does not fill again. A later fact of an older kind
    comes with a migration that clears the facts of that kind and the row of
    the fill, so the fill runs again on those rows alone. Migration 0032 does
-   this for `plan_update` and `plan_removed`, whose facts now name the plan.
+   this for `plan_update` and `plan_removed`, whose facts now name the plan,
+   and migration 0033 for `notice`, whose facts now name its severity.
 7. The fill is safe to stop. It reads 500 rows a batch, each batch in a
    transaction of its own, through a partial index of the rows with no
    facts. A fill that stops keeps its finished batches and goes on from the
@@ -103,8 +106,8 @@ Out:
    - `session_start`, `session_end` or a new prompt make it `interrupted`.
 12. When a turn ends, its text stops streaming. Its open tool calls become
    `cancelled` in a cancelled turn and `interrupted` in every other.
-13. A closed turn carries its prompt, its activity, its attention and its
-   answer, and no steps. `earlier_steps` counts its steps.
+13. A closed turn carries its prompt, its activity, its attention, its
+   notices and its answer, and no steps. `earlier_steps` counts its steps.
 14. A running turn carries its last 50 steps, and `earlier_steps` counts the
     rest. Fifty steps are about one screen of a client.
 15. `answer` is the content of the newest message of the session's own agent
@@ -127,6 +130,21 @@ Out:
     and the steps route of the turn returns each step `attention` does not
     hold. An answer to a permission or a question takes it out. The user
     decided this rule, through the orchestrator.
+
+    `notices` holds, open turn or closed, the `note` steps of severity
+    warning and the `compaction` steps of the turn's own lane, newest
+    first, and no more than 20: a screen of them, as for the errors. An
+    info note is in no `notices` and in no count. `notices_more` counts
+    each of these steps that `notices` does not hold, exact from the index
+    of the turn, which counts each warning note by its kind and its facts
+    and each compaction by its first event (rules 26, 27). A compaction in
+    `notices` shows the status and the summary of its newest update, and
+    its change is a `turn_upsert`. Each step in `notices` has the id the
+    steps route gives it, and the steps route of the turn returns each step
+    `notices` does not hold. The limit holds on the same three paths as
+    `attention`: the hub's refill loads the payloads of the steps its
+    `notices` lacks, a compaction with its newest update, as it does for
+    its `attention`. `attention` and `attention_more` hold no notice.
 17. `activity` counts the session's own lane of the turn, every event of it:
     - `tool_calls` counts the distinct tool call ids, and `steps` those and
       the subagents.
@@ -196,7 +214,9 @@ Out:
     A `notice` (021, rule 24) is a `note` step with the origin `notice`. Its
     text is the title, then ` · ` and the description where it has one. A
     `warning` or an `error` notice is a warning, and every other severity
-    is info: a note has no stronger severity.
+    is info: a note has no stronger severity. The fold takes the severity
+    from the notice's facts (rule 3), so a head counts a warning as its
+    payload does.
 27. `compaction_update` opens a `compaction` step by `compaction_id`, and a
     later one changes it: its status, its summary and its error. A stored
     update holds the whole summary so far, so its summary replaces the
@@ -294,8 +314,9 @@ Out:
 38. A read folds the heads of the turns it shows, then loads the rows a
     client sees, in this order, as far as the budget goes:
     - each shown turn whole, newest turn first: its prompt, its answer, its
-      newest 100 permissions and questions that wait, and its newest 20
-      errors with their diagnoses, the limits of rule 16. The first turn
+      newest 100 permissions and questions that wait, its newest 20 errors
+      with their diagnoses, and its newest 20 notices, each compaction with
+      its newest update, the limits of rule 16. The first turn
       whose whole does not fit is not shown, nor any older one, so each shown
       turn holds the `attention` a warm hub holds. The newest turn shows its
       prompt and answer even where its whole does not fit;
@@ -669,6 +690,28 @@ Out:
     as a warm fold does, with the earlier turn shown, left out, or past the
     budget (rules 27, 30, 34, 44):
     `read.rs::a_child_known_from_an_earlier_turn_opens_no_step_in_a_later_one`.
+74. A running and a closed turn carry their warning notes and compactions
+    in `notices`, newest first, and no info note; a compaction there shows
+    its newest update, its change is a `turn_upsert`, and `attention` holds
+    none of them (rules 13, 16):
+    `fold.rs::a_turn_carries_its_warnings_and_compactions_in_its_notices`.
+75. A closed turn of more than 20 notices holds the newest 20, each
+    compaction with its newest update, counts the rest in `notices_more`,
+    counts no info note, and the steps route returns each notice under the
+    same id (rules 16, 38, 44):
+    `read.rs::a_turn_of_many_notices_holds_the_newest_twenty_and_counts_the_rest`.
+76. A warm fold, a cold read, a `turn_upsert` and a hub's refill of a short
+    read hold the same `notices` and `notices_more` (rule 16):
+    `read.rs::a_warm_fold_and_a_cold_read_hold_the_same_notices`.
+77. A turn of many more notices than the budget loads the budget at most,
+    and counts each notice it does not hold (rules 16, 36):
+    `read.rs::a_turn_of_many_notices_loads_the_budget_at_most`.
+78. A notice names its severity in its facts, and the upgrade fills the
+    facts of the notices stored before it (rules 3, 6):
+    `event_facts.rs::a_notice_names_its_severity` and
+    `notice_facts_migration.rs::the_upgrade_fills_the_severity_of_older_notices`.
+79. `ui/openapi.json` and `ui/src/api/schema.d.ts` hold `notices` and
+    `notices_more`: `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

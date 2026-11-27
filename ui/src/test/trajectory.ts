@@ -38,6 +38,8 @@ export function aTurn(overrides: Partial<TurnDto> = {}): TurnDto {
     },
     attention: [],
     attention_more: 0,
+    notices: [],
+    notices_more: 0,
     earlier_steps: 0,
     steps: [],
     ...overrides,

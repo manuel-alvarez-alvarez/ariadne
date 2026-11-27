@@ -17,7 +17,7 @@ use ariadne_core::SessionStatus;
 use ariadne_core::event_facts::EventFacts;
 use ariadne_store::{AgentEvent, EventHead, Store, StoreError};
 
-use super::fold::{ATTENTION_ERRORS, ATTENTION_WAITS, Fold, STEP_WINDOW, TurnIndex};
+use super::fold::{ATTENTION_ERRORS, ATTENTION_WAITS, Fold, NOTICES, STEP_WINDOW, TurnIndex};
 
 /// The most full event payloads one read loads: an open of a trajectory, a
 /// page of older turns, or a page of a turn's steps. Five hundred events
@@ -239,6 +239,21 @@ fn attention(turn: &TurnIndex, errors: bool) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The steps of a turn's `notices`, newest first, with the rows that show
+/// each: its newest warning notes and compactions, a compaction with its
+/// newest update.
+fn notices(turn: &TurnIndex) -> Vec<Vec<String>> {
+    let Some(lane) = turn.lanes.get(MAIN_LANE) else {
+        return Vec::new();
+    };
+    lane.notices
+        .iter()
+        .rev()
+        .take(NOTICES)
+        .map(|id| lane.rows(id))
+        .collect()
+}
+
 /// The last `STEP_WINDOW` steps of a lane, newest first, each with the rows
 /// that show it.
 fn window(turn: &TurnIndex, lane: &str) -> Vec<Vec<String>> {
@@ -351,9 +366,9 @@ pub(crate) async fn read_turns_upto(
         ids: BTreeSet::new(),
         budget,
     };
-    // Each shown turn whole, newest first: its prompt and answer, and the
-    // waiting steps and the errors its `attention` holds, so a cold read
-    // holds what a warm hub holds. A turn that does not fit is not shown, nor
+    // Each shown turn whole, newest first: its prompt and answer, the
+    // waiting steps and the errors its `attention` holds, and the steps its
+    // `notices` holds, so a cold read holds what a warm hub holds. A turn that does not fit is not shown, nor
     // any older one. The newest turn's step window comes after them.
     let mut first_shown = None;
     for (rank, &at) in shown.iter().rev().enumerate() {
@@ -364,6 +379,7 @@ pub(crate) async fn read_turns_upto(
             .into_iter()
             .chain(attention(turn, false).into_iter().flatten())
             .chain(attention(turn, true).into_iter().flatten())
+            .chain(notices(turn).into_iter().flatten())
             .collect();
         if !picks.take(essentials) && !(rank == 0 && picks.take(mandatory(turn, prompt(at)))) {
             break;
@@ -2268,5 +2284,219 @@ mod tests {
             assert_eq!(turn.attention.len(), super::ATTENTION_WAITS + 20);
             assert_eq!(turn.attention_more, 0);
         }
+    }
+
+    /// Commit a turn of 30 warning notices, 10 info notices, a pin fallback
+    /// and 5 compactions, each compaction with a later update, and answer
+    /// the turn and the ids of its notice steps, oldest first.
+    async fn noticed_turn(store: &Store, session: &str) -> (String, Vec<String>) {
+        let turn = prompt(store, session).await;
+        let mut notices = Vec::new();
+        notices.push(commit(store, session, "session.pin_fallback", json!({})).await);
+        for n in 0..30 {
+            let severity = if n % 2 == 0 { "warning" } else { "error" };
+            notices.push(
+                commit(
+                    store,
+                    session,
+                    "notice",
+                    json!({"severity": severity, "title": format!("warn {n}")}),
+                )
+                .await,
+            );
+            if n % 3 == 0 {
+                commit(
+                    store,
+                    session,
+                    "notice",
+                    json!({"severity": "info", "title": format!("info {n}")}),
+                )
+                .await;
+            }
+            if n % 6 == 5 {
+                let id = format!("k-{n}");
+                notices.push(
+                    commit(
+                        store,
+                        session,
+                        "compaction_update",
+                        json!({"compaction_id": id, "status": "running"}),
+                    )
+                    .await,
+                );
+                commit(
+                    store,
+                    session,
+                    "compaction_update",
+                    json!({"compaction_id": id, "status": "completed",
+                           "summary": format!("kept {n}")}),
+                )
+                .await;
+            }
+        }
+        (turn, notices)
+    }
+
+    fn notice_ids(turn: &ariadne_api::trajectory::TurnDto) -> Vec<String> {
+        turn.notices
+            .iter()
+            .map(|step| step_id(step).to_string())
+            .collect()
+    }
+
+    /// A closed turn of more than 20 notices holds the newest 20, newest
+    /// first, each compaction with its newest update; `notices_more` counts
+    /// the rest, and no info note is in either. The steps route returns
+    /// each notice under the same id (rules 26, 27).
+    #[tokio::test]
+    async fn a_turn_of_many_notices_holds_the_newest_twenty_and_counts_the_rest() {
+        let (store, session, _dir) = session().await;
+        let (turn, notices) = noticed_turn(&store, &session).await;
+        stop(&store, &session).await;
+        assert_eq!(notices.len(), 36);
+
+        let fold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        let shown = fold.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(shown.state, TurnState::Completed);
+        let newest: Vec<String> = notices.iter().rev().take(20).cloned().collect();
+        assert_eq!(
+            notice_ids(&shown),
+            newest,
+            "the newest twenty, newest first"
+        );
+        assert_eq!(shown.notices_more, 16);
+        assert!(shown.attention.is_empty(), "attention does not change");
+        for step in &shown.notices {
+            match step {
+                StepDto::Note(note) => {
+                    assert_eq!(
+                        note.severity,
+                        ariadne_api::trajectory::NoteSeverity::Warning
+                    );
+                }
+                StepDto::Compaction(compaction) => {
+                    assert_eq!(
+                        compaction.status,
+                        ariadne_api::trajectory::CompactionStatus::Completed
+                    );
+                    let n = compaction.compaction_id.trim_start_matches("k-");
+                    assert_eq!(
+                        compaction.summary,
+                        vec![ariadne_api::trajectory::ContentBlockDto::Text {
+                            text: format!("kept {n}")
+                        }]
+                    );
+                }
+                other => panic!("not a notice: {other:?}"),
+            }
+        }
+
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, None, 200, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        let paged = folded(&session, page.read).held_steps(&turn, MAIN_LANE);
+        let paged_ids: Vec<String> = paged
+            .iter()
+            .filter(|step| match step {
+                StepDto::Note(note) => {
+                    note.severity == ariadne_api::trajectory::NoteSeverity::Warning
+                }
+                StepDto::Compaction(_) => true,
+                _ => false,
+            })
+            .map(|step| step_id(step).to_string())
+            .collect();
+        assert_eq!(paged_ids, notices, "the steps route returns each notice");
+        for notice in &shown.notices {
+            assert!(
+                paged.contains(notice),
+                "the same step under the same id: {notice:?}"
+            );
+        }
+    }
+
+    /// A running turn's `notices` are the same from a warm fold, a cold
+    /// read and its `turn_upsert`; a cold read too small for the turn's
+    /// whole is filled to the same window (rule 16).
+    #[tokio::test]
+    async fn a_warm_fold_and_a_cold_read_hold_the_same_notices() {
+        let (store, session, _dir) = session().await;
+        let (_, notices) = noticed_turn(&store, &session).await;
+
+        let mut warm = scratch(&session);
+        let mut last_ops = Vec::new();
+        for event in store.list_session_events(&session).await.unwrap() {
+            last_ops = warm.apply(&crate::http::convert::event_dto(event), true);
+        }
+        let cold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        let warm_turn = warm.snapshot(0, 20, None).turns[0].clone();
+        let cold_turn = cold.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(warm_turn.state, TurnState::Running);
+        let newest: Vec<String> = notices.iter().rev().take(20).cloned().collect();
+        assert_eq!(notice_ids(&warm_turn), newest);
+        assert_eq!(warm_turn.notices_more, 16);
+        assert_eq!(cold_turn.notices, warm_turn.notices);
+        assert_eq!(cold_turn.notices_more, warm_turn.notices_more);
+        let update = last_ops
+            .iter()
+            .find_map(|op| match op {
+                TrajectoryOpDto::TurnUpsert { turn } => Some(turn),
+                _ => None,
+            })
+            .expect("the last update changes its turn");
+        assert_eq!(update.notices, warm_turn.notices);
+        assert_eq!(update.notices_more, warm_turn.notices_more);
+
+        // A read that holds only the prompt: the hub fills the notices in.
+        let mut short = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 1)
+                .await
+                .unwrap(),
+        );
+        let missing = short.missing_attention();
+        assert!(!missing.is_empty(), "the window the short read lacks");
+        for event in store.events_by_ids(&missing).await.unwrap() {
+            short.fill(&crate::http::convert::event_dto(event));
+        }
+        let filled = short.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(filled.notices, warm_turn.notices);
+        assert_eq!(filled.notices_more, warm_turn.notices_more);
+    }
+
+    /// A turn of many more notices than the budget loads the budget at
+    /// most, and counts every notice it does not hold (rules 16, 36).
+    #[tokio::test]
+    async fn a_turn_of_many_notices_loads_the_budget_at_most() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        for n in 0..1200 {
+            commit(
+                &store,
+                &session,
+                "notice",
+                json!({"severity": "warning", "title": format!("warn {n}")}),
+            )
+            .await;
+        }
+
+        let read = read_turns(&store, &session, None, 20, None, 500)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 500, "loaded {}", read.loaded());
+        let shown = folded(&session, read).snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(shown.notices.len(), 20);
+        assert_eq!(shown.notices_more, 1180);
     }
 }
