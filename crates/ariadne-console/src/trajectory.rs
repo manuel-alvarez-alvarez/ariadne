@@ -9,8 +9,9 @@
 mod print;
 mod view;
 
+pub(crate) use print::activity;
 pub use print::{Printer, kind, settled, text};
 pub use view::{Gap, Touched, View, step_at, step_id, step_turn};
 
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;

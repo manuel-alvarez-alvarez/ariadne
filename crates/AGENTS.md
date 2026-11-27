@@ -11,7 +11,7 @@ ariadne-core     id, models, state_machine, workflow, ACP and the binary/path pr
 ariadne-api      REST DTOs and errors for agents, goals, tasks, sessions, skills and workflows
 ariadne-store    SQLite repositories, migrations, and defaults that seed shipped skills and workflows
 ariadne-client   REST and SSE client plus home, socket and TCP endpoint resolution for CLI and daemon
-ariadne-console  terminal console: ANSI, markdown, transcript, theme and inline TUI; daemon hosts its terminal WebSocket
+ariadne-console  terminal console: ANSI, markdown, transcript, trajectory, theme, inline TUI and full-screen console; daemon hosts its terminal WebSocket
 ariadne-daemon   ariadned: HTTP API, scheduler, ACP, agents, git, forge, webhooks, tunnel, AI permissions, stats and failure diagnosis
 ariadne-cli      ariadne commands, output, completion, MCP server, attach console and store-backed doctor
 ```

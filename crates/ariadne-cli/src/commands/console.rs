@@ -10,6 +10,7 @@
 //! `kind · summary` line for each finished item of the trajectory (040),
 //! which is what a script reads.
 
+mod app;
 mod tui;
 
 use std::collections::HashMap;
@@ -34,12 +35,16 @@ use crate::output::{Format, note, pager};
 
 /// Open a session's ACP console.
 ///
-/// A terminal on both ends gets the inline TUI. Anything else gets the plain
-/// line protocol, so `ariadne attach <id> < answers.txt` reads and writes
-/// lines a script can follow.
-pub(crate) async fn attach(client: &Client, id: &str) -> Result<()> {
+/// A terminal on both ends gets the inline TUI, or the full-screen console
+/// where `full_screen` asks for it. Anything else gets the plain line
+/// protocol, so `ariadne attach <id> < answers.txt` reads and writes lines a
+/// script can follow.
+pub(crate) async fn attach(client: &Client, id: &str, full_screen: bool) -> Result<()> {
     if tui::on_a_terminal() {
-        return tui::attach(client, id).await;
+        return match full_screen {
+            true => app::attach(client, id).await,
+            false => tui::attach(client, id).await,
+        };
     }
     run_with_io(
         client,

@@ -20,6 +20,8 @@ ariadne-core = { workspace = true, features = ["clap"] }
 ariadne-store = { workspace = true }
 anstyle = { workspace = true }
 anyhow = { workspace = true }
+# The text `y` copies, as the OSC 52 sequence carries it to the clipboard.
+base64 = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }

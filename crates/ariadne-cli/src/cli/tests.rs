@@ -1408,6 +1408,30 @@ fn a_hidden_format_flag_is_still_parsed() {
     assert_eq!(parse(&["ariadne", "attach", "x"]).format, Format::Table);
 }
 
+/// `--full-screen` opens the full-screen console, and stays out of the help
+/// until that console is the default.
+#[test]
+fn the_full_screen_flag_of_attach_is_parsed_and_hidden() {
+    let Command::Attach { full_screen, .. } =
+        parse(&["ariadne", "attach", "x", "--full-screen"]).command
+    else {
+        panic!("attach");
+    };
+    assert!(full_screen);
+    let Command::Attach { full_screen, .. } = parse(&["ariadne", "attach", "x"]).command else {
+        panic!("attach");
+    };
+    assert!(!full_screen);
+    assert!(!advertises(&command(), &["attach"], "full_screen"));
+    assert!(
+        command()
+            .find_subcommand("attach")
+            .unwrap()
+            .get_arguments()
+            .any(|arg| arg.get_id() == "full_screen")
+    );
+}
+
 /// The flag list is replaced whole, so a line has to say how: name the
 /// flags, clear them, or go back to the default — and never two of those.
 #[test]

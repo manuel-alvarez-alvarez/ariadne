@@ -390,7 +390,7 @@ pub(crate) fn questions(fields: &[FormField]) -> Vec<FormField> {
 }
 
 /// The fields of a form, in the order the schema lists them.
-fn form_fields(schema: &Value, message: &str) -> Vec<FormField> {
+pub(crate) fn form_fields(schema: &Value, message: &str) -> Vec<FormField> {
     let required: Vec<&str> = schema
         .get("required")
         .and_then(Value::as_array)

@@ -257,7 +257,7 @@ fn options(permission: &PermissionStepDto) -> String {
 }
 
 /// The state of a turn and what it did, counted, in one line.
-fn activity(turn: &TurnDto) -> String {
+pub(crate) fn activity(turn: &TurnDto) -> String {
     let state = match turn.state {
         TurnState::Running => "running".to_string(),
         TurnState::Completed => match turn.stop_reason.as_deref() {
