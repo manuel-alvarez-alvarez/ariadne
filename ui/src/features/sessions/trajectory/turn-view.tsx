@@ -128,9 +128,12 @@ export const TurnView = memo(function TurnView({
   // The turn's own notices, and the ones among the steps the console has read:
   // the opened steps hold the notices `notices_more` counts.
   const held = new Set(turn.notices.map((step) => step.id))
-  const notices = [...turn.notices, ...fold.steps.filter((step) => !held.has(step.id))]
+  // A closed fold shows the turn's own notices only: a page it loaded is
+  // dropped when the pane mounts again, so its rows would not survive.
+  const read = open ? fold.steps.filter((step) => !held.has(step.id)) : []
+  const notices = [...turn.notices, ...read]
     .filter(isNotice)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
   const asked = turn.attention.filter(
     (step): step is QuestionStep => step.type === "question" && step.state === "open",
   )

@@ -420,7 +420,7 @@ with the arrow keys or its number key. The rest of the command draws in your
 terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
 When an agent asks you a question, it uses the question tool of its own
 client: the question, the options you can pick, the option it recommends
-first, and why. The console draws the question as a form above the input,
+first, and why. The console draws the question as a form inside the turn that asked it,
 one field at a time, under a `question` rule:
 
 ```
