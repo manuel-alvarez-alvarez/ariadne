@@ -201,6 +201,12 @@ Out:
     change, so a read loads it beside the opener. A compaction holds one
     step in its lane, found by the step its lane opened for it: another lane
     may run a compaction of the same ACP id.
+    - A compaction belongs to the turn of its first event. An update after a
+      later prompt changes that step, and the later turn counts no step for
+      it. A read seeds the first event of each compaction from the heads, so
+      an update whose first event the read does not hold opens no step.
+    - The steps route loads the newest update of each compaction its page
+      shows, up to the read's bound, also past the turn.
 28. A content block with bytes carries a `blob` URL under
     `/v1/sessions/{id}/trajectory/blobs/`, and never the bytes. Adjacent text
     blocks read as one: a stored whole keeps a block per chunk (021, rule 6),
@@ -219,7 +225,9 @@ Out:
 32. A plan is the plan of a lane and an ACP `plan_id`. Its `plan_id` on the
     wire is the id of its first stored event, so every fold of the session
     names it the same.
-    - A read names each plan by its first event from the heads, whatever
+    - A plan is named by its first event, a `plan_removed` included: a
+      removal that comes before the plan's first update names the plan. A
+      read names each plan by its first event from the heads, whatever
       payloads its budget loads. A later update of a plan the read did not
       load keeps that id.
     - A `plan_update` replaces the plan of its lane and `plan_id`: an
@@ -388,8 +396,9 @@ Out:
     (rules 17, 38): `read.rs::an_oversized_closed_turn_keeps_its_answer_and_exact_activity`.
 21. A running turn's window is its last steps, whatever events follow them
     (rule 38): `read.rs::a_running_turns_window_is_its_last_steps_whatever_follows_them`.
-22. A turn of thousands of events loads the budget at most (rule 36):
-    `read.rs::a_turn_of_thousands_of_events_loads_the_budget_at_most`.
+22. A turn of many more events than the budget loads the budget at most
+    (rule 36):
+    `read.rs::a_turn_of_many_more_events_than_the_budget_loads_the_budget_at_most`.
 23. Attention outside the window keeps its turn, and a later answer finds
     it (rules 16, 35, 39): `read.rs::attention_outside_the_window_keeps_its_turn`.
 24. A subagent opened before the window keeps its step and parent
@@ -491,19 +500,28 @@ Out:
 57. The header of a closed turn is exact from its heads, with notices, a
     compaction, a plan and an abandoned call in it (rules 17, 34, 38):
     `trajectory_acp.rs::the_header_of_a_closed_turn_stays_exact`. A turn of
-    thousands of events takes the same path:
-    `read.rs::a_turn_of_thousands_of_events_loads_the_budget_at_most`.
+    many more events than the budget takes the same path:
+    `read.rs::a_turn_of_many_more_events_than_the_budget_loads_the_budget_at_most`.
 58. A plan of each kind folds by its lane and `plan_id`
     (rule 32): `fold.rs::a_plan_keeps_the_id_of_its_first_event`.
 59. A plan past the read budget keeps its first id for a later update
     (rules 32, 36):
     `read.rs::a_plan_past_the_budget_keeps_its_first_id_for_a_later_update`.
-60. A compaction takes each whole summary, an empty one included, and keeps
-    to its lane (rule 27):
+60. A compaction takes each whole summary, an empty one included, and
+    changes the step of its own lane alone (rule 27):
     `fold.rs::a_compaction_takes_each_whole_summary_and_keeps_to_its_lane`.
 61. A subagent's notice is a note of its lane (rules 26, 31):
     `fold.rs::a_subagents_notice_is_a_note_of_its_lane`.
-62. A reported empty command list stands against a stored one, and a store
+62. A compaction across a prompt changes the step of the turn it began in,
+    and the later turn counts no step for it, in a warm fold and a rebuilt
+    one, the steps route included (rules 17, 27):
+    `fold.rs::a_compaction_across_a_prompt_changes_its_first_step` and
+    `read.rs::a_rebuilt_fold_names_plans_and_compactions_by_their_first_event`.
+63. A removal before a plan's first update names the plan, in a warm fold
+    and a rebuilt one (rule 32):
+    `fold.rs::a_removal_before_a_plans_first_update_names_the_plan` and
+    `read.rs::a_rebuilt_fold_names_plans_and_compactions_by_their_first_event`.
+64. A reported empty command list stands against a stored one, and a store
     tells a reported empty state from no report (rule 33):
     `fold.rs::a_reported_empty_command_list_stands_against_a_stored_one` and
     `crates/ariadne-store/tests/store.rs::a_reported_empty_state_is_told_from_no_report`.

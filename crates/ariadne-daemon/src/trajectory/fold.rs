@@ -62,6 +62,10 @@ pub(crate) struct Fold {
     /// The id of the first stored event of each plan, from the heads of a
     /// read: a plan whose first payload the read did not load keeps it.
     plan_firsts: HashMap<PlanKey, String>,
+    /// Each compaction, by its lane and its compaction id: the step its
+    /// first event opened, in whichever turn that was. A later update
+    /// changes that step, also across a prompt.
+    compactions: HashMap<(String, String), CompactionAt>,
     session: SessionStateDto,
     /// The permissions no reply has answered yet, oldest first. A reply
     /// answers the newest.
@@ -98,8 +102,6 @@ pub(crate) struct Lane {
     thoughts: u64,
     subagents: BTreeSet<String>,
     items: BTreeSet<String>,
-    /// Each compaction's step, by its compaction id.
-    compactions: HashMap<String, String>,
     pub(crate) errors: Vec<String>,
     /// The run of text that streams now: a thought or not, and its step.
     streaming: Option<(bool, String)>,
@@ -148,6 +150,15 @@ struct Call {
     status: ToolCallStatus,
     kind: Option<String>,
     paths: Vec<String>,
+}
+
+/// Where a compaction's step is: the id of its first event, and the turn
+/// that holds it. A read seeds a compaction whose first event comes before
+/// the turns it holds with no turn: its updates then change nothing here.
+#[derive(Debug, Clone)]
+struct CompactionAt {
+    step: String,
+    turn: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -268,6 +279,7 @@ impl Fold {
             subagents: Vec::new(),
             plans: Vec::new(),
             plan_firsts: HashMap::new(),
+            compactions: HashMap::new(),
             session,
             pending: Vec::new(),
             questions: HashMap::new(),
@@ -287,6 +299,18 @@ impl Fold {
         self.plan_firsts
             .entry((lane.to_string(), plan))
             .or_insert_with(|| first.to_string());
+    }
+
+    /// Name the compaction of `lane` and `compaction_id` by `first`, the id
+    /// of its first stored event. Its first event, where the fold reads it,
+    /// opens its step; an update without it opens none.
+    pub(crate) fn seed_compaction(&mut self, lane: &str, compaction_id: &str, first: &str) {
+        self.compactions
+            .entry((lane.to_string(), compaction_id.to_string()))
+            .or_insert_with(|| CompactionAt {
+                step: first.to_string(),
+                turn: None,
+            });
     }
 
     /// Whether turns older than the fold's first exist in the store.
@@ -721,8 +745,17 @@ impl Fold {
                 };
                 self.note(input, text, severity, ops);
             }
-            "plan" | "plan_update" => self.plan(input, ops),
-            "plan_removed" => self.plan_removed(input, ops),
+            "plan" | "plan_update" | "plan_removed" => {
+                // A plan is named by its first event, a removal included, on
+                // every path: the read seeds the same from the heads.
+                self.plan_firsts
+                    .entry((input.lane.clone(), input.facts.plan.clone()))
+                    .or_insert_with(|| input.id.to_string());
+                match input.kind {
+                    "plan_removed" => self.plan_removed(input, ops),
+                    _ => self.plan(input, ops),
+                }
+            }
             "notice" => self.notice(input, ops),
             "subagent_update" => self.subagent(input, ops),
             "compaction_update" => self.compaction(input, ops),
@@ -1620,7 +1653,6 @@ impl Fold {
     }
 
     fn compaction(&mut self, input: &Input, ops: &mut Ops) {
-        let index = self.turn_for(input, ops);
         let compaction_id = input
             .facts
             .compaction
@@ -1644,23 +1676,28 @@ impl Fold {
             _ => None,
         };
         let error = payload.and_then(|payload| string_at(payload, "/error"));
-        let turn = &mut self.turns[index];
-        let lane = turn.lanes.entry(input.lane.clone()).or_default();
-        if let Some(step) = lane.compactions.get(&compaction_id).cloned() {
-            // A later update is the compaction's newest change: a read loads
-            // it beside the opener, so the step shows its status and summary.
+        let key = (input.lane.clone(), compaction_id.clone());
+        if let Some(at) = self.compactions.get(&key).cloned()
+            && at.step != input.id
+        {
+            // A later update changes the step the compaction's first event
+            // opened, in the turn that holds it, and counts nothing new. Where
+            // the fold does not hold that turn, it changes nothing here.
+            let Some(turn) = at.turn.and_then(|turn| self.turn_mut(&turn)) else {
+                return;
+            };
+            let lane = turn.lanes.entry(input.lane.clone()).or_default();
+            // The newest change: a read loads it beside the opener, so the
+            // step shows its status and summary.
             if let Some(row) = input.row() {
-                lane.follows.insert(step.clone(), row.to_string());
+                lane.follows.insert(at.step.clone(), row.to_string());
             }
             ops.touch(&turn.id);
-            // The step this lane opened for the compaction, by its id: another
-            // lane may run a compaction of the same ACP id.
-            let found = turn
-                .steps
-                .iter_mut()
-                .find(|kept| step_id(kept) == step.as_str());
-            if let Some(step) = found
-                && let StepDto::Compaction(kept) = step
+            // By id and lane: a subagent's first event also opens its
+            // subagent step in the main lane, under the same id.
+            if let Some(step) = turn.steps.iter_mut().find(|kept| {
+                step_id(kept) == at.step.as_str() && lane_of(kept) == input.lane.as_str()
+            }) && let StepDto::Compaction(kept) = step
             {
                 if payload.is_some() {
                     kept.status = status;
@@ -1673,9 +1710,15 @@ impl Fold {
             }
             return;
         }
-        lane.compactions
-            .insert(compaction_id.clone(), input.id.to_string());
-        let turn_id = turn.id.clone();
+        let index = self.turn_for(input, ops);
+        let turn_id = self.turns[index].id.clone();
+        self.compactions.insert(
+            key,
+            CompactionAt {
+                step: input.id.to_string(),
+                turn: Some(turn_id.clone()),
+            },
+        );
         let step = input.full.map(|event| {
             StepDto::Compaction(CompactionStepDto {
                 id: event.id.clone(),
@@ -2715,8 +2758,8 @@ mod tests {
     }
 
     /// A compaction's update replaces its summary, an empty one included,
-    /// and a compaction of the same ACP id in another lane is a step of its
-    /// own (rule 27).
+    /// and changes the step of its own lane: a compaction of the same ACP id
+    /// in another lane keeps its step (rule 27).
     #[test]
     fn a_compaction_takes_each_whole_summary_and_keeps_to_its_lane() {
         let mut s = Session::new();
@@ -2734,28 +2777,86 @@ mod tests {
         );
         s.event(
             "compaction_update",
-            json!({"compaction_id": "c-1", "status": "completed", "summary": []}),
+            json!({"compaction_id": "c-1", "status": "completed", "summary": [],
+                   "subagent": {"id": "child-1"}}),
         );
-
-        let steps = s.fold.held_steps(&turn, MAIN_LANE);
-        let compaction = steps
-            .iter()
-            .find_map(|step| match step {
-                StepDto::Compaction(kept) => Some(kept),
-                _ => None,
-            })
-            .expect("the main lane's compaction");
-        assert_eq!(compaction.id, main);
-        assert_eq!(compaction.status, CompactionStatus::Completed);
-        assert!(compaction.summary.is_empty(), "the cleared summary");
 
         let steps = s.fold.held_steps(&turn, "child-1");
         let [StepDto::Compaction(theirs)] = steps.as_slice() else {
             panic!("the child's compaction alone: {steps:?}");
         };
         assert_eq!(theirs.id, child);
-        assert_eq!(theirs.status, CompactionStatus::Running);
-        assert_eq!(theirs.summary, text("Child"));
+        assert_eq!(theirs.status, CompactionStatus::Completed);
+        assert!(theirs.summary.is_empty(), "the cleared summary");
+
+        let steps = s.fold.held_steps(&turn, MAIN_LANE);
+        let ours: Vec<_> = steps
+            .iter()
+            .filter_map(|step| match step {
+                StepDto::Compaction(kept) => Some(kept),
+                _ => None,
+            })
+            .collect();
+        let [ours] = ours.as_slice() else {
+            panic!("the main lane's compaction alone: {ours:?}");
+        };
+        assert_eq!(ours.id, main);
+        assert_eq!(
+            ours.status,
+            CompactionStatus::Running,
+            "the main step stays"
+        );
+        assert_eq!(ours.summary, text("Draft"));
+    }
+
+    /// A compaction that a later turn finishes changes the step of the turn
+    /// it began in, and the later turn counts no step for it (rules 17, 27).
+    #[test]
+    fn a_compaction_across_a_prompt_changes_its_first_step() {
+        let mut s = Session::new();
+        let first = s.prompt("Go");
+        let (opened, _) = s.event(
+            "compaction_update",
+            json!({"compaction_id": "c-2", "status": "in_progress"}),
+        );
+        s.stop();
+        let second = s.prompt("Again");
+        s.event(
+            "compaction_update",
+            json!({"compaction_id": "c-2", "status": "completed",
+                   "summary": [{"type": "text", "text": "Kept."}]}),
+        );
+        s.stop();
+
+        let steps = s.fold.held_steps(&first, MAIN_LANE);
+        let [StepDto::Compaction(kept)] = steps.as_slice() else {
+            panic!("the first turn's compaction: {steps:?}");
+        };
+        assert_eq!(kept.id, opened);
+        assert_eq!(kept.status, CompactionStatus::Completed);
+        assert_eq!(kept.summary, text("Kept."));
+        assert!(s.fold.held_steps(&second, MAIN_LANE).is_empty());
+        let snapshot = s.fold.snapshot(0, 20, None);
+        let counts: Vec<u64> = snapshot.turns.iter().map(|t| t.earlier_steps).collect();
+        assert_eq!(counts, [1, 0], "one step, in the turn it began in");
+    }
+
+    /// A removal that comes before a plan's first update names the plan, as
+    /// a read of the store names it (rule 32).
+    #[test]
+    fn a_removal_before_a_plans_first_update_names_the_plan() {
+        let mut s = Session::new();
+        s.prompt("Go");
+        let (removal, nothing) = s.event("plan_removed", json!({"plan_id": "p-1"}));
+        assert!(nothing.is_empty(), "no plan to remove: {nothing:?}");
+        s.event(
+            "plan_update",
+            json!({"plan": {"type": "items", "plan_id": "p-1", "entries": []}}),
+        );
+        let plans = s.fold.snapshot(0, 20, None).plans;
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].plan_id, removal);
+        assert!(!plans[0].removed);
     }
 
     /// A subagent's notice is a note of its lane, and the main lane does not
