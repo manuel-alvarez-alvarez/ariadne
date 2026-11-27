@@ -8659,7 +8659,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying the newest page of recorded events (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. The chunks and the progress are live only: they are never stored and never reach `/v1/events`. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
+            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying the newest page of recorded events (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. Chunks are live only: they are never stored and never reach `/v1/events`. Tool call progress is stored at most once in each interval, and `/v1/events` lists what is stored; the rest is live only. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
             200: {
                 headers: {
                     [name: string]: unknown;
