@@ -101,9 +101,11 @@ Out:
    `text`, the text as it was submitted: the first turn of a launch carries
    the seat brief in its content, ahead of that text. The events of a
    session before its first prompt are a turn with no prompt, opened by the
-   first of them, unless they contain only lifecycle notes.
+   first event that is not a lifecycle note.
+   Lifecycle notes alone before the first prompt open no turn.
 10. An event joins the running turn. Where no turn runs, it joins the newest
-   turn. Lifecycle notes received without a running turn wait for the next prompt.
+   turn. A lifecycle note received while a turn runs stays in that turn.
+    A lifecycle note received without a running turn starts the next turn.
 11. A turn's `state` is `running` until one of these ends it:
    - `stop` makes it `cancelled` for the stop reason `cancelled`, and
      `completed` for every other reason. The turn keeps the reason.
@@ -116,7 +118,7 @@ Out:
 14. A running turn carries its last 50 steps, and `earlier_steps` counts the
     rest. Fifty steps are about one screen of a client.
 15. `answer` is the content of the newest message of the session's own agent
-    in the turn.
+    in the turn. `answer_step_id` names that message step, or is null.
 16. `attention` holds, open turn or closed, the waiting permissions and the
     open questions of the turn, newest first, up to the read limit of 100,
     and then the newest 20 errors of the turn, newest first, and no more.
@@ -182,7 +184,8 @@ Out:
     of the same lane and tool call id. Each change adds one to `detail_rev`.
     An update with no open call opens a step. A `tool_call_abandoned` ends
     its call `cancelled` for the reason `cancelled`, and `interrupted` for
-    every other reason (rule 4). A new open shows a running call with the
+    every other reason (rule 4). A pending call reads as `running` while its turn runs.
+    A call waiting for permission stays `pending`. A new open shows a running call with the
     status of its newest stored progress and the preview of the newest
     stored update that gives one (rule 22).
 22. A call keeps the fields that an update does not send again. A cold
@@ -198,6 +201,12 @@ Out:
     old and a new text. A call with no `locations` takes the paths of its
     diffs. A console shows the counts of `diff_stat` on the row of an edit
     (008, rule 59; 015, rule 112).
+    A path subject is relative to the session working directory.
+    Another path below home starts with `~`.
+    A subject includes its line number only above 1.
+    An MCP title reads `<server> · <tool>` for `mcp__server__tool` and `mcp.server.tool`.
+    Raw detail keeps the original tool name (rule 51).
+    A command preview uses the output cleanup of rule 50 before its length limit.
 23. `permission_request` opens a `permission` step in the main lane. The open
     call it asks about names it in `permission`. `permission.replied` answers
     the newest pending permission of the session. A daemon allow of one of
@@ -253,7 +262,7 @@ Out:
 30. A subagent is a `subagent` step in the turn of its parent, opened by the
     first event of the session that names it. `subagent_update` changes its
     title, task, state and `can_cancel`. The snapshot lists every subagent in
-    `subagents`.
+    `subagents`. An ended subagent has `can_cancel` false.
     - A read seeds each subagent by the first event of the session that
       names it (`Store::first_subagent_events`), before it folds any head. An
       event of the subagent in a later turn then finds it, and opens no
@@ -288,6 +297,8 @@ Out:
 33. `session` starts from the row: status, attention, usage and context. A
     `session_updated` domain event of the session is a `session_patch`.
     `running_turn_id` names the running turn.
+    With no running turn, a row status of `running` reads as `idle` in the trajectory.
+    This does not change the session row or the scheduler rules of 009.
     - `mode`, `config_options`, `title`, `cost` and `commands` start from the
       display state that the current launch reported (021, rule 24). A hub
       reads it after it follows the console, so a change after that read
@@ -405,6 +416,10 @@ Out:
       `_meta.terminal_exit.exit_code`; and `truncated`. An output longer
       than one megabyte keeps its last megabyte, where the result and the
       errors are, and `truncated` is true.
+      Remove a code fence that wraps the whole output, including an empty fenced block.
+      Treat CRLF as a line ending.
+      On each line, keep the text after its last remaining carriage return.
+      Preserve line breaks outside a whole-output fence.
     - `edit` is `diff`: for each `diff` entry, its path, `old_text`,
       `new_text`, `unified` and `language`. `unified` is the agent's patch,
       under a file header from the entry's path where it has none, else the
@@ -446,7 +461,7 @@ Out:
     `formatted_output` or `text`, else the `_meta.terminal_output` data. A
     `rawOutput` with none of these is raw data: no typed detail writes it
     out. With `raw=true`, the answer adds `raw`: the call's raw input and
-    raw output. With `raw=false`, and without the parameter, the answer
+    raw output, and the original tool name as `title`. With `raw=false`, and without the parameter, the answer
     has no `raw`.
 52. A running call shows the newest stored update of it. Progress that the
     ACP runtime has not stored yet is in the stream alone (021).
@@ -469,25 +484,6 @@ Out:
     (rule 48). The forwarder passes a blob's bytes as they are, and gives
     the session's alias to each `blob` URL of a content block. It passes a
     call's `raw` as the agent sent it: no session id or URL in it changes.
-
-### State and text rules
-
-- Report trajectory session status as `idle` when its row is `running` and no turn runs.
-  Keep the session row unchanged.
-- Show an agent's pending tool call as `running` during its turn.
-  Keep calls waiting for permission `pending`.
-- Set `can_cancel` to false when a subagent ends.
-- Keep lifecycle notes received during a turn in that turn.
-  Queue other lifecycle notes at the start of the next turn.
-  Do not create a turn that contains only lifecycle notes before the first prompt.
-- Make path subjects relative to the session working directory.
-  Use `~` for other paths below home.
-  Append line numbers only above 1.
-- Format MCP titles as `<server> · <tool>` for both agent naming conventions.
-  Keep raw names in raw detail data.
-- Set `answer_step_id` to the answer message step ID, or null.
-- Remove whole-output code fences from command details and previews.
-  Keep only text after the last carriage return on each line.
 
 ## Acceptance criteria
 
@@ -529,8 +525,10 @@ Out:
    `read.rs::a_cold_read_holds_the_commands_the_agent_offered`.
 12. Attention, permission answers and native questions (rules 16, 23, 24):
    `fold.rs::attention_keeps_what_waits_and_the_errors_of_closed_turns`.
-13. Lifecycle notes, the prompt-less first turn and an interruption
-    (rules 9, 11, 26): `fold.rs::lifecycle_events_are_notes_and_a_restart_interrupts_the_turn`.
+13. Lifecycle notes stay in a running turn or start the next turn.
+    Lifecycle notes alone before the first prompt create no turn (rules 9, 10, 11, 26):
+    `fold.rs::lifecycle_events_are_notes_and_a_restart_interrupts_the_turn` and
+    `fold.rs::lifecycle_notes_wait_for_the_next_prompt`.
 14. A compaction (rule 27):
     `fold.rs::a_compaction_is_one_step_that_its_updates_change`.
 15. Unknown kinds and payloads without the new fields (rule 29):
@@ -751,6 +749,26 @@ Out:
     (rules 16, 27, 36, 42, 43):
     `read.rs::a_compaction_completed_in_a_skipped_turn_reads_as_a_warm_fold_does`.
 
+81. Quiet trajectory sessions read `idle` without a row change (rule 33):
+    `fold.rs::quiet_sessions_and_pending_calls_report_execution_state`.
+82. Pending calls run during their turn but wait on permission (rules 21, 23):
+    `fold.rs::quiet_sessions_and_pending_calls_report_execution_state` and
+    `fold.rs::permission_waits_keep_the_call_pending`.
+83. An ended subagent cannot be cancelled (rule 30):
+    `fold.rs::a_subagent_is_a_step_in_its_parents_turn_and_its_steps_are_its_lane`.
+84. Path subjects, MCP titles, answer IDs, and clean previews follow rules 15, 22, and 50:
+    `fold.rs::step_text_and_answer_ids_are_ready_for_clients`.
+85. Command details remove outer fences and replaced progress text (rule 50):
+    `detail.rs::command_output_has_no_outer_fence_or_replaced_progress`.
+    Empty fences give empty output:
+    `detail.rs::empty_command_fences_give_empty_output`.
+    CRLF preserves lines:
+    `detail.rs::command_crlf_preserves_lines_and_replaces_progress`.
+    Previews accept both:
+    `fold.rs::command_previews_accept_empty_fences_and_crlf`.
+86. The API documents contain answer IDs and raw tool titles (rules 15, 51):
+    `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
+
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and
 `read.rs::a_running_turns_window_is_its_last_steps_whatever_follows_them`
@@ -775,17 +793,6 @@ A page with `before` holds the subagents and plans of its own read.
 A call of more than 500 stored events shows the fields of its opener and its
 newest 499. An agent that sends each field only once, and not the whole call
 in each update, can lose a field of an update between them.
-
-The state and text rules are proved by
-`quiet_sessions_and_pending_calls_report_execution_state`,
-`lifecycle_notes_wait_for_the_next_prompt`,
-`step_text_and_answer_ids_are_ready_for_clients`, and
-`lifecycle_events_are_notes_and_a_restart_interrupts_the_turn`
-in the fold tests.
-
-Permission waits use `permission_waits_keep_the_call_pending`.
-Ended subagents use `a_subagent_is_a_step_in_its_parents_turn_and_its_steps_are_its_lane`.
-Command details use `command_output_has_no_outer_fence_or_replaced_progress` in the detail tests.
 
 ## Sources
 

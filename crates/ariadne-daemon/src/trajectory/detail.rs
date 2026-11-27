@@ -698,6 +698,30 @@ mod tests {
         assert_eq!(command.output.as_deref(), Some("new\nfinal"));
     }
 
+    #[test]
+    fn empty_command_fences_give_empty_output() {
+        for output in ["```\n```", "```text\n```"] {
+            let ToolDetailDto::Command(command) =
+                detail("execute", json!({}), json!({"rawOutput": output}))
+            else {
+                panic!("missing command")
+            };
+            assert_eq!(command.output.as_deref(), Some(""));
+        }
+    }
+
+    #[test]
+    fn command_crlf_preserves_lines_and_replaces_progress() {
+        let ToolDetailDto::Command(command) = detail(
+            "execute",
+            json!({}),
+            json!({"rawOutput": "first\r\nold\rnew\r\n"}),
+        ) else {
+            panic!("missing command")
+        };
+        assert_eq!(command.output.as_deref(), Some("first\nnew\n"));
+    }
+
     /// An edit gives each file its old and new text, a unified diff and its
     /// language; a patch keeps its own lines under the entry's path
     /// (rule 50).

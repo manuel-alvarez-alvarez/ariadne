@@ -2932,6 +2932,30 @@ mod tests {
     }
 
     #[test]
+    fn command_previews_accept_empty_fences_and_crlf() {
+        for (output, expected) in [
+            ("```\n```", None),
+            ("```text\n```", None),
+            ("first\r\nold\rnew\r\n", Some("first\nnew")),
+        ] {
+            let mut s = Session::new();
+            let turn = s.prompt("Go");
+            s.event(
+                "pre_tool_use",
+                json!({"acp": {
+                    "toolCallId": "command", "kind": "execute",
+                    "rawOutput": output
+                }}),
+            );
+            let steps = s.fold.held_steps(&turn, MAIN_LANE);
+            let StepDto::ToolCall(call) = &steps[0] else {
+                panic!("missing command")
+            };
+            assert_eq!(call.preview.as_deref(), expected);
+        }
+    }
+
+    #[test]
     fn permission_waits_keep_the_call_pending() {
         use ariadne_api::trajectory::ToolCallStatus;
         let mut s = Session::new();

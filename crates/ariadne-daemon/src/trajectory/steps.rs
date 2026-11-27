@@ -602,11 +602,19 @@ pub(super) fn display_subject(subject: &str, cwd: Option<&str>) -> String {
 }
 
 pub(super) fn clean_output(text: &str) -> String {
+    let normalized = text.replace("\r\n", "\n");
+    let text = normalized.as_str();
     let trimmed = text.trim_end_matches('\n');
     let text = if trimmed.starts_with("```") && trimmed.ends_with("\n```") {
         trimmed
             .split_once('\n')
-            .map(|(_, body)| &body[..body.len() - 4])
+            .and_then(|(_, body)| {
+                if body == "```" {
+                    Some("")
+                } else {
+                    body.strip_suffix("\n```")
+                }
+            })
             .unwrap_or(text)
     } else {
         text
