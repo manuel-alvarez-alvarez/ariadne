@@ -161,14 +161,25 @@ export function TrajectoryConsole({
   const generation = useRef(0)
   const loadingOlder = useRef(false)
   const questionReads = useRef(0)
+  /** Why the last read of the open questions failed; none once one succeeds. */
+  const [questionsError, setQuestionsError] = useState<string | null>(null)
+  /** The questions a read was asked for, so each new one is read once. */
+  const asked = useRef(new Set<string>())
 
+  // A failed read says so with a Retry, and the next new question reads again.
   const readQuestions = useCallback(() => {
     const read = ++questionReads.current
     listQuestions(host, sessionId).then(
       (listed) => {
-        if (read === questionReads.current) setQuestions(listed)
+        if (read !== questionReads.current) return
+        setQuestions(listed)
+        setQuestionsError(null)
       },
-      () => undefined,
+      (error) => {
+        if (read !== questionReads.current) return
+        asked.current.clear()
+        setQuestionsError(describeError(error))
+      },
     )
   }, [host, sessionId])
 
@@ -177,6 +188,8 @@ export function TrajectoryConsole({
     setOpen({})
     setLoads({})
     setQuestions([])
+    setQuestionsError(null)
+    asked.current.clear()
     setHistory({ state: "idle" })
     generation.current += 1
     if (baseUrl === null) {
@@ -215,7 +228,6 @@ export function TrajectoryConsole({
         !questions.some((one) => one.id === step.request_id),
     ),
   )
-  const asked = useRef(new Set<string>())
   useEffect(() => {
     if (!unlisted) return
     const ids = state.turns.flatMap((turn) =>
@@ -328,6 +340,15 @@ export function TrajectoryConsole({
     }
   }, [host, sessionId])
 
+  // Turns that fit the box leave no scroll to reach the top with: while older
+  // turns exist, they load until the box scrolls or the session starts. A
+  // box with no height yet is not on screen, and waits.
+  useLayoutEffect(() => {
+    const el = log.current
+    if (!el || history.state !== "idle" || !state.hasOlder || state.turns.length === 0) return
+    if (el.clientHeight > 0 && el.scrollHeight <= el.clientHeight) void loadOlder()
+  })
+
   /** Load a page of a turn's steps: its last ones, or with `before` the ones older than that step. */
   const loadSteps = useCallback(
     async (turnId: string, before?: string) => {
@@ -417,7 +438,7 @@ export function TrajectoryConsole({
     const id = `queued:${sendCount}`
     setState((current) => queuePrompt(current, text, id))
     post(text).catch((error) => {
-      setState((current) => dequeuePrompt(current, id))
+      setState((current) => dequeuePrompt(current, id, text))
       setFailed((now) => [
         ...now,
         { id, text, message: `Could not send the prompt: ${describeError(error)}` },
@@ -532,9 +553,16 @@ export function TrajectoryConsole({
     const el = root.current
     if (!el) return
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || event.metaKey) return
+      if (event.key !== "Escape") return
       event.preventDefault()
       event.stopPropagation()
+      // ⌘Escape leaves the console for the pane's Close button, and closes nothing.
+      if (event.metaKey) {
+        el.closest<HTMLElement>('[data-slot="docked-pane"]')
+          ?.querySelector<HTMLElement>('[data-slot="pane-close"]')
+          ?.focus()
+        return
+      }
       if (escapeKeys.current.suggesting) escapeKeys.current.dismiss()
       else if (escapeKeys.current.running) escapeKeys.current.cancel()
     }
@@ -634,6 +662,17 @@ export function TrajectoryConsole({
               <PromptBox text={prompt.text} queued />
             </div>
           ))}
+          {questionsError ? (
+            <div
+              role="alert"
+              className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
+            >
+              Could not read the open questions: {questionsError}
+              <Button size="xs" variant="outline" onClick={readQuestions}>
+                Retry
+              </Button>
+            </div>
+          ) : null}
           {failed.map((one) => (
             <FailedMessage
               key={one.id}

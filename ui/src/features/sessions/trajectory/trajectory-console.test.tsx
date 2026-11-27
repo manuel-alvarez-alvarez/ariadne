@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { QuestionDto, TrajectorySnapshotDto, TurnDto } from "@/api"
+import { fixedColours } from "@/test/colours"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { aSession } from "@/test/fixtures"
 import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
@@ -101,7 +102,10 @@ function input() {
 function activityLine(turn: TurnDto) {
   const article = transcript().querySelector<HTMLElement>(`[data-turn-id="${turn.id}"]`)
   if (!article) throw new Error(`turn ${turn.id} is not drawn`)
-  return within(article).getByRole("button", { expanded: false })
+  // The activity line is the turn's first closed disclosure; the count of attention follows it.
+  const line = within(article).getAllByRole("button", { expanded: false })[0]
+  if (!line) throw new Error(`turn ${turn.id} has no closed activity line`)
+  return line
 }
 
 it("opens the turn console with the hidden parameter, and the console of today without it", () => {
@@ -421,4 +425,177 @@ it("shows the session's status, the running turn and the token totals in the sta
   within(row).getByText("running")
   within(row).getByText("thinking")
   within(row).getByText(/↑1\.2k ↓340/)
+})
+
+it("moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing", async () => {
+  const user = userEvent.setup()
+  const heard: string[] = []
+  renderScreen(
+    // biome-ignore lint/a11y/noStaticElementInteractions: the stand-in pane only listens
+    <div data-slot="docked-pane" onKeyDown={(event) => heard.push(event.key)}>
+      <button type="button" data-slot="pane-close">
+        Close
+      </button>
+      <TrajectoryConsole host="local" sessionId={SESSION_ID} status="running" />
+    </div>,
+  )
+  act(() => {
+    latestSource().succeed()
+    latestSource().emit("snapshot", aSnapshot([aTurn({ state: "running", ended_at: null })]))
+  })
+
+  await user.click(input())
+  await user.keyboard("{Meta>}{Escape}{/Meta}")
+
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }))
+  expect(heard).not.toContain("Escape")
+  expect(posts("/console/cancel")).toHaveLength(0)
+})
+
+it("keeps the steps of a subagent out of its parent's last rows", () => {
+  const turn = aTurn({ state: "running", ended_at: null })
+  const { source } = renderConsole(
+    aSnapshot([{ ...turn, steps: [aToolStep(turn.id, { title: "Parent call" })] }]),
+    "running",
+  )
+
+  act(() =>
+    source.emit(
+      "update",
+      anUpdate(2, [
+        { op: "item_upsert", step: aToolStep(turn.id, { lane: "01CHILD", title: "Child call" }) },
+      ]),
+    ),
+  )
+
+  const live = within(transcript()).getByRole("list", { name: "Last steps of the turn" })
+  within(live).getByText("Parent call")
+  expect(within(transcript()).queryByText("Child call")).toBeNull()
+})
+
+it("draws a pending permission only as its card, in the last rows and in the open fold", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({ state: "running", ended_at: null })
+  const permission = aPermissionStep(turn.id, { tool: { title: "Delete the build" } })
+  reply(
+    "GET",
+    `/trajectory/turns/${turn.id}/steps`,
+    Response.json({ steps: [permission], earlier_steps: 0 }),
+  )
+  renderConsole(aSnapshot([{ ...turn, steps: [permission], attention: [permission] }]), "running")
+
+  screen.getByRole("region", { name: "Pending permission" })
+  expect(within(transcript()).queryByText("Delete the build")).toBeNull()
+
+  await user.click(activityLine(turn))
+  await waitFor(() => expect(within(transcript()).queryByText("Loading the steps…")).toBeNull())
+  expect(within(transcript()).queryByText("Delete the build")).toBeNull()
+})
+
+it("keeps the attention count as a disclosure once the fold is open", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({ attention_more: 2 })
+  reply("GET", `/trajectory/turns/${turn.id}/steps`, Response.json({ steps: [], earlier_steps: 0 }))
+  renderConsole(aSnapshot([turn]))
+
+  const more = within(transcript()).getByRole("button", { name: "2 more need attention" })
+  expect(more.getAttribute("aria-expanded")).toBe("false")
+  await user.click(more)
+
+  const open = within(transcript()).getByRole("button", { name: "2 more need attention" })
+  expect(open.getAttribute("aria-expanded")).toBe("true")
+})
+
+it("says a failed read of the questions, and reads them again on Retry", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({ state: "running", ended_at: null })
+  const question = aQuestionStep(turn.id)
+  // The snapshot reads the questions, and so does the open question it brings.
+  const busy = () => errorResponse(500, "internal", "store is busy")
+  reply("GET", "/questions", busy, busy)
+  listed = [
+    {
+      id: question.request_id,
+      session_id: SESSION_ID,
+      created_at: question.created_at,
+      message: "Which database?",
+      schema: {
+        type: "object",
+        properties: { db: { type: "string", title: "Database", enum: ["pg", "sqlite"] } },
+      } as never,
+    },
+  ]
+  renderConsole(aSnapshot([{ ...turn, attention: [question] }]), "running")
+
+  const alert = await within(transcript()).findByText(/Could not read the open questions/)
+  await user.click(within(alert).getByRole("button", { name: "Retry" }))
+
+  const card = await within(transcript()).findByRole("region", { name: "Agent question" })
+  within(card).getByRole("button", { name: /sqlite/ })
+  expect(within(transcript()).queryByText(/Could not read the open questions/)).toBeNull()
+})
+
+it("loads older turns while the turns fit the box and no scroll can reach the top", async () => {
+  const newest = aTurn({ answer: text("newest answer") })
+  const older = aTurn({ answer: text("older answer") })
+  reply("GET", "/trajectory", Response.json(aSnapshot([older], { rev: 0, has_older: false })))
+  const client = vi
+    .spyOn(HTMLElement.prototype, "clientHeight", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("role") === "log" ? 200 : 0
+    })
+  try {
+    renderConsole(aSnapshot([newest], { has_older: true }))
+
+    await within(transcript()).findByText("older answer")
+    const read = requests.find((one) => one.path === `/v1/sessions/${SESSION_ID}/trajectory`)
+    expect(read?.query.get("before")).toBe(newest.id)
+  } finally {
+    client.mockRestore()
+  }
+})
+
+it("draws every part with the app's tokens, shared cards included, in both themes", async () => {
+  const turn = aTurn({ state: "running", ended_at: null, attention_more: 1 })
+  const question = aQuestionStep(turn.id)
+  const permission = aPermissionStep(turn.id)
+  listed = [
+    {
+      id: question.request_id,
+      session_id: SESSION_ID,
+      created_at: question.created_at,
+      message: "Which database?",
+      schema: {
+        type: "object",
+        properties: { db: { type: "string", title: "Database", enum: ["pg", "sqlite"] } },
+      } as never,
+    },
+  ]
+  reply("POST", "/console/input", errorResponse(409, "busy", "the agent is busy"))
+  renderConsole(
+    aSnapshot([{ ...turn, attention: [question, permission, anErrorStep(turn.id)] }]),
+    "running",
+  )
+  await within(transcript()).findByRole("region", { name: "Agent question" })
+  // The parts are drawn by hand: what the claim covers is their colours. The
+  // rows of an open fold are this folder's own, which the source scan reads.
+  fireEvent.change(input(), { target: { value: "x", selectionStart: 1 } })
+  fireEvent.keyDown(input(), { key: "Enter" })
+  await within(transcript()).findByText(/the agent is busy/)
+
+  const root = document.documentElement
+  try {
+    for (const dark of [false, true]) {
+      root.classList.toggle("dark", dark)
+      const drawn = Array.from(document.body.querySelectorAll("[class], [style]")).flatMap(
+        (element) =>
+          fixedColours(
+            `${element.getAttribute("class") ?? ""} ${element.getAttribute("style") ?? ""}`,
+          ),
+      )
+      expect(drawn, dark ? "dark" : "light").toEqual([])
+    }
+  } finally {
+    root.classList.remove("dark")
+  }
 })

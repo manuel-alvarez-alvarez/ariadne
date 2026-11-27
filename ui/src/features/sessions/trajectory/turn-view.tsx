@@ -68,10 +68,14 @@ export const TurnView = memo(function TurnView({
   onEarlier,
 }: TurnViewProps) {
   const running = turn.state === "running"
-  const steps = open ? turnSteps(turn, page) : []
+  // A pending permission is the card above the composer, never a row too.
+  const steps = open ? turnSteps(turn, page).filter((step) => !isPending(step)) : []
   const answer = running ? liveAnswer(turn) : contentText(turn.answer)
   const shownIds = new Set(open ? steps.map((step) => step.id) : [])
-  const liveRows = running && !open ? turn.steps.filter((step) => step.type !== "message") : []
+  const liveRows =
+    running && !open
+      ? turnSteps(turn, undefined).filter((step) => step.type !== "message" && !isPending(step))
+      : []
   const lastRows = liveRows.slice(-LIVE_STEPS)
   for (const step of lastRows) shownIds.add(step.id)
   const errors = turn.attention.filter((step) => step.type === "error" && !shownIds.has(step.id))
@@ -131,9 +135,10 @@ export const TurnView = memo(function TurnView({
           <StepRow step={step} now={now} />
         </div>
       ))}
-      {turn.attention_more > 0 && !open ? (
+      {turn.attention_more > 0 ? (
         <button
           type="button"
+          aria-expanded={open}
           onClick={() => onToggle(turn.id)}
           className="ml-4 flex w-[calc(100%-1rem)] cursor-pointer items-center rounded-md px-2 py-1 text-left font-mono text-xs text-status-warn-fg outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50"
         >
@@ -162,6 +167,10 @@ export const TurnView = memo(function TurnView({
     </article>
   )
 })
+
+function isPending(step: StepDto): boolean {
+  return step.type === "permission" && step.state === "pending"
+}
 
 /** The newest message of the turn's own lane while it runs, else the answer so far. */
 function liveAnswer(turn: TurnDto): string {

@@ -9,8 +9,14 @@
  * id, so no item shows two times. A snapshot, the one a reconnect brings
  * included, drops the older turns and the step pages loaded before it.
  *
- * Two things are the console's own: the step pages it loaded for a turn
- * whose fold is open, and the prompts it sent that no turn holds yet.
+ * Three things are the console's own: the step pages it loaded for a turn
+ * whose fold is open, the prompts it sent that no turn holds yet, and the
+ * turns that already took a queued prompt away.
+ *
+ * A turn keeps each step of its own lane that an update brought, after it
+ * ends too, and that live version wins over a page that the steps route
+ * read before it. So a row seen live never leaves an open fold, and a late
+ * page never brings back an older status.
  */
 
 import type {
@@ -53,10 +59,21 @@ export interface TrajectoryState {
   /** The steps the steps route gave, by turn id. */
   pages: Record<string, StepPage>
   queued: QueuedPrompt[]
+  /** The turns that took a queued prompt away: each echo takes one prompt, once. */
+  echoed: string[]
 }
 
 export function emptyTrajectory(): TrajectoryState {
-  return { rev: 0, turns: [], hasOlder: false, plans: [], subagents: [], pages: {}, queued: [] }
+  return {
+    rev: 0,
+    turns: [],
+    hasOlder: false,
+    plans: [],
+    subagents: [],
+    pages: {},
+    queued: [],
+    echoed: [],
+  }
 }
 
 /** The text of a list of content blocks: the text blocks, one after another. */
@@ -81,6 +98,7 @@ export function applySnapshot(
     subagents: snapshot.subagents,
     pages: {},
     queued: state.queued,
+    echoed: state.echoed,
   })
 }
 
@@ -94,7 +112,7 @@ export function applyUpdate(state: TrajectoryState, update: TrajectoryUpdateDto)
         next = upsertTurn(next, op.turn)
         break
       case "item_upsert":
-        next = changeSteps(next, op.step.turn_id, (steps) => upsertStep(steps, op.step), true)
+        next = changeSteps(next, op.step.turn_id, (steps) => upsertStep(steps, op.step), op.step)
         break
       case "text_append":
         next = changeSteps(next, op.turn_id, (steps) =>
@@ -162,16 +180,31 @@ export function queuePrompt(state: TrajectoryState, text: string, id: string): T
   return { ...state, queued: [...state.queued, { id, text, after }] }
 }
 
-/** Take back the prompt of the send `id`, which the daemon refused. */
-export function dequeuePrompt(state: TrajectoryState, id: string): TrajectoryState {
-  return { ...state, queued: state.queued.filter((one) => one.id !== id) }
+/**
+ * Take back the prompt of the send `id`, which the daemon refused. Where an
+ * echo of the same text took that entry already, the echo was another
+ * send's, so the oldest entry of that text left is the one that is stale.
+ */
+export function dequeuePrompt(state: TrajectoryState, id: string, text: string): TrajectoryState {
+  const found = state.queued.findIndex((one) => one.id === id)
+  const index = found === -1 ? state.queued.findIndex((one) => one.text === text) : found
+  if (index === -1) return state
+  return { ...state, queued: state.queued.filter((_, at) => at !== index) }
 }
 
-/** The steps a turn shows when its fold is open: the page loaded, then the live ones after it. */
+/**
+ * The steps a turn shows when its fold is open: the page loaded, then the
+ * live steps after it. A step in both shows its live version, the newer one.
+ */
 export function turnSteps(turn: TurnDto, page: StepPage | undefined): StepDto[] {
-  if (!page) return turn.steps
+  const live = turn.steps.filter((step) => step.lane === turn.lane)
+  if (!page) return live
+  const byId = new Map(live.map((step) => [step.id, step]))
   const held = new Set(page.steps.map((step) => step.id))
-  return [...page.steps, ...turn.steps.filter((step) => !held.has(step.id))]
+  return [
+    ...page.steps.map((step) => byId.get(step.id) ?? step),
+    ...live.filter((step) => !held.has(step.id)),
+  ]
 }
 
 /** The permissions that wait for an answer, oldest first, from the attention of every turn. */
@@ -186,23 +219,37 @@ export function pendingPermissions(state: TrajectoryState) {
   )
 }
 
-/** A queued prompt leaves the queue once a newer turn holds its text. */
+/**
+ * A queued prompt leaves the queue once a newer console turn holds its text.
+ * Each turn takes one prompt, once: the turns that took one are kept, so a
+ * later revision does not take a second prompt of the same text with them.
+ */
 function settle(state: TrajectoryState): TrajectoryState {
   if (state.queued.length === 0) return state
-  const taken = new Set<string>()
+  const taken = new Set(state.echoed)
+  const echoed = [...state.echoed]
   const queued = state.queued.filter((one) => {
     const turn = state.turns.find(
       (turn) =>
         turn.id > one.after &&
         !taken.has(turn.id) &&
         turn.prompt?.source === "console" &&
-        contentText(turn.prompt.content) === one.text,
+        holdsText(contentText(turn.prompt.content), one.text),
     )
     if (!turn) return true
     taken.add(turn.id)
+    echoed.push(turn.id)
     return false
   })
-  return queued.length === state.queued.length ? state : { ...state, queued }
+  return queued.length === state.queued.length ? state : { ...state, queued, echoed }
+}
+
+/**
+ * Whether a prompt the daemon sent holds the text typed. The first turn of a
+ * launch carries the seat brief ahead of the text, with a blank line between.
+ */
+function holdsText(sent: string, typed: string): boolean {
+  return sent === typed || sent.endsWith(`\n\n${typed}`)
 }
 
 function upsertTurn(state: TrajectoryState, turn: TurnDto): TrajectoryState {
@@ -212,24 +259,25 @@ function upsertTurn(state: TrajectoryState, turn: TurnDto): TrajectoryState {
     return { ...state, turns }
   }
   const held = state.turns[at] as TurnDto
-  // An upsert carries the turn with no steps: the live ones stay while it runs.
-  const steps = turn.state === "running" ? held.steps : []
+  // An upsert carries the turn with no steps: the ones seen live stay, after
+  // the turn ends too, so an open fold keeps every row it showed.
   const turns = state.turns.slice()
-  turns[at] = { ...turn, steps }
+  turns[at] = { ...turn, steps: held.steps }
   return { ...state, turns }
 }
 
 /**
- * Change the steps of one turn wherever they are held: its live window, its
- * attention and its loaded page. With `open`, a step new to the window joins
- * it while the turn runs; the attention and a page only change the steps
- * they hold, since the turn's own upsert says what its attention is.
+ * Change the steps of one turn wherever they are held: its live steps, its
+ * attention and its loaded page. With `added`, a step new to the live steps
+ * joins them where it is of the turn's own lane: a subagent's steps are its
+ * own lane's. The attention and a page only change the steps they hold,
+ * since the turn's own upsert says what its attention is.
  */
 function changeSteps(
   state: TrajectoryState,
   turnId: string,
   change: (steps: StepDto[]) => StepDto[],
-  open = false,
+  added?: StepDto,
 ): TrajectoryState {
   const at = state.turns.findIndex((turn) => turn.id === turnId)
   if (at === -1) return state
@@ -237,7 +285,7 @@ function changeSteps(
   const turns = state.turns.slice()
   turns[at] = {
     ...turn,
-    steps: open && turn.state !== "running" ? turn.steps : change(turn.steps),
+    steps: added && added.lane !== turn.lane ? changeHeld(turn.steps, change) : change(turn.steps),
     attention: changeHeld(turn.attention, change),
   }
   const page = state.pages[turnId]

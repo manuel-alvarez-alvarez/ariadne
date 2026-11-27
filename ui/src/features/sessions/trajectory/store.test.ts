@@ -19,6 +19,7 @@ import {
   applySnapshot,
   applyUpdate,
   contentText,
+  dequeuePrompt,
   emptyTrajectory,
   prependTurns,
   queuePrompt,
@@ -140,4 +141,92 @@ it("shows a loaded page of steps, then the live steps after it", () => {
     first.id,
     second.id,
   ])
+})
+
+it("keeps a row seen live in an open fold after its turn ends", () => {
+  const turn = aTurn({ state: "running", ended_at: null })
+  const first = aToolStep(turn.id)
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([{ ...turn, steps: [first] }]))
+  state = addStepPage(state, turn.id, { steps: [first], earlier_steps: 0 })
+
+  const later = aToolStep(turn.id)
+  state = applyUpdate(state, anUpdate(2, [{ op: "item_upsert", step: later }]))
+  state = applyUpdate(
+    state,
+    anUpdate(3, [{ op: "turn_upsert", turn: { ...turn, state: "completed" } }]),
+  )
+
+  const ended = state.turns[0]
+  expect(ended && turnSteps(ended, state.pages[turn.id]).map((step) => step.id)).toEqual([
+    first.id,
+    later.id,
+  ])
+})
+
+it("shows the live status of a step over a page read before it", () => {
+  const turn = aTurn({ state: "running", ended_at: null })
+  const tool = aToolStep(turn.id, { status: "running" })
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([{ ...turn, steps: [tool] }]))
+  state = applyUpdate(
+    state,
+    anUpdate(2, [{ op: "item_upsert", step: { ...tool, status: "completed" } }]),
+  )
+
+  // The page was read while the call still ran, and lands after its end.
+  state = addStepPage(state, turn.id, { steps: [tool], earlier_steps: 0 })
+
+  const live = state.turns[0]
+  expect(live && turnSteps(live, state.pages[turn.id])[0]).toMatchObject({ status: "completed" })
+})
+
+it("keeps the steps of a subagent out of its parent's live steps", () => {
+  const turn = aTurn({ state: "running", ended_at: null })
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([turn]))
+
+  state = applyUpdate(
+    state,
+    anUpdate(2, [{ op: "item_upsert", step: aToolStep(turn.id, { lane: "01CHILD" }) }]),
+  )
+
+  const parent = state.turns[0]
+  expect(parent?.steps).toEqual([])
+  expect(parent && turnSteps(parent, undefined)).toEqual([])
+})
+
+it("takes one queued prompt per echo, whatever revision follows", () => {
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([aTurn()]))
+  state = queuePrompt(state, "same", "queued:1")
+  state = queuePrompt(state, "same", "queued:2")
+
+  const echo = aTurn({ prompt: { id: "e", content: text("same"), source: "console" } })
+  state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: echo }]))
+  expect(state.queued.map((one) => one.id)).toEqual(["queued:2"])
+
+  state = applyUpdate(state, anUpdate(3, [{ op: "session_patch", session: aSnapshot([]).session }]))
+  expect(state.queued.map((one) => one.id)).toEqual(["queued:2"])
+})
+
+it("takes a queued prompt away when its echo carries the seat brief ahead of it", () => {
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([]))
+  state = queuePrompt(state, "Start the task", "queued:1")
+
+  const echo = aTurn({
+    prompt: { id: "e", content: text("You are the author.\n\nStart the task"), source: "console" },
+  })
+  state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: echo }]))
+
+  expect(state.queued).toEqual([])
+})
+
+it("clears the entry an identical send's echo left behind when a send is refused", () => {
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([]))
+  state = queuePrompt(state, "same", "queued:1")
+  state = queuePrompt(state, "same", "queued:2")
+  // The echo of the second send comes first, and takes the oldest entry.
+  const echo = aTurn({ prompt: { id: "e", content: text("same"), source: "console" } })
+  state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: echo }]))
+
+  state = dequeuePrompt(state, "queued:1", "same")
+
+  expect(state.queued).toEqual([])
 })

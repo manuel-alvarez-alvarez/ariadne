@@ -544,7 +544,8 @@ events, so write no fold of events here:
   `ReconnectingEventStream`: a `snapshot`, then an `update` per revision.
 - `store.ts` is the pure state. `applySnapshot` replaces it and
   `applyUpdate` applies the ops of one revision by id. It also keeps the step
-  pages of an open fold and the prompts sent that no turn holds yet.
+  pages of an open fold, the prompts sent that no turn holds yet, and the
+  turns that took a queued prompt, so each echo takes one prompt once.
 - `turn-view.tsx` draws a turn: the prompt, one activity line and the
   answer, the step rows of an open fold, and the turn's `attention`.
   `permission-card.tsx` draws a pending permission above the composer.
@@ -554,7 +555,8 @@ events, so write no fold of events here:
 - `trajectory-console.tsx` holds the pane: the stream, the scroll, the keys
   and the composer, which it imports from `../console/`.
 
-The tests build turns and steps with `src/test/trajectory.ts`.
+The tests build turns and steps with `src/test/trajectory.ts`, and match a
+fixed colour with `src/test/colours.ts`.
 
 ### Routes
 
