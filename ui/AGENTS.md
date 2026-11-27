@@ -533,6 +533,29 @@ or the modal. ⌘Escape moves the keyboard to the panel's Close button or the
 modal's Collapse button. The tests drive the console through the
 `EventSource` stand-in in `src/test/event-source.ts`.
 
+### The turn console
+
+`?console=turns` on the session view opens the turn console of
+`src/features/sessions/trajectory/` in place of the console above (spec 015,
+rules 89 to 99). It reads the daemon's trajectory (040), which folds the
+events, so write no fold of events here:
+
+- `trajectory-stream.ts` reads `GET /v1/sessions/{id}/trajectory/stream`, a
+  `ReconnectingEventStream`: a `snapshot`, then an `update` per revision.
+- `store.ts` is the pure state. `applySnapshot` replaces it and
+  `applyUpdate` applies the ops of one revision by id. It also keeps the step
+  pages of an open fold and the prompts sent that no turn holds yet.
+- `turn-view.tsx` draws a turn: the prompt, one activity line and the
+  answer, the step rows of an open fold, and the turn's `attention`.
+  `permission-card.tsx` draws a pending permission above the composer.
+- `step-detail.tsx` is the slot for the detail of a step. `status-slot.tsx`,
+  `dock-slot.tsx` and `find-slot.tsx` are the mount points of the status row,
+  the dock above the composer and the find control.
+- `trajectory-console.tsx` holds the pane: the stream, the scroll, the keys
+  and the composer, which it imports from `../console/`.
+
+The tests build turns and steps with `src/test/trajectory.ts`.
+
 ### Routes
 
 Every route is in `src/routes/router.tsx`, and that is where a screen is added.

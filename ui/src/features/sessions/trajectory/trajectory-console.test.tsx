@@ -1,0 +1,424 @@
+// @vitest-environment jsdom
+
+/**
+ * The turn console, driven from the daemon's side: the trajectory stream on
+ * an `EventSource` stand-in, and the routes it reads and posts to on the
+ * fetch stub.
+ */
+
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
+
+import type { QuestionDto, TrajectorySnapshotDto, TurnDto } from "@/api"
+import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
+import { aSession } from "@/test/fixtures"
+import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
+import {
+  aMessageStep,
+  anErrorStep,
+  anUpdate,
+  aPermissionStep,
+  aQuestionStep,
+  aSnapshot,
+  aToolStep,
+  aTurn,
+  text,
+} from "@/test/trajectory"
+
+import { SessionDetailView } from "../session-detail-view"
+import { TrajectoryConsole } from "./trajectory-console"
+
+const SESSION_ID = "01JSESS0000000000000000001"
+
+type Reply = Response | (() => Response | Promise<Response>)
+
+/** Each request the console made, with its path, query and body. */
+const requests: { method: string; path: string; query: URLSearchParams; body: string }[] = []
+/** Replies by `METHOD path`, else the open questions, else an empty 204. */
+let replies: Record<string, Reply[]> = {}
+let listed: QuestionDto[] = []
+
+beforeEach(() => {
+  stubEventSource()
+  requests.length = 0
+  replies = {}
+  listed = []
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(request.url)
+    requests.push({
+      method: request.method,
+      path: url.pathname,
+      query: url.searchParams,
+      body: await request.text(),
+    })
+    const queue = replies[`${request.method} ${url.pathname}`]
+    const reply = queue?.shift()
+    if (reply) return typeof reply === "function" ? reply() : reply
+    if (url.pathname.endsWith("/questions")) return Response.json(listed)
+    return new Response(null, { status: 204 })
+  })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+function reply(method: string, path: string, ...answers: Reply[]) {
+  replies[`${method} /v1/sessions/${SESSION_ID}${path}`] = answers
+}
+
+function posts(path: string) {
+  return requests.filter(
+    (one) => one.method === "POST" && one.path === `/v1/sessions/${SESSION_ID}${path}`,
+  )
+}
+
+function renderConsole(
+  snapshot: TrajectorySnapshotDto,
+  status: "running" | "idle" | "exited" = "idle",
+) {
+  const view = renderScreen(
+    <TrajectoryConsole host="local" sessionId={SESSION_ID} status={status} />,
+  )
+  const source = latestSource()
+  act(() => {
+    source.succeed()
+    source.emit("snapshot", snapshot)
+  })
+  return { ...view, source }
+}
+
+function transcript() {
+  return screen.getByRole("log", { name: "Console transcript" })
+}
+
+function input() {
+  return screen.getByRole("textbox", { name: "Message the agent" })
+}
+
+function activityLine(turn: TurnDto) {
+  const article = transcript().querySelector<HTMLElement>(`[data-turn-id="${turn.id}"]`)
+  if (!article) throw new Error(`turn ${turn.id} is not drawn`)
+  return within(article).getByRole("button", { expanded: false })
+}
+
+it("opens the turn console with the hidden parameter, and the console of today without it", () => {
+  const session = aSession({ id: SESSION_ID, status: "idle" })
+
+  renderScreen(<SessionDetailView host="local" session={session} />, {
+    route: `/sessions?session=${SESSION_ID}&console=turns`,
+  })
+  expect(latestSource().url).toBe(
+    `http://127.0.0.1:7676/v1/sessions/${SESSION_ID}/trajectory/stream`,
+  )
+
+  stubEventSource()
+  renderScreen(<SessionDetailView host="local" session={session} />, {
+    route: `/sessions?session=${SESSION_ID}`,
+  })
+  expect(latestSource().url).toBe(`http://127.0.0.1:7676/v1/sessions/${SESSION_ID}/console/stream`)
+})
+
+it("draws a closed turn as its prompt, one activity line and its answer", () => {
+  const turn = aTurn()
+  renderConsole(aSnapshot([turn]))
+
+  const article = within(transcript()).getByRole("article")
+  within(article).getByText("Fix the bug")
+  within(article).getByText("Fixed it")
+  const line = within(article).getByRole("button", { expanded: false })
+  expect(line.textContent).toBe("1m 04s·5 steps·2 files changed·1 failed")
+  expect(within(article).getAllByRole("button")).toHaveLength(1)
+})
+
+it("opens the activity line to the step rows of the turn", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({ earlier_steps: 2 })
+  const tool = aToolStep(turn.id)
+  const thought = {
+    type: "thought" as const,
+    id: "01THOUGHT00000000000000001",
+    turn_id: turn.id,
+    lane: "main",
+    created_at: "2026-11-14T10:00:02Z",
+    content: text("Look at the tests first"),
+    streaming: false,
+  }
+  reply(
+    "GET",
+    `/trajectory/turns/${turn.id}/steps`,
+    Response.json({ steps: [thought, tool], earlier_steps: 0 }),
+  )
+  renderConsole(aSnapshot([turn]))
+
+  await user.click(activityLine(turn))
+
+  const rows = await within(transcript()).findAllByRole("listitem")
+  expect(rows.map((row) => row.textContent)).toEqual([
+    "thoughtcompletedLook at the tests first",
+    "executecompletedRun the testsnpm test12s",
+  ])
+  expect(
+    requests.some(
+      (one) => one.path === `/v1/sessions/${SESSION_ID}/trajectory/turns/${turn.id}/steps`,
+    ),
+  ).toBe(true)
+})
+
+it("shows the last steps of the running turn live, and streams its text", () => {
+  const turn = aTurn({ state: "running", ended_at: null, answer: [] })
+  const steps = [1, 2, 3, 4].map((n) => aToolStep(turn.id, { title: `Step ${n}`, subject: null }))
+  const message = aMessageStep(turn.id, { content: text("Half") })
+  const { source } = renderConsole(aSnapshot([{ ...turn, steps: [...steps, message] }]), "running")
+
+  const live = within(transcript()).getByRole("list", { name: "Last steps of the turn" })
+  expect(
+    within(live)
+      .getAllByRole("listitem")
+      .map((row) => row.textContent?.slice(0, 22)),
+  ).toEqual(["executecompletedStep 2", "executecompletedStep 3", "executecompletedStep 4"])
+  within(transcript()).getByText("Half")
+
+  act(() =>
+    source.emit(
+      "update",
+      anUpdate(2, [
+        { op: "text_append", turn_id: turn.id, item_id: message.id, text: " done" },
+        { op: "item_upsert", step: aToolStep(turn.id, { title: "Step 5", subject: null }) },
+      ]),
+    ),
+  )
+
+  within(transcript()).getByText("Half done")
+  expect(within(live).getAllByRole("listitem").at(-1)?.textContent).toContain("Step 5")
+})
+
+it("draws a pending permission as a card above the composer, answered by its keys", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({ state: "running", ended_at: null })
+  const permission = aPermissionStep(turn.id)
+  renderConsole(aSnapshot([{ ...turn, attention: [permission] }]), "running")
+
+  const card = screen.getByRole("region", { name: "Pending permission" })
+  within(card).getByText(/Permission · Bash/)
+  within(card).getByText("rm -rf build")
+  expect(within(transcript()).queryByText("rm -rf build")).toBeNull()
+  const options = within(card).getAllByRole("option")
+  expect(options.map((option) => option.textContent)).toEqual([
+    "1.Allow once",
+    "2.Allow always",
+    "3.Reject",
+  ])
+
+  await user.click(input())
+  await user.keyboard("{ArrowDown}")
+  expect(within(card).getAllByRole("option")[1]?.getAttribute("aria-selected")).toBe("true")
+  await user.keyboard("3")
+  expect(within(card).getAllByRole("option")[2]?.getAttribute("aria-selected")).toBe("true")
+  await user.keyboard("{ArrowUp}{Enter}")
+
+  await waitFor(() => expect(posts("/console/input")).toHaveLength(1))
+  expect(JSON.parse(posts("/console/input")[0]?.body ?? "")).toEqual({ text: "always" })
+})
+
+it("always shows an open question and each error, and counts the rest in one row", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({ attention_more: 4 })
+  const question = aQuestionStep(turn.id)
+  const error = anErrorStep(turn.id)
+  listed = [
+    {
+      id: question.request_id,
+      session_id: SESSION_ID,
+      created_at: question.created_at,
+      message: "Which database?",
+      schema: {
+        type: "object",
+        properties: { db: { type: "string", title: "Database", enum: ["pg", "sqlite"] } },
+      } as never,
+    },
+  ]
+  reply("GET", `/trajectory/turns/${turn.id}/steps`, Response.json({ steps: [], earlier_steps: 0 }))
+  renderConsole(aSnapshot([{ ...turn, attention: [question, error] }]), "running")
+
+  within(transcript()).getByText("The agent crashed")
+  const card = await within(transcript()).findByRole("region", { name: "Agent question" })
+  within(card).getByText("Which database?")
+  await user.click(within(card).getByRole("button", { name: /sqlite/ }))
+  await waitFor(() => expect(posts(`/questions/${question.request_id}/answer`)).toHaveLength(1))
+
+  await user.click(within(transcript()).getByRole("button", { name: "4 more need attention" }))
+  await waitFor(() =>
+    expect(
+      requests.some(
+        (one) => one.path === `/v1/sessions/${SESSION_ID}/trajectory/turns/${turn.id}/steps`,
+      ),
+    ).toBe(true),
+  )
+})
+
+it("sends a prompt as queued, and drops the queued block once a turn holds it", async () => {
+  const user = userEvent.setup()
+  const { source } = renderConsole(aSnapshot([aTurn()]))
+
+  await user.type(input(), "Add a test{Enter}")
+
+  expect(JSON.parse(posts("/console/input")[0]?.body ?? "")).toEqual({ text: "Add a test" })
+  within(transcript()).getByText("queued")
+  act(() =>
+    source.emit(
+      "update",
+      anUpdate(2, [
+        {
+          op: "turn_upsert",
+          turn: aTurn({
+            state: "running",
+            ended_at: null,
+            prompt: { id: "p", content: text("Add a test"), source: "console" },
+          }),
+        },
+      ]),
+    ),
+  )
+  expect(within(transcript()).queryByText("queued")).toBeNull()
+  expect(within(transcript()).getAllByText("Add a test")).toHaveLength(1)
+})
+
+it("keeps a refused prompt with Retry and Edit", async () => {
+  const user = userEvent.setup()
+  const refused = () => errorResponse(409, "busy", "the agent is busy")
+  reply("POST", "/console/input", refused, refused)
+  renderConsole(aSnapshot([]))
+
+  await user.type(input(), "Try this{Enter}")
+  const failed = await within(transcript()).findByRole("alert")
+  within(failed).getByText(/the agent is busy/)
+  expect(within(transcript()).queryByText("queued")).toBeNull()
+
+  await user.click(within(failed).getByRole("button", { name: "Retry" }))
+  await waitFor(() => expect(posts("/console/input")).toHaveLength(2))
+  expect(JSON.parse(posts("/console/input")[1]?.body ?? "")).toEqual({ text: "Try this" })
+
+  await user.click(await within(transcript()).findByRole("button", { name: "Edit" }))
+  expect(input()).toHaveProperty("value", "Try this")
+  expect(document.activeElement).toBe(input())
+})
+
+it("cancels a running turn with Stop and with Escape", async () => {
+  const user = userEvent.setup()
+  renderConsole(aSnapshot([aTurn({ state: "running", ended_at: null })]), "running")
+
+  await user.click(screen.getByRole("button", { name: "Stop the turn" }))
+  await user.click(input())
+  await user.keyboard("{Escape}")
+
+  await waitFor(() => expect(posts("/console/cancel")).toHaveLength(2))
+})
+
+it("lists the agent's slash commands from the session state", async () => {
+  const user = userEvent.setup()
+  const snapshot = aSnapshot([])
+  snapshot.session.commands = [
+    { name: "review", description: "Review the branch" },
+    { name: "plan", description: "Write a plan", hint: "goal" },
+  ]
+  renderConsole(snapshot)
+
+  await user.type(input(), "/re")
+  const list = screen.getByRole("listbox", { name: "Slash commands" })
+  expect(
+    within(list)
+      .getAllByRole("option")
+      .map((one) => one.textContent),
+  ).toEqual(["/reviewReview the branch"])
+  await user.keyboard("{Enter}")
+  expect(input()).toHaveProperty("value", "/review ")
+})
+
+/** The scroll box of the turns, sized and placed by the test. */
+function sizeLog(log: HTMLElement, state: { height: () => number; top: number }) {
+  Object.defineProperty(log, "scrollHeight", { configurable: true, get: state.height })
+  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 200 })
+  Object.defineProperty(log, "scrollTop", {
+    configurable: true,
+    get: () => state.top,
+    set: (value: number) => {
+      state.top = value
+    },
+  })
+}
+
+it("loads older turns at the top and keeps the reader's place", async () => {
+  const newest = aTurn({ answer: text("newest answer") })
+  const older = aTurn({ answer: text("older answer") })
+  reply("GET", "/trajectory", Response.json(aSnapshot([older], { rev: 0, has_older: false })))
+  renderConsole(aSnapshot([newest], { has_older: true }))
+  const state = {
+    height: () => (screen.queryByText("older answer") ? 1400 : 1000),
+    top: 300,
+  }
+  sizeLog(transcript(), state)
+
+  state.top = 0
+  fireEvent.scroll(transcript())
+
+  await within(transcript()).findByText("older answer")
+  const read = requests.find((one) => one.path === `/v1/sessions/${SESSION_ID}/trajectory`)
+  expect(read?.query.get("before")).toBe(newest.id)
+  expect(state.top).toBe(400)
+  const turns = within(transcript()).getAllByRole("article")
+  expect(turns.map((one) => one.dataset.turnId)).toEqual([older.id, newest.id])
+})
+
+it("follows the newest output, and offers Jump to latest once the reader scrolls away", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({ state: "running", ended_at: null })
+  const { source } = renderConsole(aSnapshot([turn]), "running")
+  const state = { height: () => 1000, top: 0 }
+  sizeLog(transcript(), state)
+
+  act(() => source.emit("update", anUpdate(2, [{ op: "item_upsert", step: aToolStep(turn.id) }])))
+  expect(state.top).toBe(1000)
+
+  state.top = 100
+  fireEvent.scroll(transcript())
+  act(() => source.emit("update", anUpdate(3, [{ op: "item_upsert", step: aToolStep(turn.id) }])))
+  expect(state.top).toBe(100)
+  screen.getByText("New output")
+
+  await user.click(screen.getByRole("button", { name: /Jump to latest/ }))
+  expect(state.top).toBe(1000)
+  expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull()
+})
+
+it("replaces the state on a reconnect and shows no item two times", () => {
+  const turn = aTurn({ answer: text("only once") })
+  const { source } = renderConsole(aSnapshot([turn]))
+  vi.useFakeTimers()
+
+  act(() => source.emit("resync", { missed: 3 }))
+  screen.getByText(/reconnecting/)
+  act(() => vi.advanceTimersByTime(500))
+  expect(FakeEventSource.instances).toHaveLength(2)
+  act(() => {
+    latestSource().succeed()
+    latestSource().emit("snapshot", aSnapshot([turn], { rev: 9 }))
+  })
+
+  expect(within(transcript()).getAllByText("only once")).toHaveLength(1)
+  expect(within(transcript()).getAllByRole("article")).toHaveLength(1)
+  screen.getByText("Live")
+})
+
+it("shows the session's status, the running turn and the token totals in the status row", () => {
+  const snapshot = aSnapshot([aTurn({ state: "running", ended_at: null })])
+  snapshot.session.usage = { input_tokens: 1200, output_tokens: 340, cached_input_tokens: 0 }
+  renderConsole(snapshot, "running")
+
+  const row = screen.getByRole("region", { name: "Session status" })
+  within(row).getByText("running")
+  within(row).getByText("thinking")
+  within(row).getByText(/↑1\.2k ↓340/)
+})
