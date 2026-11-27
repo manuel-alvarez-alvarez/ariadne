@@ -5,8 +5,8 @@ use serde_json::Value;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::trajectory::{
-    CommandDto, ContentBlockDto, DiffStatDto, LocationDto, MessageStepDto, PermissionOptionDto,
-    StepDto, SubagentRefDto, ThoughtStepDto, ToolCallStatus, ToolCallStepDto,
+    CommandDto, ContentBlockDto, DiffStatDto, LocationDto, MessageStepDto, StepDto, ThoughtStepDto,
+    ToolCallStatus, ToolCallStepDto,
 };
 
 /// What a tool call reads as when its event names no tool.
@@ -17,14 +17,6 @@ pub(super) const UNNAMED_TOOL: &str = "ACP tool";
 /// the item detail, which a later route serves.
 const PREVIEW_CHARS: usize = 400;
 const PREVIEW_LINES: usize = 5;
-
-pub(super) fn subagent_ref(payload: &Value) -> Option<SubagentRefDto> {
-    let id = string_at(payload, "/subagent/id")?;
-    Some(SubagentRefDto {
-        title: string_at(payload, "/subagent/title").unwrap_or_else(|| id.clone()),
-        id,
-    })
-}
 
 pub(crate) fn step_id(step: &StepDto) -> &str {
     match step {
@@ -401,23 +393,6 @@ pub(super) fn subject_of(
         Some("fetch") => field(&["url"]),
         _ => first.map(|location| location.path.clone()),
     }
-}
-
-pub(super) fn permission_options(payload: &Value) -> Vec<PermissionOptionDto> {
-    payload
-        .get("options")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|option| {
-            let id = string_at(option, "/optionId")?;
-            Some(PermissionOptionDto {
-                name: string_at(option, "/name").unwrap_or_else(|| id.clone()),
-                kind: string_at(option, "/kind"),
-                id,
-            })
-        })
-        .collect()
 }
 
 pub(super) fn commands_of(payload: &Value) -> Vec<CommandDto> {

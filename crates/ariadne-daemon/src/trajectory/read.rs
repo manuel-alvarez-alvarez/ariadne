@@ -1565,4 +1565,64 @@ mod tests {
         );
         assert_eq!(page.earlier, 21);
     }
+
+    /// More open questions and pending permissions than the budget all stay
+    /// in their turn's attention: their steps come from their facts (rule 24,
+    /// 27, 38).
+    #[tokio::test]
+    async fn every_waiting_question_and_permission_stays_past_the_budget() {
+        let (store, session, _dir) = session().await;
+        let turn = prompt(&store, &session).await;
+        for n in 0..20 {
+            commit(
+                &store,
+                &session,
+                "question",
+                json!({"question": {"id": format!("q-{n}"), "message": format!("Which {n}?"),
+                                    "schema": {"type": "object", "properties": {
+                                        "pick": {"type": "string", "title": "Pick",
+                                                 "oneOf": [{"const": "a", "title": "A"}]}}}}}),
+            )
+            .await;
+            commit(
+                &store,
+                &session,
+                "permission_request",
+                json!({"tool_name": "Bash", "acp": {"toolCallId": format!("c-{n}"), "kind": "execute"},
+                       "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}]}),
+            )
+            .await;
+        }
+
+        let read = read_turns(&store, &session, None, 20, None, 5)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 5, "{}", read.loaded());
+        let fold = folded(&session, read);
+        let shown = &fold.snapshot(0, 20, None).turns[0];
+        assert_eq!(shown.id, turn);
+        let questions: Vec<&ariadne_api::trajectory::QuestionStepDto> = shown
+            .attention
+            .iter()
+            .filter_map(|step| match step {
+                StepDto::Question(question) => Some(question),
+                _ => None,
+            })
+            .collect();
+        let permissions: Vec<&ariadne_api::trajectory::PermissionStepDto> = shown
+            .attention
+            .iter()
+            .filter_map(|step| match step {
+                StepDto::Permission(permission) => Some(permission),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(questions.len(), 20, "every open question");
+        assert_eq!(permissions.len(), 20, "every pending permission");
+        assert_eq!(questions[19].question, "Which 19?");
+        assert_eq!(questions[19].hint, "Pick");
+        assert_eq!(questions[19].options[0].label, "A");
+        assert_eq!(permissions[19].tool.title, "Bash");
+        assert_eq!(permissions[19].options[0].name, "Allow");
+    }
 }

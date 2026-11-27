@@ -1,7 +1,7 @@
 ---
 id: trajectory
 status: current
-updated: 2026-11-27
+updated: 2026-11-28
 areas: [api, core, daemon, store]
 commits: []
 tests:
@@ -52,10 +52,13 @@ Out:
    session's lane whoever they name: the session answers and announces them.
 3. `facts` holds what a read counts by: a tool call's id, status, kind and
    paths; a message's `item_id`; a subagent announcement's id and state; a
-   question's or a legacy request's id; an error's message, cut to its first
-   2000 characters; a diagnosis's error, category and percent; a stop's
-   reason; a compaction's id; a permission request's options and whether it
-   names an Ariadne tool; and a reply's option, decider and label.
+   question's or a legacy request's id, its text cut to its first 2000
+   characters, its hint, and the choices of its first field that offers
+   choices; an error's message, cut to its first 2000 characters; a
+   diagnosis's error, category and percent; a stop's reason; a compaction's
+   id; a permission request's tool title and kind, the subagent that asks,
+   its choices and whether it names an Ariadne tool; and a reply's option,
+   decider and label.
 4. The store derives both columns from the kind and the payload at insert,
    so the code that emits an event does not know them. A stored
    `tool_call_update` `{session_id, tool_call_id, acp}` and a
@@ -143,13 +146,19 @@ Out:
     call it asks about names it in `permission`. `permission.replied` answers
     the newest pending permission of the session. A daemon allow of one of
     Ariadne's own tools removes the step with an `item_remove`, as in 008.
+    The step comes from the request's facts: its title, its kind, the
+    subagent that asks and its options. A loaded payload adds the call's
+    `subject` and the AI permission model's note.
 24. A native `question` (021, rule 21) opens a `question` step. Its
     `question` is the message, and its `hint` and `options` are the title and
     the choices of the form's first field that offers choices.
     `question.resolved` closes it: `accept` is `answered`, with each field of
     the content as `field: value` in `answer`; `decline` is `declined`; and
     `cancel` is `cancelled`. A legacy `agent_request` with a question folds
-    the same way, and one with no question is a `note`.
+    the same way, and one with no question is a `note`. The step comes from
+    the question's facts; a loaded legacy payload adds its recommendation.
+    So a read shows every permission and question that waits, however many
+    there are, and loads none of their payloads to do so.
 25. `session.error` is an `error` step, and `session.diagnosis` sets the
     `diagnosis` of the error it names (024). Both come from the event's facts
     alone, so a read shows every error of a turn and loads none of their
@@ -159,7 +168,9 @@ Out:
 27. `compaction_update` opens a `compaction` step by `compaction_id`, and a
     later one changes it.
 28. A content block with bytes carries a `blob` URL under
-    `/v1/sessions/{id}/trajectory/blobs/`, and never the bytes.
+    `/v1/sessions/{id}/trajectory/blobs/`, and never the bytes. Adjacent text
+    blocks read as one: a stored whole keeps a block per chunk (021, rule 6),
+    and the stream appends its chunks to one block.
 29. An event of an unknown kind changes nothing. An event without the fields
     of a later daemon folds with what it has.
 
@@ -207,8 +218,8 @@ Out:
       lane if it runs, each with its newest change, newest step first;
     - each older turn's prompt and answer, newest turn first. The first turn
       whose prompt and answer do not fit, and every older one, is not shown;
-    - each step that waits on a person, one step at a time, newest turn
-      first;
+    - the payload of each step that waits on a person, one step at a time,
+      newest turn first, for its subject and its notes;
     - the first and the newest plan of each lane;
     - the first event and the newest update of each subagent.
 39. A read also holds the older turns with attention, outside the turns it
@@ -364,6 +375,11 @@ Out:
     `read.rs::a_query_for_a_subagent_the_session_never_had_is_empty`.
 42. A page of an interrupted turn shows its call interrupted (rule 44):
     `read.rs::a_page_of_an_interrupted_turn_shows_its_call_interrupted`.
+43. Every waiting question and permission stays past the budget
+    (rules 3, 23, 24, 38):
+    `read.rs::every_waiting_question_and_permission_stays_past_the_budget`.
+44. A stored whole reads its chunks as one text (rule 28):
+    `fold.rs::a_stored_whole_reads_its_chunks_as_one_text`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and
@@ -373,10 +389,9 @@ their calls.
 
 ## Known gap
 
-A read with more steps that wait on a person than its budget holds loads as
-many as fit; a page of their turn shows the rest. A turn has one of them at a
-time while its agent waits, so only a session left with many unanswered ones
-meets this.
+A read with more steps that wait on a person than its budget holds shows
+each of them, and loads the payloads of as many as fit: the rest show no
+`subject` and no AI permission note until a page of their turn loads them.
 
 A diagnosis of an error older than the 20 turns with an error that a hub
 holds changes no step the stream sends. A page that holds the error shows the

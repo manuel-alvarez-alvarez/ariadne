@@ -17,18 +17,18 @@ use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::trajectory::{
     ActivityDto, CompactionStatus, CompactionStepDto, ContentBlockDto, ContextWindowDto,
-    ErrorStepDto, MAIN_LANE, NoteSeverity, NoteStepDto, PermissionAnswerDto, PermissionState,
-    PermissionStepDto, PermissionToolDto, PlanDto, PlanEntryDto, PlanVariant, PromptDto,
-    QuestionOptionDto, QuestionState, QuestionStepDto, SessionStateDto, StepDto, SubagentStepDto,
-    ToolCallStatus, TrajectoryOpDto, TrajectorySnapshotDto, TurnDto, TurnState,
+    ErrorStepDto, MAIN_LANE, NoteSeverity, NoteStepDto, PermissionAnswerDto, PermissionOptionDto,
+    PermissionState, PermissionStepDto, PermissionToolDto, PlanDto, PlanEntryDto, PlanVariant,
+    PromptDto, QuestionOptionDto, QuestionState, QuestionStepDto, SessionStateDto, StepDto,
+    SubagentRefDto, SubagentStepDto, ToolCallStatus, TrajectoryOpDto, TrajectorySnapshotDto,
+    TurnDto, TurnState,
 };
 use ariadne_core::event_facts::{EventFacts, facts_of, lane_of as event_lane};
 use ariadne_store::EventHead;
 
 use super::steps::{
     append_text, blocks_of, commands_of, content_of, is_terminal, lane_of, locations_of,
-    merge_call, new_call, permission_options, step_id, string_at, subagent_ref, subject_of,
-    text_step,
+    merge_call, new_call, step_id, string_at, subject_of, text_step,
 };
 
 /// The kinds the ACP runtime stores only after it stored the run of text
@@ -983,41 +983,64 @@ impl Fold {
     fn permission(&mut self, input: &Input, ops: &mut Ops) {
         let index = self.turn_for(input, ops);
         let turn_id = self.turns[index].id.clone();
-        let subagent = input.full.and_then(|event| subagent_ref(&event.payload));
-        let step = input.full.map(|event| {
-            let payload = &event.payload;
-            let acp = payload.get("acp").unwrap_or(payload);
-            let title = string_at(payload, "/tool_name")
-                .or_else(|| string_at(acp, "/title"))
-                .unwrap_or_else(|| event.summary.clone());
-            let kind = string_at(acp, "/kind");
-            let tool_input = payload
-                .get("tool_input")
-                .or_else(|| acp.get("rawInput"))
-                .unwrap_or(&Value::Null);
-            StepDto::Permission(PermissionStepDto {
-                id: event.id.clone(),
-                turn_id: turn_id.clone(),
-                lane: MAIN_LANE.into(),
-                created_at: event.created_at.clone(),
-                tool_call_id: input.facts.call.clone().unwrap_or_default(),
-                tool: PermissionToolDto {
-                    subject: subject_of(kind.as_deref(), tool_input, &locations_of(acp)),
-                    title: title.clone(),
-                    kind,
-                },
-                question: match &subagent {
-                    Some(child) => format!("{title} · asked by subagent {}", child.title),
-                    None => title,
-                },
-                options: permission_options(payload),
-                state: PermissionState::Pending,
-                answer: None,
-                ai: ariadne_api::permissions::ai_permission_note(payload),
-                learned: None,
-                subagent: subagent.clone(),
-            })
+        // The step comes from the facts, so a read shows every permission
+        // that waits whatever the payload budget. A loaded payload adds what
+        // the call is about and the AI permission model's note.
+        let facts = &input.facts;
+        let subagent = facts.asker.clone().map(|id| SubagentRefDto {
+            title: facts.asker_title.clone().unwrap_or_else(|| id.clone()),
+            id,
         });
+        let title = facts
+            .title
+            .clone()
+            .or_else(|| input.full.map(|event| event.summary.clone()))
+            .unwrap_or_else(|| "permission".into());
+        let (subject, ai) = match input.full {
+            Some(event) => {
+                let payload = &event.payload;
+                let acp = payload.get("acp").unwrap_or(payload);
+                let tool_input = payload
+                    .get("tool_input")
+                    .or_else(|| acp.get("rawInput"))
+                    .unwrap_or(&Value::Null);
+                (
+                    subject_of(facts.tool_kind.as_deref(), tool_input, &locations_of(acp)),
+                    ariadne_api::permissions::ai_permission_note(payload),
+                )
+            }
+            None => (None, None),
+        };
+        let step = Some(StepDto::Permission(PermissionStepDto {
+            id: input.id.to_string(),
+            turn_id: turn_id.clone(),
+            lane: MAIN_LANE.into(),
+            created_at: input.created_at.to_string(),
+            tool_call_id: facts.call.clone().unwrap_or_default(),
+            tool: PermissionToolDto {
+                subject,
+                title: title.clone(),
+                kind: facts.tool_kind.clone(),
+            },
+            question: match &subagent {
+                Some(child) => format!("{title} · asked by subagent {}", child.title),
+                None => title,
+            },
+            options: facts
+                .choices
+                .iter()
+                .map(|choice| PermissionOptionDto {
+                    id: choice.id.clone(),
+                    name: choice.label.clone(),
+                    kind: choice.kind.clone(),
+                })
+                .collect(),
+            state: PermissionState::Pending,
+            answer: None,
+            ai,
+            learned: None,
+            subagent: subagent.clone(),
+        }));
         self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.pending.push(Pending {
             id: input.id.to_string(),
@@ -1140,10 +1163,7 @@ impl Fold {
     fn question(&mut self, input: &Input, ops: &mut Ops) {
         let asks = input.kind == "question" || input.facts.asks;
         if !asks {
-            let text = match input
-                .full
-                .and_then(|event| string_at(&event.payload, "/hint"))
-            {
+            let text = match input.facts.hint.clone() {
                 Some(hint) => format!("waiting for you · {hint}"),
                 None => "waiting for you".into(),
             };
@@ -1158,9 +1178,7 @@ impl Fold {
             .clone()
             .or(input.facts.request.clone())
             .unwrap_or_else(|| input.id.to_string());
-        let step = input
-            .full
-            .map(|event| StepDto::Question(question_step(event, &turn_id, &key)));
+        let step = Some(StepDto::Question(question_step(input, &turn_id, &key)));
         self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.questions.insert(key, (turn_id, input.id.to_string()));
     }
@@ -1658,73 +1676,38 @@ fn status_of(status: &str) -> Option<ToolCallStatus> {
 }
 
 /// A question step: a native `question` (021, rule 21), or a legacy
-/// `agent_request` with a question.
-fn question_step(event: &AgentEventDto, turn_id: &str, key: &str) -> QuestionStepDto {
-    let payload = &event.payload;
-    let mut step = QuestionStepDto {
-        id: event.id.clone(),
+/// `agent_request` with a question. It comes from the facts, so a read shows
+/// every open question whatever the payload budget; a loaded legacy payload
+/// adds its recommendation.
+fn question_step(input: &Input, turn_id: &str, key: &str) -> QuestionStepDto {
+    let facts = &input.facts;
+    let legacy = input
+        .full
+        .filter(|event| event.kind == "agent_request")
+        .and_then(|event| event.payload.get("question"));
+    QuestionStepDto {
+        id: input.id.to_string(),
         turn_id: turn_id.to_string(),
         lane: MAIN_LANE.into(),
-        created_at: event.created_at.clone(),
+        created_at: input.created_at.to_string(),
         request_id: key.to_string(),
-        hint: String::new(),
-        question: String::new(),
-        options: Vec::new(),
-        recommended: None,
-        recommendation_reason: None,
+        hint: facts.hint.clone().unwrap_or_default(),
+        question: facts.message.clone().unwrap_or_default(),
+        options: facts
+            .choices
+            .iter()
+            .map(|choice| QuestionOptionDto {
+                id: choice.id.clone(),
+                label: choice.label.clone(),
+                description: choice.description.clone(),
+            })
+            .collect(),
+        recommended: legacy.and_then(|question| string_at(question, "/recommended_option_id")),
+        recommendation_reason: legacy
+            .and_then(|question| string_at(question, "/recommendation_reason")),
         state: QuestionState::Open,
         answer: None,
-    };
-    let question = payload.get("question").unwrap_or(&Value::Null);
-    if event.kind == "question" {
-        step.question = string_at(question, "/message").unwrap_or_default();
-        // The first field that offers choices is the one the step lists.
-        let choices = question
-            .pointer("/schema/properties")
-            .and_then(Value::as_object)
-            .into_iter()
-            .flatten()
-            .find_map(|(_, field)| {
-                let options = field
-                    .get("oneOf")
-                    .or_else(|| field.pointer("/items/anyOf"))?
-                    .as_array()?;
-                Some((field, options))
-            });
-        if let Some((field, options)) = choices {
-            step.hint = string_at(field, "/title").unwrap_or_default();
-            step.options = options
-                .iter()
-                .filter_map(|option| {
-                    let id = string_at(option, "/const")?;
-                    Some(QuestionOptionDto {
-                        label: string_at(option, "/title").unwrap_or_else(|| id.clone()),
-                        description: string_at(option, "/description"),
-                        id,
-                    })
-                })
-                .collect();
-        }
-        return step;
     }
-    step.question = string_at(question, "/text").unwrap_or_default();
-    step.hint = string_at(payload, "/hint").unwrap_or_default();
-    step.options = question
-        .get("options")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|option| {
-            Some(QuestionOptionDto {
-                id: string_at(option, "/id")?,
-                label: string_at(option, "/label")?,
-                description: string_at(option, "/description"),
-            })
-        })
-        .collect();
-    step.recommended = string_at(question, "/recommended_option_id");
-    step.recommendation_reason = string_at(question, "/recommendation_reason");
-    step
 }
 
 /// The answer a resolution carries, in words: the legacy answer text, or
@@ -2533,5 +2516,24 @@ mod tests {
                 TrajectoryOpDto::ItemUpsert { step } if step_id(step) == streaming)),
             "{reopened:?}"
         );
+    }
+
+    /// A stored whole keeps a block per chunk, and reads as the one text the
+    /// stream appended (rule 28).
+    #[test]
+    fn a_stored_whole_reads_its_chunks_as_one_text() {
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        s.event(
+            "agent_message",
+            json!({"item_id": "item-1", "text": "All good.",
+                   "content": [{"type": "text", "text": "All "}, {"type": "text", "text": "good."}]}),
+        );
+
+        let held = s.fold.held_steps(&turn, MAIN_LANE);
+        let [StepDto::Message(message)] = held.as_slice() else {
+            panic!("{held:?}");
+        };
+        assert_eq!(message.content, text("All good."));
     }
 }
