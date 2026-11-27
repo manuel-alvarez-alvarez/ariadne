@@ -60,9 +60,6 @@ impl StubSsh {
         };
         log.lines()
             .map(|line| {
-                if let Some(fast) = line.strip_prefix('#') {
-                    return fast_run(fast);
-                }
                 let run: Value = serde_json::from_str(line).unwrap();
                 Run {
                     pid: run["pid"].as_u64().unwrap() as u32,
@@ -72,101 +69,6 @@ impl StubSsh {
             })
             .collect()
     }
-}
-
-/// A run the launcher itself logged, with no python: its pid, then its
-/// arguments as hex, NUL ending each one.
-fn fast_run(line: &str) -> Run {
-    let (pid, hex) = line.split_once(' ').unwrap_or((line, ""));
-    let bytes: Vec<u8> = (0..hex.len() / 2)
-        .map(|at| u8::from_str_radix(&hex[at * 2..at * 2 + 2], 16).unwrap())
-        .collect();
-    let mut args: Vec<String> = bytes
-        .split(|byte| *byte == 0)
-        .map(|arg| String::from_utf8_lossy(arg).into_owned())
-        .collect();
-    args.pop();
-    Run {
-        pid: pid.parse().unwrap(),
-        reaper: None,
-        args,
-    }
-}
-
-/// The shell text of one value, single-quoted.
-fn quoted(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "'\\''"))
-}
-
-/// What the launcher needs to answer a `setup` run without python, as shell
-/// assignments. `None` where the script asks for more than that does: those
-/// runs go to python as before.
-fn fast_env(script: &Value) -> Option<String> {
-    let setup = script.get("setup")?.as_object()?;
-    if script.get("hold_reaping").is_some() {
-        return None;
-    }
-    const KNOWN: [&str; 13] = [
-        "home",
-        "path",
-        "os",
-        "arch",
-        "interactive",
-        "interactive_path",
-        "shell_fail",
-        "banner",
-        "suffix",
-        "missing_markers",
-        "fail_service",
-        "inherited_path",
-        "maintenance_fixture",
-    ];
-    if setup
-        .keys()
-        .any(|key| key != "service_pid" && !KNOWN.contains(&key.as_str()))
-    {
-        return None;
-    }
-    let text = |key: &str, default: &str| -> Option<String> {
-        match setup.get(key) {
-            None => Some(default.to_string()),
-            Some(Value::String(text)) => Some(text.clone()),
-            Some(_) => None,
-        }
-    };
-    let flag = |key: &str| match setup.get(key) {
-        Some(Value::Bool(true)) => "1",
-        _ => "0",
-    };
-    let home = text("home", "")?;
-    let service_pid = match setup.get("service_pid") {
-        None => 4242,
-        Some(value) => value.as_u64()?,
-    };
-    let mut env = String::new();
-    let mut set = |name: &str, value: &str| env.push_str(&format!("{name}={}\n", quoted(value)));
-    set("home", &home);
-    set("service_pid", &service_pid.to_string());
-    set("ARIADNE_SETUP_LOGIN_PATH", &text("path", "/usr/bin:/bin")?);
-    set("ARIADNE_SETUP_INTERACTIVE", &text("interactive", "")?);
-    set(
-        "ARIADNE_SETUP_INTERACTIVE_PATH",
-        &text("interactive_path", "")?,
-    );
-    set("ARIADNE_SETUP_SHELL_FAIL", flag("shell_fail"));
-    set("ARIADNE_SETUP_SHELL_BANNER", &text("banner", "")?);
-    set("ARIADNE_SETUP_SHELL_SUFFIX", &text("suffix", "")?);
-    set("ARIADNE_SETUP_NO_MARKERS", flag("missing_markers"));
-    set("ARIADNE_SETUP_OS", &text("os", "Linux")?);
-    set("ARIADNE_SETUP_ARCH", &text("arch", "x86_64")?);
-    set("ARIADNE_SETUP_SERVICE_FAIL", &text("fail_service", "")?);
-    // The launcher prefixes its own directory to this.
-    match setup.get("inherited_path") {
-        None => env.push_str("inherited=$PATH\n"),
-        Some(Value::String(path)) => env.push_str(&format!("inherited={}\n", quoted(path))),
-        Some(_) => return None,
-    }
-    Some(env)
 }
 
 /// Write the stub into a directory of its own, answering from `script`.
@@ -181,9 +83,6 @@ pub(crate) fn stub_ssh(script: Value) -> StubSsh {
     )
     .unwrap();
     std::fs::write(dir.path().join("ssh-stub.py"), STUB).unwrap();
-    if let Some(env) = fast_env(&script) {
-        std::fs::write(dir.path().join("ssh-fast.env"), env).unwrap();
-    }
     let service = super::shared_script(
         "#!/bin/sh\ncase ${0##*/} in uname) case $1 in -s) echo \"$ARIADNE_SETUP_OS\";; -m) echo \"$ARIADNE_SETUP_ARCH\";; esac;; *) [ ! -e \"$ARIADNE_SETUP_SERVICE_FAIL\" ] || exit 1; case ${0##*/} in loginctl) echo yes;; esac;; esac\n",
     );
@@ -206,39 +105,11 @@ pub(crate) fn stub_ssh(script: Value) -> StubSsh {
     }
 }
 
-/// What the daemon runs: the stub beside the link. A `setup` run that the
-/// script needs nothing special for is answered here, in the shell, as
-/// python starts slower than the whole run costs: every `ssh` call of a
-/// setup pays it. The rest goes to python.
-const LAUNCHER: &str = r#"#!/bin/sh
-dir=${0%/*}
-if [ -f "$dir/ssh-fast.env" ]; then
-    tty=0; probe=0
-    for arg in "$@"; do
-        case $arg in -T) tty=1;; -G) probe=1;; esac
-    done
-    for last in "$@"; do :; done
-    if [ $tty = 1 ] && [ $probe = 0 ]; then
-        case $last in
-            *--maintenance-protocol*|*"daemon maintenance"*|*"-o comm="*) ;;
-            *)
-                . "$dir/ssh-fast.env"
-                printf '#%s %s\n' "$$" "$(printf '%s\0' "$@" | od -An -v -tx1 | tr -d ' \n')" >> "$dir/ssh-runs.jsonl"
-                case $last in
-                    *MainPID*|*"pid = "*) echo "$service_pid"; exit 0;;
-                    *"daemon status"*) printf '{"status": "ok", "pid": %s}\n' "$service_pid"; exit 0;;
-                esac
-                export HOME="$home" PATH="$dir/service-bin:$inherited" SHELL="$dir/login-shell" \
-                    ARIADNE_SETUP_LOGIN_PATH ARIADNE_SETUP_INTERACTIVE ARIADNE_SETUP_INTERACTIVE_PATH \
-                    ARIADNE_SETUP_SHELL_FAIL ARIADNE_SETUP_SHELL_BANNER ARIADNE_SETUP_SHELL_SUFFIX \
-                    ARIADNE_SETUP_NO_MARKERS ARIADNE_SETUP_OS ARIADNE_SETUP_ARCH ARIADNE_SETUP_SERVICE_FAIL
-                exec /bin/sh -c "$last";;
-        esac
-    fi
-fi
-IFS= read -r parent < "$dir/ssh-parent-pid"
-exec python3 -S "$dir/ssh-stub.py" "$parent" "$dir" "$@"
-"#;
+/// What the daemon runs: the stub beside the link.
+const LAUNCHER: &str = "#!/bin/sh\n\
+dir=${0%/*}\n\
+IFS= read -r parent < \"$dir/ssh-parent-pid\"\n\
+exec python3 -S \"$dir/ssh-stub.py\" \"$parent\" \"$dir\" \"$@\"\n";
 
 const STUB: &str = r#"
 import json, os, sys, threading, time

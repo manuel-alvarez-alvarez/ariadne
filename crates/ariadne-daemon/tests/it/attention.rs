@@ -698,11 +698,7 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
     let before: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(before.items, Vec::new(), "not told yet, so still trying");
 
-    // The repository here is no git checkout, so the scheduler's own launch
-    // of the task agent fails, and on a machine loaded enough to bunch its
-    // wakes it spends the retry budget and fails the task before this write.
-    // Either way the task is failed, which is all this test needs.
-    if h.store
+    h.store
         .transition_task(
             &cast.task.id,
             TaskStatus::Failed,
@@ -711,11 +707,7 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
             None,
         )
         .await
-        .is_err()
-    {
-        let task = h.store.get_task(&cast.task.id).await.unwrap();
-        assert_eq!(task.status(), TaskStatus::Failed);
-    }
+        .unwrap();
 
     // The prompt was delivered — the turn it started is running — but has
     // not ended: this is exactly the window a stamp taken at hand-off time
