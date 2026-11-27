@@ -596,8 +596,6 @@ async fn the_retired_console_routes_of_a_worker_session_are_not_forwarded() {
     let alias = format!("far~{}~{}", source.id, session.id);
     let source_address = Front::default().serve(&p.local).await;
     let client = ariadne_client::Client::tcp(format!("http://{source_address}"));
-    let asked = p.front.count("other");
-
     for route in ["console", "console/stream"] {
         let answer = client
             .forward(
@@ -611,7 +609,11 @@ async fn the_retired_console_routes_of_a_worker_session_are_not_forwarded() {
         assert_eq!(answer.status, 404, "{route}");
     }
 
-    assert_eq!(p.front.count("other"), asked, "the worker was never asked");
+    assert_eq!(
+        p.front.count("retired console route"),
+        0,
+        "the worker was never asked for either route"
+    );
 }
 
 #[tokio::test]
