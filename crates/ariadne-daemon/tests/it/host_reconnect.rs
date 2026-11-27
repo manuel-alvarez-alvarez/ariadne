@@ -1,6 +1,6 @@
 //! `POST /v1/hosts/{name}/reconnect`: one host reconnects at once (037).
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::common::acp::pid_is_alive;
 use crate::common::ssh::stub_ssh;
@@ -46,42 +46,43 @@ async fn local_is_400_and_an_unknown_name_is_404_in_the_error_envelope() {
 
 #[tokio::test]
 async fn a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after() {
-    // The wait between runs is an hour: no test outlasts it, so a run that
-    // comes while the test waits is the reconnect's, with no clock to read.
-    // That the wait is the first backoff again after it is the backoff's own
-    // test (`hosts.rs::a_reset_backoff_waits_the_first_value_again_and_the_cap_holds`).
+    // Each run exits at once: the base, then twice, then four times the base
+    // between runs.
+    let base = Duration::from_millis(250);
     let stub = stub_ssh(json!({"stderr": "Connection refused", "exit": 255}));
     let host = "endpoint = \"ssh://box\"\nremote = \"/run/far.sock\"\n";
     let timeouts = Timeouts {
-        ssh_retry: Duration::from_secs(3600),
+        ssh_retry: base,
         ..Timeouts::default()
     };
     let (local, _dir) = local_with(host, Some(&stub), timeouts).await;
     local.state.hosts.start();
-    eventually(TIMEOUT, "the first ssh run", || async {
-        stub.runs().len() == 1
+    eventually(TIMEOUT, "a third ssh run", || async {
+        stub.runs().len() == 3
     })
     .await;
-    eventually(TIMEOUT, "the first run down", || async {
+    eventually(TIMEOUT, "the third run down", || async {
         listed(&local).await.status == HostStatus::Down
     })
     .await;
     let mut updates = Updates(local.bus.subscribe());
 
+    // The wait is now 4 bases: a run within 2 bases is the reconnect's.
     reconnect(&local).await;
     assert_eq!(updates.next().await.status, HostStatus::Connecting);
-    eventually(TIMEOUT, "a run at once", || async {
-        stub.runs().len() == 2
+    eventually(2 * base, "a run at once", || async {
+        stub.runs().len() == 4
     })
     .await;
+    let fourth = Instant::now();
     assert_eq!(updates.next().await.status, HostStatus::Down);
 
-    // Down again, with an hour to wait: a second reconnect still runs at once.
-    reconnect(&local).await;
-    eventually(TIMEOUT, "a second run at once", || async {
-        stub.runs().len() == 3
+    // The wait after it is the first one again, not 8 bases.
+    eventually(3 * base, "a run after the first wait", || async {
+        stub.runs().len() == 5
     })
     .await;
+    assert!(fourth.elapsed() >= base, "the next run waits {base:?}");
 }
 
 #[tokio::test]
