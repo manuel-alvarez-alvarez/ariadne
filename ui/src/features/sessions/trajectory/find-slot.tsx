@@ -1,7 +1,7 @@
 /**
  * The find control above the turns. It searches what the console has
  * loaded: the prompt and the answer of each turn shown, and every step it
- * holds for them, live, in a loaded page or in the turn's attention. Find
+ * holds for them, live, in a loaded page, in the turn's attention or among its retained notices. Find
  * leaves the folds, the place and the draft as they are. A search on the
  * daemon is not part of it: the line under the results says when older
  * turns are not loaded yet, and loads them on request.
@@ -15,19 +15,21 @@ import { contentText, foldSteps, type StepPage } from "./store"
 export function TrajectoryFind({
   turns,
   pages,
+  notices,
   older,
   loading,
   loadOlder,
 }: {
   turns: readonly TurnDto[]
   pages: Readonly<Record<string, StepPage>>
+  notices: Readonly<Record<string, readonly StepDto[]>>
   older: boolean
   loading: boolean
   loadOlder: () => void
 }) {
   return (
     <TranscriptFind
-      entries={findEntries(turns, pages)}
+      entries={findEntries(turns, pages, notices)}
       older={older}
       loading={loading}
       loadOlder={loadOlder}
@@ -39,13 +41,18 @@ export function TrajectoryFind({
 function findEntries(
   turns: readonly TurnDto[],
   pages: Readonly<Record<string, StepPage>>,
+  notices: Readonly<Record<string, readonly StepDto[]>>,
 ): { id: string; text: string }[] {
   return turns.flatMap((turn) => {
     const entries: { id: string; text: string }[] = []
     if (turn.prompt)
       entries.push({ id: `${turn.id}:prompt`, text: contentText(turn.prompt.content) })
     const seen = new Set<string>()
-    for (const step of [...foldSteps(turn, pages[turn.id]).steps, ...turn.attention]) {
+    for (const step of [
+      ...foldSteps(turn, pages[turn.id]).steps,
+      ...turn.attention,
+      ...(notices[turn.id] ?? []),
+    ]) {
       if (seen.has(step.id)) continue
       seen.add(step.id)
       entries.push({ id: step.id, text: stepText(step) })

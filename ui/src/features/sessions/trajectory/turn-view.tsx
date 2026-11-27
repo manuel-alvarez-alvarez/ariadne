@@ -53,7 +53,9 @@ type QuestionStep = Extract<StepDto, { type: "question" }>
 const QUESTION_MARKER = "[&_.text-purple-500]:text-question-fg"
 
 /** Where the load of a turn's steps stands. */
-export type PageLoad = { state: "idle" | "loading" } | { state: "error"; message: string }
+export type PageLoad =
+  | { state: "idle" | "loading" }
+  | { state: "error"; message: string; retry: () => void }
 
 interface TurnViewProps {
   host: Host
@@ -154,7 +156,7 @@ export const TurnView = memo(function TurnView({
             <Button
               size="xs"
               variant="ghost"
-              disabled={load.state === "loading"}
+              disabled={load.state !== "idle"}
               onClick={() => onEarlier(turn.id)}
               className="font-mono text-muted-foreground"
             >
@@ -169,7 +171,7 @@ export const TurnView = memo(function TurnView({
               </li>
             ))}
           </ul>
-          <LoadLine load={load} onRetry={() => onEarlier(turn.id)} />
+          <LoadLine load={load} />
         </div>
       ) : lastRows.length > 0 ? (
         <ul aria-label="Last steps of the turn" className="ml-4 space-y-0.5">
@@ -180,6 +182,7 @@ export const TurnView = memo(function TurnView({
           ))}
         </ul>
       ) : null}
+      {!open && load.state === "error" ? <LoadLine load={load} /> : null}
       {errors.map((step) => (
         <div key={step.id} className="ml-4">
           <StepRow step={step} now={now} />
@@ -288,7 +291,7 @@ function ActivityLine({
   )
 }
 
-function LoadLine({ load, onRetry }: { load: PageLoad; onRetry: () => void }) {
+function LoadLine({ load }: { load: PageLoad }) {
   if (load.state === "loading")
     return <p className="px-2 py-1 font-mono text-xs text-muted-foreground">Loading the steps…</p>
   if (load.state === "error")
@@ -298,7 +301,7 @@ function LoadLine({ load, onRetry }: { load: PageLoad; onRetry: () => void }) {
         className="flex items-center gap-2 px-2 py-1 font-mono text-xs text-status-danger-fg"
       >
         Could not load the steps: {load.message}
-        <Button size="xs" variant="outline" onClick={onRetry}>
+        <Button size="xs" variant="outline" onClick={load.retry}>
           Retry
         </Button>
       </p>

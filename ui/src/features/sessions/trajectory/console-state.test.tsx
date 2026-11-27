@@ -49,6 +49,7 @@ beforeEach(() => {
     following: true,
     oldest: undefined,
     blockFolds: {},
+    turnEarlier: {},
   })
   stubEventSource()
   requests.length = 0
@@ -403,17 +404,23 @@ it("keeps the draft, the scroll place and the open folds through a change of tab
 it("puts the place back once the open folds read their rows, not before", async () => {
   const turn = aTurn()
   const tool = aToolStep(turn.id)
-  const page = () => Response.json({ steps: [tool], earlier_steps: 0 })
+  const older = aToolStep(turn.id, { title: "Read the older rows" })
+  const page = () => Response.json({ steps: [tool], earlier_steps: 1 })
+  const earlier = () => Response.json({ steps: [older], earlier_steps: 0 })
   let release: () => void = () => {}
   const late = new Promise<void>((resolve) => {
     release = resolve
   })
-  reply(`/trajectory/turns/${turn.id}/steps`, page(), () => late.then(page))
+  reply(`/trajectory/turns/${turn.id}/steps`, page(), earlier(), earlier(), page(), () =>
+    late.then(earlier),
+  )
   const view = renderConsole(aSnapshot([turn]))
   fireEvent.click(activityLine(turn))
   await within(article(turn)).findByText("Run the tests")
+  fireEvent.click(within(article(turn)).getByRole("button", { name: "Show 1 earlier" }))
+  await within(article(turn)).findByText("Read the older rows")
   // The open rows make the box tall enough for the place.
-  const rows = () => within(transcript()).queryByText("Run the tests") !== null
+  const rows = () => within(transcript()).queryByText("Read the older rows") !== null
   const first = { height: () => (rows() ? 1000 : 300), top: 600 }
   sizeLog(transcript(), first)
   fireEvent.scroll(transcript())
@@ -426,10 +433,11 @@ it("puts the place back once the open folds read their rows, not before", async 
     latestSource().succeed()
     latestSource().emit("snapshot", aSnapshot([turn]))
   })
+  await within(article(turn)).findByText("Run the tests")
   expect(again.top).toBe(0)
 
   await act(async () => release())
-  await within(article(turn)).findByText("Run the tests")
+  await within(article(turn)).findByText("Read the older rows")
   await waitFor(() => expect(again.top).toBe(600))
 })
 
@@ -443,6 +451,7 @@ it("shows the warnings and the compaction of a closed turn of a snapshot before 
     `/trajectory/turns/${turn.id}/steps`,
     Response.json({ steps: [warning, tool, compaction], earlier_steps: 120 }),
     Response.json({ steps: [older, aNote(turn.id, "info", "Session started")], earlier_steps: 0 }),
+    Response.json({ steps: [older], earlier_steps: 0 }),
   )
   // A closed turn of a snapshot carries no steps (040, rule 13).
   renderConsole(aSnapshot([{ ...turn, steps: [] }]))
@@ -455,6 +464,42 @@ it("shows the warnings and the compaction of a closed turn of a snapshot before 
   expect(activityLine(turn).getAttribute("aria-expanded")).toBe("false")
   const reads = requests.filter((one) => one.path.endsWith(`/turns/${turn.id}/steps`))
   expect(reads.map((one) => one.query.get("before"))).toEqual([null, warning.id])
+
+  fireEvent.click(screen.getByRole("button", { name: "Find in transcript" }))
+  const field = screen.getByRole("textbox", { name: "Find in transcript" })
+  const find = within(field.closest("search") as HTMLElement)
+  fireEvent.change(field, { target: { value: "Pin fell back" } })
+  expect(find.getByRole("status").textContent).toBe("1 of 1")
+
+  fireEvent.click(activityLine(turn))
+  fireEvent.click(within(drawn).getByRole("button", { name: "Show 120 earlier" }))
+  await waitFor(() => expect(within(drawn).queryByText("Loading the steps…")).toBeNull())
+  expect(find.getByRole("status").textContent).toBe("1 of 1")
+})
+
+it("resumes the notice scan at the failed cursor on Retry", async () => {
+  const turn = aTurn()
+  const newest = aToolStep(turn.id)
+  const middle = aToolStep(turn.id)
+  const resumed = aToolStep(turn.id)
+  const older = aNote(turn.id, "warning", "Old warning after retry")
+  const page = (steps: StepDto[], earlier_steps: number) => Response.json({ steps, earlier_steps })
+  const path = `/trajectory/turns/${turn.id}/steps`
+  reply(
+    path,
+    page([newest], 3),
+    page([middle], 2),
+    new Response(null, { status: 503 }),
+    page([resumed], 1),
+    page([older], 0),
+  )
+  renderConsole(aSnapshot([turn]))
+  const drawn = within(article(turn))
+  fireEvent.click(await drawn.findByRole("button", { name: "Retry" }))
+  await drawn.findByText("Old warning after retry")
+  expect(
+    requests.filter((one) => one.path.endsWith(path)).map((one) => one.query.get("before")),
+  ).toEqual([null, newest.id, middle.id, middle.id, resumed.id])
 })
 
 it("loads back to the oldest turn it had loaded before it puts the reader's place back", async () => {

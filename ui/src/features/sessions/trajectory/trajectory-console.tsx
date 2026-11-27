@@ -463,9 +463,7 @@ function TrajectoryPane({
     if (!back || !el || state.rev === 0) return
     // Wait for the open folds and notice lines to take up their space.
     const read = shownTurns(state).every(
-      (turn) =>
-        loads[turn.id]?.state === "error" ||
-        (state.pages[turn.id] && loads[turn.id]?.state !== "loading"),
+      (turn) => state.pages[turn.id] && loads[turn.id]?.state === "idle",
     )
     if (!read) return
     const loadedBack =
@@ -494,35 +492,51 @@ function TrajectoryPane({
     [host, sessionId],
   )
 
-  /**
-   * Load a page of a turn's steps. Without `before`, it is the turn's last
-   * steps, and the read goes on through the older steps for their notices
-   * alone, so a warning and a compaction show before the fold opens.
-   */
+  // Restore full fold pages first, then retain only notices from earlier pages.
   const loadSteps = useCallback(
-    async (turnId: string, before?: string) => {
+    async function load(
+      turnId: string,
+      kind: "restore" | "earlier" | "notices" = "restore",
+      before?: string,
+    ) {
       const mine = generation.current
+      const key = keyRef.current
+      const target = readViewState(key).turnEarlier?.[turnId]
       setLoads((current) => ({ ...current, [turnId]: { state: "loading" } }))
       try {
-        const page = await readSteps(turnId, before === undefined ? {} : { before })
-        if (generation.current !== mine) return
-        setState((current) => addStepPage(current, turnId, page, before))
-        let earlier = before === undefined ? page.earlier_steps : 0
-        let first = page.steps[0]?.id
-        while (earlier > 0 && first !== undefined) {
-          const older = await readSteps(turnId, { before: first, limit: NOTICE_PAGE })
+        while (true) {
+          const page = await readSteps(turnId, {
+            before,
+            ...(kind === "notices" ? { limit: NOTICE_PAGE } : {}),
+          })
           if (generation.current !== mine) return
-          const found = older.steps.filter(isNotice)
-          setState((current) => addNotices(current, turnId, found))
-          earlier = older.earlier_steps
-          first = older.steps[0]?.id
+          const cursor = before
+          if (kind === "notices") {
+            const found = page.steps.filter(isNotice)
+            setState((current) => addNotices(current, turnId, found))
+          } else {
+            setState((current) => addStepPage(current, turnId, page, cursor))
+          }
+          if (kind === "earlier") {
+            const kept = readViewState(key).turnEarlier
+            updateViewState(key, { turnEarlier: { ...kept, [turnId]: page.earlier_steps } })
+            break
+          }
+          const first = page.steps[0]?.id
+          if (!page.earlier_steps || !first || first === cursor) break
+          if (target === undefined || page.earlier_steps <= target) kind = "notices"
+          before = first
         }
         setLoads((current) => ({ ...current, [turnId]: IDLE }))
       } catch (error) {
         if (generation.current !== mine) return
         setLoads((current) => ({
           ...current,
-          [turnId]: { state: "error", message: describeError(error) },
+          [turnId]: {
+            state: "error",
+            message: describeError(error),
+            retry: () => void load(turnId, kind, before),
+          },
         }))
       }
     },
@@ -559,7 +573,7 @@ function TrajectoryPane({
       const turn = latest.current.turns.find((one) => one.id === turnId)
       const page = latest.current.pages[turnId]
       const first = turn ? foldSteps(turn, page).steps[0] : page?.steps[0]
-      void loadSteps(turnId, first?.id)
+      void loadSteps(turnId, "earlier", first?.id)
     },
     [loadSteps],
   )
@@ -824,6 +838,7 @@ function TrajectoryPane({
       <TrajectoryFind
         turns={shown}
         pages={state.pages}
+        notices={state.notices}
         older={state.hasOlder}
         loading={history.state === "loading"}
         loadOlder={() => void loadOlder()}

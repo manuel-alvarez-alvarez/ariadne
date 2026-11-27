@@ -1923,12 +1923,14 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     snapshot carries no steps (040, rule 13), and `attention` carries no
     notes (040, rule 16). So the console reads the steps of each turn shown
     once, after each snapshot: the last page, which an opened fold then
-    shows, and then each older page, for its notices alone. A compaction
+    shows, and then each older page, for its notices alone. Retry resumes a
+    failed notice read at its cursor and continues through the older pages. A compaction
     line says it runs, ended, or failed with its error. An info note is a row
     of the open activity fold alone: it is not a line of the turn, nor one of
     the last rows of a running turn (`trajectory/notices.tsx`)
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn of a snapshot before its fold opens`,
-    `ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`).
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::resumes the notice scan at the failed cursor on Retry`).
 99d. An answered permission is a mark on the row of its call, found by the
     call's `permission` id or by its tool call id, and not a row of its own
     where the call's row shows. The mark gives `✓` or `✗` by the kind of the
@@ -1941,10 +1943,11 @@ plans and the `note` and `compaction` steps of the trajectory (040).
 99f. Find (`trajectory/find-slot.tsx`, over the find of the console of today
     in `console/transcript-find.tsx`) searches the loaded turns and the
     loaded steps: the prompt and the answer of each turn shown, and each
-    step the console holds for it, live, in a loaded page or in its
-    attention. A step shows in find once its page is loaded. Find reports
-    when older turns are unloaded and loads them on request. It searches nothing on the daemon
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`).
+    step the console holds for it, including live steps, full pages, attention
+    and notices retained from older pages. Each step appears once by ID.
+    Find reports when older turns are unloaded and loads them on request
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn of a snapshot before its fold opens`).
 99g. The turn console expands into a modal and collapses back, as rule 24i
     says of the console of today. Expand, collapse and a change of tab each
     mount a new pane. The console keeps the draft, the scroll place and
@@ -1954,10 +1957,9 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through expand and collapse`,
     `ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through a change of tab`).
 99h. A pane mounted again reads the older turns back to the oldest turn the
-    console had loaded, and the first page of steps of each turn shown, the
-    open folds' among them, and their notices. Then it puts the scroll place back, so the place
-    holds the same turns and rows, and a browser does not cut the offset to
-    a shorter box
+    console had loaded. It restores each turn’s loaded step range and its
+    notices before it restores the scroll offset. This keeps the older rows
+    loaded by Show earlier in the open fold
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::loads back to the oldest turn it had loaded before it puts the reader's place back`,
     `ui/src/features/sessions/trajectory/console-state.test.tsx::puts the place back once the open folds read their rows, not before`).
 
