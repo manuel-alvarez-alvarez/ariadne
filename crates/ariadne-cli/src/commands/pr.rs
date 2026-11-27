@@ -456,7 +456,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                     anyhow::anyhow!("the request carries no id to attach a review to")
                 })?;
                 let session_id = wait_for_review_session(client, &pull_request_id).await?;
-                return crate::commands::console::attach(client, &session_id).await;
+                return crate::commands::console::attach(client, &session_id, false).await;
             }
             // A row of nobody's own has no id to show; the number still
             // names the request a `--stop` on it answered about.
@@ -498,7 +498,7 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                     anyhow::anyhow!("the request carries no id to attach a keeper session to")
                 })?;
                 let session_id = wait_for_keeper_session(client, &pull_request_id).await?;
-                return crate::commands::console::attach(client, &session_id).await;
+                return crate::commands::console::attach(client, &session_id, false).await;
             }
             let id = pull.id.clone().unwrap_or_else(|| pull.number.to_string());
             let verb = if stop { "stopped" } else { "asked" };

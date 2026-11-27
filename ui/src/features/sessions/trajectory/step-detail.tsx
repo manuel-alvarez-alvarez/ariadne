@@ -41,6 +41,7 @@ import { DiffEditor } from "../../tasks/diff-editor"
 import { parseUnifiedDiff } from "../../tasks/diff-parse"
 import { MediaBlocks } from "./content-blocks"
 import { useChildSteps, useFullView } from "./full-view-context"
+import type { PermissionStep } from "./notices"
 import { StepRow } from "./step-row"
 import { childSteps, contentText } from "./store"
 
@@ -57,18 +58,26 @@ export function StepDetail({
   sessionId,
   step,
   now,
+  permission,
 }: {
   host: Host
   sessionId: string
   step: StepDto
   /** Now, as an ISO instant, for the clock of what still runs. */
   now: string
+  permission?: PermissionStep
 }) {
   const [open, setOpen] = useState(false)
   return (
     <div>
       <div className="flex min-w-0 items-center gap-1">
-        <StepRow step={step} now={now} open={open} onToggle={() => setOpen((was) => !was)} />
+        <StepRow
+          step={step}
+          now={now}
+          permission={permission}
+          open={open}
+          onToggle={() => setOpen((was) => !was)}
+        />
         {step.type === "subagent" && step.can_cancel ? (
           <CancelSubagent host={host} sessionId={sessionId} step={step} />
         ) : null}

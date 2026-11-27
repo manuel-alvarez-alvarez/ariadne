@@ -565,6 +565,12 @@ events, so write no fold of events here:
   `full-view-context.ts`. `status-slot.tsx`,
   `dock-slot.tsx` and `find-slot.tsx` are the mount points of the status row,
   the dock above the composer and the find control.
+
+  `plan.tsx` draws a plan line and its checklist, and `notices.tsx` the
+  warning and compaction lines and the mark of an answered permission.
+- The console keeps its draft, folds and scroll place in
+  `../console/console-view-state.ts`, so expand, collapse and a change of
+  tab, which each mount a new pane, keep them.
 - `trajectory-console.tsx` holds the pane: the stream, the scroll, the keys
   and the composer, which it imports from `../console/`.
 

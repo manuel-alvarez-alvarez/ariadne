@@ -1,3 +1,4 @@
+import { PermissionMark, type PermissionStep } from "./notices"
 /**
  * One step of a turn as a row: its kind, its status, its title, its subject
  * and its duration. A subagent's row adds the count of its steps. With
@@ -105,9 +106,11 @@ export function StepRow({
   now,
   open,
   onToggle,
+  permission,
 }: {
   step: StepDto
   now: string
+  permission?: PermissionStep
   /** Whether the step's detail is open under the row. */
   open?: boolean
   /** Open or close the detail: the row is then a disclosure. */
@@ -123,6 +126,7 @@ export function StepRow({
       {facts.subject ? (
         <span className="min-w-0 truncate text-muted-foreground">{facts.subject}</span>
       ) : null}
+      {permission ? <PermissionMark step={permission} /> : null}
       {facts.count || facts.duration ? (
         <span className="ml-auto flex shrink-0 gap-2 tabular-nums text-muted-foreground">
           {facts.count ? <span>{facts.count}</span> : null}

@@ -32,6 +32,8 @@ export type ConsoleViewState = {
   anchor: { blockId: string; offset: number } | undefined
   /** The oldest event id the console had loaded; a pane mounted again loads back to it. */
   oldest: string | undefined
+  /** The count of steps before the oldest loaded page of each turn. */
+  turnEarlier?: Record<string, number>
   /** True while the reader is at the newest block. */
   following: boolean
   /** A fold preference per block id; a foldable block with none starts folded. */
