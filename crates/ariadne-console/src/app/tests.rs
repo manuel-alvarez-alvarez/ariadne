@@ -271,6 +271,35 @@ fn a_running_turn_draws_the_whole_answer_and_live_steps() {
     assert_eq!(count(&screen, "Work subject"), 1);
 }
 
+fn streaming_answer() -> Value {
+    let mut turn = running(
+        "t2",
+        "Two",
+        vec![step(
+            "message",
+            "m2",
+            "t2",
+            json!({"content": [{"type": "text", "text": "second answer"}], "streaming": true}),
+        )],
+    );
+    turn["answer"] = json!([{"type": "text", "text": "second answer"}]);
+    turn
+}
+
+#[test]
+fn a_streamed_append_updates_the_live_answer() {
+    let mut app = app_with(vec![streaming_answer()]);
+    app.frame(Frame::Update(update(
+        2,
+        json!([{
+            "op": "text_append", "turn_id": "t2", "item_id": "m2",
+            "text": "\n\nAnother paragraph."
+        }]),
+    )));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(count(&screen, "Another paragraph."), 1, "{screen:#?}");
+}
+
 #[tokio::test]
 async fn an_open_running_turn_reads_all_steps_after_it_finishes() {
     let latest = call("c2", "t1", "Latest", "completed");
@@ -807,6 +836,44 @@ async fn an_open_question_shows_its_form_above_the_input_and_the_keys_answer_it(
 }
 
 #[tokio::test]
+async fn the_active_question_and_choice_stay_visible_after_resize_and_answer() {
+    let mut app = App::new("s1");
+    let mut question = form();
+    question.schema["properties"]["base"]["oneOf"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            json!({"const": "third", "title": "Third"}),
+            json!({"const": "fourth", "title": "Fourth"}),
+        ]);
+    let mut stub = Stub {
+        questions: vec![question],
+        ..Stub::default()
+    };
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, 12)).unwrap();
+    let source = stream::iter([Ok(asking())]).chain(stream::pending());
+    let keys = stream::iter([
+        Ok(TermEvent::Resize(WIDTH, 12)),
+        Ok(key(KeyCode::Enter)),
+        Ok(ctrl('c')),
+        Ok(ctrl('c')),
+    ]);
+    drive(&mut terminal, source, &mut stub, Box::pin(keys), &mut app)
+        .await
+        .unwrap();
+
+    let screen = rows(terminal.backend().buffer());
+    assert_eq!(count(&screen, "Which base branch?"), 1, "{screen:#?}");
+    assert_eq!(count(&screen, "❯ 1. Main"), 1, "{screen:#?}");
+    let answers = stub.answers.lock().unwrap();
+    assert_eq!(answers.len(), 1);
+    assert_eq!(
+        answers[0].1.content.as_ref().unwrap()["base"],
+        json!("main")
+    );
+}
+
+#[tokio::test]
 async fn escape_declines_the_open_question() {
     let mut app = App::new("s1");
     let mut stub = Stub {
@@ -892,15 +959,13 @@ fn a_reconnect_shows_no_item_two_times() {
     let down = draw(&app, WIDTH, HEIGHT);
     app.frame(snap(
         7,
-        vec![
-            done("t1", "One", "first answer"),
-            done("t2", "Two", "second answer"),
-        ],
+        vec![done("t1", "One", "first answer"), streaming_answer()],
     ));
     let back = draw(&app, WIDTH, HEIGHT);
 
     assert!(down.last().unwrap().contains("reconnecting"), "{down:#?}");
     assert!(!back.last().unwrap().contains("reconnecting"), "{back:#?}");
+    assert_eq!(count(&back, "◐ message"), 1, "{back:#?}");
     for text in ["❯ One", "first answer", "Bash", "❯ Two", "second answer"] {
         assert_eq!(count(&back, text), 1, "{text}: {back:#?}");
     }

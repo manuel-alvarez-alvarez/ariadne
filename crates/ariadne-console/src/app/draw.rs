@@ -236,6 +236,20 @@ impl App {
         ));
         rows.push(Row::head(Line::from(parts), &item));
 
+        // Text appends update the message step between turn headers.
+        let live_answer = if turn.state == TurnState::Running {
+            turn.steps.iter().rev().find_map(|step| match step {
+                StepDto::Message(message) if message.lane == MAIN_LANE => Some(message),
+                _ => None,
+            })
+        } else {
+            None
+        };
+        let is_answer_step = |step: &StepDto| {
+            live_answer.is_some_and(|message| message.id == crate::trajectory::step_id(step))
+        };
+        let mut answer_in_step = false;
+
         if open {
             if turn.earlier_steps > 0 && turn.state == TurnState::Running {
                 rows.push(Row::of(
@@ -253,8 +267,10 @@ impl App {
                             turn: turn.id.clone(),
                             step: crate::trajectory::step_id(step).to_string(),
                         };
-                        rows.push(Row::head(self.step_row(step, width), &step_item));
+                        let is_answer = is_answer_step(step);
+                        rows.push(Row::head(self.step_row(step, width, is_answer), &step_item));
                         if self.open.contains(&step_item) {
+                            answer_in_step |= is_answer;
                             for line in step_body(step, width) {
                                 rows.push(Row::of(line, Some(&step_item)));
                             }
@@ -269,18 +285,21 @@ impl App {
         } else if turn.state == TurnState::Running {
             let skip = turn.steps.len().saturating_sub(LIVE_STEPS);
             for step in &turn.steps[skip..] {
-                rows.push(Row::of(self.step_row(step, width), Some(&item)));
+                rows.push(Row::of(
+                    self.step_row(step, width, is_answer_step(step)),
+                    Some(&item),
+                ));
             }
         } else {
             for step in &turn.attention {
                 if matches!(step, StepDto::Error(_)) {
-                    rows.push(Row::of(self.step_row(step, width), Some(&item)));
+                    rows.push(Row::of(self.step_row(step, width, false), Some(&item)));
                 }
             }
         }
 
-        let answer = text(&turn.answer);
-        if !answer.trim().is_empty() {
+        let answer = text(live_answer.map_or(turn.answer.as_slice(), |message| &message.content));
+        if !answer_in_step && !answer.trim().is_empty() {
             for line in self.answer(&turn.id, &answer, body) {
                 let mut spans = vec![Span::raw("  ")];
                 spans.extend(line.spans);
@@ -314,7 +333,7 @@ impl App {
     }
 
     /// One step: its status, its kind, its subject and how long it took.
-    fn step_row(&self, step: &StepDto, width: usize) -> Line<'static> {
+    fn step_row(&self, step: &StepDto, width: usize, is_answer: bool) -> Line<'static> {
         let (mark, style) = step_mark(step);
         let label = step_kind(step);
         let kind_style = match step {
@@ -332,7 +351,11 @@ impl App {
         .unwrap_or_default();
         let room =
             width.saturating_sub(wrap::width(&lead) + wrap::width(&kind) + wrap::width(&took));
-        let subject = subject(step);
+        let subject = if is_answer {
+            "Turn answer".into()
+        } else {
+            subject(step)
+        };
         let first = subject.lines().next().unwrap_or_default();
         Line::from(vec![
             Span::raw(STEP_INDENT),
@@ -348,9 +371,7 @@ impl App {
         if let Some(permission) = self.permission() {
             return permission_lines(permission, self.picked.1, width, most);
         }
-        let mut lines = self.form_lines(width).unwrap_or_default();
-        lines.drain(..lines.len().saturating_sub(most));
-        lines
+        self.form_lines(width, most).unwrap_or_default()
     }
 
     /// The keys of the zone that has them, and the state of the link.

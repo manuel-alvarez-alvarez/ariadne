@@ -125,12 +125,16 @@ pub(super) fn choice_count(field: &FormField) -> usize {
 /// The open question being answered, between two rules: the agent's
 /// message, the fields already answered with their answers, the field being
 /// answered with its choices, and the fields still to come.
-pub(super) fn draw(
+fn draw(
     message: &str,
     fields: &[FormField],
     state: &FormState,
     width: usize,
+    most: usize,
 ) -> Vec<Line<'static>> {
+    if most == 0 {
+        return Vec::new();
+    }
     let width = width.max(8);
     let all_fields = fields;
     let fields = crate::transcript::questions(fields);
@@ -160,8 +164,12 @@ pub(super) fn draw(
         QUESTION,
         width,
     ));
+    let mut selected = None;
     if let FieldKind::Single(choices) | FieldKind::Multi(choices) = &field.kind {
         for (index, choice) in choices.iter().enumerate() {
+            if index == state.picked {
+                selected = Some(lines.len());
+            }
             lines.extend(choice_lines(
                 index,
                 choice,
@@ -171,6 +179,9 @@ pub(super) fn draw(
             ));
         }
         if crate::transcript::companion(all_fields, field).is_some() {
+            if choices.len() == state.picked {
+                selected = Some(lines.len());
+            }
             lines.extend(choice_lines(
                 choices.len(),
                 &FormChoice {
@@ -192,6 +203,13 @@ pub(super) fn draw(
         );
     }
     lines.push(Line::from(Span::styled(theme::RULE.repeat(width), FRAME)));
+    if lines.len() > most {
+        // Keep the field title and leave enough room for the highlighted choice.
+        let tail = lines.len() - most + 1;
+        let start = selected.map_or(tail, |row| tail.min(row));
+        lines.drain(1..start);
+        lines.truncate(most);
+    }
     lines
 }
 
@@ -294,7 +312,7 @@ impl App {
     }
 
     /// The open question as the form draws it, above the input.
-    pub(super) fn form_lines(&self, width: usize) -> Option<Vec<Line<'static>>> {
+    pub(super) fn form_lines(&self, width: usize, most: usize) -> Option<Vec<Line<'static>>> {
         let (question, form) = self.question()?;
         Some(match form {
             Some((message, fields)) => draw(
@@ -302,6 +320,7 @@ impl App {
                 &fields,
                 &self.form_state(&question.request_id),
                 width,
+                most,
             ),
             None => {
                 let mut lines = hung(
@@ -312,6 +331,7 @@ impl App {
                     width,
                 );
                 lines.extend(hung("reading the question…", "  ", DIM, DIM, width));
+                lines.truncate(most);
                 lines
             }
         })
