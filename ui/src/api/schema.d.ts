@@ -4941,6 +4941,11 @@ export interface components {
             prompt_kind?: string | null;
             /** @description `console` or `daemon`. */
             source?: string | null;
+            /**
+             * @description The text as it was submitted, without the seat brief that `content`
+             *     carries ahead of it on the first turn of a launch.
+             */
+            text?: string | null;
         };
         /**
          * @description One comment on a request, as the forge holds it now, read live (026),

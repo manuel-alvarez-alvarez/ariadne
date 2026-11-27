@@ -184,6 +184,9 @@ pub struct PromptDto {
     pub source: Option<String>,
     /// The lifecycle kind of a daemon prompt, such as `agent_resume`.
     pub prompt_kind: Option<String>,
+    /// The text as it was submitted, without the seat brief that `content`
+    /// carries ahead of it on the first turn of a launch.
+    pub text: Option<String>,
     pub content: Vec<ContentBlockDto>,
 }
 

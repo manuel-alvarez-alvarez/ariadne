@@ -687,6 +687,9 @@ impl Fold {
             prompt_kind: input
                 .full
                 .and_then(|event| string_at(&event.payload, "/prompt_kind")),
+            text: input
+                .full
+                .and_then(|event| string_at(&event.payload, "/text")),
             content: input
                 .full
                 .map(|event| content_of(&event.payload, &self.session_id, &event.id))
@@ -2082,6 +2085,25 @@ mod tests {
                 subagents: 0,
             }
         );
+    }
+
+    /// A prompt keeps the text as it was submitted beside the content the
+    /// agent read, which leads with the seat brief on the first turn of a
+    /// launch: a console matches what it sent by that text.
+    #[test]
+    fn a_prompt_keeps_its_submitted_text_beside_the_seat_brief() {
+        let mut s = Session::new();
+        s.event(
+            "user_prompt_submit",
+            json!({"text": "Start", "source": "console",
+                   "content": [{"type": "text", "text": "Brief\n\nStart"}]}),
+        );
+
+        let turn = &s.fold.snapshot(0, 20, None).turns[0];
+        let prompt = turn.prompt.as_ref().unwrap();
+
+        assert_eq!(prompt.text.as_deref(), Some("Start"));
+        assert_eq!(prompt.content, text("Brief\n\nStart"));
     }
 
     /// A running turn carries its last steps, and counts the ones before.

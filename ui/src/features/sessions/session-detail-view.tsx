@@ -81,6 +81,7 @@ import {
   sessionHeading,
   shownAttention,
 } from "./session-display"
+import { TrajectoryConsole } from "./trajectory/trajectory-console"
 
 /**
  * The session panel's own header: the breadcrumb back to whichever goal or
@@ -210,6 +211,9 @@ export function SessionDetailView({
   const switchedFromTo = usePanelSessionTo(session.switched_from ?? "")
   const [search, setSearch] = useSearchParams()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "terminal"
+  // A hidden switch: `?console=turns` opens the turn console in place of the
+  // console of today, until the turn console replaces it.
+  const Console = search.get("console") === "turns" ? TrajectoryConsole : SessionConsole
   // Set when the panel was opened by a row that said this agent is blocked on
   // a prompt: what it is waiting for is an answer, so the console takes the
   // keyboard rather than waiting to be clicked. Read once, on arrival.
@@ -368,7 +372,7 @@ export function SessionDetailView({
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
         <TabsContent value="terminal" className="min-h-0 flex flex-1 flex-col pt-3">
-          <SessionConsole
+          <Console
             host={host}
             sessionId={session.id}
             status={session.status}
