@@ -2539,7 +2539,7 @@ mod tests {
     async fn a_turn_of_many_notices_loads_the_budget_at_most() {
         let (store, session, _dir) = session().await;
         prompt(&store, &session).await;
-        for n in 0..1200 {
+        for n in 0..520 {
             commit(
                 &store,
                 &session,
@@ -2555,10 +2555,11 @@ mod tests {
         assert!(read.loaded() <= 500, "loaded {}", read.loaded());
         let shown = folded(&session, read).snapshot(0, 20, None).turns[0].clone();
         assert_eq!(shown.notices.len(), 20);
-        assert_eq!(shown.notices_more, 1180);
+        assert_eq!(shown.notices_more, 500);
     }
 
-    /// Turn A holds 1,200 warning notes and opens a compaction, turn B
+    /// Turn A holds 520 warning notes, more than the payload budget, and
+    /// opens a compaction, turn B
     /// completes it, and a subagent's lane is in A and C alone. A cold read
     /// of that lane skips B, and its notice of A shows B's newest update as
     /// the warm fold does, within the budget; so does a page of older turns
@@ -2576,7 +2577,7 @@ mod tests {
             json!({"subagent": child, "text": "A"}),
         )
         .await;
-        for n in 0..1200 {
+        for n in 0..520 {
             commit(
                 &store,
                 &session,
@@ -2618,7 +2619,7 @@ mod tests {
         }
         let warm_a = warm.snapshot(0, 20, Some("child-1")).turns[0].clone();
         assert_eq!(warm_a.id, a);
-        assert_eq!(warm_a.notices_more, 1181);
+        assert_eq!(warm_a.notices_more, 501);
         let completed = |turn: &ariadne_api::trajectory::TurnDto| {
             let [StepDto::Compaction(step), ..] = turn.notices.as_slice() else {
                 panic!(

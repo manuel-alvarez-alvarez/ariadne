@@ -1809,8 +1809,13 @@ impl Turn {
         self.steps.iter().any(waits_or_failed)
     }
 
-    fn main(&self) -> Lane {
-        self.lanes.get(MAIN_LANE).cloned().unwrap_or_default()
+    /// The index of the session's own lane, borrowed: a header is built at
+    /// each event, so it copies no lane.
+    fn main(&self) -> std::borrow::Cow<'_, Lane> {
+        match self.lanes.get(MAIN_LANE) {
+            Some(lane) => std::borrow::Cow::Borrowed(lane),
+            None => std::borrow::Cow::Owned(Lane::default()),
+        }
     }
 
     /// The turn as a client reads it: a running turn with its last steps,
@@ -1866,13 +1871,21 @@ impl Turn {
         // The newest notices the index counts, as far as the fold holds
         // them: a cold read and a warm hub hold the same, and
         // `notices_more` counts the rest, exact from the index.
-        let notices: Vec<StepDto> = main
+        let newest: Vec<&str> = main
             .notices
             .iter()
             .rev()
             .take(NOTICES)
-            .filter_map(|id| held.clone().find(|step| step_id(step) == id.as_str()))
-            .cloned()
+            .map(String::as_str)
+            .collect();
+        let found: HashMap<&str, &StepDto> = held
+            .clone()
+            .filter(|step| newest.contains(&step_id(step)))
+            .map(|step| (step_id(step), step))
+            .collect();
+        let notices: Vec<StepDto> = newest
+            .iter()
+            .filter_map(|id| found.get(id).map(|step| (*step).clone()))
             .collect();
         let shown_waits = waits.len().min(ATTENTION_WAITS);
         let shown_errors = errors.len().min(ATTENTION_ERRORS);
