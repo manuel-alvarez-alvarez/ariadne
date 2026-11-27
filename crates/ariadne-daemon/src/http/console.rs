@@ -489,7 +489,7 @@ fn snapshot_of(stored: Vec<AgentEvent>, so_far: Vec<AgentEventDto>) -> Vec<Agent
 /// carries no call id: an end cut off from its start would otherwise take
 /// the start of a later call of the same tool, and survive on it.
 fn whole_calls(page: Vec<AgentEventDto>) -> Vec<AgentEventDto> {
-    let mut open: HashMap<String, usize> = HashMap::new();
+    let mut open: HashMap<(String, String), usize> = HashMap::new();
     page.into_iter()
         .filter(|event| match event.kind.as_str() {
             "pre_tool_use" => {
@@ -520,7 +520,7 @@ fn whole_calls(page: Vec<AgentEventDto>) -> Vec<AgentEventDto> {
 /// What pairs a call's end with its start: the ACP call id, and the tool's
 /// name where an event carries no id, as the transcript pairs them. An event
 /// with neither is one call, and pairs with another of its kind.
-fn call_of(event: &AgentEventDto) -> String {
+fn call_of(event: &AgentEventDto) -> (String, String) {
     // A child session's call ids are its own: two children may reuse one.
     let child = event
         .payload
@@ -534,7 +534,7 @@ fn call_of(event: &AgentEventDto) -> String {
         .or_else(|| event.payload.get("tool_call_id").and_then(Value::as_str))
         .or_else(|| event.payload.get("tool_name").and_then(Value::as_str))
         .unwrap_or_default();
-    format!("{child}\u{0}{call}")
+    (child.to_string(), call.to_string())
 }
 
 /// Follow a session's console.
@@ -782,6 +782,17 @@ mod tests {
             call("4", "post_tool_use", "a"),
         ];
         assert_eq!(whole_calls(same).len(), 4);
+        // Child and call ids are separate fields, whatever they contain.
+        let mut split = vec![
+            call("1", "pre_tool_use", "a"),
+            call("2", "post_tool_use", "a\0b"),
+            call("3", "post_tool_use", "a"),
+        ];
+        split[0].payload = json!({"acp": {"toolCallId": "b\0c"}, "subagent": {"id": "a"}});
+        split[1].payload = json!({"acp": {"toolCallId": "c"}, "subagent": {"id": "a\0b"}});
+        split[2].payload = json!({"acp": {"toolCallId": "b\0c"}, "subagent": {"id": "a"}});
+        let kept: Vec<String> = whole_calls(split).into_iter().map(|e| e.id).collect();
+        assert_eq!(kept, ["1", "3"]);
     }
 
     /// A store of its own for one test: the console reads its page of stored
