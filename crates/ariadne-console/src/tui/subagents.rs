@@ -439,9 +439,10 @@ mod tests {
     }
 
     /// A session whose agent announces no child, as OpenCode's, has no bar,
-    /// and Tab goes to the box as it always did.
-    #[test]
-    fn a_session_without_a_child_has_no_bar_and_tab_switches_nothing() {
+    /// and Tab goes to the box as it always did. The paused clock holds the
+    /// status row's turn clock still between the two renders it compares.
+    #[tokio::test(start_paused = true)]
+    async fn a_session_without_a_child_has_no_bar_and_tab_switches_nothing() {
         let mut console = Console::new(header());
         console.snapshot(&[said("parent words")]);
         let before = drawn(&mut console);
