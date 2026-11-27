@@ -13960,6 +13960,8 @@
           "earlier_steps",
           "attention",
           "attention_more",
+          "notices",
+          "notices_more",
           "answer"
         ],
         "properties": {
@@ -14004,6 +14006,19 @@
           },
           "lane": {
             "type": "string"
+          },
+          "notices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepDto"
+            },
+            "description": "The warning notes and the compactions of the turn, newest first, up\nto 20, whatever the state of the turn. A compaction shows the status\nand the summary of its newest update."
+          },
+          "notices_more": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many warning notes and compactions of the turn `notices` does\nnot hold. The steps route of the turn returns each of them.",
+            "minimum": 0
           },
           "prompt": {
             "oneOf": [

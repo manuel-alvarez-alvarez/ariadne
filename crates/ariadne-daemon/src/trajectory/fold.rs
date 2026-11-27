@@ -42,6 +42,11 @@ pub(crate) const ATTENTION_ERRORS: usize = 20;
 /// ones. `attention_more` counts the rest, and the steps route returns them.
 pub(crate) const ATTENTION_WAITS: usize = 100;
 
+/// How many warning notes and compactions a turn's `notices` holds, the
+/// newest first: a screen of them, as for the errors of `attention`.
+/// `notices_more` counts the rest, and the steps route returns them.
+pub(crate) const NOTICES: usize = 20;
+
 /// How many of its last steps a running turn carries. Fifty steps are about
 /// one screen of a client; the rest are a page of the steps route away.
 pub(crate) const STEP_WINDOW: usize = 50;
@@ -103,6 +108,9 @@ pub(crate) struct Lane {
     subagents: BTreeSet<String>,
     items: BTreeSet<String>,
     pub(crate) errors: Vec<String>,
+    /// The warning notes and the compactions the lane opened, in order: the
+    /// steps of a turn's `notices`.
+    pub(crate) notices: Vec<String>,
     /// The run of text that streams now: a thought or not, and its step.
     streaming: Option<(bool, String)>,
     /// The id of the newest message step: the turn's answer.
@@ -495,12 +503,13 @@ impl Fold {
         self.apply(event, true);
     }
 
-    /// The rows of the attention steps the fold counts in its turns and
-    /// does not hold: within each turn's newest `ATTENTION_WAITS` waiting
-    /// permissions and questions and its newest `ATTENTION_ERRORS` errors,
-    /// those no full event built, with an error's diagnosis. A hub loads
-    /// them and fills them in, so its `attention` stays the window a cold
-    /// read holds.
+    /// The rows of the attention and notice steps the fold counts in its
+    /// turns and does not hold: within each turn's newest `ATTENTION_WAITS`
+    /// waiting permissions and questions, its newest `ATTENTION_ERRORS`
+    /// errors and its newest `NOTICES` notices, those no full event built,
+    /// with an error's diagnosis and a compaction's newest update. A hub
+    /// loads them and fills them in, so its `attention` and its `notices`
+    /// stay the windows a cold read holds.
     pub(crate) fn missing_attention(&self) -> Vec<String> {
         let mut rows = Vec::new();
         for turn in &self.turns {
@@ -526,9 +535,11 @@ impl Fold {
                     .map(str::to_string),
             );
             if let Some(lane) = turn.lanes.get(MAIN_LANE) {
-                for error in lane.errors.iter().rev().take(ATTENTION_ERRORS) {
-                    if !held(error) {
-                        rows.extend(lane.rows(error));
+                let errors = lane.errors.iter().rev().take(ATTENTION_ERRORS);
+                let notices = lane.notices.iter().rev().take(NOTICES);
+                for step in errors.chain(notices) {
+                    if !held(step) {
+                        rows.extend(lane.rows(step));
                     }
                 }
             }
@@ -536,11 +547,38 @@ impl Fold {
         rows
     }
 
+    /// Fold a compaction's later update that a read loaded outside the turns
+    /// it holds: the update changes the step that the compaction's first
+    /// event opened, and opens no turn and no step. Any other event changes
+    /// nothing here.
+    pub(crate) fn apply_update(&mut self, event: &AgentEventDto) -> Vec<TrajectoryOpDto> {
+        if !self.is_later_update(event) {
+            return Vec::new();
+        }
+        self.apply(event, true)
+    }
+
+    /// Whether an event is a later update of a compaction the fold knows.
+    fn is_later_update(&self, event: &AgentEventDto) -> bool {
+        if event.kind != "compaction_update" {
+            return false;
+        }
+        let lane = event_lane(&event.kind, &event.payload).unwrap_or_else(|| MAIN_LANE.into());
+        facts_of(&event.kind, &event.payload)
+            .compaction
+            .is_some_and(|compaction| {
+                self.compactions
+                    .get(&(lane, compaction))
+                    .is_some_and(|at| at.step != event.id)
+            })
+    }
+
     /// Build the step of a stored event the index already counts, from its
     /// payload, in its place: what [`Self::missing_attention`] named. A
-    /// diagnosis reads onto its error. The index does not change.
+    /// diagnosis reads onto its error, and a compaction's later update onto
+    /// its compaction. The index does not change.
     pub(crate) fn fill(&mut self, event: &AgentEventDto) -> Vec<TrajectoryOpDto> {
-        if event.kind == "session.diagnosis" {
+        if event.kind == "session.diagnosis" || self.is_later_update(event) {
             return self.apply(event, true);
         }
         let facts = facts_of(&event.kind, &event.payload);
@@ -564,6 +602,13 @@ impl Fold {
                     .or(facts.request.clone())
                     .unwrap_or_else(|| event.id.clone());
                 StepDto::Question(question_step(event, &turn.id, &key))
+            }
+            "notice" | "session.pin_fallback" => {
+                let (text, severity) = note_of(&event.kind, &facts, Some(event));
+                note_step(event, &turn.id, MAIN_LANE, text, severity)
+            }
+            "compaction_update" => {
+                compaction_step(event, &turn.id, MAIN_LANE, &facts, &self.session_id)
             }
             _ => return Vec::new(),
         };
@@ -764,21 +809,11 @@ impl Fold {
             }
             "session_start" | "session_end" => {
                 self.end_running(TurnState::Interrupted, None, input.created_at, ops);
-                let text = match input.kind {
-                    "session_start" => "session started",
-                    _ => "session ended",
-                };
-                self.note(input, text.into(), NoteSeverity::Info, ops);
+                let (text, severity) = note_of(input.kind, &input.facts, input.full);
+                self.note(input, text, severity, ops);
             }
-            "session.switched" | "session.pin_fallback" => {
-                let text = input
-                    .full
-                    .map(|event| event.summary.clone())
-                    .unwrap_or_default();
-                let severity = match input.kind {
-                    "session.pin_fallback" => NoteSeverity::Warning,
-                    _ => NoteSeverity::Info,
-                };
+            "session.switched" | "session.pin_fallback" | "notice" => {
+                let (text, severity) = note_of(input.kind, &input.facts, input.full);
                 self.note(input, text, severity, ops);
             }
             "plan" | "plan_update" | "plan_removed" => {
@@ -792,7 +827,6 @@ impl Fold {
                     _ => self.plan(input, ops),
                 }
             }
-            "notice" => self.notice(input, ops),
             "subagent_update" => self.subagent(input, ops),
             "compaction_update" => self.compaction(input, ops),
             "available_commands_update" if input.lane == MAIN_LANE => {
@@ -1474,20 +1508,21 @@ impl Fold {
 
     fn note(&mut self, input: &Input, text: String, severity: NoteSeverity, ops: &mut Ops) {
         let index = self.turn_for(input, ops);
-        let step = input.full.map(|event| {
-            StepDto::Note(NoteStepDto {
-                id: event.id.clone(),
-                turn_id: self.turns[index].id.clone(),
-                lane: input.lane.clone(),
-                created_at: event.created_at.clone(),
-                origin: event.kind.clone(),
-                severity,
-                text,
-            })
-        });
+        let turn_id = self.turns[index].id.clone();
+        let step = input
+            .full
+            .map(|event| note_step(event, &turn_id, &input.lane, text, severity));
         // A note is in the lane of its event: a subagent's notice is the
         // subagent's.
         self.open_step(index, &input.lane, input.id, input.row(), step, ops);
+        if severity == NoteSeverity::Warning {
+            self.turns[index]
+                .lanes
+                .entry(input.lane.clone())
+                .or_default()
+                .notices
+                .push(input.id.to_string());
+        }
     }
 
     /// A plan update: a `plan` of the old kind replaces the one plan of its
@@ -1556,24 +1591,6 @@ impl Fold {
         self.running()
             .or(self.turns.len().checked_sub(1))
             .map(|index| self.turns[index].id.clone())
-    }
-
-    /// An ACP notice is a note with its severity: an `error` notice is a
-    /// warning, the strongest a note says.
-    fn notice(&mut self, input: &Input, ops: &mut Ops) {
-        let payload = input.full.map(|event| &event.payload);
-        let severity = match payload.and_then(|payload| string_at(payload, "/severity")) {
-            Some(severity) if severity == "warning" || severity == "error" => NoteSeverity::Warning,
-            _ => NoteSeverity::Info,
-        };
-        let title = payload
-            .and_then(|payload| string_at(payload, "/title"))
-            .unwrap_or_default();
-        let text = match payload.and_then(|payload| string_at(payload, "/description")) {
-            Some(description) if !description.is_empty() => format!("{title} · {description}"),
-            _ => title,
-        };
-        self.note(input, text, severity, ops);
     }
 
     fn subagent(&mut self, input: &Input, ops: &mut Ops) {
@@ -1715,24 +1732,9 @@ impl Fold {
             .compaction
             .clone()
             .unwrap_or_else(|| input.id.to_string());
-        let payload = input.full.map(|event| &event.payload);
-        let status = match payload
-            .and_then(|payload| string_at(payload, "/status"))
-            .as_deref()
-        {
-            Some("running" | "started" | "in_progress") => CompactionStatus::Running,
-            Some("failed") => CompactionStatus::Failed,
-            _ => CompactionStatus::Completed,
-        };
-        // A stored update holds the whole summary so far (021, rule 24): an
-        // empty one is a summary the agent cleared, and replaces the last.
-        let summary = match payload.and_then(|payload| payload.get("summary")) {
-            Some(Value::String(text)) => Some(vec![ContentBlockDto::Text { text: text.clone() }]),
-            Some(Value::Array(blocks)) => Some(blocks_of(blocks, &self.session_id, input.id)),
-            Some(Value::Null) => Some(Vec::new()),
-            _ => None,
-        };
-        let error = payload.and_then(|payload| string_at(payload, "/error"));
+        let parts = input
+            .full
+            .map(|event| compaction_of(&event.payload, &self.session_id, input.id));
         let key = (input.lane.clone(), compaction_id.clone());
         if let Some(at) = self.compactions.get(&key).cloned()
             && at.step != input.id
@@ -1756,7 +1758,7 @@ impl Fold {
                 step_id(kept) == at.step.as_str() && lane_of(kept) == input.lane.as_str()
             }) && let StepDto::Compaction(kept) = step
             {
-                if payload.is_some() {
+                if let Some((status, summary, error)) = parts {
                     kept.status = status;
                     if let Some(summary) = summary {
                         kept.summary = summary;
@@ -1777,18 +1779,15 @@ impl Fold {
             },
         );
         let step = input.full.map(|event| {
-            StepDto::Compaction(CompactionStepDto {
-                id: event.id.clone(),
-                turn_id,
-                lane: input.lane.clone(),
-                created_at: event.created_at.clone(),
-                compaction_id,
-                status,
-                summary: summary.unwrap_or_default(),
-                error,
-            })
+            compaction_step(event, &turn_id, &input.lane, &input.facts, &self.session_id)
         });
         self.open_step(index, &input.lane, input.id, input.row(), step, ops);
+        self.turns[index]
+            .lanes
+            .entry(input.lane.clone())
+            .or_default()
+            .notices
+            .push(input.id.to_string());
     }
 }
 
@@ -1810,8 +1809,13 @@ impl Turn {
         self.steps.iter().any(waits_or_failed)
     }
 
-    fn main(&self) -> Lane {
-        self.lanes.get(MAIN_LANE).cloned().unwrap_or_default()
+    /// The index of the session's own lane, borrowed: a header is built at
+    /// each event, so it copies no lane.
+    fn main(&self) -> std::borrow::Cow<'_, Lane> {
+        match self.lanes.get(MAIN_LANE) {
+            Some(lane) => std::borrow::Cow::Borrowed(lane),
+            None => std::borrow::Cow::Owned(Lane::default()),
+        }
     }
 
     /// The turn as a client reads it: a running turn with its last steps,
@@ -1864,6 +1868,25 @@ impl Turn {
             .filter(|step| matches!(step, StepDto::Error(_)))
             .rev()
             .collect();
+        // The newest notices the index counts, as far as the fold holds
+        // them: a cold read and a warm hub hold the same, and
+        // `notices_more` counts the rest, exact from the index.
+        let newest: Vec<&str> = main
+            .notices
+            .iter()
+            .rev()
+            .take(NOTICES)
+            .map(String::as_str)
+            .collect();
+        let found: HashMap<&str, &StepDto> = held
+            .clone()
+            .filter(|step| newest.contains(&step_id(step)))
+            .map(|step| (step_id(step), step))
+            .collect();
+        let notices: Vec<StepDto> = newest
+            .iter()
+            .filter_map(|id| found.get(id).map(|step| (*step).clone()))
+            .collect();
         let shown_waits = waits.len().min(ATTENTION_WAITS);
         let shown_errors = errors.len().min(ATTENTION_ERRORS);
         let attention_more = waiting.max(waits.len()) - shown_waits
@@ -1887,6 +1910,8 @@ impl Turn {
                 .cloned()
                 .collect(),
             attention_more: attention_more as u64,
+            notices_more: (main.notices.len() - notices.len()) as u64,
+            notices,
             answer: held
                 .filter_map(|step| match step {
                     StepDto::Message(message) if Some(&message.id) == main.answer.as_ref() => {
@@ -1952,6 +1977,103 @@ fn waits(step: &StepDto) -> bool {
         StepDto::Question(question) => question.state == QuestionState::Open,
         _ => false,
     }
+}
+
+/// The text and the severity of a note event. The severity comes from the
+/// kind and the facts, so a head counts a warning as its payload does: a
+/// pin fallback is a warning, and so is a `warning` or an `error` notice,
+/// the strongest a note says. Every other note is info.
+fn note_of(kind: &str, facts: &EventFacts, full: Option<&AgentEventDto>) -> (String, NoteSeverity) {
+    let payload = full.map(|event| &event.payload);
+    let summary = || full.map(|event| event.summary.clone()).unwrap_or_default();
+    match kind {
+        "session_start" => ("session started".into(), NoteSeverity::Info),
+        "session_end" => ("session ended".into(), NoteSeverity::Info),
+        "session.pin_fallback" => (summary(), NoteSeverity::Warning),
+        "notice" => {
+            let severity = match facts.severity.as_deref() {
+                Some("warning" | "error") => NoteSeverity::Warning,
+                _ => NoteSeverity::Info,
+            };
+            let title = payload
+                .and_then(|payload| string_at(payload, "/title"))
+                .unwrap_or_default();
+            let text = match payload.and_then(|payload| string_at(payload, "/description")) {
+                Some(description) if !description.is_empty() => {
+                    format!("{title} · {description}")
+                }
+                _ => title,
+            };
+            (text, severity)
+        }
+        _ => (summary(), NoteSeverity::Info),
+    }
+}
+
+fn note_step(
+    event: &AgentEventDto,
+    turn_id: &str,
+    lane: &str,
+    text: String,
+    severity: NoteSeverity,
+) -> StepDto {
+    StepDto::Note(NoteStepDto {
+        id: event.id.clone(),
+        turn_id: turn_id.to_string(),
+        lane: lane.to_string(),
+        created_at: event.created_at.clone(),
+        origin: event.kind.clone(),
+        severity,
+        text,
+    })
+}
+
+/// The status, the summary and the error of a compaction update. A stored
+/// update holds the whole summary so far (021, rule 24): an empty one is a
+/// summary the agent cleared, and replaces the last. None where the update
+/// sends no summary.
+fn compaction_of(
+    payload: &Value,
+    session_id: &str,
+    event_id: &str,
+) -> (
+    CompactionStatus,
+    Option<Vec<ContentBlockDto>>,
+    Option<String>,
+) {
+    let status = match string_at(payload, "/status").as_deref() {
+        Some("running" | "started" | "in_progress") => CompactionStatus::Running,
+        Some("failed") => CompactionStatus::Failed,
+        _ => CompactionStatus::Completed,
+    };
+    let summary = match payload.get("summary") {
+        Some(Value::String(text)) => Some(vec![ContentBlockDto::Text { text: text.clone() }]),
+        Some(Value::Array(blocks)) => Some(blocks_of(blocks, session_id, event_id)),
+        Some(Value::Null) => Some(Vec::new()),
+        _ => None,
+    };
+    (status, summary, string_at(payload, "/error"))
+}
+
+/// The step a compaction's first event opens, from its payload.
+fn compaction_step(
+    event: &AgentEventDto,
+    turn_id: &str,
+    lane: &str,
+    facts: &EventFacts,
+    session_id: &str,
+) -> StepDto {
+    let (status, summary, error) = compaction_of(&event.payload, session_id, &event.id);
+    StepDto::Compaction(CompactionStepDto {
+        id: event.id.clone(),
+        turn_id: turn_id.to_string(),
+        lane: lane.to_string(),
+        created_at: event.created_at.clone(),
+        compaction_id: facts.compaction.clone().unwrap_or_else(|| event.id.clone()),
+        status,
+        summary: summary.unwrap_or_default(),
+        error,
+    })
 }
 
 /// A permission step, from its request's payload.
@@ -2600,6 +2722,83 @@ mod tests {
         };
         assert_eq!(step.status, CompactionStatus::Completed);
         assert_eq!(step.summary, text("Kept the plan."));
+    }
+
+    /// A turn carries its warning notes and its compactions in `notices`,
+    /// newest first, and no info note; a compaction there shows its newest
+    /// update, and the change comes as an update of the turn. `attention`
+    /// holds none of them (rules 26, 27).
+    #[test]
+    fn a_turn_carries_its_warnings_and_compactions_in_its_notices() {
+        use ariadne_api::trajectory::CompactionStatus;
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        let (fallback, _) = s.event("session.pin_fallback", json!({}));
+        let (warning, _) = s.event(
+            "notice",
+            json!({"severity": "warning", "title": "Slow", "description": "The API is slow."}),
+        );
+        s.event("notice", json!({"severity": "info", "title": "Hello"}));
+        s.event("session.switched", json!({}));
+        let (compaction, _) = s.event(
+            "compaction_update",
+            json!({"compaction_id": "k-1", "status": "running"}),
+        );
+        let (error, _) = s.event("notice", json!({"severity": "error", "title": "Broke"}));
+
+        let notices = |turn: &ariadne_api::trajectory::TurnDto| -> Vec<String> {
+            turn.notices
+                .iter()
+                .map(|step| step_id(step).to_string())
+                .collect()
+        };
+        let running = s.fold.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(
+            notices(&running),
+            [
+                error.clone(),
+                compaction.clone(),
+                warning.clone(),
+                fallback.clone()
+            ]
+        );
+        assert_eq!(running.notices_more, 0);
+        assert!(running.attention.is_empty(), "attention does not change");
+
+        let (_, ops) = s.event(
+            "compaction_update",
+            json!({"compaction_id": "k-1", "status": "completed", "summary": "Kept the plan."}),
+        );
+        let update = ops
+            .iter()
+            .find_map(|op| match op {
+                TrajectoryOpDto::TurnUpsert { turn: upsert } if upsert.id == turn => Some(upsert),
+                _ => None,
+            })
+            .expect("the change updates the turn");
+        let Some(StepDto::Compaction(step)) = update
+            .notices
+            .iter()
+            .find(|step| step_id(step) == compaction)
+        else {
+            panic!("the compaction is a notice: {:?}", update.notices);
+        };
+        assert_eq!(step.status, CompactionStatus::Completed);
+        assert_eq!(step.summary, text("Kept the plan."));
+
+        s.stop();
+        let closed = s.fold.snapshot(0, 20, None).turns[0].clone();
+        assert!(closed.steps.is_empty());
+        assert_eq!(
+            notices(&closed),
+            [
+                error.clone(),
+                compaction.clone(),
+                warning.clone(),
+                fallback.clone()
+            ]
+        );
+        assert_eq!(closed.notices_more, 0);
     }
 
     /// A turn that holds attention stays outside the snapshot when the fold

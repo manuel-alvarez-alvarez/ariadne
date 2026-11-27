@@ -6117,6 +6117,18 @@ export interface components {
              */
             id: string;
             lane: string;
+            /**
+             * @description The warning notes and the compactions of the turn, newest first, up
+             *     to 20, whatever the state of the turn. A compaction shows the status
+             *     and the summary of its newest update.
+             */
+            notices: components["schemas"]["StepDto"][];
+            /**
+             * Format: int64
+             * @description How many warning notes and compactions of the turn `notices` does
+             *     not hold. The steps route of the turn returns each of them.
+             */
+            notices_more: number;
             prompt?: components["schemas"]["PromptDto"] | null;
             started_at: string;
             state: components["schemas"]["TurnState"];

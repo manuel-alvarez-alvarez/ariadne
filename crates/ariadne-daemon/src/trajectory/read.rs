@@ -17,7 +17,7 @@ use ariadne_core::SessionStatus;
 use ariadne_core::event_facts::EventFacts;
 use ariadne_store::{AgentEvent, EventHead, Store, StoreError};
 
-use super::fold::{ATTENTION_ERRORS, ATTENTION_WAITS, Fold, STEP_WINDOW, TurnIndex};
+use super::fold::{ATTENTION_ERRORS, ATTENTION_WAITS, Fold, NOTICES, STEP_WINDOW, TurnIndex};
 
 /// The most full event payloads one read loads: an open of a trajectory, a
 /// page of older turns, or a page of a turn's steps. Five hundred events
@@ -59,12 +59,16 @@ pub(crate) enum Item {
     Head(EventHead),
     /// A permission or a question outside every turn the fold holds.
     Pair(EventHead),
+    /// The newest update of a compaction that a shown step holds, loaded
+    /// outside the turns the read holds: a turn the read skips, or a turn
+    /// after its bound. It changes that step, and opens no turn.
+    Update(Box<AgentEvent>),
 }
 
 impl Item {
     fn id(&self) -> &str {
         match self {
-            Self::Full(event) | Self::Seed(event, _) => &event.id,
+            Self::Full(event) | Self::Seed(event, _) | Self::Update(event) => &event.id,
             Self::Head(head) | Self::Pair(head) => &head.id,
         }
     }
@@ -102,7 +106,7 @@ impl Read {
     pub(crate) fn loaded(&self) -> usize {
         self.items
             .iter()
-            .filter(|item| matches!(item, Item::Full(_) | Item::Seed(..)))
+            .filter(|item| matches!(item, Item::Full(_) | Item::Seed(..) | Item::Update(_)))
             .count()
     }
 
@@ -125,6 +129,9 @@ impl Read {
                 }
                 Item::Seed(event, turn) => {
                     fold.apply_in(&turn, &crate::http::convert::event_dto(*event));
+                }
+                Item::Update(event) => {
+                    fold.apply_update(&crate::http::convert::event_dto(*event));
                 }
                 Item::Head(head) => fold.apply_head(&head),
                 Item::Pair(head) => fold.pair_head(&head),
@@ -239,6 +246,35 @@ fn attention(turn: &TurnIndex, errors: bool) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The steps of a turn's `notices`, newest first, with the rows that show
+/// each: its newest warning notes and compactions, a compaction with its
+/// newest update wherever in the session that update is.
+fn notices(turn: &TurnIndex, compactions: &[CompactionRows]) -> Vec<Vec<String>> {
+    let Some(lane) = turn.lanes.get(MAIN_LANE) else {
+        return Vec::new();
+    };
+    lane.notices
+        .iter()
+        .rev()
+        .take(NOTICES)
+        .map(|id| {
+            let mut rows = lane.rows(id);
+            rows.extend(newest_update(compactions, id, MAIN_LANE));
+            rows
+        })
+        .collect()
+}
+
+/// The newest update of the compaction whose first event is `step` in
+/// `lane`, where it has one after that first event.
+fn newest_update(compactions: &[CompactionRows], step: &str, lane: &str) -> Option<String> {
+    compactions
+        .iter()
+        .find(|kept| kept.first == step && kept.lane.as_deref().unwrap_or(MAIN_LANE) == lane)
+        .filter(|kept| kept.newest != kept.first)
+        .map(|kept| kept.newest.clone())
+}
+
 /// The last `STEP_WINDOW` steps of a lane, newest first, each with the rows
 /// that show it.
 fn window(turn: &TurnIndex, lane: &str) -> Vec<Vec<String>> {
@@ -274,18 +310,44 @@ pub(crate) async fn read_turns(
     lane: Option<&str>,
     budget: usize,
 ) -> Result<Read, StoreError> {
-    let Some(upper) = store.newest_session_event_id(session_id, before).await? else {
+    let Some(newest) = store.newest_session_event_id(session_id, None).await? else {
         return Ok(Read::default());
     };
-    read_turns_upto(store, session_id, &upper, turns, lane, budget).await
+    let upper = match before {
+        None => newest.clone(),
+        Some(before) => match store
+            .newest_session_event_id(session_id, Some(before))
+            .await?
+        {
+            Some(upper) => upper,
+            None => return Ok(Read::default()),
+        },
+    };
+    read_turns_within(store, session_id, &upper, &newest, turns, lane, budget).await
 }
 
 /// [`read_turns`] at the bound `upper`: no event above it is in the read,
 /// whatever the store holds by the time a query of it runs.
+#[cfg(test)]
 pub(crate) async fn read_turns_upto(
     store: &Store,
     session_id: &str,
     upper: &str,
+    turns: usize,
+    lane: Option<&str>,
+    budget: usize,
+) -> Result<Read, StoreError> {
+    read_turns_within(store, session_id, upper, upper, turns, lane, budget).await
+}
+
+/// The turns up to `upper`. A compaction of those turns shows its newest
+/// update up to `reach`, the bound the read began with: a page of older
+/// turns ends at its cursor, and its compactions do not.
+async fn read_turns_within(
+    store: &Store,
+    session_id: &str,
+    upper: &str,
+    reach: &str,
     turns: usize,
     lane: Option<&str>,
     budget: usize,
@@ -335,7 +397,7 @@ pub(crate) async fn read_turns_upto(
         );
     }
 
-    let compaction_firsts = compactions_of(store, session_id, upper).await?;
+    let compaction_firsts = compactions_of(store, session_id, reach).await?;
     let subagent_firsts = store.first_subagent_events(session_id, upper).await?;
     let mut fold = scratch(session_id);
     seed_compactions(&mut fold, &compaction_firsts);
@@ -351,9 +413,9 @@ pub(crate) async fn read_turns_upto(
         ids: BTreeSet::new(),
         budget,
     };
-    // Each shown turn whole, newest first: its prompt and answer, and the
-    // waiting steps and the errors its `attention` holds, so a cold read
-    // holds what a warm hub holds. A turn that does not fit is not shown, nor
+    // Each shown turn whole, newest first: its prompt and answer, the
+    // waiting steps and the errors its `attention` holds, and the steps its
+    // `notices` holds, so a cold read holds what a warm hub holds. A turn that does not fit is not shown, nor
     // any older one. The newest turn's step window comes after them.
     let mut first_shown = None;
     for (rank, &at) in shown.iter().rev().enumerate() {
@@ -364,6 +426,7 @@ pub(crate) async fn read_turns_upto(
             .into_iter()
             .chain(attention(turn, false).into_iter().flatten())
             .chain(attention(turn, true).into_iter().flatten())
+            .chain(notices(turn, &compaction_firsts).into_iter().flatten())
             .collect();
         if !picks.take(essentials) && !(rank == 0 && picks.take(mandatory(turn, prompt(at)))) {
             break;
@@ -423,12 +486,13 @@ pub(crate) async fn read_turns_upto(
         picks.take(rows);
     }
 
+    let updates = updates_of(&compaction_firsts);
     let loaded = store
         .events_by_ids(&picks.ids.into_iter().collect::<Vec<_>>())
         .await?;
     let first_turn = starts[first_shown].id.clone();
     Ok(Read {
-        items: merge(heads, pairs, loaded, &starts),
+        items: merge(heads, pairs, loaded, &starts, &updates),
         upper: Some(upper.to_string()),
         has_older: candidates.first().is_some_and(|&first| first < first_shown),
         first_turn: Some(first_turn),
@@ -542,14 +606,7 @@ pub(crate) async fn read_steps(
     let mut kept = 0;
     for opener in index.openers[start..end].iter().rev() {
         let mut rows = index.rows(&opener.step);
-        rows.extend(
-            compaction_firsts
-                .iter()
-                .filter(|kept| {
-                    kept.first == opener.step && kept.lane.as_deref().unwrap_or(MAIN_LANE) == lane
-                })
-                .map(|kept| kept.newest.clone()),
-        );
+        rows.extend(newest_update(&compaction_firsts, &opener.step, lane));
         if let Some(child) = turn
             .lanes
             .get(lane)
@@ -571,7 +628,8 @@ pub(crate) async fn read_steps(
         .await?;
     // The prompt after the turn closes it as it closed it in the session: a
     // call it cut short reads as interrupted, not pending.
-    let mut items = merge(heads, pairs, loaded, &starts);
+    let updates = updates_of(&compaction_firsts);
+    let mut items = merge(heads, pairs, loaded, &starts, &updates);
     let successor = starts.get(at + 1).cloned();
     let successor_id = successor.as_ref().map(|head| head.id.clone());
     items.extend(successor.map(Item::Head));
@@ -624,6 +682,7 @@ fn merge(
     pairs: Vec<EventHead>,
     loaded: Vec<AgentEvent>,
     starts: &[EventHead],
+    updates: &BTreeSet<String>,
 ) -> Vec<Item> {
     let held: BTreeSet<String> = heads.iter().map(|head| head.id.clone()).collect();
     let mut loaded: BTreeMap<String, AgentEvent> = loaded
@@ -649,7 +708,12 @@ fn merge(
     // A plan or a subagent's first event outside the turns a read holds is
     // a plan or a subagent the snapshot shows all the same, in the turn it
     // came in.
+    // A compaction's newest update outside the held turns changes its step
+    // and opens no turn.
     items.extend(loaded.into_values().map(|event| {
+        if updates.contains(&event.id) {
+            return Item::Update(Box::new(event));
+        }
         let turn = starts
             .iter()
             .rfind(|start| start.id <= event.id)
@@ -699,6 +763,16 @@ async fn compactions_of(
             newest,
         })
         .collect())
+}
+
+/// The later updates of the compactions: a loaded one outside the held
+/// turns is an [`Item::Update`].
+fn updates_of(compactions: &[CompactionRows]) -> BTreeSet<String> {
+    compactions
+        .iter()
+        .filter(|kept| kept.newest != kept.first)
+        .map(|kept| kept.newest.clone())
+        .collect()
 }
 
 fn seed_subagents(fold: &mut Fold, firsts: &[(String, String)]) {
@@ -2268,5 +2342,316 @@ mod tests {
             assert_eq!(turn.attention.len(), super::ATTENTION_WAITS + 20);
             assert_eq!(turn.attention_more, 0);
         }
+    }
+
+    /// Commit a turn of 30 warning notices, 10 info notices, a pin fallback
+    /// and 5 compactions, each compaction with a later update, and answer
+    /// the turn and the ids of its notice steps, oldest first.
+    async fn noticed_turn(store: &Store, session: &str) -> (String, Vec<String>) {
+        let turn = prompt(store, session).await;
+        let mut notices = Vec::new();
+        notices.push(commit(store, session, "session.pin_fallback", json!({})).await);
+        for n in 0..30 {
+            let severity = if n % 2 == 0 { "warning" } else { "error" };
+            notices.push(
+                commit(
+                    store,
+                    session,
+                    "notice",
+                    json!({"severity": severity, "title": format!("warn {n}")}),
+                )
+                .await,
+            );
+            if n % 3 == 0 {
+                commit(
+                    store,
+                    session,
+                    "notice",
+                    json!({"severity": "info", "title": format!("info {n}")}),
+                )
+                .await;
+            }
+            if n % 6 == 5 {
+                let id = format!("k-{n}");
+                notices.push(
+                    commit(
+                        store,
+                        session,
+                        "compaction_update",
+                        json!({"compaction_id": id, "status": "running"}),
+                    )
+                    .await,
+                );
+                commit(
+                    store,
+                    session,
+                    "compaction_update",
+                    json!({"compaction_id": id, "status": "completed",
+                           "summary": format!("kept {n}")}),
+                )
+                .await;
+            }
+        }
+        (turn, notices)
+    }
+
+    fn notice_ids(turn: &ariadne_api::trajectory::TurnDto) -> Vec<String> {
+        turn.notices
+            .iter()
+            .map(|step| step_id(step).to_string())
+            .collect()
+    }
+
+    /// A closed turn of more than 20 notices holds the newest 20, newest
+    /// first, each compaction with its newest update; `notices_more` counts
+    /// the rest, and no info note is in either. The steps route returns
+    /// each notice under the same id (rules 26, 27).
+    #[tokio::test]
+    async fn a_turn_of_many_notices_holds_the_newest_twenty_and_counts_the_rest() {
+        let (store, session, _dir) = session().await;
+        let (turn, notices) = noticed_turn(&store, &session).await;
+        stop(&store, &session).await;
+        assert_eq!(notices.len(), 36);
+
+        let fold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        let shown = fold.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(shown.state, TurnState::Completed);
+        let newest: Vec<String> = notices.iter().rev().take(20).cloned().collect();
+        assert_eq!(
+            notice_ids(&shown),
+            newest,
+            "the newest twenty, newest first"
+        );
+        assert_eq!(shown.notices_more, 16);
+        assert!(shown.attention.is_empty(), "attention does not change");
+        for step in &shown.notices {
+            match step {
+                StepDto::Note(note) => {
+                    assert_eq!(
+                        note.severity,
+                        ariadne_api::trajectory::NoteSeverity::Warning
+                    );
+                }
+                StepDto::Compaction(compaction) => {
+                    assert_eq!(
+                        compaction.status,
+                        ariadne_api::trajectory::CompactionStatus::Completed
+                    );
+                    let n = compaction.compaction_id.trim_start_matches("k-");
+                    assert_eq!(
+                        compaction.summary,
+                        vec![ariadne_api::trajectory::ContentBlockDto::Text {
+                            text: format!("kept {n}")
+                        }]
+                    );
+                }
+                other => panic!("not a notice: {other:?}"),
+            }
+        }
+
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, None, 200, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        let paged = folded(&session, page.read).held_steps(&turn, MAIN_LANE);
+        let paged_ids: Vec<String> = paged
+            .iter()
+            .filter(|step| match step {
+                StepDto::Note(note) => {
+                    note.severity == ariadne_api::trajectory::NoteSeverity::Warning
+                }
+                StepDto::Compaction(_) => true,
+                _ => false,
+            })
+            .map(|step| step_id(step).to_string())
+            .collect();
+        assert_eq!(paged_ids, notices, "the steps route returns each notice");
+        for notice in &shown.notices {
+            assert!(
+                paged.contains(notice),
+                "the same step under the same id: {notice:?}"
+            );
+        }
+    }
+
+    /// A running turn's `notices` are the same from a warm fold, a cold
+    /// read and its `turn_upsert`; a cold read too small for the turn's
+    /// whole is filled to the same window (rule 16).
+    #[tokio::test]
+    async fn a_warm_fold_and_a_cold_read_hold_the_same_notices() {
+        let (store, session, _dir) = session().await;
+        let (_, notices) = noticed_turn(&store, &session).await;
+
+        let mut warm = scratch(&session);
+        let mut last_ops = Vec::new();
+        for event in store.list_session_events(&session).await.unwrap() {
+            last_ops = warm.apply(&crate::http::convert::event_dto(event), true);
+        }
+        let cold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        let warm_turn = warm.snapshot(0, 20, None).turns[0].clone();
+        let cold_turn = cold.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(warm_turn.state, TurnState::Running);
+        let newest: Vec<String> = notices.iter().rev().take(20).cloned().collect();
+        assert_eq!(notice_ids(&warm_turn), newest);
+        assert_eq!(warm_turn.notices_more, 16);
+        assert_eq!(cold_turn.notices, warm_turn.notices);
+        assert_eq!(cold_turn.notices_more, warm_turn.notices_more);
+        let update = last_ops
+            .iter()
+            .find_map(|op| match op {
+                TrajectoryOpDto::TurnUpsert { turn } => Some(turn),
+                _ => None,
+            })
+            .expect("the last update changes its turn");
+        assert_eq!(update.notices, warm_turn.notices);
+        assert_eq!(update.notices_more, warm_turn.notices_more);
+
+        // A read that holds only the prompt: the hub fills the notices in.
+        let mut short = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 1)
+                .await
+                .unwrap(),
+        );
+        let missing = short.missing_attention();
+        assert!(!missing.is_empty(), "the window the short read lacks");
+        for event in store.events_by_ids(&missing).await.unwrap() {
+            short.fill(&crate::http::convert::event_dto(event));
+        }
+        let filled = short.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(filled.notices, warm_turn.notices);
+        assert_eq!(filled.notices_more, warm_turn.notices_more);
+    }
+
+    /// A turn of many more notices than the budget loads the budget at
+    /// most, and counts every notice it does not hold (rules 16, 36).
+    #[tokio::test]
+    async fn a_turn_of_many_notices_loads_the_budget_at_most() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        for n in 0..520 {
+            commit(
+                &store,
+                &session,
+                "notice",
+                json!({"severity": "warning", "title": format!("warn {n}")}),
+            )
+            .await;
+        }
+
+        let read = read_turns(&store, &session, None, 20, None, 500)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 500, "loaded {}", read.loaded());
+        let shown = folded(&session, read).snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(shown.notices.len(), 20);
+        assert_eq!(shown.notices_more, 500);
+    }
+
+    /// Turn A holds 520 warning notes, more than the payload budget, and
+    /// opens a compaction, turn B
+    /// completes it, and a subagent's lane is in A and C alone. A cold read
+    /// of that lane skips B, and its notice of A shows B's newest update as
+    /// the warm fold does, within the budget; so does a page of older turns
+    /// whose cursor comes before that update (rules 16, 27, 42, 43).
+    #[tokio::test]
+    async fn a_compaction_completed_in_a_skipped_turn_reads_as_a_warm_fold_does() {
+        use ariadne_api::trajectory::{CompactionStatus, ContentBlockDto};
+        let (store, session, _dir) = session().await;
+        let child = json!({"id": "child-1"});
+        let a = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "agent_message",
+            json!({"subagent": child, "text": "A"}),
+        )
+        .await;
+        for n in 0..520 {
+            commit(
+                &store,
+                &session,
+                "notice",
+                json!({"severity": "warning", "title": format!("warn {n}")}),
+            )
+            .await;
+        }
+        let compaction = commit(
+            &store,
+            &session,
+            "compaction_update",
+            json!({"compaction_id": "k-1", "status": "running", "summary": "old"}),
+        )
+        .await;
+        stop(&store, &session).await;
+        let b = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "compaction_update",
+            json!({"compaction_id": "k-1", "status": "completed", "summary": "new"}),
+        )
+        .await;
+        stop(&store, &session).await;
+        let c = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "agent_message",
+            json!({"subagent": child, "text": "C"}),
+        )
+        .await;
+        stop(&store, &session).await;
+
+        let mut warm = scratch(&session);
+        for event in store.list_session_events(&session).await.unwrap() {
+            warm.apply(&crate::http::convert::event_dto(event), true);
+        }
+        let warm_a = warm.snapshot(0, 20, Some("child-1")).turns[0].clone();
+        assert_eq!(warm_a.id, a);
+        assert_eq!(warm_a.notices_more, 501);
+        let completed = |turn: &ariadne_api::trajectory::TurnDto| {
+            let [StepDto::Compaction(step), ..] = turn.notices.as_slice() else {
+                panic!(
+                    "the compaction is the newest notice: {:?}",
+                    turn.notices.first()
+                );
+            };
+            assert_eq!(step.id, compaction);
+            assert_eq!(step.status, CompactionStatus::Completed);
+            assert_eq!(
+                step.summary,
+                vec![ContentBlockDto::Text { text: "new".into() }]
+            );
+        };
+        completed(&warm_a);
+
+        let read = read_turns(&store, &session, None, 20, Some("child-1"), 500)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 500, "loaded {}", read.loaded());
+        let cold = folded(&session, read).snapshot(0, 20, Some("child-1"));
+        let ids: Vec<&str> = cold.turns.iter().map(|turn| turn.id.as_str()).collect();
+        assert_eq!(ids, [a.as_str(), c.as_str()], "the read skips B");
+        assert_eq!(cold.turns[0].notices, warm_a.notices);
+        assert_eq!(cold.turns[0].notices_more, warm_a.notices_more);
+
+        let page = read_page(&store, &session, &b, 5, None, 500).await.unwrap();
+        assert!(page.loaded() <= 500, "loaded {}", page.loaded());
+        let paged = folded(&session, page).snapshot(0, 20, None);
+        let ids: Vec<&str> = paged.turns.iter().map(|turn| turn.id.as_str()).collect();
+        assert_eq!(ids, [a.as_str()], "the page ends at its cursor");
+        assert_eq!(paged.turns[0].notices, warm_a.notices);
+        assert_eq!(paged.turns[0].notices_more, warm_a.notices_more);
     }
 }
