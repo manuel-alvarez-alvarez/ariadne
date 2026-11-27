@@ -49,6 +49,7 @@ type PermissionStep = Extract<StepDto, { type: "permission" }>
 type QuestionStep = Extract<StepDto, { type: "question" }>
 type ErrorStep = Extract<StepDto, { type: "error" }>
 type MessageStep = Extract<StepDto, { type: "message" }>
+type SubagentStep = Extract<StepDto, { type: "subagent" }>
 
 export function aToolStep(turnId: string, overrides: Partial<ToolStep> = {}): ToolStep {
   return {
@@ -130,6 +131,33 @@ export function anErrorStep(turnId: string, overrides: Partial<ErrorStep> = {}):
     lane: "main",
     created_at: "2026-11-14T10:00:50Z",
     text: "The agent crashed",
+    ...overrides,
+  }
+}
+
+export function aSubagentStep(turnId: string, overrides: Partial<SubagentStep> = {}): SubagentStep {
+  return {
+    type: "subagent",
+    id: anId(),
+    turn_id: turnId,
+    lane: "main",
+    created_at: "2026-11-14T10:00:06Z",
+    started_at: "2026-11-14T10:00:06Z",
+    ended_at: null,
+    subagent_id: "01SUBAGENT0000000000000001",
+    title: "Explore the tests",
+    task: "Find the flaky test",
+    state: "running",
+    can_cancel: true,
+    activity: {
+      steps: 4,
+      files_changed: 0,
+      failed: 0,
+      cancelled: 0,
+      subagents: 0,
+      thoughts: 0,
+      tool_calls: 4,
+    },
     ...overrides,
   }
 }

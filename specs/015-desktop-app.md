@@ -1791,8 +1791,8 @@ the default until the turn console replaces it.
     `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps`. A row shows the
     kind, the status, the title, the subject and the duration of its step.
     Where earlier steps exist, `Show N earlier` reads the page before the
-    first row. Each row has a slot for the detail of its step
-    (`trajectory/step-detail.tsx`), which draws nothing yet. A step that an
+    first row. Each row is drawn by the slot for the detail of its step
+    (`trajectory/step-detail.tsx`), which rules 100 to 109 describe. A step that an
     update brought stays a row of the open fold after its turn ends, and its
     live version wins over a page read before it. The rows keep the turn's
     order: a live step that the page does not hold goes before the next live
@@ -1895,6 +1895,75 @@ the default until the turn console replaces it.
     file. The status row shows the session's status, the running turn and
     the token totals. The find control draws nothing yet
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the session's status, the running turn and the token totals in the status row`).
+
+### A step in place
+
+A step of the turn console opens under its row, and shows its detail by its
+kind. `trajectory/step-detail.tsx` draws the row and the detail,
+`trajectory/step-row.tsx` the row, `trajectory/content-blocks.tsx` the
+content blocks that are not text, and `trajectory/full-view.tsx` the full
+view.
+
+100. A step row is a button with `aria-expanded`. A click, Enter or Space
+     opens the detail of the step under the row, to a set height, and the
+     same action closes it. The rows of an open fold, the last rows of a
+     running turn and the errors of a turn's `attention` all open this way
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::opens a step under its row on a click, Enter or Space, to a set height, and closes it the same way`).
+101. The detail of a tool call is read from
+     `GET /v1/sessions/{id}/trajectory/items/{item_id}` and draws by its
+     `type`. A `command` shows the command and its output, with the working
+     directory and the exit code. A `diff` shows each file in the task diff
+     viewer (`features/tasks/diff-editor.tsx`), with its line numbers and the
+     colours of its language. A `file` shows the text read with its language
+     and its line numbers from `line`. A `search` and a `fetch` show the query
+     or the URL, and the result. A `generic` detail shows its content blocks
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::draws a command as its command and its output`,
+     `::draws an edit as a diff with line numbers and language colours`,
+     `::draws a read as the file with its language and its line numbers`,
+     `::draws a search and a fetch as the query or the URL, and the result`).
+102. The content of a detail comes first and its controls second. Each code
+     section is a `CodeBlock` under one frame of its own, never a frame in a
+     frame, with its name and its language. `Copy` in a section copies the
+     content of that section
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::copies the content of a section`).
+103. `Raw` is a toggle with `aria-pressed`. It reads the detail again with
+     `raw=true` and shows the raw input and the raw output as JSON. The
+     detail reads without `raw` until then, and no raw data shows without it
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::shows the raw input and the raw output only behind Raw`).
+104. An image block shows inline, in the answer of a turn and in a detail.
+     An audio block, a resource and a resource link show as a labelled row
+     with a link. A block with bytes links to its `blob` path on the host's
+     daemon (040)
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::shows an image inline in a message and in a detail, and audio and resources as labelled rows with a link`).
+105. The detail of a tool call is read again at each new `detail_rev` of
+     its step, so an open step of a running call shows new progress, in
+     place and in the full view
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::reads the detail of an open running call again at each new detail_rev`,
+     `::shows the newest progress of a running call in the full view`).
+106. A subagent step row shows its title, its task, its state, its time and
+     the count of its steps. It opens to the subagent's own steps, read from
+     `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps?subagent=<id>`,
+     and each of those opens in place too. Where `can_cancel` is true, the
+     row has a Cancel control that posts `{"subagent_id"}` to
+     `POST /v1/sessions/{id}/console/cancel`. Where it is false, the row has
+     none
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
+     `::offers no cancel on a subagent the agent does not let cancel`).
+107. `Open` shows the whole content of a step, with no set height, in the
+     full view. On a console panel of 880 CSS pixels or wider the full view
+     sits beside the conversation, and on a narrower panel it is a modal
+     drawer. The width is the panel's, not the browser's. The full view of a
+     subagent shows its whole work: its steps
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::opens the whole step beside the conversation on a panel of 880 px or wider`,
+     `::opens the whole step in a drawer on a panel narrower than 880 px`).
+108. The full view takes the keyboard on its Close button. Escape in the
+     full view closes it, gives the keyboard back to the control that opened
+     it, and does not cancel the running turn. Escape elsewhere in the
+     console still cancels it (rule 95)
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::closes the full view on Escape and does not cancel the running turn`).
+109. The step detail and the full view use the app's tokens alone, as rule
+     98 says of the whole turn console
+     (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`).
 
 ## Acceptance criteria
 
@@ -2961,6 +3030,13 @@ the default until the turn console replaces it.
   (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx`,
   `ui/src/features/sessions/trajectory/store.test.ts`,
   `ui/src/features/sessions/trajectory/tokens.test.ts`).
+- A step of the turn console (rules 100 to 109) opens under its row, draws
+  its detail by kind, shows raw data only behind `Raw`, copies a section,
+  shows images inline and other blocks as linked rows, follows a running
+  call, opens a subagent to its steps with a cancel where permitted, and
+  opens whole in a full view beside the conversation or in a drawer, which
+  Escape closes without a cancel
+  (`ui/src/features/sessions/trajectory/step-detail.test.tsx`).
 
 - Hosts (rules 51 to 60): `local` maps to the settings base URL and a named
   host is reachable only over HTTP while ready

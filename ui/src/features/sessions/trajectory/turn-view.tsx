@@ -17,7 +17,7 @@
 import { BotIcon, ChevronDownIcon, ChevronRightIcon, CircleHelpIcon } from "lucide-react"
 import { memo } from "react"
 
-import type { Host, QuestionDto, StepDto, TurnDto } from "@/api"
+import type { ContentBlockDto, Host, QuestionDto, StepDto, TurnDto } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { cn, formatClock } from "@/lib/format"
@@ -26,6 +26,7 @@ import { PromptBox } from "../console/blocks"
 import { elapsed } from "../console/elapsed"
 import { FormCard } from "../console/form-card"
 import { formQuestions } from "../console/form-questions"
+import { MediaBlocks } from "./content-blocks"
 import { StepDetail } from "./step-detail"
 import { contentText, foldSteps, type StepPage } from "./store"
 
@@ -74,7 +75,9 @@ export const TurnView = memo(function TurnView({
   // A pending permission is the card above the composer, never a row too.
   const fold = foldSteps(turn, page)
   const steps = open ? fold.steps.filter((step) => !isPending(step)) : []
-  const answer = running ? liveAnswer(turn) : contentText(turn.answer)
+  const blocks = running ? liveBlocks(turn) : turn.answer
+  const answer = contentText(blocks)
+  const media = blocks.some((block) => block.type !== "text")
   const shownIds = new Set(open ? steps.map((step) => step.id) : [])
   const liveRows =
     running && !open
@@ -120,8 +123,7 @@ export const TurnView = memo(function TurnView({
           <ul aria-label="Steps of the turn" className="space-y-0.5">
             {steps.map((step) => (
               <li key={step.id}>
-                <StepRow step={step} now={now} />
-                <StepDetail host={host} sessionId={sessionId} step={step} />
+                <StepDetail host={host} sessionId={sessionId} step={step} now={now} />
               </li>
             ))}
           </ul>
@@ -131,14 +133,14 @@ export const TurnView = memo(function TurnView({
         <ul aria-label="Last steps of the turn" className="ml-4 space-y-0.5">
           {lastRows.map((step) => (
             <li key={step.id}>
-              <StepRow step={step} now={now} />
+              <StepDetail host={host} sessionId={sessionId} step={step} now={now} />
             </li>
           ))}
         </ul>
       ) : null}
       {errors.map((step) => (
         <div key={step.id} className="ml-4">
-          <StepRow step={step} now={now} />
+          <StepDetail host={host} sessionId={sessionId} step={step} now={now} />
         </div>
       ))}
       {turn.attention_more > 0 ? (
@@ -161,13 +163,14 @@ export const TurnView = memo(function TurnView({
           questions={questions}
         />
       ))}
-      {answer ? (
+      {answer || media ? (
         <div className="rounded-md bg-muted/30 px-2 py-1.5 ring-1 ring-inset ring-border/40">
           <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
             <BotIcon aria-hidden className="size-3.5 shrink-0" />
             Assistant
           </div>
           <Markdown>{answer}</Markdown>
+          <MediaBlocks host={host} blocks={blocks} />
         </div>
       ) : null}
     </article>
@@ -178,10 +181,10 @@ function isPending(step: StepDto): boolean {
   return step.type === "permission" && step.state === "pending"
 }
 
-/** The newest message of the turn's own lane while it runs, else the answer so far. */
-function liveAnswer(turn: TurnDto): string {
+/** While the turn runs, the content of the newest message of the turn's own lane, else the answer so far. */
+function liveBlocks(turn: TurnDto): ContentBlockDto[] {
   const message = turn.steps.findLast((step) => step.type === "message" && step.lane === turn.lane)
-  return message?.type === "message" ? contentText(message.content) : contentText(turn.answer)
+  return message?.type === "message" ? message.content : turn.answer
 }
 
 function plural(count: number, one: string, many: string): string {
@@ -240,113 +243,6 @@ function LoadLine({ load, onRetry }: { load: PageLoad; onRetry: () => void }) {
       </p>
     )
   return null
-}
-
-/** What a row of a step says: its kind, its status, its title, its subject and its duration. */
-function stepFacts(
-  step: StepDto,
-  now: string,
-): { kind: string; status: string; title: string; subject?: string; duration?: string } {
-  switch (step.type) {
-    case "tool_call":
-      return {
-        kind: step.kind ?? "tool",
-        status: step.status,
-        title: step.title,
-        subject: step.subject && step.subject !== step.title ? firstLine(step.subject) : undefined,
-        duration: elapsed(step.started_at, step.ended_at ?? now),
-      }
-    case "message":
-    case "thought":
-      return {
-        kind: step.type,
-        status: step.streaming ? "running" : "completed",
-        title: firstLine(contentText(step.content)),
-      }
-    case "permission":
-      return {
-        kind: "permission",
-        status: step.answer ? `${step.state} · ${step.answer.label}` : step.state,
-        title: step.tool.title,
-        subject: step.tool.subject ? firstLine(step.tool.subject) : undefined,
-      }
-    case "question":
-      return {
-        kind: "question",
-        status: step.state,
-        title: firstLine(step.question),
-        subject: step.hint || undefined,
-      }
-    case "note":
-      return { kind: "note", status: step.severity, title: firstLine(step.text) }
-    case "error":
-      return {
-        kind: "error",
-        status: "failed",
-        title: firstLine(step.text),
-        subject: step.diagnosis ? firstLine(step.diagnosis) : undefined,
-      }
-    case "subagent":
-      return {
-        kind: "subagent",
-        status: step.state ?? "running",
-        title: step.title,
-        subject: step.task ? firstLine(step.task) : undefined,
-        duration: elapsed(step.started_at, step.ended_at ?? now),
-      }
-    case "compaction":
-      return {
-        kind: "compaction",
-        status: step.status,
-        title: "compaction",
-        subject: step.error ?? undefined,
-      }
-  }
-}
-
-function firstLine(text: string): string {
-  return (
-    text
-      .split("\n")
-      .find((line) => line.trim().length > 0)
-      ?.trim() ?? ""
-  )
-}
-
-const STATUS_TONES: Record<string, string> = {
-  running: "text-status-active-fg",
-  pending: "text-status-warn-fg",
-  open: "text-status-warn-fg",
-  warning: "text-status-warn-fg",
-  failed: "text-status-danger-fg",
-  interrupted: "text-status-danger-fg",
-  completed: "text-status-done-fg",
-}
-
-/** One step as a row: the kind, the status, the title, the subject and the duration. */
-function StepRow({ step, now }: { step: StepDto; now: string }) {
-  const facts = stepFacts(step, now)
-  const tone = STATUS_TONES[facts.status.split(" ")[0] ?? ""] ?? "text-muted-foreground"
-  return (
-    <div
-      data-step-id={step.id}
-      data-step-kind={step.type}
-      title={formatClock(step.created_at)}
-      className="flex min-w-0 items-baseline gap-2 rounded-md px-2 py-0.5 font-mono text-xs"
-    >
-      <span className="shrink-0 text-muted-foreground">{facts.kind}</span>
-      <span className={cn("shrink-0", tone)}>{facts.status}</span>
-      <span className="min-w-0 truncate text-foreground">{facts.title}</span>
-      {facts.subject ? (
-        <span className="min-w-0 truncate text-muted-foreground">{facts.subject}</span>
-      ) : null}
-      {facts.duration ? (
-        <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
-          {facts.duration}
-        </span>
-      ) : null}
-    </div>
-  )
 }
 
 /**

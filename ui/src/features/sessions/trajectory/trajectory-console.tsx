@@ -70,6 +70,7 @@ import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
 import { TrajectoryDock } from "./dock-slot"
 import { TrajectoryFind } from "./find-slot"
+import { StepWorkspace } from "./full-view"
 import { PermissionCard } from "./permission-card"
 import { TrajectoryStatus } from "./status-slot"
 import {
@@ -662,7 +663,11 @@ export function TrajectoryConsole({
       </div>
       <TrajectoryFind turns={shownTurns(state)} />
       <HistoryLine history={history} onRetry={() => void loadOlder()} />
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <StepWorkspace
+        host={host}
+        sessionId={sessionId}
+        className="relative flex min-h-0 flex-1 flex-col"
+      >
         <div
           ref={log}
           role="log"
@@ -741,7 +746,7 @@ export function TrajectoryConsole({
             ) : null}
           </Button>
         ) : null}
-      </div>
+      </StepWorkspace>
       <TrajectoryDock>
         {pending ? (
           <PermissionCard
