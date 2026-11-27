@@ -533,3 +533,38 @@ it("loads back to the oldest turn it had loaded before it puts the reader's plac
   expect(reads.map((one) => one.query.get("before"))).toEqual([newest.id, newest.id])
   await waitFor(() => expect(again.top).toBe(250))
 })
+
+it("names the session in the header when the agent gives no title", () => {
+  const snapshot = aSnapshot([aTurn()])
+  snapshot.session = { ...snapshot.session, title: null }
+  renderScreen(
+    <TrajectoryConsole
+      host="local"
+      sessionId={SESSION_ID}
+      status="idle"
+      session={aSession({ id: SESSION_ID, status: "idle", seat: "reviewer" })}
+    />,
+  )
+  const source = latestSource()
+  act(() => {
+    source.succeed()
+    source.emit("snapshot", snapshot)
+  })
+
+  expect(screen.getByLabelText("Session title").textContent).toBe("Reviewer session")
+})
+
+it("puts the find icon in the header row and opens the find pane below it", () => {
+  const snapshot = aSnapshot([aTurn()])
+  snapshot.session = { ...snapshot.session, title: "Fix the login bug" }
+  renderConsole(snapshot)
+
+  const header = screen.getByLabelText("Session title").closest("div.border-b") as HTMLElement
+  const trigger = within(header).getByRole("button", { name: "Find in transcript" })
+  expect(trigger.textContent).toBe("")
+  fireEvent.keyDown(transcript(), { key: "f", ctrlKey: true })
+  const pane = screen.getByLabelText("Find loaded transcript")
+  expect(header.contains(pane)).toBe(true)
+  expect(pane.className).toContain("top-full")
+  expect(header.className).toContain("relative")
+})

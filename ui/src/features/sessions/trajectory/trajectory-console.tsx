@@ -788,13 +788,20 @@ function TrajectoryPane({
         className,
       )}
     >
-      <div className="flex items-center gap-3 border-b px-3 py-1.5 font-mono text-xs text-muted-foreground">
+      <div className="relative flex items-center gap-3 border-b px-3 py-1.5 font-mono text-xs text-muted-foreground">
         <div className="flex min-w-0 flex-1 flex-col">
           <span role="status" className="flex min-w-0 items-center gap-3">
             <StreamStatusLine status={streamStatus} error={streamError} />
           </span>
-          <ConsoleSubtitle title={sessionState?.title} />
+          <ConsoleSubtitle title={sessionState?.title} session={session} />
         </div>
+        <TrajectoryFind
+          turns={shown}
+          pages={state.pages}
+          older={state.hasOlder}
+          loading={history.state === "loading"}
+          loadOlder={() => void loadOlder()}
+        />
         {onExpand ? (
           <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
             <Maximize2Icon />
@@ -812,13 +819,6 @@ function TrajectoryPane({
           </Button>
         ) : null}
       </div>
-      <TrajectoryFind
-        turns={shown}
-        pages={state.pages}
-        older={state.hasOlder}
-        loading={history.state === "loading"}
-        loadOlder={() => void loadOlder()}
-      />
       <HistoryLine history={history} onRetry={() => void loadOlder()} />
       <StepWorkspace
         host={host}

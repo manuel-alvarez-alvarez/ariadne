@@ -6,14 +6,16 @@
  * the context use and the cost, and at its end the token totals. It is one
  * line at every width: a fact that does not fit is cut, never wrapped.
  *
- * The subtitle is the title the agent gave the session, where it gave one.
+ * The subtitle is the title the agent gave the session, else the heading the
+ * session panel shows.
  */
 
-import type { SessionStatus, TrajectorySnapshotDto } from "@/api"
+import type { SessionDto, SessionStatus, TrajectorySnapshotDto } from "@/api"
 import { formatTokens } from "@/lib/format"
 
 import { StatusRow } from "../console/status"
 import type { TokenTotals } from "../console/transcript"
+import { sessionHeading } from "../session-display"
 
 type SessionState = TrajectorySnapshotDto["session"]
 
@@ -53,8 +55,18 @@ export function TrajectoryStatus({
   )
 }
 
-/** The title the agent gave the session, under the console's stream line. */
-export function ConsoleSubtitle({ title }: { title?: string | null }) {
+/**
+ * The title the agent gave the session, under the console's stream line. With
+ * none, the heading the session panel shows.
+ */
+export function ConsoleSubtitle({
+  title,
+  session,
+}: {
+  title?: string | null
+  session?: Pick<SessionDto, "seat">
+}) {
+  title ||= session ? sessionHeading(session) : null
   if (!title) return null
   return (
     <p

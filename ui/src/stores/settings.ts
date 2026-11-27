@@ -73,6 +73,13 @@ interface SettingsState {
    */
   sidebarCollapsed: boolean
   toggleSidebar: () => void
+  /**
+   * Whether the session panel lists its facts. Open until the user folds
+   * them, and remembered across sessions and restarts: one value for every
+   * session panel. See `features/sessions/session-detail-view.tsx`.
+   */
+  sessionFactsOpen: boolean
+  setSessionFactsOpen: (open: boolean) => void
   /** The inspector width in pixels, clamped to the window by its frame. */
   panelWidth: number
   setPanelWidth: (width: number) => void
@@ -114,6 +121,8 @@ export const useSettingsStore = create<SettingsState>()(
       setSessionGoalHost: (value) => set({ sessionGoalHost: value }),
       sessionTaskHost: "",
       setSessionTaskHost: (value) => set({ sessionTaskHost: value }),
+      sessionFactsOpen: true,
+      setSessionFactsOpen: (sessionFactsOpen) => set({ sessionFactsOpen }),
       panelWidth: 576,
       setPanelWidth: (panelWidth) => set({ panelWidth }),
       sidebarCollapsed: false,
@@ -150,6 +159,7 @@ export const useSettingsStore = create<SettingsState>()(
         sessionTaskHost: state.sessionTaskHost,
         sidebarCollapsed: state.sidebarCollapsed,
         panelWidth: state.panelWidth,
+        sessionFactsOpen: state.sessionFactsOpen,
         showDisabledModels: state.showDisabledModels,
         hostFilter: state.hostFilter,
       }),
