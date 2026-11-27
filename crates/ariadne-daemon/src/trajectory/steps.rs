@@ -7,7 +7,8 @@ use ariadne_core::event_facts::{EventFacts, FactLocation, output_text};
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::trajectory::{
-    CommandDto, ContentBlockDto, DiffStatDto, LocationDto, MessageStepDto, PermissionOptionDto,
+    CommandDto, ConfigOptionDto, ConfigValueDto, ContentBlockDto, CostDto, DiffStatDto,
+    LocationDto, MessageStepDto, ModeDto, ModeStateDto, PermissionOptionDto, SessionStateDto,
     StepDto, SubagentRefDto, ThoughtStepDto, ToolCallStatus, ToolCallStepDto,
 };
 
@@ -490,9 +491,12 @@ pub(super) fn permission_options(payload: &Value) -> Vec<PermissionOptionDto> {
 }
 
 pub(super) fn commands_of(payload: &Value) -> Vec<CommandDto> {
-    payload
-        .get("available_commands")
-        .and_then(Value::as_array)
+    commands_in(payload.get("available_commands"))
+}
+
+/// Each ACP command of a list.
+fn commands_in(list: Option<&Value>) -> Vec<CommandDto> {
+    list.and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|command| {
@@ -503,6 +507,93 @@ pub(super) fn commands_of(payload: &Value) -> Vec<CommandDto> {
             })
         })
         .collect()
+}
+
+/// Put each field of a display state (021, rule 24) that `display` holds
+/// into the session's state: the whole state the row keeps, or the fields
+/// a `display_state_update` says changed. Each mode, option and command is
+/// the ACP JSON the agent sent. Answers whether `display` held a list of
+/// commands, an empty one included.
+pub(super) fn apply_display(session: &mut SessionStateDto, display: &Value) -> bool {
+    if let Some(mode) = display.get("mode") {
+        session.mode = mode.is_object().then(|| ModeStateDto {
+            current_id: string_at(mode, "/current_id"),
+            available: mode
+                .get("available")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|mode| {
+                    Some(ModeDto {
+                        id: string_at(mode, "/id")?,
+                        name: string_at(mode, "/name").unwrap_or_default(),
+                        description: string_at(mode, "/description"),
+                    })
+                })
+                .collect(),
+        });
+    }
+    if let Some(options) = display.get("config_options") {
+        session.config_options = options
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(config_option_of)
+            .collect();
+    }
+    if let Some(title) = display.get("title") {
+        session.title = title.as_str().map(str::to_string);
+    }
+    if let Some(cost) = display.get("cost") {
+        session.cost = cost
+            .get("amount")
+            .and_then(Value::as_f64)
+            .map(|amount| CostDto {
+                amount,
+                currency: string_at(cost, "/currency").unwrap_or_default(),
+            });
+    }
+    let commands = display.get("commands");
+    if commands.is_some() {
+        session.commands = commands_in(commands);
+    }
+    commands.is_some_and(Value::is_array)
+}
+
+/// One ACP config option. A grouped select lists the values of every group,
+/// and a boolean option has no values and its value as text.
+fn config_option_of(option: &Value) -> Option<ConfigOptionDto> {
+    let value = |value: &Value| {
+        Some(ConfigValueDto {
+            value: string_at(value, "/value")?,
+            name: string_at(value, "/name").unwrap_or_default(),
+            description: string_at(value, "/description"),
+        })
+    };
+    let values = option
+        .get("options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(
+            |entry| match entry.get("options").and_then(Value::as_array) {
+                Some(group) => group.iter().filter_map(value).collect::<Vec<_>>(),
+                None => value(entry).into_iter().collect(),
+            },
+        )
+        .collect();
+    Some(ConfigOptionDto {
+        id: string_at(option, "/id")?,
+        name: string_at(option, "/name").unwrap_or_default(),
+        description: string_at(option, "/description"),
+        category: string_at(option, "/category"),
+        current_value: match option.get("currentValue") {
+            Some(Value::String(text)) => Some(text.clone()),
+            None | Some(Value::Null) => None,
+            Some(other) => Some(other.to_string()),
+        },
+        values,
+    })
 }
 
 pub(super) fn string_at(value: &Value, pointer: &str) -> Option<String> {

@@ -6,7 +6,8 @@
 //! draws an agent's markdown as styled lines. [`theme`] holds the styles and
 //! glyphs the pane draws with. The inline pane itself — the scrolling
 //! transcript, the status line and the input box, and the loop that drives
-//! them — is [`tui`].
+//! them — is [`tui`]. The full-screen console, which draws the trajectory
+//! (040) as turns on the whole screen, is [`app`].
 //!
 //! Nothing here dials a daemon or owns a process terminal. The loop takes a
 //! stream of frames and a sink for what the console sends, and a ratatui
@@ -15,8 +16,10 @@
 //! writes terminal bytes to a socket and asks no terminal anything.
 
 pub mod ansi;
+pub mod app;
 pub mod markdown;
 pub mod theme;
+pub mod trajectory;
 pub mod transcript;
 pub mod tui;
 mod wrap;

@@ -49,6 +49,13 @@ impl Store {
     /// The display state that the session's current launch reported: empty
     /// where that launch reported none.
     pub async fn session_display_state(&self, id: &str) -> Result<SessionDisplayState> {
+        Ok(self.reported_display_state(id).await?.unwrap_or_default())
+    }
+
+    /// The display state that the session's current launch reported, or
+    /// `None` where that launch has reported none yet. An empty list in a
+    /// reported state is what the agent said, not a state that is missing.
+    pub async fn reported_display_state(&self, id: &str) -> Result<Option<SessionDisplayState>> {
         let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT launch_id, display_launch_id, display_state FROM agent_sessions WHERE id = ?",
         )
@@ -59,11 +66,13 @@ impl Store {
             return Err(crate::not_found("session", id));
         };
         if current.is_none() || current != written_by {
-            return Ok(SessionDisplayState::default());
+            return Ok(None);
         }
-        Ok(stored
-            .and_then(|state| serde_json::from_str(&state).ok())
-            .unwrap_or_default())
+        Ok(Some(
+            stored
+                .and_then(|state| serde_json::from_str(&state).ok())
+                .unwrap_or_default(),
+        ))
     }
 
     /// Change the display state as `launch_id` reports it, and answer with

@@ -103,3 +103,11 @@ export type DomainEventKind = DomainEvent["event"]
 export type PullRequestDto = components["schemas"]["PullRequestDto"]
 
 export type QuestionDto = Schemas["QuestionDto"]
+
+/** A session folded into turns by the daemon (040): the snapshot, its updates and their parts. */
+export type TrajectorySnapshotDto = Schemas["TrajectorySnapshotDto"]
+export type TrajectoryUpdateDto = Schemas["TrajectoryUpdateDto"]
+export type TrajectoryStepsDto = Schemas["TrajectoryStepsDto"]
+export type TurnDto = Schemas["TurnDto"]
+export type StepDto = Schemas["StepDto"]
+export type ContentBlockDto = Schemas["ContentBlockDto"]

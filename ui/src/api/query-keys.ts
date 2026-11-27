@@ -112,6 +112,20 @@ export const qk = {
     detail: (host: Host, id: string) => [host, "sessions", "detail", id] as const,
     /** The session's open native questions (`GET /v1/sessions/{id}/questions`). */
     questions: (host: Host, id: string) => [host, "sessions", "detail", id, "questions"] as const,
+    /**
+     * The detail of one tool call step (`GET /v1/sessions/{id}/trajectory/items/{item_id}`)
+     * at one `detail_rev`, with or without its raw input and output: a new
+     * `detail_rev` is a new key, so a running call reads its progress again.
+     */
+    trajectoryItem: (host: Host, id: string, itemId: string, rev: number, raw: boolean) =>
+      [host, "sessions", "detail", id, "trajectory-item", itemId, { rev, raw }] as const,
+    /**
+     * The steps of one subagent in one turn
+     * (`GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps?subagent=`), at
+     * one count of its steps: a new step is a new key.
+     */
+    subagentSteps: (host: Host, id: string, turnId: string, subagentId: string, steps: number) =>
+      [host, "sessions", "detail", id, "trajectory-steps", turnId, { subagentId, steps }] as const,
   },
   skills: {
     all: (host: Host) => [host, "skills"] as const,

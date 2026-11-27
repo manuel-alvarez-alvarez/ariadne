@@ -14,6 +14,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-console/src/tui/picker.rs
+  - crates/ariadne-console/src/trajectory/print.rs
   - crates/ariadne-client/src/lib.rs
   - crates/ariadne-cli/src/commands/permissions.rs
   - crates/ariadne-cli/src/cli/tests.rs
@@ -204,7 +205,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   `::a_stopped_model_warns_and_waits_for_the_console`), and the console and
   `session logs` show it with the question, not with the answer
   (`tui/picker.rs::tests::a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not`,
-  `transcript.rs::tests::a_question_says_why_the_ai_permission_model_left_it_to_the_console`,
+  `ariadne-console::trajectory::print::tests::a_permission_says_why_the_ai_permission_model_had_a_part`,
   `ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`).
 - A `score` answer is divided by its highest level index for the danger score
   (`ai_permissions_decisions.rs::a_score_answer_is_used_as_the_danger`), and
@@ -262,8 +263,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   A waiting question and `ariadne session logs` render the same facts.
   The event summary names the same reason
   (`ariadne-console::tui::picker::tests::ai_answers_name_the_model_and_the_danger`,
-  `commands/transcript.rs::tests::a_transcript_answer_shows_both_ai_probabilities`,
-  `commands/transcript.rs::tests::a_question_says_why_the_ai_permission_model_left_it_to_the_console`,
+  `ariadne-console::trajectory::print::tests::a_permission_says_why_the_ai_permission_model_had_a_part`,
   `http/classify.rs::tests::an_answered_permission_says_who_answered_and_why_the_model_did_not`).
 - The CLI sends both threshold fields and nothing else, and `show` prints
   every field, the hardware and the flavour and device table

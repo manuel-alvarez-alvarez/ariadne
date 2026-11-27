@@ -7161,6 +7161,34 @@ async fn a_new_launch_replaces_the_display_state_of_the_earlier_launch() {
     assert_eq!(state.config_options, [serde_json::json!({"id": "model"})]);
 }
 
+/// A launch that has reported no display state reads as none, and a launch
+/// that reported empty commands reads as that report (040 rule 33).
+#[tokio::test]
+async fn a_reported_empty_state_is_told_from_no_report() {
+    let (store, _dir) = test_store().await;
+    let session = loose_session(&store).await;
+    store
+        .set_session_launch(&session.id, "launch-1")
+        .await
+        .unwrap();
+    assert_eq!(
+        store.reported_display_state(&session.id).await.unwrap(),
+        None,
+        "the launch reported nothing yet"
+    );
+    store
+        .update_session_display_state(&session.id, "launch-1", |state| {
+            state.commands = Vec::new();
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        store.reported_display_state(&session.id).await.unwrap(),
+        Some(SessionDisplayState::default()),
+        "an empty report is a report"
+    );
+}
+
 async fn loose_session(store: &Store) -> AgentSession {
     store
         .create_session(NewSession {

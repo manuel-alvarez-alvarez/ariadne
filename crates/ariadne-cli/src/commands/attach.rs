@@ -153,7 +153,7 @@ async fn revive(client: &Client, id: &str, seat: Option<Seat>) -> Result<Session
 
 /// Attach to one specific session: its console when it is live, else revive
 /// it first.
-async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
+async fn attach_session(client: &Client, session: SessionDto, full_screen: bool) -> Result<()> {
     let session = if session.status.is_live() {
         session
     } else {
@@ -169,7 +169,7 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
             .post_empty(&format!("/v1/sessions/{}/resume", session.id))
             .await?
     };
-    attach_to(client, &session).await
+    attach_to(client, &session, full_screen).await
 }
 
 /// The session of one named workflow column of a stepped task, whether or
@@ -194,21 +194,36 @@ pub(crate) async fn resolve_step(client: &Client, task_id: &str, step: &str) -> 
 /// `task attach --step <id>`: the console of the named column's agent.
 pub(crate) async fn attach_step(client: &Client, task_id: &str, step: &str) -> Result<()> {
     let session = resolve_step(client, task_id, step).await?;
-    attach_to(client, &session).await
+    attach_to(client, &session, false).await
 }
 
 /// Attach to a task or goal id: the live session of the wanted seat, or the
 /// most recent resumable session of that seat revived.
 pub(crate) async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
+    attach_seat(client, id, seat, false).await
+}
+
+async fn attach_seat(
+    client: &Client,
+    id: &str,
+    seat: Option<Seat>,
+    full_screen: bool,
+) -> Result<()> {
     let session = match resolve_live(client, id, seat).await {
         Ok(session) => session,
         Err(_) => revive(client, id, seat).await?,
     };
-    attach_to(client, &session).await
+    attach_to(client, &session, full_screen).await
 }
 
-/// `ariadne attach <id>`: session, task or goal id.
-pub(crate) async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
+/// `ariadne attach <id>`: session, task or goal id. `full_screen` opens the
+/// full-screen console in place of the inline one.
+pub(crate) async fn attach_any(
+    client: &Client,
+    id: &str,
+    seat: Option<Seat>,
+    full_screen: bool,
+) -> Result<()> {
     // Which of the three it is decides everything below, so a short id that
     // names one of each is refused here rather than resolved to whichever
     // list happens to be probed first.
@@ -221,12 +236,12 @@ pub(crate) async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) ->
                 session.seat.map_or("-", |seat| seat.as_str())
             );
         }
-        return attach_session(client, session).await;
+        return attach_session(client, session, full_screen).await;
     }
-    attach(client, id, seat).await
+    attach_seat(client, id, seat, full_screen).await
 }
 
-async fn attach_to(client: &Client, session: &SessionDto) -> Result<()> {
+async fn attach_to(client: &Client, session: &SessionDto, full_screen: bool) -> Result<()> {
     eprintln!(
         "{}",
         hint(&format!(
@@ -235,7 +250,7 @@ async fn attach_to(client: &Client, session: &SessionDto) -> Result<()> {
             agent_of(&session.model)
         ))
     );
-    crate::commands::console::attach(client, &session.id).await
+    crate::commands::console::attach(client, &session.id, full_screen).await
 }
 
 #[cfg(test)]

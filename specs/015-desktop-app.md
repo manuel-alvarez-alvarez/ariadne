@@ -1769,6 +1769,289 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
 88. The panel of a task with no goal has no goal breadcrumb and reads no goal.
     It shows the task's own `steps`, or no columns for a task with no workflow.
 
+### The turn console
+
+The turn console draws a session from the daemon's trajectory (040) as
+turns. It lives in `ui/src/features/sessions/trajectory/`. The daemon folds
+the events, and the console folds none: `store.ts` applies the snapshot and
+the ops of each update by id. The console of today (rules 21 to 24i) stays
+the default until the turn console replaces it.
+
+89. With `?console=turns` in the URL, the session view shows the turn
+    console, and it reads `GET /v1/sessions/{id}/trajectory/stream`.
+    Without the parameter, the session view shows the console of today
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::opens the turn console with the hidden parameter, and the console of today without it`).
+90. A turn shows its prompt, one activity line and its answer. A closed turn
+    with nothing in its `attention` is these three rows. The activity line
+    gives the time of the turn, its steps, the files it changed and its
+    failed calls, as `1m 04s · 5 steps · 2 files changed · 1 failed`
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a closed turn as its prompt, one activity line and its answer`).
+91. The activity line is a button with `aria-expanded`. It opens to the step
+    rows of the turn, which it reads from
+    `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps`. A row shows the
+    kind, the status, the title, the subject and the duration of its step.
+    Where earlier steps exist, `Show N earlier` reads the page before the
+    first row. Each row is drawn by the slot for the detail of its step
+    (`trajectory/step-detail.tsx`), which rules 100 to 109 describe. A step that an
+    update brought stays a row of the open fold after its turn ends, and its
+    live version wins over a page read before it. The rows keep the turn's
+    order: a live step that the page does not hold goes before the next live
+    step that the page holds. `N` counts the earlier steps that no row shows,
+    and `Show N earlier` reads the page before the first row shown
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::opens the activity line to the step rows of the turn`,
+    `ui/src/features/sessions/trajectory/store.test.ts::keeps a row seen live in an open fold after its turn ends`,
+    `::shows the live status of a step over a page read before it`,
+    `::shows the steps of an open fold in the turn's order, each counted once`).
+92. The running turn shows its last 3 steps under its activity line, and
+    each new step pushes the oldest one out. Its newest message is its
+    answer, and a `text_append` op extends it as it streams. The rows and
+    the open fold hold the steps of the turn's own lane: the steps of a
+    subagent are its own lane's
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the last steps of the running turn live, and streams its text`,
+    `::keeps the steps of a subagent out of its parent's last rows`,
+    `ui/src/features/sessions/trajectory/store.test.ts::keeps the steps of a subagent out of its parent's live steps`).
+93. A pending permission in the `attention` of a turn is a card above the
+    composer, in the dock (`trajectory/dock-slot.tsx`), and never a row of
+    its turn, in the last rows or in the open fold. The card shows the call,
+    its subject and its options. Up, Down and 1 to 9 select an option, from
+    the card and from an empty composer, and Enter or a click posts
+    `{"text": "<optionId>"}` to `POST /v1/sessions/{id}/console/input`
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a pending permission as a card above the composer, answered by its keys`,
+    `::draws a pending permission only as its card, in the last rows and in the open fold`).
+94. An open question and each error in the `attention` of a turn always
+    show, whatever the fold. An open question is the form card of rule 22f,
+    with its form from `GET /v1/sessions/{id}/questions`, and it posts its
+    answer to the question's own route. A failed read of the questions shows
+    its error with a Retry that reads them again. Where `attention_more` is
+    above zero, one row gives the count, open fold or closed. It is a
+    disclosure with `aria-expanded`, and it opens the steps of the turn
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::always shows an open question and each error, and counts the rest in one row`,
+    `::says a failed read of the questions, and reads them again on Retry`,
+    `::keeps the attention count as a disclosure once the fold is open`).
+95. The composer is the one of today (rules 22, 22b, 22e, 23c). A sent
+    prompt shows `queued` until a newer console turn holds its text: the
+    prompt's `text` as it was submitted (040), which leaves out the seat
+    brief, else its content where a daemon sends no `text`. A prompt that
+    only ends with the same text holds another text. Each turn takes one
+    queued prompt, once. A refused prompt stays with Retry and Edit, and where the
+    echo of an identical send took its entry, the refusal clears the entry
+    that echo left behind (rule 23e). Stop and Escape post the cancel, and
+    ⌘Escape moves the keyboard to the pane's Close button and closes
+    nothing (rule 23). The slash commands come from the `commands` of the
+    session's state. The draft and the refused prompts are retained in memory
+    per daemon address and session, as rule 24i says: another session starts
+    with its own, and a refusal that lands after the pane moved goes to the
+    session that sent it
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::sends a prompt as queued, and drops the queued block once a turn holds it`,
+    `::keeps a refused prompt with Retry and Edit`,
+    `::keeps the draft and the refused prompts apart for each session`,
+    `::cancels a running turn with Stop and with Escape`,
+    `::moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing`,
+    `::lists the agent's slash commands from the session state`,
+    `ui/src/features/sessions/trajectory/store.test.ts::keeps a queued prompt until a newer turn holds its text`,
+    `::takes one queued prompt per echo, whatever revision follows`,
+    `::takes a queued prompt away when its echo carries the seat brief ahead of it`,
+    `::keeps a queued prompt when another prompt only ends with its text`,
+    `::clears the entry an identical send's echo left behind when a send is refused`).
+96. A scroll to the top reads the whole turns before the oldest one, with
+    `GET /v1/sessions/{id}/trajectory?before=<turn id>`, while `has_older`
+    is true. Turns that fit the box leave no scroll, so they read the older
+    turns until the box scrolls or no older turn is left. The page starts at
+    the oldest turn of the history read whole. A turn the stream brings from
+    before it, such as an old turn whose error a diagnosis names, is held but
+    not shown until the pages reach it. Such a header can carry no prompt
+    and no answer. The turn then keeps the stream's state and attention and
+    the page's prompt and answer, whichever of the two comes first. A later
+    header with no prompt or answer keeps the ones the reader loaded. The
+    reader's place holds. The console follows the newest output while the
+    reader is at the bottom, and shows `Jump to latest`, marked `New output`,
+    once the reader scrolls away
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::loads older turns at the top and keeps the reader's place`,
+    `::loads older turns while the turns fit the box and no scroll can reach the top`,
+    `::reads older turns from the history it holds, not from an old turn the stream brought`,
+    `::follows the newest output, and offers Jump to latest once the reader scrolls away`,
+    `ui/src/features/sessions/trajectory/store.test.ts::keeps a turn the stream brings from before the history out of view and off the cursor`,
+    `::keeps the page's prompt and answer, and the stream's newer attention, when the stream came first`,
+    `::keeps the prompt and answer the reader loaded when a partial header comes after the page`).
+97. A `resync` or a drop reconnects on the event stream's backoff. The new
+    snapshot replaces the state and drops the older turns and the step pages
+    loaded before it, so no item shows two times. An update whose `rev` the
+    console holds already changes nothing
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::replaces the state on a reconnect and shows no item two times`,
+    `ui/src/features/sessions/trajectory/store.test.ts::replaces a turn and a step by id, so an upsert never shows an item two times`,
+    `::ignores a revision it has applied already`,
+    `::replaces the state with a snapshot and drops the pages loaded before it`).
+98. The turn console uses the app's tokens in both themes. No source of it
+    names a fixed colour, and nothing it draws shows one, in the light or the
+    dark theme, the shared parts of `console/` included. The shared form
+    card keeps its own look in the console of today. In the turn console
+    its marker takes the token `--question-fg`, which the turn console sets
+    on the card's wrapper
+    (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`,
+    `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws every part with the app's tokens, shared cards included, in both themes`).
+99. The status row (`trajectory/status-slot.tsx`), the dock above the
+    composer (`trajectory/dock-slot.tsx`) and the find control
+    (`trajectory/find-slot.tsx`) are named mount points, each in its own
+    file. The status row shows the session's status, the running turn and
+    the token totals (rule 99b)
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the session's status, the running turn and the token totals in the status row`).
+
+#### The live state of the session
+
+Rules 99a to 99h show the live state of the session outside the activity
+fold, and keep the reader's view. The data comes from the session state, the
+plans and the `note` and `compaction` steps of the trajectory (040).
+
+99a. While a plan has an open entry, one plan line shows in the dock above
+    the composer (`trajectory/plan.tsx`). It is the newest such plan, as
+    `Plan <done>/<all> · <current entry>`. The current entry is the first
+    `in_progress` entry, else the first entry not `completed`. The line is a
+    disclosure with `aria-expanded`, and it opens to the checklist of the
+    entries: `✓` done, `●` in progress, `○` the rest. A plan with every entry
+    `completed` leaves the dock and shows in the turn that last changed it,
+    as the same line, closed. A removed plan and a plan with no entries show
+    nowhere
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows one plan line above the composer while a plan has an open entry, and a finished plan in its turn`).
+99b. The status row shows, in this order, the status, the running turn, the
+    mode, each config option with its current value, the context use as a
+    share of the window, the cost in its currency, and the token totals at
+    its right end. The row is one line at each width: it does not wrap, and
+    a fact that does not fit is cut
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
+99c. A warning note and a compaction always show as lines of their turn,
+    whatever the fold, and an error shows as rule 94 says. A closed turn of a
+    snapshot carries no steps (040, rule 13), and `attention` carries no
+    notes (040, rule 16). So the console reads the steps of each turn shown
+    once, after each snapshot: the last page, which an opened fold then
+    shows, and then each older page, for its notices alone. Retry resumes a
+    failed notice read at its cursor and continues through the older pages. A compaction
+    line says it runs, ended, or failed with its error. An info note is a row
+    of the open activity fold alone: it is not a line of the turn, nor one of
+    the last rows of a running turn (`trajectory/notices.tsx`)
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn of a snapshot before its fold opens`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::resumes the notice scan at the failed cursor on Retry`).
+99d. An answered permission is a mark on the row of its call, found by the
+    call's `permission` id or by its tool call id, and not a row of its own
+    where the call's row shows. The mark gives `✓` or `✗` by the kind of the
+    option chosen, the option's label, and who decided: `you`, `AI`, a
+    learned rule or `auto`
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::marks an answered permission on the row of its call, with who decided`).
+99e. The title that the agent gives the session shows as the subtitle of the
+    console, under its stream line, and a `session_patch` changes it
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the title that the agent gives as the subtitle of the console`).
+99f. Find (`trajectory/find-slot.tsx`, over the find of the console of today
+    in `console/transcript-find.tsx`) searches the loaded turns and the
+    loaded steps: the prompt and the answer of each turn shown, and each
+    step the console holds for it, including live steps, full pages, attention
+    and notices retained from older pages. Each step appears once by ID.
+    Find reports when older turns are unloaded and loads them on request
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn of a snapshot before its fold opens`).
+99g. The turn console expands into a modal and collapses back, as rule 24i
+    says of the console of today. Expand, collapse and a change of tab each
+    mount a new pane. The console keeps the draft, the scroll place and
+    whether it follows, and the open folds of each session, the turns' and
+    the plans', in `console/console-view-state.ts`, and a new pane reads them
+    back
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through expand and collapse`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through a change of tab`).
+99h. A pane mounted again reads the older turns back to the oldest turn the
+    console had loaded. It restores each turn’s loaded step range and its
+    notices before it restores the scroll offset. This keeps the older rows
+    loaded by Show earlier in the open fold
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::loads back to the oldest turn it had loaded before it puts the reader's place back`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::puts the place back once the open folds read their rows, not before`).
+
+### A step in place
+
+A step of the turn console opens under its row, and shows its detail by its
+kind. `trajectory/step-detail.tsx` draws the row and the detail,
+`trajectory/step-row.tsx` the row, `trajectory/content-blocks.tsx` the
+content blocks that are not text, and `trajectory/full-view.tsx` the full
+view.
+
+100. A step row is a button with `aria-expanded`. A click, Enter or Space
+     opens the detail of the step under the row, to a set height, and the
+     same action closes it. The rows of an open fold, the last rows of a
+     running turn and the errors of a turn's `attention` all open this way
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::opens a step under its row on a click, Enter or Space, to a set height, and closes it the same way`).
+101. The detail of a tool call is read from
+     `GET /v1/sessions/{id}/trajectory/items/{item_id}` and draws by its
+     `type`. A `command` shows the command and its output, with the working
+     directory and the exit code. A `diff` shows each file in the task diff
+     viewer (`features/tasks/diff-editor.tsx`), with its line numbers and the
+     colours of its language. A `file` shows the text read with its language
+     and its line numbers from `line`. A `search` and a `fetch` show the query
+     or the URL, and the result. A `generic` detail shows its content blocks
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::draws a command as its command and its output`,
+     `::draws an edit as a diff with line numbers and language colours`,
+     `::draws a read as the file with its language and its line numbers`,
+     `::draws a search and a fetch as the query or the URL, and the result`).
+102. The content of a detail comes first and its controls second. Each code
+     section is a `CodeBlock` under one frame of its own, never a frame in a
+     frame, with its name and its language. `Copy` in a section copies the
+     content of that section
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::copies the content of a section`).
+103. `Raw` is a toggle with `aria-pressed`. It reads the detail again with
+     `raw=true` and shows the raw input and the raw output as JSON. The
+     detail reads without `raw` until then, and no raw data shows without it.
+     Each step the full view shows starts afresh, with `Raw` off, so the raw
+     data of one step never shows under another
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::shows the raw input and the raw output only behind Raw`,
+     `::starts each step the full view shows afresh, with Raw off`).
+104. An image block shows inline, in the answer of a turn and in a detail.
+     An audio block, a resource and a resource link show as a labelled row
+     with a link. A block with bytes links to its `blob` path on the host's
+     daemon (040)
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::shows an image inline in a message and in a detail, and audio and resources as labelled rows with a link`).
+105. The detail of a tool call is read again at each new `detail_rev` of
+     its step, so an open step of a running call shows new progress, in
+     place and in the full view. The store keeps the live version of each
+     step of a subagent's lane (`children`), which a snapshot drops, and an
+     open subagent shows it over the page it read. So a running call of a
+     subagent shows new progress while the subagent's step count holds.
+     The full view reads the selected step from the store even when its
+     inline row closes or leaves the conversation.
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::reads the detail of an open running call again at each new detail_rev`,
+     `::shows the newest progress of a running call in the full view`,
+     `::shows the new progress of a subagent's running call while its step count holds`,
+     `::keeps showing child tool progress after its inline subagent collapses`,
+     `ui/src/features/sessions/trajectory/store.test.ts::keeps the live version of each step of a subagent's lane, and a snapshot drops them`).
+106. A subagent step row shows its title, its task, its state, its time and
+     the count of its steps. It opens to the subagent's own steps, read from
+     `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps?subagent=<id>`,
+     and each of those opens in place too. The newest page is read again at
+     each new step of the subagent, and a row once read stays. Where earlier
+     steps exist, `Show N earlier` reads the page before the first row, with
+     `before=<step id>`, in place and in the full view. Where `can_cancel` is true, the
+     row has a Cancel control that posts `{"subagent_id"}` to
+     `POST /v1/sessions/{id}/console/cancel`. Where it is false, the row has
+     none
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
+     `::offers no cancel on a subagent the agent does not let cancel`,
+     `::reads the earlier steps of a subagent with Show N earlier`).
+107. `Open` shows the whole content of a step, with no set height, in the
+     full view. On a console panel of 880 CSS pixels or wider the full view
+     sits beside the conversation, and on a narrower panel it is a modal
+     drawer. The width is the panel's, not the browser's. The full view of a
+     subagent shows its whole work: its steps
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::opens the whole step beside the conversation on a panel of 880 px or wider`,
+     `::opens the whole step in a drawer on a panel narrower than 880 px`).
+108. The full view takes the keyboard on its Close button, for each step it
+     shows: an `Open` inside the view shows another step there, and the
+     keyboard stays in the view. Escape in the full view closes it and does
+     not cancel the running turn. The keyboard goes back to the control
+     outside the view that opened it, else to the row of the step shown,
+     else to the console. Escape elsewhere in the console still cancels the
+     turn (rule 95)
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::closes the full view on Escape and does not cancel the running turn`,
+     `::keeps the keyboard in the full view when an Open inside it shows another step, and gives it back to the first Open`,
+     `::returns focus to the step row when Escape closes a drawer whose opener disappeared`).
+109. The step detail and the full view use the app's tokens alone, as rule
+     98 says of the whole turn console
+     (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`).
+
 ## Acceptance criteria
 
 - Goal task cards show a remote host in its host colour and explain when it
@@ -2825,6 +3108,25 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
 - The goals screen narrows the board by title and names the search when nothing matches.
+- The turn console shows the plan, the session state, the notices, the
+  marks of answered permissions, the title and find, and keeps the view of
+  each session (rules 99a to 99h) (`ui/src/features/sessions/trajectory/console-state.test.tsx`).
+- The turn console (rules 89 to 99) opens behind `?console=turns`, draws a
+  closed turn as three rows, opens its activity line to step rows, shows the
+  running turn live, answers a pending permission from a card above the
+  composer, always shows the attention of a turn, keeps the composer of
+  today, loads older turns and keeps the place, and replaces its state on a
+  reconnect with no item two times, in the app's tokens alone
+  (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx`,
+  `ui/src/features/sessions/trajectory/store.test.ts`,
+  `ui/src/features/sessions/trajectory/tokens.test.ts`).
+- A step of the turn console (rules 100 to 109) opens under its row, draws
+  its detail by kind, shows raw data only behind `Raw`, copies a section,
+  shows images inline and other blocks as linked rows, follows a running
+  call, opens a subagent to its steps with a cancel where permitted, and
+  opens whole in a full view beside the conversation or in a drawer, which
+  Escape closes without a cancel
+  (`ui/src/features/sessions/trajectory/step-detail.test.tsx`).
 
 - Hosts (rules 51 to 60): `local` maps to the settings base URL and a named
   host is reachable only over HTTP while ready

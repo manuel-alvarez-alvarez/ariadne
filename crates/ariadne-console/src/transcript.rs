@@ -11,67 +11,19 @@ use ariadne_api::events::AgentEventDto;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-/// Snapshot filters accepted by both transcript commands.
-#[derive(Debug, Clone, Default)]
-pub struct Filters {
-    pub tail: Option<usize>,
-    pub since: Option<Since>,
-    pub kinds: Vec<String>,
-}
-
-impl Filters {
-    pub fn allows_kind(&self, kind: &str) -> bool {
-        self.kinds.is_empty() || self.kinds.iter().any(|wanted| wanted == kind)
-    }
-
-    pub fn apply(&self, items: Vec<TranscriptItem>) -> Vec<TranscriptItem> {
-        let mut items: Vec<_> = items
-            .into_iter()
-            .filter(|item| {
-                self.kinds.is_empty()
-                    || item
-                        .meta()
-                        .kinds
-                        .iter()
-                        .any(|kind| self.kinds.iter().any(|wanted| wanted == kind))
-            })
-            .filter(|item| {
-                self.since.as_ref().is_none_or(|since| {
-                    DateTime::parse_from_rfc3339(&item.meta().created_at)
-                        .map(|created| created.with_timezone(&Utc) >= since.0)
-                        .unwrap_or(true)
-                })
-            })
-            .collect();
-        if let Some(tail) = self.tail {
-            items.drain(..items.len().saturating_sub(tail));
-        }
-        items
-    }
-
-    /// Apply event filters without changing any retained DTO.
-    pub fn apply_events<'a>(&self, events: &'a [AgentEventDto]) -> Vec<&'a AgentEventDto> {
-        let mut events: Vec<_> = events
-            .iter()
-            .filter(|event| self.allows_kind(&event.kind))
-            .filter(|event| {
-                self.since.as_ref().is_none_or(|since| {
-                    DateTime::parse_from_rfc3339(&event.created_at)
-                        .map(|created| created.with_timezone(&Utc) >= since.0)
-                        .unwrap_or(true)
-                })
-            })
-            .collect();
-        if let Some(tail) = self.tail {
-            events.drain(..events.len().saturating_sub(tail));
-        }
-        events
-    }
-}
-
 /// An RFC 3339 instant, or an instant relative to command invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Since(DateTime<Utc>);
+
+impl Since {
+    /// Whether an RFC 3339 `timestamp` is at or after this instant. A
+    /// timestamp that does not parse is kept.
+    pub fn includes(&self, timestamp: &str) -> bool {
+        DateTime::parse_from_rfc3339(timestamp)
+            .map(|at| at.with_timezone(&Utc) >= self.0)
+            .unwrap_or(true)
+    }
+}
 
 impl FromStr for Since {
     type Err = String;
@@ -438,7 +390,7 @@ pub(crate) fn questions(fields: &[FormField]) -> Vec<FormField> {
 }
 
 /// The fields of a form, in the order the schema lists them.
-fn form_fields(schema: &Value, message: &str) -> Vec<FormField> {
+pub(crate) fn form_fields(schema: &Value, message: &str) -> Vec<FormField> {
     let required: Vec<&str> = schema
         .get("required")
         .and_then(Value::as_array)
@@ -588,7 +540,7 @@ fn field_lines(at: usize, field: &FormField) -> Vec<String> {
 
 /// How a form question closed: each answer under its field's title, or the
 /// way it closed without one.
-pub fn closed_lines(closed: &FormClosed, fields: &[FormField]) -> Vec<String> {
+fn closed_lines(closed: &FormClosed, fields: &[FormField]) -> Vec<String> {
     match closed.action.as_str() {
         "accept" => {
             let mut lines = vec!["answered".to_string()];

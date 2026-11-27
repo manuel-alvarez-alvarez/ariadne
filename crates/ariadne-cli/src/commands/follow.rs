@@ -208,7 +208,7 @@ async fn first<T>(stop: impl Future<Output = ()>, work: impl Future<Output = T>)
 /// A handler that could not be installed resolves as *never* rather than as an
 /// interruption: tokio reports that failure by resolving, and taking it for a
 /// Ctrl-C would end every follow mode the instant it began.
-async fn interrupt() {
+pub(crate) async fn interrupt() {
     if tokio::signal::ctrl_c().await.is_err() {
         std::future::pending::<()>().await
     }

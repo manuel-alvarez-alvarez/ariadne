@@ -28,7 +28,9 @@ use crate::output::{
     pager, print, print_json, print_kv, print_list, status_line, usage_block, usage_cell, view,
     yes_no,
 };
-use ariadne_console::transcript::{Filters, Since};
+use ariadne_console::transcript::Since;
+
+use crate::commands::transcript::Filters;
 use edit::{Edits, parse_agent_slot, parse_create_agent_slot, resolve_repo, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
@@ -277,13 +279,16 @@ pub(crate) enum TaskCommand {
         /// Keep printing output until the session ends
         #[arg(short, long)]
         follow: bool,
-        /// Print only the last N transcript items
+        /// Print each step of a turn under it
+        #[arg(long)]
+        steps: bool,
+        /// Print only the last N turns
         #[arg(long, value_name = "N")]
         tail: Option<usize>,
-        /// Print items at or after an RFC 3339 time, or from a duration ago
+        /// Print turns and steps at or after an RFC 3339 time, or from a duration ago
         #[arg(long, value_name = "TIME")]
         since: Option<Since>,
-        /// Print only this event kind; repeatable
+        /// Print only steps of this kind; repeatable
         #[arg(id = "kind", long = "kind", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::transcript_kinds))]
         kinds: Vec<String>,
     },
@@ -484,6 +489,7 @@ pub(crate) async fn run(
             id,
             seat,
             follow,
+            steps,
             tail,
             since,
             kinds,
@@ -494,6 +500,7 @@ pub(crate) async fn run(
                 client,
                 &session.id,
                 follow,
+                steps,
                 Filters { tail, since, kinds },
                 format,
             )
