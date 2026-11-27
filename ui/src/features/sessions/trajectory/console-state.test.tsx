@@ -302,9 +302,9 @@ it("marks an answered permission on the row of its call, with who decided", asyn
   await user.click(activityLine(turn))
 
   const rows = await within(article(turn)).findAllByRole("listitem")
-  expect(rows.map((row) => row.textContent)).toEqual([
-    "executecompletedRemove the build✓ Allow once · AI12s",
-    "executecompletedPush the branch✗ Reject · you12s",
+  expect(rows.map((row) => row.textContent?.trim())).toEqual([
+    "Remove the build ✓ Allow once · AI 12s",
+    "Push the branch ✗ Reject · you 12s",
   ])
 })
 

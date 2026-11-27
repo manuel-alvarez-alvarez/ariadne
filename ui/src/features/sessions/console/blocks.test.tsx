@@ -28,7 +28,8 @@ it("renders developer prompts as full Markdown without a fold", () => {
 
   expect(container.querySelector("h2")?.textContent).toBe("Resume")
   expect(screen.queryByRole("button")).toBeNull()
-  screen.getByText("Developer")
+  screen.getByRole("img", { name: "Developer" })
+  expect(screen.queryByText("Developer")).toBeNull()
 })
 
 it("draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text", () => {

@@ -39,6 +39,11 @@ Out:
 - The events themselves and their payloads. They are the ACP runtime's (021).
 - The console input, cancel and terminal routes, and the consoles that read the trajectory (008).
 - How a console draws the detail of a call.
+- How a console draws the rows of the steps: their state and kind icons,
+  the group rows of consecutive `read` and `search` calls, and the `+N -N`
+  of an edit from its `diff_stat`. The terminal console draws them by 008,
+  rule 59, and the desktop console by 015, rule 112. Both read the steps
+  and the `diff_stat` that this spec gives, and the daemon groups nothing.
 - The stored kinds of the session state an agent reports, and the display
   state the session row keeps. They are the ACP runtime's (021, rule 24).
 
@@ -191,7 +196,8 @@ Out:
     `diff_stat` counts the files of its diffs, and the `+` and `-` lines of a
     patch, or the lines between the common start and the common end of an
     old and a new text. A call with no `locations` takes the paths of its
-    diffs.
+    diffs. A console shows the counts of `diff_stat` on the row of an edit
+    (008, rule 59; 015, rule 112).
 23. `permission_request` opens a `permission` step in the main lane. The open
     call it asks about names it in `permission`. `permission.replied` answers
     the newest pending permission of the session. A daemon allow of one of

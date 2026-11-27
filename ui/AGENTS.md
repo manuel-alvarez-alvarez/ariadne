@@ -509,6 +509,10 @@ shares in `src/features/sessions/console/`:
   `full-view-context.ts`. `status-slot.tsx`,
   `dock-slot.tsx` and `find-slot.tsx` are the mount points of the status row,
   the dock above the composer and the find control.
+- `step-row.tsx` draws a step row and the group row of consecutive read and
+  search calls. `step-groups.ts` holds the group rule, which the terminal
+  console shares (008, rule 59), and `step-icons.tsx` the state and kind
+  icons. A state takes the board's icon and colour (spec 015, rule 112).
 - `plan.tsx` draws a plan line and its checklist, and `notices.tsx` the
   warning and compaction lines and the mark of an answered permission.
 - `trajectory-console.tsx` holds the pane: the stream, the scroll, the keys

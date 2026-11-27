@@ -1627,12 +1627,14 @@ the ops of each update by id.
 90. A turn shows its prompt, one activity line and its answer. A closed turn
     with nothing in its `attention` is these three rows. The activity line
     gives the time of the turn, its steps, the files it changed and its
-    failed calls, as `1m 04s · 5 steps · 2 files changed · 1 failed`
+    failed calls, as `1m 04s · 5 steps · 2 files changed · 1 failed`, after
+    the icon of the turn's state (rule 112)
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a closed turn as its prompt, one activity line and its answer`).
 91. The activity line is a button with `aria-expanded`. It opens to the step
     rows of the turn, which it reads from
     `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps`. A row shows the
-    kind, the status, the title, the subject and the duration of its step.
+    status and the kind of its step as icons (rule 112), then the title, the
+    subject and the duration of its step.
     Where earlier steps exist, `Show N earlier` reads the page before the
     first row. Each row is drawn by the slot for the detail of its step
     (`trajectory/step-detail.tsx`), which rules 100 to 109 describe. A step that an
@@ -1981,8 +1983,8 @@ view.
      - A tooltip opened by focus never keeps the pane open: Escape on an icon
        button of the pane still closes the pane
        (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing the replacement goal breadcrumb`).
-     - Tabs, step rows, turn lines and headers, state pills and buttons that
-       submit a form or a dialog stay as they are
+     - Tabs, state pills and buttons that submit a form or a dialog stay as
+       they are. Step rows, turn lines and turn headers show icons by rule 112
        (`ui/src/components/icon-button.test.tsx::names the button by its label and draws no text`,
        `::shows the label as the tooltip when the button takes focus`,
        `::shows a tooltip of its own without changing the accessible name`,
@@ -2001,6 +2003,46 @@ view.
        `ui/src/features/goals/attention-blocks.test.tsx::draws the content of a drawer row: summary, action, age, links, target and Dismiss`;
        `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::follows the newest output, and offers Jump to latest once the reader scrolls away`;
        `ui/src/features/sessions/trajectory/step-detail.test.tsx::shows the raw input and the raw output only behind Raw`).
+112. The turn console shows its rows with the design of the terminal
+     console (008, rule 59): icons, groups and line counts.
+     - A step row shows a state icon, then a kind icon, then its title and
+       subject. The state word and the kind word are the tooltips of the
+       icons, and stay in the accessible name of the row. A tool call has the
+       icon of its kind, and a kind with no icon has one fallback icon
+       (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the state and the kind of a step row as icons, with their words as names and tooltips`).
+     - A state has the icon and the colour that the board gives the same
+       state: running is in progress, completed is finished, and failed,
+       cancelled and pending are the same words
+       (`::shows a step state with the icon and the colour the board gives the same state`).
+     - Consecutive tool steps of kind `read` or `search` in one turn show as
+       one group row (`trajectory/step-groups.ts`). The group row shows the
+       subject of each step, else its title, cut to the width. A group of one
+       kind has the icon of that kind, and a group of both kinds has a group
+       icon. A step of another kind ends a group, and a group of one step is
+       a normal step row. A running turn takes its last 3 steps (rule 92)
+       before it folds them. A browser probe of a session panel at viewports
+       of 1400, 900 and 640 CSS pixels found the subjects cut with an
+       ellipsis inside the group row, and each row one line of 20 pixels
+       (`::folds consecutive read and search steps into one group row of their subjects`,
+       `::gives a group of one kind the icon of that kind`).
+     - The state of a group is running while a step in it runs, failed if a
+       step in it failed, and completed in all other cases
+       (`::shows a group as running while a step runs, failed if a step failed, and completed otherwise`).
+     - A group row is a disclosure with `aria-expanded`. A click opens the
+       group and shows its steps as rows, and each of those rows opens its
+       detail as rule 100 says
+       (`::opens a group row to its steps, and each opens its detail`).
+     - An edit step row shows its subject and `+N -N` from `diff_stat`, in
+       the diff colours, when the step carries one
+       (`::shows the subject of an edit row and the lines it added and removed`).
+     - The activity line shows the time and the counts. A state icon
+       replaces the state word, which stays in the accessible name
+       (`::shows the state of a turn line as an icon, with the time and the counts`).
+     - The prompt and the answer of a turn show an icon for the user, the
+       developer and the assistant. The role word is the icon's tooltip and
+       its accessible name
+       (`::shows the author of each turn part as an icon, its word as the name`,
+       `ui/src/features/sessions/console/blocks.test.tsx::renders developer prompts as full Markdown without a fold`).
 
 ## Acceptance criteria
 
