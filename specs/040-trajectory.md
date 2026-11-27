@@ -220,6 +220,14 @@ Out:
     first event of the session that names it. `subagent_update` changes its
     title, task, state and `can_cancel`. The snapshot lists every subagent in
     `subagents`.
+    - A read seeds each subagent by the first event of the session that
+      names it (`Store::first_subagent_events`), before it folds any head. An
+      event of the subagent in a later turn then finds it, and opens no
+      step in that turn: the turn's count, its page and its activity hold no
+      phantom subagent step, also where the first event is past the budget.
+    - The step opens where that first event folds. A subagent whose first
+      event no fold of the read holds has no step, and the snapshot does
+      not list it.
 31. An event that names a subagent is in that subagent's lane. A subagent's
     `activity` counts its lane.
 32. A plan is the plan of a lane and an ACP `plan_id`. Its `plan_id` on the
@@ -517,6 +525,8 @@ Out:
     one, the steps route included (rules 17, 27):
     `fold.rs::a_compaction_across_a_prompt_changes_its_first_step` and
     `read.rs::a_rebuilt_fold_names_plans_and_compactions_by_their_first_event`.
+    A child's compaction across a prompt does the same in the child's lane:
+    `read.rs::a_child_known_from_an_earlier_turn_opens_no_step_in_a_later_one`.
 63. A removal before a plan's first update names the plan, in a warm fold
     and a rebuilt one (rule 32):
     `fold.rs::a_removal_before_a_plans_first_update_names_the_plan` and
@@ -525,6 +535,11 @@ Out:
     tells a reported empty state from no report (rule 33):
     `fold.rs::a_reported_empty_command_list_stands_against_a_stored_one` and
     `crates/ariadne-store/tests/store.rs::a_reported_empty_state_is_told_from_no_report`.
+65. A child known from an earlier turn opens no step in a later one: the
+    later turn's page holds its own steps, and every read counts each turn
+    as a warm fold does, with the earlier turn shown, left out, or past the
+    budget (rules 27, 30, 34, 44):
+    `read.rs::a_child_known_from_an_earlier_turn_opens_no_step_in_a_later_one`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

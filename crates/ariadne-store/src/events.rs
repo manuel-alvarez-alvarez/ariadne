@@ -355,26 +355,29 @@ impl Store {
         Ok(q.fetch_all(self.r()).await?)
     }
 
-    /// The first event of a session that names the subagent `subagent`: its
-    /// announcement, or the first event of its own lane. Payload unread.
-    pub async fn first_subagent_event(
+    /// The first event of each subagent of a session up to `upto`, as the
+    /// subagent's id and the event's id, by subagent id: the first event in
+    /// its lane, or the first `subagent_update` about it, whichever is first.
+    pub async fn first_subagent_events(
         &self,
         session_id: &str,
-        subagent: &str,
         upto: &str,
-    ) -> Result<Option<EventHead>> {
-        Ok(sqlx::query_as::<_, EventHead>(
-            "SELECT id, kind, lane, COALESCE(facts, '{}') AS facts, created_at FROM agent_events
-               WHERE session_id = ? AND id <= ?
-                 AND (lane = ? OR (kind = 'subagent_update'
-                                   AND json_extract(facts, '$.subagent') = ?))
-               ORDER BY id LIMIT 1",
+    ) -> Result<Vec<(String, String)>> {
+        Ok(sqlx::query_as(
+            "SELECT subagent, MIN(id) FROM (
+                 SELECT lane AS subagent, id FROM agent_events
+                   WHERE session_id = ? AND id <= ? AND lane IS NOT NULL
+                 UNION ALL
+                 SELECT json_extract(facts, '$.subagent') AS subagent, id FROM agent_events
+                   WHERE session_id = ? AND id <= ? AND kind = 'subagent_update'
+               )
+               WHERE subagent IS NOT NULL GROUP BY subagent ORDER BY subagent",
         )
         .bind(session_id)
         .bind(upto)
-        .bind(subagent)
-        .bind(subagent)
-        .fetch_optional(self.r())
+        .bind(session_id)
+        .bind(upto)
+        .fetch_all(self.r())
         .await?)
     }
 

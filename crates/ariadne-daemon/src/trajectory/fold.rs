@@ -175,6 +175,11 @@ struct Subagent {
     step: SubagentStepDto,
     /// The newest `subagent_update` of it.
     latest: Option<String>,
+    /// Whether its first event opened its step. A read seeds a subagent by
+    /// its first event before it folds anything, so that an event of a
+    /// later turn finds the subagent and opens no step of its own; the
+    /// step opens where that first event folds.
+    opened: bool,
 }
 
 /// One event, as the fold reads it: its facts always, its payload where the
@@ -311,6 +316,36 @@ impl Fold {
                 step: first.to_string(),
                 turn: None,
             });
+    }
+
+    /// Know the subagent `subagent_id` by `first`, the id of the first event
+    /// of the session that names it, before any event folds.
+    pub(crate) fn seed_subagent(&mut self, subagent_id: &str, first: &str) {
+        if self
+            .subagents
+            .iter()
+            .any(|child| child.step.subagent_id == subagent_id)
+        {
+            return;
+        }
+        self.subagents.push(Subagent {
+            step: SubagentStepDto {
+                id: first.to_string(),
+                turn_id: String::new(),
+                lane: MAIN_LANE.into(),
+                created_at: String::new(),
+                subagent_id: subagent_id.to_string(),
+                title: subagent_id.to_string(),
+                task: None,
+                state: None,
+                can_cancel: false,
+                started_at: String::new(),
+                ended_at: None,
+                activity: ActivityDto::default(),
+            },
+            latest: None,
+            opened: false,
+        });
     }
 
     /// Whether turns older than the fold's first exist in the store.
@@ -594,6 +629,7 @@ impl Fold {
             subagents: self
                 .subagents
                 .iter()
+                .filter(|child| child.opened)
                 .map(|child| child.step.clone())
                 .collect(),
             plans: self.plans.iter().map(|(_, plan)| plan.clone()).collect(),
@@ -1569,10 +1605,14 @@ impl Fold {
     /// The index of a subagent, which the first event that names it opens
     /// as a step of the main lane.
     fn subagent_at(&mut self, input: &Input, id: &str, ops: &mut Ops) -> usize {
-        if let Some(at) = self
+        let known = self
             .subagents
             .iter()
-            .position(|child| child.step.subagent_id == id)
+            .position(|child| child.step.subagent_id == id);
+        // A known subagent's step opens at its first event alone: a later
+        // event, in this turn or another, is the subagent's and opens none.
+        if let Some(at) = known
+            && (self.subagents[at].opened || self.subagents[at].step.id != input.id)
         {
             return at;
         }
@@ -1594,10 +1634,21 @@ impl Fold {
             ended_at: None,
             activity: ActivityDto::default(),
         };
-        self.subagents.push(Subagent {
+        let child = Subagent {
             step: step.clone(),
             latest: None,
-        });
+            opened: true,
+        };
+        let at = match known {
+            Some(at) => {
+                self.subagents[at] = child;
+                at
+            }
+            None => {
+                self.subagents.push(child);
+                self.subagents.len() - 1
+            }
+        };
         self.open_step(
             index,
             MAIN_LANE,
@@ -1612,11 +1663,14 @@ impl Fold {
             .or_default()
             .subagents
             .insert(id.to_string());
-        self.subagents.len() - 1
+        at
     }
 
     /// Put the registry's copy of a subagent into its step, and say so.
     fn publish_subagent(&mut self, at: usize, ops: &mut Ops) {
+        if !self.subagents[at].opened {
+            return;
+        }
         let child = self.subagents[at].step.clone();
         if let Some(turn) = self.turn_mut(&child.turn_id) {
             if let Some(step) = turn.steps.iter_mut().find(|step| {
