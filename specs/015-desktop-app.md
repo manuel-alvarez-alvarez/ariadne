@@ -1707,7 +1707,10 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     mode, each config option with its current value, the context use as a
     share of the window, the cost in its currency, and the token totals at
     its right end. The row is one line at each width: it does not wrap, and
-    a fact that does not fit is cut
+    a fact that does not fit is cut. The row does not count the running
+    subagents, and it has no bar of views: the console of events said
+    `running N subagents`, and that ends here. A running subagent shows as its
+    own step row, with its state and its step count (rule 106)
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
 99c. A warning note and a compaction always show as lines of their turn,
     whatever the fold, and an error shows as rule 94 says. The console takes
