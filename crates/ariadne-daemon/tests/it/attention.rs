@@ -648,12 +648,14 @@ async fn an_exhausted_session_already_switched_raises_no_quota_item() {
 #[tokio::test]
 async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it_is_still_running()
 {
-    // The orchestrator's launch waits on the periodic full reconcile: the
-    // status write below, straight through the store, wakes the scheduler
-    // about nothing in particular.
+    // The status writes below go straight through the store, which wakes the
+    // scheduler about nothing in particular, so the test wakes it itself
+    // about the goal after each. The periodic tick never comes round: each
+    // pass of it would retry the repository's failing launch of the task
+    // agent, and the third would fail the task before the test does.
     let h = harness()
         .timeouts(Timeouts {
-            full_reconcile: RUNS_OUT,
+            full_reconcile: TIMEOUT * 2,
             ..Timeouts::default()
         })
         .scheduler()
@@ -678,6 +680,7 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
         .set_goal_status(&cast.goal.id, ariadne_core::GoalStatus::Active)
         .await
         .unwrap();
+    h.notify_goal(&cast.goal.id);
     let orchestrator = async || {
         h.sessions_of_goal(&cast.goal.id)
             .await
@@ -708,6 +711,7 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
         )
         .await
         .unwrap();
+    h.notify_goal(&cast.goal.id);
 
     // The prompt was delivered — the turn it started is running — but has
     // not ended: this is exactly the window a stamp taken at hand-off time
@@ -754,14 +758,19 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
 /// proving the delivery was retried, not merely that the attempt was made.
 #[tokio::test]
 async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacement_answers() {
-    // The replacement's launch waits on the periodic full reconcile: nothing
-    // an agent dying mid-turn reports ever wakes the scheduler about it. The
-    // kill below must also sit out the cancel grace rather than resolve it:
-    // shortened here, the way `a_relaunch_after_a_kill_resumes_once_the_killed_agent_is_gone`
+    // The status writes below go straight through the store, and nothing an
+    // agent dying mid-turn reports wakes the scheduler about it, so the test
+    // wakes it itself: about the goal after each write, and for the
+    // replacement's launch with one full reconcile after the kill. The
+    // periodic tick never comes round: each pass of it would retry the
+    // repository's failing launch of the task agent, and the third would
+    // fail the task before the test does. The kill must also sit out the
+    // cancel grace rather than resolve it: shortened here, the way
+    // `a_relaunch_after_a_kill_resumes_once_the_killed_agent_is_gone`
     // (`acp_console.rs`) does for the same reason.
     let h = harness()
         .timeouts(Timeouts {
-            full_reconcile: RUNS_OUT,
+            full_reconcile: TIMEOUT * 2,
             cancel_grace: RUNS_OUT,
             ..Timeouts::default()
         })
@@ -790,6 +799,7 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
         .set_goal_status(&cast.goal.id, ariadne_core::GoalStatus::Active)
         .await
         .unwrap();
+    h.notify_goal(&cast.goal.id);
     let orchestrator = async || {
         h.sessions_of_goal(&cast.goal.id)
             .await
@@ -818,6 +828,7 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
         )
         .await
         .unwrap();
+    h.notify_goal(&cast.goal.id);
 
     // Accepted into the queue, and its own turn actually starts: this is
     // the delivery being accepted, not refused at the channel.
@@ -862,7 +873,13 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
     h.agent.reprogram(crate::common::acp::script());
 
     // The scheduler's own liveness handling resumes the dead orchestrator
-    // automatically; its replacement turn actually ends and confirms.
+    // automatically, on the full reconcile the test now asks for; its
+    // replacement turn actually ends and confirms.
+    h.sched
+        .as_ref()
+        .unwrap()
+        .send(ariadne_daemon::scheduler::SchedEvent::FullReconcile)
+        .unwrap();
     eventually(
         TIMEOUT,
         "the replacement's own turn to actually confirm the failure",
