@@ -28,7 +28,7 @@ use crate::output::{
     pager, print, print_json, print_kv, print_list, status_line, usage_block, usage_cell, view,
     yes_no,
 };
-use ariadne_console::transcript::Since;
+use ariadne_console::Since;
 
 use crate::commands::transcript::Filters;
 use edit::{Edits, parse_agent_slot, parse_create_agent_slot, resolve_repo, update_request};

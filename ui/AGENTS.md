@@ -536,8 +536,8 @@ The parts in `console/` are:
 A prompt and a permission pick both post `{"text"}` to
 `POST /v1/sessions/{id}/console/input`. A cancel posts
 `POST /v1/sessions/{id}/console/cancel` with no body. A failed post is kept in
-the console with Retry and Edit. The UI calls neither
-`GET /v1/sessions/{id}/console` nor `GET /v1/sessions/{id}/console/stream`.
+the console with Retry and Edit. The UI reads a session through the trajectory
+routes alone.
 
 Escape inside the console cancels a running turn and never reaches the pane
 or the modal; inside a step's full view it closes the view. ⌘Escape moves the

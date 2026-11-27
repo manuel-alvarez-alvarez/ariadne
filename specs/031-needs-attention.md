@@ -17,7 +17,6 @@ tests:
   - crates/ariadne-daemon/src/attention/mod.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-daemon/src/http/classify.rs
-  - crates/ariadne-console/src/transcript.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/tests/request_migration.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
@@ -650,10 +649,6 @@ Proof: `crates/ariadne-cli/src/main.rs::tests::dismisses_a_quota_item_whose_mode
   (`attention.rs::an_idle_turn_raises_no_attention_item`).
 - A live session that reported an error is one item on its console
   (`attention.rs::an_agent_error_is_one_item_for_its_console`).
-- A permission on an Ariadne tool allowed by the daemon itself leaves no
-  block while one a person answered, one the daemon denied or cancelled, or
-  one on any other tool, keeps its
-  (`ariadne-console::transcript::tests::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
 - No MCP tool raises a request (013 rule 3): the seats ask with the question
   tool of their own client
   (`mcp.rs::no_session_text_names_a_tool_that_left_and_a_call_to_it_is_refused`,
@@ -667,9 +662,7 @@ Proof: `crates/ariadne-cli/src/main.rs::tests::dismisses_a_quota_item_whose_mode
 - A relay turn file of the last release still loads
   (`acp::tests::a_turn_file_of_the_last_release_still_loads`).
 - An old `agent_request` event and its close move neither status nor
-  attention (`classify.rs::an_old_agent_request_event_moves_nothing`), and
-  the terminal console draws no block for them
-  (`ariadne-console::transcript::tests::an_old_agent_request_draws_no_block`).
+  attention (`classify.rs::an_old_agent_request_event_moves_nothing`).
 - A waiting permission targets its session console, while an automatic
   permission creates no item
   (`attention.rs::permission_events_only_create_items_while_waiting_for_a_person`,

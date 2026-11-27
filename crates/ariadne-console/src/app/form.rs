@@ -1,9 +1,9 @@
 //! A question the agent asked with its own tool (021), as the form that
 //! answers it: one field at a time, above the input.
 //!
-//! The form of the inline pane (`tui/form.rs` and its keys), taken over
-//! whole. Its fields are read off the question the host lists, since the
-//! question step of the trajectory names its first choice field alone.
+//! Its fields are read off the question the host lists ([`crate::fields`]),
+//! since the question step of the trajectory names its first choice field
+//! alone.
 //!
 //! A choice field takes the arrows, a number, Space for a multi-select, and
 //! Enter. A text field takes the text in the input box on Enter. The last
@@ -20,8 +20,8 @@ use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
 use unicode_width::UnicodeWidthStr;
 
+use crate::fields::{self, FieldKind, FormChoice, FormField};
 use crate::theme::{self, ASK, DIM, FAIL, FRAME, PICKED, QUESTION};
-use crate::transcript::{self, FieldKind, FormChoice, FormField};
 
 use super::{Action, App};
 use crate::wrap;
@@ -137,7 +137,7 @@ fn draw(
     }
     let width = width.max(8);
     let all_fields = fields;
-    let fields = crate::transcript::questions(fields);
+    let fields = crate::fields::questions(fields);
     let Some(field) = fields.get(state.field) else {
         return vec![rule(width)];
     };
@@ -151,7 +151,7 @@ fn draw(
         header.push_str(&format!(" · {} of {}", state.field + 1, fields.len()));
         for question in &fields {
             let answered = state.content.contains_key(&question.key)
-                || crate::transcript::companion(all_fields, question)
+                || crate::fields::companion(all_fields, question)
                     .is_some_and(|c| state.content.contains_key(&c.key));
             header.push_str(if answered { " ✓" } else { " ○" });
         }
@@ -178,7 +178,7 @@ fn draw(
                 width,
             ));
         }
-        if crate::transcript::companion(all_fields, field).is_some() {
+        if crate::fields::companion(all_fields, field).is_some() {
             if choices.len() == state.picked {
                 selected = Some(lines.len());
             }
@@ -348,7 +348,7 @@ impl App {
             }
             (_, None) => return None,
         };
-        let fields = transcript::questions(&all_fields);
+        let fields = fields::questions(&all_fields);
         let mut state = self.form_state(&question_id);
         if key.code == KeyCode::Esc {
             self.form = FormState::default();
@@ -389,10 +389,10 @@ impl App {
             let target = &fields[state.field];
             if let Some(value) = state.content.get(&target.key) {
                 match &target.kind {
-                    transcript::FieldKind::Single(choices) => {
+                    fields::FieldKind::Single(choices) => {
                         state.picked = choices.iter().position(|c| &c.value == value).unwrap_or(0);
                     }
-                    transcript::FieldKind::Multi(choices) => {
+                    fields::FieldKind::Multi(choices) => {
                         for (index, choice) in choices.iter().enumerate() {
                             if value
                                 .as_array()
@@ -408,7 +408,7 @@ impl App {
             self.form = state;
             return Some(Action::None);
         }
-        let custom = transcript::companion(&all_fields, field);
+        let custom = fields::companion(&all_fields, field);
         let count = choice_count(field) + usize::from(custom.is_some());
         let typing = count == 0;
         let boxed = !self.input.is_empty();
@@ -423,7 +423,7 @@ impl App {
                 let index = digit as usize - '1' as usize;
                 if index < count {
                     state.picked = index;
-                    if matches!(field.kind, transcript::FieldKind::Single(_))
+                    if matches!(field.kind, fields::FieldKind::Single(_))
                         && index < choice_count(field)
                     {
                         self.form = state;
@@ -431,9 +431,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char(' ')
-                if !boxed && matches!(field.kind, transcript::FieldKind::Multi(_)) =>
-            {
+            KeyCode::Char(' ') if !boxed && matches!(field.kind, fields::FieldKind::Multi(_)) => {
                 if !state.chosen.remove(&state.picked) {
                     state.chosen.insert(state.picked);
                 }
@@ -452,8 +450,7 @@ impl App {
                         custom.key.clone(),
                         serde_json::Value::String(text.to_string()),
                     );
-                    if matches!(field.kind, transcript::FieldKind::Single(_))
-                        || state.chosen.is_empty()
+                    if matches!(field.kind, fields::FieldKind::Single(_)) || state.chosen.is_empty()
                     {
                         state.content.remove(&field.key);
                         Ok(None)
@@ -481,7 +478,7 @@ impl App {
                     && let Some((index, missing)) = fields.iter().enumerate().find(|(_, field)| {
                         field.required
                             && !state.content.contains_key(&field.key)
-                            && !transcript::companion(&all_fields, field)
+                            && !fields::companion(&all_fields, field)
                                 .is_some_and(|custom| state.content.contains_key(&custom.key))
                     })
                 {

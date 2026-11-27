@@ -37,7 +37,7 @@ routes are listed in 012, rule 8.
 Out:
 
 - The events themselves and their payloads. They are the ACP runtime's (021).
-- The console routes and the two consoles that read them (008).
+- The console input, cancel and terminal routes, and the consoles that read the trajectory (008).
 - How a console draws the detail of a call.
 - The stored kinds of the session state an agent reports, and the display
   state the session row keeps. They are the ACP runtime's (021, rule 24).
@@ -365,8 +365,8 @@ Out:
     `update` frame `{rev, ops}` per revision. Each `rev` is one more than the
     revision before it. A `turn_upsert` carries the turn with no steps. A
     reconnect gets a new snapshot.
-46. All the subscribers of a session share one hub: one console merge
-    (`open_console`'s input) feeds one fold, and one broadcast sends each
+46. All the subscribers of a session share one hub: one merge of the stored and
+    the live events (`Merge`) feeds one fold, and one broadcast sends each
     revision. So two subscribers receive the same `rev` sequence. Two that
     come at once to a session with no hub open one. A subscriber that falls
     more than 1024 revisions behind receives `resync`, and its stream closes.
@@ -760,8 +760,7 @@ in each update, can lose a field of an update between them.
 `crates/ariadne-store/src/lib.rs` (`Store::open`),
 `crates/ariadne-daemon/src/trajectory/`,
 `crates/ariadne-daemon/src/http/trajectory.rs`,
-`crates/ariadne-daemon/src/http/console.rs` (`Merge`, `open_console`),
-`crates/ariadne-daemon/src/http/source_sessions.rs`, and the two folds it
-replaces for a client: `crates/ariadne-console/src/transcript.rs` (`Tool`)
-and `ui/src/features/sessions/console/transcript.ts` (`toolOf`,
-`toolOutput` and `toolDiff`).
+`crates/ariadne-daemon/src/http/console.rs` (`Merge`),
+`crates/ariadne-daemon/src/http/source_sessions.rs`, and the fold it
+replaces for a client: `ui/src/features/sessions/console/transcript.ts`
+(`toolOf`, `toolOutput` and `toolDiff`).

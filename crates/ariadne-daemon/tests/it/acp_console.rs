@@ -468,7 +468,7 @@ async fn a_prompt_without_usage_keeps_zero_totals_and_records_stop() {
 
     let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
     assert_eq!(session_usage.usage, tokens(0, 0, 0));
-    let events: Vec<AgentEventDto> = h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    let events: Vec<AgentEventDto> = h.get(&format!("/v1/events?session={}", session.id)).await;
     assert!(events.iter().any(|event| event.kind == "stop"));
 }
 
@@ -511,55 +511,6 @@ async fn resumed_prompt_usage_adds_a_new_launch_total() {
 
     let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", resumed.id)).await;
     assert_eq!(session_usage.usage, tokens(66, 22, 44));
-}
-
-/// The console stream opens with a snapshot of everything the session has
-/// done so far, then delivers a later turn's events as deltas.
-#[tokio::test]
-async fn the_console_stream_gives_the_snapshot_then_deltas() {
-    let agent_dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(agent_dir.path(), script());
-    let h = harness().home(registry_home(&stub)).await;
-    let cast = acp_cast(&h).await;
-    let session = spawned_idle(&h, &cast).await;
-
-    let mut body = h
-        .stream(get(&format!("/v1/sessions/{}/console/stream", session.id)))
-        .await;
-
-    let snapshot = expect_sse(&mut body, "snapshot").await;
-    let kinds: Vec<String> = snapshot
-        .as_array()
-        .expect("snapshot is an array of events")
-        .iter()
-        .map(|e| e["kind"].as_str().unwrap().to_string())
-        .collect();
-    for kind in [
-        "session_start",
-        "user_prompt_submit",
-        "pre_tool_use",
-        "stop",
-    ] {
-        assert!(
-            kinds.iter().any(|k| k == kind),
-            "{kind} missing from the snapshot: {kinds:?}"
-        );
-    }
-
-    // A second turn, run by posting input, arrives as a delta rather than
-    // requiring a fresh connection.
-    let (status, _) = h.send(post_console_input(&session.id, "keep going")).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-
-    let delta = expect_sse(&mut body, "event").await;
-    assert_eq!(delta["kind"], "user_prompt_submit");
-    assert!(
-        delta["payload"]["prompt"]
-            .as_str()
-            .unwrap()
-            .contains("keep going"),
-        "{delta}"
-    );
 }
 
 /// Posted text becomes a `session/prompt` reaching the agent; text posted
@@ -632,10 +583,11 @@ async fn posted_input_reaches_the_agent_and_queues_behind_a_running_turn() {
     );
 }
 
-/// Available commands are live console state: a connected console receives
-/// each update, and every later snapshot carries only the latest list.
+/// Available commands are live state of the trajectory, never stored: each
+/// update replaces the list in the session's state, and every later snapshot
+/// carries only the latest one.
 #[tokio::test]
-async fn available_commands_reach_console_streams_and_snapshots_without_storage() {
+async fn available_commands_reach_the_trajectory_without_storage() {
     let agent_dir = tempfile::tempdir().unwrap();
     let finish = agent_dir.path().join("finish-first-turn");
     let publish = agent_dir.path().join("publish-commands");
@@ -662,41 +614,33 @@ async fn available_commands_reach_console_streams_and_snapshots_without_storage(
     })
     .await;
 
-    let mut stream = h
-        .stream(get(&format!("/v1/sessions/{}/console/stream", session.id)))
-        .await;
-    expect_sse(&mut stream, "snapshot").await;
+    let commands = |session_id: String| {
+        let h = &h;
+        async move {
+            let trajectory: serde_json::Value = h
+                .get(&format!("/v1/sessions/{session_id}/trajectory"))
+                .await;
+            trajectory["session"]["commands"].clone()
+        }
+    };
     std::fs::write(&finish, "go").unwrap();
     eventually(TIMEOUT, "the session to become idle", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
+    assert_eq!(commands(session.id.clone()).await, json!([]));
 
     std::fs::write(&publish, "go").unwrap();
-    let commands = loop {
-        let event = expect_sse(&mut stream, "event").await;
-        if event["kind"] == "available_commands_update" {
-            break event;
-        }
-    };
-    assert_eq!(
-        commands["payload"],
-        json!({"session_id": "stub-session", "available_commands": [{
-            "name": "compact", "description": "Compact the conversation.",
-            "input": {"hint": "What to keep"}
-        }]}),
-    );
-
-    let snapshot: Vec<serde_json::Value> =
-        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
-    assert_eq!(
-        snapshot
-            .iter()
-            .filter(|event| event["kind"] == "available_commands_update")
-            .map(|event| event["payload"].clone())
-            .collect::<Vec<_>>(),
-        vec![commands["payload"].clone()],
-    );
+    eventually(
+        TIMEOUT,
+        "the between-turn list to reach the trajectory",
+        || async {
+            commands(session.id.clone()).await
+                == json!([{"name": "compact", "description": "Compact the conversation.",
+                       "hint": "What to keep"}])
+        },
+    )
+    .await;
 
     let (status, _) = h
         .send(post_console_input(&session.id, "continue normally"))
@@ -707,19 +651,10 @@ async fn available_commands_reach_console_streams_and_snapshots_without_storage(
             && h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
-    let snapshot: Vec<serde_json::Value> =
-        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
     assert_eq!(
-        snapshot
-            .iter()
-            .filter(|event| event["kind"] == "available_commands_update")
-            .map(|event| event["payload"].clone())
-            .collect::<Vec<_>>(),
-        vec![
-            json!({"session_id": "stub-session", "available_commands": [{
-                "name": "review", "description": "Review the change."
-            }]})
-        ],
+        commands(session.id.clone()).await,
+        json!([{"name": "review", "description": "Review the change.", "hint": null}]),
+        "every later snapshot carries only the latest list"
     );
 
     let listed: Vec<serde_json::Value> = h.get(&format!("/v1/events?session={}", session.id)).await;
@@ -728,20 +663,6 @@ async fn available_commands_reach_console_streams_and_snapshots_without_storage(
             .iter()
             .all(|event| event["kind"] != "available_commands_update"),
         "the commands must not be stored: {listed:?}"
-    );
-
-    h.launcher.kill_session(&session.id).await.unwrap();
-    eventually(TIMEOUT, "the agent to leave the runtime", || async {
-        !h.launcher.acp.is_running(&session.id)
-    })
-    .await;
-    let ended: Vec<serde_json::Value> =
-        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
-    assert!(
-        ended
-            .iter()
-            .all(|event| event["kind"] != "available_commands_update"),
-        "an ended agent has no commands: {ended:?}"
     );
 }
 
@@ -1811,10 +1732,10 @@ async fn a_request_without_raw_input_never_auto_allows() {
     asked(&h, &again.id).await;
 }
 
-/// A permission request, and the daemon's reply to it, appear in the console
-/// stream — the same events `acp_runtime.rs` proves reach the store.
+/// A permission request, and the daemon's reply to it, are recorded events
+/// of the session — the same events `acp_runtime.rs` proves reach the store.
 #[tokio::test]
-async fn a_permission_request_appears_in_the_console_stream() {
+async fn a_permission_request_and_its_reply_are_listed_with_the_sessions_events() {
     let mut scripted = script();
     scripted["prompts"] = json!([{
         "permission": {
@@ -1834,20 +1755,12 @@ async fn a_permission_request_appears_in_the_console_stream() {
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
 
-    let mut body = h
-        .stream(get(&format!("/v1/sessions/{}/console/stream", session.id)))
-        .await;
-    let snapshot = expect_sse(&mut body, "snapshot").await;
-    let kinds: Vec<String> = snapshot
-        .as_array()
-        .expect("snapshot is an array of events")
-        .iter()
-        .map(|e| e["kind"].as_str().unwrap().to_string())
-        .collect();
+    let events: Vec<serde_json::Value> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    let kinds = kinds(&events);
     for kind in ["permission_request", "permission.replied"] {
         assert!(
             kinds.iter().any(|k| k == kind),
-            "{kind} missing from the console: {kinds:?}"
+            "{kind} missing from the listing: {kinds:?}"
         );
     }
 }
@@ -1916,10 +1829,10 @@ impl Streaming {
 
     /// Start the streaming turn from the console and wait until the stub has
     /// sent everything and the daemon has read all of it: the stub's marker
-    /// says what it sent, and the last chunk it sent showing in the console
-    /// snapshot says what the daemon has. The two are independent — a test
-    /// that stopped at the marker alone could read a snapshot the daemon was
-    /// still catching up to.
+    /// says what it sent, and the last chunk it sent showing in the
+    /// trajectory says what the daemon has. The two are independent — a test
+    /// that stopped at the marker alone could read a trajectory the daemon
+    /// was still catching up to.
     async fn begin_turn(&self) {
         let (status, _) = self
             .h
@@ -1928,8 +1841,7 @@ impl Streaming {
         assert_eq!(status, StatusCode::NO_CONTENT);
         let reached = self._agent_dir.path().join("streaming-turn.reached");
         eventually(TIMEOUT, "the streaming turn to be held open", || async {
-            reached.exists()
-                && text_of(&self.snapshot().await, "agent_message_chunk") == ["Half done."]
+            reached.exists() && self.newest_text().await == "Half done."
         })
         .await;
     }
@@ -1943,13 +1855,27 @@ impl Streaming {
         .await;
     }
 
-    fn console_stream(&self) -> Request<Body> {
-        get(&format!("/v1/sessions/{}/console/stream", self.session.id))
+    /// The text of the newest message step of the trajectory, which the
+    /// daemon reads live while its run is still being written.
+    async fn newest_text(&self) -> String {
+        let trajectory: serde_json::Value = self
+            .h
+            .get(&format!("/v1/sessions/{}/trajectory", self.session.id))
+            .await;
+        trajectory["turns"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|turn| turn["steps"].as_array().into_iter().flatten())
+            .rfind(|step| step["type"] == "message")
+            .and_then(|step| step["content"][0]["text"].as_str().map(str::to_owned))
+            .unwrap_or_default()
     }
 
+    /// The session's recorded events: what the runtime stored, in order.
     async fn snapshot(&self) -> Vec<serde_json::Value> {
         self.h
-            .get(&format!("/v1/sessions/{}/console", self.session.id))
+            .get(&format!("/v1/events?session={}", self.session.id))
             .await
     }
 }
@@ -1961,78 +1887,12 @@ fn kinds(events: &[serde_json::Value]) -> Vec<String> {
         .collect()
 }
 
-/// Read `event` frames off a console stream until one of `kind` arrives,
-/// answering every event read on the way, that one last.
-async fn events_until(body: &mut Body, kind: &str) -> Vec<serde_json::Value> {
-    let mut seen = Vec::new();
-    loop {
-        let event = expect_sse(body, "event").await;
-        let done = event["kind"] == kind;
-        seen.push(event);
-        if done {
-            return seen;
-        }
-    }
-}
-
 fn text_of<'a>(events: &'a [serde_json::Value], kind: &str) -> Vec<&'a str> {
     events
         .iter()
         .filter(|e| e["kind"] == kind)
         .map(|e| e["payload"]["text"].as_str().unwrap())
         .collect()
-}
-
-/// A console stream client sees each `agent_message_chunk` as the stub sends
-/// it, while the turn is still open.
-#[tokio::test]
-async fn a_console_stream_client_sees_message_chunks_before_the_turn_ends() {
-    let t = Streaming::start().await;
-    let mut body = t.h.stream(t.console_stream()).await;
-    expect_sse(&mut body, "snapshot").await;
-
-    t.begin_turn().await;
-    let mut seen = Vec::new();
-    for _ in 0..3 {
-        seen.extend(events_until(&mut body, "agent_message_chunk").await);
-    }
-
-    assert_eq!(
-        text_of(&seen, "agent_message_chunk"),
-        ["Look.", "Half ", "done."],
-        "{seen:?}"
-    );
-    assert!(
-        !kinds(&seen).iter().any(|k| k == "stop"),
-        "the chunks arrive before the turn ends: {:?}",
-        kinds(&seen)
-    );
-    assert_eq!(t.h.session_status(&t.session).await, SessionStatus::Running);
-    t.end_turn().await;
-}
-
-/// Thought chunks and a tool call's progress reach the stream live too, the
-/// progress carrying the call merged so far.
-#[tokio::test]
-async fn thought_chunks_and_tool_call_progress_reach_the_console_stream_live() {
-    let t = Streaming::start().await;
-    let mut body = t.h.stream(t.console_stream()).await;
-    expect_sse(&mut body, "snapshot").await;
-
-    t.begin_turn().await;
-    let seen = events_until(&mut body, "tool_call_update").await;
-
-    assert_eq!(
-        text_of(&seen, "agent_thought_chunk"),
-        ["Think ", "first."],
-        "{seen:?}"
-    );
-    let progress = seen.last().unwrap();
-    assert_eq!(progress["payload"]["tool_call_id"], "call-2");
-    assert_eq!(progress["payload"]["acp"]["status"], "in_progress");
-    assert_eq!(progress["payload"]["acp"]["title"], "Bash");
-    assert_eq!(t.h.session_status(&t.session).await, SessionStatus::Running);
-    t.end_turn().await;
 }
 
 /// Once the turn is over the snapshot holds each run of text once, whole,
@@ -2193,50 +2053,6 @@ async fn console_input_is_reported_as_its_text_from_the_console() {
     );
 }
 
-/// A client that opens the console mid-turn reads the text so far in its
-/// snapshot: the run still being written, as one chunk after the stored
-/// events, on the stream and on the plain snapshot alike. The runs before it
-/// are stored where they were written, not drawn at the end.
-#[tokio::test]
-async fn a_stream_opened_mid_turn_gets_the_text_so_far_in_its_snapshot() {
-    let t = Streaming::start().await;
-    t.begin_turn().await;
-
-    let mut body = t.h.stream(t.console_stream()).await;
-    let snapshot = expect_sse(&mut body, "snapshot").await;
-    let events = snapshot.as_array().unwrap().clone();
-    let opened_on = kinds(&events);
-    let prompt = opened_on
-        .iter()
-        .rposition(|k| k == "user_prompt_submit")
-        .unwrap();
-    assert_eq!(
-        opened_on[prompt + 1..],
-        [
-            "agent_thought",
-            "plan",
-            "agent_message",
-            "pre_tool_use",
-            "post_tool_use",
-            "agent_message_chunk"
-        ],
-        "{opened_on:?}"
-    );
-    assert_eq!(text_of(&events, "agent_thought"), ["Think first."]);
-    assert_eq!(text_of(&events, "agent_message"), ["done", "Look."]);
-    assert_eq!(text_of(&events, "agent_message_chunk"), ["Half done."]);
-
-    let plain = t.snapshot().await;
-    assert_eq!(text_of(&plain, "agent_message_chunk"), ["Half done."]);
-
-    t.end_turn().await;
-    let after = kinds(&t.snapshot().await);
-    assert!(
-        !after.iter().any(|k| k.ends_with("_chunk")),
-        "the partial text goes once the turn is stored: {after:?}"
-    );
-}
-
 /// Cancelling a running turn sends `session/cancel` to the agent and ends
 /// the turn as `cancelled`, the text so far stored.
 #[tokio::test]
@@ -2281,14 +2097,39 @@ async fn cancel_with_no_turn_running_is_refused() {
     assert!(t.stub.calls_of("session/cancel").is_empty());
 }
 
-/// The cancel endpoint is in the OpenAPI document, beside the console's
-/// other three.
+/// The cancel and input endpoints are in the OpenAPI document.
 #[tokio::test]
 async fn the_cancel_endpoint_is_in_the_openapi_document() {
     let h = harness().await;
     let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
     assert!(doc["paths"]["/v1/sessions/{id}/console/cancel"]["post"].is_object());
     assert!(doc["paths"]["/v1/sessions/{id}/console/input"]["post"].is_object());
+}
+
+/// The event routes of the old console are gone: the OpenAPI document names
+/// neither, and a call to either finds no route, for a session that exists.
+#[tokio::test]
+async fn the_old_console_event_routes_are_gone() {
+    let h = harness().await;
+    let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
+    let paths = doc["paths"].as_object().unwrap();
+    assert!(
+        !paths.contains_key("/v1/sessions/{id}/console"),
+        "{paths:?}"
+    );
+    assert!(
+        !paths.contains_key("/v1/sessions/{id}/console/stream"),
+        "{paths:?}"
+    );
+
+    let cast = h.active_cast().await;
+    let session = h.agent_session(&cast, "develop").await;
+    for route in ["console", "console/stream"] {
+        let (status, _) = h
+            .send(get(&format!("/v1/sessions/{}/{route}", session.id)))
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{route}");
+    }
 }
 
 /// The `wait_for_user` request routes are gone: the OpenAPI document names
@@ -2437,11 +2278,11 @@ async fn cancelling_a_subagent_that_does_not_advertise_cancel_is_refused() {
     assert!(stub.calls_of("session/cancel").is_empty());
 }
 
-/// A console client that falls behind on the stored events is told to
-/// resync, and the connection closes right after — the live half does not
-/// keep it open on a transcript with holes in it.
+/// A trajectory subscriber whose follow falls behind on the stored events is
+/// told to resync, and the connection closes right after — the live half does
+/// not keep it open on a trajectory with holes in it.
 #[tokio::test]
-async fn a_lagged_console_client_gets_a_resync_and_the_stream_ends() {
+async fn a_lagged_trajectory_client_gets_a_resync_and_the_stream_ends() {
     let t = Streaming::start().await;
     // A tiny bus, so a handful of unread events overflows this subscriber.
     let bus = EventBus::with_capacity(2);
@@ -2450,13 +2291,17 @@ async fn a_lagged_console_client_gets_a_resync_and_the_stream_ends() {
         ..t.h.state.clone()
     });
 
-    let response = tower::ServiceExt::oneshot(router, t.console_stream())
-        .await
-        .unwrap();
+    let response = tower::ServiceExt::oneshot(
+        router,
+        get(&format!("/v1/sessions/{}/trajectory/stream", t.session.id)),
+    )
+    .await
+    .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body();
+    expect_sse(&mut body, "snapshot").await;
 
-    // Nothing reads the body yet, so these pile up in the subscriber's buffer.
+    // Nothing reads the body yet, so these pile up in the hub's buffer.
     for i in 0..8 {
         bus.publish(BusEvent {
             event: DomainEvent::SkillDeleted(DeletedDto {
@@ -2468,7 +2313,6 @@ async fn a_lagged_console_client_gets_a_resync_and_the_stream_ends() {
         });
     }
 
-    expect_sse(&mut body, "snapshot").await;
     let message = next_sse_message(&mut body).await;
     assert!(
         message.contains("event: resync"),

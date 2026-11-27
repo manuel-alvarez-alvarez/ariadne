@@ -576,7 +576,7 @@ async fn draw_until(
 }
 
 #[tokio::test]
-async fn source_console_stream_and_terminal_connections_reach_the_worker_session() {
+async fn source_trajectory_stream_and_terminal_connections_reach_the_worker_session() {
     use futures_util::SinkExt;
     let (p, goal) = setup().await;
     let source = draft(&p, &goal, "Console", &[]).await;
@@ -605,7 +605,7 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
     let source_address = Front::default().serve(&p.local).await;
     let client = ariadne_client::Client::tcp(format!("http://{source_address}"));
     let mut stream = client
-        .stream(&format!("/v1/sessions/{alias}/console/stream"))
+        .stream(&format!("/v1/sessions/{alias}/trajectory/stream"))
         .await
         .unwrap();
     let snapshot = tokio::time::timeout(TIMEOUT, stream.next())
@@ -615,7 +615,6 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
         .unwrap();
     assert_eq!(snapshot.event, "snapshot");
     assert!(snapshot.data.contains("worker transcript"));
-    assert!(snapshot.data.contains(&alias));
     drop(stream);
     let (mut socket, _) = tokio_tungstenite::connect_async(format!(
         "ws://{source_address}/v1/sessions/{alias}/console/terminal"

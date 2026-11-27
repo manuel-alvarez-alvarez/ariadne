@@ -3,7 +3,7 @@
 //! diff, a read as the file in its language, a search and a fetch with what
 //! they found. `r` draws the raw input and the raw output instead.
 //!
-//! The folds are those of the inline pane: an output keeps its last lines,
+//! An output keeps its last lines,
 //! and a diff, a file and raw JSON keep their first ones, each with a count
 //! of what was left out. A second Enter on the step draws it whole.
 

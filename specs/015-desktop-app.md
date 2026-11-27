@@ -332,8 +332,8 @@ Out: the daemon endpoints themselves (012).
 21. Every session is shown in its console, which draws the turns of the
     daemon's trajectory (040): rules 89 to 109 say what a turn shows. The
     session view mounts it in the session panel, a task, a goal and a pull
-    request, with no switch and no URL parameter. The UI calls neither
-    `GET /v1/sessions/{id}/console` nor `GET /v1/sessions/{id}/console/stream`
+    request, with no switch and no URL parameter. The UI reads a session through
+    the trajectory routes alone
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the turn console in the session view, with no parameter`,
     `ui/src/features/sessions/session-mounts.test.tsx::shows the turn console in the session panel`,
     `::shows the turn console in a task`,

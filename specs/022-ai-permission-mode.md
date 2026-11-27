@@ -13,7 +13,6 @@ tests:
   - crates/ariadne-daemon/tests/it/learned_permissions.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
-  - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-console/src/trajectory/print.rs
   - crates/ariadne-client/src/lib.rs
   - crates/ariadne-cli/src/commands/permissions.rs
@@ -202,10 +201,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`::a_confident_deny_selects_the_rejecting_option_and_reports_ai`).
 - The request carries the model's answer while the question waits
   (`ai_permissions_decisions.rs::a_deny_without_a_rejecting_option_waits_for_the_console`,
-  `::a_stopped_model_warns_and_waits_for_the_console`), and the console and
-  `session logs` show it with the question, not with the answer
-  (`tui/picker.rs::tests::a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not`,
-  `ariadne-console::trajectory::print::tests::a_permission_says_why_the_ai_permission_model_had_a_part`,
+  `::a_stopped_model_warns_and_waits_for_the_console`), and `session logs`
+  shows it with the question, not with the answer
+  (`ariadne-console::trajectory::print::tests::a_permission_says_why_the_ai_permission_model_had_a_part`,
   `ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`).
 - A `score` answer is divided by its highest level index for the danger score
   (`ai_permissions_decisions.rs::a_score_answer_is_used_as_the_danger`), and
@@ -260,10 +258,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   `acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`,
   `::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
 - A model reply renders both probabilities, danger and both thresholds.
-  A waiting question and `ariadne session logs` render the same facts.
+  `ariadne session logs` renders the same facts for a waiting question.
   The event summary names the same reason
-  (`ariadne-console::tui::picker::tests::ai_answers_name_the_model_and_the_danger`,
-  `ariadne-console::trajectory::print::tests::a_permission_says_why_the_ai_permission_model_had_a_part`,
+  (  `ariadne-console::trajectory::print::tests::a_permission_says_why_the_ai_permission_model_had_a_part`,
   `http/classify.rs::tests::an_answered_permission_says_who_answered_and_why_the_model_did_not`).
 - The CLI sends both threshold fields and nothing else, and `show` prints
   every field, the hardware and the flavour and device table

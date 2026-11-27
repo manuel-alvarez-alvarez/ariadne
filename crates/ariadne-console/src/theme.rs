@@ -1,7 +1,7 @@
-//! How the pane looks: the colour of every kind of line, and the glyph and
+//! How the console looks: the colour of every kind of line, and the glyph and
 //! marker that says what a line is before a word of it is read.
 //!
-//! Every style and every glyph of the pane is named here, so that one place
+//! Every style and every glyph of the console is named here, so that one place
 //! holds the look and a change of it touches no drawing code.
 
 use ratatui::style::{Color, Modifier, Style};
@@ -55,8 +55,6 @@ pub const ADDED: Style = Style::new().fg(Color::Green);
 pub const REMOVED: Style = Style::new().fg(Color::Red);
 pub const HUNK: Style = Style::new().fg(Color::Cyan);
 pub const FILE: Style = Style::new().add_modifier(Modifier::BOLD);
-/// The welcome banner that identifies a console as it opens.
-pub const BANNER: Style = Style::new().fg(Color::Blue);
 
 /// The frames of the spinner, one per tick while a turn runs.
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -69,16 +67,11 @@ pub const GAP: &str = "   ";
 pub const TOKENS_IN: &str = "↑ ";
 pub const TOKENS_OUT: &str = "↓ ";
 
-/// Where a block starts: what was typed, what the agent said, what it
-/// thought, what the daemon sent, and what went wrong. A typed prompt has
-/// the input box's glyph, and a bar down the left edge of each of its rows.
+/// Where a block starts: what was typed, and what went wrong. A typed prompt
+/// has the input box's glyph.
 pub const USER_MARKER: &str = "❯ ";
-pub const USER_BAR: &str = "▌";
 /// The tag of a typed prompt the daemon has not taken yet.
 pub const QUEUED: &str = "queued";
-pub const AGENT_MARKER: &str = "● ";
-pub const THOUGHT_MARKER: &str = "· ";
-pub const DAEMON_MARKER: &str = "» daemon";
 pub const ERROR_MARKER: &str = "✗ ";
 
 /// The input box: its rule, first-row prompt, continued-row indent and hint.
@@ -108,39 +101,24 @@ pub const KINDS: &[(&str, &str)] = &[
     ("think", "∴"),
     ("switch_mode", "⇄"),
 ];
-pub const KIND_OTHER: &str = "◇";
-/// What ties a call's output to its head: the first row of the output
-/// starts with it, two columns in.
-pub const OUTPUT_MARKER: &str = "  ⎿ ";
 
 /// A plan entry: pending, in progress, and completed.
 pub const PLAN_TODO: &str = "  ☐ ";
 pub const PLAN_DOING: &str = "  ◐ ";
 pub const PLAN_DONE: &str = "  ☑ ";
 
-/// The picker of a permission question: the label in the rule above, the option
-/// it is on and the ones it is not on, and the option that was chosen once the
-/// question is answered.
-pub const ASK_LABEL: &str = "permission";
+/// The picker of a permission question: the option it is on and the ones it
+/// is not on.
 pub const OPTION_PICKED: &str = "❯ ";
 pub const OPTION_IDLE: &str = "  ";
-pub const ANSWER_MARKER: &str = "↳ ";
 
-/// Markdown marks, kept with the pane's other visible vocabulary.
+/// Markdown marks, kept with the console's other visible vocabulary.
 pub const RULE: &str = "─";
 pub const QUOTE_BAR: &str = "│ ";
 pub const CODE_CONTINUATION: &str = "↪";
 pub const LIST_BULLETS: [&str; 3] = ["• ", "◦ ", "▪ "];
 pub const TASK_DONE: &str = "☑ ";
 pub const TASK_TODO: &str = "☐ ";
-
-/// The box around a welcome banner where the pane is wide enough for one.
-pub const BANNER_TOP_LEFT: &str = "╭";
-pub const BANNER_TOP_RIGHT: &str = "╮";
-pub const BANNER_BOTTOM_LEFT: &str = "╰";
-pub const BANNER_BOTTOM_RIGHT: &str = "╯";
-pub const BANNER_HORIZONTAL: &str = "─";
-pub const BANNER_VERTICAL: &str = "│";
 
 #[cfg(test)]
 mod tests {
@@ -155,22 +133,16 @@ mod tests {
             (USER_MARKER, "the user's"),
             (INPUT_PROMPT, "the user's"),
             (OPTION_PICKED, "the user's"),
-            (AGENT_MARKER, "the agent speaks"),
-            (THOUGHT_MARKER, "the agent thinks"),
-            (DAEMON_MARKER, "the daemon speaks"),
             (ERROR_MARKER, "failed"),
             (CALL_FAILED, "failed"),
             (CALL_DONE, "done"),
             (CALL_RUNNING, "in progress"),
             (CALL_PENDING, "pending"),
-            (KIND_OTHER, "a call of another kind"),
-            (OUTPUT_MARKER, "output"),
             (PLAN_TODO, "to do"),
             (PLAN_DOING, "in progress"),
             (PLAN_DONE, "done"),
             (TASK_TODO, "to do"),
             (TASK_DONE, "done"),
-            (ANSWER_MARKER, "the answer"),
             (CODE_CONTINUATION, "a line goes on"),
             (QUOTE_BAR, "a quote"),
         ];

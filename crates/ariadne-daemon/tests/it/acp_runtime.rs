@@ -1480,14 +1480,18 @@ async fn reconnect_restores_offline_text_usage_and_an_answered_permission_withou
             })
     })
     .await;
-    // The id the old daemon gave the message it was writing, as a console
-    // read it.
-    let live_item = eventually_some(TIMEOUT, "the text so far in the console", || async {
-        let snapshot: Vec<Value> = h.get(&format!("/v1/sessions/{}/console", session.id)).await;
-        snapshot
+    // The id the old daemon gave the message it was writing, as the
+    // trajectory read it.
+    let live_item = eventually_some(TIMEOUT, "the text so far in the trajectory", || async {
+        let trajectory: Value = h
+            .get(&format!("/v1/sessions/{}/trajectory", session.id))
+            .await;
+        trajectory["turns"]
+            .as_array()?
             .iter()
-            .find(|e| e["kind"] == "agent_message_chunk" && e["payload"]["text"] == "before ")
-            .map(|e| e["payload"]["item_id"].clone())
+            .flat_map(|turn| turn["steps"].as_array().into_iter().flatten())
+            .find(|step| step["type"] == "message" && step["content"][0]["text"] == "before ")
+            .map(|step| step["id"].clone())
     })
     .await;
     h.launcher.acp.detach_relays().await;
@@ -1981,22 +1985,20 @@ async fn reconnect_restores_commands_offered_in_a_completed_turn() {
     })
     .await;
     let response = ariadne_daemon::http::router(state)
-        .oneshot(common::get(&format!("/v1/sessions/{}/console", session.id)))
+        .oneshot(common::get(&format!(
+            "/v1/sessions/{}/trajectory",
+            session.id
+        )))
         .await
         .unwrap();
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    let snapshot: Vec<Value> = serde_json::from_slice(&body).unwrap();
-    let commands: Vec<Value> = snapshot
-        .iter()
-        .filter(|event| event["kind"] == "available_commands_update")
-        .map(|event| event["payload"]["available_commands"].clone())
-        .collect();
+    let trajectory: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(
-        commands,
-        vec![json!([{"name":"inspect", "description":"Inspect the task"}])]
+        trajectory["session"]["commands"],
+        json!([{"name": "inspect", "description": "Inspect the task", "hint": null}])
     );
     runtime.kill_and_wait(&session.id).await;
 }

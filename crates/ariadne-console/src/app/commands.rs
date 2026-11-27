@@ -1,6 +1,6 @@
 //! The slash commands the agent lists, as the suggestion list over the box.
 //!
-//! The list is the one of the inline pane (`tui/commands.rs`): while the box
+//! While the box
 //! starts with `/` and the cursor is still in its first word, the list shows
 //! the commands whose name holds the rest of that word, and its keys pick
 //! one. Here the commands are the session's, as the trajectory holds them.
