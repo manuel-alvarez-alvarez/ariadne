@@ -173,19 +173,75 @@ pub enum Zone {
     Transcript,
 }
 
-/// One item of the transcript: a turn, or one step of an open turn.
+/// One item of the transcript: a turn, or one step or group of steps of an
+/// open turn. A group is named by the id of its first step.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Item {
     Turn(String),
     Step { turn: String, step: String },
+    Group { turn: String, first: String },
 }
 
 impl Item {
     fn turn(&self) -> &str {
         match self {
-            Item::Turn(turn) | Item::Step { turn, .. } => turn,
+            Item::Turn(turn) | Item::Step { turn, .. } | Item::Group { turn, .. } => turn,
         }
     }
+}
+
+/// A row of an open turn: one step, at its depth, or a group of consecutive
+/// read and search steps (rule 59).
+enum Entry<'a> {
+    Step(usize, &'a StepDto),
+    Group(Vec<&'a StepDto>),
+}
+
+impl Entry<'_> {
+    /// The item a click or the cursor reaches on the row of the entry.
+    fn item(&self, turn: &str) -> Item {
+        match self {
+            Entry::Step(_, step) => Item::Step {
+                turn: turn.to_string(),
+                step: step_id(step).to_string(),
+            },
+            Entry::Group(steps) => Item::Group {
+                turn: turn.to_string(),
+                first: step_id(steps[0]).to_string(),
+            },
+        }
+    }
+}
+
+/// Whether a step is a tool call of a kind that folds into a group.
+fn folds(step: &StepDto) -> bool {
+    matches!(step, StepDto::ToolCall(call)
+        if matches!(call.kind.as_deref(), Some("read" | "search")))
+}
+
+/// Fold each run of two or more consecutive read and search calls at depth
+/// zero into a group. A step of another kind ends the run.
+fn grouped<'a>(steps: Vec<(usize, &'a StepDto)>) -> Vec<Entry<'a>> {
+    let mut entries = Vec::new();
+    let mut run: Vec<&'a StepDto> = Vec::new();
+    fn flush<'a>(run: &mut Vec<&'a StepDto>, entries: &mut Vec<Entry<'a>>) {
+        match run.len() {
+            0 => {}
+            1 => entries.push(Entry::Step(0, run[0])),
+            _ => entries.push(Entry::Group(std::mem::take(run))),
+        }
+        run.clear();
+    }
+    for (depth, step) in steps {
+        if depth == 0 && folds(step) {
+            run.push(step);
+        } else {
+            flush(&mut run, &mut entries);
+            entries.push(Entry::Step(depth, step));
+        }
+    }
+    flush(&mut run, &mut entries);
+    entries
 }
 
 /// Where the last draw put the transcript, so that a key or a click reads
@@ -459,7 +515,7 @@ impl App {
             .iter()
             .filter_map(|item| match item {
                 Item::Turn(id) => Some(id.clone()),
-                Item::Step { .. } => None,
+                Item::Step { .. } | Item::Group { .. } => None,
             })
             .filter(|id| self.wants_steps(id))
             .collect();
@@ -473,7 +529,7 @@ impl App {
             .iter()
             .filter_map(|item| match item {
                 Item::Step { turn, step } => Some((turn.clone(), step.clone())),
-                Item::Turn(_) => None,
+                Item::Turn(_) | Item::Group { .. } => None,
             })
             .collect();
         for (turn, step) in open_steps {
@@ -676,6 +732,12 @@ impl App {
         Some(shown)
     }
 
+    /// The rows of an open turn: its shown steps, with the read and search
+    /// calls folded into groups.
+    fn entries<'a>(&'a self, turn: &'a TurnDto) -> Option<Vec<Entry<'a>>> {
+        Some(grouped(self.shown_steps(turn)?))
+    }
+
     fn push_steps<'a>(
         &'a self,
         turn: &'a TurnDto,
@@ -728,11 +790,19 @@ impl App {
                 });
             }
             if open {
-                for (_, step) in self.shown_steps(turn).unwrap_or_default() {
-                    items.push(Item::Step {
-                        turn: turn.id.clone(),
-                        step: step_id(step).to_string(),
-                    });
+                for entry in self.entries(turn).unwrap_or_default() {
+                    items.push(entry.item(&turn.id));
+                    match &entry {
+                        Entry::Group(steps) if self.open.contains(&entry.item(&turn.id)) => {
+                            for step in steps {
+                                items.push(Item::Step {
+                                    turn: turn.id.clone(),
+                                    step: step_id(step).to_string(),
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -1098,6 +1168,15 @@ impl App {
                 Some(printer.turn(turn, steps))
             }
             Item::Step { turn, step } => Some(printer.step(self.step(turn, step)?)),
+            Item::Group { turn, first } => {
+                let view = self.view.as_ref()?.turn(turn)?;
+                let entries = self.entries(view)?;
+                let steps = entries.iter().find_map(|entry| match entry {
+                    Entry::Group(steps) if step_id(steps[0]) == first => Some(steps),
+                    _ => None,
+                })?;
+                Some(steps.iter().map(|step| printer.step(step)).collect())
+            }
         }
     }
 

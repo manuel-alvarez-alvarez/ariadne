@@ -118,12 +118,13 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     The next snapshot replaces the view. Thus a reconnect shows no item two times.
 41. The transcript shows each turn as its prompt, one activity line and its answer.
     The activity line has the fold mark, the state mark, the counts of the turn and its duration.
+    It prints no state word for a completed turn: the mark says it.
     The answer is markdown and appears while the turn runs. A daemon prompt shows its first line only.
     A folded running turn shows its last three steps, live.
     The latest message supplies the running answer as text arrives. Its step row keeps the status without repeating the answer.
 42. An open turn shows a row for each step under its activity line.
     A row has the status mark, the kind, the subject and the duration.
-    The kind of a tool call is the kind of its tool.
+    The kind of a tool call is the icon of its kind, and its row prints no kind word (rule 59).
     The console reads the complete steps from the steps route (040), including when an open turn finishes.
 43. The screen has two zones: the transcript and the input. The input zone has the keys at the start.
     Tab gives the keys to the transcript, with the cursor on the newest turn.
@@ -195,6 +196,15 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
 58. An image, an audio block, a resource without text and a resource link show as one line: `[<type>] <name>`.
     The name is the last part of the URI, else the MIME type, else the title of a link, else its name.
     A change of a shown field draws the line again, also when the text of the turn stays the same.
+59. A tool step row has its state mark, then the icon of its kind from `theme::KINDS`, then its subject.
+    A kind with no entry there has one fallback icon.
+    Consecutive tool steps of kind `read` or `search` in one turn fold into one group row, which shows the subject of each step, cut to the width.
+    A group of one kind has the icon of that kind, and a group of both kinds has the group glyph `☰`.
+    A folded running turn takes its last three steps (rule 41) before it folds the groups, so it shows at most three steps, in rows or in one group.
+    A step of another kind ends a group, and a group of one step is a normal row.
+    The state mark of a group is running while a step in it runs, else failed if a step failed, else completed.
+    Enter on a group row opens it and shows its steps as rows, and each opens its detail (rule 51).
+    An edit row shows `+N -N` from its `diff_stat`, when it has one.
 
 ## Acceptance criteria
 
@@ -239,6 +249,7 @@ Number selection and question navigation use
 42. Rule 56: `ariadne-console::app::tests::an_answered_permission_is_a_mark_on_the_row_of_its_call`.
 43. Rule 57: `ariadne-console::app::tests::the_status_row_shows_the_state_of_the_session_and_drops_whole_items_when_narrow`, `::the_status_row_names_the_stored_model_where_the_agent_sends_no_model_option`, `ariadne-cli::commands::console::app::tests::the_stored_model_is_read_from_the_session_row`, `crates/ariadne-daemon/tests/it/acp_terminal.rs::a_wheel_message_scrolls_the_transcript`.
 44. Rule 58: `ariadne-console::app::tests::an_image_audio_resource_and_link_show_as_one_line_with_type_and_name`, `::a_changed_image_name_or_link_title_draws_again_while_the_text_stays`.
+45. Rule 59: `ariadne-console::app::tests::a_tool_row_starts_with_its_state_mark_and_the_icon_of_its_kind_and_prints_no_kind_word`, `::a_kind_with_no_icon_shows_the_fallback_icon`, `::consecutive_read_and_search_steps_show_as_one_group_row_of_their_subjects`, `::a_group_row_cuts_its_subjects_to_the_width`, `::a_group_is_running_while_a_step_runs_failed_if_one_failed_and_completed_otherwise`, `::enter_on_a_group_row_opens_its_steps_as_rows_that_open_their_detail`, `::an_edit_row_shows_its_subject_and_the_lines_it_added_and_removed`, `::a_group_of_one_kind_has_the_icon_of_that_kind`, `::a_folded_running_turn_shows_its_last_three_steps_even_when_they_group`. Rule 41, no state word on a completed turn: `::a_turn_shows_its_prompt_one_activity_line_and_its_answer`.
 
 ## Sources
 

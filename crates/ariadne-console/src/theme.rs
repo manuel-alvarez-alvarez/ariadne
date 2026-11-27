@@ -102,6 +102,18 @@ pub const KINDS: &[(&str, &str)] = &[
     ("switch_mode", "⇄"),
 ];
 
+/// The glyph of a tool call whose kind is none of those of [`KINDS`].
+const KIND_FALLBACK: &str = "◆";
+
+/// The glyph of a group of calls of more than one kind.
+pub const GROUP: &str = "☰";
+
+/// The glyph of a kind of call: its own, or the fallback.
+pub fn kind_icon(kind: Option<&str>) -> &'static str {
+    kind.and_then(|kind| KINDS.iter().find(|(name, _)| *name == kind))
+        .map_or(KIND_FALLBACK, |(_, glyph)| glyph)
+}
+
 /// A plan entry: pending, in progress, and completed.
 pub const PLAN_TODO: &str = "  ☐ ";
 pub const PLAN_DOING: &str = "  ◐ ";
@@ -148,6 +160,8 @@ mod tests {
         ];
         marks.extend(LIST_BULLETS.iter().map(|bullet| (*bullet, "a list item")));
         marks.extend(KINDS.iter().map(|(kind, glyph)| (*glyph, *kind)));
+        marks.push((KIND_FALLBACK, "a call of another kind"));
+        marks.push((GROUP, "a group of calls"));
         // The footer's tokens are part of the pane too.
         marks.push((TOKENS_IN, "tokens read"));
         marks.push((TOKENS_OUT, "tokens written"));

@@ -261,7 +261,7 @@ fn a_turn_shows_its_prompt_one_activity_line_and_its_answer() {
     let screen = draw(&app, WIDTH, HEIGHT);
 
     assert_eq!(screen[0], "❯ Run the tests");
-    assert_eq!(screen[1], "  ▸ ✓ completed · 2 steps · 1 tool call · 2s");
+    assert_eq!(screen[1], "  ▸ ✓ 2 steps · 1 tool call · 2s");
     assert_eq!(screen[2], "  All tests pass.");
     assert_eq!(screen[3], "");
 }
@@ -281,11 +281,11 @@ fn a_running_turn_shows_its_last_steps_live() {
     let screen = draw(&app, WIDTH, HEIGHT);
     assert_eq!(count(&screen, "First"), 0, "{screen:#?}");
     assert!(
-        screen[2].starts_with("    ✓ execute    Second · Second subject  2s"),
+        screen[2].starts_with("    ✓ $ Second · Second subject  2s"),
         "{screen:#?}"
     );
     assert!(
-        screen[4].starts_with("    ◐ execute    Fourth · Fourth subject"),
+        screen[4].starts_with("    ◐ $ Fourth · Fourth subject"),
         "{screen:#?}"
     );
 
@@ -390,9 +390,9 @@ async fn an_open_turn_shows_a_row_per_step_with_its_status_kind_subject_and_dura
     )
     .await;
 
-    assert_eq!(screen[1], "  ▾ ✓ completed · 2 steps · 1 tool call · 2s");
-    assert_eq!(screen[2], "    ✓ execute    Bash · Bash subject  2s");
-    assert_eq!(screen[3], "    ✗ execute    Edit · Edit subject  2s");
+    assert_eq!(screen[1], "  ▾ ✓ 2 steps · 1 tool call · 2s");
+    assert_eq!(screen[2], "    ✓ $ Bash · Bash subject  2s");
+    assert_eq!(screen[3], "    ✗ $ Edit · Edit subject  2s");
     assert_eq!(screen[4], "    ✓ message    Done.");
     assert_eq!(screen[5], "  Fixed.");
 }
@@ -1677,7 +1677,7 @@ async fn a_subagent_shows_its_title_task_state_time_and_steps_and_opens_to_them(
     assert!(
         screen
             .iter()
-            .any(|row| row == "      ✓ execute    Grep · Grep subject  2s"),
+            .any(|row| row == "      ✓ $ Grep · Grep subject  2s"),
         "a subagent's steps go one level under it: {screen:#?}"
     );
 }
@@ -1853,7 +1853,7 @@ async fn an_answered_permission_is_a_mark_on_the_row_of_its_call() {
     assert!(
         screen
             .iter()
-            .any(|row| row == "    ✓ execute    Bash · Bash subject  ✓ Allow · by ai  2s"),
+            .any(|row| row == "    ✓ $ Bash · Bash subject  ✓ Allow · by ai  2s"),
         "{screen:#?}"
     );
 }
@@ -1964,7 +1964,7 @@ async fn an_open_turn_shows_its_notices_and_their_count_once_whether_its_steps_r
         vec![ctrl('o')],
     )
     .await;
-    assert_eq!(screen[1], "  ▾ ✓ completed · 2 steps · 1 tool call · 2s");
+    assert_eq!(screen[1], "  ▾ ✓ 2 steps · 1 tool call · 2s");
     assert_eq!(
         screen[2], "    ! note       disk almost full",
         "{screen:#?}"
@@ -2004,10 +2004,7 @@ async fn an_open_turn_shows_its_notices_and_their_count_once_whether_its_steps_r
     .await;
     assert_eq!(count(&screen, "disk almost full"), 1, "{screen:#?}");
     assert_eq!(count(&screen, "2 more notices"), 1, "{screen:#?}");
-    assert_eq!(
-        screen[5], "    ✓ execute    Bash · Bash subject  2s",
-        "{screen:#?}"
-    );
+    assert_eq!(screen[5], "    ✓ $ Bash · Bash subject  2s", "{screen:#?}");
 }
 
 #[test]
@@ -2122,7 +2119,7 @@ fn an_update_of_a_call_changes_its_row_in_place() {
     assert!(
         screen
             .iter()
-            .any(|row| row == "    ✓ execute    Work · Work subject  2s"),
+            .any(|row| row == "    ✓ $ Work · Work subject  2s"),
         "{screen:#?}"
     );
 }
@@ -2317,4 +2314,164 @@ async fn a_host_that_reads_no_detail_shows_the_step_text_and_the_reason() {
     );
     // No stored model and no model option: the status row has none.
     assert_eq!(status_row(&screen), " running");
+}
+
+/// A tool call of `kind`, with an optional `diff_stat`.
+fn kinded(id: &str, kind: &str, status: &str, extra: Value) -> StepDto {
+    let mut value = call(id, "t1", &format!("{kind} {id}"), status);
+    value["kind"] = json!(kind);
+    value["subject"] = json!(format!("{id}.rs"));
+    value["title"] = json!(format!("{kind} {id}"));
+    if let Value::Object(extra) = extra {
+        value.as_object_mut().unwrap().extend(extra);
+    }
+    serde_json::from_value(value).unwrap()
+}
+
+fn open_turn(steps: Vec<StepDto>) -> App {
+    let mut app = app_with(vec![done("t1", "Go", "Ok.")]);
+    app.steps_read("t1".into(), steps);
+    app.event(ctrl('o'));
+    app
+}
+
+#[test]
+fn a_tool_row_starts_with_its_state_mark_and_the_icon_of_its_kind_and_prints_no_kind_word() {
+    let app = open_turn(vec![
+        kinded("a", "execute", "completed", json!({})),
+        kinded("b", "think", "completed", json!({})),
+    ]);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(screen[2], "    ✓ $ execute a · a.rs  2s");
+    assert_eq!(screen[3], "    ✓ ∴ think b · b.rs  2s");
+    assert_eq!(count(&screen, "execute    "), 0, "{screen:#?}");
+}
+
+#[test]
+fn a_kind_with_no_icon_shows_the_fallback_icon() {
+    let app = open_turn(vec![kinded("a", "teleport", "completed", json!({}))]);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(screen[2], "    ✓ ◆ teleport a · a.rs  2s");
+}
+
+#[test]
+fn consecutive_read_and_search_steps_show_as_one_group_row_of_their_subjects() {
+    let app = open_turn(vec![
+        kinded("a", "read", "completed", json!({})),
+        kinded("b", "search", "completed", json!({})),
+        kinded("c", "read", "completed", json!({})),
+        kinded("d", "execute", "completed", json!({})),
+        kinded("e", "read", "completed", json!({})),
+    ]);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(screen[2], "    ✓ ☰ a.rs, b.rs, c.rs");
+    // A step of another kind ends the group, and a group of one is a row.
+    assert_eq!(screen[3], "    ✓ $ execute d · d.rs  2s");
+    assert_eq!(screen[4], "    ✓ ≡ read e · e.rs  2s");
+}
+
+#[test]
+fn a_group_row_cuts_its_subjects_to_the_width() {
+    let app = open_turn(vec![
+        kinded("a", "read", "completed", json!({"subject": "a".repeat(40)})),
+        kinded("b", "read", "completed", json!({"subject": "b".repeat(40)})),
+    ]);
+
+    let screen = draw(&app, 30, HEIGHT);
+
+    assert_eq!(screen[2].chars().count(), 30, "{screen:#?}");
+    assert!(screen[2].ends_with('…'), "{screen:#?}");
+}
+
+#[test]
+fn a_group_is_running_while_a_step_runs_failed_if_one_failed_and_completed_otherwise() {
+    let mark = |states: [&str; 3]| {
+        let steps = states
+            .iter()
+            .enumerate()
+            .map(|(at, state)| kinded(&format!("s{at}"), "read", state, json!({})))
+            .collect();
+        draw(&open_turn(steps), WIDTH, HEIGHT)[2].clone()
+    };
+
+    assert!(mark(["completed", "running", "failed"]).starts_with("    ◐ ≡ "));
+    assert!(mark(["completed", "failed", "completed"]).starts_with("    ✗ ≡ "));
+    assert!(mark(["completed", "cancelled", "completed"]).starts_with("    ✓ ≡ "));
+}
+
+#[test]
+fn enter_on_a_group_row_opens_its_steps_as_rows_that_open_their_detail() {
+    let mut app = open_turn(vec![
+        kinded("a", "read", "completed", json!({})),
+        kinded("b", "read", "completed", json!({})),
+    ]);
+    app.event(key(KeyCode::Tab));
+    app.event(key(KeyCode::Down));
+    assert_eq!(
+        app.cursor,
+        Some(Item::Group {
+            turn: "t1".into(),
+            first: "a".into()
+        })
+    );
+
+    app.event(key(KeyCode::Enter));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(screen[2], "    ✓ ≡ a.rs, b.rs");
+    assert_eq!(screen[3], "      ✓ ≡ read a · a.rs  2s");
+    assert_eq!(screen[4], "      ✓ ≡ read b · b.rs  2s");
+
+    app.event(key(KeyCode::Down));
+    app.event(key(KeyCode::Enter));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(screen[4], "        reading the detail…", "{screen:#?}");
+}
+
+#[test]
+fn an_edit_row_shows_its_subject_and_the_lines_it_added_and_removed() {
+    let stat = json!({"diff_stat": {"files": 1, "added": 12, "removed": 3}});
+    let app = open_turn(vec![
+        kinded("a", "edit", "completed", stat.clone()),
+        kinded("b", "execute", "completed", stat),
+        kinded("c", "edit", "completed", json!({})),
+    ]);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(screen[2], "    ✓ ✎ edit a · a.rs  +12 -3  2s");
+    assert_eq!(screen[3], "    ✓ $ execute b · b.rs  2s");
+    assert_eq!(screen[4], "    ✓ ✎ edit c · c.rs  2s");
+}
+
+#[test]
+fn a_group_of_one_kind_has_the_icon_of_that_kind() {
+    let app = open_turn(vec![
+        kinded("a", "search", "completed", json!({})),
+        kinded("b", "search", "completed", json!({})),
+    ]);
+
+    assert_eq!(draw(&app, WIDTH, HEIGHT)[2], "    ✓ ⌕ a.rs, b.rs");
+}
+
+#[test]
+fn a_folded_running_turn_shows_its_last_three_steps_even_when_they_group() {
+    let steps: Vec<Value> = (1..=4)
+        .map(|at| {
+            let mut read = call(&format!("c{at}"), "t1", "Read", "completed");
+            read["kind"] = json!("read");
+            read["subject"] = json!(format!("f{at}.rs"));
+            read
+        })
+        .collect();
+    let app = app_with(vec![running("t1", "Go", steps)]);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(screen[2], "    ✓ ≡ f2.rs, f3.rs, f4.rs", "{screen:#?}");
 }

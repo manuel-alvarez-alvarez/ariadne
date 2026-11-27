@@ -15,12 +15,15 @@ use ariadne_api::trajectory::{
 
 use crate::markdown;
 use crate::theme::{
-    self, AGENT, ASK, DAEMON, DIM, FAIL, FRAME, PICKED, PROMPT, QUESTION, SPINNER, TOOL, USER,
+    self, ADDED, AGENT, ASK, DAEMON, DIM, FAIL, FRAME, PICKED, PROMPT, QUESTION, REMOVED, SPINNER,
+    TOOL, USER,
 };
 use crate::trajectory::{kind, text};
 use crate::wrap;
 
-use super::{App, Detail, Item, LIVE_STEPS, Zone, detail, is_live, lane_of, status};
+use super::{
+    App, Detail, Entry, Item, LIVE_STEPS, Zone, detail, grouped, is_live, lane_of, status,
+};
 
 /// The marks of an item that is closed and of one that is open.
 pub(super) const FOLDED: &str = "▸ ";
@@ -265,7 +268,11 @@ impl App {
             Span::styled(if open { UNFOLDED } else { FOLDED }, DIM),
             Span::styled(format!("{mark} "), style),
         ];
-        let mut said = crate::trajectory::activity(turn);
+        let mut said = match turn.state {
+            // The mark says a completed turn is completed.
+            TurnState::Completed => crate::trajectory::counts_line(turn),
+            _ => crate::trajectory::activity(turn),
+        };
         if let Some(took) = took(&turn.started_at, turn.ended_at.as_deref()) {
             said.push_str(&format!("{}{took}", theme::SEPARATOR));
         }
@@ -328,22 +335,37 @@ impl App {
                     Some(&item),
                 ));
             }
-            match self.shown_steps(turn) {
+            match self.entries(turn) {
                 Some(steps) => {
-                    for (depth, step) in steps {
-                        let step_item = Item::Step {
-                            turn: turn.id.clone(),
-                            step: crate::trajectory::step_id(step).to_string(),
-                        };
-                        let is_answer = is_answer_step(step);
-                        rows.push(Row::head(
-                            self.step_row(turn, step, depth, width, is_answer),
-                            &step_item,
-                        ));
-                        if self.open.contains(&step_item) {
-                            answer_in_step |= is_answer;
-                            for line in self.open_step(step, &step_item, depth, width) {
-                                rows.push(Row::of(line, Some(&step_item)));
+                    for entry in steps {
+                        match entry {
+                            Entry::Step(depth, step) => {
+                                self.push_step_rows(
+                                    turn,
+                                    step,
+                                    depth,
+                                    width,
+                                    is_answer_step(step),
+                                    &mut answer_in_step,
+                                    rows,
+                                );
+                            }
+                            Entry::Group(group) => {
+                                let group_item = Entry::Group(group.clone()).item(&turn.id);
+                                rows.push(Row::head(self.group_row(&group, width), &group_item));
+                                if self.open.contains(&group_item) {
+                                    for step in group {
+                                        self.push_step_rows(
+                                            turn,
+                                            step,
+                                            1,
+                                            width,
+                                            false,
+                                            &mut answer_in_step,
+                                            rows,
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -367,11 +389,15 @@ impl App {
                     .filter(|step| !answered_on_its_call(step, &turn.steps))
                     .collect();
                 let skip = live.len().saturating_sub(LIVE_STEPS);
-                for step in &live[skip..] {
-                    rows.push(Row::of(
-                        self.step_row(turn, step, 0, width, is_answer_step(step)),
-                        Some(&item),
-                    ));
+                let entries = grouped(live[skip..].iter().map(|step| (0, *step)).collect());
+                for entry in &entries {
+                    let line = match entry {
+                        Entry::Step(_, step) => {
+                            self.step_row(turn, step, 0, width, is_answer_step(step))
+                        }
+                        Entry::Group(group) => self.group_row(group, width),
+                    };
+                    rows.push(Row::of(line, Some(&item)));
                 }
             } else {
                 for step in &turn.attention {
@@ -474,6 +500,79 @@ impl App {
         }
     }
 
+    /// The row of a step, and under it what it shows while it is open.
+    #[allow(clippy::too_many_arguments)]
+    fn push_step_rows(
+        &self,
+        turn: &TurnDto,
+        step: &StepDto,
+        depth: usize,
+        width: usize,
+        is_answer: bool,
+        answer_in_step: &mut bool,
+        rows: &mut Vec<Row>,
+    ) {
+        let step_item = Item::Step {
+            turn: turn.id.clone(),
+            step: crate::trajectory::step_id(step).to_string(),
+        };
+        rows.push(Row::head(
+            self.step_row(turn, step, depth, width, is_answer),
+            &step_item,
+        ));
+        if self.open.contains(&step_item) {
+            *answer_in_step |= is_answer;
+            for line in self.open_step(step, &step_item, depth, width) {
+                rows.push(Row::of(line, Some(&step_item)));
+            }
+        }
+    }
+
+    /// A group of read and search calls: its state mark, the icon of its
+    /// first call and the subject of each call, cut to the width.
+    fn group_row(&self, group: &[&StepDto], width: usize) -> Line<'static> {
+        let state = |step: &&StepDto| match step {
+            StepDto::ToolCall(call) => call.status,
+            _ => ToolCallStatus::Completed,
+        };
+        let (mark, style) = if group
+            .iter()
+            .any(|step| state(step) == ToolCallStatus::Running)
+        {
+            (theme::CALL_RUNNING, TOOL)
+        } else if group
+            .iter()
+            .any(|step| state(step) == ToolCallStatus::Failed)
+        {
+            (theme::CALL_FAILED, FAIL)
+        } else {
+            (theme::CALL_DONE, AGENT)
+        };
+        // One glyph has one meaning: a group of one kind has the icon of
+        // that kind, and a mixed group has the glyph of a group.
+        fn kind_of<'a>(step: &&'a StepDto) -> Option<&'a str> {
+            match step {
+                StepDto::ToolCall(call) => call.kind.as_deref(),
+                _ => None,
+            }
+        }
+        let icon = if group.iter().all(|step| kind_of(step) == kind_of(&group[0])) {
+            theme::kind_icon(kind_of(&group[0]))
+        } else {
+            theme::GROUP
+        };
+        let subjects: Vec<String> = group.iter().map(|step| call_subject(step)).collect();
+        let lead = STEP_INDENT.to_string();
+        let room =
+            width.saturating_sub(wrap::width(&lead) + wrap::width(mark) + wrap::width(icon) + 2);
+        Line::from(vec![
+            Span::raw(lead),
+            Span::styled(format!("{mark} "), style),
+            Span::styled(format!("{icon} "), TOOL),
+            Span::raw(wrap::clip(&subjects.join(", "), room)),
+        ])
+    }
+
     fn turn_mark(&self, turn: &TurnDto) -> (&'static str, Style) {
         match turn.state {
             TurnState::Running => (SPINNER[self.tick % SPINNER.len()], TOOL),
@@ -495,14 +594,15 @@ impl App {
         is_answer: bool,
     ) -> Line<'static> {
         let (mark, style) = step_mark(step);
-        let label = step_kind(step);
-        let kind_style = match step {
-            StepDto::ToolCall(_) => TOOL,
-            _ => DIM,
+        // A tool call shows the icon of its kind; every other step names its
+        // kind.
+        let (label, kind_style) = match step {
+            StepDto::ToolCall(call) => (theme::kind_icon(call.kind.as_deref()).to_string(), TOOL),
+            other => (format!("{:<KIND_WIDTH$}", step_kind(other)), DIM),
         };
         let indent = format!("{STEP_INDENT}{}", DEPTH_INDENT.repeat(depth));
         let lead = format!("{indent}{mark} ");
-        let kind = format!("{label:<KIND_WIDTH$} ");
+        let kind = format!("{label} ");
         let mut tail = Vec::new();
         let took = match step {
             StepDto::ToolCall(call) => {
@@ -535,8 +635,19 @@ impl App {
                 format!("  {}", said.join(theme::SEPARATOR)),
                 DIM,
             ));
-        } else if let Some(took) = took {
-            tail.push(Span::styled(format!("  {took}"), DIM));
+        } else {
+            if let StepDto::ToolCall(call) = step
+                && call.kind.as_deref() == Some("edit")
+                && let Some(stat) = &call.diff_stat
+            {
+                tail.push(Span::raw("  "));
+                tail.push(Span::styled(format!("+{}", stat.added), ADDED));
+                tail.push(Span::raw(" "));
+                tail.push(Span::styled(format!("-{}", stat.removed), REMOVED));
+            }
+            if let Some(took) = took {
+                tail.push(Span::styled(format!("  {took}"), DIM));
+            }
         }
         let tail_width: usize = tail.iter().map(|span| wrap::width(&span.content)).sum();
         let room = width.saturating_sub(wrap::width(&lead) + wrap::width(&kind) + tail_width);
@@ -669,6 +780,19 @@ fn subject(step: &StepDto) -> String {
         MAIN_LANE => said,
         lane => format!("{lane}: {said}"),
     }
+}
+
+/// What a tool call is about, short: its subject, else its title.
+fn call_subject(step: &StepDto) -> String {
+    match step {
+        StepDto::ToolCall(call) => call.subject.clone().unwrap_or_else(|| call.title.clone()),
+        other => bare_subject(other),
+    }
+    .lines()
+    .next()
+    .unwrap_or_default()
+    .trim()
+    .to_string()
 }
 
 /// What a step is about, whole.

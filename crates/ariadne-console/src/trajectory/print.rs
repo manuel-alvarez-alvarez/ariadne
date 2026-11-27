@@ -273,6 +273,11 @@ pub(crate) fn activity(turn: &TurnDto) -> String {
     parts.join(" · ")
 }
 
+/// The counts of a turn, with no word for its state.
+pub(crate) fn counts_line(turn: &TurnDto) -> String {
+    counts(&turn.activity).join(" · ")
+}
+
 fn counts(activity: &ActivityDto) -> Vec<String> {
     [
         (activity.steps, "step", "steps"),
