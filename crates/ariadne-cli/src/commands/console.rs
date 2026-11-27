@@ -1103,6 +1103,68 @@ mod tests {
                  10:05:00  AGENT  answer t1\n\
                  \n\
                  10:00:00  USER  prompt t2\n\
+                 \x20 in the turn of 10:00:00: prompt t1\n\
+                 \x20 10:02:00  question  Which base?\n\
+                 \x20   answer: base: next\n\
+                 \x20 completed · 2 steps · 2 tool calls\n\
+                 10:05:00  AGENT  answer t2\n\
+                 \n",
+                "with --steps: {steps}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_question_that_closes_on_the_live_stream_after_its_turn_closed_prints_its_close() {
+        for steps in [false, true] {
+            let stub = Stub {
+                streams: streams(vec![vec![
+                    (
+                        "snapshot",
+                        snapshot(
+                            0,
+                            "running",
+                            vec![
+                                turn(
+                                    "t1",
+                                    "completed",
+                                    json!({"attention": [question("q1", "t1", "open")]}),
+                                ),
+                                turn("t2", "running", json!({})),
+                            ],
+                            false,
+                        ),
+                    ),
+                    (
+                        "update",
+                        json!({"rev": 1, "ops": [
+                            {"op": "item_upsert", "step": question("q1", "t1", "answered")},
+                            {"op": "turn_upsert", "turn": turn("t1", "completed", json!({}))},
+                        ]}),
+                    ),
+                    (
+                        "update",
+                        json!({"rev": 2, "ops": [
+                            {"op": "turn_upsert", "turn": turn("t2", "completed", json!({}))},
+                            {"op": "session_patch", "session": session("exited")},
+                        ]}),
+                    ),
+                ]]),
+                steps: HashMap::from([("t1".into(), json!([question("q1", "t1", "open")]))]),
+                ..Stub::default()
+            };
+
+            let out = follow_with(stub, Layout::Blocks, steps, Filters::default()).await;
+
+            assert_eq!(
+                out,
+                "10:00:00  USER  prompt t1\n\
+                 \x20 10:02:00  question  Which base?\n\
+                 \x20 completed · 2 steps · 2 tool calls\n\
+                 10:05:00  AGENT  answer t1\n\
+                 \n\
+                 10:00:00  USER  prompt t2\n\
+                 \x20 in the turn of 10:00:00: prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
                  \x20   answer: base: next\n\
                  \x20 completed · 2 steps · 2 tool calls\n\

@@ -244,8 +244,10 @@ same binary also serves (013).
       turn that opened and closed while the stream was down prints too.
       It also reads the stored steps of each turn with a permission or a
       question that it printed while it waited, so a close that came while
-      the stream was down prints too, whole when its turn has closed. Only
-      what was not printed prints. A follow ends when the session is
+      the stream was down prints too. Only what was not printed prints.
+    - A close that comes on the live stream after its turn closed prints
+      too, from the step the update sends. A close after its turn closed
+      prints whole, under a line that names its turn by time and prompt. A follow ends when the session is
       no longer live and no turn runs.
     - A piped console answers with a number only the permission that waits
       when the line is read, and only once. Any other line is a prompt.
@@ -905,6 +907,9 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`commands/console.rs::a_follow_prints_each_finished_item_once_also_after_a_reconnect`,
   `::a_reconnect_prints_the_turns_that_came_and_went_while_the_stream_was_down`,
   `::a_question_that_closes_while_the_stream_is_down_prints_its_close_after_the_reconnect`,
+  `::a_question_that_closes_on_the_live_stream_after_its_turn_closed_prints_its_close`,
+  `ariadne-console::trajectory::view::tests::an_answer_on_a_closed_turn_names_the_step_it_takes_out_of_attention`,
+  `ariadne-console::trajectory::print::tests::an_owner_line_names_a_turn_by_its_time_and_the_start_of_its_prompt`,
   `commands/transcript.rs::tests::a_follow_prints_each_item_once_across_snapshots`,
   `::a_follow_leaves_out_the_turns_tail_does_not_keep`). The client view
   applies each op of an update, refuses a skipped revision, and shows a

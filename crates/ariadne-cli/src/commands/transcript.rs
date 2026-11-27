@@ -259,6 +259,8 @@ pub(crate) struct Follower<Tz> {
     /// their turn: a snapshot reads their turn's stored steps, so a close
     /// that came while the stream was down prints too.
     waiting: HashMap<String, String>,
+    /// The line that names each opened turn, over a close printed after it.
+    owners: HashMap<String, String>,
 }
 
 impl<Tz> Follower<Tz>
@@ -282,6 +284,7 @@ where
             answered: HashSet::new(),
             held: HashMap::new(),
             waiting: HashMap::new(),
+            owners: HashMap::new(),
         }
     }
 
@@ -369,23 +372,35 @@ where
         out
     }
 
-    /// What an applied update adds, for the turns it touched.
+    /// What an applied update adds, for the turns it touched. A step an
+    /// update sent joins the sweep of its turn, so the close of a step that
+    /// the view no longer holds, on a closed turn, prints too.
     pub(crate) fn update(&mut self, view: &View, touched: &[Touched]) -> String {
-        let mut turns: Vec<&str> = Vec::new();
+        let mut turns: Vec<(&str, Vec<StepDto>)> = Vec::new();
         for touched in touched {
-            let id = match touched {
-                Touched::Turn(id) => id.as_str(),
-                Touched::Step { turn_id, .. } => turn_id.as_str(),
+            let (id, step) = match touched {
+                Touched::Turn(id) => (id.as_str(), None),
+                Touched::Step { turn_id, .. } => (turn_id.as_str(), None),
+                Touched::Item(step) => (step_turn(step), Some(step.as_ref().clone())),
                 _ => continue,
             };
-            if !turns.contains(&id) {
-                turns.push(id);
+            match turns.iter_mut().find(|(held, _)| *held == id) {
+                Some((_, steps)) => steps.extend(step),
+                None => turns.push((id, step.into_iter().collect())),
             }
         }
         let mut out = String::new();
-        for id in turns {
-            if let Some(turn) = view.turn(id) {
-                out.push_str(&self.sweep(turn, &[]));
+        for (id, steps) in turns {
+            match view.turn(id) {
+                Some(turn) => out.push_str(&self.sweep(turn, &steps)),
+                // A turn the view does not hold can still close a waiting step.
+                None => {
+                    for step in &steps {
+                        if self.waiting.contains_key(step_id(step)) {
+                            out.push_str(&self.step(step));
+                        }
+                    }
+                }
             }
         }
         out
@@ -397,6 +412,8 @@ where
         }
         let mut out = String::new();
         if self.opened.insert(turn.id.clone()) {
+            self.owners
+                .insert(turn.id.clone(), self.printer.owner(turn));
             if turn.state == TurnState::Running {
                 self.live.insert(turn.id.clone());
             }
@@ -481,7 +498,14 @@ where
             return match self.layout {
                 // A close after its turn closed prints whole: under a later
                 // turn, an answer line alone would not say what it answers.
-                Layout::Blocks if self.closed.contains(step_turn(step)) => self.printer.step(step),
+                Layout::Blocks if self.closed.contains(step_turn(step)) => {
+                    let owner = self
+                        .owners
+                        .get(step_turn(step))
+                        .cloned()
+                        .unwrap_or_else(|| format!("  in the turn {}:\n", step_turn(step)));
+                    format!("{owner}{}", self.printer.step(step))
+                }
                 Layout::Blocks => self.printer.answered(step).unwrap_or_default(),
                 Layout::Lines => self.printer.answered_line(step).unwrap_or_default(),
                 Layout::Json => String::new(),

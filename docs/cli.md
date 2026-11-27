@@ -407,7 +407,8 @@ one time when it is done. A turn prints its prompt when it starts, and its
 activity line and answer when it ends. A lost stream reconnects. The follow
 then reads the turns that started and ended while the stream was down, and
 the answers to permissions and questions that came in that time. It prints
-only what was not printed. With `--format json`, a follow prints one
+only what was not printed. An answer that comes after its turn ended prints
+under a line that names that turn by its time and prompt. With `--format json`, a follow prints one
 typed turn in each line when the turn ends, with all its steps when you give
 `--steps`.
 

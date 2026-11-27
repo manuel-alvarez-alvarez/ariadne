@@ -18,10 +18,18 @@ pub struct View {
 }
 
 /// What one op of an update changed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Touched {
     Turn(String),
-    Step { turn_id: String, step_id: String },
+    /// Text streamed onto a step, or a step gone.
+    Step {
+        turn_id: String,
+        step_id: String,
+    },
+    /// A step opened or changed, as the update sent it. It names the step
+    /// also where the view holds no place for it: a closed turn holds no
+    /// steps, and an answer takes a step out of `attention`.
+    Item(Box<StepDto>),
     Plan(String),
     Subagent(String),
     Session,
@@ -222,9 +230,11 @@ impl View {
     /// its copy in `attention` whatever the state of the turn. An answer
     /// takes a permission or a question out of `attention`.
     fn upsert_step(&mut self, step: StepDto) -> Option<Touched> {
-        let turn_id = step_turn(&step).to_string();
         let id = step_id(&step).to_string();
-        let turn = self.turn_mut(&turn_id)?;
+        let Some(turn) = self.turn_mut(step_turn(&step)) else {
+            return Some(Touched::Item(Box::new(step)));
+        };
+        let touched = Touched::Item(Box::new(step.clone()));
         if turn.state == TurnState::Running {
             match turn.steps.iter_mut().find(|held| step_id(held) == id) {
                 Some(held) => *held = step.clone(),
@@ -240,10 +250,7 @@ impl View {
             None if waits => turn.attention.insert(0, step),
             None => {}
         }
-        Some(Touched::Step {
-            turn_id,
-            step_id: id,
-        })
+        Some(touched)
     }
 
     fn turn_mut(&mut self, id: &str) -> Option<&mut TurnDto> {
@@ -443,6 +450,39 @@ mod tests {
         .unwrap();
 
         assert_eq!(seen, [vec!["n1".to_string()], vec![]]);
+    }
+
+    #[test]
+    fn an_answer_on_a_closed_turn_names_the_step_it_takes_out_of_attention() {
+        let mut view = View::new(snapshot(
+            0,
+            vec![turn(
+                "t1",
+                "completed",
+                json!({"attention": [step("question", "q1", "t1", json!({}))]}),
+            )],
+        ));
+        let answered = step(
+            "question",
+            "q1",
+            "t1",
+            json!({"state": "answered", "answer": "base: next"}),
+        );
+
+        let touched = view
+            .apply(update(
+                1,
+                json!([{"op": "item_upsert", "step": answered.clone()}]),
+            ))
+            .unwrap();
+
+        assert!(view.turn("t1").unwrap().attention.is_empty());
+        assert_eq!(
+            touched,
+            [Touched::Item(Box::new(
+                serde_json::from_value(answered).unwrap()
+            ))]
+        );
     }
 
     #[test]

@@ -176,6 +176,23 @@ where
         closing(step).map(|line| format!("    {line}\n"))
     }
 
+    /// The line that names a turn, over a step printed after the turn
+    /// closed: its time and the start of its prompt.
+    pub fn owner(&self, turn: &TurnDto) -> String {
+        let prompt = match &turn.prompt {
+            Some(prompt) => collapsed(&text(&prompt.content)),
+            None => "before the first prompt".to_string(),
+        };
+        let prompt = match prompt.char_indices().nth(60) {
+            Some((at, _)) => format!("{}…", &prompt[..at]),
+            None => prompt,
+        };
+        format!(
+            "  in the turn of {}: {prompt}\n",
+            self.clock(&turn.started_at)
+        )
+    }
+
     /// The line form of a turn's prompt.
     pub fn opened_line(&self, turn: &TurnDto) -> String {
         match &turn.prompt {
@@ -677,6 +694,26 @@ mod tests {
         assert_eq!(
             printer().answered(&declined).as_deref(),
             Some("    declined\n")
+        );
+    }
+
+    #[test]
+    fn an_owner_line_names_a_turn_by_its_time_and_the_start_of_its_prompt() {
+        let short = typed_turn(turn("t1", "completed", json!({})));
+        let long = typed_turn(turn(
+            "t2",
+            "completed",
+            json!({"prompt": {"id": "t2", "source": "console", "prompt_kind": null,
+                              "content": [{"type": "text", "text": "word ".repeat(20)}]}}),
+        ));
+
+        assert_eq!(
+            printer().owner(&short),
+            "  in the turn of 10:00:00: prompt t1\n"
+        );
+        assert_eq!(
+            printer().owner(&long),
+            format!("  in the turn of 10:00:00: {}…\n", "word ".repeat(12))
         );
     }
 
