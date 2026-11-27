@@ -787,6 +787,7 @@ picker, the Hosts screen and one stream per host — is spec
 - Rules 105, 106, and 110: `far_tasks::source_references::source_sessions_history_diffs_and_usage_resolve_the_worker_identity`.
 - Rule 106 endpoint changes: `far_tasks::source_references::an_endpoint_change_preserves_the_worker_identity_and_task_reference`.
 - Rule 106 ownership: `far_tasks::source_references::changing_the_host_endpoint_cannot_replace_the_recorded_execution_owner`.
+- Rule 106 retired console routes: `far_tasks::source_references::the_retired_console_routes_of_a_worker_session_are_not_forwarded`.
 - Rule 106 console routing: `far_tasks::source_references::source_trajectory_stream_and_terminal_connections_reach_the_worker_session`.
 - Rule 107 session updates: `far_tasks::source_references::worker_session_creation_refreshes_source_progress_without_a_usage_report`.
 - Rule 107: `far_tasks::source_references::stream_loss_marks_progress_stale_until_the_current_worker_is_reconciled`.

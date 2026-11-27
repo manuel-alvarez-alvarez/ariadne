@@ -210,6 +210,11 @@ async fn route(
         && let Some((task_id, rest)) = rest.split_once('~')
     {
         let (session_id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
+        // The retired event routes are gone here too: the worker is never
+        // asked, so even an older worker that still serves them answers none.
+        if matches!(suffix, "console" | "console/stream") {
+            return Ok(next.run(request).await);
+        }
         if let Some(reference) = state.store.source_task_reference(task_id).await? {
             if suffix == "switch" {
                 return Ok(next.run(request).await);

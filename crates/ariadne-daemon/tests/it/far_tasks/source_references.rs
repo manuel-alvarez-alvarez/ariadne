@@ -575,6 +575,45 @@ async fn draw_until(
     }
 }
 
+/// The retired event routes are gone for a worker's session too: the source
+/// answers `404` itself and never asks the worker, which may be an older one
+/// that still serves them.
+#[tokio::test]
+async fn the_retired_console_routes_of_a_worker_session_are_not_forwarded() {
+    let (p, goal) = setup().await;
+    let source = draft(&p, &goal, "Console", &[]).await;
+    let worker_task = p.far.store.get_task(&source.id).await.unwrap();
+    let worker_goal = p.far.store.task_goal(&worker_task).await.unwrap();
+    let session = p
+        .far
+        .session(
+            &worker_goal,
+            Some(&worker_task),
+            ariadne_core::Seat::Agent,
+            &source.agents[0].id,
+        )
+        .await;
+    let alias = format!("far~{}~{}", source.id, session.id);
+    let source_address = Front::default().serve(&p.local).await;
+    let client = ariadne_client::Client::tcp(format!("http://{source_address}"));
+    let asked = p.front.count("other");
+
+    for route in ["console", "console/stream"] {
+        let answer = client
+            .forward(
+                axum::http::Method::GET,
+                &format!("/v1/sessions/{alias}/{route}"),
+                None,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer.status, 404, "{route}");
+    }
+
+    assert_eq!(p.front.count("other"), asked, "the worker was never asked");
+}
+
 #[tokio::test]
 async fn source_trajectory_stream_and_terminal_connections_reach_the_worker_session() {
     use futures_util::SinkExt;
