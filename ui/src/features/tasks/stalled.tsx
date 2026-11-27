@@ -13,6 +13,8 @@
  * dark mode, which the hand-rolled ambers it replaces did not.
  */
 
+import { TriangleAlertIcon } from "lucide-react"
+
 import { StatusBadge } from "@/components/status-badge"
 
 export const STALLED_META = {
@@ -22,6 +24,8 @@ export const STALLED_META = {
   badge: "bg-status-warn-soft text-status-warn-fg",
   /** Text colour, for the board card, where the flag is a line and not a pill. */
   text: "text-status-warn-fg",
+  /** The board's icon for the flag. */
+  icon: TriangleAlertIcon,
   /** Card border, for the board card that outlines itself when its task stalls. */
   border: "border-status-warn/40",
 } as const

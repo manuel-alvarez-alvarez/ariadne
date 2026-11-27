@@ -29,6 +29,7 @@ import { Link } from "react-router-dom"
 import { type GoalDto, type Host, type HostRow, type TaskDto, useHostLists } from "@/api"
 import { RefreshWarning } from "@/components/error-state"
 import { HostLabel } from "@/components/host-label"
+import { StatusIcon } from "@/components/status-icon"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -488,10 +489,7 @@ function GoalLine({
         <FoldToggle goal={goal} collapsed={collapsed} refocus={refocus} onToggle={onToggle} />
         <GoalTitle goal={goal} tasks={tasks} />
         {showHost ? <HostLabel host={goal.host} className={HOST_HIDES} /> : null}
-        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-          <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
-          {status.label}
-        </span>
+        <StatusIcon icon={status.icon} label={status.label} tone={status.text} />
         {children}
         {orchestrator ? <SessionAttentionBadge size="sm" attention={orchestrator} /> : null}
       </div>

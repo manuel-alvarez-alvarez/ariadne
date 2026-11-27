@@ -329,3 +329,17 @@ it("names the worker in a source task panel", async () => {
   })
   expect(await screen.findByText("worker")).toBeTruthy()
 })
+
+it("shows the task's state in the pane as a pill with its word", async () => {
+  const task = aTask({ status: "failed", reason: "boom" })
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => {
+      client.setQueryData(qk.tasks.detail("local", task.id), task)
+      client.setQueryData(qk.goals.detail("local", GOAL_ID), aGoal({ id: GOAL_ID }))
+    },
+  })
+
+  const pills = await screen.findAllByText("Failed")
+  expect(pills.some((pill) => pill.className.includes("rounded-full"))).toBe(true)
+  expect(screen.queryByRole("img", { name: "Failed" })).toBeNull()
+})

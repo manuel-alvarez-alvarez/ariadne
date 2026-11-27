@@ -792,7 +792,7 @@ Out: the daemon endpoints themselves (012).
     and cancelled tasks; All, Finished and custom filters show every task in
     each matching goal. Progress counts use all tasks.
     A task row shows on one line the facts of the task card: the title, the
-    session attention badge, the state badge, the host label, the step track,
+    session attention badge, the state icon, the host label, the step track,
     the token figure, the PR link and the last activity. The board is one
     grid and each row takes its columns, so the columns align from row to
     row. The board has no line of column names. The token column is as wide
@@ -800,6 +800,27 @@ Out: the daemon endpoints themselves (012).
     no border and no fill. Pointer hover and keyboard focus give it a soft
     tint. It is one link to `?task=` with one tab stop, and the PR link is a
     real anchor outside it with no tab stop.
+    The board shows a state as an icon, not a pill. A task row shows one
+    coloured icon for every status: pending a clock, ready a play circle, in
+    progress a spinner circle, finished a check circle, failed a cross circle,
+    cancelled a ban sign, and a stalled task a warning triangle in place of its
+    status. A goal line shows its status the same way: planning a compass,
+    active a spinner circle, completed a check circle, cancelled a ban sign.
+    Each state has its own shape, so colour is never the only carrier. The icon
+    takes its colour from the `status-*` tokens of `ui/src/index.css`, and the
+    muted foreground for cancelled; no token is added. The icon's accessible
+    name is the status word ("Pending" for a waiting row, "Stalled" for a
+    stalled one), and its tooltip leads with it and adds the detail, such as
+    "Waits for N tasks to merge". A row whose execution owner is unconfigured shows a
+    warning icon named "Unconfigured worker", with the words in its tooltip,
+    in place of the text. The panes keep the state pill with its word
+    (`ui/src/features/goals/goal-board.test.tsx::shows each task state as its own coloured icon with the word as its name and tooltip`,
+    `::shows a stalled task as a warning icon`,
+    `::names a waiting task's icon by its state word and keeps the dependencies in the tooltip`,
+    `::shows an unresolved execution owner on a row as a warning icon`,
+    `::shows each goal state as its own coloured icon`,
+    `ui/src/features/tasks/task-panel.test.tsx::shows the task's state in the pane as a pill with its word`,
+    `ui/src/features/goals/goal-panel.test.tsx::shows the goal's state in the pane as a pill with its word`).
     Each row has a rail segment at its left edge. The segment takes the
     colour the card's border has, in the card's order of precedence, and
     the border colour when the card has none. The rows of one goal are
