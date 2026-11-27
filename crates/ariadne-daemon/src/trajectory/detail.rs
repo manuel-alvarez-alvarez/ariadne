@@ -427,6 +427,10 @@ fn title_query(title: &str) -> Option<String> {
 ///   each after its number, a colon and a space, and a notice such as
 ///   `[Output truncated. …]` can follow them. Its first line is the line it
 ///   read from, also where that is before the offset asked for.
+/// - OpenCode 1.x puts the same lines between `<path>…</path>`,
+///   `<type>file</type>` and `<content>` and a closing `</content>`, with a
+///   notice such as `(End of file - total 1 lines)` before it and, at
+///   times, a `<system-reminder>` after it.
 ///
 /// A notice is no line of the file, and the text leaves it out.
 fn numbered_text(output: &str) -> Option<(String, u64)> {
@@ -445,6 +449,18 @@ fn numbered_text(output: &str) -> Option<(String, u64)> {
         .is_some_and(|line| line.starts_with("Read file ") && line.contains(", lines "))
     {
         lines.remove(0);
+        ": "
+    } else if lines.len() >= 3
+        && lines[0].starts_with("<path>")
+        && lines[0].ends_with("</path>")
+        && lines[1] == "<type>file</type>"
+        && lines[2] == "<content>"
+    {
+        lines.drain(..3);
+        // The wrapper closes at `</content>`; a system reminder can follow it.
+        if let Some(close) = lines.iter().rposition(|line| *line == "</content>") {
+            lines.truncate(close);
+        }
         ": "
     } else {
         return None;
@@ -976,5 +992,41 @@ mod tests {
 
         assert_eq!(file.text.as_deref(), Some("12: keep this"));
         assert_eq!(file.line, Some(1));
+    }
+
+    /// OpenCode 1.4.0 wraps a read in `<path>`, `<type>` and `<content>`
+    /// tags, numbers each line after a colon, and closes on a notice and
+    /// `</content>` (`tool/read.ts`, v1.4.0); its ACP call carries that output
+    /// as one text (`acp/agent.ts`). The text and the first line come out
+    /// of it (rule 50).
+    #[test]
+    fn an_opencode_1_read_gives_the_lines_inside_its_tags() {
+        let text = |output: &str| {
+            json!({"content": [{"type": "content",
+                                "content": {"type": "text", "text": output}}]})
+        };
+        let whole = "<path>/a.rs</path>\n<type>file</type>\n<content>\n1: fn a() {}\n\n(End of file - total 1 lines)\n</content>";
+        let reminded = "<path>/a.rs</path>\n<type>file</type>\n<content>\n40: let x = 1;\n41: \n\n(Showing lines 40-41 of 90. Use offset=42 to continue.)\n</content>\n\n<system-reminder>\nbe brief\n</system-reminder>";
+
+        let first = detail("read", json!({"filePath": "/a.rs"}), text(whole));
+        let ToolDetailDto::File(later) = detail(
+            "read",
+            json!({"filePath": "/a.rs", "offset": 40}),
+            text(reminded),
+        ) else {
+            panic!("a read is a file");
+        };
+
+        assert_eq!(
+            first,
+            ToolDetailDto::File(FileDetailDto {
+                path: Some("/a.rs".into()),
+                line: Some(1),
+                language: Some("rust".into()),
+                text: Some("fn a() {}".into()),
+            })
+        );
+        assert_eq!(later.line, Some(40));
+        assert_eq!(later.text.as_deref(), Some("let x = 1;\n"));
     }
 }

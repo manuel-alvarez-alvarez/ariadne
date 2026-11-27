@@ -323,6 +323,12 @@ Out:
         under a header `Read file <path>, lines <from>-<to>`, and can end
         it with a notice such as `[Output truncated. …]`. Its range can
         start before the offset asked for, when the offset is past the end.
+      - OpenCode 1.x puts the same lines between the lines `<path>…</path>`,
+        `<type>file</type>` and `<content>` and a closing `</content>`. A
+        notice such as `(End of file - total 1 lines)` comes before the
+        close, and a `<system-reminder>` can follow it. Its ACP call carries
+        that output as one text block (OpenCode v1.4.0, `tool/read.ts` and
+        `acp/agent.ts`).
       A notice is no line of the file, and the text leaves it out. A text
       in no such wrapper is the file's own, a number at the start of a line
       included: it stays as it is, and the line is the call's first
@@ -523,7 +529,9 @@ Out:
     `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
 56. The provider shapes of a call (rules 50, 51): a Codex shell search,
     `detail.rs::a_codex_shell_search_takes_its_query_from_its_title`; an
-    OpenCode read, `detail.rs::an_opencode_read_gives_the_range_it_read`; a
+    OpenCode read, `detail.rs::an_opencode_read_gives_the_range_it_read`; an
+    OpenCode 1.x read,
+    `detail.rs::an_opencode_1_read_gives_the_lines_inside_its_tags`; a
     Claude Code read with a notice,
     `detail.rs::a_claude_read_keeps_its_lines_before_a_truncation_notice`;
     an opaque raw output,
