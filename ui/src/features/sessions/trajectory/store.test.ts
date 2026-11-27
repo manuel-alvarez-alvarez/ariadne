@@ -4,8 +4,11 @@
 
 import { expect, it } from "vitest"
 
+import type { TurnDto } from "@/api"
+
 import {
   aMessageStep,
+  anErrorStep,
   anUpdate,
   aPermissionStep,
   aSnapshot,
@@ -296,4 +299,46 @@ it("keeps a turn the stream brings from before the history out of view and off t
 
   state = prependTurns(state, aSnapshot([first], { has_older: false }))
   expect(shownTurns(state).map((turn) => turn.id)).toEqual([first.id, second.id, third.id])
+})
+
+/**
+ * An old turn outside the daemon's window, as a diagnosis brings it: its
+ * attention, with no prompt and no answer, since the read loaded no more.
+ */
+function partialHeader(whole: TurnDto): TurnDto {
+  return {
+    ...whole,
+    prompt: null,
+    answer: [],
+    attention: [anErrorStep(whole.id, { diagnosis: "The disk is full" })],
+  }
+}
+
+it("keeps the page's prompt and answer, and the stream's newer attention, when the stream came first", () => {
+  const old = aTurn({ answer: text("Old answer") })
+  const newest = aTurn()
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([newest], { has_older: true }))
+  state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: partialHeader(old) }]))
+
+  state = prependTurns(state, aSnapshot([{ ...old, attention: [] }], { has_older: false }))
+
+  const shown = shownTurns(state)[0]
+  expect(shown?.id).toBe(old.id)
+  expect(contentText(shown?.prompt?.content ?? [])).toBe("Fix the bug")
+  expect(contentText(shown?.answer ?? [])).toBe("Old answer")
+  expect(shown?.attention).toMatchObject([{ type: "error", diagnosis: "The disk is full" }])
+})
+
+it("keeps the prompt and answer the reader loaded when a partial header comes after the page", () => {
+  const old = aTurn({ answer: text("Old answer") })
+  const newest = aTurn()
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([newest], { has_older: true }))
+  state = prependTurns(state, aSnapshot([old], { has_older: false }))
+
+  state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: partialHeader(old) }]))
+
+  const shown = shownTurns(state)[0]
+  expect(contentText(shown?.prompt?.content ?? [])).toBe("Fix the bug")
+  expect(contentText(shown?.answer ?? [])).toBe("Old answer")
+  expect(shown?.attention).toMatchObject([{ type: "error", diagnosis: "The disk is full" }])
 })

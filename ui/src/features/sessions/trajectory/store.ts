@@ -155,13 +155,19 @@ export function applyUpdate(state: TrajectoryState, update: TrajectoryUpdateDto)
 
 /**
  * Put a page of older whole turns in front of the history read whole. A turn
- * the stream already brought keeps its live version, in its own place.
+ * the stream already brought keeps its live state and attention, and takes
+ * the prompt and answer of the page where the stream's header had none.
  */
 export function prependTurns(state: TrajectoryState, page: TrajectorySnapshotDto): TrajectoryState {
-  const held = new Set(state.turns.map((turn) => turn.id))
+  const held = new Map(state.turns.map((turn) => [turn.id, turn]))
+  const paged = new Set(page.turns.map((turn) => turn.id))
+  const merged = page.turns.map((turn) => {
+    const live = held.get(turn.id)
+    return live ? mergeTurn(turn, live) : turn
+  })
   return {
     ...state,
-    turns: [...page.turns.filter((turn) => !held.has(turn.id)), ...state.turns].sort(byId),
+    turns: [...merged, ...state.turns.filter((turn) => !paged.has(turn.id))].sort(byId),
     cursor: page.turns[0]?.id ?? state.cursor,
     hasOlder: page.has_older,
   }
@@ -293,12 +299,27 @@ function upsertTurn(state: TrajectoryState, turn: TurnDto): TrajectoryState {
     const turns = [...state.turns, { ...turn }].sort(byId)
     return { ...state, turns }
   }
-  const held = state.turns[at] as TurnDto
-  // An upsert carries the turn with no steps: the ones seen live stay, after
-  // the turn ends too, so an open fold keeps every row it showed.
   const turns = state.turns.slice()
-  turns[at] = { ...turn, steps: held.steps }
+  turns[at] = mergeTurn(state.turns[at] as TurnDto, turn)
   return { ...state, turns }
+}
+
+/**
+ * A newer version of a turn over the one held. The newer one says the state,
+ * the activity and the attention. An upsert carries no steps, so the ones
+ * seen live stay, after the turn ends too, and an open fold keeps every row
+ * it showed. A header of an old turn that a read loaded for its attention
+ * alone has no prompt and no answer: the ones held stay. A prompt never
+ * changes, and an answer only grows, so neither goes back to empty.
+ */
+function mergeTurn(held: TurnDto, newer: TurnDto): TurnDto {
+  const prompt = newer.prompt && newer.prompt.content.length > 0 ? newer.prompt : held.prompt
+  return {
+    ...newer,
+    prompt: prompt ?? newer.prompt,
+    answer: newer.answer.length > 0 ? newer.answer : held.answer,
+    steps: held.steps.length > 0 ? held.steps : newer.steps,
+  }
 }
 
 /**

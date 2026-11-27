@@ -1855,14 +1855,20 @@ the default until the turn console replaces it.
     turns until the box scrolls or no older turn is left. The page starts at
     the oldest turn of the history read whole. A turn the stream brings from
     before it, such as an old turn whose error a diagnosis names, is held but
-    not shown until the pages reach it. The reader's place holds. The console follows the newest output while the reader is at the
-    bottom, and shows `Jump to latest`, marked `New output`, once the reader
-    scrolls away
+    not shown until the pages reach it. Such a header can carry no prompt
+    and no answer. The turn then keeps the stream's state and attention and
+    the page's prompt and answer, whichever of the two comes first. A later
+    header with no prompt or answer keeps the ones the reader loaded. The
+    reader's place holds. The console follows the newest output while the
+    reader is at the bottom, and shows `Jump to latest`, marked `New output`,
+    once the reader scrolls away
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::loads older turns at the top and keeps the reader's place`,
     `::loads older turns while the turns fit the box and no scroll can reach the top`,
     `::reads older turns from the history it holds, not from an old turn the stream brought`,
+    `::follows the newest output, and offers Jump to latest once the reader scrolls away`,
     `ui/src/features/sessions/trajectory/store.test.ts::keeps a turn the stream brings from before the history out of view and off the cursor`,
-    `::follows the newest output, and offers Jump to latest once the reader scrolls away`).
+    `::keeps the page's prompt and answer, and the stream's newer attention, when the stream came first`,
+    `::keeps the prompt and answer the reader loaded when a partial header comes after the page`).
 97. A `resync` or a drop reconnects on the event stream's backoff. The new
     snapshot replaces the state and drops the older turns and the step pages
     loaded before it, so no item shows two times. An update whose `rev` the
