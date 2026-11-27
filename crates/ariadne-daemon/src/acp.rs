@@ -3277,11 +3277,19 @@ impl RuntimeIncoming {
                 );
                 if !due {
                     self.sink.emit_live("tool_call_update", payload).await;
-                } else if self.sink.emit_held("tool_call_update", payload).await
-                    && let Some(call) = turn.tools.get_mut(&key)
+                } else if self
+                    .sink
+                    .emit_held("tool_call_update", payload.clone())
+                    .await
                 {
-                    call.stored_at = Some(Instant::now());
-                    call.opened = true;
+                    if let Some(call) = turn.tools.get_mut(&key) {
+                        call.stored_at = Some(Instant::now());
+                        call.opened = true;
+                    }
+                } else {
+                    // The store refused it: the console still gets it, and
+                    // the next update tries the store again.
+                    self.sink.emit_live("tool_call_update", payload).await;
                 }
             }
             Some("usage_update") => {

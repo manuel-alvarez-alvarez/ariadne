@@ -781,7 +781,48 @@ async fn a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update(
         json!({"stdout": "README.md\n"})
     );
     assert_eq!(done["payload"]["acp"]["kind"], "execute");
+    // A console that opens after the end still shows the call's result: the
+    // stored progress is the opener the end pairs with.
+    let after = t.snapshot().await;
+    assert!(
+        after
+            .iter()
+            .any(|e| e["kind"] == "post_tool_use" && e["id"] == done["id"]),
+        "{after:?}"
+    );
     t.release();
     t.ended().await;
     assert!(of_kind(&t.stored().await, "tool_call_abandoned").is_empty());
+}
+
+/// Progress whose insert the store refuses still reaches a console that is
+/// open, and nothing of it is stored.
+#[tokio::test]
+async fn a_running_calls_progress_the_store_refused_still_goes_live() {
+    let t = Turned::start(
+        json!([
+            {"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "Bash",
+             "kind": "execute", "status": "pending", "rawInput": {"command": "ls"}},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-9", "status": "in_progress"},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-9", "status": "completed"},
+        ]),
+        false,
+        with_tool_progress(std::time::Duration::ZERO),
+    )
+    .await;
+    t.h.reject_events_of_kind("tool_call_update").await;
+    let mut body = t.console_stream().await;
+    expect_sse(&mut body, "snapshot").await;
+    t.begin().await;
+
+    let mut seen = Vec::new();
+    while seen
+        .last()
+        .is_none_or(|e: &Value| e["kind"] != "post_tool_use")
+    {
+        seen.push(expect_sse(&mut body, "event").await);
+    }
+    assert_eq!(of_kind(&seen, "tool_call_update").len(), 1, "{seen:?}");
+    t.ended().await;
+    assert!(of_kind(&t.stored().await, "tool_call_update").is_empty());
 }

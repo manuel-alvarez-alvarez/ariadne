@@ -496,6 +496,12 @@ fn whole_calls(page: Vec<AgentEventDto>) -> Vec<AgentEventDto> {
                 *open.entry(call_of(event)).or_default() += 1;
                 true
             }
+            // Stored progress opens a call whose `pre_tool_use` the store
+            // refused (021): it carries the call as merged, input included.
+            "tool_call_update" => {
+                open.entry(call_of(event)).or_insert(1);
+                true
+            }
             "post_tool_use" => match open.get_mut(&call_of(event)) {
                 Some(started) if *started > 0 => {
                     *started -= 1;
@@ -543,9 +549,10 @@ fn call_of(event: &AgentEventDto) -> String {
                        running turn's text so far, then an `event` per new one \
                        (`AgentEventDto`) — message and thought chunks, tool call progress, \
                        tool calls, plans, permission requests and turn status all arrive \
-                       this way, in the vocabulary the ACP runtime reports them in. The \
-                       chunks and the progress are live only: they are never stored and \
-                       never reach `/v1/events`. A client that falls behind gets a `resync` \
+                       this way, in the vocabulary the ACP runtime reports them in. Chunks \
+                       are live only: they are never stored and never reach `/v1/events`. \
+                       Tool call progress is stored at most once in each interval, and \
+                       `/v1/events` lists what is stored; the rest is live only. A client that falls behind gets a `resync` \
                        event (ResyncDto) and the connection closes.",
         content_type = "text/event-stream", body = AgentEventDto),
         (status = 404)))]

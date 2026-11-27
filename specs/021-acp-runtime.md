@@ -227,7 +227,10 @@ it leaves nothing to delete.
    (`acp_items.rs::a_running_calls_progress_is_stored_once_its_interval_has_passed`).
    Inside that interval the update goes live to the console stream alone, in
    the same shape, and is not stored
-   (`::a_running_calls_progress_inside_its_interval_is_not_stored`). So a
+   (`::a_running_calls_progress_inside_its_interval_is_not_stored`). An
+   update the store refuses also goes live, and the next update tries the
+   store again
+   (`::a_running_calls_progress_the_store_refused_still_goes_live`). So a
    call stores at most one update in each interval, and a call that ends
    within its first interval stores none. `post_tool_use`, on a `completed`
    or `failed` update, carries `tool_name`, `tool_input` and the merged call
@@ -254,7 +257,8 @@ it leaves nothing to delete.
    into its opening, but no snapshot shows it and no turn's end abandons it.
    Its first update, stored at once whatever the interval, carries the call
    merged from its opening, and from then the call is open; its
-   `post_tool_use` keeps the opening's input
+   `post_tool_use` keeps the opening's input, and a snapshot keeps that end
+   with it
    (`::a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update`). A call stays
    open until the store holds its `tool_call_abandoned`. A write the store
    refuses, or that a kill cuts off, is tried again at the next turn's start
