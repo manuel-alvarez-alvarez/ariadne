@@ -728,3 +728,65 @@ it("keeps the keyboard in the full view when an Open inside it shows another ste
   expect(document.activeElement).toBe(open)
   expect(requests.filter((one) => one.path.endsWith("/console/cancel"))).toEqual([])
 })
+
+it("keeps showing child tool progress after its inline subagent collapses", async () => {
+  stubPanelWidth()
+  const user = userEvent.setup()
+  let subagent = aSubagentStep("none")
+  const { source } = renderTurn((turnId) => {
+    subagent = aSubagentStep(turnId)
+    return [subagent]
+  })
+  const child = aToolStep(subagent.turn_id, {
+    lane: subagent.subagent_id,
+    status: "running",
+    ended_at: null,
+  })
+  subagentSteps[subagent.subagent_id] = [child]
+  details[child.id] = {
+    detail: { type: "command", command: "npm test", output: "before collapse", truncated: false },
+  }
+  act(() => resize(880))
+  await user.click(row(subagent))
+  await waitFor(() => row(child))
+  await user.click(row(child))
+  await user.click(within(detailOf(child) as HTMLElement).getByRole("button", { name: "Open" }))
+  const view = screen.getByRole("complementary", { name: "Full view" })
+  await within(view).findByText("before collapse")
+
+  await user.click(row(subagent))
+  expect(detailOf(subagent)).toBeNull()
+  details[child.id] = {
+    detail: { type: "command", command: "npm test", output: "after collapse", truncated: false },
+  }
+  act(() =>
+    source.emit("update", anUpdate(2, [{ op: "item_upsert", step: { ...child, detail_rev: 2 } }])),
+  )
+  await within(view).findByText("after collapse")
+})
+
+it("returns focus to the step row when Escape closes a drawer whose opener disappeared", async () => {
+  const user = userEvent.setup()
+  let tool = {} as ToolStep
+  renderTurn(
+    (turnId) => {
+      tool = aToolStep(turnId)
+      return [tool]
+    },
+    { status: "running" },
+  )
+  details[tool.id] = { detail: { type: "command", command: "npm test", truncated: false } }
+  const stepRow = row(tool)
+  await user.click(stepRow)
+  const open = within(detailOf(tool) as HTMLElement).getByRole("button", { name: "Open" })
+  await user.click(open)
+  await screen.findByRole("dialog", { name: tool.title })
+
+  // Collapse the inline detail while the modal is open to unmount its opener.
+  fireEvent.click(stepRow)
+  expect(open.isConnected).toBe(false)
+  await user.keyboard("{Escape}")
+  await waitFor(() => expect(document.activeElement).toBe(stepRow))
+  expect(screen.queryByRole("dialog")).toBeNull()
+  expect(requests.filter((one) => one.path.endsWith("/console/cancel"))).toEqual([])
+})

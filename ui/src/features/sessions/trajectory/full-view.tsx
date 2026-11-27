@@ -19,6 +19,7 @@ import { cn } from "@/lib/format"
 
 import { ChildStepsContext, type FullView, FullViewContext } from "./full-view-context"
 import { StepBody } from "./step-detail"
+import type { TrajectoryState } from "./store"
 
 /** The narrowest console panel that shows the full view beside the conversation. */
 const WIDE_PX = 880
@@ -27,13 +28,12 @@ export function StepWorkspace({
   host,
   sessionId,
   className,
-  childSteps,
+  trajectory,
   children,
 }: {
   host: Host
   sessionId: string
-  /** The live steps of the subagents' lanes, by step id. */
-  childSteps: Readonly<Record<string, StepDto>>
+  trajectory: TrajectoryState
   /** The classes of the conversation's own box. */
   className?: string
   children: ReactNode
@@ -43,7 +43,17 @@ export function StepWorkspace({
   const bodyBox = useRef<HTMLDivElement>(null)
   const close = useRef<HTMLButtonElement>(null)
   const trigger = useRef<HTMLElement | null>(null)
-  const [step, setStep] = useState<StepDto | undefined>(undefined)
+  // The drawer can restore focus after the selection has cleared.
+  const shownId = useRef<string | undefined>(undefined)
+  const [selected, setSelected] = useState<StepDto>()
+  const turn = selected && trajectory.turns.find((turn) => turn.id === selected.turn_id)
+  const step =
+    selected &&
+    (trajectory.children[selected.id] ??
+      turn?.steps.find((step) => step.id === selected.id) ??
+      turn?.attention.find((step) => step.id === selected.id) ??
+      trajectory.pages[selected.turn_id]?.steps.find((step) => step.id === selected.id) ??
+      selected)
   const [wide, setWide] = useState(false)
 
   useEffect(() => {
@@ -57,9 +67,6 @@ export function StepWorkspace({
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
-
-  const shownId = useRef<string | undefined>(undefined)
-  shownId.current = step?.id
 
   /**
    * The control the keyboard goes back to: the one that opened the view, else
@@ -79,21 +86,20 @@ export function StepWorkspace({
   // The drawer gives the keyboard back itself, through its `finalFocus`.
   const dismiss = useCallback(() => {
     const target = wide ? returnTarget() : null
-    setStep(undefined)
+    setSelected(undefined)
     target?.focus()
   }, [wide, returnTarget])
 
   const view = useMemo<FullView>(
     () => ({
-      shownId: step?.id,
       show: (next, from) => {
         // An Open inside the view keeps the control that opened the view at first.
         if (!from || !bodyBox.current?.contains(from)) trigger.current = from ?? null
-        setStep(next)
+        shownId.current = next.id
+        setSelected(next)
       },
-      refresh: (next) => setStep((shown) => (shown?.id === next.id ? next : shown)),
     }),
-    [step?.id],
+    [],
   )
 
   // The aside is inside the console, whose own Escape cancels the turn: the
@@ -155,7 +161,7 @@ export function StepWorkspace({
 
   return (
     <FullViewContext.Provider value={view}>
-      <ChildStepsContext.Provider value={childSteps}>
+      <ChildStepsContext.Provider value={trajectory.children}>
         <div
           ref={root}
           data-step-workspace
@@ -178,7 +184,7 @@ export function StepWorkspace({
           <Sheet
             open={step !== undefined}
             onOpenChange={(open) => {
-              if (!open) setStep(undefined)
+              if (!open) setSelected(undefined)
             }}
           >
             <SheetContent

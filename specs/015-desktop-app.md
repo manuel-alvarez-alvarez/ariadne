@@ -1943,10 +1943,13 @@ view.
      place and in the full view. The store keeps the live version of each
      step of a subagent's lane (`children`), which a snapshot drops, and an
      open subagent shows it over the page it read. So a running call of a
-     subagent shows new progress while the subagent's step count holds
+     subagent shows new progress while the subagent's step count holds.
+     The full view reads the selected step from the store even when its
+     inline row closes or leaves the conversation.
      (`ui/src/features/sessions/trajectory/step-detail.test.tsx::reads the detail of an open running call again at each new detail_rev`,
      `::shows the newest progress of a running call in the full view`,
      `::shows the new progress of a subagent's running call while its step count holds`,
+     `::keeps showing child tool progress after its inline subagent collapses`,
      `ui/src/features/sessions/trajectory/store.test.ts::keeps the live version of each step of a subagent's lane, and a snapshot drops them`).
 106. A subagent step row shows its title, its task, its state, its time and
      the count of its steps. It opens to the subagent's own steps, read from
@@ -1976,7 +1979,8 @@ view.
      else to the console. Escape elsewhere in the console still cancels the
      turn (rule 95)
      (`ui/src/features/sessions/trajectory/step-detail.test.tsx::closes the full view on Escape and does not cancel the running turn`,
-     `::keeps the keyboard in the full view when an Open inside it shows another step, and gives it back to the first Open`).
+     `::keeps the keyboard in the full view when an Open inside it shows another step, and gives it back to the first Open`,
+     `::returns focus to the step row when Escape closes a drawer whose opener disappeared`).
 109. The step detail and the full view use the app's tokens alone, as rule
      98 says of the whole turn console
      (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`).

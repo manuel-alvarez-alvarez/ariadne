@@ -65,13 +65,6 @@ export function StepDetail({
   now: string
 }) {
   const [open, setOpen] = useState(false)
-  const full = useFullView()
-  // The full view shows the newest version of the step it shows.
-  const refresh = full?.refresh
-  const shown = full?.shownId === step.id
-  useEffect(() => {
-    if (shown) refresh?.(step)
-  }, [shown, refresh, step])
   return (
     <div>
       <div className="flex min-w-0 items-center gap-1">

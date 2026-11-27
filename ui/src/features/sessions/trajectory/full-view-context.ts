@@ -10,12 +10,8 @@ import { createContext, useContext } from "react"
 import type { StepDto } from "@/api"
 
 export interface FullView {
-  /** The id of the step the full view shows, if any. */
-  shownId?: string
   /** Show `step` whole. The keyboard goes back to `trigger` when the view closes. */
   show: (step: StepDto, trigger?: HTMLElement | null) => void
-  /** Keep the shown step at its newest version: a running call's progress. */
-  refresh: (step: StepDto) => void
 }
 
 export const FullViewContext = createContext<FullView | null>(null)
