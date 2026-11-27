@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-26
+updated: 2026-11-27
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/acp_items.rs
+  - crates/ariadne-daemon/tests/it/acp_state.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/metrics.rs
@@ -42,12 +43,10 @@ The wire uses the `agent-client-protocol` SDK and its typed v1 schema.
 `acp_transport` adapts direct pipes and relay streams for the SDK.
 The daemon owns direct process groups; the relay owns multiplexer process groups.
 
-The daemon advertises no compaction. An agent compacts its own conversation
-near the context limit and carries on, and the daemon asks for none — the
-report said only that the agent was back at its prompt, which whatever it
-does next says anyway. It was read when the daemon typed the compaction
-itself and had to know when to let the agent go; that has not been true
-since (007, rule 17).
+The daemon asks for no compaction. An agent compacts its own conversation
+near the context limit and carries on (007, rule 17). The daemon advertises
+`session.compaction` only to store what the agent reports of it for the
+trajectory (rule 24), and it waits on no compaction.
 
 Both messages an agent sends are read as the JSON it sent, not as the SDK's
 typed enums. `SessionUpdate` is a closed set, and the runtime has always
@@ -171,7 +170,7 @@ it leaves nothing to delete.
    turn spent and added to the launch's earlier turns. A launch never
    reports both.
    A `usage_update` keeps its latest `used` and `size` on the session while
-   the turn runs. Its `cost`, when present, is ignored.
+   the turn runs. Its `cost` goes to the display state (rule 24).
    An `available_commands_update` keeps the agent's latest complete command
    list while it runs, including between turns and through every `session/load`
    replay. It goes live to the console alone as
@@ -629,7 +628,75 @@ it leaves nothing to delete.
     or a prompt kind that this build does not know, such as an agent message
     (018), loads as none. The turn keeps its prompt and has nothing to claim.
 
+24. The runtime keeps the session state that the agent reports. It reads
+    each update as raw JSON.
+    - `initialize` advertises `clientCapabilities.plan: {}`,
+      `session.notices: {}` and `session.compaction: {}`. The SDK keeps
+      `plan` behind its `unstable_plan_operations` feature, so the runtime
+      adds it to the request's JSON.
+    - The runtime stores `plan_update` as `plan_update` with
+      `{session_id, plan}`. `plan` is `{type: "items", plan_id, entries}` or
+      `{type: "markdown", plan_id, content, path}`. A plan of another type is
+      stored as the agent sent it.
+    - The runtime stores `plan_removed` as `plan_removed` with
+      `{session_id, plan_id}`.
+    - The runtime stores `notice` as `notice` with
+      `{session_id, severity, title, description}`.
+    - A `compaction_summary_chunk` goes live alone as
+      `compaction_summary_chunk` with `{session_id, compaction_id, content}`.
+      The runtime adds its content to the summary of that compaction.
+    - The runtime stores `compaction_update` as `compaction_update` with
+      `{session_id, compaction_id, status, summary, error}`. `summary` is the
+      whole summary so far. A `summary` or `error` in the update is a patch:
+      an omitted one keeps its value, null clears it, and a value replaces
+      it.
+    - The runtime stores `current_mode_update` as `mode_update` with
+      `{session_id, current_mode_id}`.
+    - The session row keeps a display state, which
+      `Store::session_display_state` reads:
+      `{mode {current_id, available}, config_options, title,
+      cost {amount, currency}, commands}`. Each mode, option and command is
+      the ACP JSON. The state is in the store, so it survives a daemon
+      restart.
+    - A launch writes the modes and the options that the session opened
+      with, after the pins of rule 3 and the plan mode of rule 22. A mode
+      change that the agent reported before that write keeps its mode.
+    - `current_mode_update`, `config_option_update`, the `title` of a
+      `session_info_update`, the `cost` of a `usage_update` and
+      `available_commands_update` change the display state. A model switch
+      writes the options that its answer carries.
+    - Each change goes live as `display_state_update` with `{session_id}`
+      and the fields that changed.
+    - The display state belongs to one launch. The first write of a new
+      launch starts from an empty state. A write from a launch that the
+      session has replaced changes nothing.
+    - An update from a subagent (rule 15) never changes the display state.
+      A child's `mode_update` is stored with its `subagent` field.
+
 ## Acceptance criteria
+
+- `initialize` advertises plans, notices and compaction
+  (`ariadne-daemon::acp::tests::initialize_tells_the_agent_what_the_daemon_supports`).
+- Plan updates of both shapes, a removed plan, a notice, a compaction and a
+  mode change are stored under their own kinds, and the stored compaction
+  holds the whole summary
+  (`acp_state.rs::plans_notices_compactions_and_mode_changes_are_stored_under_their_names`).
+  A whole summary replaces the chunks before it
+  (`::a_whole_compaction_summary_replaces_its_chunks`).
+- Summary chunks and display state changes go out live
+  (`acp_state.rs::summary_chunks_and_display_changes_go_out_live`).
+- The session keeps the modes, options, title, cost and commands that its
+  agent reports
+  (`acp_state.rs::the_session_keeps_the_display_state_its_agent_reports`),
+  starting from the modes and options it opened with
+  (`::a_launch_starts_from_the_modes_and_options_it_opened_with`).
+- The display state survives a reopened store
+  (`store.rs::a_sessions_display_state_survives_a_reopened_store`).
+- A new launch replaces the display state of the earlier launch
+  (`acp_state.rs::a_new_launch_replaces_the_display_state_of_the_earlier_one`,
+  `store.rs::a_new_launch_replaces_the_display_state_of_the_earlier_launch`).
+- A subagent's updates leave the display state alone
+  (`acp_state.rs::a_subagents_updates_leave_the_display_state_alone`).
 
 - A turn file of an agent message still loads with no delivery, and a turn
   file keeps a delivery and a kind that this build knows
@@ -1078,6 +1145,7 @@ updates),
 `crates/ariadne-daemon/src/transcript.rs` (the transcript reader),
 `crates/ariadne-daemon/src/launcher.rs` (the launch, liveness and kill),
 `crates/ariadne-daemon/src/learned_key.rs` (the learned key and family),
+`crates/ariadne-store/src/display_state.rs` (the display state),
 `crates/ariadne-store/src/permissions.rs` (the learned rows),
 `crates/ariadne-daemon/src/scheduler/mod.rs` (the prompt delivery),
 `crates/ariadne-daemon/tests/it/common/acp.rs` (the scriptable stub agent).
