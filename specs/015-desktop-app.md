@@ -352,7 +352,7 @@ Out: the daemon endpoints themselves (012).
 22. An input box posts a prompt as `{"text"}` to
     `POST /v1/sessions/{id}/console/input`: Enter sends it, and Shift+Enter
     adds a line. A failed post is kept, rule 22d. The box is disabled while
-    the session is not live. A running turn shows a Stop control that posts
+    the session is not live. A running turn, as rule 99b says, shows a Stop control that posts
     `POST /v1/sessions/{id}/console/cancel` with no body, and Escape inside
     the console cancels it too. A pending permission is answered as rule 93
     says
@@ -1756,16 +1756,40 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     as the same line, closed. A removed plan and a plan with no entries show
     nowhere
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows one plan line above the composer while a plan has an open entry, and a finished plan in its turn`).
-99b. The status row shows, in this order, the status, the running turn, the
-    mode, each config option with its current value, the context use as a
-    share of the window, the cost in its currency, and the token totals at
-    its right end. The row is one line at each width: it does not wrap, and
-    a fact that does not fit is cut. The row does not count the running
-    subagents, and it has no bar of views: the console of events said
-    `running N subagents`, and that ends here. A running subagent shows as its
-    own step row, with its state and its step count (rule 106)
+99b. The status row is one line of whole facts. The row shows, highest rank
+    first: the state, the turn activity, the token totals, the context use as
+    a share of the window, the model, the mode, each other config option
+    with its current value, then the cost in its currency. The state is
+    the `session.status` of the trajectory, and the status of the session row
+    only until the first snapshot. After the first snapshot the row shows a turn
+    activity (`thinking`, `running <tool>` and its clock) only while
+    `session.running_turn_id` names a turn, and the composer shows Stop only
+    then (rule 22). When the facts do not fit, the row drops whole facts, the
+    lowest rank first. It never cuts a fact to a part of its words and it
+    draws no text over other text. The turn activity is cut with an ellipsis
+    and takes no more than half of the row. The mode shows one time, from
+    `session.mode`, else from the config option of category `mode`. The row
+    does not count the running subagents, and it has no bar of views: the
+    console of events said `running N subagents`, and that ends here. A running
+    subagent shows as its own step row, with its state and its step count
+    (rule 106). The row wraps and its height holds one line, so a fact that
+    does not fit drops out of view with every fact after it. The tokens are
+    third, not at the right end
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::counts no running subagent in the status row, and draws no bar of views for one`,
-    `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
+    `::shows the status, the tokens, the context use, the model, the mode, the options and the cost in rank order`,
+    `::shows the mode one time when the mode state and a mode option both name it`,
+    `ui/src/features/sessions/console/status.test.tsx::holds the turn activity to half of the row, cut with an ellipsis, and never cuts a fact`,
+    `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::takes the state word and the busy state from the trajectory once its snapshot came`,
+    `::shows a turn activity and Stop while running_turn_id names a turn, whatever the session row says`).
+    The widths have a browser proof, as jsdom lays out nothing: a Playwright
+    probe on a temporary daemon, with a long running command and four config
+    options injected, at a pane of 384 px (the narrowest, 24rem), 420, 480,
+    560, 720 and 960 px and the expanded console on a 1600 px window. At each
+    width no two facts overlapped, every shown fact fit whole in the row, the turn
+    activity took at most 0.50 of the row, and the facts dropped in rank order
+    (at 384 px only the state, the turn and the tokens show; the context
+    comes at 560 px, the model, the mode and the effort at 960 px, and every
+    fact in the expanded console)
 99c. A warning note and a compaction always show as lines of their turn,
     whatever the fold, and an error shows as rule 94 says. The console takes
     the warning notes and the compactions from the `notices` field of the
@@ -2579,8 +2603,8 @@ view.
   `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing`,
   `ui/src/components/panel-sheet.test.tsx::leaves Escape on the board alone and returns focus when the pane closes`).
 - The status row cuts a multiline tool name to its first line, whole on hover,
-  with the tokens at the right end (rule 99b)
-  (`ui/src/features/sessions/console/status.test.tsx::shows only the first line of a multiline tool name, whole on hover, with the tokens at the right end`).
+  with the tokens after the turn (rule 99b)
+  (`ui/src/features/sessions/console/status.test.tsx::shows only the first line of a multiline tool name, whole on hover`).
 - The blocked banner says where to answer, says to resume an agent that is
   gone, and shows for no other reason
   (`ui/src/features/sessions/session-blocked-banner.test.tsx::says what a permission prompt is waiting for, and where to answer it`,

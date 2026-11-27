@@ -341,7 +341,9 @@ function TrajectoryPane({
 
   const live = isLiveStatus(status)
   const sessionState = state.session
-  const running = live && (status === "running" || (sessionState?.running_turn_id ?? null) !== null)
+  // Once a snapshot came, a turn runs only where the trajectory names it.
+  const running =
+    live && (sessionState ? (sessionState.running_turn_id ?? null) !== null : status === "running")
   const runningTurn = state.turns.find((turn) => turn.state === "running")
   const startedAt = running ? runningTurn?.started_at : undefined
 
