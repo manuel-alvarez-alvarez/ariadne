@@ -2,9 +2,9 @@
 import { act, fireEvent, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
-import type { AttentionListDto, GoalDto, SessionDto, TaskDto } from "@/api"
+import type { AttentionListDto, GoalDto, SessionDto, TaskDto, WorkflowStepDto } from "@/api"
 import { dispatchDomainEvent } from "@/events/dispatch"
-import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
+import { aGoal, aSession, aSessionPage, aTask, aWorkflow } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { forgetHosts, stubHosts } from "@/test/hosts"
 import { GoalBoard } from "./goal-board"
@@ -32,7 +32,7 @@ function stubDaemon(
   })
 }
 
-function board(goals: GoalDto[], props: { activeOnly?: boolean } = {}) {
+function board(goals: GoalDto[], props: { activeOnly?: boolean; showHost?: boolean } = {}) {
   return renderScreen(
     <GoalBoard
       hosts={["local"]}
@@ -44,15 +44,22 @@ function board(goals: GoalDto[], props: { activeOnly?: boolean } = {}) {
 
 /** Each row's own text, top to bottom: a task row, a folded goal or a placeholder. */
 function rowTitles(): string[] {
-  return [
-    ...document.querySelectorAll("[data-task-row], [data-goal-folded], [data-goal-placeholder]"),
-  ].map((row) =>
+  return [...document.querySelectorAll("[data-task-row], [data-goal-folded]")].map((row) =>
     row.matches("[data-task-row]")
       ? (row.querySelector("a span")?.textContent ?? "")
-      : (row.querySelector("a")?.getAttribute("aria-label") ??
-        row.querySelector("a")?.textContent ??
-        ""),
+      : (row.querySelector("a")?.textContent ?? ""),
   )
+}
+
+/** The classes that would draw a box around an element. */
+const BOX = /(^|\s)(border|border-dashed|bg-[\w/-]+|ring|shadow[\w-]*)(\s|$)/
+
+/** Whether something on the way from `node` up to the board hides it until hover or focus. */
+function hiddenAtRest(node: HTMLElement): boolean {
+  for (let at: HTMLElement | null = node; at; at = at.parentElement) {
+    if (/(^|\s)(opacity-0|hidden|invisible)(\s|$)/.test(at.className)) return true
+  }
+  return false
 }
 
 it("draws each task as one row of one list, the rows of a goal in its group, and counts them", async () => {
@@ -71,6 +78,9 @@ it("draws each task as one row of one list, the rows of a goal in its group, and
     "Second",
   ])
   expect(screen.queryByText("No goal")).toBeNull()
+  // The rows speak for themselves: no line of column names over them.
+  expect(screen.queryAllByRole("columnheader")).toEqual([])
+  expect(document.querySelectorAll("[data-goal-line]")).toHaveLength(1)
 })
 
 it("makes a row one link to the task panel with one tab stop, its pull request outside the link", async () => {
@@ -99,7 +109,189 @@ it("makes a row one link to the task panel with one tab stop, its pull request o
     (node) => node.tabIndex >= 0,
   )
   expect(stops).toEqual([own])
-  expect(row.className).toContain("border-status-danger/40")
+})
+
+it("draws a row with no border and no fill, its rail segment in the status colour", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  stubDaemon([
+    aTask({ id: "t1", goal_id: goal.id, title: "Broke", status: "failed", reason: "boom" }),
+    aTask({ id: "t2", goal_id: goal.id, title: "Done", status: "finished" }),
+    aTask({ id: "t3", goal_id: goal.id, title: "Waiting", status: "pending" }),
+    aTask({ id: "n1", goal_id: null, title: "Loose", status: "cancelled", steps: [] }),
+  ])
+  board([goal])
+
+  const rail = async (title: string) => {
+    const row = (await screen.findByText(title)).closest("[data-task-row]") as HTMLElement
+    expect(row.className).not.toMatch(BOX)
+    // Hover and keyboard focus tint the row; nothing else draws it.
+    expect(row.className).toContain("hover:bg-muted/60")
+    expect(row.className).toContain("has-[a:focus-visible]:bg-muted/60")
+    return (row.querySelector("[data-rail]") as HTMLElement).className
+  }
+  expect(await rail("Broke")).toContain("border-status-danger/40")
+  expect(await rail("Done")).toContain("border-status-done/40")
+  expect(await rail("Waiting")).toContain("border-border")
+  // A task with no goal has its segment too.
+  expect(await rail("Loose")).toContain("border-muted-foreground/40")
+})
+
+it("puts the token figures in one column, the goal's total over its rows', never cut", async () => {
+  const goal = aGoal({ title: GOAL_TITLE, status: "active" })
+  stubDaemon([aTask({ id: "t1", goal_id: goal.id, title: "Spend", status: "in_progress" })])
+  board([goal])
+
+  const row = (await screen.findByText("Spend")).closest("[data-task-row]") as HTMLElement
+  const line = document.querySelector("[data-goal-line]") as HTMLElement
+  const rowTokens = row.querySelector("[data-column=tokens]") as HTMLElement
+  const goalTokens = line.querySelector("[data-column=tokens]") as HTMLElement
+  expect(within(goalTokens).getByText(/out/)).toBeTruthy()
+  expect(within(rowTokens).getByText(/out/)).toBeTruthy()
+  // One grid track holds both, sized to the widest figure, and neither cell clips.
+  const track = (cell: HTMLElement) => cell.className.match(/col-start-\d/)?.[0]
+  expect(track(goalTokens)).toBe("col-start-5")
+  expect(track(rowTokens)).toBe("col-start-5")
+  for (const cell of [goalTokens, rowTokens])
+    expect(cell.className).not.toMatch(/truncate|overflow-hidden|max-w-/)
+  const list = line.closest("[role=group]")?.parentElement as HTMLElement
+  expect(list.className).toContain("max-content")
+})
+
+it("keeps the state, the step dots and the tokens whole: only the title gives up its width", async () => {
+  const step = (id: string) => ({ ...(aWorkflow().steps[0] as WorkflowStepDto), id, title: id })
+  const short = aGoal({ id: "g-short", title: "Short", steps: ["a", "b", "c"].map(step) })
+  const long = aGoal({
+    id: "g-long",
+    title: "Long",
+    steps: ["a", "b", "c", "d", "e", "f", "g"].map(step),
+  })
+  stubDaemon([
+    aTask({ id: "t1", goal_id: short.id, title: "Fit", status: "failed", reason: "boom" }),
+    aTask({ id: "t2", goal_id: long.id, title: "Fold" }),
+  ])
+  board([short, long])
+
+  const row = (await screen.findByText("Fit")).closest("[data-task-row]") as HTMLElement
+  const list = row.closest("[role=group]")?.parentElement as HTMLElement
+  const templates = [...list.className.matchAll(/grid-cols-\[([^\]]+)\]/g)].map((m) => m[1] ?? "")
+  // One template for a wide board and one for a narrow board, seven tracks each.
+  expect(templates).toHaveLength(2)
+  for (const template of templates) {
+    const tracks = template.split("_")
+    expect(tracks).toHaveLength(7)
+    // The title alone can shrink to nothing.
+    expect(tracks[0]).toBe("minmax(0,1fr)")
+    // The badges take their content's width, and the dots their floor.
+    expect(tracks[1]).toBe("auto")
+    expect(tracks[3]).toMatch(/^minmax\(var\(--board-dots,0rem\),/)
+    // The tokens take the widest figure.
+    expect(tracks[4]).toBe("max-content")
+  }
+  // The floor is the dots of the longest workflow: seven steps fold to the
+  // current one and its neighbours, 3 × (0.875 dot + 1.25 arrow and gaps),
+  // the ellipsis (1) and the cell's padding (0.75).
+  expect(list.style.getPropertyValue("--board-dots")).toBe("8.125rem")
+  // Nothing in the state cell clips its badges.
+  const state = row.querySelector("[data-column=state]") as HTMLElement
+  expect(state.className).not.toMatch(/overflow-hidden|max-w-|min-w-0|truncate/)
+})
+
+it("sizes the dots floor to the widest track when a folded workflow is the longest", async () => {
+  const step = (id: string) => ({ ...(aWorkflow().steps[0] as WorkflowStepDto), id, title: id })
+  const five = aGoal({
+    id: "g-five",
+    title: "Five goal",
+    steps: ["a", "b", "c", "d", "e"].map(step),
+  })
+  const seven = aGoal({
+    id: "g-seven",
+    title: "Seven goal",
+    steps: ["a", "b", "c", "d", "e", "f", "g"].map(step),
+  })
+  stubDaemon([
+    aTask({ id: "t5", goal_id: five.id, title: "Five" }),
+    aTask({ id: "t7", goal_id: seven.id, title: "Seven" }),
+  ])
+  board([five, seven])
+
+  const row = (await screen.findByText("Seven")).closest("[data-task-row]") as HTMLElement
+  const list = row.closest("[role=group]")?.parentElement as HTMLElement
+  // Seven steps fold to 8.125rem; five unfolded steps need 10.125rem, the floor.
+  expect(list.style.getPropertyValue("--board-dots")).toBe("10.125rem")
+})
+
+it("sizes the dots floor to an unfolded workflow of five steps", async () => {
+  const step = (id: string) => ({ ...(aWorkflow().steps[0] as WorkflowStepDto), id, title: id })
+  const goal = aGoal({ title: GOAL_TITLE, steps: ["a", "b", "c", "d", "e"].map(step) })
+  stubDaemon([aTask({ goal_id: goal.id, title: "Five" })])
+  board([goal])
+
+  const row = (await screen.findByText("Five")).closest("[data-task-row]") as HTMLElement
+  const list = row.closest("[role=group]")?.parentElement as HTMLElement
+  // 5 × 0.875 dots, 4 × 1.25 arrows and gaps, 0.75 padding.
+  expect(list.style.getPropertyValue("--board-dots")).toBe("10.125rem")
+})
+
+it("hides a goal's host on its goal line with the host column", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  stubDaemon([aTask({ goal_id: goal.id, title: "Hosted", host: "worker" })])
+  board([goal], { showHost: true })
+
+  const row = (await screen.findByText("Hosted")).closest("[data-task-row]") as HTMLElement
+  const line = document.querySelector("[data-goal-line]") as HTMLElement
+  const hides = (node: Element) =>
+    node.className.match(/@max-\[[\d.]+rem\]\/board:hidden/)?.[0] ?? null
+  const rowHost = row.querySelector("[data-column=host]") as HTMLElement
+  const goalHost = within(line).getByText("local")
+  expect(hides(rowHost)).not.toBeNull()
+  expect(hides(goalHost)).toBe(hides(rowHost))
+})
+
+it("hides whole columns by the board's own width: step names, then activity, host and PR link", async () => {
+  const goal = aGoal({ title: GOAL_TITLE, steps: aWorkflow().steps })
+  stubDaemon([
+    aTask({
+      id: "t1",
+      goal_id: goal.id,
+      title: "Narrow",
+      status: "in_progress",
+      step: "develop",
+      host: "worker",
+      pr_url: "https://github.com/acme/app/pull/7",
+    }),
+  ])
+  board([goal])
+
+  const row = (await screen.findByText("Narrow")).closest("[data-task-row]") as HTMLElement
+  const section = screen.getByRole("region", { name: "Goals board" })
+  // The board is the container the widths are read from, and it scrolls sideways only below its 33.9rem floor.
+  expect(section.className).toContain("@container/board")
+  expect(section.className).toContain("overflow-x-auto")
+  expect(section.className).not.toContain("overflow-x-hidden")
+  // The rows hold the floor, so a board narrower than it scrolls and cuts no column.
+  const list = section.children[1] as HTMLElement
+  expect(list.className).toContain("min-w-[33.9rem]")
+  const below = (column: string) => {
+    const cell = row.querySelector(`[data-column=${column}]`) as HTMLElement
+    const at = cell.className.match(
+      /@max-\[(\d+(?:\.\d+)?)rem\]\/board:(?:\[&_\[data-step-name\]\]:)?hidden/,
+    )
+    return at ? Number(at[1]) : null
+  }
+  const steps = below("steps") as number
+  const activity = below("activity") as number
+  const host = below("host") as number
+  const pr = below("pr") as number
+  expect(steps).toBeGreaterThan(activity)
+  expect(activity).toBeGreaterThan(host)
+  expect(host).toBeGreaterThan(pr)
+  // A pinned inspector leaves the board 36rem to 42rem wide: it hides all four.
+  expect(pr).toBeLessThanOrEqual(42)
+  for (const column of ["title", "state", "tokens"]) expect(below(column)).toBeNull()
+  // The step cell hides the names alone; its dots stay.
+  const track = within(row).getByRole("list", { name: "Workflow steps" })
+  expect(track.querySelectorAll("[data-step-name]").length).toBeGreaterThan(0)
+  expect((row.querySelector("[data-column=title]") as HTMLElement).className).toContain("truncate")
 })
 
 it("hides terminal tasks under Active while preserving progress", async () => {
@@ -118,7 +310,7 @@ it("hides terminal tasks under Active while preserving progress", async () => {
   expect(screen.getByText("1/2")).toBeTruthy()
 })
 
-it("puts a goal bar over the rows of its goal: toggle, title link, status, progress and tokens", async () => {
+it("puts one goal line over the rows of its goal, shown at rest: toggle, title link, status, progress and tokens", async () => {
   const goal = aGoal({ title: GOAL_TITLE, status: "active" })
   stubDaemon([
     aTask({ id: "t1", goal_id: goal.id, status: "finished" }),
@@ -129,19 +321,24 @@ it("puts a goal bar over the rows of its goal: toggle, title link, status, progr
   await screen.findByRole("heading", { name: "Tasks (2)" })
   const link = screen.getByRole("link", { name: GOAL_TITLE })
   expect(link.getAttribute("href")).toContain(`goal=${goal.id}`)
-  const bar = link.closest("[data-goal-bar]") as HTMLElement
-  expect(bar.getAttribute("data-goal-bar")).toBe("hover")
-  expect(within(bar).getByRole("button", { name: `Collapse ${GOAL_TITLE}` })).toBeTruthy()
-  expect(within(bar).getByText("Active")).toBeTruthy()
-  expect(await within(bar).findByText("1/2")).toBeTruthy()
-  expect(within(bar).getByText(/out/)).toBeTruthy()
-  // The bar and its frame float over the gap: neither is a row of the list.
+  const line = link.closest("[data-goal-line]") as HTMLElement
+  expect(within(line).getByRole("button", { name: `Collapse ${GOAL_TITLE}` })).toBeTruthy()
+  expect(within(line).getByText("Active")).toBeTruthy()
+  expect(await within(line).findByText("1/2")).toBeTruthy()
+  expect(within(line).getByText(/out/)).toBeTruthy()
+  expect(line.querySelector("[data-task-row]")).toBeNull()
+  // Visible with no hover and no focus, and drawn as plain text: no box, no frame.
+  expect(hiddenAtRest(line)).toBe(false)
+  expect(line.className).not.toMatch(BOX)
   const group = screen.getByRole("group", { name: `${GOAL_TITLE}: Tasks` })
-  expect(group.querySelector("[data-goal-frame]")).toBeTruthy()
-  expect(bar.querySelector("[data-task-row]")).toBeNull()
+  expect(group.className).not.toMatch(BOX)
+  // Nothing is laid over the rows: the only drawn pieces past the text are the rails.
+  expect(
+    [...group.querySelectorAll(".absolute")].every((node) => node.matches("[data-rail]")),
+  ).toBe(true)
 })
 
-it("keeps the goal bar shown at rest while its orchestrator wants a person", async () => {
+it("shows the orchestrator's attention badge on the goal line", async () => {
   const goal = aGoal({ title: GOAL_TITLE, status: "active" })
   const orchestrator = aSession({
     goal_id: goal.id,
@@ -168,34 +365,42 @@ it("keeps the goal bar shown at rest while its orchestrator wants a person", asy
   board([goal])
 
   const badge = await screen.findByText("Waiting for permission")
-  const bar = badge.closest("[data-goal-bar]") as HTMLElement
-  expect(bar.getAttribute("data-goal-bar")).toBe("pinned")
+  const line = badge.closest("[data-goal-line]") as HTMLElement
+  expect(within(line).getByRole("link", { name: GOAL_TITLE })).toBeTruthy()
+  expect(hiddenAtRest(line)).toBe(false)
 })
 
-it("folds a finished goal to one summary row", async () => {
+it("folds a finished goal to its goal line with the summary, and no border", async () => {
   const goal = aGoal({ title: GOAL_TITLE, status: "completed" })
   stubDaemon([aTask({ goal_id: goal.id, title: "Done work", status: "finished" })])
   board([goal])
 
   const summary = await screen.findByText("1 task finished")
   const row = summary.closest("[data-goal-folded]") as HTMLElement
+  expect(row.hasAttribute("data-goal-line")).toBe(true)
+  expect(row.className).not.toMatch(BOX)
   expect(within(row).getByRole("button", { name: `Expand ${GOAL_TITLE}` })).toBeTruthy()
   expect(within(row).getByRole("link", { name: GOAL_TITLE })).toBeTruthy()
   expect(within(row).getByText("Completed")).toBeTruthy()
+  expect(within(row).getByText(/out/)).toBeTruthy()
   expect(screen.queryByText("Done work")).toBeNull()
 })
 
-it("draws a goal with no shown task as one placeholder row that opens the goal", async () => {
+it("draws a goal with no shown task as its goal line, then one muted line with the state", async () => {
   const goal = aGoal({ title: GOAL_TITLE, status: "planning" })
   stubDaemon([])
   board([goal])
 
   const state = await screen.findByText("No tasks yet — the orchestrator is still working")
-  const row = screen.getByRole("link", { name: GOAL_TITLE })
-  expect(row.hasAttribute("data-goal-placeholder")).toBe(true)
-  expect(row.contains(state)).toBe(true)
-  expect(row.getAttribute("href")).toContain(`goal=${goal.id}`)
-  expect(within(row).getByText("Planning")).toBeTruthy()
+  const placeholder = state.closest("[data-goal-placeholder]") as HTMLElement
+  expect(placeholder.className).toContain("text-muted-foreground")
+  expect(placeholder.className).not.toMatch(BOX)
+  const line = screen.getByRole("link", { name: GOAL_TITLE }).closest("[data-goal-line]")
+  expect(line?.nextElementSibling).toBe(placeholder)
+  expect(screen.getByRole("link", { name: GOAL_TITLE }).getAttribute("href")).toContain(
+    `goal=${goal.id}`,
+  )
+  expect(within(line as HTMLElement).getByText("Planning")).toBeTruthy()
   expect(screen.getByRole("heading", { name: "Tasks (0)" })).toBeTruthy()
 })
 
@@ -373,7 +578,7 @@ it("hands the keyboard to the fold button that replaces the one that was activat
   expect(document.activeElement).toBe(expand)
 })
 
-it("hands the keyboard to the placeholder row when unfolding leaves a goal with no shown task", async () => {
+it("hands the keyboard to the fold button when unfolding leaves a goal with no shown task", async () => {
   const goal = aGoal({ title: GOAL_TITLE, status: "cancelled" })
   stubDaemon([aTask({ id: "t1", goal_id: goal.id, status: "cancelled" })])
   board([goal], { activeOnly: true })
@@ -381,7 +586,7 @@ it("hands the keyboard to the placeholder row when unfolding leaves a goal with 
   const expand = await screen.findByRole("button", { name: `Expand ${GOAL_TITLE}` })
   expand.focus()
   fireEvent.click(expand)
-  const row = await screen.findByRole("link", { name: GOAL_TITLE })
-  expect(row.hasAttribute("data-goal-placeholder")).toBe(true)
-  expect(document.activeElement).toBe(row)
+  const collapse = await screen.findByRole("button", { name: `Collapse ${GOAL_TITLE}` })
+  expect(screen.getByText("No active tasks").closest("[data-goal-placeholder]")).toBeTruthy()
+  expect(document.activeElement).toBe(collapse)
 })
