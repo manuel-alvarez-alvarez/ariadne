@@ -100,7 +100,14 @@ pub(crate) struct Lane {
     /// update, a permission's reply, a question's resolution, an error's
     /// diagnosis — by the step's id.
     pub(crate) follows: HashMap<String, String>,
+    /// The rows of each call's updates, oldest first: an update can name
+    /// the call's title, kind or input, and a later one omit them.
+    pub(crate) updates: HashMap<String, Vec<String>>,
 }
+
+/// How many of a call's updates a read loads: the first and the newest.
+const CALL_UPDATES_HEAD: usize = 3;
+const CALL_UPDATES_TAIL: usize = 5;
 
 /// One step a lane opened: its id on the wire, and the stored row that
 /// opened it. A step a live event opened has no row until one is stored.
@@ -119,8 +126,20 @@ impl Lane {
             .iter()
             .find(|opener| opener.step == step)
             .and_then(|opener| opener.row.clone());
+        let updates = self.updates.get(step).map_or(&[][..], Vec::as_slice);
+        let skip = if updates.len() > CALL_UPDATES_HEAD + CALL_UPDATES_TAIL {
+            updates.len() - CALL_UPDATES_TAIL
+        } else {
+            0
+        };
+        let kept = updates
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| *at < CALL_UPDATES_HEAD || *at >= skip)
+            .map(|(_, row)| row.clone());
         opener
             .into_iter()
+            .chain(kept)
             .chain(self.follows.get(step).cloned())
             .collect()
     }
@@ -1046,6 +1065,10 @@ impl Fold {
             && let Some(row) = input.row()
         {
             lane.follows.insert(target.clone(), row.to_string());
+            let updates = lane.updates.entry(target.clone()).or_default();
+            if updates.last().map(String::as_str) != Some(row) {
+                updates.push(row.to_string());
+            }
         }
         ops.touch(&turn.id);
         let Some(event) = input.full else {

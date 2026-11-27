@@ -378,6 +378,18 @@ pub(crate) async fn read_turns_upto(
     for rows in first_and_newest_per_lane(&plans) {
         picks.take(rows);
     }
+    // The commands the agent offers: its newest update of the session.
+    let commands = store
+        .session_event_heads(
+            session_id,
+            None,
+            Some(upper),
+            &["available_commands_update"],
+        )
+        .await?;
+    if let Some(head) = commands.iter().rev().find(|head| head.lane.is_none()) {
+        picks.take([head.id.clone()]);
+    }
     for (subagent, rows) in fold.subagent_rows() {
         if picks.full() {
             break;
@@ -1292,6 +1304,78 @@ mod tests {
             !held.contains(&first),
             "the page starts after the first call"
         );
+    }
+
+    /// A cold read keeps the fields an intermediate update named and a
+    /// status-only completion omitted (rule 22).
+    #[tokio::test]
+    async fn a_cold_read_keeps_the_fields_of_an_intermediate_update() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "pre_tool_use",
+            json!({"tool_name": "Edit", "acp": {"toolCallId": "c1", "status": "pending"}}),
+        )
+        .await;
+        commit(
+            &store,
+            &session,
+            "tool_call_update",
+            json!({"acp": {"toolCallId": "c1", "title": "Read config", "kind": "read",
+                           "rawInput": {"path": "config.json"}}}),
+        )
+        .await;
+        commit(
+            &store,
+            &session,
+            "tool_call_update",
+            json!({"acp": {"toolCallId": "c1", "status": "completed"}}),
+        )
+        .await;
+
+        let fold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        let snapshot = fold.snapshot(0, 20, None);
+        let Some(ariadne_api::trajectory::StepDto::ToolCall(call)) =
+            snapshot.turns[0].steps.first()
+        else {
+            panic!("a call step");
+        };
+        assert_eq!(call.title, "Read config");
+        assert_eq!(call.kind.as_deref(), Some("read"));
+        assert_eq!(call.subject.as_deref(), Some("config.json"));
+        assert_eq!(call.detail_rev, 2);
+    }
+
+    /// A cold read holds the commands the agent offered before the shown
+    /// turns (rule 33).
+    #[tokio::test]
+    async fn a_cold_read_holds_the_commands_the_agent_offered() {
+        let (store, session, _dir) = session().await;
+        commit(
+            &store,
+            &session,
+            "available_commands_update",
+            json!({"available_commands": [{"name": "help", "description": "Help"}]}),
+        )
+        .await;
+        prompt(&store, &session).await;
+
+        let fold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        let snapshot = fold.snapshot(0, 20, None);
+        assert_eq!(snapshot.session.commands.len(), 1);
+        assert_eq!(snapshot.session.commands[0].name, "help");
     }
 
     /// A plan keeps the id of its first event in a cold read (rule 32).

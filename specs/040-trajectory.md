@@ -147,7 +147,8 @@ Out:
     stored, a `post_tool_use` and a `tool_call_abandoned` change the open call
     of the same lane and tool call id. Each change adds one to `detail_rev`.
     An update with no open call opens a step.
-22. A call keeps the fields that an update does not send again. Its
+22. A call keeps the fields that an update does not send again, in a cold
+    read too: it loads the call's first three and newest five updates. Its
     `preview` is the first five lines, and at most 400 characters, of its
     output text, else of its `rawOutput`: a row shows that much. Its
     `diff_stat` counts the files of its diffs, and the `+` and `-` lines of a
@@ -196,7 +197,8 @@ Out:
 33. `session` starts from the row: status, attention, usage and context. A
     `session_updated` domain event of the session is a `session_patch`.
     `running_turn_id` names the running turn. The agent's own
-    `available_commands_update` sets `commands`.
+    `available_commands_update` sets `commands`; a cold read loads the
+    newest one of the session.
 
 ### The fold
 
@@ -307,7 +309,9 @@ Out:
 10. A running turn carries its last steps (rule 14):
    `fold.rs::a_running_turn_carries_its_last_steps`.
 11. A call's preview, diff stat, subject and detail revision (rules 21, 22):
-   `fold.rs::a_call_previews_its_output_and_counts_its_diff`.
+   `fold.rs::a_call_previews_its_output_and_counts_its_diff`,
+   `read.rs::a_cold_read_keeps_the_fields_of_an_intermediate_update`,
+   `read.rs::a_cold_read_holds_the_commands_the_agent_offered`.
 12. Attention, permission answers and native questions (rules 16, 23, 24):
    `fold.rs::attention_keeps_what_waits_and_the_errors_of_closed_turns`.
 13. Lifecycle notes, the prompt-less first turn and an interruption
