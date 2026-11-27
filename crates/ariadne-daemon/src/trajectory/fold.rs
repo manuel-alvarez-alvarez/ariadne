@@ -59,15 +59,18 @@ pub(crate) struct Fold {
     /// Each plan, by its lane and its ACP `plan_id`: none for a plan of the
     /// old `plan` kind, one to a lane.
     plans: Vec<(PlanKey, PlanDto)>,
+    /// The id of the first stored event of each plan, from the heads of a
+    /// read: a plan whose first payload the read did not load keeps it.
+    plan_firsts: HashMap<PlanKey, String>,
     session: SessionStateDto,
     /// The permissions no reply has answered yet, oldest first. A reply
     /// answers the newest.
     pending: Vec<Pending>,
     /// The open questions, by question or request id: the turn and the step.
     questions: HashMap<String, (String, String)>,
-    /// Whether the display state gave the commands. A stored
-    /// `available_commands_update`, from a daemon before the display state,
-    /// then changes nothing.
+    /// Whether the current launch reported a display state, its commands
+    /// even where they are none. A stored `available_commands_update`, from
+    /// a daemon before the display state, then changes nothing.
     display_commands: bool,
 }
 
@@ -197,17 +200,19 @@ pub(crate) struct TurnIndex {
 }
 
 /// The state of a session as its row says it, before any event: its
-/// status, attention, usage and context, and the display state its agent
-/// reported (021, rule 24).
+/// status, attention, usage and context, and the display state its current
+/// launch reported (021, rule 24), where it reported one.
 pub(crate) fn session_state(
     session: &SessionDto,
-    display: &SessionDisplayState,
+    display: Option<&SessionDisplayState>,
 ) -> SessionStateDto {
     let mut state = row_state(session);
-    apply_display(
-        &mut state,
-        &serde_json::to_value(display).expect("a display state is JSON"),
-    );
+    if let Some(display) = display {
+        apply_display(
+            &mut state,
+            &serde_json::to_value(display).expect("a display state is JSON"),
+        );
+    }
     state
 }
 
@@ -255,17 +260,33 @@ fn head_facts(head: &EventHead) -> EventFacts {
 impl Fold {
     pub(crate) fn new(session_id: &str, session: SessionStateDto) -> Self {
         Self {
-            display_commands: !session.commands.is_empty(),
+            display_commands: false,
             session_id: session_id.to_string(),
             turns: Vec::new(),
             outside: Vec::new(),
             has_older: false,
             subagents: Vec::new(),
             plans: Vec::new(),
+            plan_firsts: HashMap::new(),
             session,
             pending: Vec::new(),
             questions: HashMap::new(),
         }
+    }
+
+    /// Whether the current launch reported a display state: its commands
+    /// then stand, even an empty list, against a stored list of an older
+    /// daemon.
+    pub(crate) fn set_display_reported(&mut self, reported: bool) {
+        self.display_commands = reported;
+    }
+
+    /// Name the plan of `lane` and `plan` by `first`, the id of its first
+    /// stored event, whether or not the read loads that event.
+    pub(crate) fn seed_plan(&mut self, lane: &str, plan: Option<String>, first: &str) {
+        self.plan_firsts
+            .entry((lane.to_string(), plan))
+            .or_insert_with(|| first.to_string());
     }
 
     /// Whether turns older than the fold's first exist in the store.
@@ -1385,14 +1406,16 @@ impl Fold {
             StepDto::Note(NoteStepDto {
                 id: event.id.clone(),
                 turn_id: self.turns[index].id.clone(),
-                lane: MAIN_LANE.into(),
+                lane: input.lane.clone(),
                 created_at: event.created_at.clone(),
                 origin: event.kind.clone(),
                 severity,
                 text,
             })
         });
-        self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
+        // A note is in the lane of its event: a subagent's notice is the
+        // subagent's.
+        self.open_step(index, &input.lane, input.id, input.row(), step, ops);
     }
 
     /// A plan update: a `plan` of the old kind replaces the one plan of its
@@ -1422,7 +1445,9 @@ impl Fold {
             .plans
             .iter()
             .find(|(kept, _)| *kept == key)
-            .map_or_else(|| event.id.clone(), |(_, plan)| plan.plan_id.clone());
+            .map(|(_, plan)| plan.plan_id.clone())
+            .or_else(|| self.plan_firsts.get(&key).cloned())
+            .unwrap_or_else(|| event.id.clone());
         let plan = PlanDto {
             plan_id,
             variant,
@@ -1610,10 +1635,13 @@ impl Fold {
             Some("failed") => CompactionStatus::Failed,
             _ => CompactionStatus::Completed,
         };
+        // A stored update holds the whole summary so far (021, rule 24): an
+        // empty one is a summary the agent cleared, and replaces the last.
         let summary = match payload.and_then(|payload| payload.get("summary")) {
-            Some(Value::String(text)) => vec![ContentBlockDto::Text { text: text.clone() }],
-            Some(Value::Array(blocks)) => blocks_of(blocks, &self.session_id, input.id),
-            _ => Vec::new(),
+            Some(Value::String(text)) => Some(vec![ContentBlockDto::Text { text: text.clone() }]),
+            Some(Value::Array(blocks)) => Some(blocks_of(blocks, &self.session_id, input.id)),
+            Some(Value::Null) => Some(Vec::new()),
+            _ => None,
         };
         let error = payload.and_then(|payload| string_at(payload, "/error"));
         let turn = &mut self.turns[index];
@@ -1622,18 +1650,21 @@ impl Fold {
             // A later update is the compaction's newest change: a read loads
             // it beside the opener, so the step shows its status and summary.
             if let Some(row) = input.row() {
-                lane.follows.insert(step, row.to_string());
+                lane.follows.insert(step.clone(), row.to_string());
             }
             ops.touch(&turn.id);
-            let found = turn.steps.iter_mut().find(|step| {
-                matches!(step, StepDto::Compaction(kept) if kept.compaction_id == compaction_id)
-            });
+            // The step this lane opened for the compaction, by its id: another
+            // lane may run a compaction of the same ACP id.
+            let found = turn
+                .steps
+                .iter_mut()
+                .find(|kept| step_id(kept) == step.as_str());
             if let Some(step) = found
                 && let StepDto::Compaction(kept) = step
             {
                 if payload.is_some() {
                     kept.status = status;
-                    if !summary.is_empty() {
+                    if let Some(summary) = summary {
                         kept.summary = summary;
                     }
                     kept.error = error;
@@ -1653,7 +1684,7 @@ impl Fold {
                 created_at: event.created_at.clone(),
                 compaction_id,
                 status,
-                summary,
+                summary: summary.unwrap_or_default(),
                 error,
             })
         });
@@ -1998,8 +2029,8 @@ impl Ops {
 mod tests {
     use ariadne_api::events::AgentEventDto;
     use ariadne_api::trajectory::{
-        ActivityDto, ContentBlockDto, MAIN_LANE, PermissionState, PlanVariant, QuestionState,
-        SessionStateDto, StepDto, TrajectoryOpDto, TurnState,
+        ActivityDto, CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionState,
+        PlanVariant, QuestionState, SessionStateDto, StepDto, TrajectoryOpDto, TurnState,
     };
     use ariadne_api::usage::TokenUsageDto;
     use ariadne_core::SessionStatus;
@@ -2655,6 +2686,103 @@ mod tests {
         assert!(!plans[2].removed);
     }
 
+    /// A launch that reported no commands has none, whatever an older daemon
+    /// stored; a session whose launch reported nothing reads the stored list
+    /// (rule 33).
+    #[test]
+    fn a_reported_empty_command_list_stands_against_a_stored_one() {
+        let stored_list = json!({"available_commands": [{"name": "old", "description": "Old"}]});
+        let mut reported = Session::new();
+        reported.fold.set_display_reported(true);
+        reported.prompt("Go");
+        reported.event("available_commands_update", stored_list.clone());
+        assert!(reported.fold.session.commands.is_empty());
+
+        let mut unreported = Session::new();
+        unreported.prompt("Go");
+        unreported.event("available_commands_update", stored_list);
+        assert_eq!(unreported.fold.session.commands[0].name, "old");
+
+        // A live report of no commands stands too.
+        let mut live = Session::new();
+        live.prompt("Go");
+        live.event("display_state_update", json!({"commands": []}));
+        live.event(
+            "available_commands_update",
+            json!({"available_commands": [{"name": "old", "description": "Old"}]}),
+        );
+        assert!(live.fold.session.commands.is_empty());
+    }
+
+    /// A compaction's update replaces its summary, an empty one included,
+    /// and a compaction of the same ACP id in another lane is a step of its
+    /// own (rule 27).
+    #[test]
+    fn a_compaction_takes_each_whole_summary_and_keeps_to_its_lane() {
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        let (main, _) = s.event(
+            "compaction_update",
+            json!({"compaction_id": "c-1", "status": "in_progress",
+                   "summary": [{"type": "text", "text": "Draft"}]}),
+        );
+        let (child, _) = s.event(
+            "compaction_update",
+            json!({"compaction_id": "c-1", "status": "in_progress",
+                   "summary": [{"type": "text", "text": "Child"}],
+                   "subagent": {"id": "child-1"}}),
+        );
+        s.event(
+            "compaction_update",
+            json!({"compaction_id": "c-1", "status": "completed", "summary": []}),
+        );
+
+        let steps = s.fold.held_steps(&turn, MAIN_LANE);
+        let compaction = steps
+            .iter()
+            .find_map(|step| match step {
+                StepDto::Compaction(kept) => Some(kept),
+                _ => None,
+            })
+            .expect("the main lane's compaction");
+        assert_eq!(compaction.id, main);
+        assert_eq!(compaction.status, CompactionStatus::Completed);
+        assert!(compaction.summary.is_empty(), "the cleared summary");
+
+        let steps = s.fold.held_steps(&turn, "child-1");
+        let [StepDto::Compaction(theirs)] = steps.as_slice() else {
+            panic!("the child's compaction alone: {steps:?}");
+        };
+        assert_eq!(theirs.id, child);
+        assert_eq!(theirs.status, CompactionStatus::Running);
+        assert_eq!(theirs.summary, text("Child"));
+    }
+
+    /// A subagent's notice is a note of its lane, and the main lane does not
+    /// count it (rules 26, 31).
+    #[test]
+    fn a_subagents_notice_is_a_note_of_its_lane() {
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        let (notice, _) = s.event(
+            "notice",
+            json!({"severity": "warning", "title": "Slow", "subagent": {"id": "child-1"}}),
+        );
+        s.stop();
+
+        let snapshot = s.fold.snapshot(0, 20, None);
+        let header = snapshot.turns.iter().find(|t| t.id == turn).unwrap();
+        // The main lane opened the subagent's step alone.
+        assert_eq!(header.earlier_steps, 1);
+        let steps = s.fold.held_steps(&turn, "child-1");
+        let [StepDto::Note(note)] = steps.as_slice() else {
+            panic!("the child's note: {steps:?}");
+        };
+        assert_eq!(note.id, notice);
+        assert_eq!(note.lane, "child-1");
+        assert_eq!(note.severity, NoteSeverity::Warning);
+    }
+
     /// The display state the session starts from gives its commands, which a
     /// stored list of an older daemon does not replace; a live display
     /// change is a `session_patch` (rule 33).
@@ -2668,6 +2796,7 @@ mod tests {
             hint: None,
         }];
         s.fold = Fold::new("session", state);
+        s.fold.set_display_reported(true);
         s.prompt("Go");
         let (_, stored) = s.event(
             "available_commands_update",

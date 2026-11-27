@@ -84,6 +84,9 @@ pub(crate) struct Read {
     /// The prompt after the read, which a page folds to close its last turn
     /// and then drops.
     pub(crate) successor: Option<String>,
+    /// The first stored event of each plan, by its lane and its `plan_id`,
+    /// from the heads: a plan keeps that id whatever the budget loads.
+    pub(crate) plan_firsts: Vec<(Option<String>, Option<String>, String)>,
 }
 
 impl Read {
@@ -99,6 +102,9 @@ impl Read {
     /// Fold the read, and the live events that joined it, into a fold that
     /// has seen nothing yet.
     pub(crate) fn fold_into(self, fold: &mut Fold, live: Vec<AgentEventDto>) {
+        for (lane, plan, first) in &self.plan_firsts {
+            fold.seed_plan(lane.as_deref().unwrap_or(MAIN_LANE), plan.clone(), first);
+        }
         let mut live = live.into_iter().peekable();
         for item in self.items {
             while let Some(event) = live.next_if(|event| event.id.as_str() < item.id()) {
@@ -380,6 +386,7 @@ pub(crate) async fn read_turns_upto(
             &["plan", "plan_update", "plan_removed"],
         )
         .await?;
+    let plan_firsts = first_per_plan(&plans);
     for rows in rows_per_plan(&plans) {
         picks.take(rows);
     }
@@ -415,6 +422,7 @@ pub(crate) async fn read_turns_upto(
         has_older: candidates.first().is_some_and(|&first| first < first_shown),
         first_turn: Some(first_turn),
         successor: None,
+        plan_firsts,
     })
 }
 
@@ -553,6 +561,7 @@ pub(crate) async fn read_steps(
             first_turn: Some(turn_id.to_string()),
             has_older: at > 0,
             successor: successor_id,
+            plan_firsts: Vec::new(),
         },
         page,
         earlier: (end - kept) as u64,
@@ -626,6 +635,21 @@ fn merge(
     }));
     items.sort_by(|a, b| a.id().cmp(b.id()));
     items
+}
+
+/// The first event of each plan, by its lane and its ACP `plan_id`.
+fn first_per_plan(plans: &[EventHead]) -> Vec<(Option<String>, Option<String>, String)> {
+    let mut firsts: BTreeMap<(Option<String>, Option<String>), String> = BTreeMap::new();
+    for plan in plans {
+        let facts: EventFacts = serde_json::from_str(&plan.facts).unwrap_or_default();
+        firsts
+            .entry((plan.lane.clone(), facts.plan))
+            .or_insert_with(|| plan.id.clone());
+    }
+    firsts
+        .into_iter()
+        .map(|((lane, plan), first)| (lane, plan, first))
+        .collect()
 }
 
 /// The events that show each plan, by its lane and its ACP `plan_id`: the
@@ -1454,6 +1478,43 @@ mod tests {
         let plans = fold.snapshot(0, 20, None).plans;
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].plan_id, first);
+        assert_eq!(plans[0].entries[0].status, "completed");
+    }
+
+    /// A plan whose events the budget leaves out keeps the id of its first
+    /// event when a later update of it comes (rules 32, 36).
+    #[tokio::test]
+    async fn a_plan_past_the_budget_keeps_its_first_id_for_a_later_update() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        let plan = |status: &str| {
+            json!({"plan": {"type": "items", "plan_id": "plan-1",
+                            "entries": [{"content": "a", "status": status}]}})
+        };
+        let first = commit(&store, &session, "plan_update", plan("pending")).await;
+        commit(&store, &session, "plan_update", plan("in_progress")).await;
+
+        // The budget holds the prompt alone.
+        let read = read_turns(&store, &session, None, 20, None, 1)
+            .await
+            .unwrap();
+        assert_eq!(read.loaded(), 1);
+        let mut fold = folded(&session, read);
+        assert!(fold.snapshot(0, 20, None).plans.is_empty());
+
+        let later = store
+            .create_event(NewAgentEvent {
+                session_id: Some(session.clone()),
+                task_id: None,
+                kind: "plan_update".into(),
+                payload: plan("completed"),
+            })
+            .await
+            .unwrap();
+        fold.apply(&crate::http::convert::event_dto(later), true);
+        let plans = fold.snapshot(0, 20, None).plans;
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].plan_id, first, "the plan keeps its first id");
         assert_eq!(plans[0].entries[0].status, "completed");
     }
 

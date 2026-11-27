@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-core/src/event_facts.rs
   - crates/ariadne-store/src/events.rs
   - crates/ariadne-store/tests/plan_facts_migration.rs
+  - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/src/trajectory/fold.rs
   - crates/ariadne-daemon/src/trajectory/read.rs
   - crates/ariadne-daemon/src/http/trajectory.rs
@@ -187,14 +188,19 @@ Out:
     payloads of the newest 20 and their diagnoses.
 26. `session_start`, `session_end`, `session.switched` and
     `session.pin_fallback` are `note` steps. A pin fallback is a warning.
+    A note is in the lane of its event, so a subagent's notice is a step of
+    that subagent's lane and the main lane does not count it (rule 31).
     A `notice` (021, rule 24) is a `note` step with the origin `notice`. Its
     text is the title, then ` · ` and the description where it has one. A
     `warning` or an `error` notice is a warning, and every other severity
     is info: a note has no stronger severity.
 27. `compaction_update` opens a `compaction` step by `compaction_id`, and a
-    later one changes it: its status, its summary where it gives one, and
-    its error. The later one is the step's newest change, so a read loads it
-    beside the opener. A compaction holds one step in its lane.
+    later one changes it: its status, its summary and its error. A stored
+    update holds the whole summary so far, so its summary replaces the
+    step's, an empty one included. The later one is the step's newest
+    change, so a read loads it beside the opener. A compaction holds one
+    step in its lane, found by the step its lane opened for it: another lane
+    may run a compaction of the same ACP id.
 28. A content block with bytes carries a `blob` URL under
     `/v1/sessions/{id}/trajectory/blobs/`, and never the bytes. Adjacent text
     blocks read as one: a stored whole keeps a block per chunk (021, rule 6),
@@ -213,6 +219,9 @@ Out:
 32. A plan is the plan of a lane and an ACP `plan_id`. Its `plan_id` on the
     wire is the id of its first stored event, so every fold of the session
     names it the same.
+    - A read names each plan by its first event from the heads, whatever
+      payloads its budget loads. A later update of a plan the read did not
+      load keeps that id.
     - A `plan_update` replaces the plan of its lane and `plan_id`: an
       `items` plan with its entries, and a `markdown` plan with its content
       and its path. A plan of another type folds as an `items` plan with
@@ -230,16 +239,18 @@ Out:
     `session_updated` domain event of the session is a `session_patch`.
     `running_turn_id` names the running turn.
     - `mode`, `config_options`, `title`, `cost` and `commands` start from the
-      display state of the row (021, rule 24). A hub reads it after it
-      follows the console, so a change after that read reaches it live.
+      display state that the current launch reported (021, rule 24). A hub
+      reads it after it follows the console, so a change after that read
+      reaches it live.
     - A live `display_state_update` sets each field it carries, and a
       change is a `session_patch`.
     - A config option lists the values of every group of a grouped select.
       A value that is not text, such as a boolean, reads as its JSON.
     - The agent's own `available_commands_update` sets `commands`. A stored
       one, from a daemon before the display state, sets them only where the
-      display state gave none; a cold read loads the newest one of the
-      session.
+      current launch reported no display state. A reported state is the
+      agent's word, an empty list of commands included. A cold read loads
+      the newest stored one of the session.
 
 ### The fold
 
@@ -484,6 +495,18 @@ Out:
     `read.rs::a_turn_of_thousands_of_events_loads_the_budget_at_most`.
 58. A plan of each kind folds by its lane and `plan_id`
     (rule 32): `fold.rs::a_plan_keeps_the_id_of_its_first_event`.
+59. A plan past the read budget keeps its first id for a later update
+    (rules 32, 36):
+    `read.rs::a_plan_past_the_budget_keeps_its_first_id_for_a_later_update`.
+60. A compaction takes each whole summary, an empty one included, and keeps
+    to its lane (rule 27):
+    `fold.rs::a_compaction_takes_each_whole_summary_and_keeps_to_its_lane`.
+61. A subagent's notice is a note of its lane (rules 26, 31):
+    `fold.rs::a_subagents_notice_is_a_note_of_its_lane`.
+62. A reported empty command list stands against a stored one, and a store
+    tells a reported empty state from no report (rule 33):
+    `fold.rs::a_reported_empty_command_list_stands_against_a_stored_one` and
+    `crates/ariadne-store/tests/store.rs::a_reported_empty_state_is_told_from_no_report`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

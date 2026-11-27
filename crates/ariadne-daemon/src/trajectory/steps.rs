@@ -481,7 +481,8 @@ fn commands_in(list: Option<&Value>) -> Vec<CommandDto> {
 /// Put each field of a display state (021, rule 24) that `display` holds
 /// into the session's state: the whole state the row keeps, or the fields
 /// a `display_state_update` says changed. Each mode, option and command is
-/// the ACP JSON the agent sent. Answers whether `display` held commands.
+/// the ACP JSON the agent sent. Answers whether `display` held a list of
+/// commands, an empty one included.
 pub(super) fn apply_display(session: &mut SessionStateDto, display: &Value) -> bool {
     if let Some(mode) = display.get("mode") {
         session.mode = mode.is_object().then(|| ModeStateDto {
@@ -525,7 +526,7 @@ pub(super) fn apply_display(session: &mut SessionStateDto, display: &Value) -> b
     if commands.is_some() {
         session.commands = commands_in(commands);
     }
-    commands.is_some_and(|list| list.as_array().is_some_and(|list| !list.is_empty()))
+    commands.is_some_and(Value::is_array)
 }
 
 /// One ACP config option. A grouped select lists the values of every group,
