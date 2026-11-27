@@ -94,9 +94,10 @@ fn call_details(
     moments: &[Moment],
     events: &[AgentEvent],
 ) -> HashMap<String, CallDetail> {
-    let by_id: HashMap<&str, &AgentEvent> = events
+    let by_id: HashMap<&str, (usize, &AgentEvent)> = events
         .iter()
-        .map(|event| (event.id.as_str(), event))
+        .enumerate()
+        .map(|(at, event)| (event.id.as_str(), (at, event)))
         .collect();
     let mut details = HashMap::new();
     for moment in moments {
@@ -104,10 +105,16 @@ fn call_details(
             continue;
         };
         let mut detail = CallDetail::default();
-        for row in fold.call_rows(&call.id) {
-            let Some(event) = by_id.get(row.as_str()) else {
-                continue;
-            };
+        // The fold names the rows by role; the newest of each kind wins
+        // only where the rows are read in the order the events came.
+        let mut rows: Vec<(usize, &AgentEvent)> = fold
+            .call_rows(&call.id)
+            .iter()
+            .filter_map(|row| by_id.get(row.as_str()).copied())
+            .collect();
+        rows.sort_by_key(|(at, _)| *at);
+        rows.dedup_by_key(|(at, _)| *at);
+        for (_, event) in rows {
             let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) else {
                 continue;
             };
@@ -633,6 +640,38 @@ mod tests {
         assert!(out.contains("line 14"), "{out}");
         assert!(!out.contains("line 1\n"), "{out}");
         assert!(out.contains("… 4 more lines"), "{out}");
+    }
+
+    #[test]
+    fn a_call_keeps_its_newest_output_across_mixed_updates() {
+        let call = |id: &str, kind: &str, acp: Value| {
+            let mut acp = acp;
+            acp["toolCallId"] = json!("call-1");
+            acp["kind"] = json!("edit");
+            event(id, kind, json!({"tool_name": "Edit", "acp": acp}))
+        };
+        let events = [
+            call("a", "pre_tool_use", json!({"status": "pending"})),
+            call(
+                "b",
+                "tool_call_update",
+                json!({"status": "in_progress", "rawOutput": "old output",
+                       "content": [{"type": "diff", "path": "a.txt",
+                                    "patch": {"format": "git_patch", "text": "@@ -1 +1 @@\n-x\n+y\n"}}]}),
+            ),
+            call(
+                "c",
+                "tool_call_update",
+                json!({"status": "in_progress", "rawOutput": "new output"}),
+            ),
+            call("d", "post_tool_use", json!({"status": "completed"})),
+        ];
+
+        let out = handoff_text(&events, 10_000);
+
+        assert!(out.contains("new output"), "{out}");
+        assert!(!out.contains("old output"), "{out}");
+        assert!(out.contains("+y"), "{out}");
     }
 
     #[test]
