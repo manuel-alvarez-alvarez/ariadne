@@ -848,6 +848,21 @@ Out: the daemon endpoints themselves (012).
     of `done/total`, no border and no task row.
     Finished and cancelled goals start folded, and the fold the user picks
     for a goal is kept in `localStorage`.
+    Attention blocks: an unfolded goal shows, below each task row, one block
+    for each attention item that names the task, or one of its sessions
+    through the shared sessions list. An item that names many tasks shows one
+    block below each. Directly below the goal line, it shows one block for each
+    item that names the goal, or a session of the goal with no task. A task
+    with no goal shows its blocks below its row. A folded goal shows no block,
+    and its goal line keeps the attention badge. A block is the drawer row
+    (`AttentionBlock`, shared with the popover and the drawer): the reason,
+    the summary, the required action, the age, the affected links, the target
+    link and Dismiss. A form of one single-select question (rule 59) shows its
+    message and one button for each choice; every other form links to the
+    console. The blocks come only from `GET /v1/attention`, also during an
+    incomplete read, and follow its query with no new polling and no new
+    stream. The blocks keep the columns and width rules above, and each link
+    and button of a block takes a tab stop.
     A task card is three contained rows, for every status, in the goal
     panel. Finished cards have green borders, cancelled cards gray borders,
     and failed cards red borders. Its target minimum width is 18rem (about
@@ -2571,6 +2586,28 @@ view.
   and its rail segment takes the card's border colour, a goal-less task's
   too
   (`ui/src/features/goals/goal-board.test.tsx::draws a row with no border and no fill, its rail segment in the status colour`).
+- An attention item is a block below the task row or goal line it names:
+  below each task it names or whose session it names, one below each of many
+  tasks, below the goal line for the goal or a session with no task, below the
+  row of a task with no goal, and none under a folded goal, whose line keeps
+  the badge
+  (`ui/src/features/goals/attention-blocks.test.tsx::shows a block below the row of the task an item names, and none below the others`;
+  `::shows a block below a task whose session an item names`;
+  `::shows one block below each task an item names, and one if it names a task and its session`;
+  `::shows a block for the goal, or for a session of the goal with no task, directly below the goal line`;
+  `::shows a task with no goal its blocks below its row`;
+  `::shows no block under a folded goal, and its goal line keeps the attention badge`).
+- A block draws the content of a drawer row and keeps every link and button
+  in the tab order
+  (`ui/src/features/goals/attention-blocks.test.tsx::draws the content of a drawer row: summary, action, age, links, target and Dismiss`;
+  `::keeps every link and button of a block in the tab order`).
+- A block of a form of one single-select question answers it with one button
+  for each choice, and a block of any other form links to the console
+  (`ui/src/features/goals/attention-blocks.test.tsx::answers a form of one single-select question from its block with one button per choice`;
+  `::links a form of another shape to the console and draws no buttons`).
+- The blocks read only the shared list, also while its read is incomplete
+  (`ui/src/features/goals/attention-blocks.test.tsx::shows blocks from the shared list while the read is incomplete`;
+  `ui/src/features/goals/attention-incomplete.test.tsx::retains known items and their board badges while reporting an incomplete read`).
 - The token figures share one column sized to the largest figure, the
   goal's total directly above its rows', and no cell cuts a figure
   (`ui/src/features/goals/goal-board.test.tsx::puts the token figures in one column, the goal's total over its rows', never cut`).

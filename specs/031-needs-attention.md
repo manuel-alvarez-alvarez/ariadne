@@ -82,9 +82,15 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
    no polling or subscription. The shell header remains available while page
    content scrolls.
 
+4. The Goals board draws each item as a block below the task row or the goal
+   line it names, with the one component (`AttentionBlock`) the popover and
+   the drawer use. It reads the same shared query, so it adds no polling and
+   no stream, and it shows items also during an incomplete read. Spec 015
+   rule 39 states the placement.
+
 Acceptance criteria: `ui/src/features/goals/attention-header.test.tsx` proves
 loading, unavailable, empty, partial and populated states, item navigation,
-Escape dismissal, and rendering outside the Goals route. The header is outside
+Escape dismissal, and rendering outside the Goals route. `ui/src/features/goals/attention-blocks.test.tsx` proves the blocks of rule 4: their placement under tasks and goal lines, their content, the single-select answer, and the incomplete read. The header is outside
 the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
 
 
