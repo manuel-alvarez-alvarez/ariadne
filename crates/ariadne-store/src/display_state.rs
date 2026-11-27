@@ -5,7 +5,8 @@
 //! The state belongs to one launch. A report from a launch that the session
 //! has replaced changes nothing, and the first report of a new launch starts
 //! from an empty state, so no value of the earlier launch is carried into it.
-//! Until the new launch reports, the earlier launch's state is the one read.
+//! Once the session names another launch, the earlier launch's state is read
+//! as empty, even where the new launch never reports.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,15 +46,21 @@ pub struct SessionCost {
 }
 
 impl Store {
-    /// The display state the session's agent last reported: empty where it
-    /// reported none.
+    /// The display state that the session's current launch reported: empty
+    /// where that launch reported none.
     pub async fn session_display_state(&self, id: &str) -> Result<SessionDisplayState> {
-        self.get_session(id).await?;
-        let stored: Option<String> =
-            sqlx::query_scalar("SELECT display_state FROM agent_sessions WHERE id = ?")
-                .bind(id)
-                .fetch_one(self.r())
-                .await?;
+        let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT launch_id, display_launch_id, display_state FROM agent_sessions WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.r())
+        .await?;
+        let Some((current, written_by, stored)) = row else {
+            return Err(crate::not_found("session", id));
+        };
+        if current.is_none() || current != written_by {
+            return Ok(SessionDisplayState::default());
+        }
         Ok(stored
             .and_then(|state| serde_json::from_str(&state).ok())
             .unwrap_or_default())

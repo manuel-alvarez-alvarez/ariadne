@@ -370,3 +370,51 @@ async fn a_new_launch_replaces_the_display_state_of_the_earlier_one() {
     assert_eq!(state.title, None, "the earlier launch's title is gone");
     assert_eq!(state.mode.unwrap().current_id.as_deref(), Some("code"));
 }
+
+/// A refused model switch leaves the options that the agent reported: the
+/// daemon's own copy of the options is not written over them.
+#[tokio::test]
+async fn a_refused_switch_leaves_the_reported_options() {
+    let reported = json!([{"id": "model-id", "name": "Model", "category": "model",
+                           "type": "select", "currentValue": "test-model",
+                           "options": [{"value": "test-model", "name": "Reported"}]}]);
+    let mut scripted = script();
+    scripted["reject_config_value"] = json!("b");
+    scripted["prompts"] = json!([turn(json!([
+        {"sessionUpdate": "config_option_update", "configOptions": reported},
+    ]))]);
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    h.git_repo("repo");
+    let cast = h.cast_pinned("stub:test-model").await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the first turn to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(
+        json!(display_state(&h, &session).await.config_options),
+        reported
+    );
+
+    let (status, _) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/switch", session.id),
+            json!({"model": "stub:b"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    assert_eq!(
+        stub.calls_of("session/set_config_option")
+            .last()
+            .map(|call| call["value"].clone()),
+        Some(json!("b")),
+        "the switch reached the agent"
+    );
+
+    assert_eq!(
+        json!(display_state(&h, &session).await.config_options),
+        reported
+    );
+}

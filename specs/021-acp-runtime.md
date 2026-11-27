@@ -649,7 +649,8 @@ it leaves nothing to delete.
       `{session_id, compaction_id, status, summary, error}`. `summary` is the
       whole summary so far. A `summary` or `error` in the update is a patch:
       an omitted one keeps its value, null clears it, and a value replaces
-      it.
+      it. A relay reconnect (rules 18 and 20) folds the retained frames of completed
+      turns into each compaction before it handles a later update.
     - The runtime stores `current_mode_update` as `mode_update` with
       `{session_id, current_mode_id}`.
     - The session row keeps a display state, which
@@ -660,16 +661,21 @@ it leaves nothing to delete.
       restart.
     - A launch writes the modes and the options that the session opened
       with, after the pins of rule 3 and the plan mode of rule 22. A mode
-      change that the agent reported before that write keeps its mode.
+      change that the agent reported before that write keeps its mode. A
+      relay reconnect writes nothing at setup, since its setup answers are
+      the relay's record and the state has moved past them.
     - `current_mode_update`, `config_option_update`, the `title` of a
       `session_info_update`, the `cost` of a `usage_update` and
       `available_commands_update` change the display state. A model switch
-      writes the options that its answer carries.
+      writes the options only where the agent's answers changed them. A
+      refused switch leaves the options that the agent reported.
     - Each change goes live as `display_state_update` with `{session_id}`
       and the fields that changed.
-    - The display state belongs to one launch. The first write of a new
-      launch starts from an empty state. A write from a launch that the
-      session has replaced changes nothing.
+    - The display state belongs to one launch. Once the row names another
+      launch, the earlier launch's state reads as empty, also where the new
+      launch ends before it writes. The first write of a new launch starts
+      from an empty state. A write from a launch that the session has
+      replaced changes nothing.
     - An update from a subagent (rule 15) never changes the display state.
       A child's `mode_update` is stored with its `subagent` field.
 
@@ -693,8 +699,14 @@ it leaves nothing to delete.
 - The display state survives a reopened store
   (`store.rs::a_sessions_display_state_survives_a_reopened_store`).
 - A new launch replaces the display state of the earlier launch
-  (`acp_state.rs::a_new_launch_replaces_the_display_state_of_the_earlier_one`,
-  `store.rs::a_new_launch_replaces_the_display_state_of_the_earlier_launch`).
+  (`acp_state.rs::a_new_launch_replaces_the_display_state_of_the_earlier_one`),
+  and hides it before its own first write
+  (`store.rs::a_new_launch_replaces_the_display_state_of_the_earlier_launch`).
+- A relay reconnect keeps a compaction's earlier summary chunks and the
+  options the agent reported
+  (`acp_runtime.rs::reconnect_keeps_a_compactions_summary_and_the_reported_options`).
+- A refused switch leaves the reported options
+  (`acp_state.rs::a_refused_switch_leaves_the_reported_options`).
 - A subagent's updates leave the display state alone
   (`acp_state.rs::a_subagents_updates_leave_the_display_state_alone`).
 

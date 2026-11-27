@@ -2006,6 +2006,74 @@ async fn reconnect_restores_commands_offered_in_a_completed_turn() {
     runtime.kill_and_wait(&session.id).await;
 }
 
+/// A reconnect keeps what a completed turn reported (021 rule 24): a
+/// compaction that the next turn completes holds the summary chunks of the
+/// earlier turn, and the reported options are not replaced by the replayed
+/// setup answer.
+#[tokio::test]
+async fn reconnect_keeps_a_compactions_summary_and_the_reported_options() {
+    use ariadne_daemon::acp::AcpRuntime;
+    let reported = json!([{"id": "model-id", "name": "Model", "category": "model",
+                           "type": "select", "currentValue": "reported-model",
+                           "options": [{"value": "reported-model", "name": "Reported"}]}]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["relay_parent"] = json!(true);
+    scripted["prompts"] = json!([
+        {"updates": [
+            {"sessionUpdate": "compaction_update", "compactionId": "c-1", "status": "in_progress"},
+            {"sessionUpdate": "compaction_summary_chunk", "compactionId": "c-1",
+             "content": {"type": "text", "text": "Kept across the reconnect."}},
+            {"sessionUpdate": "config_option_update", "configOptions": reported},
+        ]},
+        {"updates": [
+            {"sessionUpdate": "compaction_update", "compactionId": "c-1", "status": "completed"},
+        ]},
+    ]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .home(registry_home(&stub))
+        .session_place("tmux")
+        .await;
+    let _cleanup = common::RelayCleanup(h.launcher.cfg.root.clone());
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+    h.launcher.acp.detach_relays().await;
+    let runtime = AcpRuntime::new(h.store.clone()).with_places(
+        h.launcher.cfg.root.clone(),
+        env!("CARGO_BIN_EXE_ariadned").into(),
+        Some("none".into()),
+    );
+    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
+    runtime.send_prompt(&session.id, "continue".into()).unwrap();
+    eventually(TIMEOUT, "the turn after the reconnect", || async {
+        stub.calls_of("session/prompt").len() == 2
+            && h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let compactions: Vec<Value> = h
+        .store
+        .list_events(EventFilter {
+            session_id: Some(session.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.kind == "compaction_update")
+        .map(|event| serde_json::from_str(&event.payload).unwrap())
+        .collect();
+    assert_eq!(
+        compactions.last().unwrap()["summary"],
+        json!([{"type": "text", "text": "Kept across the reconnect."}]),
+        "{compactions:?}"
+    );
+    let state = h.store.session_display_state(&session.id).await.unwrap();
+    assert_eq!(json!(state.config_options), reported);
+    runtime.kill_and_wait(&session.id).await;
+}
+
 #[tokio::test]
 async fn a_stale_relay_socket_does_not_block_other_reconnects_or_the_liveness_sweep() {
     assert_failed_relay_is_swept("stale socket", true).await;

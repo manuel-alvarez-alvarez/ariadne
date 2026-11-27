@@ -7113,8 +7113,9 @@ async fn a_sessions_display_state_survives_a_reopened_store() {
     );
 }
 
-/// The first report of a new launch starts from an empty state, and a report
-/// from the replaced launch changes nothing (021 rule 24).
+/// A new launch hides the earlier launch's state at once, its first report
+/// starts from an empty state, and a report from the replaced launch changes
+/// nothing (021 rule 24).
 #[tokio::test]
 async fn a_new_launch_replaces_the_display_state_of_the_earlier_launch() {
     let (store, _dir) = test_store().await;
@@ -7143,14 +7144,9 @@ async fn a_new_launch_replaces_the_display_state_of_the_earlier_launch() {
         .unwrap();
     assert_eq!(stale, None, "the replaced launch writes nothing");
     assert_eq!(
-        store
-            .session_display_state(&session.id)
-            .await
-            .unwrap()
-            .title
-            .as_deref(),
-        Some("Old title"),
-        "the earlier state is read until the new launch reports"
+        store.session_display_state(&session.id).await.unwrap(),
+        SessionDisplayState::default(),
+        "the earlier launch's state is hidden before the new launch reports"
     );
 
     store

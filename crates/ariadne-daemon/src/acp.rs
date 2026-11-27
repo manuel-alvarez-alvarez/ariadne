@@ -555,6 +555,36 @@ struct Compaction {
     error: Value,
 }
 
+impl Turn {
+    /// Fold one compaction update into the compaction it names, under `key`.
+    /// A summary chunk appends its content. A `compaction_update` patches
+    /// `summary` and `error`: an omitted one keeps its value, null clears
+    /// it, and a value replaces it. Answers the summary and the error that
+    /// result, or None for an update of another kind.
+    fn fold_compaction(&mut self, key: String, update: &Value) -> Option<(Vec<Value>, Value)> {
+        let kind = update["sessionUpdate"].as_str()?;
+        if !matches!(kind, "compaction_summary_chunk" | "compaction_update") {
+            return None;
+        }
+        let compaction = self.compactions.entry(key).or_default();
+        if kind == "compaction_summary_chunk" {
+            compaction
+                .summary
+                .push(update.get("content").cloned().unwrap_or(Value::Null));
+        } else {
+            match update.get("summary") {
+                Some(Value::Array(summary)) => compaction.summary = summary.clone(),
+                Some(_) => compaction.summary.clear(),
+                None => {}
+            }
+            if let Some(error) = update.get("error") {
+                compaction.error = error.clone();
+            }
+        }
+        Some((compaction.summary.clone(), compaction.error.clone()))
+    }
+}
+
 /// An open tool call.
 struct OpenToolCall {
     /// The call merged so far.
@@ -2332,6 +2362,7 @@ impl AcpRuntime {
                         turn_ended.clone(),
                     );
                     rpc.effects = effects.clone();
+                    rpc.reconnected = recovery.is_some();
                     rpc.active_turn = active_turn.clone();
                     rpc.in_flight = in_flight.clone();
                     rpc.seat_brief = seat_brief_in_turns(&launch.config.system_prompt);
@@ -3013,6 +3044,9 @@ struct Rpc {
     /// The seat brief the next turn carries: set at the launch and again
     /// after a model switch, and taken by the first turn after either.
     brief: Option<String>,
+    /// A daemon reconnecting to a relay that runs this launch already: its
+    /// setup answers come from the relay's record, not from the agent now.
+    reconnected: bool,
 }
 
 impl Rpc {
@@ -3041,6 +3075,7 @@ impl Rpc {
             seat_brief: None,
             brief: None,
             after_cancel: false,
+            reconnected: false,
         }
     }
 
@@ -3112,6 +3147,11 @@ impl RuntimeIncoming {
             let session = &params["sessionId"];
             let update = &params["update"];
             self.subagents.fold(session, update);
+            // A compaction that a later turn completes keeps the summary
+            // and the error that its earlier frames reported.
+            let compaction = update["compactionId"].as_str().unwrap_or_default();
+            let key = tool_key(compaction, self.subagents.tag(session).as_ref());
+            self.turn.lock().await.fold_compaction(key, update);
             if update["sessionUpdate"] == "available_commands_update"
                 && self.subagents.tag(session).is_none()
             {
@@ -3280,11 +3320,7 @@ impl RuntimeIncoming {
                 self.turn
                     .lock()
                     .await
-                    .compactions
-                    .entry(tool_key(id, subagent))
-                    .or_default()
-                    .summary
-                    .push(content.clone());
+                    .fold_compaction(tool_key(id, subagent), &update);
                 self.sink
                     .emit_live(
                         "compaction_summary_chunk",
@@ -3296,24 +3332,15 @@ impl RuntimeIncoming {
                     )
                     .await;
             }
-            // `summary` and `error` are patches: an omitted one keeps its
-            // value, null clears it, and a value replaces it.
             Some("compaction_update") => {
                 self.end_text().await;
                 let id = update["compactionId"].as_str().unwrap_or_default();
-                let (summary, error) = {
-                    let mut turn = self.turn.lock().await;
-                    let compaction = turn.compactions.entry(tool_key(id, subagent)).or_default();
-                    match update.get("summary") {
-                        Some(Value::Array(summary)) => compaction.summary = summary.clone(),
-                        Some(_) => compaction.summary.clear(),
-                        None => {}
-                    }
-                    if let Some(error) = update.get("error") {
-                        compaction.error = error.clone();
-                    }
-                    (compaction.summary.clone(), compaction.error.clone())
-                };
+                let (summary, error) = self
+                    .turn
+                    .lock()
+                    .await
+                    .fold_compaction(tool_key(id, subagent), &update)
+                    .unwrap_or_default();
                 self.sink
                     .emit(
                         "compaction_update",
@@ -4160,7 +4187,8 @@ async fn run_protocol(
     // The launch's display state starts from what the session opened with,
     // after the pins and the plan mode (rule 24). A mode change the agent
     // reported meanwhile is newer than the answer, unless the daemon set
-    // `plan` after it.
+    // `plan` after it. A reconnect replays setup answers that the state has
+    // moved past, so it writes nothing.
     let planning = matches!(
         rpc.outbound
             .plan_mode
@@ -4187,18 +4215,20 @@ async fn run_protocol(
                 .collect(),
         });
     let opened_with = option_values(&options);
-    rpc.sink
-        .update_display(&json!(session_id), &["mode", "config_options"], |state| {
-            let reported = state.mode.take().and_then(|mode| mode.current_id);
-            state.mode = modes.map(|mut modes| {
-                if !planning && reported.is_some() {
-                    modes.current_id = reported;
-                }
-                modes
-            });
-            state.config_options = opened_with;
-        })
-        .await;
+    if !rpc.reconnected {
+        rpc.sink
+            .update_display(&json!(session_id), &["mode", "config_options"], |state| {
+                let reported = state.mode.take().and_then(|mode| mode.current_id);
+                state.mode = modes.map(|mut modes| {
+                    if !planning && reported.is_some() {
+                        modes.current_id = reported;
+                    }
+                    modes
+                });
+                state.config_options = opened_with;
+            })
+            .await;
+    }
 
     rpc.sink
         .emit("session_start", json!({"session_id": session_id}))
@@ -4254,6 +4284,7 @@ async fn serve_with_input(
             change = switches.recv(), if switches_open && !closing.load(Ordering::SeqCst) => {
                 match change {
                     Some(change) => {
+                        let before = option_values(&options);
                         let result = async {
                             options = set_pinned_option(rpc, session_id, options.clone(), &["model"], &["model"], "model", &change.model).await?;
                             if let Some(effort) = &change.effort {
@@ -4266,12 +4297,16 @@ async fn serve_with_input(
                         if result.is_ok() {
                             rpc.brief = rpc.seat_brief.clone();
                         }
+                        // Only an answer the agent gave moves the options:
+                        // a refused switch leaves the ones it reported.
                         let switched = option_values(&options);
-                        rpc.sink
-                            .update_display(&json!(session_id), &["config_options"], |state| {
-                                state.config_options = switched;
-                            })
-                            .await;
+                        if switched != before {
+                            rpc.sink
+                                .update_display(&json!(session_id), &["config_options"], |state| {
+                                    state.config_options = switched;
+                                })
+                                .await;
+                        }
                         let _ = change.done.send(result);
                     }
                     None => switches_open = false,
