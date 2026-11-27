@@ -292,13 +292,47 @@ fn subject_input(input: &Value) -> Value {
     Value::Object(kept)
 }
 
-/// Whether a call event carries text its preview reads: a non-empty text
-/// content, or a raw output.
+/// The output text of a call event that its preview reads: its non-empty
+/// text contents, else its `rawOutput`. None where it has neither.
+pub fn output_text(acp: &Value) -> Option<String> {
+    let text: Vec<String> = content_of(acp)
+        .filter(|entry| text(entry, "/type").as_deref() == Some("content"))
+        .filter_map(|entry| text(entry, "/content/text"))
+        .filter(|text| !text.is_empty())
+        .collect();
+    if !text.is_empty() {
+        return Some(text.join("\n"));
+    }
+    match acp.get("rawOutput") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) => Some(text.clone()),
+        Some(Value::Object(object))
+            if object.contains_key("stdout") || object.contains_key("stderr") =>
+        {
+            Some(
+                ["stdout", "stderr"]
+                    .into_iter()
+                    .filter_map(|key| object.get(key)?.as_str())
+                    .filter(|text| !text.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        }
+        Some(raw) => Some(raw.to_string()),
+    }
+}
+
+/// Whether a call event gives its call a preview: output text whose first
+/// lines are not empty.
 fn has_output(acp: &Value) -> bool {
-    content_of(acp).any(|entry| {
-        text(entry, "/type").as_deref() == Some("content")
-            && text(entry, "/content/text").is_some_and(|text| !text.is_empty())
-    }) || acp.get("rawOutput").is_some_and(|raw| !raw.is_null())
+    output_text(acp).is_some_and(|whole| {
+        let mut lines = whole.lines();
+        match (lines.next(), lines.next()) {
+            (None, _) => false,
+            (Some(first), None) => !first.is_empty(),
+            _ => true,
+        }
+    })
 }
 
 fn text(value: &Value, pointer: &str) -> Option<String> {
@@ -381,6 +415,25 @@ mod tests {
         assert!(!facts.diffs);
         let text = serde_json::to_string(&facts).unwrap();
         assert!(!text.contains("LOG-TEXT") && !text.contains("BIG-INPUT"));
+    }
+
+    /// An event flags output only where its preview is not empty: an empty
+    /// raw output and an empty stdout and stderr flag none.
+    #[test]
+    fn only_an_output_with_a_preview_is_flagged() {
+        let flagged = |raw: serde_json::Value| {
+            facts_of(
+                "tool_call_update",
+                &json!({"acp": {"toolCallId": "c", "rawOutput": raw}}),
+            )
+            .output
+        };
+        assert!(flagged(json!("useful output")));
+        assert!(!flagged(json!("")));
+        assert!(!flagged(json!("\n")));
+        assert!(!flagged(json!({"stdout": "", "stderr": ""})));
+        assert!(flagged(json!({"stdout": "", "stderr": "boom"})));
+        assert!(flagged(json!({"exit": 0})));
     }
 
     /// The stored `tool_call_update` and `tool_call_abandoned` of the ticket

@@ -1309,7 +1309,8 @@ mod tests {
     /// A cold read gives a call of any count of updates the step a warm
     /// fold gives it: the fields an intermediate update named and a later
     /// one omitted, and every update counted in `detail_rev`, from the
-    /// facts; the preview from the newest output payload (rule 22).
+    /// facts; the preview from the newest payload that gives one, past an
+    /// empty output (rule 22).
     #[tokio::test]
     async fn a_cold_read_keeps_the_fields_of_an_intermediate_update() {
         let (store, session, _dir) = session().await;
@@ -1333,6 +1334,8 @@ mod tests {
                     json!({"toolCallId": "c1", "content": [{"type": "diff", "path": "config.json",
                              "oldText": "a\nb", "newText": "a\nc"}]})
                 }
+                40 => json!({"toolCallId": "c1", "rawOutput": ""}),
+                50 => json!({"toolCallId": "c1", "rawOutput": {"stdout": "", "stderr": ""}}),
                 _ => json!({"toolCallId": "c1", "status": "in_progress"}),
             };
             commit(&store, &session, "tool_call_update", json!({ "acp": acp })).await;

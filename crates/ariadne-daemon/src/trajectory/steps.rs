@@ -3,7 +3,7 @@
 
 use serde_json::Value;
 
-use ariadne_core::event_facts::{EventFacts, FactLocation};
+use ariadne_core::event_facts::{EventFacts, FactLocation, output_text};
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::trajectory::{
@@ -384,34 +384,7 @@ pub(super) fn diffs_of(acp: &Value) -> Vec<(Option<String>, u64, u64)> {
 /// The start of what a call gave back: the text of its content, else its
 /// raw output.
 pub(super) fn preview_of(acp: &Value) -> Option<String> {
-    let text: Vec<String> = acp
-        .get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|entry| string_at(entry, "/type").as_deref() == Some("content"))
-        .filter_map(|entry| string_at(entry, "/content/text"))
-        .filter(|text| !text.is_empty())
-        .collect();
-    let whole = if !text.is_empty() {
-        text.join("\n")
-    } else {
-        match acp.get("rawOutput") {
-            None | Some(Value::Null) => return None,
-            Some(Value::String(text)) => text.clone(),
-            Some(Value::Object(object))
-                if object.contains_key("stdout") || object.contains_key("stderr") =>
-            {
-                ["stdout", "stderr"]
-                    .into_iter()
-                    .filter_map(|key| object.get(key)?.as_str())
-                    .filter(|text| !text.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            Some(raw) => raw.to_string(),
-        }
-    };
+    let whole = output_text(acp)?;
     let lines: Vec<&str> = whole.lines().take(PREVIEW_LINES).collect();
     let preview: String = lines.join("\n").chars().take(PREVIEW_CHARS).collect();
     (!preview.is_empty()).then_some(preview)

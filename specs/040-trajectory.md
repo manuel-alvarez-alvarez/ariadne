@@ -53,7 +53,7 @@ Out:
 3. `facts` holds what a read counts by: a tool call's id, status, kind,
    paths, title and locations, the fields of its input that its subject
    reads (a command's first line, a path, a line, a pattern, a URL), and
-   whether it carries output text and diffs, never the output itself; a message's `item_id`; a subagent announcement's id and state; a
+   whether it gives a preview and carries diffs, never the output itself; a message's `item_id`; a subagent announcement's id and state; a
    question's or a legacy request's id; a diagnosis's error; a stop's
    reason; a compaction's id; a permission request's options and whether it
    names an Ariadne tool; and a reply's option, decider and label. Facts are
@@ -153,8 +153,8 @@ Out:
     read gives a call of any count of updates the step a warm fold gives
     it: it takes the title, kind, locations, subject and status of each
     update from its facts, counts each update in `detail_rev`, and loads
-    the payload of the opener, the newest update, the newest update with
-    output text and the newest with diffs. Its
+    the payload of the opener, the newest update, the newest update that
+    gives a preview and the newest with diffs. Its
     `preview` is the first five lines, and at most 400 characters, of its
     output text, else of its `rawOutput`: a row shows that much. Its
     `diff_stat` counts the files of its diffs, and the `+` and `-` lines of a
@@ -288,7 +288,8 @@ Out:
 
 1. The facts of an event, its lane, and the daemon's own allow
    (rules 2, 3): `event_facts.rs::the_facts_hold_what_a_read_counts_by`,
-   `event_facts.rs::a_calls_facts_hold_its_small_fields_and_no_output`.
+   `event_facts.rs::a_calls_facts_hold_its_small_fields_and_no_output`,
+   `event_facts.rs::only_an_output_with_a_preview_is_flagged`.
 2. The facts of the stored call updates of the ticket contract (rule 4):
    `event_facts.rs::the_stored_call_updates_give_the_facts_of_their_call`.
 3. The store keeps the facts at insert, fills them for an old row, and
