@@ -11,7 +11,7 @@
 import { normalizeBaseUrl, type TrajectorySnapshotDto, type TrajectoryUpdateDto } from "@/api"
 import { parsePayload, ReconnectingEventStream } from "@/events/reconnecting-stream"
 
-import type { ConsoleStreamStatus } from "../console/console-stream"
+export type ConsoleStreamStatus = "connecting" | "live" | "reconnecting"
 
 const MAX_BACKOFF_MS = 5_000
 

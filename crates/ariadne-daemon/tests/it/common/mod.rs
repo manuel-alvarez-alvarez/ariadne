@@ -28,6 +28,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
+use tokio::sync::Notify;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::mpsc::UnboundedSender;
 use tower::ServiceExt;
@@ -163,6 +164,7 @@ pub(crate) struct HarnessBuilder {
     discover_agents: bool,
     second_agent: Option<String>,
     timeouts: Timeouts,
+    failure_diagnosis_deadline: Option<Arc<Notify>>,
     path: std::ffi::OsString,
     index: String,
     manager_homes: Option<ManagerHomes>,
@@ -229,6 +231,7 @@ pub(crate) fn harness() -> HarnessBuilder {
             forge_wake_debounce: Duration::from_millis(1),
             ..Timeouts::default()
         },
+        failure_diagnosis_deadline: None,
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
         manager_homes: None,
@@ -246,6 +249,11 @@ pub(crate) fn harness() -> HarnessBuilder {
 }
 
 impl HarnessBuilder {
+    pub(crate) fn failure_diagnosis_deadline(mut self, deadline: Arc<Notify>) -> Self {
+        self.failure_diagnosis_deadline = Some(deadline);
+        self
+    }
+
     pub(crate) fn session_place(mut self, place: &str) -> Self {
         self.session_place = Some(place.into());
         self
@@ -540,6 +548,10 @@ impl HarnessBuilder {
             store.clone(),
             self.timeouts.failure_diagnosis_decision,
         );
+        let failure_diagnosis = match self.failure_diagnosis_deadline {
+            Some(deadline) => failure_diagnosis.with_manual_deadline(deadline),
+            None => failure_diagnosis,
+        };
         let config = Arc::new(config);
         let mut acp = ariadne_daemon::acp::AcpRuntime::with_transcripts(
             store.clone(),

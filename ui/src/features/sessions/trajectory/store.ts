@@ -72,8 +72,6 @@ export interface TrajectoryState {
    * turn holds them, and an open subagent step shows their live version.
    */
   children: Record<string, StepDto>
-  /** The notices of the steps before a turn's page, by turn id, oldest first. */
-  notices: Record<string, StepDto[]>
   queued: QueuedPrompt[]
   /** The turns that took a queued prompt away: each echo takes one prompt, once. */
   echoed: string[]
@@ -88,7 +86,6 @@ export function emptyTrajectory(): TrajectoryState {
     subagents: [],
     pages: {},
     children: {},
-    notices: {},
     queued: [],
     echoed: [],
   }
@@ -117,7 +114,6 @@ export function applySnapshot(
     subagents: snapshot.subagents,
     pages: {},
     children: {},
-    notices: {},
     queued: state.queued,
     echoed: state.echoed,
   })
@@ -219,18 +215,6 @@ export function addStepPage(
         ]
       : page.steps
   return { ...state, pages: { ...state.pages, [turnId]: { steps, earlier: page.earlier_steps } } }
-}
-
-/** Keep the notices of an older page of a turn's steps, in front of the ones held. */
-export function addNotices(
-  state: TrajectoryState,
-  turnId: string,
-  steps: readonly StepDto[],
-): TrajectoryState {
-  if (steps.length === 0) return state
-  const held = state.notices[turnId] ?? []
-  const fresh = steps.filter((step) => !held.some((one) => one.id === step.id))
-  return { ...state, notices: { ...state.notices, [turnId]: [...fresh, ...held] } }
 }
 
 export function queuePrompt(state: TrajectoryState, text: string, id: string): TrajectoryState {

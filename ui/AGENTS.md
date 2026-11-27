@@ -124,7 +124,7 @@ running one by hand.
 
 The suite needs no daemon and no agent. The daemon is a stubbed `fetch` and a
 stubbed `EventSource` (`src/test/`), and a session's console is fed the
-console stream events a test emits on that stand-in. Do not put a heavy mock in
+trajectory snapshots and updates a test emits on that stand-in. Do not put a heavy mock in
 `src/test/setup.ts`: a mock there slows every file, and the dialog tests then
 time out.
 
@@ -184,8 +184,8 @@ src/
                    pane over one
     issues/        the Forge tab of open issues from an enabled repository's
                    forge, and filling a goal dialog from one
-    sessions/      the sessions screen, the session panel and its console: a
-                   transcript of the daemon's console stream
+    sessions/      the sessions screen, the session panel and its console: the
+                   turns of the daemon's trajectory
     models/        the pin picker, the model catalog and the agent summary
     skills/        skills screen: the catalog, and the document each one is
     workflows/     the Workflows screen: the catalog, the document editor, and
@@ -452,7 +452,7 @@ invalidate *everything* of that stream's host, `qk.host(host)`
 (`src/events/stream.test.ts` pins both). Reconnection
 itself — capped exponential backoff with jitter — is
 `src/events/reconnecting-stream.ts`, shared with the daemon-log stream and a
-session's console stream; `DomainEventStream` adds the
+session's trajectory stream; `DomainEventStream` adds the
 protocol and publishes its state through `useStreamStore`.
 
 An `EventSource` can sit `OPEN` with no `error` while the daemon is gone, so
@@ -472,75 +472,13 @@ places until it is handled.
 
 ### The session console
 
-A session's console is drawn by the app, in React, from the daemon's console
-stream (008). It lives in `src/features/sessions/console/`:
-
-- `console-stream.ts` reads `GET /v1/sessions/{id}/console/stream`, a
-  `ReconnectingEventStream`. A `snapshot` carries the newest page of stored
-  events and the running turn's text so far, and an `event` carries each
-  later one. A `resync` or a drop reconnects on the event stream's backoff,
-  and the next snapshot replaces the transcript, so no block shows twice.
-- `transcript.ts` is the pure model. It folds the events into blocks as the
-  CLI's transcript does (`crates/ariadne-console/src/transcript.rs`): one
-  tool call block per `tool_call_id`, live chunks in one open block that the
-  stored whole closes, a permission and its reply in one block, and a
-  diagnosis on the error it names. A block keeps its first event id, and the
-  `subagent` that spoke, where the payload names one. It lists the
-  session's children from their `subagent_update` events, and `view` picks
-  the blocks of `main` or of one child. A child's permission question is
-  the session's, so it stays in `main`.
-- `console-view-state.ts` retains, in memory and per host and session (`local` also per daemon
-  address), what a console keeps while it is off screen: the draft, the
-  scroll position, whether it follows, the view shown and a fold
-  preference per block id. Write to it through `updateViewState`; a pane
-  mounted again reads it back.
-- `composer-menu.tsx` is the plus menu: the agent's commands and the session
-  actions. Switch and Resume are `SwitchSessionDialog` and `useResumeAction`
-  from `../session-actions.tsx`, the same ones the session panel uses.
-- `session-console.tsx` holds the pane's state, stream, scroll and keyboard
-  logic only; it draws no block, composer or status markup of its own.
-  `blocks.tsx` draws the blocks, `composer.tsx` the composer row (the input
-  box, suggestions, Send and Stop, footer) and `status.tsx` the status row,
-  the view bar, the stream and history lines and a failed send. A prompt and a permission pick both post `{"text"}` to
-  `POST /v1/sessions/{id}/console/input`. A cancel posts
-  `POST /v1/sessions/{id}/console/cancel` with no body. A failed post is kept
-  in the transcript with Retry and Edit. `form-card.tsx` draws a question the agent asks with its own tool
-  (an ACP form elicitation) as a card; `form-questions.ts` reads its schema, folds the
-  `question` and `question.resolved` events with `GET /v1/sessions/{id}/questions`,
-  and posts to `POST /v1/sessions/{id}/questions/{question_id}/answer`.
-  A session with subagents
-  shows a bar of views, as the CLI
-  attach pane does (008 rules 30 to 36). the arrow keys switch the view
-  inside the bar, which is one Tab stop, and a child's view is read-only. Escape there goes back to `main`, or
-  posts `{"subagent_id"}` to the cancel route for a running child that may
-  be cancelled.
-
-The console also has the CLI pane's extras (spec 015, rules 23a to 23f): a
-individual block disclosures (no global fold controls or global fold state), the agent's slash commands as a
-suggestion list over the input, a status row, a `queued` block for a sent
-prompt, and a footer of keys. `transcript.ts` holds their state
-(`availableCommands`, `queuedPrompts`, the launches' token totals and the
-turn's start); `blocks.tsx`, `composer.tsx` and `status.tsx` draw it.
-
-`workspace.tsx` measures the console panel: selected tool details sit beside
-the conversation at 880 CSS pixels or wider, and use a modal drawer below that.
-Tool and permission rows stay compact and selection never follows newer calls.
-Permission response controls open in the same details area; questions stay in the conversation.
-Ctrl-O has
-no handler in the shared browser and desktop console.
-
-Escape inside tool or permission details closes them and returns focus to the selected row.
-Escape elsewhere inside the console cancels a running turn and never reaches the pane
-or the modal. ⌘Escape moves the keyboard to the panel's Close button or the
-modal's Collapse button. The tests drive the console through the
-`EventSource` stand-in in `src/test/event-source.ts`.
-
-### The turn console
-
-`?console=turns` on the session view opens the turn console of
-`src/features/sessions/trajectory/` in place of the console above (spec 015,
-rules 89 to 109). It reads the daemon's trajectory (040), which folds the
-events, so write no fold of events here:
+A session's console is drawn by the app, in React, from the daemon's
+trajectory (040): turns, each with its prompt, one activity line and its
+answer (spec 015, rules 21 to 23c, 25 and 89 to 109). The daemon folds the events,
+so write no fold of events here. The session view mounts it in the session
+panel, a task, a goal and a pull request, with no switch and no URL
+parameter. It lives in `src/features/sessions/trajectory/`, with the parts it
+shares in `src/features/sessions/console/`:
 
 - `trajectory-stream.ts` reads `GET /v1/sessions/{id}/trajectory/stream`, a
   `ReconnectingEventStream`: a `snapshot`, then an `update` per revision.
@@ -552,8 +490,12 @@ events, so write no fold of events here:
   `children` holds the live steps of the subagents' lanes, which no turn
   holds, for an open subagent step.
 - `turn-view.tsx` draws a turn: the prompt, one activity line and the
-  answer, the step rows of an open fold, and the turn's `attention`.
-  `permission-card.tsx` draws a pending permission above the composer.
+  answer, the step rows of an open fold, and the turn's `attention` and
+  `notices`. The turn carries its warning notes and its compactions in
+  `notices`, and `notices_more` counts the others: one row gives the count
+  and opens the steps of the turn. The console reads no page of steps to find
+  a notice. `permission-card.tsx` draws a pending permission above the
+  composer.
 - `step-detail.tsx` draws a step: its row (`step-row.tsx`), and the detail
   that the row opens in place, by the step's kind, from the detail route
   (spec 015, rules 100 to 109). It reads a call's detail again at each new
@@ -565,20 +507,50 @@ events, so write no fold of events here:
   `full-view-context.ts`. `status-slot.tsx`,
   `dock-slot.tsx` and `find-slot.tsx` are the mount points of the status row,
   the dock above the composer and the find control.
-
-  `plan.tsx` draws a plan line and its checklist, and `notices.tsx` the
+- `plan.tsx` draws a plan line and its checklist, and `notices.tsx` the
   warning and compaction lines and the mark of an answered permission.
-- The console keeps its draft, folds and scroll place in
-  `../console/console-view-state.ts`, so expand, collapse and a change of
-  tab, which each mount a new pane, keep them.
 - `trajectory-console.tsx` holds the pane: the stream, the scroll, the keys
-  and the composer, which it imports from `../console/`.
+  and the composer.
 
-The shared parts of `../console/` keep their own look there. Where one draws
-a fixed colour, the turn console recolours it on a wrapper, as
+The parts in `console/` are:
+
+- `console-view-state.ts` retains, in memory and per host and session (`local`
+  also per daemon address), what a console keeps while it is off screen: the
+  draft, the scroll position, whether it follows, the folds and the refused
+  prompts. Write to it through `updateViewState`; a pane mounted again reads
+  it back, so expand, collapse and a change of tab, which each mount a new
+  pane, keep them.
+- `composer.tsx` is the composer row (the input box, suggestions, Send and
+  Stop, footer), and `composer-menu.tsx` the plus menu: the agent's commands
+  and the session actions. Switch and Resume are `SwitchSessionDialog` and
+  `useResumeAction` from `../session-actions.tsx`, the same ones the session
+  panel uses.
+- `status.tsx` draws the status row, the stream and history lines and a failed
+  send. `blocks.tsx` draws the prompt box and the permission picker.
+  `transcript-find.tsx` is the find control.
+- `form-card.tsx` draws a question the agent asks with its own tool (an ACP
+  form elicitation) as a card; `form-questions.ts` reads its schema, lists
+  the open questions with `GET /v1/sessions/{id}/questions`, and posts to
+  `POST /v1/sessions/{id}/questions/{question_id}/answer`.
+
+A prompt and a permission pick both post `{"text"}` to
+`POST /v1/sessions/{id}/console/input`. A cancel posts
+`POST /v1/sessions/{id}/console/cancel` with no body. A failed post is kept in
+the console with Retry and Edit. The UI calls neither
+`GET /v1/sessions/{id}/console` nor `GET /v1/sessions/{id}/console/stream`.
+
+Escape inside the console cancels a running turn and never reaches the pane
+or the modal; inside a step's full view it closes the view. ⌘Escape moves the
+keyboard to the panel's Close button or the modal's Collapse button. Ctrl-O
+has no handler in the browser and desktop console.
+
+The shared parts of `console/` keep their own look. Where one draws a fixed
+colour, the console recolours it on a wrapper, as
 `[&_.text-purple-500]:text-question-fg` does for the question card. The tests
-build turns and steps with `src/test/trajectory.ts`, and `drawnColours` in
-`src/test/colours.ts` finds a fixed colour that is drawn and not recoloured.
+build turns and steps with `src/test/trajectory.ts`, drive the console
+through the `EventSource` stand-in in `src/test/event-source.ts`, and
+`drawnColours` in `src/test/colours.ts` finds a fixed colour that is drawn and
+not recoloured.
 
 ### Routes
 

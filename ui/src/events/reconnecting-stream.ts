@@ -2,7 +2,7 @@
  * An `EventSource` that reconnects on its own terms.
  *
  * Three streams in this app need one — the domain events, the daemon's log
- * and a session's console (`features/sessions/console/console-stream.ts`).
+ * and a session's console (`features/sessions/trajectory/trajectory-stream.ts`).
  * The first two had written the same machinery for themselves: open, close
  * the old source first, retry with capped exponential backoff and jitter,
  * cancel the pending retry on stop. Written twice they drifted in the details

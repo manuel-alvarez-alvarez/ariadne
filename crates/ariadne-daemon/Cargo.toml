@@ -86,6 +86,8 @@ keepawake = { workspace = true }
 zbus = { workspace = true }
 
 [dev-dependencies]
+# `start_paused`: a test of a timer reads the clock it paused, not the wall.
+tokio = { workspace = true, features = ["test-util"] }
 toml = { workspace = true }
 http-body-util = { workspace = true }
 # Tests that need a clock the store does not offer: `last_activity_at` is

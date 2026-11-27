@@ -21,6 +21,7 @@ import {
   anUpdate,
   aPermissionStep,
   aSnapshot,
+  aSubagentStep,
   aToolStep,
   aTurn,
   text,
@@ -231,6 +232,17 @@ it("shows the status, the mode, the options, the context use, the cost and the t
   expect(row.className).not.toContain("flex-wrap")
 })
 
+it("counts no running subagent in the status row, and draws no bar of views for one", () => {
+  const turn = aTurn({ state: "running", ended_at: null, answer: [] })
+  const child = aSubagentStep(turn.id)
+  renderConsole(aSnapshot([{ ...turn, steps: [child] }], { subagents: [child] }), "running")
+
+  const row = screen.getByRole("region", { name: "Session status" })
+  expect(row.textContent).not.toMatch(/subagent/)
+  expect(screen.queryByRole("tablist", { name: "Console views" })).toBeNull()
+  expect(within(article(turn)).getByText("Explore the tests")).toBeTruthy()
+})
+
 it("always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone", async () => {
   const user = userEvent.setup()
   const turn = aTurn({ state: "running", ended_at: null, answer: [] })
@@ -240,7 +252,10 @@ it("always shows a warning, an error and a compaction in their turn, and an info
   const error = anErrorStep(turn.id)
   const steps = [info, warning, compaction]
   reply(`/trajectory/turns/${turn.id}/steps`, Response.json({ steps, earlier_steps: 0 }))
-  renderConsole(aSnapshot([{ ...turn, steps, attention: [error] }]), "running")
+  renderConsole(
+    aSnapshot([{ ...turn, steps, notices: [warning, compaction], attention: [error] }]),
+    "running",
+  )
 
   const drawn = article(turn)
   within(drawn).getByText("Rate limited · retrying")
@@ -332,8 +347,10 @@ it("finds the text of the loaded turns and the loaded steps", async () => {
   expect(within(find).getByRole("status").textContent).toBe("1 of 2")
   within(find).getByText("Older history remains unloaded.", { exact: false })
 
-  // A step is found once the console loaded it, and not before.
+  // A step is found once the console loaded it, and not before: an open fold loads it.
   fireEvent.change(field, { target: { value: "-- login" } })
+  expect(within(find).getByRole("status").textContent).toBe("No matches in loaded messages")
+  fireEvent.click(activityLine(turn))
   expect(within(find).getByRole("status").textContent).toBe("No matches in loaded messages")
   await act(async () => release())
   await waitFor(() => expect(within(find).getByRole("status").textContent).toBe("1 of 1"))
@@ -351,7 +368,7 @@ async function keptView(mount: "console" | "session view") {
   else
     renderScreen(
       <SessionDetailView host="local" session={aSession({ id: SESSION_ID, status: "idle" })} />,
-      { route: `/sessions?session=${SESSION_ID}&console=turns` },
+      { route: `/sessions?session=${SESSION_ID}` },
     )
   /** Open the stream of the pane on screen, with a box of its own. */
   const show = () => {
@@ -411,9 +428,7 @@ it("puts the place back once the open folds read their rows, not before", async 
   const late = new Promise<void>((resolve) => {
     release = resolve
   })
-  reply(`/trajectory/turns/${turn.id}/steps`, page(), earlier(), earlier(), page(), () =>
-    late.then(earlier),
-  )
+  reply(`/trajectory/turns/${turn.id}/steps`, page(), earlier(), page(), () => late.then(earlier))
   const view = renderConsole(aSnapshot([turn]))
   fireEvent.click(activityLine(turn))
   await within(article(turn)).findByText("Run the tests")
@@ -441,65 +456,47 @@ it("puts the place back once the open folds read their rows, not before", async 
   await waitFor(() => expect(again.top).toBe(600))
 })
 
-it("shows the warnings and the compaction of a closed turn of a snapshot before its fold opens", async () => {
+it("shows the warnings and the compaction of a closed turn from its notices, and reads no steps for them", async () => {
   const turn = aTurn()
   const warning = aNote(turn.id, "warning", "Rate limited · retrying")
   const compaction = aCompaction(turn.id)
-  const older = aNote(turn.id, "warning", "Pin fell back to sonnet")
-  const tool = aToolStep(turn.id)
-  reply(
-    `/trajectory/turns/${turn.id}/steps`,
-    Response.json({ steps: [warning, tool, compaction], earlier_steps: 120 }),
-    Response.json({ steps: [older, aNote(turn.id, "info", "Session started")], earlier_steps: 0 }),
-    Response.json({ steps: [older], earlier_steps: 0 }),
-  )
-  // A closed turn of a snapshot carries no steps (040, rule 13).
-  renderConsole(aSnapshot([{ ...turn, steps: [] }]))
+  // A closed turn of a snapshot carries no steps (040, rule 13), only its notices.
+  renderConsole(aSnapshot([{ ...turn, steps: [], notices: [warning, compaction] }]))
 
   const drawn = article(turn)
-  await within(drawn).findByText("Pin fell back to sonnet")
   within(drawn).getByText("Rate limited · retrying")
   within(drawn).getByText("Compacted the context")
-  expect(within(drawn).queryByText("Session started")).toBeNull()
   expect(activityLine(turn).getAttribute("aria-expanded")).toBe("false")
-  const reads = requests.filter((one) => one.path.endsWith(`/turns/${turn.id}/steps`))
-  expect(reads.map((one) => one.query.get("before"))).toEqual([null, warning.id])
+  expect(requests.filter((one) => one.path.endsWith(`/turns/${turn.id}/steps`))).toEqual([])
 
   fireEvent.click(screen.getByRole("button", { name: "Find in transcript" }))
   const field = screen.getByRole("textbox", { name: "Find in transcript" })
   const find = within(field.closest("search") as HTMLElement)
-  fireEvent.change(field, { target: { value: "Pin fell back" } })
-  expect(find.getByRole("status").textContent).toBe("1 of 1")
-
-  fireEvent.click(activityLine(turn))
-  fireEvent.click(within(drawn).getByRole("button", { name: "Show 120 earlier" }))
-  await waitFor(() => expect(within(drawn).queryByText("Loading the steps…")).toBeNull())
+  fireEvent.change(field, { target: { value: "Rate limited" } })
   expect(find.getByRole("status").textContent).toBe("1 of 1")
 })
 
-it("resumes the notice scan at the failed cursor on Retry", async () => {
+it("counts the notices of a turn that its notices do not hold in one row, which opens the steps of the turn", async () => {
+  const user = userEvent.setup()
   const turn = aTurn()
-  const newest = aToolStep(turn.id)
-  const middle = aToolStep(turn.id)
-  const resumed = aToolStep(turn.id)
-  const older = aNote(turn.id, "warning", "Old warning after retry")
-  const page = (steps: StepDto[], earlier_steps: number) => Response.json({ steps, earlier_steps })
-  const path = `/trajectory/turns/${turn.id}/steps`
+  const warning = aNote(turn.id, "warning", "Rate limited · retrying")
+  const older = aNote(turn.id, "warning", "Pin fell back to sonnet")
   reply(
-    path,
-    page([newest], 3),
-    page([middle], 2),
-    new Response(null, { status: 503 }),
-    page([resumed], 1),
-    page([older], 0),
+    `/trajectory/turns/${turn.id}/steps`,
+    Response.json({ steps: [older, warning], earlier_steps: 0 }),
   )
-  renderConsole(aSnapshot([turn]))
-  const drawn = within(article(turn))
-  fireEvent.click(await drawn.findByRole("button", { name: "Retry" }))
-  await drawn.findByText("Old warning after retry")
-  expect(
-    requests.filter((one) => one.path.endsWith(path)).map((one) => one.query.get("before")),
-  ).toEqual([null, newest.id, middle.id, middle.id, resumed.id])
+  renderConsole(aSnapshot([{ ...turn, notices: [warning], notices_more: 2 }]))
+
+  const drawn = article(turn)
+  expect(requests.filter((one) => one.path.endsWith(`/turns/${turn.id}/steps`))).toEqual([])
+  await user.click(within(drawn).getByRole("button", { name: "2 more notices" }))
+
+  expect(activityLine(turn).getAttribute("aria-expanded")).toBe("true")
+  await within(drawn).findByRole("list", { name: "Steps of the turn" })
+  // The notice the turn's own list left out shows once its steps are read, once.
+  await within(drawn).findByText("Pin fell back to sonnet")
+  expect(within(drawn).getAllByText("Rate limited · retrying")).toHaveLength(1)
+  expect(requests.filter((one) => one.path.endsWith(`/turns/${turn.id}/steps`))).toHaveLength(1)
 })
 
 it("loads back to the oldest turn it had loaded before it puts the reader's place back", async () => {

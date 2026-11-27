@@ -70,8 +70,6 @@ interface TurnViewProps {
   now: string
   /** The session's open questions, with their forms. */
   questions: readonly QuestionDto[]
-  /** The notices the console read from the steps before the turn's page. */
-  notices: readonly StepDto[]
   /** The finished plans that this turn last changed. */
   plans: readonly Plan[]
   /** The open folds of the console, by id: a plan's checklist among them. */
@@ -91,7 +89,6 @@ export const TurnView = memo(function TurnView({
   live,
   now,
   questions,
-  notices: older,
   plans,
   folds,
   onToggle,
@@ -128,11 +125,15 @@ export const TurnView = memo(function TurnView({
   const lastRows = liveRows.slice(-LIVE_STEPS).filter((step) => !marked(step, lastCalls))
   for (const step of lastRows) shownIds.add(step.id)
   const errors = turn.attention.filter((step) => step.type === "error" && !shownIds.has(step.id))
-  const held = new Set(fold.steps.map((step) => step.id))
-  const notices = [
-    ...older.filter(isNotice).filter((step) => !held.has(step.id)),
-    ...fold.steps.filter(isNotice),
-  ]
+  // The turn's own notices, and the ones among the steps the console has read:
+  // the opened steps hold the notices `notices_more` counts.
+  const held = new Set(turn.notices.map((step) => step.id))
+  // A closed fold shows the turn's own notices only: a page it loaded is
+  // dropped when the pane mounts again, so its rows would not survive.
+  const read = open ? fold.steps.filter((step) => !held.has(step.id)) : []
+  const notices = [...turn.notices, ...read]
+    .filter(isNotice)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
   const asked = turn.attention.filter(
     (step): step is QuestionStep => step.type === "question" && step.state === "open",
   )
@@ -204,6 +205,16 @@ export const TurnView = memo(function TurnView({
       {notices.map((step) => (
         <NoticeLine key={step.id} step={step} />
       ))}
+      {turn.notices_more > 0 ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => onToggle(turn.id)}
+          className="ml-4 flex w-[calc(100%-1rem)] cursor-pointer items-center rounded-md px-2 py-1 text-left font-mono text-xs text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {turn.notices_more} more {turn.notices_more === 1 ? "notice" : "notices"}
+        </button>
+      ) : null}
       {turn.attention_more > 0 ? (
         <button
           type="button"
