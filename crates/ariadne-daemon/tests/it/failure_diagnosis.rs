@@ -10,14 +10,16 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post as route_post;
 use serde_json::{Value, json};
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 
 use ariadne_core::{PermissionMode, SessionStatus, TaskStatus};
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{AgentPin, AgentSession, EventFilter, Store, Task};
 
 use crate::common::acp::{discovery_accepted, script, stub_acp_agent};
-use crate::common::{Harness, QUIET, TIMEOUT, eventually, harness, put_json, test_pin};
+use crate::common::{
+    Harness, HarnessBuilder, QUIET, TIMEOUT, eventually, harness, put_json, test_pin,
+};
 
 /// Start the agent of the task's first column and hand it a first prompt, the
 /// way the scheduler briefs a column's agent once it is up: the launch itself
@@ -64,6 +66,8 @@ struct ServerState {
 struct ModelServer {
     endpoint: String,
     requests: Arc<Mutex<Vec<Value>>>,
+    /// The worker returns to the semaphore when the hanging handler drops.
+    worker: Arc<Semaphore>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -112,10 +116,11 @@ impl ModelServer {
 
     async fn start(answer: Answer) -> Self {
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let worker = Arc::new(Semaphore::new(1));
         let state = ServerState {
             answer,
             requests: requests.clone(),
-            worker: Arc::new(Semaphore::new(1)),
+            worker: worker.clone(),
         };
         let app = axum::Router::new()
             .route("/v1/systemone", route_post(respond))
@@ -126,6 +131,7 @@ impl ModelServer {
         Self {
             endpoint,
             requests,
+            worker,
             task,
         }
     }
@@ -198,22 +204,21 @@ async fn world(
         error,
         ai_failure_diagnosis,
         server,
-        Timeouts::default(),
+        harness().timeouts(Timeouts::default()),
         true,
     )
     .await
 }
 
-/// [`world`], with the daemon's timeouts of its own — for a test about one
-/// of them running out — and whether the AI permission model is turned on
-/// at all: off, `ai_failure_diagnosis` finds it absent exactly as it would a
-/// model still loading, since [`FailureDiagnosis::consider`] reads
+/// [`world`], with a configurable harness and AI permission model. When the
+/// model is off, diagnosis treats it as absent, just as it would while
+/// loading, since [`FailureDiagnosis::consider`] reads
 /// [`AiPermissions::live`] rather than waiting on either.
 async fn world_with(
     error: Value,
     ai_failure_diagnosis: bool,
     server: &ModelServer,
-    timeouts: Timeouts,
+    builder: HarnessBuilder,
     ai_permissions_enabled: bool,
 ) -> (Harness, AgentSession) {
     let root = tempfile::tempdir().unwrap();
@@ -231,12 +236,11 @@ async fn world_with(
     );
     std::fs::write(home.join("config.toml"), config).unwrap();
 
-    let h = harness()
+    let h = builder
         .home(home)
         .discover_agents()
         .ai_permissions_endpoint(server.endpoint.clone())
         .python_bin(python())
-        .timeouts(timeouts)
         .await;
     discovery_accepted(&h, &agent, "stub").await;
 
@@ -433,7 +437,7 @@ async fn an_absent_model_produces_no_diagnosis_the_same_as_one_still_loading() {
         quota_error(),
         true,
         &server,
-        Timeouts::default(),
+        harness().timeouts(Timeouts::default()),
         /* ai_permissions_enabled */ false,
     )
     .await;
@@ -574,14 +578,14 @@ async fn a_second_failure_while_one_is_in_flight_is_skipped_not_queued() {
 #[tokio::test]
 async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
     let server = ModelServer::hanging().await;
+    let deadline = Arc::new(Notify::new());
     let (h, agent) = world_with(
         quota_error(),
         true,
         &server,
-        Timeouts {
-            failure_diagnosis_decision: Duration::from_millis(200),
-            ..Timeouts::default()
-        },
+        harness()
+            .timeouts(Timeouts::default())
+            .failure_diagnosis_deadline(deadline.clone()),
         true,
     )
     .await;
@@ -590,10 +594,17 @@ async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
         !server.requests.lock().unwrap().is_empty()
     })
     .await;
-    // Quiet, past the 200 ms bound above: a timed-out request reports
-    // nothing, so no later event marks it — only the continued absence of
-    // a diagnosis proves it never arrived.
+    assert_eq!(server.worker.available_permits(), 0);
+    deadline.notify_one();
+    eventually(
+        TIMEOUT,
+        "the hanging request's connection to close",
+        || async { server.worker.available_permits() == 1 },
+    )
+    .await;
+    // A timed-out request reports nothing, so listen for an unexpected event.
     tokio::time::sleep(QUIET).await;
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
     assert!(
         events_of(&h, &agent.id, "session.diagnosis")
             .await

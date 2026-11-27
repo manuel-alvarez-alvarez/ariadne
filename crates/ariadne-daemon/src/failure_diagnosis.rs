@@ -18,7 +18,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use futures_util::future::Either;
 use serde_json::{Map, Value, json};
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use ariadne_api::events::IngestEventRequest;
@@ -68,6 +70,7 @@ const SNAPSHOT_CUT: usize = 2_000;
 #[derive(Clone)]
 pub struct FailureDiagnosis {
     inner: Arc<Inner>,
+    manual_deadline: Option<Arc<Notify>>,
 }
 
 struct Inner {
@@ -114,7 +117,15 @@ impl FailureDiagnosis {
                 busy: AtomicBool::new(false),
                 current: Mutex::new(None),
             }),
+            manual_deadline: None,
         }
+    }
+
+    /// Use a signal in place of the timer for a test that controls expiry.
+    #[doc(hidden)]
+    pub fn with_manual_deadline(mut self, deadline: Arc<Notify>) -> Self {
+        self.manual_deadline = Some(deadline);
+        self
     }
 
     /// Consider a failed session for an advisory diagnosis: a no-op unless
@@ -146,10 +157,17 @@ impl FailureDiagnosis {
             return;
         }
         let inner = self.inner.clone();
+        let manual_deadline = self.manual_deadline.clone();
         let handle = tokio::spawn(async move {
             let _busy = BusyGuard(inner.clone());
-            if let Some((category, probabilities, model)) =
-                classify(&live.endpoint, &message, data.as_ref(), inner.timeout).await
+            if let Some((category, probabilities, model)) = classify(
+                &live.endpoint,
+                &message,
+                data.as_ref(),
+                inner.timeout,
+                manual_deadline.as_deref(),
+            )
+            .await
             {
                 let mut payload = Map::new();
                 payload.insert("error_event_id".into(), json!(error_event_id));
@@ -205,6 +223,7 @@ async fn classify(
     message: &str,
     data: Option<&Value>,
     timeout: Duration,
+    manual_deadline: Option<&Notify>,
 ) -> Option<(String, Option<Value>, String)> {
     let body = request_body(message, data);
     let request = async {
@@ -219,13 +238,22 @@ async fn classify(
         let bytes = response.bytes().await?;
         Ok::<Value, anyhow::Error>(serde_json::from_slice(&bytes)?)
     };
-    let answer = match tokio::time::timeout(timeout, request).await {
-        Ok(Ok(answer)) => answer,
-        Ok(Err(error)) => {
-            tracing::warn!(error = %error, "failure diagnosis request failed");
-            return None;
-        }
-        Err(_) => {
+    let deadline = match manual_deadline {
+        Some(signal) => Either::Left(signal.notified()),
+        None => Either::Right(tokio::time::sleep(timeout)),
+    };
+    let answer = tokio::select! {
+        // Like tokio::time::timeout, accept a ready response first.
+        biased;
+        result = request => match result {
+            Ok(answer) => answer,
+            Err(error) => {
+                tracing::warn!(error = %error, "failure diagnosis request failed");
+                return None;
+            }
+        },
+        // Check expiry even when the request exhausted its cooperative budget.
+        () = tokio::task::unconstrained(deadline) => {
             tracing::warn!("failure diagnosis request timed out");
             return None;
         }
