@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use ariadne_api::dashboards::DashboardDto;
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::goals::{GoalDto, GoalUsageDto, LinkedGoalDto, PullRequestOperationDto};
+use ariadne_api::goals::{GoalDto, GoalUsageDto, LinkedGoalDto};
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
 };
@@ -107,7 +107,6 @@ dto! {
         steps: Vec<WorkflowStepDto>,
     ) -> GoalDto {
         status: g.status(),
-        pull_request: pull_request_operation_dto(&g),
         linked: g.origin_goal_id.map(|origin_goal_id| LinkedGoalDto { origin_goal_id }),
         steps: steps,
         repos: repos,
@@ -235,16 +234,6 @@ pub(crate) fn event_dto(e: store::AgentEvent) -> AgentEventDto {
     }
 }
 
-/// The request an operation goal works on, where the goal runs one.
-fn pull_request_operation_dto(goal: &store::Goal) -> Option<PullRequestOperationDto> {
-    Some(PullRequestOperationDto {
-        operation: goal.pull_request_operation()?,
-        repository_id: goal.pr_repository_id.clone()?,
-        number: goal.pr_number?,
-        url: goal.pr_url.clone()?,
-    })
-}
-
 /// The names of the skills an agent loads, in the order they reach it.
 ///
 /// An agent has no name of its own, so this is what a reader identifies it
@@ -290,14 +279,15 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
     let depends_on = store.list_task_dependencies(&task.id).await?;
     let usage = task_usage(store, &task.id, &agents).await?;
     let reason = store.ended_reason(&task).await?;
-    let goal = store.task_goal(&task).await?;
-    let operation = goal.pull_request_operation();
-    // A review or babysit task works on its goal's request without opening
-    // one, so the response names that request; the stored `pr_url` stays as
-    // it is. A task that opened its own request keeps its own.
+    let link = store.task_pull_request(&task.id).await?;
+    let operation = link.as_ref().and_then(|link| link.operation());
+    // A review or babysit task works on a request without opening one, so
+    // the response names that request; the stored `pr_url` stays as it is.
     let mut task = task;
-    if operation.is_some() && task.pr_url.is_none() {
-        task.pr_url = goal.pr_url;
+    if let Some(link) = link
+        && task.pr_url.is_none()
+    {
+        task.pr_url = Some(link.url);
     }
     let remote = store.remote_task_context(&task.id).await?;
     let workflow = store.task_workflow(&task.id).await?;
@@ -594,18 +584,13 @@ pub(crate) async fn pull_request_dto_of(
         .map(|session| session.id);
     let mut operations = Vec::new();
     for operation in ariadne_core::workflow::PrOperation::ALL {
-        if let Some(goal) = store
-            .active_pr_goal(&row.repository_id, row.number, operation)
+        if let Some(task) = store
+            .active_pr_task(&row.repository_id, row.number, operation)
             .await?
         {
-            let task_id = store
-                .pr_operation_owner(&goal)
-                .await?
-                .map(|owner| owner.task.id);
             operations.push(ariadne_api::pull_requests::PullRequestOperationRefDto {
                 operation,
-                goal_id: goal.id,
-                task_id,
+                task_id: task.id,
             });
         }
     }

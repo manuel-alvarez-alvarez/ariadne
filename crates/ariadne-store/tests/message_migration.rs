@@ -62,7 +62,7 @@ async fn row_counts(path: &std::path::Path) -> Vec<(String, i64)> {
     let pool = pool(path).await;
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table'
-         AND name NOT IN ('messages', '_sqlx_migrations', 'task_workflows') ORDER BY name",
+         AND name NOT IN ('messages', '_sqlx_migrations', 'task_workflows', 'task_pull_requests') ORDER BY name",
     )
     .fetch_all(&pool)
     .await

@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-11-26
+updated: 2026-11-27
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -32,7 +32,7 @@ briefing says.
 
 ## Scope
 
-In: which requests can be asked for, the ask route, the goal and task it
+In: which requests can be asked for, the ask route, the task it
 makes, the seat, the worktree and its branch, the briefing, the news, the
 tools, and the attention this raises.
 
@@ -49,9 +49,9 @@ reads behind them ([026](026-pull-requests.md)).
    competing keepers. Git push permissions still apply to the head repository.
 2. The session sits on the request alone, on a new seat, `keeper`. It is the
    session of the one agent of a babysit operation's task (rule 7b), so it
-   carries that goal, task and agent, the same as a reviewer session does
-   (029 rule 10b). A keeper from before such goals has none: its
-   `agent_sessions.goal_id`, `task_id` and `task_agent_id` are NULL.
+   carries that task and agent and no goal, the same as a reviewer session
+   does (029 rule 10b). A keeper from before operation tasks has none: its
+   `agent_sessions.task_id` and `task_agent_id` are NULL.
 3. The worktree is `worktree_root/pr-<id>-keep`, on a local branch
    `ariadne/keep-<id>`, cut from the request's head: the head branch is
    fetched from the repository's remote (or the head repository of a fork,
@@ -69,8 +69,8 @@ reads behind them ([026](026-pull-requests.md)).
    base, the login and the push command. The title, the URL and the base
    branch name are fenced, the same as a reviewer's own (026 rule 26);
    the worktree path, the login and the local branch — Ariadne's own
-   name, `ariadne/keep-<id>` — are not. The task and goal of a keeper
-   session are the daemon's own and carry the request's title, so 006 rule
+   name, `ariadne/keep-<id>` — are not. The task of a keeper
+   session is the daemon's own and carry the request's title, so 006 rule
    19's plain-text treatment of a task's title never applies here: the
    title, the URL and the base branch name stay the forge's own, fenced
    regardless. A keeper session refuses to start on
@@ -87,7 +87,7 @@ reads behind them ([026](026-pull-requests.md)).
    same skill the `pr` column of a task stages — through the fixed
    `babysit` column (030 rule 11), and the skills the user picked when
    asking, each one a task agent is staffed on. A keeper from before
-   goals loads `pr-babysit` and the skills stored on its request row. Its
+   operation tasks loads `pr-babysit` and the skills stored on its request row. Its
    comment batching, branch-update and review-scope rules are 030 rule 10.
 
 ## Asking on a request, by hand
@@ -98,49 +98,49 @@ reads behind them ([026](026-pull-requests.md)).
    is; a missing or unknown one answers 400. `model` must also have a rank
    the fixed `babysit` column allows (030 rule 11): an unranked model, or
    one of another rank, answers 400 naming the band — the band of the open
-   goal's snapshot where one is open, else of the fixed column. Each skill must be one a task agent is staffed
+   task's snapshot where one is open, else of the fixed column. Each skill must be one a task agent is staffed
    on, else 400; `pr-babysit` is loaded anyway and is not stored. Asking
-   an open request starts Ariadne's work on it, makes the babysit goal
+   an open request starts Ariadne's work on it, makes the babysit task
    (rule 7b), writes `pull_requests.babysit_asked`, the pin `babysit_model` and
    `babysit_effort`, and `babysit_skills`; a request that is not open
    answers 409. Asking a second time moves the pin and the skills onto the
    new ask. `asked: false` clears the pin and the skills, cancels the
-   babysit goal and takes the keeper session down.
+   babysit task and takes the keeper session down.
 
-7b. A babysit ask makes one active goal of the babysit operation, and a
-    stop or an end finishes it. It is the lifecycle 029 rule 10b states for
-    every PR operation (`Store::start_pr_operation`,
+7b. A babysit ask makes one task of the babysit operation, with no goal,
+    and a stop or an end finishes it. It is the lifecycle 029 rule 10b
+    states for every PR operation (`Store::start_pr_operation`,
     `Store::end_pr_operation`), applied to the keeper:
-    - The goal runs on `pr-babysit`, snapshotted into `goal_steps`, is
-      `active` at once and has no orchestrator. It has one task, already
-      `in_progress` on the `babysit` column, and one agent: the pin of the
-      ask and the column's skills with the picked ones. The request's own
-      pass starts, resumes and watches the keeper session (rule 9), and the
-      session carries the goal, the task and the agent, so the Goals board,
-      the task panel, the session panel, its history and its usage read it
-      as any task's. Nothing about the keeper's worktree, branch, push
-      target, permissions or news changes.
-    - A repeated ask keeps the open goal, its task and its agent and moves
-      the pin and skills onto the agent; the keeper restarts on the new pin
-      as rule 9 says, on the same session row where it can.
-    - A merge completes the task and the goal; a close fails the task and leaves the goal active; a stop, a goal
-      whose ask is gone, or an integration turned off cancels both. The
-      next ask after a stop makes a new goal. A session belongs to the goal
-      it started under: a keeper from before goals is not adopted at
-      rollout and runs on as it did, with no goal, until the user asks
-      again, and that ask makes the goal and puts a new session under it on
-      the same worktree and branch, so nothing unpushed is lost.
-    - A request a task keeps is refused (rule 1), and the goal of one
+    - The task belongs to no goal, runs on the fixed `babysit` column
+      snapshotted into `remote_task_steps`, records `pr-babysit` as its
+      workflow name, and is `in_progress` on that column at once, with one
+      agent: the pin of the ask and the column's skills with the picked
+      ones. The request's own pass starts, resumes and watches the keeper
+      session (rule 9), and the session carries the task and the agent, so
+      the board, the task panel, the session panel, its history and its
+      usage read it as any goal-less task's. Nothing about the keeper's
+      worktree, branch, push target, permissions or news changes.
+    - A repeated ask keeps the open task and its agent and moves the pin and
+      skills onto the agent; the keeper restarts on the new pin as rule 9
+      says, on the same session row where it can.
+    - A merge finishes the task; a close fails it; a stop, a task whose ask
+      is gone, or an integration turned off cancels it. The next ask after a
+      stop makes a new task. A session belongs to the task it started under:
+      a keeper from before operation tasks is not adopted and runs on as it
+      did, with no task, until the user asks again, and that ask makes the
+      task and puts a new session under it on the same worktree and branch,
+      so nothing unpushed is lost.
+    - A request a task keeps is refused (rule 1), and the task of one
       operation never blocks the other: a babysit and a review of the same
-      request are two goals on two tasks, and stopping one leaves the
-      other. At most one babysit goal is open per request; a repeat reuses
-      it.
+      request are two tasks, and stopping one leaves the other. At most one
+      babysit task is open per request; a repeat reuses it.
     - The start, the stop and the part of a scheduler pass that acts on
-      the goal hold the one lock of the request (029 rule 10b), so two
-      asks at once make one goal and one task, and the goal and the ask
-      always stand together, across a daemon restart too: the goal names
-      the request by value, and the pass finds it again.
-    - Cancelling the goal from the Goals board is a stop (029 rule 10b).
+      the task hold the one lock of the request (029 rule 10b), so two
+      asks at once make one task, and the task and the ask always stand
+      together, across a daemon restart too: the task names the request by
+      value, and the pass finds it again.
+    - Cancelling the task (`POST /v1/tasks/{id}/cancel`) is a stop (029 rule
+      10b).
 8. `ariadne pr babysit <repo> <number> --model AGENT:MODEL [--effort E]
    [--skill S]... [--attach]` and `ariadne pr babysit <repo> <number>
    --stop` call this route from the CLI, mirroring `pr review` (014):
@@ -157,8 +157,8 @@ reads behind them ([026](026-pull-requests.md)).
    started, the same as a reviewer session is (029 rule 5a).
 10. The keeper receives the same immediate comment and new-head news as a task agent (026 rule 12).
     Its head mark is independent of the reviewer mark.
-11. Babysitting ends on an explicit stop, merge or close: the babysit goal
-    and its task end (rule 7b), the keeper session is killed, its worktree and its local branch are removed, and Ariadne
+11. Babysitting ends on an explicit stop, merge or close: the babysit task
+    ends (rule 7b), the keeper session is killed, its worktree and its local branch are removed, and Ariadne
     stops working on the request, unless a review is still asked of it.
     Asking again on a later open request starts a fresh keeper session.
     An ask that lands while a pass is stopping work on a request
@@ -198,8 +198,8 @@ reads behind them ([026](026-pull-requests.md)).
     closes the dialog and, once the daemon has the keeper session up, opens
     its console in the panel, the same way starting a review does (029); an
     "Ariadne babysitting" pill marks the row and the panel header while one
-    is asked, beside "Ariadne reviewing", and links the babysit's goal as
-    **Babysit goal**. The panel's Sessions tab lists the
+    is asked, beside "Ariadne reviewing", and links the babysit's task as
+    **Babysit task**. The panel's Sessions tab lists the
     keeper session beside a review's, since both carry the request's id.
 
 17. The keeper follows the batch, reply and dispute rules of 030 rule 10.
@@ -236,29 +236,28 @@ reads behind them ([026](026-pull-requests.md)).
   by another login reaches it once; daemon readiness uses forge evidence; and the
   merge ends it, with its worktree and its branch gone and the row gone:
   `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`.
-- A babysit ask makes one active goal with no orchestrator, on a snapshot of
-  `pr-babysit`, with one task in its `babysit` column and one agent whose
-  session is the keeper; a repeated ask keeps them, and two asks at once
-  make one goal:
-  `store.rs::a_babysit_start_makes_one_active_goal_with_one_staffed_task`,
-  `pull_request_babysit.rs::a_babysit_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it`,
-  `::two_babysit_asks_at_once_make_one_goal`.
-- A merge completes the goal and its task, a close fails the task and leaves the goal active, a stop cancels both,
-  and the next ask makes a new goal:
-  `store.rs::a_repeated_babysit_start_keeps_its_goal_and_an_end_leaves_the_next_start_new`,
-  `pull_request_babysit.rs::a_merged_request_completes_its_babysit_goal_and_task`,
+- A babysit ask makes one task with no goal and no orchestrator, in the
+  fixed `babysit` column, with one agent whose session is the keeper; a
+  repeated ask keeps them, and two asks at once make one task:
+  `store.rs::a_babysit_start_makes_one_goal_less_task_in_its_column`,
+  `pull_request_babysit.rs::a_babysit_is_one_goal_less_task_and_a_repeat_keeps_it`,
+  `::two_babysit_asks_at_once_make_one_task`.
+- A merge finishes the task, a close fails it, a stop cancels it, and the
+  next ask makes a new task:
+  `store.rs::a_repeated_babysit_start_keeps_its_task_and_an_end_leaves_the_next_start_new`,
+  `pull_request_babysit.rs::a_merged_request_finishes_its_babysit_task`,
   `::a_closed_request_fails_its_babysit_task`,
-  `::stopping_a_babysit_cancels_its_goal_and_the_next_ask_starts_a_new_one`.
-- Cancelling the goal from the Goals board stops the babysit for good:
-  `pull_request_babysit.rs::cancelling_the_babysit_goal_stops_the_babysit_and_it_stays_stopped`.
-- A model outside the `babysit` column's band is refused and starts no goal:
+  `::stopping_a_babysit_cancels_its_task_and_the_next_ask_starts_a_new_one`.
+- Cancelling the task stops the babysit for good:
+  `pull_request_babysit.rs::cancelling_the_babysit_task_stops_the_babysit_and_it_stays_stopped`.
+- A model outside the `babysit` column's band is refused and starts no task:
   `pull_request_babysit.rs::a_babysit_refuses_a_model_outside_the_workflow_band`.
-- A keeper from before goals is not adopted: it runs on until an ask puts a
-  session under a new goal, on the same worktree:
-  `pull_request_babysit.rs::a_keeper_from_before_goals_runs_on_until_an_ask_puts_it_under_a_goal`.
-- A babysit and a review of one request are two goals, and stopping one
+- A keeper from before operation tasks is not adopted: it runs on until an
+  ask puts a session under a new task, on the same worktree:
+  `pull_request_babysit.rs::a_keeper_from_before_operation_tasks_runs_on_until_an_ask_puts_it_under_one`.
+- A babysit and a review of one request are two tasks, and stopping one
   leaves the other:
-  `pull_request_babysit.rs::a_babysit_and_a_review_of_one_request_are_two_goals`.
+  `pull_request_babysit.rs::a_babysit_and_a_review_of_one_request_are_two_tasks`.
 - A babysit runs on its fixed `babysit` column and on no workflow of the
   catalog, and no ordinary goal or repository default names `pr-babysit`:
   `defaults.rs::each_pr_operation_runs_one_fixed_column_and_no_shipped_workflow`,
@@ -289,8 +288,8 @@ reads behind them ([026](026-pull-requests.md)).
   `attention.rs::each_escalated_thread_raises_its_own_item_until_the_forge_settles_it`.
 - The keeper briefing fills every placeholder it names, its title, URL
   and base branch name fenced the same as a reviewer's own, since a
-  keeper session carries no task or goal for 006 rule 19's plain-text
-  treatment to reach:
+  keeper session's task is the daemon's own and 006 rule 19's plain-text
+  treatment never reaches it:
   `prompts.rs::tests::the_keeper_briefing_fills_every_placeholder_it_names`.
 - The push command quotes the remote and the head branch into one
   argument each, a real shell reads either back as the exact value
@@ -316,8 +315,8 @@ reads behind them ([026](026-pull-requests.md)).
   `::offers Start babysit on a request of mine that no task keeps`,
   `::offers Start babysit on a request that asks for my review`,
   `::offers no Start babysit on a request of mine a task already keeps`.
-- The panel links the babysit's goal to the Goals board:
-  `pull-request-panel.test.tsx::links the goal of a babysit to the Goals board`.
+- The panel links the babysit's task:
+  `pull-request-panel.test.tsx::links the task of a babysit`.
 - A row shows the Ariadne babysitting pill while a keeper session babysits
   it by hand:
   `pull-requests-page.test.tsx::shows the Ariadne babysitting pill on a row a keeper session babysits by hand`.

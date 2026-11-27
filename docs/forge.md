@@ -171,11 +171,11 @@ setting to fall back to. The session starts rounds under the rules above.
 It posts its review as a comment on your own request, since no forge takes a change
 request from a request's own author. Starting it closes the dialog and,
 once the daemon has the agent up, opens that session's console in the
-panel. **Stop review** takes it down. Starting a review makes a goal of its
-own with one task, on one fixed `review` column, and that task's agent is that session:
-the panel links it as **Review goal**, and it shows on the Goals board like
-any other goal. It completes when the request merges. A close without merging
-fails its task and leaves the goal active. **Stop review** cancels it; see [Pull request reviews and babysits](workflows.md#pull-request-reviews-and-babysits).
+panel. **Stop review** takes it down. Starting a review makes one task with
+no goal, on one fixed `review` column, and that task's agent is that session:
+the panel links it as **Review task**, and it shows on the board like any
+other task without a goal. It finishes when the request merges. A close
+without merging fails it. **Stop review**, or cancelling the task, cancels it; see [Pull request reviews and babysits](workflows.md#pull-request-reviews-and-babysits).
 The model must have a rank that column allows. The panel's Sessions tab lists the
 review session, and the task's keeping agent where a task opened the
 request; picking one opens its console in the panel.
@@ -241,11 +241,11 @@ playbook, always on; any other skill can join it. Starting it closes the
 dialog and, once the daemon has the keeper session up, opens that
 session's console in the panel, the same way starting a review does. An
 **Ariadne babysitting** pill marks the row and the panel while one runs,
-beside Ariadne reviewing. **Stop babysit** takes it down. Starting makes a
-goal of its own with one task, on one fixed `babysit` column, and that task's agent is
-the keeper session: the panel links it as **Babysit goal**, and it shows on
-the Goals board like any other goal. A merge completes it. A close without
-merging fails its task and leaves the goal active. **Stop babysit** cancels it. The panel's Sessions tab lists the keeper
+beside Ariadne reviewing. **Stop babysit** takes it down. Starting makes one
+task with no goal, on one fixed `babysit` column, and that task's agent is
+the keeper session: the panel links it as **Babysit task**, and it shows on
+the board like any other task without a goal. A merge finishes it. A close
+without merging fails it. **Stop babysit**, or cancelling the task, cancels it. The panel's Sessions tab lists the keeper
 session beside a review's.
 
 The keeper session loads `pr-babysit` — the same skill a task's `pr`

@@ -1,7 +1,6 @@
 //! Goal DTOs.
 
 use ariadne_core::GoalStatus;
-use ariadne_core::workflow::PrOperation;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -28,10 +27,6 @@ pub struct GoalDto {
     /// The goal on the daemon that supplies tasks, or null for a local goal.
     #[serde(default)]
     pub linked: Option<LinkedGoalDto>,
-    /// The pull request and operation this goal runs (029), or null for an
-    /// ordinary goal. One open goal exists per request and operation.
-    #[serde(default)]
-    pub pull_request: Option<PullRequestOperationDto>,
     /// What the orchestrator runs on, `<agent>:<model>`: the registry agent
     /// and, after the `:`, the model of it.
     #[schema(example = "claude-acp:claude-opus-5")]
@@ -54,16 +49,6 @@ pub struct GoalDto {
 #[serde(deny_unknown_fields)]
 pub struct LinkedGoalDto {
     pub origin_goal_id: String,
-}
-
-/// The pull request an operation goal works on, named by value: the request's
-/// own row goes when Ariadne stops working on it, and the goal stays.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PullRequestOperationDto {
-    pub operation: PrOperation,
-    pub repository_id: String,
-    pub number: i64,
-    pub url: String,
 }
 
 /// What a goal cost, by the seat that spent it, and by the agent of every

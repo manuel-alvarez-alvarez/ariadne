@@ -240,7 +240,7 @@ it("names the host that reviews and the task that keeps a request read on anothe
     { id: "pull-local", origin_task_id: "task-7" },
     {
       review_asked: true,
-      operations: [{ operation: "review", goal_id: "goal-box", task_id: "task-box" }],
+      operations: [{ operation: "review", task_id: "task-box" }],
     },
   )
   renderScreen(<PullRequestPanel id="repo-local:42" onClose={() => {}} />, {
@@ -255,9 +255,9 @@ it("names the host that reviews and the task that keeps a request read on anothe
   const kept = keptBy.getAttribute("href")
   expect(kept).toContain("task=task-7")
   expect(kept).not.toContain("host=")
-  const goal = screen.getByRole("link", { name: "Review goal" }).getAttribute("href")
-  expect(goal).toContain("goal=goal-box")
-  expect(goal).toContain("host=box")
+  const review = screen.getByRole("link", { name: "Review task" }).getAttribute("href")
+  expect(review).toContain("task=task-box")
+  expect(review).toContain("host=box")
 })
 
 it("links the task that keeps the request on the host of the task", async () => {
@@ -271,19 +271,19 @@ it("links the task that keeps the request on the host of the task", async () => 
   expect(screen.queryByRole("button", { name: "Start babysit" })).toBeNull()
 })
 
-it("links the babysit goal on the host that babysits", async () => {
+it("links the babysit task on the host that babysits", async () => {
   twoCopies(
     {},
     {
       babysit_asked: true,
-      operations: [{ operation: "babysit", goal_id: "goal-sit", task_id: "task-sit" }],
+      operations: [{ operation: "babysit", task_id: "task-sit" }],
     },
   )
   renderScreen(<PullRequestPanel id="repo-local:42" onClose={() => {}} />, {
     route: "/forge/pull-requests?pr=repo-local%3A42",
   })
-  const link = await screen.findByRole("link", { name: "Babysit goal" })
-  expect(link.getAttribute("href")).toContain("goal=goal-sit")
+  const link = await screen.findByRole("link", { name: "Babysit task" })
+  expect(link.getAttribute("href")).toContain("task=task-sit")
   expect(link.getAttribute("href")).toContain("host=box")
 })
 

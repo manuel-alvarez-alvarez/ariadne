@@ -24,7 +24,7 @@ impl super::Scheduler {
         // The task of a pull request operation has no branch, no worktree
         // of its own and no column to walk: the request's pass owns its
         // session and its ending (029).
-        if goal.pull_request_operation().is_some() {
+        if self.store.task_pull_request(&task.id).await?.is_some() {
             return Ok(());
         }
         // A far task runs on its host (037): the far task worker sends it

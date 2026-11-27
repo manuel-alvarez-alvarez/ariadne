@@ -178,17 +178,17 @@ pub const DEFAULT_WORKFLOW: &str = "develop-review-merge";
 /// The workflow that lands a task by a request a human merges or closes.
 pub const PULL_REQUEST_WORKFLOW: &str = "develop-review-pr";
 
-/// The name a review goal (029) records as its workflow. No workflow of the
-/// catalog has it: the goal's one column is [`pr_operation_step`], fixed by
+/// The name a review task (029) records as its workflow. No workflow of the
+/// catalog has it: the task's one column is [`pr_operation_step`], fixed by
 /// Ariadne, and a workflow of the user's own cannot take the name.
 pub(crate) const PR_REVIEW_WORKFLOW: &str = "pr-review";
 
-/// The name a babysit goal (032) records as its workflow. No workflow of the
-/// catalog has it: the goal's one column is [`pr_operation_step`], fixed by
+/// The name a babysit task (032) records as its workflow. No workflow of the
+/// catalog has it: the task's one column is [`pr_operation_step`], fixed by
 /// Ariadne, and a workflow of the user's own cannot take the name.
 pub(crate) const PR_BABYSIT_WORKFLOW: &str = "pr-babysit";
 
-/// The name an operation's goal records as its workflow.
+/// The name an operation's task records as its workflow.
 pub fn pr_operation_workflow(operation: ariadne_core::workflow::PrOperation) -> &'static str {
     match operation {
         ariadne_core::workflow::PrOperation::Review => PR_REVIEW_WORKFLOW,
@@ -196,7 +196,7 @@ pub fn pr_operation_workflow(operation: ariadne_core::workflow::PrOperation) -> 
     }
 }
 
-/// Whether `name` is reserved for the goals of a pull request operation.
+/// Whether `name` is reserved for the tasks of a pull request operation.
 pub(crate) fn is_pr_operation_workflow(name: &str) -> bool {
     name == PR_REVIEW_WORKFLOW || name == PR_BABYSIT_WORKFLOW
 }

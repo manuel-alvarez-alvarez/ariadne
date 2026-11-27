@@ -331,15 +331,15 @@ async fn an_open_request_i_review_gets_one_session_detached_at_its_head() {
 
     assert_eq!(session.model, PIN);
     assert_eq!(session.seat.as_deref(), Some("reviewer"));
-    // The review is the one task of an operation goal (029).
-    let goal = h
+    // The review is one goal-less task (029).
+    let task = h
         .store
-        .active_pr_goal(&repo, 1, ariadne_core::workflow::PrOperation::Review)
+        .active_pr_task(&repo, 1, ariadne_core::workflow::PrOperation::Review)
         .await
         .unwrap()
-        .expect("the review's goal");
-    assert_eq!(session.goal_id.as_deref(), Some(goal.id.as_str()));
-    assert!(session.task_id.is_some());
+        .expect("the review's task");
+    assert_eq!(session.goal_id, None);
+    assert_eq!(session.task_id.as_deref(), Some(task.id.as_str()));
     assert!(session.task_agent_id.is_some());
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     assert!(worktree.ends_with(format!("pr-{id}")));
@@ -1851,13 +1851,12 @@ fn put_review(repo: &str, body: Value) -> Request<Body> {
         .unwrap()
 }
 
-/// Asking for a review makes one active goal with no orchestrator and one
-/// staffed task, and the review session is that task's agent: the goal, the
-/// task and the request's own DTO name each other, and the Goals board reads
-/// the goal like any other. A repeated ask keeps the goal and its task, and
-/// a new pin is a fresh session on the same task.
+/// Asking for a review makes one goal-less task in the fixed `review`
+/// column, and the review session is that task's agent: the task and the
+/// request's own DTO name each other, and no goal or orchestrator exists. A
+/// repeated ask keeps the task, and a new pin moves onto the same agent.
 #[tokio::test]
-async fn a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it() {
+async fn a_review_is_one_goal_less_task_and_a_repeat_keeps_it() {
     use ariadne_core::workflow::PrOperation;
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
@@ -1868,55 +1867,37 @@ async fn a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it() {
     ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
 
-    let goal = h
+    let open = h
         .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .active_pr_task(&repo, 1, PrOperation::Review)
         .await
         .unwrap()
-        .expect("the review's goal");
-    let goal_dto: Value = h.get(&format!("/v1/goals/{}", goal.id)).await;
-    assert_eq!(goal_dto["status"], "active");
-    assert_eq!(goal_dto["orchestrated"], false);
-    assert_eq!(goal_dto["workflow"], "pr-review");
-    assert_eq!(goal_dto["pull_request"]["operation"], "review");
-    assert_eq!(goal_dto["pull_request"]["number"], 1);
-    assert_eq!(goal_dto["steps"].as_array().unwrap().len(), 1);
+        .expect("the review's task");
+    assert!(h.store.list_goals(&[]).await.unwrap().is_empty(), "no goal");
+    assert_eq!(open.goal_id, None);
     assert!(
-        h.sessions_of_goal(&goal.id)
+        h.sessions_of(&open.id)
             .await
             .iter()
             .all(|s| s.seat.as_deref() == Some("reviewer")),
         "no orchestrator plans it"
     );
-    let tasks = h
-        .store
-        .list_tasks(ariadne_store::TaskFilter {
-            goal_id: Some(goal.id.clone()),
-            status: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(tasks.len(), 1);
-    let task: Value = h.get(&format!("/v1/tasks/{}", tasks[0].id)).await;
+    let task: Value = h.get(&format!("/v1/tasks/{}", open.id)).await;
+    assert_eq!(task["goal_id"], Value::Null);
     assert_eq!(task["status"], "in_progress");
     assert_eq!(task["step"], "review");
     assert_eq!(task["operation"], "review");
-    assert_eq!(task["pr_url"], goal_dto["pull_request"]["url"]);
-    assert!(
-        task["pr_url"].is_string(),
-        "the review task shows its request"
-    );
-    assert!(
-        tasks[0].pr_url.is_none(),
-        "the stored task pr_url is unchanged"
-    );
+    assert_eq!(task["workflow"], "pr-review");
+    assert_eq!(task["steps"].as_array().unwrap().len(), 1);
+    assert_eq!(task["pr_url"], "https://github.com/acme/widgets/pull/1");
+    assert!(open.pr_url.is_none(), "the stored task pr_url is unchanged");
     assert_eq!(task["agents"].as_array().unwrap().len(), 1);
     assert_eq!(task["agents"][0]["skills"], json!(["pr-reviewer"]));
     assert_eq!(task["agents"][0]["session_id"], session.id);
     let row: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(row["operations"][0]["operation"], "review");
-    assert_eq!(row["operations"][0]["goal_id"], goal.id);
-    assert_eq!(row["operations"][0]["task_id"], tasks[0].id);
+    assert_eq!(row["operations"][0]["task_id"], open.id);
+    assert!(row["operations"][0].get("goal_id").is_none());
 
     h.store
         .set_model_ranks(&[(
@@ -1925,8 +1906,8 @@ async fn a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it() {
         )])
         .await
         .unwrap();
-    // Asked again on another pin: the goal, its task and its agent stay,
-    // the pin moves onto the agent, and the live session runs on.
+    // Asked again on another pin: the task and its agent stay, the pin
+    // moves onto the agent, and the live session runs on.
     let _: Value = h
         .json(
             put_review(&repo, json!({"asked": true, "model": "stub:new-model"})),
@@ -1936,22 +1917,22 @@ async fn a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it() {
     h.flush_scheduler().await;
     let again = h
         .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .active_pr_task(&repo, 1, PrOperation::Review)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(again.id, goal.id);
-    assert_eq!(h.store.list_goals(&[]).await.unwrap().len(), 1);
+    assert_eq!(again.id, open.id);
+    assert!(h.store.list_goals(&[]).await.unwrap().is_empty());
     assert!(h.session_status(&session).await.is_live());
     assert_eq!(sessions(&h, &id).await.len(), 1);
-    let agent = &h.store.list_task_agents(&tasks[0].id).await.unwrap()[0];
+    let agent = &h.store.list_task_agents(&open.id).await.unwrap()[0];
     assert_eq!(agent.model, "stub:new-model");
 }
 
-/// Stopping a review cancels its task and goal; the request's next ask is a
-/// new goal, and the old goal stays as history with its session.
+/// Stopping a review cancels its task; the request's next ask is a new task,
+/// and the old one stays as history with its session.
 #[tokio::test]
-async fn stopping_a_review_cancels_its_goal_and_the_next_ask_starts_a_new_one() {
+async fn stopping_a_review_cancels_its_task_and_the_next_ask_starts_a_new_one() {
     use ariadne_core::workflow::PrOperation;
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
@@ -1963,7 +1944,7 @@ async fn stopping_a_review_cancels_its_goal_and_the_next_ask_starts_a_new_one() 
     let session = idle_session(&h, &id).await;
     let first = h
         .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .active_pr_task(&repo, 1, PrOperation::Review)
         .await
         .unwrap()
         .unwrap();
@@ -1972,12 +1953,7 @@ async fn stopping_a_review_cancels_its_goal_and_the_next_ask_starts_a_new_one() 
         .json(put_review(&repo, json!({"asked": false})), StatusCode::OK)
         .await;
     assert_eq!(
-        h.store.get_goal(&first.id).await.unwrap().status(),
-        ariadne_core::GoalStatus::Cancelled
-    );
-    let task = &h.sessions_of_goal(&first.id).await[0];
-    assert_eq!(
-        h.status(task.task_id.as_deref().unwrap()).await,
+        h.status(&first.id).await,
         ariadne_core::TaskStatus::Cancelled
     );
     eventually(TIMEOUT, "the review session to end", async || {
@@ -1986,7 +1962,7 @@ async fn stopping_a_review_cancels_its_goal_and_the_next_ask_starts_a_new_one() 
     .await;
     assert!(
         h.store
-            .active_pr_goal(&repo, 1, PrOperation::Review)
+            .active_pr_task(&repo, 1, PrOperation::Review)
             .await
             .unwrap()
             .is_none()
@@ -2001,29 +1977,30 @@ async fn stopping_a_review_cancels_its_goal_and_the_next_ask_starts_a_new_one() 
         .await;
     let second = h
         .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .active_pr_task(&repo, 1, PrOperation::Review)
         .await
         .unwrap()
-        .expect("a new goal");
+        .expect("a new task");
     assert_ne!(second.id, first.id);
-    eventually(TIMEOUT, "a session on the new goal", async || {
+    eventually(TIMEOUT, "a session on the new task", async || {
         h.flush_scheduler().await;
-        h.sessions_of_goal(&second.id)
+        h.sessions_of(&second.id)
             .await
             .iter()
             .any(|s| s.status().is_live())
     })
     .await;
     assert_eq!(
-        h.store.get_goal(&first.id).await.unwrap().status(),
-        ariadne_core::GoalStatus::Cancelled
+        h.status(&first.id).await,
+        ariadne_core::TaskStatus::Cancelled
     );
+    assert_eq!(h.sessions_of(&first.id).await.len(), 1);
     let _ = id;
 }
 
-/// A request that merges completes the review's task and goal.
+/// A request that merges finishes the review's task.
 #[tokio::test]
-async fn a_merged_request_completes_its_review_goal_and_task() {
+async fn a_merged_request_finishes_its_review_task() {
     use ariadne_core::workflow::PrOperation;
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
@@ -2045,12 +2022,6 @@ async fn a_merged_request_completes_its_review_goal_and_task() {
         stub.fetches() > before
     })
     .await;
-    let goal = h
-        .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
-        .await
-        .unwrap()
-        .unwrap();
     let task_id = session.task_id.clone().unwrap();
 
     stub.reprogram(script(&Shown {
@@ -2058,19 +2029,27 @@ async fn a_merged_request_completes_its_review_goal_and_task() {
         ..Shown::open(&head)
     }));
     h.state.forge_poll.wake(&repo);
-    eventually(TIMEOUT, "the goal and task to complete", async || {
+    eventually(TIMEOUT, "the task to finish", async || {
         h.flush_scheduler().await;
-        h.store.get_goal(&goal.id).await.unwrap().status() == ariadne_core::GoalStatus::Completed
+        h.status(&task_id).await == ariadne_core::TaskStatus::Finished
     })
     .await;
-    assert_eq!(h.status(&task_id).await, ariadne_core::TaskStatus::Finished);
+    assert!(
+        h.store
+            .active_pr_task(&repo, 1, PrOperation::Review)
+            .await
+            .unwrap()
+            .is_none(),
+        "the finished task lets go of the request"
+    );
     eventually(TIMEOUT, "the session to end", async || {
         !h.session_status(&session).await.is_live()
     })
     .await;
 }
 
-/// A closed request fails its task and leaves the failure visible.
+/// A closed request fails its task and leaves the failure visible: the
+/// failed task stays the request's open one.
 #[tokio::test]
 async fn a_closed_request_fails_its_review_task() {
     use ariadne_core::workflow::PrOperation;
@@ -2094,12 +2073,6 @@ async fn a_closed_request_fails_its_review_task() {
         stub.fetches() > before
     })
     .await;
-    let goal = h
-        .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
-        .await
-        .unwrap()
-        .unwrap();
     let task_id = session.task_id.clone().unwrap();
 
     stub.reprogram(script(&Shown {
@@ -2113,8 +2086,12 @@ async fn a_closed_request_fails_its_review_task() {
     })
     .await;
     assert_eq!(
-        h.store.get_goal(&goal.id).await.unwrap().status(),
-        ariadne_core::GoalStatus::Active
+        h.store
+            .active_pr_task(&repo, 1, PrOperation::Review)
+            .await
+            .unwrap()
+            .map(|task| task.id),
+        Some(task_id.clone())
     );
     eventually(TIMEOUT, "the session to end", async || {
         !h.session_status(&session).await.is_live()
@@ -2124,7 +2101,7 @@ async fn a_closed_request_fails_its_review_task() {
 
 /// The review column's band decides which models a review accepts: a model
 /// the user ranked outside it, or never ranked, is refused and starts no
-/// goal.
+/// task.
 #[tokio::test]
 async fn a_review_refuses_a_model_outside_the_workflow_band() {
     let stub = stub_forge_cli(json!([]));
@@ -2150,14 +2127,20 @@ async fn a_review_refuses_a_model_outside_the_workflow_band() {
             error.error.message
         );
     }
-    assert!(h.store.list_goals(&[]).await.unwrap().is_empty());
+    assert!(
+        h.store
+            .list_tasks(Default::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
-/// Cancelling the review's goal from the Goals board stops the review: the
-/// ask on the request goes with it, so no later pass starts a session for a
-/// review nobody owns, and Forge shows the review stopped.
+/// Cancelling the review's task from the board stops the review: the ask on
+/// the request goes with it, so no later pass starts a session for a review
+/// nobody owns, and Forge shows the review stopped.
 #[tokio::test]
-async fn cancelling_the_review_goal_stops_the_review_and_it_stays_stopped() {
+async fn cancelling_the_review_task_stops_the_review_and_it_stays_stopped() {
     use ariadne_core::workflow::PrOperation;
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
@@ -2167,9 +2150,9 @@ async fn cancelling_the_review_goal_stops_the_review_and_it_stays_stopped() {
     let id = the_request(&h).await;
     ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
-    let goal = h
+    let task = h
         .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .active_pr_task(&repo, 1, PrOperation::Review)
         .await
         .unwrap()
         .unwrap();
@@ -2180,7 +2163,7 @@ async fn cancelling_the_review_goal_stops_the_review_and_it_stays_stopped() {
     };
     let cancelled: Value = h
         .json(
-            post_json(&format!("/v1/goals/{}/cancel", goal.id), json!({})),
+            post_json(&format!("/v1/tasks/{}/cancel", task.id), json!({})),
             StatusCode::OK,
         )
         .await;
@@ -2202,20 +2185,20 @@ async fn cancelling_the_review_goal_stops_the_review_and_it_stays_stopped() {
     );
     assert_eq!(sessions(&h, &id).await.len(), 1);
     if let Ok(row) = h.store.get_pull_request(&id).await {
-        assert!(!row.review_asked, "the ask went with the goal");
+        assert!(!row.review_asked, "the ask went with the task");
     }
     assert_eq!(
-        h.store.get_goal(&goal.id).await.unwrap().status(),
-        ariadne_core::GoalStatus::Cancelled
+        h.status(&task.id).await,
+        ariadne_core::TaskStatus::Cancelled
     );
 }
 
-/// A scheduler pass that comes while a start is half written — the goal
+/// A scheduler pass that comes while a start is half written — the task
 /// made, the ask not yet — waits for it, then sees the whole of it: the new
-/// goal is not cancelled as an ask that is gone, and the session it starts
-/// belongs to that goal.
+/// task is not cancelled as an ask that is gone, and the session it starts
+/// belongs to that task.
 #[tokio::test]
-async fn a_pass_between_the_goal_and_the_ask_of_a_start_waits_for_the_start() {
+async fn a_pass_between_the_task_and_the_ask_of_a_start_waits_for_the_start() {
     use ariadne_core::workflow::PrOperation;
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
@@ -2257,8 +2240,8 @@ async fn a_pass_between_the_goal_and_the_ask_of_a_start_waits_for_the_start() {
     })
     .await;
     assert_eq!(
-        h.store.get_goal(&owner.goal.id).await.unwrap().status(),
-        ariadne_core::GoalStatus::Active,
+        h.status(&owner.task.id).await,
+        ariadne_core::TaskStatus::InProgress,
         "the pass waits, it does not cancel the half-made start"
     );
     h.store
@@ -2267,17 +2250,17 @@ async fn a_pass_between_the_goal_and_the_ask_of_a_start_waits_for_the_start() {
         .unwrap();
     drop(held);
     let session = idle_session(&h, &id).await;
-    assert_eq!(session.goal_id.as_deref(), Some(owner.goal.id.as_str()));
+    assert_eq!(session.goal_id, None);
     assert_eq!(session.task_id.as_deref(), Some(owner.task.id.as_str()));
     assert_eq!(
-        h.store.get_goal(&owner.goal.id).await.unwrap().status(),
-        ariadne_core::GoalStatus::Active
+        h.status(&owner.task.id).await,
+        ariadne_core::TaskStatus::InProgress
     );
 }
 
 /// A stop and a start of the same request at once end in one of two whole
-/// states: asked, with an open goal that owns the session, or stopped, with
-/// no open goal and no live session. Never an ask with no goal behind it.
+/// states: asked, with an open task that owns the session, or stopped, with
+/// no open task and no live session. Never an ask with no task behind it.
 #[tokio::test]
 async fn a_stop_and_a_start_at_once_leave_one_whole_state() {
     use ariadne_core::workflow::PrOperation;
@@ -2301,22 +2284,23 @@ async fn a_stop_and_a_start_at_once_leave_one_whole_state() {
         started.0
     );
     h.flush_scheduler().await;
-    let goal = h
+    let task = h
         .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .active_pr_task(&repo, 1, PrOperation::Review)
         .await
-        .unwrap();
+        .unwrap()
+        .filter(|task| !task.status().is_terminal());
     let asked = h
         .store
         .pull_request_by_number(&repo, 1)
         .await
         .unwrap()
         .is_some_and(|row| row.review_asked);
-    assert_eq!(goal.is_some(), asked, "an ask and its goal stand together");
-    if let Some(goal) = goal {
-        eventually(TIMEOUT, "the session of the open goal", async || {
+    assert_eq!(task.is_some(), asked, "an ask and its task stand together");
+    if let Some(task) = task {
+        eventually(TIMEOUT, "the session of the open task", async || {
             h.flush_scheduler().await;
-            h.sessions_of_goal(&goal.id)
+            h.sessions_of(&task.id)
                 .await
                 .iter()
                 .any(|s| s.status().is_live())
@@ -2325,11 +2309,11 @@ async fn a_stop_and_a_start_at_once_leave_one_whole_state() {
     }
 }
 
-/// Cancelling a goal that a stop and a new start replaced while the cancel
-/// waited for the request's lock cancels nothing: the request names the old
-/// goal, and the new one is another goal's.
+/// Cancelling a task that a stop and a new start replaced while the cancel
+/// waited for the request's lock cancels nothing: the old task has ended,
+/// and the request's open task is the new one.
 #[tokio::test]
-async fn cancelling_a_replaced_review_goal_leaves_its_replacement_alone() {
+async fn cancelling_a_replaced_review_task_leaves_its_replacement_alone() {
     use ariadne_core::workflow::PrOperation;
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
@@ -2341,7 +2325,7 @@ async fn cancelling_a_replaced_review_goal_leaves_its_replacement_alone() {
     idle_session(&h, &id).await;
     let old = h
         .store
-        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .active_pr_task(&repo, 1, PrOperation::Review)
         .await
         .unwrap()
         .unwrap();
@@ -2352,11 +2336,11 @@ async fn cancelling_a_replaced_review_goal_leaves_its_replacement_alone() {
         effort: None,
     };
     let cancel = h.send(post_json(
-        &format!("/v1/goals/{}/cancel", old.id),
+        &format!("/v1/tasks/{}/cancel", old.id),
         json!({}),
     ));
     let replace = async {
-        // The cancel has read its goal and waits for the lock.
+        // The cancel has read its task and waits for the lock.
         eventually(TIMEOUT, "the cancel to reach the lock", async || {
             h.store.pr_operation_waiters(&repo, 1) > 0
         })
@@ -2386,15 +2370,11 @@ async fn cancelling_a_replaced_review_goal_leaves_its_replacement_alone() {
         owner
     };
     let ((status, _), replacement) = tokio::join!(cancel, replace);
-    assert_eq!(status, StatusCode::CONFLICT, "the old goal has ended");
-    assert_ne!(replacement.goal.id, old.id);
+    assert_eq!(status, StatusCode::CONFLICT, "the old task has ended");
+    assert_ne!(replacement.task.id, old.id);
     assert_eq!(
-        h.store
-            .get_goal(&replacement.goal.id)
-            .await
-            .unwrap()
-            .status(),
-        ariadne_core::GoalStatus::Active
+        h.status(&replacement.task.id).await,
+        ariadne_core::TaskStatus::InProgress
     );
     assert!(
         h.store.get_pull_request(&id).await.unwrap().review_asked,

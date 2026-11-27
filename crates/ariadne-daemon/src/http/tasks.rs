@@ -631,6 +631,50 @@ pub(super) async fn cancel(
             return Ok(Json(task_dto_of(&state.store, task).await?));
         }
     }
+    // The task of a pull request operation is stopped as its own control
+    // stops it: the ask on the request goes before the task, or the next
+    // pass would start a session for an ask nobody owns (029, 032).
+    if let Some(link) = state.store.task_pull_request(&id).await?
+        && let Some(operation) = link.operation()
+    {
+        let _operation = state
+            .store
+            .pr_operation_lock(&link.repository_id, link.number)
+            .await;
+        // Read again under the lock: a stop and a start may have replaced
+        // this task as the request's open one since.
+        let open = state
+            .store
+            .task_pull_request(&id)
+            .await?
+            .is_some_and(|link| link.open);
+        let task = state.store.get_task(&id).await?;
+        if !open || task.status().is_terminal() {
+            return Err(ApiError::conflict(format!(
+                "task is already {}",
+                task.status
+            )));
+        }
+        let stopped = state
+            .store
+            .stop_pr_operation(
+                &link.repository_id,
+                link.number,
+                operation,
+                &format!("cancelled by {}", ctx.actor.as_str()),
+            )
+            .await?
+            .ok_or_else(|| ApiError::conflict("task is already ended"))?;
+        if let Some(row) = state
+            .store
+            .pull_request_by_number(&link.repository_id, link.number)
+            .await?
+        {
+            state.notify_scheduler_pull_request(&row.id);
+        }
+        state.notify_scheduler(&stopped.id);
+        return Ok(Json(task_dto_of(&state.store, stopped).await?));
+    }
     let reason = format!("cancelled by {}", ctx.actor.as_str());
     let task = apply_transition(
         &state,

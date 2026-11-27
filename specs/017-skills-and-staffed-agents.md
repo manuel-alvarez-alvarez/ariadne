@@ -154,7 +154,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     keeper session on a request asked for by hand (032), where the fixed
     `babysit` column stages it too. The store refuses
     a task agent staffed on `orchestration`, and on `pr-reviewer` unless
-    the agent belongs to a review operation goal (029), and
+    the agent belongs to a review operation's task (029), and
     `list_skills` lists neither (013). Nor does it list a skill with no
     document, shipped or written, or one of blank space only: a dropped
     skill such as `pull-request` (rule 7) keeps its row for an old staffing,
@@ -308,13 +308,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
 13. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
 14. A review session (029) is the session of the one agent of a review
-    operation goal's task. The daemon staffs that agent on the pin asked
+    operation's task, which belongs to no goal. The daemon staffs that agent on the pin asked
     directly on the request — there is no repository pin (025) — with the
     skills of the `pr-review` column and the ones the user picked, and the
     session loads what the agent was staffed with; no orchestrator staffs
-    it. A review from before such goals loads `pr-reviewer` and the skills
-    stored on its request row. A keeper session (032) is likewise the
-    session of the one agent of a babysit operation goal's task, staffed
+    it. A review from before operation tasks loads `pr-reviewer` and the
+    skills stored on its request row. A keeper session (032) is likewise the
+    session of the one agent of a babysit operation's task, staffed
     with the skills of the `pr-babysit` column and the picked ones.
 15. The daemon keeps one shared copy of every store skill under
     `<home>/skills` by default, or `skills_dir` when configured. Every sync

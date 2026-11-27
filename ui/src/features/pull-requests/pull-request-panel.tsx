@@ -353,10 +353,10 @@ function PullRequestHeader({
   useEffect(() => {
     if (kept) setBabysitting(false)
   }, [kept])
-  // The review and the babysit are goals of their own, on the Goals board
-  // like any other (029, 032), each on the host that runs it.
-  const reviewGoal = operationOf(copies, "review")
-  const babysitGoal = operationOf(copies, "babysit")
+  // The review and the babysit are tasks of their own, with no goal (029,
+  // 032), each on the host that runs it.
+  const reviewTask = operationOf(copies, "review")
+  const babysitTask = operationOf(copies, "babysit")
   const target = (copy: HostRow<PullRequestDto>) => ({
     host: copy.host,
     repository_id: copy.repository_id,
@@ -449,28 +449,14 @@ function PullRequestHeader({
                 {showHost ? <HostLabel host={reviewer.host} /> : null}
               </span>
             ) : null}
-            {reviewGoal ? (
-              <Link
-                className="text-xs underline"
-                to={paths.goal(reviewGoal.goal_id, reviewGoal.host)}
-              >
-                Review goal
-              </Link>
-            ) : null}
+            {reviewTask ? <OperationTaskLink {...reviewTask} label="Review task" /> : null}
             {babysitter ? (
               <span className="inline-flex items-center gap-1" data-slot="ariadne-work">
                 <StatusBadge label={ARIADNE_BABYSITTING.label} tone={ARIADNE_BABYSITTING.tone} />
                 {showHost ? <HostLabel host={babysitter.host} /> : null}
               </span>
             ) : null}
-            {babysitGoal ? (
-              <Link
-                className="text-xs underline"
-                to={paths.goal(babysitGoal.goal_id, babysitGoal.host)}
-              >
-                Babysit goal
-              </Link>
-            ) : null}
+            {babysitTask ? <OperationTaskLink {...babysitTask} label="Babysit task" /> : null}
           </>
         }
         id={pull.id ? <CopyableId value={pull.id} label="pull request id" /> : undefined}
@@ -522,16 +508,34 @@ function PullRequestHeader({
   )
 }
 
-/** The goal of the first host that runs `operation` on the request, with that host. */
+/** The task of the first host that runs `operation` on the request, with that host. */
 function operationOf(
   copies: HostRow<PullRequestDto>[],
   operation: "review" | "babysit",
-): { goal_id: string; host: Host } | undefined {
+): { task_id: string; host: Host } | undefined {
   for (const copy of copies) {
     const found = copy.operations?.find((each) => each.operation === operation)
-    if (found) return { goal_id: found.goal_id, host: copy.host }
+    if (found) return { task_id: found.task_id, host: copy.host }
   }
   return undefined
+}
+
+/** The panel of an operation's task, opened in place of the request's. */
+function OperationTaskLink({
+  task_id,
+  host,
+  label,
+}: {
+  task_id: string
+  host: Host
+  label: string
+}) {
+  const to = useTaskPanelTo(task_id, host)
+  return (
+    <Link className="text-xs underline" to={to} replace={to.replace}>
+      {label}
+    </Link>
+  )
 }
 
 function PullRequestFacts({

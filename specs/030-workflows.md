@@ -403,16 +403,16 @@ every other kebab-case word in it; the wire spells the same gate
     `review[Review]` and loads `pr-reviewer`; for `babysit` the column is
     `babysit[Babysit]` and loads `pr-babysit`. Both columns allow the
     `balanced` and `frontier` ranks and wait on the `request-merged` gate.
-    The goal of an operation snapshots that column and records `pr-review`
-    or `pr-babysit` as its workflow name
+    The task of an operation, which belongs to no goal, snapshots that
+    column and records `pr-review` or `pr-babysit` as its workflow name
     (`defaults::pr_operation_workflow`). Those two names are reserved: a
     workflow create under either is refused, and no goal or repository
-    default can name either, since no catalog row has it. A goal of the
-    operation, and its one task, are 029's to start and to end, for a
+    default can name either, since no catalog row has it. The task of the
+    operation is 029's to start and to end, for a
     babysit as for a review (032 rule 7b). An upgrade drops both catalog
     rows, with any edit the user wrote over them
-    (`migrations/0028_drop_pr_operation_workflows.sql`). An open goal keeps
-    the columns it snapshotted. An older upgrade added the gate to custom
+    (`migrations/0028_drop_pr_operation_workflows.sql`). An open operation
+    keeps the columns it snapshotted. An older upgrade added the gate to custom
     operation workflows and to active goal snapshots, and preserved
     completed snapshots
     (`store.rs::operation_gate_upgrade_preserves_custom_settings_and_history`).
@@ -499,7 +499,7 @@ every other kebab-case word in it; the wire spells the same gate
 - A pull request operation runs on one fixed column and on no workflow of
   the catalog: the catalog lists neither operation name, a create under
   either name is refused, no goal or repository default names either, each
-  operation's goal snapshots its fixed column, and the upgrade drops both
+  operation's task snapshots its fixed column, and the upgrade drops both
   rows (`defaults.rs::each_pr_operation_runs_one_fixed_column_and_no_shipped_workflow`,
   `store.rs::pull_request_operations_run_on_no_workflow_of_the_catalog`,
   `::the_upgrade_drops_both_pull_request_operation_workflows`,

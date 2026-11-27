@@ -2,7 +2,6 @@
 
 use ariadne_core::GoalStatus;
 use ariadne_core::id::new_id;
-use ariadne_core::workflow::PrOperation;
 
 use crate::{AgentPin, Change, Goal, Repository, Result, Store, StoreError, not_found, now};
 
@@ -23,17 +22,6 @@ pub struct NewGoal {
     pub pin: AgentPin,
 }
 
-/// The pull request an operation goal works on (029): named by value, since
-/// the request's own row goes when Ariadne stops working on it and the goal
-/// stays as history.
-#[derive(Debug, Clone)]
-pub struct NewPrGoal {
-    pub operation: PrOperation,
-    pub repository_id: String,
-    pub number: i64,
-    pub url: String,
-}
-
 /// The workflow a new goal gets: its creator's choice or the default of the
 /// first repository in the order goals show.
 fn goal_workflow(requested: Option<String>, repositories: &[Repository]) -> Result<String> {
@@ -49,7 +37,7 @@ fn goal_workflow(requested: Option<String>, repositories: &[Repository]) -> Resu
 
 impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
-        Ok(self.create_goal_as(new, None, None).await?.0)
+        Ok(self.create_goal_as(new, None).await?.0)
     }
 
     /// The linked goal of `origin_goal_id`, a goal of another daemon (037),
@@ -67,20 +55,12 @@ impl Store {
         new: NewGoal,
         origin_goal_id: &str,
     ) -> Result<(Goal, bool)> {
-        self.create_goal_as(new, None, Some(origin_goal_id)).await
-    }
-
-    /// Create the goal of one pull request operation: active at once, with
-    /// no orchestrator, on that operation's one fixed column. A conflict
-    /// means the request already has an open goal for the operation.
-    pub(crate) async fn create_pr_goal(&self, new: NewGoal, pr: NewPrGoal) -> Result<Goal> {
-        Ok(self.create_goal_as(new, Some(pr), None).await?.0)
+        self.create_goal_as(new, Some(origin_goal_id)).await
     }
 
     async fn create_goal_as(
         &self,
         new: NewGoal,
-        pr: Option<NewPrGoal>,
         origin_goal_id: Option<&str>,
     ) -> Result<(Goal, bool)> {
         if new.repository_ids.is_empty() {
@@ -97,12 +77,7 @@ impl Store {
                 repositories.push(repository);
             }
         }
-        // An operation goal runs on its operation's one fixed column; an
-        // ordinary goal runs on a workflow of the catalog.
-        let workflow_name = match &pr {
-            Some(pr) => crate::defaults::pr_operation_workflow(pr.operation).to_string(),
-            None => goal_workflow(new.workflow, &repositories)?,
-        };
+        let workflow_name = goal_workflow(new.workflow, &repositories)?;
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
@@ -112,20 +87,14 @@ impl Store {
         // the middle of changing, and the columns are kept with the goal
         // from here on — a later edit of the catalog reaches later goals
         // alone.
-        let steps = match &pr {
-            Some(pr) => vec![crate::defaults::pr_operation_step(pr.operation)],
-            None => {
-                let workflow: crate::Workflow =
-                    sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
-                        .bind(&workflow_name)
-                        .fetch_optional(&mut *tx)
-                        .await?
-                        .ok_or_else(|| not_found("workflow", &workflow_name))?;
-                ariadne_core::workflow::parse(workflow.document_text())
-                    .map_err(|e| StoreError::Invalid(e.to_string()))?
-                    .steps
-            }
-        };
+        let workflow: crate::Workflow = sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
+            .bind(&workflow_name)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| not_found("workflow", &workflow_name))?;
+        let steps = ariadne_core::workflow::parse(workflow.document_text())
+            .map_err(|e| StoreError::Invalid(e.to_string()))?
+            .steps;
         if let Some(origin) = origin_goal_id {
             let linked: Vec<Goal> =
                 sqlx::query_as("SELECT * FROM goals WHERE origin_goal_id = ? ORDER BY id")
@@ -162,7 +131,7 @@ impl Store {
             }
         }
         let (model, effort) = AgentPin::columns(&new.pin);
-        let orchestrated = pr.is_none() && origin_goal_id.is_none();
+        let orchestrated = origin_goal_id.is_none();
         let status = if orchestrated {
             GoalStatus::Planning
         } else {
@@ -171,8 +140,8 @@ impl Store {
         sqlx::query(
             "INSERT INTO goals (id, title, description, issue_url, status,
                                 orchestrated, model, effort, workflow, created_at, updated_at,
-                                pr_operation, pr_repository_id, pr_number, pr_url, origin_goal_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                origin_goal_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
@@ -185,19 +154,9 @@ impl Store {
         .bind(&workflow_name)
         .bind(&ts)
         .bind(&ts)
-        .bind(pr.as_ref().map(|p| p.operation.as_str()))
-        .bind(pr.as_ref().map(|p| p.repository_id.clone()))
-        .bind(pr.as_ref().map(|p| p.number))
-        .bind(pr.as_ref().map(|p| p.url.clone()))
         .bind(origin_goal_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::Database(ref db) if db.is_unique_violation() => StoreError::Conflict(
-                "the request already has an open goal for this operation".into(),
-            ),
-            other => StoreError::Db(other),
-        })?;
+        .await?;
         for (ordinal, step) in steps.iter().enumerate() {
             let ranks: Vec<&str> = step.ranks.iter().map(|r| r.as_str()).collect();
             sqlx::query("INSERT INTO goal_steps (goal_id, ordinal, id, title, description, skills, ranks, gate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")

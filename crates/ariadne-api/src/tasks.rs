@@ -20,8 +20,8 @@ pub struct TaskDto {
     pub workflow: Option<String>,
     #[serde(default)]
     pub steps: Vec<crate::workflows::WorkflowStepDto>,
-    /// The pull request operation the task's goal runs (029), or null for an
-    /// ordinary task.
+    /// The pull request operation the task runs (029, 032), or null for an
+    /// ordinary task. Such a task belongs to no goal.
     #[serde(default)]
     pub operation: Option<ariadne_core::workflow::PrOperation>,
     /// Id of the repository the task works in, one of its goal's.
@@ -44,7 +44,7 @@ pub struct TaskDto {
     pub merge_commit: Option<String>,
     /// URL of the pull or merge request the task's `pr` column opened, once
     /// it has; null for a task landed directly. On a review or babysit task
-    /// (one with an `operation`) that opened none, the goal's own request, in
+    /// (one with an `operation`) that opened none, the request it works on, in
     /// the response only.
     pub pr_url: Option<String>,
     /// Why a `failed` or `cancelled` task ended — an agent's own `fail_task`

@@ -1662,7 +1662,8 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     repository id. It shows the work of every host:
     - The header and the Ariadne fact name the host that reviews and the host
       that keeps, and "Kept by" links the task panel on the host of the task.
-      The Review goal and Babysit goal links open on the host of that goal.
+      The Review task and Babysit task links open the task panel on the host
+      of that task.
       `HostLabel` draws each host name, where rule 74 names the panel's host.
     - Review New turn and Stop review go to the host that reviews. Babysit New turn and
       Stop babysit go to the host that keeps. Each uses that host's repository
@@ -1678,7 +1679,7 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     Tests in `ui/src/features/pull-requests/hosts.test.tsx`: “names the host
     that reviews and the task that keeps a request read on another host”,
     “links the task that keeps the request on the host of the task”, “links
-    the babysit goal on the host that babysits”, “sends New turn and Stop
+    the babysit task on the host that babysits”, “sends New turn and Stop
     review to the host that reviews, with its repository id”, “sends New
     turn and Stop babysit to the host that keeps, with its repository id”,
     “lists the sessions of every host, each row named by its host, and opens
