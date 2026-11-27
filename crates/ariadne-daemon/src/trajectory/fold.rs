@@ -31,6 +31,29 @@ use super::steps::{
     text_step,
 };
 
+/// The kinds the ACP runtime stores only after it stored the run of text
+/// before them (021, rule 6): a run of text starts after the newest of them.
+/// Kinds stored without that end — a reply, a resolution, a diagnosis, a
+/// switch — can land while a run streams.
+const RUN_BOUNDARIES: &[&str] = &[
+    "user_prompt_submit",
+    "agent_message",
+    "agent_thought",
+    "pre_tool_use",
+    "post_tool_use",
+    "tool_call_update",
+    "tool_call_abandoned",
+    "plan",
+    "permission_request",
+    "subagent_update",
+    "question",
+    "stop",
+    "session.error",
+    "session_start",
+    "session_end",
+    "compaction_update",
+];
+
 /// How many of its last steps a running turn carries. Fifty steps are about
 /// one screen of a client; the rest are a page of the steps route away.
 pub(crate) const STEP_WINDOW: usize = 50;
@@ -53,6 +76,9 @@ pub(crate) struct Fold {
     pending: Vec<Pending>,
     /// The open questions, by question or request id: the turn and the step.
     questions: HashMap<String, (String, String)>,
+    /// The newest stored event of a kind that ends a run of text: what a
+    /// run that has no `item_id` is named after while it streams.
+    boundary: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,9 +100,6 @@ struct Turn {
 pub(crate) struct Lane {
     /// The steps the lane opened, in order.
     pub(crate) openers: Vec<Opener>,
-    /// How many text steps the lane opened: what names a run that has no
-    /// `item_id` while it streams.
-    texts: u64,
     /// Each call by its ACP id: its state.
     calls: HashMap<String, Call>,
     thoughts: u64,
@@ -171,8 +194,7 @@ pub(crate) struct TurnIndex {
     /// The steps that wait on a person: pending permissions and open
     /// questions.
     pub(crate) actions: Vec<String>,
-    /// The error steps.
-    pub(crate) errors: Vec<String>,
+
     pub(crate) lanes: HashMap<String, Lane>,
 }
 
@@ -212,6 +234,7 @@ impl Fold {
             session,
             pending: Vec::new(),
             questions: HashMap::new(),
+            boundary: None,
         }
     }
 
@@ -234,6 +257,7 @@ impl Fold {
         };
         let mut ops = Ops::default();
         self.step(&input, &mut ops);
+        self.mark_boundary(&input);
         self.finish(ops)
     }
 
@@ -249,6 +273,7 @@ impl Fold {
             stored: true,
         };
         self.step(&input, &mut Ops::default());
+        self.mark_boundary(&input);
     }
 
     /// Pair a permission or a question outside the turns the fold reads:
@@ -321,11 +346,7 @@ impl Fold {
                     .get(MAIN_LANE)
                     .and_then(|lane| lane.answer.clone()),
                 actions: self.action_ids(turn),
-                errors: turn
-                    .lanes
-                    .get(MAIN_LANE)
-                    .map(|lane| lane.errors.clone())
-                    .unwrap_or_default(),
+
                 lanes: turn.lanes.clone(),
             })
             .collect()
@@ -451,6 +472,12 @@ impl Fold {
             }
         }
         out
+    }
+
+    fn mark_boundary(&mut self, input: &Input) {
+        if input.stored && RUN_BOUNDARIES.contains(&input.kind) {
+            self.boundary = Some(input.id.to_string());
+        }
     }
 
     fn session_op(&self) -> TrajectoryOpDto {
@@ -729,11 +756,11 @@ impl Fold {
         }
         // A run with no `item_id` is named after the stored event before it,
         // which every open of the session reads the same while it streams.
-        // A run with no `item_id` is named after its turn, its lane and how
-        // many text steps the lane opened before it, which every open of
-        // the session counts the same while the run streams.
-        let texts = turn.lanes.get(&input.lane).map_or(0, |lane| lane.texts);
-        let id = item.unwrap_or_else(|| format!("{}~{}~{texts}", turn.id, input.lane));
+        // A run with no `item_id` is named after the stored event it began
+        // after, and its lane: every open of the session reads the same one
+        // while the run streams, whatever else is stored meanwhile.
+        let after = self.boundary.clone().unwrap_or_else(|| turn.id.clone());
+        let id = item.unwrap_or_else(|| format!("{after}~{}", input.lane));
         let step = text_step(
             thought,
             id.clone(),
@@ -748,7 +775,6 @@ impl Fold {
             .lanes
             .entry(input.lane.clone())
             .or_default();
-        lane.texts += 1;
         lane.items.insert(id.clone());
         lane.streaming = Some((thought, id.clone()));
         if thought {
@@ -799,7 +825,6 @@ impl Fold {
                 .lanes
                 .entry(input.lane.clone())
                 .or_default();
-            lane.texts += 1;
             lane.items.insert(id.clone());
             if thought {
                 lane.thoughts += 1;
@@ -1180,23 +1205,23 @@ impl Fold {
         ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
     }
 
+    /// An error step comes from the event's facts alone, so a read shows
+    /// every error of a turn whatever the payload budget.
     fn error(&mut self, input: &Input, ops: &mut Ops) {
         let index = self.turn_for(input, ops);
-        let step = input.full.map(|event| {
-            let payload = &event.payload;
-            StepDto::Error(ErrorStepDto {
-                id: event.id.clone(),
-                turn_id: self.turns[index].id.clone(),
-                lane: MAIN_LANE.into(),
-                created_at: event.created_at.clone(),
-                text: string_at(payload, "/error/data/message")
-                    .or_else(|| string_at(payload, "/error/message"))
-                    .or_else(|| string_at(payload, "/message"))
-                    .unwrap_or_else(|| event.summary.clone()),
-                diagnosis: None,
-            })
+        let step = StepDto::Error(ErrorStepDto {
+            id: input.id.to_string(),
+            turn_id: self.turns[index].id.clone(),
+            lane: MAIN_LANE.into(),
+            created_at: input.created_at.to_string(),
+            text: input
+                .facts
+                .message
+                .clone()
+                .unwrap_or_else(|| "session error".into()),
+            diagnosis: None,
         });
-        self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
+        self.open_step(index, MAIN_LANE, input.id, input.row(), Some(step), ops);
         self.turns[index]
             .lanes
             .entry(MAIN_LANE.into())
@@ -1206,6 +1231,7 @@ impl Fold {
         self.end_running(TurnState::Failed, None, input.created_at, ops);
     }
 
+    /// A diagnosis reads onto its error from its facts alone.
     fn diagnosis(&mut self, input: &Input, ops: &mut Ops) {
         let Some(error_id) = input.facts.error.clone() else {
             return;
@@ -1223,19 +1249,18 @@ impl Fold {
             return;
         };
         ops.touch(&turn.id);
-        turn.lanes
-            .entry(MAIN_LANE.into())
-            .or_default()
-            .follows
-            .insert(error_id.clone(), input.id.to_string());
-        if let Some(event) = input.full
-            && let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == error_id)
+        let note = input.facts.category.as_ref().and_then(|category| {
+            let mut payload = serde_json::json!({ "category": category });
+            if let Some(percent) = input.facts.percent {
+                payload["probabilities"] =
+                    serde_json::json!({ category.as_str(): percent as f64 / 100.0 });
+            }
+            ariadne_api::events::diagnosis_note(&payload)
+        });
+        if let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == error_id)
             && let StepDto::Error(error) = step
         {
-            error.diagnosis = Some(
-                ariadne_api::events::diagnosis_note(&event.payload)
-                    .unwrap_or_else(|| event.summary.clone()),
-            );
+            error.diagnosis = note.or_else(|| input.full.map(|event| event.summary.clone()));
             ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
         }
     }
@@ -2472,5 +2497,41 @@ mod tests {
 
         let reopened = again.fold.snapshot(0, 20, None).turns[0].steps[0].clone();
         assert_eq!(step_id(&reopened), streaming);
+    }
+
+    /// A reply, a resolution or a switch stored while a run streams does not
+    /// end the run, so it does not rename it: a reopen after them names the
+    /// run as the stream did.
+    #[test]
+    fn a_reply_stored_while_a_run_streams_does_not_rename_it() {
+        let mut live = Session::new();
+        live.prompt("Go");
+        live.event(
+            "permission_request",
+            json!({"acp": {"toolCallId": "c-1"}, "options": []}),
+        );
+        let (_, opened) = live.event("agent_message_chunk", json!({"text": "Half "}));
+        let TrajectoryOpDto::ItemUpsert { step } = &opened[0] else {
+            panic!("{opened:?}");
+        };
+        let streaming = step_id(step).to_string();
+        live.event("permission.replied", json!({"option_id": "yes"}));
+        live.event("session.switched", json!({}));
+
+        let mut again = Session::new();
+        again.prompt("Go");
+        again.event(
+            "permission_request",
+            json!({"acp": {"toolCallId": "c-1"}, "options": []}),
+        );
+        again.event("permission.replied", json!({"option_id": "yes"}));
+        again.event("session.switched", json!({}));
+        let (_, reopened) = again.event("agent_message_chunk", json!({"text": "Half "}));
+
+        assert!(
+            reopened.iter().any(|op| matches!(op,
+                TrajectoryOpDto::ItemUpsert { step } if step_id(step) == streaming)),
+            "{reopened:?}"
+        );
     }
 }

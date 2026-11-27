@@ -205,14 +205,13 @@ fn mandatory(turn: &TurnIndex, prompt: bool) -> Vec<String> {
     ids
 }
 
-/// Each attention step of a turn, with the rows that show it: the actions
-/// that wait on a person, or the errors.
-fn attention(turn: &TurnIndex, errors: bool) -> Vec<Vec<String>> {
+/// Each step of a turn that waits on a person, with the rows that show it.
+/// An error needs no row: its step comes from its facts.
+fn attention(turn: &TurnIndex) -> Vec<Vec<String>> {
     let Some(lane) = turn.lanes.get(MAIN_LANE) else {
         return Vec::new();
     };
-    let ids = if errors { &turn.errors } else { &turn.actions };
-    ids.iter().map(|id| lane.rows(id)).collect()
+    turn.actions.iter().map(|id| lane.rows(id)).collect()
 }
 
 /// The last `STEP_WINDOW` steps of a lane, newest first, each with the rows
@@ -283,6 +282,14 @@ pub(crate) async fn read_turns_upto(
             found.into_iter().collect()
         }
     };
+    // A lane no turn holds, such as a subagent the session never had, shows
+    // nothing.
+    if candidates.is_empty() {
+        return Ok(Read {
+            upper: Some(upper.to_string()),
+            ..Read::default()
+        });
+    }
     let shown = &candidates[candidates.len() - candidates.len().min(turns.max(1))..];
     let mut held: BTreeSet<usize> = shown.iter().copied().collect();
     held.extend(attention_turns(&starts, &pairs, shown.first().copied()));
@@ -335,13 +342,10 @@ pub(crate) async fn read_turns_upto(
         first_shown = Some(at);
     }
     let first_shown = first_shown.unwrap_or(shown[shown.len() - 1]);
-    // What waits on a person, then the errors, each step on its own, newest
-    // turn first.
-    for errors in [false, true] {
-        for turn in index.values().rev() {
-            for rows in attention(turn, errors) {
-                picks.take(rows);
-            }
+    // What waits on a person, each step on its own, newest turn first.
+    for turn in index.values().rev() {
+        for rows in attention(turn) {
+            picks.take(rows);
         }
     }
     let plans = store
@@ -495,13 +499,19 @@ pub(crate) async fn read_steps(
     let loaded = store
         .events_by_ids(&picks.ids.into_iter().collect::<Vec<_>>())
         .await?;
+    // The prompt after the turn closes it as it closed it in the session: a
+    // call it cut short reads as interrupted, not pending.
+    let mut items = merge(heads, pairs, loaded, &starts);
+    let successor = starts.get(at + 1).cloned();
+    let successor_id = successor.as_ref().map(|head| head.id.clone());
+    items.extend(successor.map(Item::Head));
     Ok(Some(StepsRead {
         read: Read {
-            items: merge(heads, pairs, loaded, &starts),
+            items,
             upper: Some(upper),
             first_turn: Some(turn_id.to_string()),
             has_older: at > 0,
-            successor: None,
+            successor: successor_id,
         },
         page,
         earlier: (end - kept) as u64,
@@ -1292,10 +1302,11 @@ mod tests {
         assert_eq!(plans[0].entries[0].status, "completed");
     }
 
-    /// A turn with more errors than the budget keeps its prompt and its
-    /// answer, and as many of its errors as fit (rules 36, 38).
+    /// A turn with more errors than the budget keeps its prompt, its answer
+    /// and every error: an error's step comes from its facts, and loads no
+    /// payload (rules 25, 38).
     #[tokio::test]
-    async fn a_turn_of_many_errors_keeps_its_prompt_and_answer() {
+    async fn a_turn_of_many_errors_keeps_its_prompt_answer_and_every_error() {
         let (store, session, _dir) = session().await;
         let turn = prompt(&store, &session).await;
         commit(
@@ -1305,20 +1316,20 @@ mod tests {
             json!({"text": "Trying."}),
         )
         .await;
-        for _ in 0..30 {
+        for n in 0..30 {
             commit(
                 &store,
                 &session,
                 "session.error",
-                json!({"message": "boom"}),
+                json!({"error": {"message": format!("boom {n}")}}),
             )
             .await;
         }
 
-        let read = read_turns(&store, &session, None, 20, None, 10)
+        let read = read_turns(&store, &session, None, 20, None, 3)
             .await
             .unwrap();
-        assert!(read.loaded() <= 10);
+        assert!(read.loaded() <= 3);
         let fold = folded(&session, read);
         let shown = &fold.snapshot(0, 20, None).turns[0];
         assert_eq!(shown.id, turn);
@@ -1332,7 +1343,59 @@ mod tests {
                 text: "Trying.".into()
             }]
         );
-        assert_eq!(shown.attention.len(), 8, "the errors that fit the rest");
+        assert_eq!(shown.attention.len(), 30, "every error");
+        assert!(
+            matches!(&shown.attention[29], StepDto::Error(e) if e.text == "boom 29"),
+            "{:?}",
+            shown.attention[29]
+        );
+    }
+
+    /// A query for a lane no turn holds answers no turn, and does not fail.
+    #[tokio::test]
+    async fn a_query_for_a_subagent_the_session_never_had_is_empty() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        stop(&store, &session).await;
+
+        let read = read_turns(&store, &session, None, 20, Some("nobody"), 500)
+            .await
+            .unwrap();
+        let fold = folded(&session, read);
+        let snapshot = fold.snapshot(0, 20, Some("nobody"));
+        assert!(snapshot.turns.is_empty());
+        assert!(!snapshot.has_older);
+    }
+
+    /// A page of a turn the next prompt cut short shows the turn closed as
+    /// it was: its unfinished call interrupted, not pending (rule 44).
+    #[tokio::test]
+    async fn a_page_of_an_interrupted_turn_shows_its_call_interrupted() {
+        let (store, session, _dir) = session().await;
+        let turn = prompt(&store, &session).await;
+        let open = commit(
+            &store,
+            &session,
+            "pre_tool_use",
+            json!({"acp": {"toolCallId": "c-1", "kind": "execute", "status": "pending"}}),
+        )
+        .await;
+        prompt(&store, &session).await;
+
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, None, 10, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        let fold = folded(&session, page.read);
+        let held = fold.held_steps(&turn, MAIN_LANE);
+        let [StepDto::ToolCall(call)] = held.as_slice() else {
+            panic!("the one call: {held:?}");
+        };
+        assert_eq!(call.id, open);
+        assert_eq!(
+            call.status,
+            ariadne_api::trajectory::ToolCallStatus::Interrupted
+        );
     }
 
     /// The newest turn's step window comes before the subagents of the

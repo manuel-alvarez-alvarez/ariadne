@@ -45,9 +45,17 @@ pub struct EventFacts {
     pub request: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub asks: bool,
-    /// The error event a `session.diagnosis` is about.
+    /// The error event a `session.diagnosis` is about, its category and its
+    /// probability in percent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub percent: Option<i64>,
+    /// A `session.error`'s message, at most [`MESSAGE_CHARS`] characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -66,6 +74,10 @@ pub struct EventFacts {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
+
+/// How much of an error's message its facts keep: a step shows that much,
+/// and the whole message is the item detail, which a later route serves.
+pub const MESSAGE_CHARS: usize = 2000;
 
 /// The kinds that stay in the session's own lane whoever they name: the
 /// session answers a permission and a question, and announces a subagent.
@@ -117,7 +129,22 @@ pub fn facts_of(kind: &str, payload: &Value) -> EventFacts {
             facts.asks = payload.get("question").is_some_and(Value::is_object);
         }
         "agent_request.resolved" => facts.request = text(payload, "/request_id"),
-        "session.diagnosis" => facts.error = text(payload, "/error_event_id"),
+        "session.diagnosis" => {
+            facts.error = text(payload, "/error_event_id");
+            facts.category = text(payload, "/category");
+            facts.percent = facts.category.as_ref().and_then(|category| {
+                payload
+                    .pointer(&format!("/probabilities/{category}"))
+                    .and_then(Value::as_f64)
+                    .map(|probability| (probability * 100.0).round() as i64)
+            });
+        }
+        "session.error" => {
+            facts.message = text(payload, "/error/data/message")
+                .or_else(|| text(payload, "/error/message"))
+                .or_else(|| text(payload, "/message"))
+                .map(|message| message.chars().take(MESSAGE_CHARS).collect());
+        }
         "stop" => facts.stop_reason = text(payload, "/stop_reason"),
         "compaction_update" => facts.compaction = text(payload, "/compaction_id"),
         "permission_request" => {
@@ -284,5 +311,32 @@ mod tests {
             lane_of("tool_call_abandoned", &json!({"tool_call_id": "c-2"})),
             None
         );
+    }
+
+    /// An error keeps its message, cut to its first characters, and a
+    /// diagnosis its error, category and percent: their steps need no
+    /// payload.
+    #[test]
+    fn an_error_and_its_diagnosis_keep_what_their_steps_show() {
+        let long = "x".repeat(super::MESSAGE_CHARS + 10);
+        let error = facts_of(
+            "session.error",
+            &json!({"error": {"data": {"message": long}}}),
+        );
+        assert_eq!(
+            error.message.map(|m| m.chars().count()),
+            Some(super::MESSAGE_CHARS)
+        );
+        let plain = facts_of("session.error", &json!({"message": "boom"}));
+        assert_eq!(plain.message.as_deref(), Some("boom"));
+
+        let diagnosis = facts_of(
+            "session.diagnosis",
+            &json!({"error_event_id": "e-1", "category": "quota_exhausted",
+                    "probabilities": {"quota_exhausted": 0.724}}),
+        );
+        assert_eq!(diagnosis.error.as_deref(), Some("e-1"));
+        assert_eq!(diagnosis.category.as_deref(), Some("quota_exhausted"));
+        assert_eq!(diagnosis.percent, Some(72));
     }
 }
