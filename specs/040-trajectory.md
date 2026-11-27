@@ -44,14 +44,16 @@ Out:
 
 1. The store keeps two columns beside each event's deflated payload: `lane`,
    and `facts`, a small JSON (`EventFacts`). A query can read them, and no
-   query can read a payload. Migration 0030 adds them, an index on
+   query can read a payload. Migration 0031 adds them, an index on
    `(session_id, kind, id)` for the reads of one kind, and the table
    `store_fills`.
 2. `lane` is the subagent the payload names, or null for the session's own
    lane. A permission, a question and a subagent announcement are in the
    session's lane whoever they name: the session answers and announces them.
-3. `facts` holds what a read counts by: a tool call's id, status, kind and
-   paths; a message's `item_id`; a subagent announcement's id and state; a
+3. `facts` holds what a read counts by: a tool call's id, status, kind,
+   paths, title and locations, the fields of its input that its subject
+   reads (a command's first line, a path, a line, a pattern, a URL), and
+   whether it carries output text and diffs, never the output itself; a message's `item_id`; a subagent announcement's id and state; a
    question's or a legacy request's id; a diagnosis's error; a stop's
    reason; a compaction's id; a permission request's options and whether it
    names an Ariadne tool; and a reply's option, decider and label. Facts are
@@ -65,7 +67,7 @@ Out:
    call's id from `acp.toolCallId`, else `tool_call_id`. An abandoned call is
    `cancelled` for the reason `cancelled`, and `interrupted` otherwise.
 5. When the store opens, it fills the columns of every row stored before
-   migration 0030 from its payload, before it serves a read. So an old
+   migration 0031 from its payload, before it serves a read. So an old
    session reads as exactly as a new one.
 6. The fill runs once. A finished fill writes its row in `store_fills`, and
    a store with that row does not fill again.
@@ -147,9 +149,12 @@ Out:
     stored, a `post_tool_use` and a `tool_call_abandoned` change the open call
     of the same lane and tool call id. Each change adds one to `detail_rev`.
     An update with no open call opens a step.
-22. A call keeps the fields that an update does not send again, in a cold
-    read too: it loads the call's updates, the first 8 and the newest 56 of a call with
-    more. Its
+22. A call keeps the fields that an update does not send again. A cold
+    read gives a call of any count of updates the step a warm fold gives
+    it: it takes the title, kind, locations, subject and status of each
+    update from its facts, counts each update in `detail_rev`, and loads
+    the payload of the opener, the newest update, the newest update with
+    output text and the newest with diffs. Its
     `preview` is the first five lines, and at most 400 characters, of its
     output text, else of its `rawOutput`: a row shows that much. Its
     `diff_stat` counts the files of its diffs, and the `+` and `-` lines of a
@@ -282,7 +287,8 @@ Out:
 ## Acceptance criteria
 
 1. The facts of an event, its lane, and the daemon's own allow
-   (rules 2, 3): `event_facts.rs::the_facts_hold_what_a_read_counts_by`.
+   (rules 2, 3): `event_facts.rs::the_facts_hold_what_a_read_counts_by`,
+   `event_facts.rs::a_calls_facts_hold_its_small_fields_and_no_output`.
 2. The facts of the stored call updates of the ticket contract (rule 4):
    `event_facts.rs::the_stored_call_updates_give_the_facts_of_their_call`.
 3. The store keeps the facts at insert, fills them for an old row, and
@@ -435,7 +441,7 @@ A page with `before` holds the subagents and plans of its own read.
 `crates/ariadne-api/src/trajectory.rs`,
 `crates/ariadne-core/src/event_facts.rs`,
 `crates/ariadne-store/src/events.rs`,
-`crates/ariadne-store/migrations/0030_agent_event_facts.sql`,
+`crates/ariadne-store/migrations/0031_agent_event_facts.sql`,
 `crates/ariadne-store/src/lib.rs` (`Store::open`),
 `crates/ariadne-daemon/src/trajectory/`,
 `crates/ariadne-daemon/src/http/trajectory.rs`,

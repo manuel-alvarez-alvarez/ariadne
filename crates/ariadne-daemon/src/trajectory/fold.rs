@@ -27,8 +27,8 @@ use ariadne_store::EventHead;
 
 use super::steps::{
     append_text, blocks_of, commands_of, content_of, is_terminal, lane_of, locations_of,
-    merge_call, new_call, permission_options, step_id, string_at, subagent_ref, subject_of,
-    text_step,
+    merge_call, merge_call_facts, new_call, permission_options, status_of, step_id, string_at,
+    subagent_ref, subject_of, text_step,
 };
 
 /// How many errors a turn's `attention` holds, the newest first: a screen of
@@ -100,15 +100,12 @@ pub(crate) struct Lane {
     /// update, a permission's reply, a question's resolution, an error's
     /// diagnosis — by the step's id.
     pub(crate) follows: HashMap<String, String>,
-    /// The rows of each call's updates, oldest first: an update can name
-    /// the call's title, kind or input, and a later one omit them.
-    pub(crate) updates: HashMap<String, Vec<String>>,
+    /// The newest update of each call that carries output text, and the
+    /// newest that carries diffs, by the call's step: the preview and the
+    /// diff stat come from their payloads, the rest from the facts.
+    pub(crate) outputs: HashMap<String, String>,
+    pub(crate) diffs: HashMap<String, String>,
 }
-
-/// How many updates of one call a read loads. A call with more loads its
-/// first and its newest ones.
-const CALL_UPDATES_HEAD: usize = 8;
-const CALL_UPDATES_TAIL: usize = 56;
 
 /// One step a lane opened: its id on the wire, and the stored row that
 /// opened it. A step a live event opened has no row until one is stored.
@@ -127,20 +124,10 @@ impl Lane {
             .iter()
             .find(|opener| opener.step == step)
             .and_then(|opener| opener.row.clone());
-        let updates = self.updates.get(step).map_or(&[][..], Vec::as_slice);
-        let skip = if updates.len() > CALL_UPDATES_HEAD + CALL_UPDATES_TAIL {
-            updates.len() - CALL_UPDATES_TAIL
-        } else {
-            0
-        };
-        let kept = updates
-            .iter()
-            .enumerate()
-            .filter(|(at, _)| *at < CALL_UPDATES_HEAD || *at >= skip)
-            .map(|(_, row)| row.clone());
         opener
             .into_iter()
-            .chain(kept)
+            .chain(self.outputs.get(step).cloned())
+            .chain(self.diffs.get(step).cloned())
             .chain(self.follows.get(step).cloned())
             .collect()
     }
@@ -1066,19 +1053,23 @@ impl Fold {
             && let Some(row) = input.row()
         {
             lane.follows.insert(target.clone(), row.to_string());
-            let updates = lane.updates.entry(target.clone()).or_default();
-            if updates.last().map(String::as_str) != Some(row) {
-                updates.push(row.to_string());
+            if input.facts.output {
+                lane.outputs.insert(target.clone(), row.to_string());
+            }
+            if input.facts.diffs {
+                lane.diffs.insert(target.clone(), row.to_string());
             }
         }
         ops.touch(&turn.id);
-        let Some(event) = input.full else {
-            return;
-        };
+        // An update whose payload the read did not load still changes its
+        // call: by its facts, which hold every field but the output.
         if let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == target)
             && let StepDto::ToolCall(call) = step
         {
-            merge_call(call, event);
+            match input.full {
+                Some(event) => merge_call(call, event),
+                None => merge_call_facts(call, &input.facts, input.created_at),
+            }
             if target != input.id {
                 call.detail_rev += 1;
             }
@@ -1731,18 +1722,6 @@ fn waits(step: &StepDto) -> bool {
         StepDto::Question(question) => question.state == QuestionState::Open,
         _ => false,
     }
-}
-
-fn status_of(status: &str) -> Option<ToolCallStatus> {
-    Some(match status {
-        "pending" => ToolCallStatus::Pending,
-        "in_progress" => ToolCallStatus::Running,
-        "completed" => ToolCallStatus::Completed,
-        "failed" => ToolCallStatus::Failed,
-        "cancelled" => ToolCallStatus::Cancelled,
-        "interrupted" => ToolCallStatus::Interrupted,
-        _ => return None,
-    })
 }
 
 /// A permission step, from its request's payload.

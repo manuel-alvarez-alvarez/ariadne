@@ -1169,7 +1169,7 @@ mod tests {
         .snapshot(0, 20, None);
         store.close().await;
 
-        // As a release before migration 0030 left it: no facts, no fill.
+        // As a release before migration 0031 left it: no facts, no fill.
         let path = dir.path().join("test.db");
         let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
             .await
@@ -1306,8 +1306,10 @@ mod tests {
         );
     }
 
-    /// A cold read keeps the fields an intermediate update named and a
-    /// status-only completion omitted (rule 22).
+    /// A cold read gives a call of any count of updates the step a warm
+    /// fold gives it: the fields an intermediate update named and a later
+    /// one omitted, and every update counted in `detail_rev`, from the
+    /// facts; the preview from the newest output payload (rule 22).
     #[tokio::test]
     async fn a_cold_read_keeps_the_fields_of_an_intermediate_update() {
         let (store, session, _dir) = session().await;
@@ -1316,25 +1318,24 @@ mod tests {
             &store,
             &session,
             "pre_tool_use",
-            json!({"tool_name": "Edit", "acp": {"toolCallId": "c1", "status": "pending"}}),
+            json!({"tool_name": "Read", "acp": {"toolCallId": "c1", "status": "pending"}}),
         )
         .await;
-        commit(
-            &store,
-            &session,
-            "tool_call_update",
-            json!({"acp": {"toolCallId": "c1", "title": "Read config", "kind": "read",
-                           "rawInput": {"path": "config.json"}}}),
-        )
-        .await;
-        for _ in 0..11 {
-            commit(
-                &store,
-                &session,
-                "tool_call_update",
-                json!({"acp": {"toolCallId": "c1", "status": "in_progress"}}),
-            )
-            .await;
+        for n in 0..80 {
+            let acp = match n {
+                8 => json!({"toolCallId": "c1", "title": "Read config", "kind": "read",
+                            "status": "in_progress",
+                            "locations": [{"path": "config.json", "line": 3}],
+                            "rawInput": {"path": "config.json", "content": "x".repeat(4000)}}),
+                20 => json!({"toolCallId": "c1", "content": [{"type": "content",
+                             "content": {"type": "text", "text": "first lines"}}]}),
+                30 => {
+                    json!({"toolCallId": "c1", "content": [{"type": "diff", "path": "config.json",
+                             "oldText": "a\nb", "newText": "a\nc"}]})
+                }
+                _ => json!({"toolCallId": "c1", "status": "in_progress"}),
+            };
+            commit(&store, &session, "tool_call_update", json!({ "acp": acp })).await;
         }
         commit(
             &store,
@@ -1344,22 +1345,38 @@ mod tests {
         )
         .await;
 
-        let fold = folded(
-            &session,
-            read_turns(&store, &session, None, 20, None, 500)
-                .await
-                .unwrap(),
+        let mut warm = scratch(&session);
+        for event in store.list_session_events(&session).await.unwrap() {
+            warm.apply(&crate::http::convert::event_dto(event), true);
+        }
+        let read = read_turns(&store, &session, None, 20, None, 500)
+            .await
+            .unwrap();
+        assert!(
+            read.loaded() <= 5,
+            "the opener, the prompt and three updates"
         );
-        let snapshot = fold.snapshot(0, 20, None);
-        let Some(ariadne_api::trajectory::StepDto::ToolCall(call)) =
-            snapshot.turns[0].steps.first()
-        else {
-            panic!("a call step");
+        let cold = folded(&session, read);
+        let step = |fold: &Fold| {
+            let snapshot = fold.snapshot(0, 20, None);
+            match snapshot.turns[0].steps.first() {
+                Some(ariadne_api::trajectory::StepDto::ToolCall(call)) => call.clone(),
+                other => panic!("a call step, not {other:?}"),
+            }
         };
-        assert_eq!(call.title, "Read config");
-        assert_eq!(call.kind.as_deref(), Some("read"));
-        assert_eq!(call.subject.as_deref(), Some("config.json"));
-        assert_eq!(call.detail_rev, 13);
+        let (warm, cold) = (step(&warm), step(&cold));
+        assert_eq!(cold, warm);
+        assert_eq!(cold.title, "Read config");
+        assert_eq!(cold.kind.as_deref(), Some("read"));
+        assert_eq!(cold.subject.as_deref(), Some("config.json:3"));
+        assert_eq!(cold.locations[0].path, "config.json");
+        assert_eq!(
+            cold.status,
+            ariadne_api::trajectory::ToolCallStatus::Completed
+        );
+        assert_eq!(cold.preview.as_deref(), Some("first lines"));
+        assert_eq!(cold.diff_stat.map(|stat| stat.files), Some(1));
+        assert_eq!(cold.detail_rev, 81);
     }
 
     /// A cold read holds the commands the agent offered before the shown

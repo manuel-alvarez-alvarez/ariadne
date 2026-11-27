@@ -28,6 +28,20 @@ pub struct EventFacts {
     /// The paths a tool call names: its locations, and its diffs' paths.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
+    /// A tool call's title, its ACP locations with their lines, and the
+    /// fields of its input that name its subject. Input that is present
+    /// holds an object, empty where it names none of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locations: Vec<FactLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Value>,
+    /// Whether a tool call event carries output text to preview, and diffs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub output: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub diffs: bool,
     /// The `item_id` of a message or a thought.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<String>,
@@ -67,6 +81,30 @@ pub struct EventFacts {
     pub label: Option<String>,
 }
 
+/// One ACP location of a tool call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FactLocation {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u64>,
+}
+
+/// The input fields a call's subject reads: a command, a path, a line, a
+/// search pattern and a URL. A command keeps its first line.
+const SUBJECT_KEYS: &[&str] = &[
+    "path",
+    "file_path",
+    "filePath",
+    "file",
+    "line",
+    "pattern",
+    "query",
+    "regex",
+    "directory",
+    "cwd",
+    "url",
+];
+
 /// The kinds that stay in the session's own lane whoever they name: the
 /// session answers a permission and a question, and announces a subagent.
 const MAIN_KINDS: &[&str] = &[
@@ -102,6 +140,16 @@ pub fn facts_of(kind: &str, payload: &Value) -> EventFacts {
             };
             facts.tool_kind = text(acp, "/kind");
             facts.paths = paths_of(acp);
+            facts.title = text(payload, "/tool_name").or_else(|| text(acp, "/title"));
+            facts.locations = locations_of(acp);
+            facts.input = payload
+                .get("tool_input")
+                .or_else(|| acp.get("rawInput"))
+                .filter(|input| !input.is_null())
+                .map(subject_input);
+            facts.output = has_output(acp);
+            facts.diffs =
+                content_of(acp).any(|entry| text(entry, "/type").as_deref() == Some("diff"));
         }
         "agent_message" | "agent_thought" | "agent_message_chunk" | "agent_thought_chunk" => {
             facts.item = text(payload, "/item_id");
@@ -191,6 +239,68 @@ fn paths_of(acp: &Value) -> Vec<String> {
     paths
 }
 
+fn content_of(acp: &Value) -> impl Iterator<Item = &Value> {
+    acp.get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+}
+
+fn locations_of(acp: &Value) -> Vec<FactLocation> {
+    acp.get("locations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|location| {
+            Some(FactLocation {
+                path: text(location, "/path")?,
+                line: location.get("line").and_then(Value::as_u64),
+            })
+        })
+        .collect()
+}
+
+/// The fields of a call's input that its subject reads, and no other.
+fn subject_input(input: &Value) -> Value {
+    let mut kept = serde_json::Map::new();
+    match input.get("command") {
+        Some(Value::String(command)) => {
+            let first = command.lines().next().unwrap_or_default();
+            kept.insert("command".into(), Value::String(first.to_string()));
+        }
+        Some(Value::Array(parts)) => {
+            let parts: Vec<Value> = parts
+                .iter()
+                .filter(|part| part.is_string())
+                .cloned()
+                .collect();
+            kept.insert("command".into(), Value::Array(parts));
+        }
+        _ => {}
+    }
+    for key in SUBJECT_KEYS {
+        match input.get(*key) {
+            Some(value @ Value::String(_)) => {
+                kept.insert((*key).into(), value.clone());
+            }
+            Some(value) if *key == "line" && value.is_u64() => {
+                kept.insert((*key).into(), value.clone());
+            }
+            _ => {}
+        }
+    }
+    Value::Object(kept)
+}
+
+/// Whether a call event carries text its preview reads: a non-empty text
+/// content, or a raw output.
+fn has_output(acp: &Value) -> bool {
+    content_of(acp).any(|entry| {
+        text(entry, "/type").as_deref() == Some("content")
+            && text(entry, "/content/text").is_some_and(|text| !text.is_empty())
+    }) || acp.get("rawOutput").is_some_and(|raw| !raw.is_null())
+}
+
 fn text(value: &Value, pointer: &str) -> Option<String> {
     value.pointer(pointer)?.as_str().map(str::to_string)
 }
@@ -249,6 +359,28 @@ mod tests {
         assert!(allow.daemon_allowed(&request));
         assert!(!reject.daemon_allowed(&request));
         assert!(!person.daemon_allowed(&request));
+    }
+
+    /// A call's facts hold its title, locations and the subject fields of
+    /// its input, and whether it carries output and diffs, but never the
+    /// output or the rest of the input.
+    #[test]
+    fn a_calls_facts_hold_its_small_fields_and_no_output() {
+        let facts = facts_of(
+            "tool_call_update",
+            &json!({"acp": {"toolCallId": "c-1", "title": "Run", "kind": "execute",
+                            "locations": [{"path": "a.rs", "line": 4}],
+                            "rawInput": {"command": "make\nrm -rf", "content": "BIG-INPUT"},
+                            "content": [{"type": "content",
+                                         "content": {"type": "text", "text": "LOG-TEXT"}}]}}),
+        );
+        assert_eq!(facts.title.as_deref(), Some("Run"));
+        assert_eq!(facts.locations[0].line, Some(4));
+        assert_eq!(facts.input, Some(json!({"command": "make"})));
+        assert!(facts.output);
+        assert!(!facts.diffs);
+        let text = serde_json::to_string(&facts).unwrap();
+        assert!(!text.contains("LOG-TEXT") && !text.contains("BIG-INPUT"));
     }
 
     /// The stored `tool_call_update` and `tool_call_abandoned` of the ticket

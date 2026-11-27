@@ -3,6 +3,8 @@
 
 use serde_json::Value;
 
+use ariadne_core::event_facts::EventFacts;
+
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::trajectory::{
     CommandDto, ContentBlockDto, DiffStatDto, LocationDto, MessageStepDto, PermissionOptionDto,
@@ -206,11 +208,16 @@ pub(super) fn merge_call(call: &mut ToolCallStepDto, event: &AgentEventDto) {
     let mut locations = locations_of(acp);
     let diffs = diffs_of(acp);
     if locations.is_empty() {
-        locations = diffs
-            .iter()
-            .filter_map(|(path, _, _)| path.clone())
-            .map(|path| LocationDto { path, line: None })
-            .collect();
+        for (path, _, _) in &diffs {
+            if let Some(path) = path
+                && !locations.iter().any(|location| &location.path == path)
+            {
+                locations.push(LocationDto {
+                    path: path.clone(),
+                    line: None,
+                });
+            }
+        }
     }
     if !locations.is_empty() {
         call.locations = locations;
@@ -254,6 +261,64 @@ pub(super) fn merge_call(call: &mut ToolCallStepDto, event: &AgentEventDto) {
     if is_terminal(call.status) && call.ended_at.is_none() {
         call.ended_at = Some(event.created_at.clone());
     }
+}
+
+/// Take what the facts of a call event say, where its payload is not read:
+/// the same title, kind, locations, subject and status `merge_call` takes.
+pub(super) fn merge_call_facts(call: &mut ToolCallStepDto, facts: &EventFacts, created_at: &str) {
+    if let Some(title) = &facts.title
+        && title != UNNAMED_TOOL
+    {
+        call.title = title.clone();
+    }
+    if let Some(kind) = &facts.tool_kind {
+        call.kind = Some(kind.clone());
+    }
+    let locations: Vec<LocationDto> = if facts.locations.is_empty() {
+        facts
+            .paths
+            .iter()
+            .map(|path| LocationDto {
+                path: path.clone(),
+                line: None,
+            })
+            .collect()
+    } else {
+        facts
+            .locations
+            .iter()
+            .map(|location| LocationDto {
+                path: location.path.clone(),
+                line: location.line,
+            })
+            .collect()
+    };
+    if !locations.is_empty() {
+        call.locations = locations;
+    }
+    if let Some(input) = &facts.input {
+        call.subject = subject_of(call.kind.as_deref(), input, &call.locations);
+    } else if call.subject.is_none() && !call.locations.is_empty() {
+        call.subject = subject_of(call.kind.as_deref(), &Value::Null, &call.locations);
+    }
+    if let Some(status) = facts.status.as_deref().and_then(status_of) {
+        call.status = status;
+    }
+    if is_terminal(call.status) && call.ended_at.is_none() {
+        call.ended_at = Some(created_at.to_string());
+    }
+}
+
+pub(super) fn status_of(status: &str) -> Option<ToolCallStatus> {
+    Some(match status {
+        "pending" => ToolCallStatus::Pending,
+        "in_progress" => ToolCallStatus::Running,
+        "completed" => ToolCallStatus::Completed,
+        "failed" => ToolCallStatus::Failed,
+        "cancelled" => ToolCallStatus::Cancelled,
+        "interrupted" => ToolCallStatus::Interrupted,
+        _ => return None,
+    })
 }
 
 pub(super) fn is_terminal(status: ToolCallStatus) -> bool {
