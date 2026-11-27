@@ -3,7 +3,7 @@
  * the goals board draw an item with.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
 import { api, type GoalDto, type Host, qk, unwrap } from "@/api"
@@ -362,7 +362,12 @@ function PermissionAnswers({ host, sessionId }: { host: Host; sessionId: string 
       return pendingPermissions(applySnapshot(emptyTrajectory(), snapshot))[0] ?? null
     },
   })
+  // The board, the popover and the drawer can show the same permission, so
+  // a post running in any one of them disables the buttons of all.
+  const answerKey = qk.sessions.permissionAnswer(host, sessionId)
+  const posting = useIsMutating({ mutationKey: answerKey }) > 0
   const answer = useMutation({
+    mutationKey: answerKey,
     mutationFn: (optionId: string) =>
       unwrap(
         api(host).POST("/v1/sessions/{id}/console/input", {
@@ -400,7 +405,7 @@ function PermissionAnswers({ host, sessionId }: { host: Host; sessionId: string 
             type="button"
             size="sm"
             variant="outline"
-            disabled={answer.isPending}
+            disabled={posting}
             onClick={() => answer.mutate(option.id)}
           >
             {option.name}

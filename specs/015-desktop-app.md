@@ -1226,8 +1226,9 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     subject, the question and one button for each option, and the subagent
     that asked. A click posts the option id as `text` to that host's
     `POST /v1/sessions/{id}/console/input`. Every button is disabled while the
-    post runs, and a failed post shows its error and permits a new attempt
+    post runs, in every view of that permission, and a failed post shows its error and permits a new attempt
     (`ui/src/features/goals/attention-permissions.test.tsx::disables every option while the post runs`,
+    `ui/src/features/goals/attention-permissions.test.tsx::disables the buttons of every view of the permission while one view posts`,
     `ui/src/features/goals/attention-permissions.test.tsx::shows a failed post and permits a new attempt`). A session with no
     pending permission shows no button and keeps the console link. The
     trajectory is read again after each change of the host's attention list.

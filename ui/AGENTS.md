@@ -298,6 +298,7 @@ the host first; below, the host is left out of each key for brevity:
 ["sessions",     "list", filters]   ["sessions", "detail", id]
 ["sessions",     "detail", id, "questions"]
 ["sessions",     "detail", id, "pending-permission", { stamp }]
+["sessions",     "detail", id, "permission-answer"]  (a mutation key)
 ["sessions",     "detail", id, "trajectory-item", itemId, { rev, raw }]
 ["sessions",     "detail", id, "trajectory-steps", turnId, { subagentId, steps }]
 ["hosts",        "list", {}]         (always under "local")

@@ -120,6 +120,9 @@ export const qk = {
      */
     pendingPermission: (host: Host, id: string, stamp: number) =>
       [host, "sessions", "detail", id, "pending-permission", { stamp }] as const,
+    /** The post that answers a permission of the session: one key for every view of it. */
+    permissionAnswer: (host: Host, id: string) =>
+      [host, "sessions", "detail", id, "permission-answer"] as const,
     /**
      * The detail of one tool call step (`GET /v1/sessions/{id}/trajectory/items/{item_id}`)
      * at one `detail_rev`, with or without its raw input and output: a new

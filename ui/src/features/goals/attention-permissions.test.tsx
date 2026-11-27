@@ -154,14 +154,45 @@ it("names the subagent that asked", async () => {
 
 it("shows no option button and keeps the console link when nothing is pending", async () => {
   stub(aSnapshot([aTurn({ state: "running" })]))
-  board()
+  const { queryClient } = board()
 
   await screen.findByText("Permission approval needed")
-  await waitFor(() =>
-    expect(screen.queryByRole("region", { name: "Pending permission" })).toBeNull(),
-  )
+  // The trajectory response has arrived and holds no pending permission.
+  await waitFor(() => {
+    const reads = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ["local", "sessions", "detail", "S1", "pending-permission"] })
+    expect(reads.length).toBeGreaterThan(0)
+    expect(reads.every((read) => read.state.status === "success")).toBe(true)
+  })
+  expect(screen.queryByRole("region", { name: "Pending permission" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull()
   expect(screen.getByText("Open console")).toBeTruthy()
+})
+
+it("disables the buttons of every view of the permission while one view posts", async () => {
+  stub(aSnapshot([turnWith(aPermissionStep("T"))]), () => new Promise(() => {}) as never)
+  renderScreen(
+    <>
+      <GoalBoard hosts={["local"]} goals={[{ ...goal, host: "local" }]} />
+      <AttentionPopover />
+    </>,
+    { route: "/goals" },
+  )
+
+  await card()
+  fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
+  await waitFor(() =>
+    expect(screen.getAllByRole("region", { name: "Pending permission" })).toHaveLength(2),
+  )
+  const [first, second] = screen.getAllByRole("region", { name: "Pending permission" })
+  fireEvent.click(within(first as HTMLElement).getByRole("button", { name: "Allow once" }))
+
+  await waitFor(() => {
+    for (const view of [first, second])
+      for (const button of within(view as HTMLElement).getAllByRole("button"))
+        expect((button as HTMLButtonElement).disabled).toBe(true)
+  })
 })
 
 it("shows the permission now pending after the attention list changes", async () => {
