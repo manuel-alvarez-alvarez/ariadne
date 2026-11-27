@@ -2193,6 +2193,44 @@ async fn cancelling_the_review_task_stops_the_review_and_it_stays_stopped() {
     );
 }
 
+/// Only the user stops a review by cancelling its task: the review's own
+/// session is refused, and the review, its ask and its session stay.
+#[tokio::test]
+async fn the_review_session_cannot_cancel_its_own_task() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+    let task = h
+        .store
+        .active_pr_task(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let _: Value = h
+        .json(
+            crate::common::as_session(
+                &format!("/v1/tasks/{}/cancel", task.id),
+                &session.id,
+                json!({}),
+            ),
+            StatusCode::FORBIDDEN,
+        )
+        .await;
+    assert_eq!(
+        h.status(&task.id).await,
+        ariadne_core::TaskStatus::InProgress
+    );
+    assert!(h.store.get_pull_request(&id).await.unwrap().review_asked);
+    assert!(h.session_status(&session).await.is_live());
+}
+
 /// A scheduler pass that comes while a start is half written — the task
 /// made, the ask not yet — waits for it, then sees the whole of it: the new
 /// task is not cancelled as an ask that is gone, and the session it starts

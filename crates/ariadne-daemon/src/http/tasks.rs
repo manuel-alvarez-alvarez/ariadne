@@ -637,6 +637,15 @@ pub(super) async fn cancel(
     if let Some(link) = state.store.task_pull_request(&id).await?
         && let Some(operation) = link.operation()
     {
+        // The stop is the user's alone: no orchestrator plans the task, and
+        // its own agent ends its work through its request, never by
+        // cancelling the operation.
+        if ctx.actor != Actor::User {
+            return Err(ApiError::forbidden(format!(
+                "{} may not cancel a pull request operation's task",
+                ctx.actor.as_str()
+            )));
+        }
         let _operation = state
             .store
             .pr_operation_lock(&link.repository_id, link.number)

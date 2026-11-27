@@ -212,7 +212,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
       clears the ask and cancels the task under the same lock, so Forge
       shows the review stopped and no session starts afterwards. The task
       is read again under the lock: one a stop and a new start replaced
-      while the cancel waited answers 409, and the replacement stays.
+      while the cancel waited answers 409, and the replacement stays. The
+      stop is the user's alone: an orchestrator or a column, review or
+      keeper session that cancels an operation's task answers 403, and the
+      task, its ask and its session stay.
     - `TaskDto.operation` and `PullRequestDto.operations` name the operation
       and the open task of each; a review task's `pr_url` names its request.
       The desktop's request panel links the task, and `pr show` prints it.
@@ -439,12 +442,13 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `::a_closed_request_fails_its_review_task`,
   `::stopping_a_review_cancels_its_task_and_the_next_ask_starts_a_new_one`.
 - A scheduler pass between a start's task and its ask waits for the start,
-  a stop and a start at once leave one whole state, and cancelling the task
-  stops the review for good:
+  a stop and a start at once leave one whole state, cancelling the task
+  stops the review for good, and the review's own session cannot cancel it:
   `pull_request_reviews.rs::a_pass_between_the_task_and_the_ask_of_a_start_waits_for_the_start`,
   `::a_stop_and_a_start_at_once_leave_one_whole_state`,
   `::cancelling_the_review_task_stops_the_review_and_it_stays_stopped`,
-  `::cancelling_a_replaced_review_task_leaves_its_replacement_alone`.
+  `::cancelling_a_replaced_review_task_leaves_its_replacement_alone`,
+  `::the_review_session_cannot_cancel_its_own_task`.
 - The upgrade turns each review and babysit goal into its goal-less task and
   leaves ordinary goals as they were:
   `pr_operation_task_migration.rs::the_upgrade_turns_operation_goals_into_goal_less_tasks`.
