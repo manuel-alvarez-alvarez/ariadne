@@ -35,6 +35,7 @@ pub mod socket;
 pub mod source_posts;
 pub mod telemetry;
 pub mod timeouts;
+pub(crate) mod trajectory;
 pub mod transcript;
 
 pub mod webhooks;

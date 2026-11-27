@@ -308,6 +308,7 @@ async fn main() -> Result<()> {
         reply_locks: Default::default(),
         source_posts: Default::default(),
         closing: Default::default(),
+        trajectories: Default::default(),
     };
     // Far tasks follow the hosts' status from the event bus (037).
     let far = ariadne_daemon::far::start(&state, ariadne_daemon::timeouts::Timeouts::default());

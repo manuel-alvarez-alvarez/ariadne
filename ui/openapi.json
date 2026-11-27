@@ -4119,7 +4119,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nactive goal for the babysit, with one staffed task and no orchestrator,\nin one `babysit` column that Ariadne fixes: the model must be ranked\ninside that column's band, else 400. Asking again keeps the open goal and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The goal completes when the request merges; its task fails on close.\nStopping cancels the goal and its task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
+        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nstaffed task for the babysit, with no goal and no orchestrator, in one\n`babysit` column that Ariadne fixes: the model must be ranked inside that\ncolumn's band, else 400. Asking again keeps the open task and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The task finishes when the request merges and fails on close.\nStopping cancels the task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
         "operationId": "ask_babysit",
         "parameters": [
           {
@@ -4172,7 +4172,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one active goal for the review, with one\nstaffed task and no orchestrator, in one `review` column that Ariadne\nfixes: the model must be ranked inside that column's band, else 400. Asking again keeps\nthe open goal and moves its pin and skills. The session waits while the\nrequest is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The goal completes when the\nrequest merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
+        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one staffed task for the review, with no\ngoal and no orchestrator, in one `review` column that Ariadne fixes: the\nmodel must be ranked inside that column's band, else 400. Asking again\nkeeps the open task and moves its pin and skills. The session waits while\nthe request is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The task finishes when the\nrequest merges, and fails if the request closes. Stopping cancels the task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
         "operationId": "ask_review",
         "parameters": [
           {
@@ -4884,6 +4884,185 @@
           "400": {},
           "404": {},
           "409": {}
+        }
+      }
+    },
+    "/v1/sessions/{id}/trajectory": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "The session's trajectory: the newest turns, oldest first, the running\none with its last steps. With `before`, a page of the whole turns older\nthan that turn, at `rev` 0: a page is read from the store and is no\nrevision of the stream. With `subagent`, each turn carries that\nsubagent's steps.",
+        "operationId": "trajectory_snapshot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "A turn id: answer the whole turns older than it, newest last.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many turns to answer: 20 when omitted, at most 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "subagent",
+            "in": "query",
+            "description": "A subagent id: each turn carries that subagent's steps alone.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrajectorySnapshotDto"
+                }
+              }
+            }
+          },
+          "404": {},
+          "503": {
+            "description": "the session streamed faster than its trajectory could be read, every time it was tried; ask again"
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/trajectory/stream": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Follow a session's trajectory.",
+        "description": "Opens with a `snapshot` (`TrajectorySnapshotDto`), then an `update` per\nrevision (`TrajectoryUpdateDto`), each `rev` one more than the one\nbefore. Streamed text arrives as `text_append` ops. A client that falls\nbehind gets a `resync` (`ResyncDto`) and the connection closes; a\nreconnect opens on a new snapshot.",
+        "operationId": "trajectory_stream",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many turns the snapshot carries: 20 when omitted, at most 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream of the trajectory (text/event-stream): a `snapshot` event (TrajectorySnapshotDto), then an `update` event per revision (TrajectoryUpdateDto). A client that falls behind gets a `resync` event (ResyncDto) and the connection closes.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrajectoryUpdateDto"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/v1/sessions/{id}/trajectory/turns/{turn_id}/steps": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "One page of the steps of a turn, oldest first: the `limit` steps before\nthe step `before`, or the turn's last ones, and how many come before\nthem. With `subagent`, that subagent's steps in the turn.",
+        "operationId": "trajectory_steps",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "turn_id",
+            "in": "path",
+            "description": "turn id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "A step id: answer the steps older than it.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many steps to answer: 50 when omitted, at most 200.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "subagent",
+            "in": "query",
+            "description": "A subagent id: page that subagent's steps in the turn.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrajectoryStepsDto"
+                }
+              }
+            }
+          },
+          "404": {}
         }
       }
     },
@@ -5944,6 +6123,60 @@
           "no_restart_resume"
         ]
       },
+      "ActivityDto": {
+        "type": "object",
+        "description": "What a turn or a subagent did, counted.",
+        "required": [
+          "steps",
+          "tool_calls",
+          "files_changed",
+          "failed",
+          "cancelled",
+          "thoughts",
+          "subagents"
+        ],
+        "properties": {
+          "cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cancelled calls.",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed calls.",
+            "minimum": 0
+          },
+          "files_changed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The distinct paths of completed edit, delete and move calls.",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tool calls and subagents.",
+            "minimum": 0
+          },
+          "subagents": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "thoughts": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tool_calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "AgentAssignment": {
         "type": "object",
         "description": "One agent to staff on a task: the column it works, the skills it loads,\nand what it is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
@@ -6687,6 +6920,83 @@
         ],
         "description": "Binaries on the daemon machine, or assets from an explicitly selected release."
       },
+      "CommandDto": {
+        "type": "object",
+        "description": "A slash command the agent offers.",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What its argument is, where the agent says."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name, without its `/`."
+          }
+        }
+      },
+      "CompactionStatus": {
+        "type": "string",
+        "enum": [
+          "running",
+          "completed",
+          "failed"
+        ]
+      },
+      "CompactionStepDto": {
+        "type": "object",
+        "description": "The agent compacting its context.",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "compaction_id",
+          "status",
+          "summary"
+        ],
+        "properties": {
+          "compaction_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CompactionStatus"
+          },
+          "summary": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentBlockDto"
+            }
+          },
+          "turn_id": {
+            "type": "string"
+          }
+        }
+      },
       "CompleteGoalRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is\ndone. Its call, not the user's, and it carries nothing — every task being\nfinished or cancelled is the whole of the argument, and the daemon checks\nthat itself.",
@@ -6713,6 +7023,48 @@
         },
         "additionalProperties": false
       },
+      "ConfigOptionDto": {
+        "type": "object",
+        "description": "One ACP session config option, such as the model or the effort.",
+        "required": [
+          "id",
+          "name",
+          "values"
+        ],
+        "properties": {
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ACP category, such as `model` or `thought_level`."
+          },
+          "current_value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigValueDto"
+            }
+          }
+        }
+      },
       "ConfigSyncDto": {
         "type": "object",
         "description": "The worker's effective live settings and pending registry changes.",
@@ -6732,6 +7084,27 @@
           },
           "state": {
             "$ref": "#/components/schemas/SyncState"
+          }
+        }
+      },
+      "ConfigValueDto": {
+        "type": "object",
+        "required": [
+          "value",
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
           }
         }
       },
@@ -6760,6 +7133,201 @@
           }
         },
         "additionalProperties": false
+      },
+      "ContentBlockDto": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "text",
+              "type"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "blob": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mime_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "image"
+                ]
+              },
+              "uri": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "blob": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mime_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "audio"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "uri",
+              "type"
+            ],
+            "properties": {
+              "blob": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mime_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resource"
+                ]
+              },
+              "uri": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "uri",
+              "name",
+              "type"
+            ],
+            "properties": {
+              "mime_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "size": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "minimum": 0
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resource_link"
+                ]
+              },
+              "uri": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "One ACP content block. A block with bytes carries a `blob` URL, never\nthe bytes."
+      },
+      "ContextWindowDto": {
+        "type": "object",
+        "description": "The context window position the agent last reported.",
+        "required": [
+          "used",
+          "size"
+        ],
+        "properties": {
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "used": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CostDto": {
+        "type": "object",
+        "required": [
+          "amount",
+          "currency"
+        ],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "format": "double"
+          },
+          "currency": {
+            "type": "string"
+          }
+        }
       },
       "CreateDashboardRequest": {
         "type": "object",
@@ -7260,6 +7828,31 @@
           "slow": {
             "type": "boolean",
             "description": "A note only: the flavour can still be chosen on this device."
+          }
+        }
+      },
+      "DiffStatDto": {
+        "type": "object",
+        "required": [
+          "files",
+          "added",
+          "removed"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "removed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -7870,6 +8463,40 @@
           "id": {
             "type": "string",
             "example": "high"
+          }
+        }
+      },
+      "ErrorStepDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "text"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "diagnosis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The advisory diagnosis of the error (024), once one arrived."
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
           }
         }
       },
@@ -8874,6 +9501,25 @@
         },
         "additionalProperties": false
       },
+      "LocationDto": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
       "LogLineDto": {
         "type": "object",
         "description": "One captured daemon log line.",
@@ -8974,6 +9620,49 @@
           }
         }
       },
+      "MessageStepDto": {
+        "type": "object",
+        "description": "Text the agent wrote.",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "content",
+          "streaming"
+        ],
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentBlockDto"
+            }
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ACP `messageId`, where the agent sent one."
+          },
+          "streaming": {
+            "type": "boolean",
+            "description": "Still taking text: `text_append` ops extend it."
+          },
+          "turn_id": {
+            "type": "string"
+          }
+        }
+      },
       "MissingRepositoryDto": {
         "type": "object",
         "description": "A local repository a host has no checkout of.",
@@ -8991,6 +9680,48 @@
           "id": {
             "type": "string",
             "description": "The local repository's id."
+          }
+        }
+      },
+      "ModeDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ModeStateDto": {
+        "type": "object",
+        "description": "The session's mode and the modes the agent offers.",
+        "required": [
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModeDto"
+            }
+          },
+          "current_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -9052,6 +9783,50 @@
           "fast",
           "local"
         ]
+      },
+      "NoteSeverity": {
+        "type": "string",
+        "enum": [
+          "info",
+          "warning"
+        ]
+      },
+      "NoteStepDto": {
+        "type": "object",
+        "description": "A line the daemon says about the session.",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "origin",
+          "severity",
+          "text"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "description": "The kind of the event the note is about."
+          },
+          "severity": {
+            "$ref": "#/components/schemas/NoteSeverity"
+          },
+          "text": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          }
+        }
       },
       "OpenPullRequestRequest": {
         "type": "object",
@@ -9149,6 +9924,31 @@
           }
         }
       },
+      "PermissionAnswerDto": {
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "decided_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`console`, `ai`, `learned` or `auto`."
+          },
+          "label": {
+            "type": "string",
+            "description": "The name of the option chosen, or `cancelled`."
+          },
+          "option_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "PermissionMode": {
         "type": "string",
         "description": "How the ACP runtime answers a tool permission request.",
@@ -9158,6 +9958,28 @@
           "learn",
           "ai"
         ]
+      },
+      "PermissionOptionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`allow_once`, `allow_always`, `reject_once` or `reject_always`."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "PermissionReplyDto": {
         "type": "object",
@@ -9264,6 +10086,119 @@
           "session_id": {}
         }
       },
+      "PermissionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "answered",
+          "cancelled"
+        ]
+      },
+      "PermissionStepDto": {
+        "type": "object",
+        "description": "A permission the agent asked for a tool call.",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "tool_call_id",
+          "tool",
+          "question",
+          "options",
+          "state"
+        ],
+        "properties": {
+          "ai": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the AI permission model had a part, where it did."
+          },
+          "answer": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PermissionAnswerDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "learned": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The learned rule that answered, as `command` or `family <key>`."
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionOptionDto"
+            }
+          },
+          "question": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PermissionState"
+          },
+          "subagent": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubagentRefDto",
+                "description": "The subagent that asks, where one does."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tool": {
+            "$ref": "#/components/schemas/PermissionToolDto"
+          },
+          "tool_call_id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          }
+        }
+      },
+      "PermissionToolDto": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "PlaceDto": {
         "type": "object",
         "description": "The daemon's selected session location and the reason for its selection.",
@@ -9280,6 +10215,79 @@
             "type": "string"
           },
           "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "PlanDto": {
+        "type": "object",
+        "description": "A plan of the agent or of a subagent.",
+        "required": [
+          "plan_id",
+          "variant",
+          "entries",
+          "removed",
+          "updated_at"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanEntryDto"
+            }
+          },
+          "markdown": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file the plan is written in, for a `markdown` plan."
+          },
+          "plan_id": {
+            "type": "string",
+            "description": "The id of the stored event that opened the plan."
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The turn that last changed the plan."
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "variant": {
+            "$ref": "#/components/schemas/PlanVariant"
+          }
+        }
+      },
+      "PlanEntryDto": {
+        "type": "object",
+        "required": [
+          "content",
+          "status"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "priority": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
             "type": "string"
           }
         }
@@ -9320,6 +10328,13 @@
             "type": "string"
           }
         }
+      },
+      "PlanVariant": {
+        "type": "string",
+        "enum": [
+          "entries",
+          "markdown"
+        ]
       },
       "PortableAgentDto": {
         "type": "object",
@@ -9438,6 +10453,38 @@
           "review",
           "babysit"
         ]
+      },
+      "PromptDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentBlockDto"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "prompt_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The lifecycle kind of a daemon prompt, such as `agent_resume`."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`console` or `daemon`."
+          }
+        }
       },
       "PullRequestCommentDto": {
         "type": "object",
@@ -9851,6 +10898,102 @@
           "session_id": {
             "type": "string",
             "description": "The Ariadne session whose agent asks."
+          }
+        }
+      },
+      "QuestionOptionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "QuestionState": {
+        "type": "string",
+        "enum": [
+          "open",
+          "answered",
+          "declined",
+          "cancelled"
+        ]
+      },
+      "QuestionStepDto": {
+        "type": "object",
+        "description": "A question the agent asked through `wait_for_user` (031).",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "request_id",
+          "hint",
+          "question",
+          "options",
+          "state"
+        ],
+        "properties": {
+          "answer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The answer, once it was answered."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuestionOptionDto"
+            }
+          },
+          "question": {
+            "type": "string"
+          },
+          "recommendation_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recommended": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/QuestionState"
+          },
+          "turn_id": {
+            "type": "string"
           }
         }
       },
@@ -10445,6 +11588,91 @@
           }
         }
       },
+      "SessionStateDto": {
+        "type": "object",
+        "description": "The state of the session a trajectory belongs to.",
+        "required": [
+          "status",
+          "config_options",
+          "usage",
+          "commands"
+        ],
+        "properties": {
+          "attention_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttentionReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommandDto"
+            },
+            "description": "The slash commands the agent offers now."
+          },
+          "config_options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigOptionDto"
+            }
+          },
+          "context": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ContextWindowDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CostDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModeStateDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "running_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The turn that runs now, if one does."
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The title the agent gave the session, where it gave one."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsageDto"
+          }
+        }
+      },
       "SessionStatus": {
         "type": "string",
         "description": "Agent session lifecycle status.",
@@ -10913,6 +12141,200 @@
           }
         }
       },
+      "StepDto": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MessageStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "message"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ThoughtStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "thought"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ToolCallStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "tool_call"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PermissionStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "permission"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QuestionStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "question"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NoteStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "note"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ErrorStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "error"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SubagentStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "subagent"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CompactionStepDto"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "compaction"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "description": "One step of a turn, tagged by `type`."
+      },
       "StepGate": {
         "type": "string",
         "description": "What a step waits for before the next one may start: the author's commit,\na push, a merge onto the base, or a request merged by a human.",
@@ -10922,6 +12344,84 @@
           "merged",
           "request_merged"
         ]
+      },
+      "SubagentRefDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "SubagentStepDto": {
+        "type": "object",
+        "description": "A subagent the agent started, in the turn of its parent.",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "subagent_id",
+          "title",
+          "can_cancel",
+          "started_at",
+          "activity"
+        ],
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/ActivityDto"
+          },
+          "can_cancel": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`running`, `completed`, `failed` or `cancelled`, where the agent says."
+          },
+          "subagent_id": {
+            "type": "string"
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          }
+        }
       },
       "SubmitReviewRequest": {
         "type": "object",
@@ -11511,6 +13011,41 @@
           }
         }
       },
+      "ThoughtStepDto": {
+        "type": "object",
+        "description": "Text the agent thought.",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "content",
+          "streaming"
+        ],
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentBlockDto"
+            }
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "streaming": {
+            "type": "boolean"
+          },
+          "turn_id": {
+            "type": "string"
+          }
+        }
+      },
       "TokenUsageDto": {
         "type": "object",
         "description": "Tokens spent, as the agents' own transcripts report them.\n\nAlways present and always a number: nothing reported is zero, not null.",
@@ -11536,6 +13071,353 @@
             "type": "integer",
             "format": "int64",
             "description": "Completion tokens, thinking and reasoning included.",
+            "minimum": 0
+          }
+        }
+      },
+      "ToolCallStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "cancelled",
+          "interrupted"
+        ]
+      },
+      "ToolCallStepDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "turn_id",
+          "lane",
+          "created_at",
+          "tool_call_id",
+          "title",
+          "status",
+          "locations",
+          "started_at",
+          "detail_rev"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "detail_rev": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Grows each time the call's detail changes.",
+            "minimum": 0
+          },
+          "diff_stat": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DiffStatDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ACP kind: `read`, `edit`, `delete`, `move`, `search`, `execute`,\n`think`, `fetch`, `switch_mode` or `other`."
+          },
+          "lane": {
+            "type": "string"
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LocationDto"
+            }
+          },
+          "permission": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The id of the permission step that asked about this call."
+          },
+          "preview": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The start of what the call gave back."
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolCallStatus"
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the call is about: the command, the path, the pattern or the URL."
+          },
+          "title": {
+            "type": "string"
+          },
+          "tool_call_id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          }
+        }
+      },
+      "TrajectoryOpDto": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A turn opened or changed. `steps` is empty: the steps change by\n`item_upsert`. A closed turn drops the steps a client holds for it.",
+            "required": [
+              "turn",
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "turn_upsert"
+                ]
+              },
+              "turn": {
+                "$ref": "#/components/schemas/TurnDto"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A step opened or changed, in the turn and lane it names.",
+            "required": [
+              "step",
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "item_upsert"
+                ]
+              },
+              "step": {
+                "$ref": "#/components/schemas/StepDto"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Text streamed onto the end of a `message` or `thought` step.",
+            "required": [
+              "turn_id",
+              "item_id",
+              "text",
+              "op"
+            ],
+            "properties": {
+              "item_id": {
+                "type": "string"
+              },
+              "op": {
+                "type": "string",
+                "enum": [
+                  "text_append"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "turn_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A step is gone.",
+            "required": [
+              "turn_id",
+              "item_id",
+              "op"
+            ],
+            "properties": {
+              "item_id": {
+                "type": "string"
+              },
+              "op": {
+                "type": "string",
+                "enum": [
+                  "item_remove"
+                ]
+              },
+              "turn_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "plan",
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "plan_upsert"
+                ]
+              },
+              "plan": {
+                "$ref": "#/components/schemas/PlanDto"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "subagent",
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "subagent_upsert"
+                ]
+              },
+              "subagent": {
+                "$ref": "#/components/schemas/SubagentStepDto"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The session's state, whole.",
+            "required": [
+              "session",
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "session_patch"
+                ]
+              },
+              "session": {
+                "$ref": "#/components/schemas/SessionStateDto"
+              }
+            }
+          }
+        ],
+        "description": "One change of a trajectory, tagged by `op`."
+      },
+      "TrajectorySnapshotDto": {
+        "type": "object",
+        "description": "A session's trajectory: what `GET /trajectory` answers, and the\n`snapshot` frame of `/trajectory/stream`.",
+        "required": [
+          "rev",
+          "session",
+          "turns",
+          "has_older",
+          "subagents",
+          "plans"
+        ],
+        "properties": {
+          "has_older": {
+            "type": "boolean",
+            "description": "Whether older turns exist: `?before=<turns[0].id>` reads them."
+          },
+          "plans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanDto"
+            }
+          },
+          "rev": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The revision this snapshot stands at. The first update of a stream\ncarries the next one.",
+            "minimum": 0
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionStateDto"
+          },
+          "subagents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubagentStepDto"
+            }
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurnDto"
+            },
+            "description": "Oldest first."
+          }
+        }
+      },
+      "TrajectoryStepsDto": {
+        "type": "object",
+        "description": "One page of the steps of a turn.",
+        "required": [
+          "steps",
+          "earlier_steps"
+        ],
+        "properties": {
+          "earlier_steps": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many steps come before these.",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepDto"
+            },
+            "description": "Oldest first."
+          }
+        }
+      },
+      "TrajectoryUpdateDto": {
+        "type": "object",
+        "description": "One `update` frame of `/trajectory/stream`.",
+        "required": [
+          "rev",
+          "ops"
+        ],
+        "properties": {
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrajectoryOpDto"
+            }
+          },
+          "rev": {
+            "type": "integer",
+            "format": "int64",
+            "description": "One more than the revision before it.",
             "minimum": 0
           }
         }
@@ -11572,6 +13454,107 @@
           "up",
           "down",
           "off"
+        ]
+      },
+      "TurnDto": {
+        "type": "object",
+        "description": "One turn: a prompt and everything the agent did for it.",
+        "required": [
+          "id",
+          "lane",
+          "state",
+          "started_at",
+          "activity",
+          "steps",
+          "earlier_steps",
+          "attention",
+          "attention_more",
+          "answer"
+        ],
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/ActivityDto"
+          },
+          "answer": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentBlockDto"
+            },
+            "description": "The last message of the session's own agent in the turn."
+          },
+          "attention": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepDto"
+            },
+            "description": "What waits on a person, and the errors, whatever the state of the\nturn: the pending permissions and open questions the read loaded,\nnewest first, then the newest 20 errors, newest first."
+          },
+          "attention_more": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many attention steps of the turn `attention` does not hold: the\nwaiting steps past the read's limit, and the errors past 20. The\nsteps route of the turn returns each of them.",
+            "minimum": 0
+          },
+          "earlier_steps": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many steps come before `steps`: the steps route pages them.",
+            "minimum": 0
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "The id of the stored event that opened the turn: its prompt, or the\nfirst event of a session before its first prompt."
+          },
+          "lane": {
+            "type": "string"
+          },
+          "prompt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PromptDto",
+                "description": "None for the events a session has before its first prompt."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TurnState"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepDto"
+            },
+            "description": "The last steps of a running turn, oldest first. A closed turn\ncarries none."
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ACP stop reason, once a `stop` ended the turn."
+          }
+        }
+      },
+      "TurnState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "completed",
+          "cancelled",
+          "failed",
+          "interrupted"
         ]
       },
       "UpdateAgentConfigRequest": {

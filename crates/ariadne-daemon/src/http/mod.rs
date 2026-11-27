@@ -38,6 +38,7 @@ mod steps;
 mod stream;
 mod tasks;
 mod terminal;
+mod trajectory;
 mod workflows;
 
 use std::sync::Arc;
@@ -107,6 +108,8 @@ pub struct AppState {
     /// Cancelled when shutdown starts: every open event stream ends then, so
     /// the HTTP drain does not wait on a client that never hangs up (016).
     pub closing: tokio_util::sync::CancellationToken,
+    /// The trajectory hub of each session that someone follows (040).
+    pub trajectories: trajectory::Trajectories,
 }
 
 impl AppState {
@@ -190,6 +193,7 @@ impl AppState {
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
         questions::list, questions::answer,
+        trajectory::snapshot, trajectory::stream, trajectory::steps,
         terminal::terminal,
         events::list, stream::stream,
         models::list,
@@ -216,6 +220,9 @@ impl AppState {
         ariadne_api::attention::AttentionSubjectKind, ariadne_api::attention::AttentionTarget,
         ariadne_api::sessions::QuestionDto, ariadne_api::sessions::QuestionAction,
         ariadne_api::sessions::AnswerQuestionRequest,
+        ariadne_api::trajectory::TrajectorySnapshotDto, ariadne_api::trajectory::TrajectoryUpdateDto,
+        ariadne_api::trajectory::TrajectoryOpDto, ariadne_api::trajectory::TrajectoryStepsDto,
+        ariadne_api::trajectory::StepDto, ariadne_api::trajectory::ContentBlockDto,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
@@ -455,6 +462,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))
         .route("/v1/sessions/{id}/questions", get(questions::list))
+        .route("/v1/sessions/{id}/trajectory", get(trajectory::snapshot))
+        .route(
+            "/v1/sessions/{id}/trajectory/stream",
+            get(trajectory::stream),
+        )
+        .route(
+            "/v1/sessions/{id}/trajectory/turns/{turn_id}/steps",
+            get(trajectory::steps),
+        )
         .route(
             "/v1/sessions/{id}/questions/{question_id}/answer",
             post(questions::answer),
@@ -566,6 +582,7 @@ async fn record_request_duration(request: Request, next: Next) -> Response {
     let response = next.run(request).await;
     let excluded = matches!(path.as_str(), "/v1/events/stream" | "/v1/logs/stream")
         || path.contains("/console/stream")
+        || path.contains("/trajectory/stream")
         || path.contains("/console/terminal")
         || ["/otlp/", "/api/v1/", "/loki/"]
             .iter()

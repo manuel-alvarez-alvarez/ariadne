@@ -57,6 +57,12 @@ IGNORED = {
     "crates/ariadne-store/src/defaults.rs: BuiltinWorkflow": (
         "the element type of the public `BUILTIN_WORKFLOWS`; its callers read the fields"
     ),
+    "crates/ariadne-api/src/trajectory.rs: ModeDto": (
+        "the element type of the public field `ModeStateDto::available`; utoipa names it (040)"
+    ),
+    "crates/ariadne-api/src/trajectory.rs: ConfigValueDto": (
+        "the element type of the public field `ConfigOptionDto::values`; utoipa names it (040)"
+    ),
     "crates/ariadne-console/src/transcript.rs: Location": (
         "the element type of the public field `Tool::locations`"
     ),
