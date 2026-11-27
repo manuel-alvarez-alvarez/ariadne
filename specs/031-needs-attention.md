@@ -28,6 +28,7 @@ tests:
   - crates/ariadne-daemon/src/scheduler/goals.rs
   - crates/ariadne-daemon/src/scheduler/pull_requests.rs
   - crates/ariadne-daemon/src/scheduler/quiet.rs
+  - ui/src/features/goals/attention-permissions.test.tsx
   - crates/ariadne-daemon/src/scheduler/tasks.rs
   - crates/ariadne-daemon/src/forge/mod.rs
   - crates/ariadne-daemon/src/forge/poll.rs
@@ -474,6 +475,21 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     option) or cancelled (`option_id` null), since the call then fails and
     the answer is the one line that says why — the AI's reason under the
     question, which 022 promises.
+11a. A client answers the pending permission of such an item in place. The
+    item's id is `agent_request:waiting_permission:<session id>`, and its
+    target is the session's console. The client reads the oldest pending
+    permission of the session from `GET /v1/sessions/{id}/trajectory` on
+    the host of the item. It shows the tool, its subject, the question and
+    one button for each option, and names the subagent that asked. A click
+    posts the option id as `text` to `POST /v1/sessions/{id}/console/input`
+    on that host. A session with no pending permission in its trajectory
+    shows no button. The client reads the trajectory again after each change
+    of the attention list of the host, and polls nothing
+    (`ui/src/features/goals/attention-permissions.test.tsx::shows the oldest pending permission of the session with one button per option`,
+    `ui/src/features/goals/attention-permissions.test.tsx::posts the option id as text to the console input of the session`,
+    `ui/src/features/goals/attention-permissions.test.tsx::names the subagent that asked`,
+    `ui/src/features/goals/attention-permissions.test.tsx::shows no option button and keeps the console link when nothing is pending`,
+    `ui/src/features/goals/attention-permissions.test.tsx::shows the permission now pending after the attention list changes`).
 12. Ariadne holds no `wait_for_user` request. An agent asks the user with
     its own question tool (rule 18, 021 rule 21). No route lives under
     `/v1/sessions/{id}/agent-requests`. Migration

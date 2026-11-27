@@ -40,7 +40,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { goalsQueryOptions } from "./queries"
 
 /** `GET /v1/attention` of one host: that daemon's own authoritative recovery list. */
-function attentionListQueryOptions(host: Host) {
+export function attentionListQueryOptions(host: Host) {
   return queryOptions({
     queryKey: qk.attention.list(host),
     queryFn: () => unwrap(api(host).GET("/v1/attention")),
