@@ -39,6 +39,47 @@ mod sync;
 /// The longest wait between two starts of one forward.
 const BACKOFF_CAP: Duration = Duration::from_secs(60);
 
+/// The wait before a forward is started again: `base` at first, doubled
+/// after each wait that ran out, up to [`BACKOFF_CAP`], and back to `base`
+/// where a forward came up or a reconnect cut the wait (037 rule 36).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Backoff {
+    base: Duration,
+    wait: Duration,
+}
+
+impl Backoff {
+    fn new(base: Duration) -> Self {
+        Self { base, wait: base }
+    }
+
+    fn grow(&mut self) {
+        self.wait = (self.wait * 2).min(BACKOFF_CAP);
+    }
+
+    fn reset(&mut self) {
+        self.wait = self.base;
+    }
+
+    /// Wait the backoff out, then grow it: `None`. A reconnect asked on
+    /// `requests` cuts the wait and resets it: its reply.
+    async fn rest(
+        &mut self,
+        requests: &mut mpsc::UnboundedReceiver<Reconnect>,
+    ) -> Option<Reconnect> {
+        tokio::select! {
+            () = sleep(self.wait) => {
+                self.grow();
+                None
+            }
+            Some(reply) = requests.recv() => {
+                self.reset();
+                Some(reply)
+            }
+        }
+    }
+}
+
 /// A reconnect asked of one host: answered once the host has acted on it.
 type Reconnect = oneshot::Sender<()>;
 
@@ -604,8 +645,7 @@ impl Inner {
     /// first value.
     async fn supervise(&self, index: usize, mut requests: mpsc::UnboundedReceiver<Reconnect>) {
         let (name, host) = &self.cfg.hosts[index];
-        let base = self.timeouts.ssh_retry;
-        let mut backoff = base;
+        let mut backoff = Backoff::new(self.timeouts.ssh_retry);
         let mut asked: Option<Reconnect> = None;
         loop {
             let ended = self
@@ -614,7 +654,6 @@ impl Inner {
                     &host.endpoint,
                     &host.remote,
                     &mut backoff,
-                    base,
                     &mut requests,
                     &mut asked,
                 )
@@ -622,7 +661,7 @@ impl Inner {
             let error = match ended {
                 Ended::Again(reply) => {
                     asked = Some(reply);
-                    backoff = base;
+                    backoff.reset();
                     continue;
                 }
                 Ended::Down(error) => error,
@@ -630,13 +669,7 @@ impl Inner {
             warn!(host = %name, %error, "ssh forward down");
             self.set(index, HostStatus::Down, None, Some(error));
             acted(&mut asked);
-            tokio::select! {
-                () = sleep(backoff) => backoff = (backoff * 2).min(BACKOFF_CAP),
-                Some(reply) = requests.recv() => {
-                    asked = Some(reply);
-                    backoff = base;
-                }
-            }
+            asked = backoff.rest(&mut requests).await;
         }
     }
 
@@ -653,8 +686,7 @@ impl Inner {
         index: usize,
         endpoint: &str,
         remote: &Option<String>,
-        backoff: &mut Duration,
-        base: Duration,
+        backoff: &mut Backoff,
         requests: &mut mpsc::UnboundedReceiver<Reconnect>,
         asked: &mut Option<Reconnect>,
     ) -> Ended {
@@ -726,7 +758,7 @@ impl Inner {
                 return Ended::Down(error);
             }
             Ok(Ok(())) => {
-                *backoff = base;
+                backoff.reset();
                 info!(endpoint = %local, "ssh forward ready");
                 self.set(index, HostStatus::Ready, Some(local.clone()), None);
                 loop {
@@ -1058,6 +1090,52 @@ impl Hosts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The wait doubles after each wait that ran out, stops at the cap, and
+    /// goes back to the first value at a reconnect: the next wait after one
+    /// is `ssh_retry`, not the doubled one it was cut from.
+    #[test]
+    fn a_reset_backoff_waits_the_first_value_again_and_the_cap_holds() {
+        let base = Duration::from_secs(1);
+        let mut backoff = Backoff::new(base);
+        assert_eq!(backoff.wait, base);
+        backoff.grow();
+        backoff.grow();
+        assert_eq!(backoff.wait, 4 * base);
+
+        backoff.reset();
+        assert_eq!(backoff.wait, base);
+
+        for _ in 0..20 {
+            backoff.grow();
+        }
+        assert_eq!(backoff.wait, BACKOFF_CAP);
+    }
+
+    /// A reconnect cuts the wait at once and the wait after it is the first
+    /// one again: on the paused clock, the time a wait takes is its length.
+    #[tokio::test(start_paused = true)]
+    async fn a_reconnect_cuts_the_backoff_and_the_wait_after_it_is_the_first_again() {
+        let base = Duration::from_secs(1);
+        let mut backoff = Backoff::new(base);
+        let (ask, mut requests) = mpsc::unbounded_channel();
+        let started = Instant::now();
+        assert!(backoff.rest(&mut requests).await.is_none());
+        assert!(backoff.rest(&mut requests).await.is_none());
+        assert!(backoff.rest(&mut requests).await.is_none());
+        assert_eq!(started.elapsed(), 7 * base, "1, 2 and 4 bases ran out");
+        assert_eq!(backoff.wait, 8 * base);
+
+        let (reply, _answer) = oneshot::channel();
+        ask.send(reply).unwrap();
+        let cut = Instant::now();
+        assert!(backoff.rest(&mut requests).await.is_some());
+        assert_eq!(cut.elapsed(), Duration::ZERO, "the reconnect cuts the wait");
+
+        let next = Instant::now();
+        assert!(backoff.rest(&mut requests).await.is_none());
+        assert_eq!(next.elapsed(), base, "not the 8 bases it was cut from");
+    }
 
     #[test]
     fn a_forward_names_the_user_the_port_and_the_remote() {

@@ -86,6 +86,28 @@ async fn permission_events_only_create_items_while_waiting_for_a_person() {
     assert!(list.items.is_empty());
 }
 
+/// Fail the task, where the scheduler runs on a repository that is no git
+/// checkout. Its own launch of the task agent fails there, and on a machine
+/// loaded enough to bunch its wakes it spends the retry budget and fails the
+/// task before this write. Either way the task is failed, which is all the
+/// test needs: the write may be refused only for a task that already is.
+async fn fail_task_as_the_scheduler_may_have(h: &Harness, task_id: &str) {
+    let written = h
+        .store
+        .transition_task(
+            task_id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("the tests did not pass"),
+            None,
+        )
+        .await;
+    if written.is_err() {
+        let task = h.store.get_task(task_id).await.unwrap();
+        assert_eq!(task.status(), TaskStatus::Failed);
+    }
+}
+
 /// Confirm, directly through the store's own persisted evidence, that this
 /// goal's orchestrator has had a turn on exactly this task's current
 /// failure — the same state `acp::serve_with_input` writes once a real
@@ -698,16 +720,7 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
     let before: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(before.items, Vec::new(), "not told yet, so still trying");
 
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::Failed,
-            Actor::Daemon,
-            Some("the tests did not pass"),
-            None,
-        )
-        .await
-        .unwrap();
+    fail_task_as_the_scheduler_may_have(&h, &cast.task.id).await;
 
     // The prompt was delivered — the turn it started is running — but has
     // not ended: this is exactly the window a stamp taken at hand-off time
@@ -808,16 +821,7 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
     .await;
     let session = orchestrator().await.unwrap();
 
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::Failed,
-            Actor::Daemon,
-            Some("the tests did not pass"),
-            None,
-        )
-        .await
-        .unwrap();
+    fail_task_as_the_scheduler_may_have(&h, &cast.task.id).await;
 
     // Accepted into the queue, and its own turn actually starts: this is
     // the delivery being accepted, not refused at the channel.

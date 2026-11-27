@@ -64,6 +64,8 @@ struct ServerState {
 struct ModelServer {
     endpoint: String,
     requests: Arc<Mutex<Vec<Value>>>,
+    /// The state's worker, to see a request's connection end.
+    worker: Arc<Semaphore>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -112,10 +114,11 @@ impl ModelServer {
 
     async fn start(answer: Answer) -> Self {
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let worker = Arc::new(Semaphore::new(1));
         let state = ServerState {
             answer,
             requests: requests.clone(),
-            worker: Arc::new(Semaphore::new(1)),
+            worker: worker.clone(),
         };
         let app = axum::Router::new()
             .route("/v1/systemone", route_post(respond))
@@ -126,6 +129,7 @@ impl ModelServer {
         Self {
             endpoint,
             requests,
+            worker,
             task,
         }
     }
@@ -579,7 +583,7 @@ async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
         true,
         &server,
         Timeouts {
-            failure_diagnosis_decision: Duration::from_millis(200),
+            failure_diagnosis_decision: Duration::from_secs(2),
             ..Timeouts::default()
         },
         true,
@@ -590,9 +594,15 @@ async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
         !server.requests.lock().unwrap().is_empty()
     })
     .await;
-    // Quiet, past the 200 ms bound above: a timed-out request reports
+    // The bound ends the request by dropping its connection, which frees the
+    // one worker the hanging handler holds: the end is seen, not guessed at
+    // from a clock a loaded machine stretches. A timed-out request reports
     // nothing, so no later event marks it — only the continued absence of
     // a diagnosis proves it never arrived.
+    eventually(TIMEOUT, "the bound to end the request", || async {
+        server.worker.available_permits() == 1
+    })
+    .await;
     tokio::time::sleep(QUIET).await;
     assert!(
         events_of(&h, &agent.id, "session.diagnosis")

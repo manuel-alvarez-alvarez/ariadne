@@ -232,13 +232,17 @@ fn offline_status_and_output_do_not_need_a_daemon() {
 
 #[test]
 fn stop_kills_the_full_process_group() {
-    let script = "import subprocess,sys\nsubprocess.Popen(['python3','-u','-c',\"import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(); print('ready',flush=True); c,_=s.accept(); c.recv(1)\",sys.argv[0]+'.child'])\nsys.stdin.readline()";
+    let script = "import subprocess,sys\nsubprocess.Popen(['python3','-u','-c',\"import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(); print('ready',flush=True); c,_=s.accept(); print('accepted',flush=True); c.recv(1)\",sys.argv[0]+'.child'])\nsys.stdin.readline()";
     let mut relay = Relay::start(script);
     // The fixture uses a private path instead of a shared executable or socket.
     let mut peer = relay.connect();
     replay(&mut peer, 0);
     assert_eq!(receive(&mut peer)["data"], "ready");
     let socket = UnixStream::connect(relay.home.path().join("-c.child")).unwrap();
+    // Killed before it accepts, the child's closing listener resets a
+    // connection still in its backlog, which reads as an error and not as the
+    // end of the stream this test is after.
+    assert_eq!(receive(&mut peer)["data"], "accepted");
     socket
         .set_read_timeout(Some(crate::common::TIMEOUT))
         .unwrap();
