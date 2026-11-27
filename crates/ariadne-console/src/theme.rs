@@ -59,13 +59,14 @@ pub const FILE: Style = Style::new().add_modifier(Modifier::BOLD);
 /// The frames of the spinner, one per tick while a turn runs.
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// What stands between two parts of the status row or two hints of the
-/// footer, and between the session's status and what the turn is doing.
+/// What stands between two items of the bottom row.
 pub const SEPARATOR: &str = " · ";
 pub const GAP: &str = "   ";
-/// The tokens the session has read and written, on the right of the footer.
-pub const TOKENS_IN: &str = "↑ ";
-pub const TOKENS_OUT: &str = "↓ ";
+/// The hint on the right of the bottom row: `?` opens the list of keys.
+pub const KEYS_HINT: &str = "? keys";
+/// The mark of a session waiting for a prompt, and of one that has ended.
+pub const SESSION_IDLE: &str = "●";
+pub const SESSION_ENDED: &str = "■";
 
 /// Where a block starts: what was typed, and what went wrong. A typed prompt
 /// has the input box's glyph.
@@ -162,9 +163,8 @@ mod tests {
         marks.extend(KINDS.iter().map(|(kind, glyph)| (*glyph, *kind)));
         marks.push((KIND_FALLBACK, "a call of another kind"));
         marks.push((GROUP, "a group of calls"));
-        // The footer's tokens are part of the pane too.
-        marks.push((TOKENS_IN, "tokens read"));
-        marks.push((TOKENS_OUT, "tokens written"));
+        marks.push((SESSION_IDLE, "a session that waits"));
+        marks.push((SESSION_ENDED, "a session that ended"));
         // A move names the old place and the new, as a renamed file does.
         let rename = "→";
 

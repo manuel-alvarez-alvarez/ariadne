@@ -1,12 +1,12 @@
 //! The whole screen, drawn from the state: the transcript of turns, the
 //! plan, the permission or the question above the input, the suggestion
-//! list, the input box, the status row and the footer.
+//! list, the input box and the bottom row, and over them the list of keys.
 
 use ratatui::Frame as Draw;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Clear, Paragraph};
 
 use ariadne_api::trajectory::{
     CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionState, PermissionStepDto,
@@ -74,9 +74,8 @@ impl App {
         let area = frame.area();
         let width = usize::from(area.width);
         let input = self.input.height(area.width).min(area.height);
-        let footer = u16::from(area.height > input);
-        let status_row = u16::from(area.height > input + footer);
-        let below = input + footer + status_row;
+        let bottom = u16::from(area.height > input);
+        let below = input + bottom;
         let most = (area.height.saturating_sub(below) / 2) as usize;
         let attention = self.attention_lines(width, most);
         let attention_rows = attention.len() as u16;
@@ -121,8 +120,7 @@ impl App {
         let attention_area = next(attention_rows);
         let suggestions_area = next(suggested);
         let input_area = next(input);
-        let status_area = next(status_row);
-        let footer_area = next(footer);
+        let bottom_area = next(bottom);
 
         self.draw_transcript(frame, transcript_area);
         self.layout.borrow_mut().plan = plan_area;
@@ -131,17 +129,10 @@ impl App {
         self.draw_suggestions(frame, suggestions_area);
         self.input
             .draw(frame, input_area, self.hint(), self.zone == Zone::Input);
-        if let Some(view) = &self.view {
-            frame.render_widget(
-                Paragraph::new(status::status_line(
-                    view.session(),
-                    self.model.as_deref(),
-                    width,
-                )),
-                status_area,
-            );
+        frame.render_widget(Paragraph::new(self.bottom_row(width)), bottom_area);
+        if self.keys_open {
+            self.draw_keys(frame, area);
         }
-        frame.render_widget(Paragraph::new(self.footer(width)), footer_area);
     }
 
     fn draw_transcript(&self, frame: &mut Draw, area: Rect) {
@@ -683,8 +674,9 @@ impl App {
         self.form_lines(width, most).unwrap_or_default()
     }
 
-    /// The keys of the zone that has them, and the state of the link.
-    fn footer(&self, width: usize) -> Line<'static> {
+    /// The row under the input box: the state of the session and the hint
+    /// for the keys, or the state of the link while it needs saying.
+    fn bottom_row(&self, width: usize) -> Line<'static> {
         let mut said = Vec::new();
         if !self.live {
             said.push("reconnecting");
@@ -692,30 +684,125 @@ impl App {
         if self.armed {
             said.push("ctrl-c again to leave");
         }
-        let keys = match self.zone {
-            Zone::Transcript => {
-                "↑↓ move · enter open · ← close · r raw · y copy · home/end · ctrl-t plan · tab input"
-            }
-            Zone::Input if self.permission().is_some() => {
-                "↑↓ pick · enter answer · tab transcript · ctrl-c twice leave"
-            }
-            Zone::Input if self.question().is_some() => {
-                "↑↓ pick · enter answer · tab next · esc decline · ctrl-c twice leave"
-            }
-            Zone::Input if self.running() => {
-                "enter send · tab transcript · pgup/pgdn scroll · ctrl-o open · ctrl-t plan · esc cancel · ctrl-c twice leave"
-            }
-            Zone::Input => {
-                "enter send · tab transcript · pgup/pgdn scroll · ctrl-o open · ctrl-t plan · ctrl-c twice leave"
-            }
-        };
-        said.push(keys);
-        Line::styled(
-            wrap::clip(&format!(" {}", said.join(theme::SEPARATOR)), width),
-            DIM,
+        let said = (!said.is_empty()).then(|| said.join(theme::SEPARATOR));
+        status::bottom_row(
+            self.view.as_ref().map(|view| view.session()),
+            self.model.as_deref(),
+            said.as_deref(),
+            width,
         )
     }
+
+    /// The list of every key, over the screen, in a group for each zone.
+    fn draw_keys(&self, frame: &mut Draw, area: Rect) {
+        let mut lines = Vec::new();
+        for (zone, keys) in KEYS {
+            if !lines.is_empty() {
+                lines.push(Line::raw(""));
+            }
+            lines.push(Line::styled(format!(" {zone}"), QUESTION));
+            for (key, what) in *keys {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("   {key:<14}"), PICKED),
+                    Span::raw(what.to_string()),
+                ]));
+            }
+        }
+        // Everything above the bottom row, so that no line of the screen
+        // under it shows through. The first row names how to close the list
+        // and stays; the keys under it scroll where they do not all fit.
+        let over = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
+        frame.render_widget(Clear, over);
+        let room = usize::from(over.height.saturating_sub(1));
+        let from = self.keys_scroll.get().min(lines.len().saturating_sub(room));
+        self.keys_scroll.set(from);
+        let mut shown = vec![Line::styled(
+            " keys · ? or esc closes · ↑↓ pgup pgdn scroll",
+            DIM,
+        )];
+        shown.extend(lines.into_iter().skip(from).take(room));
+        frame.render_widget(Paragraph::new(Text::from(shown)), over);
+    }
 }
+
+/// Every key of the console, by zone, for the list that `?` opens.
+pub(super) const KEYS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Input",
+        &[
+            ("enter", "send the prompt"),
+            ("tab", "to the transcript; complete a pick"),
+            ("esc", "cancel the running turn"),
+            ("↑ ↓", "box rows, then prompt history"),
+            ("/", "open the slash commands"),
+            ("↑ ↓ tab enter", "pick and complete a slash command"),
+        ],
+    ),
+    (
+        "Input box",
+        &[
+            ("shift-enter", "new line"),
+            ("alt-enter", "new line"),
+            ("ctrl-j", "new line"),
+            ("\\ enter", "new line after a backslash"),
+            ("← →", "move one character"),
+            ("alt-← alt-→", "move one word"),
+            ("alt-b alt-f", "move one word"),
+            ("home ctrl-a", "start of the line"),
+            ("end ctrl-e", "end of the line"),
+            ("backspace", "delete before the cursor"),
+            ("delete", "delete at the cursor"),
+            ("ctrl-u", "delete to the start of the line"),
+            ("ctrl-k", "delete to the end of the line"),
+            ("ctrl-w", "delete the word before the cursor"),
+        ],
+    ),
+    (
+        "Permission",
+        &[
+            ("↑ ↓", "pick an option"),
+            ("1-9", "pick the option of that number"),
+            ("enter", "answer with the picked option"),
+        ],
+    ),
+    (
+        "Question",
+        &[
+            ("↑ ↓", "pick a choice"),
+            ("1-9", "pick a choice; answer a single one"),
+            ("space", "check a multi-select choice"),
+            ("enter", "answer and advance"),
+            ("tab ← →", "move between questions, empty box"),
+            ("esc", "decline the question"),
+        ],
+    ),
+    (
+        "Transcript",
+        &[
+            ("↑ ↓ j k", "move between turns and steps"),
+            ("enter →", "open the item in place"),
+            ("←", "close the item, or go to its turn"),
+            ("r", "show the raw input and output of a call"),
+            ("y", "copy the item"),
+            ("home end", "go to the first or the newest turn"),
+            ("tab esc", "give the keys back to the input"),
+            ("click", "open or close a turn or a step"),
+        ],
+    ),
+    (
+        "Everywhere",
+        &[
+            ("pgup pgdn", "scroll the transcript"),
+            ("wheel", "scroll the transcript or the plan"),
+            ("ctrl-o", "open or close the newest turn"),
+            ("ctrl-t", "open or close the plan"),
+            ("click plan", "open or close the plan"),
+            ("ctrl-c ctrl-c", "leave"),
+            ("ctrl-d", "leave at once"),
+            ("?", "open this list, in an empty box"),
+        ],
+    ),
+];
 
 /// The status mark of a step and its style.
 fn step_mark(step: &StepDto) -> (&'static str, Style) {

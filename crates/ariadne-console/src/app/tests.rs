@@ -502,7 +502,7 @@ fn tab_gives_the_keys_to_the_transcript_and_tab_escape_or_a_typed_character_give
         app.event(key(KeyCode::Tab));
         assert_eq!(app.zone(), Zone::Transcript);
         let screen = draw(&app, WIDTH, HEIGHT);
-        assert!(screen.last().unwrap().contains("y copy"), "{screen:#?}");
+        assert!(!screen.last().unwrap().contains("copy"), "{screen:#?}");
         app.event(back);
         assert_eq!(app.zone(), Zone::Input);
     }
@@ -701,9 +701,8 @@ fn the_wheel_scrolls_in_both_zones_and_a_click_opens_or_closes_an_item() {
         app.zone = zone;
         app.event(wheel(MouseEventKind::ScrollUp));
         let up = draw(&app, WIDTH, HEIGHT);
-        // The transcript zone: the screen less the box, the status row and
-        // the footer.
-        let zone_rows = usize::from(HEIGHT) - 5;
+        // The transcript zone: the screen less the box and the bottom row.
+        let zone_rows = usize::from(HEIGHT) - 4;
         assert_eq!(
             up[3..zone_rows],
             end[..zone_rows - 3],
@@ -1878,8 +1877,8 @@ fn with_state() -> App {
     app
 }
 
-/// The status row: the row under the input box's lower rule.
-fn status_row(screen: &[String]) -> String {
+/// The bottom row: the row under the input box's lower rule.
+fn bottom_row(screen: &[String]) -> String {
     let rule = screen
         .iter()
         .rposition(|row| row.starts_with("───"))
@@ -1887,27 +1886,221 @@ fn status_row(screen: &[String]) -> String {
     screen[rule + 1].clone()
 }
 
+/// A row of `width` columns: `left` at the start and `? keys` at the end.
+fn keyed(left: &str, width: usize) -> String {
+    let pad = width - left.chars().count() - "? keys".len() - 1;
+    format!("{left}{}? keys", " ".repeat(pad))
+}
+
 #[test]
-fn the_status_row_shows_the_state_of_the_session_and_drops_whole_items_when_narrow() {
+fn the_bottom_row_shows_the_state_mark_model_mode_context_and_cost_and_the_keys_hint() {
     let app = with_state();
+    let screen = draw(&app, 80, HEIGHT);
     assert_eq!(
-        status_row(&draw(&app, 80, HEIGHT)),
-        " running · Code · Opus 5.5 · context 45% · $0.42 · ↑ 12.4k ↓ 3.1k"
+        bottom_row(&screen),
+        keyed(" ◐ · Opus 5.5 · Code · context 45% · $0.42", 80)
     );
+    // The one row replaces the status row and the footer.
+    assert_eq!(screen.last().unwrap(), &bottom_row(&screen), "{screen:#?}");
+    let row = bottom_row(&screen);
+    for word in ["running", "↑", "tab", "enter", "pgup"] {
+        assert!(!row.contains(word), "{word}: {row}");
+    }
+}
+
+#[test]
+fn a_narrow_bottom_row_drops_whole_items_in_rank_order_and_the_keys_hint_last() {
+    let app = with_state();
+    let at = |width: usize| bottom_row(&draw(&app, u16::try_from(width).unwrap(), HEIGHT));
     assert_eq!(
-        status_row(&draw(&app, 60, HEIGHT)),
-        " running · Code · Opus 5.5 · context 45% · ↑ 12.4k ↓ 3.1k"
+        at(51),
+        keyed(" ◐ · Opus 5.5 · Code · context 45% · $0.42", 51)
     );
+    assert_eq!(at(50), keyed(" ◐ · Opus 5.5 · Code · context 45%", 50));
+    assert_eq!(at(42), keyed(" ◐ · Opus 5.5 · Code", 42));
+    assert_eq!(at(28), keyed(" ◐ · Opus 5.5", 28));
+    assert_eq!(at(21), keyed(" ◐", 21));
+    assert_eq!(at(10), keyed("", 10));
+    assert_eq!(at(9), "");
+}
+
+#[test]
+fn reconnecting_and_the_leave_hint_replace_the_left_side_of_the_row_while_they_apply() {
+    let mut app = with_state();
+    app.frame(Frame::Dropped);
     assert_eq!(
-        status_row(&draw(&app, 45, HEIGHT)),
-        " running · Code · Opus 5.5 · context 45%"
+        bottom_row(&draw(&app, 60, HEIGHT)),
+        keyed(" reconnecting", 60)
     );
+    app.frame(snap(2, vec![done("t1", "Work", "Done.")]));
+    assert!(bottom_row(&draw(&app, 60, HEIGHT)).starts_with(" ◐"));
+    app.event(ctrl('c'));
     assert_eq!(
-        status_row(&draw(&app, 26, HEIGHT)),
-        " running · Code · Opus 5.5"
+        bottom_row(&draw(&app, 60, HEIGHT)),
+        keyed(" ctrl-c again to leave", 60)
     );
-    assert_eq!(status_row(&draw(&app, 20, HEIGHT)), " running · Opus 5.5");
-    assert_eq!(status_row(&draw(&app, 12, HEIGHT)), " running");
+}
+
+#[test]
+fn a_question_mark_opens_an_overlay_of_every_key_in_groups_by_zone() {
+    let mut app = app_with(many());
+    typed(&mut app, "?");
+    let screen = draw(&app, 80, 80);
+    let at = |text: &str| {
+        screen
+            .iter()
+            .position(|row| row.contains(text))
+            .unwrap_or_else(|| panic!("{text}: {screen:#?}"))
+    };
+    // A group for each zone, in order, each with its own keys.
+    let (input, transcript, everywhere) = (at("Input"), at("Transcript"), at("Everywhere"));
+    assert!(input < transcript && transcript < everywhere, "{screen:#?}");
+    for (key, group) in [
+        ("enter", input),
+        ("shift-enter", input),
+        ("esc", input),
+        ("↑ ↓ j k", transcript),
+        ("y", transcript),
+        ("home end", transcript),
+        ("pgup pgdn", everywhere),
+        ("ctrl-o", everywhere),
+        ("ctrl-t", everywhere),
+        ("ctrl-c ctrl-c", everywhere),
+    ] {
+        let row = screen
+            .iter()
+            .position(|row| row.trim_start().starts_with(key))
+            .unwrap_or_else(|| panic!("{key}: {screen:#?}"));
+        assert!(row > group, "{key} is under its group: {screen:#?}");
+    }
+    assert!(
+        screen.iter().all(|row| !row.contains("prompt 20")),
+        "{screen:#?}"
+    );
+    // The typed question mark did not reach the box.
+    assert!(app.input.is_empty());
+}
+
+#[test]
+fn every_key_of_the_overlay_is_reached_by_scrolling_in_a_60_by_24_terminal() {
+    let mut app = app_with(many());
+    app.event(key(KeyCode::Char('?')));
+    let mut seen = String::new();
+    let mut first = None;
+    for _ in 0..40 {
+        let screen = draw(&app, WIDTH, HEIGHT);
+        assert!(screen[0].contains("? or esc closes"), "{screen:#?}");
+        assert!(screen.iter().all(|row| row.chars().count() <= 60));
+        first.get_or_insert_with(|| screen.clone());
+        seen.push_str(&screen.join("\n"));
+        app.event(key(KeyCode::Down));
+    }
+    let first = first.unwrap();
+    assert!(first[1].contains("Input"), "{first:#?}");
+    // An inventory read from the key handlers, not from the overlay: the
+    // chords of the input box (`input.rs`), the form (`form.rs`), the
+    // suggestions (`commands.rs`), the transcript and the console (`mod.rs`).
+    for chord in [
+        "shift-enter",
+        "alt-enter",
+        "ctrl-j",
+        "ctrl-a",
+        "ctrl-e",
+        "ctrl-u",
+        "ctrl-k",
+        "ctrl-w",
+        "alt-b",
+        "alt-f",
+        "alt-←",
+        "alt-→",
+        "backspace",
+        "delete",
+        "home",
+        "end",
+        "space",
+        "pgup",
+        "pgdn",
+        "ctrl-o",
+        "ctrl-t",
+        "ctrl-c",
+        "ctrl-d",
+        "tab",
+        "esc",
+        "enter",
+        "1-9",
+        "wheel",
+        "click",
+        "j k",
+    ] {
+        assert!(seen.contains(chord), "{chord} is not in the overlay");
+    }
+    for zone in [
+        "Input",
+        "Input box",
+        "Permission",
+        "Question",
+        "Transcript",
+        "Everywhere",
+    ] {
+        assert!(seen.contains(zone), "{zone}");
+    }
+    app.event(key(KeyCode::Esc));
+    assert!(
+        draw(&app, WIDTH, HEIGHT)
+            .iter()
+            .all(|row| !row.contains("? or esc closes"))
+    );
+}
+
+#[test]
+fn a_question_mark_in_a_non_empty_input_types_the_character() {
+    let mut app = app_with(many());
+    typed(&mut app, "why?");
+    let screen = draw(&app, 80, HEIGHT);
+    assert!(screen.iter().any(|row| row == "❯ why?"), "{screen:#?}");
+    assert!(screen.iter().all(|row| !row.contains("? or esc closes")));
+}
+
+#[test]
+fn a_question_mark_or_escape_closes_the_overlay_and_the_screen_stays_as_it_was() {
+    for close in [KeyCode::Char('?'), KeyCode::Esc] {
+        let mut app = app_with(many());
+        app.event(key(KeyCode::PageUp));
+        let before = draw(&app, WIDTH, HEIGHT);
+        app.event(key(KeyCode::Char('?')));
+        // Keys other than the closing ones leave the box and the scroll alone.
+        app.event(key(KeyCode::Char('x')));
+        app.event(key(KeyCode::PageDown));
+        assert!(
+            draw(&app, WIDTH, HEIGHT)
+                .iter()
+                .any(|row| row.contains("? or esc closes"))
+        );
+        app.event(key(close));
+        let after = draw(&app, WIDTH, HEIGHT);
+        assert_eq!(after, before, "{close:?}");
+        assert!(app.input.is_empty(), "{close:?}");
+    }
+}
+
+#[test]
+fn the_question_mark_opens_the_overlay_from_the_transcript_zone_too() {
+    let mut app = app_with(many());
+    app.event(key(KeyCode::Tab));
+    assert_eq!(app.zone(), Zone::Transcript);
+    app.event(key(KeyCode::Char('?')));
+    assert!(
+        draw(&app, 80, 40)
+            .iter()
+            .any(|row| row.contains("? or esc closes"))
+    );
+    app.event(key(KeyCode::Esc));
+    assert_eq!(app.zone(), Zone::Transcript);
+    assert!(
+        draw(&app, 80, 40)
+            .iter()
+            .all(|row| !row.contains("? or esc closes"))
+    );
 }
 
 #[test]
@@ -2053,19 +2246,19 @@ fn every_entry_of_a_checklist_taller_than_its_room_is_reached_with_the_wheel() {
 }
 
 #[test]
-fn the_status_row_names_the_stored_model_where_the_agent_sends_no_model_option() {
+fn the_bottom_row_names_the_stored_model_where_the_agent_sends_no_model_option() {
     let mut app = app_with(vec![done("t1", "Work", "Done.")]);
     app.stored_model("claude-acp:opus-5");
-    assert_eq!(status_row(&draw(&app, 80, HEIGHT)), " running · opus-5");
+    assert_eq!(
+        bottom_row(&draw(&app, 80, HEIGHT)),
+        keyed(" ◐ · opus-5", 80)
+    );
 
     // The agent's model option wins over the stored model.
     let mut app = with_state();
     app.stored_model("claude-acp:opus-5");
-    assert!(
-        status_row(&draw(&app, 80, HEIGHT)).starts_with(" running · Code · Opus 5.5 · "),
-        "{:?}",
-        status_row(&draw(&app, 80, HEIGHT))
-    );
+    let row = bottom_row(&draw(&app, 80, HEIGHT));
+    assert!(row.starts_with(" ◐ · Opus 5.5 · Code · "), "{row}");
 }
 
 #[test]
@@ -2312,8 +2505,8 @@ async fn a_host_that_reads_no_detail_shows_the_step_text_and_the_reason() {
             .any(|row| row == "      this console reads no step detail"),
         "{screen:#?}"
     );
-    // No stored model and no model option: the status row has none.
-    assert_eq!(status_row(&screen), " running");
+    // No stored model and no model option: the bottom row has none.
+    assert!(!bottom_row(&screen).contains(" · "), "{screen:#?}");
 }
 
 /// A tool call of `kind`, with an optional `diff_stat`.

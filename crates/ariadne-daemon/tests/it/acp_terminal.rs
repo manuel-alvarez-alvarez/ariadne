@@ -128,7 +128,7 @@ fn home_with_stub(dir: &tempfile::TempDir, stub: &StubAcpAgent) -> std::path::Pa
 
 /// The footer the full-screen console draws under its input box, which says
 /// that it is drawn.
-const READY: &str = "enter send · tab transcript";
+const READY: &str = "? keys";
 
 /// The client's end: the emulator the bytes draw on, and the socket they
 /// come over.
@@ -308,8 +308,8 @@ async fn the_terminal_draws_the_full_screen_console_at_the_client_size() {
     let rows: Vec<&str> = screen.lines().collect();
     assert_eq!(rows.len(), 40, "the console fills the terminal:\n{screen}");
     assert!(
-        rows[39].starts_with(&format!(" {READY}")),
-        "the footer is the last row:\n{screen}"
+        rows[39].ends_with(READY),
+        "the bottom row is the last row:\n{screen}"
     );
     assert!(
         rows[4].contains("▸") && rows[4].contains("1 tool call") && rows[5].contains("done"),
@@ -575,7 +575,7 @@ async fn ctrl_c_twice_or_ctrl_d_closes_the_socket_and_the_session_stays_alive() 
 }
 
 /// A resize sent after the first draw draws the whole screen again at the new
-/// size: the footer moves to the new last row, and no row of the old screen
+/// size: the bottom row moves to the new last row, and no row of the old screen
 /// is left under or beside it.
 #[tokio::test]
 async fn a_resize_redraws_at_the_new_size() {
@@ -594,7 +594,7 @@ async fn a_resize_redraws_at_the_new_size() {
             screen
                 .lines()
                 .nth(19)
-                .is_some_and(|row| row.starts_with(&format!(" {READY}")))
+                .is_some_and(|row| row.ends_with(READY))
         })
         .await;
     let screen = client.screen();
@@ -641,7 +641,7 @@ async fn a_click_message_opens_and_closes_the_turn_under_it() {
 async fn a_wheel_message_scrolls_the_transcript() {
     let (_dir, _stub, _h, session, address) = idle_daemon().await;
     // The transcript has six lines and four rows to show them in: the
-    // screen less the box, the status row and the footer.
+    // screen less the box and the bottom row.
     let mut client = Client::open(address, &session.id, 100, 9).await;
     client
         .read_until("the end of the transcript", |screen| {

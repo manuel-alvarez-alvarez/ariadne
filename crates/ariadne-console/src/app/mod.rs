@@ -6,7 +6,7 @@
 //! and the step rows of a turn that is open. A step opens in place to its
 //! detail, and a subagent to its own steps. The input zone is the box the
 //! next prompt is typed into, with the plan, a pending permission or an open
-//! question above it and the status row under it. One zone at a time has the
+//! question above it and the bottom row under it. One zone at a time has the
 //! keys, and Tab moves them (008, rules 39 to 56).
 //!
 //! The console draws from the client [`View`] of the trajectory and nothing
@@ -336,7 +336,7 @@ pub struct App {
     /// most one notch of the wheel moves it, so no entry is skipped.
     plan_shown: Cell<usize>,
     /// The model the session was launched with, as the host read it: what
-    /// the status row names where the agent reports no model option.
+    /// the bottom row names where the agent reports no model option.
     model: Option<String>,
     /// The first line of the transcript on the screen. `None` follows the
     /// end of the transcript.
@@ -375,6 +375,10 @@ pub struct App {
     shown: BTreeMap<String, TurnDto>,
     /// One Ctrl-C has been seen: the next one leaves.
     armed: bool,
+    /// The list of keys is open over the screen.
+    keys_open: bool,
+    /// The first line of the list of keys on the screen.
+    keys_scroll: Cell<usize>,
     tick: usize,
 }
 
@@ -421,12 +425,14 @@ impl App {
             notices: Vec::new(),
             shown: BTreeMap::new(),
             armed: false,
+            keys_open: false,
+            keys_scroll: Cell::new(0),
             tick: 0,
         }
     }
 
     /// The model the session was launched with, `<agent>:<model>`, which
-    /// the status row names where the agent reports no model option.
+    /// the bottom row names where the agent reports no model option.
     pub fn stored_model(&mut self, model: &str) {
         let model = model.split_once(':').map_or(model, |(_, model)| model);
         self.model = (!model.is_empty()).then(|| model.to_string());
@@ -909,6 +915,7 @@ impl App {
     pub fn event(&mut self, event: TermEvent) -> Action {
         match event {
             TermEvent::Key(key) => self.key(key),
+            TermEvent::Paste(_) if self.keys_open => Action::None,
             TermEvent::Paste(text) => {
                 self.armed = false;
                 self.zone = Zone::Input;
@@ -948,6 +955,33 @@ impl App {
                 let item = Item::Turn(newest.id.clone());
                 self.toggle(item);
             }
+            return Action::None;
+        }
+        // The list of keys takes every key until it closes, and the screen
+        // under it stays as it was.
+        if self.keys_open {
+            let at = self.keys_scroll.get();
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('?') => self.keys_open = false,
+                KeyCode::Up | KeyCode::Char('k') => self.keys_scroll.set(at.saturating_sub(1)),
+                KeyCode::Down | KeyCode::Char('j') => self.keys_scroll.set(at + 1),
+                KeyCode::PageUp => self.keys_scroll.set(at.saturating_sub(10)),
+                KeyCode::PageDown => self.keys_scroll.set(at + 10),
+                KeyCode::Home => self.keys_scroll.set(0),
+                KeyCode::End => self.keys_scroll.set(usize::MAX),
+                _ => {}
+            }
+            return Action::None;
+        }
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        if key.code == KeyCode::Char('?')
+            && plain
+            && (self.zone == Zone::Transcript || self.input.is_empty())
+        {
+            self.keys_open = true;
+            self.keys_scroll.set(0);
             return Action::None;
         }
         match key.code {
@@ -1205,6 +1239,9 @@ impl App {
     }
 
     fn mouse(&mut self, mouse: MouseEvent) -> Action {
+        if self.keys_open {
+            return Action::None;
+        }
         match mouse.kind {
             // The wheel over an open checklist scrolls the plan, and
             // anywhere else the transcript.

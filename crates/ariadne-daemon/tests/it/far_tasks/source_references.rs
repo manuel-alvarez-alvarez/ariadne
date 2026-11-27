@@ -681,8 +681,8 @@ async fn source_trajectory_stream_and_terminal_connections_reach_the_worker_sess
     .await;
     assert!(emulator.screen().alternate_screen());
     // A mouse message crosses the forwarder as the worker reads it: the
-    // click opens the first turn, which puts the keys in the transcript, and
-    // a resize after it draws the screen again.
+    // click opens the first turn, and a resize after it draws the screen
+    // again, with the bottom row on the new last row.
     for kind in ["wheel_up", "wheel_down", "click"] {
         socket
             .send(send(json!({"type":"mouse","kind":kind,"col":2,"row":1})))
@@ -704,7 +704,7 @@ async fn source_trajectory_stream_and_terminal_connections_reach_the_worker_sess
                 && contents
                     .lines()
                     .nth(19)
-                    .is_some_and(|row| row.contains("↑↓ move"))
+                    .is_some_and(|row| row.ends_with("? keys"))
         },
     )
     .await;

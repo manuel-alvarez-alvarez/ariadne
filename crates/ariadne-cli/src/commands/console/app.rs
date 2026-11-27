@@ -67,9 +67,9 @@ pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     outcome
 }
 
-/// The model the session was launched with, which the status row names where
+/// The model the session was launched with, which the bottom row names where
 /// the agent reports no model option. A session the daemon will not describe
-/// costs the status row its model and nothing else.
+/// costs the bottom row its model and nothing else.
 async fn stored_model(client: &Client, id: &str) -> Option<String> {
     client
         .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))

@@ -1,12 +1,12 @@
 //! The live state of the session around the input: the plan line above it,
-//! which opens to the checklist, and the status row under it.
+//! which opens to the checklist, and the bottom row under the input.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use ariadne_api::trajectory::{PlanDto, SessionStateDto};
 
-use crate::theme::{self, AGENT, DIM, FAIL, PLAN, TOOL};
+use crate::theme::{self, AGENT, ASK, DIM, FAIL, PLAN, TOOL};
 use crate::wrap::{self, wrap};
 
 use super::draw::{FOLDED, UNFOLDED};
@@ -99,87 +99,92 @@ pub(super) fn plan_lines(
     (lines, scroll, shown)
 }
 
-/// The status row: the session's status, its mode, its model — the agent's
-/// model option, else the model the session was launched with — the context
-/// it uses, its cost and its tokens. Where the row does not fit, it drops
-/// whole items, the least important first: the cost, then the tokens, the
-/// context, the mode and the model. The status stays to the last.
-pub(super) fn status_line(
-    session: &SessionStateDto,
+/// The mark of the session's state: it says what a status word said.
+fn state_mark(status: &str) -> (&'static str, Style) {
+    match status {
+        "running" | "starting" => (theme::CALL_RUNNING, TOOL),
+        "failed" => (theme::CALL_FAILED, FAIL),
+        "idle" => (theme::SESSION_IDLE, AGENT),
+        _ => (theme::SESSION_ENDED, DIM),
+    }
+}
+
+/// The one row under the input box. On the left: the mark of the session's
+/// state, its model — the agent's model option, else the model the session
+/// was launched with — its mode, the context it uses and its cost. On the
+/// right: the hint that `?` lists the keys. `said` replaces the left side
+/// while it applies. Where the row does not fit, it drops whole items, the
+/// least important first: the cost, the context, the mode, the model, the
+/// mark, and `? keys` last.
+pub(super) fn bottom_row(
+    session: Option<&SessionStateDto>,
     stored_model: Option<&str>,
+    said: Option<&str>,
     width: usize,
 ) -> Line<'static> {
-    // Each item, in its place on the row, with its rank: the lowest rank
-    // goes first.
+    // Each item of the left side, in its place on the row, with its rank:
+    // the lowest rank goes first.
     let mut items: Vec<(u8, String, Style)> = Vec::new();
-    let status = session.status.as_str();
-    let status_style = match status {
-        "running" | "starting" => TOOL,
-        "failed" => FAIL,
-        "idle" => AGENT,
-        _ => DIM,
-    };
-    items.push((5, status.to_string(), status_style));
-    if let Some(mode) = session.mode.as_ref().and_then(|mode| {
-        let id = mode.current_id.as_deref()?;
-        Some(
-            mode.available
-                .iter()
-                .find(|available| available.id == id)
-                .map_or(id.to_string(), |available| available.name.clone()),
-        )
-    }) {
-        items.push((3, mode, DIM));
-    }
-    if let Some(model) = session
-        .config_options
-        .iter()
-        .find(|option| option.category.as_deref() == Some("model"))
-        .and_then(|option| {
-            let value = option.current_value.as_deref()?;
+    if let Some(said) = said {
+        items.push((5, said.to_string(), ASK));
+    } else if let Some(session) = session {
+        let (mark, style) = state_mark(session.status.as_str());
+        items.push((4, mark.to_string(), style));
+        if let Some(model) = session
+            .config_options
+            .iter()
+            .find(|option| option.category.as_deref() == Some("model"))
+            .and_then(|option| {
+                let value = option.current_value.as_deref()?;
+                Some(
+                    option
+                        .values
+                        .iter()
+                        .find(|held| held.value == value)
+                        .map_or(value.to_string(), |held| held.name.clone()),
+                )
+            })
+            .or_else(|| stored_model.map(str::to_string))
+        {
+            items.push((3, model, DIM));
+        }
+        if let Some(mode) = session.mode.as_ref().and_then(|mode| {
+            let id = mode.current_id.as_deref()?;
             Some(
-                option
-                    .values
+                mode.available
                     .iter()
-                    .find(|held| held.value == value)
-                    .map_or(value.to_string(), |held| held.name.clone()),
+                    .find(|available| available.id == id)
+                    .map_or(id.to_string(), |available| available.name.clone()),
             )
-        })
-        .or_else(|| stored_model.map(str::to_string))
-    {
-        items.push((4, model, DIM));
+        }) {
+            items.push((2, mode, DIM));
+        }
+        if let Some(context) = session.context.filter(|context| context.size > 0) {
+            let percent = context.used.saturating_mul(100) / context.size;
+            items.push((1, format!("context {percent}%"), DIM));
+        }
+        if let Some(cost) = &session.cost {
+            let said = match cost.currency.as_str() {
+                "USD" => format!("${:.2}", cost.amount),
+                currency => format!("{:.2} {currency}", cost.amount),
+            };
+            items.push((0, said, DIM));
+        }
     }
-    if let Some(context) = session.context.filter(|context| context.size > 0) {
-        let percent = context.used.saturating_mul(100) / context.size;
-        items.push((2, format!("context {percent}%"), DIM));
-    }
-    if let Some(cost) = &session.cost {
-        let said = match cost.currency.as_str() {
-            "USD" => format!("${:.2}", cost.amount),
-            currency => format!("{:.2} {currency}", cost.amount),
-        };
-        items.push((0, said, DIM));
-    }
-    let usage = session.usage;
-    if usage.input_tokens > 0 || usage.output_tokens > 0 {
-        items.push((
-            1,
-            format!(
-                "{}{} {}{}",
-                theme::TOKENS_IN,
-                compact(usage.input_tokens),
-                theme::TOKENS_OUT,
-                compact(usage.output_tokens)
-            ),
-            DIM,
-        ));
-    }
-    let fits = |items: &[(u8, String, Style)]| {
+    let keys = wrap::width(theme::KEYS_HINT);
+    // A margin on both sides, and two columns between the sides.
+    let fits = |items: &[(u8, String, Style)], hint: bool| {
         let texts: usize = items.iter().map(|(_, text, _)| wrap::width(text)).sum();
         let gaps = wrap::width(theme::SEPARATOR) * items.len().saturating_sub(1);
-        1 + texts + gaps <= width
+        let hint = if hint { keys + 3 } else { 0 };
+        1 + texts + gaps + hint <= width
     };
-    while items.len() > 1 && !fits(&items) {
+    let mut hint = true;
+    while !fits(&items, hint) && (hint || !items.is_empty()) {
+        if items.is_empty() {
+            hint = false;
+            continue;
+        }
         let least = items
             .iter()
             .enumerate()
@@ -195,24 +200,15 @@ pub(super) fn status_line(
         }
         spans.push(Span::styled(text, style));
     }
+    if hint {
+        let left: usize = spans.iter().map(|span| wrap::width(&span.content)).sum();
+        let pad = width.saturating_sub(left + keys + 1);
+        spans.push(Span::raw(" ".repeat(pad)));
+        spans.push(Span::styled(theme::KEYS_HINT, DIM));
+    }
     let line = Line::from(spans);
     match line.width() <= width {
         true => line,
-        // The status alone is wider than the row.
         false => Line::styled(wrap::clip(&line.to_string(), width), DIM),
-    }
-}
-
-/// A count of tokens in at most five columns: `950`, `12.4k`, `1.2M`.
-fn compact(count: u64) -> String {
-    let tenths = |unit: u64| (count + unit / 20) / (unit / 10);
-    let (tenths, suffix) = match count {
-        0..1_000 => return count.to_string(),
-        _ if tenths(1_000) < 10_000 => (tenths(1_000), "k"),
-        _ => (tenths(1_000_000), "M"),
-    };
-    match tenths % 10 {
-        0 => format!("{}{suffix}", tenths / 10),
-        tenth => format!("{}.{tenth}{suffix}", tenths / 10),
     }
 }

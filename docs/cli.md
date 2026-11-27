@@ -107,8 +107,7 @@ scrollback stay as they were. The screen has these parts, from the top:
 - The plan line, while the agent has a plan with an open entry.
 - A permission or a question that waits for you.
 - The input box.
-- The status row.
-- The footer, with the keys you can press now.
+- The bottom row, with the state of the session and `? keys`.
 
 ```
 ❯ Run the tests
@@ -122,8 +121,7 @@ scrollback stay as they were. The screen has these parts, from the top:
 ──────────────────────────────────────────────────────────────
 ❯ Tell the agent what to do
 ──────────────────────────────────────────────────────────────
- running · Code · Opus 5.5 · context 45% · $0.42 · ↑ 12.4k ↓ 3.1k
- enter send · tab transcript · pgup/pgdn scroll · ctrl-o open · …
+ ◐ · Opus 5.5 · Code · context 45% · $0.42                          ? keys
 ```
 
 ### Turns
@@ -207,21 +205,27 @@ scrolls the plan`. Turn the wheel over the checklist to see the other
 entries. One notch moves no more lines than the checklist shows, so no
 entry is skipped.
 
-### The status row
+### The bottom row
 
-The status row shows the status of the session (`running`, `idle`,
-`exited`), its mode, its model, how much of the context window it uses, its
-cost, and the tokens it read (`↑`) and wrote (`↓`). An item that the agent
-does not report is not shown. On a narrow terminal the row drops whole
-items, the least important first: the cost, then the tokens, the context,
-the mode and the model. The status stays to the last.
+One row sits under the input box. On the left it shows the mark of the
+session state (`◐` running, `●` idle, `✗` failed, `■` ended), the model, the
+mode, how much of the context window it uses, and the cost. An item that the
+agent does not report is not shown. On a narrow terminal the row drops whole
+items, the least important first: the cost, the context, the mode, the model
+and the mark. While the link is down the left side reads `reconnecting`, and
+after one Ctrl-C it reads `ctrl-c again to leave`.
+
+On the right the row shows `? keys`, which drops last. Press `?` with an empty
+input box, or in the transcript zone, to open a list of every key, in a group
+for each zone. On a short terminal, scroll the list with the arrows, PgUp, PgDn, Home and End. `?` or Escape closes it, and the transcript and the input stay
+as they were. A `?` in a box that holds text is a typed character.
 
 ### The two zones
 
 The keys go to one zone at a time. The input zone has them when the console
 opens. Tab gives them to the transcript, with the cursor on the newest turn.
 Tab, Escape, or a typed character gives them back to the input. The line of
-the item at the cursor is reversed. The footer names the keys of the zone.
+the item at the cursor is reversed. `?` lists the keys of each zone.
 
 | Key, in the transcript | What it does |
 | --- | --- |
