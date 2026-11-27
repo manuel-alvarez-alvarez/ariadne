@@ -90,16 +90,33 @@ async fn session_row(client: &Client, id: &str) -> Option<SessionDto> {
 /// The name of the session, as `ariadne session ls` shows it: the title of
 /// the task, the goal or the pull request behind it, then its seat and step.
 async fn session_name_of(client: &Client, row: &SessionDto) -> String {
-    let title = if let Some(id) = &row.task_id {
-        titled::<TaskDto>(client, "tasks", id, |task| task.title).await
-    } else if let Some(id) = &row.goal_id {
-        titled::<GoalDto>(client, "goals", id, |goal| goal.title).await
-    } else if let Some(id) = &row.pull_request_id {
-        titled::<PullRequestDto>(client, "pull-requests", id, |pull| pull.title).await
-    } else {
-        None
-    };
+    let title = session_title(client, row).await;
     session_name(title.as_deref(), row.seat, row.step.as_deref())
+}
+
+/// The title `ariadne session ls` shows, found as the daemon finds it: the
+/// pull request's title with its URL where the session has a pull request
+/// the daemon can read, else the task's title, else the goal's.
+async fn session_title(client: &Client, row: &SessionDto) -> Option<String> {
+    if let Some(id) = &row.pull_request_id
+        && let Some(pull) = pull_of(client, id).await
+    {
+        return Some(format!("{} ({})", pull.title, pull.url));
+    }
+    if let Some(id) = &row.task_id
+        && let Some(title) = titled::<TaskDto>(client, "tasks", id, |task| task.title).await
+    {
+        return Some(title);
+    }
+    let id = row.goal_id.as_ref()?;
+    titled::<GoalDto>(client, "goals", id, |goal| goal.title).await
+}
+
+async fn pull_of(client: &Client, id: &str) -> Option<PullRequestDto> {
+    client
+        .get_json(&format!("/v1/pull-requests/{id}"))
+        .await
+        .ok()
 }
 
 async fn titled<T: serde::de::DeserializeOwned>(
@@ -774,6 +791,48 @@ mod tests {
         server.abort();
 
         assert_eq!(name, "task t1 · agent · develop");
+    }
+
+    /// A pull request session reads as `ariadne session ls` titles it: the
+    /// request's title with its URL, ahead of the task's. A task the daemon
+    /// cannot read falls back to the goal, as the daemon's own lookup does.
+    #[tokio::test]
+    async fn a_pull_request_session_is_named_with_its_url_and_a_lost_task_falls_back_to_its_goal() {
+        let pull = json!({
+            "id": "p1", "repository_id": "r1", "number": 7,
+            "url": "https://forge.test/r/pull/7", "title": "Fix the lint",
+            "author_login": "me", "state": "open", "draft": false,
+            "head_branch": "fix", "head_sha": "abc", "head_repo": null,
+            "base_branch": "main", "checks": "passing", "review_decision": "",
+            "opened_at": "2026-11-27T10:00:00Z", "updated_at": "2026-11-27T10:00:00Z",
+            "role": "author", "dependency_updates": [], "reviews": [], "comments": []
+        });
+        let goal = crate::commands::fixtures::goal("g1", "Ship the UI");
+        let router = Router::new()
+            .route(
+                "/v1/pull-requests/p1",
+                get(move || async move { axum::Json(pull) }),
+            )
+            .route("/v1/goals/g1", get(move || async move { axum::Json(goal) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let mut pulled = crate::commands::fixtures::session("s1", "g1", Some("t1"));
+        pulled.pull_request_id = Some("p1".into());
+        pulled.seat = Some(ariadne_core::Seat::Keeper);
+        pulled.step = None;
+        let lost = crate::commands::fixtures::session("s2", "g1", Some("gone"));
+
+        let pulled = session_name_of(&client, &pulled).await;
+        let lost = session_name_of(&client, &lost).await;
+        server.abort();
+
+        assert_eq!(
+            pulled,
+            "Fix the lint (https://forge.test/r/pull/7) · keeper"
+        );
+        assert_eq!(lost, "Ship the UI · agent · develop");
     }
 
     #[test]
