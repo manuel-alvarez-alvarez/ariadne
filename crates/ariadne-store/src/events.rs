@@ -378,6 +378,24 @@ impl Store {
         .await?)
     }
 
+    /// The ids of a session's events in the lane `lane` up to `upto`,
+    /// payloads unread.
+    pub async fn session_lane_ids(
+        &self,
+        session_id: &str,
+        lane: &str,
+        upto: &str,
+    ) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM agent_events WHERE session_id = ? AND lane = ? AND id <= ? ORDER BY id",
+        )
+        .bind(session_id)
+        .bind(lane)
+        .bind(upto)
+        .fetch_all(self.r())
+        .await?)
+    }
+
     /// The events with these ids, in id order, payloads read.
     pub async fn events_by_ids(&self, ids: &[String]) -> Result<Vec<AgentEvent>> {
         let mut events = Vec::with_capacity(ids.len());

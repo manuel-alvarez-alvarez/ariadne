@@ -470,6 +470,7 @@ pub(super) async fn steps(
         lane,
         query.before.as_deref(),
         limit,
+        READ_EVENTS,
     )
     .await?
     .ok_or_else(|| turn_not_found(&turn_id))?;

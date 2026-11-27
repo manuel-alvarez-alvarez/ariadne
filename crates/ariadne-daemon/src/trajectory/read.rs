@@ -25,11 +25,11 @@ use super::fold::{Fold, STEP_WINDOW, TurnIndex};
 /// which a client opens on at once.
 pub(crate) const READ_EVENTS: usize = 500;
 
-/// How many turns older than the ones a read shows it keeps for the
-/// attention they hold: a permission or a question that still waits, or an
-/// error that a diagnosis may still name. Twenty keeps a day of failed
-/// turns, and keeps the scan of their heads short.
-const OUTSIDE_TURNS: usize = 20;
+/// How many turns with an error older than the ones a read shows it holds,
+/// for a diagnosis that may still name the error. Twenty keeps a day of
+/// failed turns, and keeps the scan of their heads short. A turn with a
+/// permission or a question that waits is held whatever its age.
+const ERROR_TURNS: usize = 20;
 
 /// The event kind that opens a turn.
 const PROMPT: &str = "user_prompt_submit";
@@ -187,39 +187,61 @@ impl Picks {
         self.ids.extend(fresh);
         true
     }
+
+    fn full(&self) -> bool {
+        self.ids.len() >= self.budget
+    }
 }
 
-/// What a turn shows whatever its state: its prompt, its answer, and its
-/// attention with the events that changed it.
-fn essentials(turn: &TurnIndex, prompt: bool) -> Vec<String> {
-    let main = turn.lanes.get(MAIN_LANE);
-    let mut ids: Vec<String> = Vec::new();
+/// The rows a turn shows whatever its state: its prompt and its answer.
+fn mandatory(turn: &TurnIndex, prompt: bool) -> Vec<String> {
+    let mut ids = Vec::new();
     if prompt {
         ids.push(turn.id.clone());
     }
-    ids.extend(turn.answer.clone());
-    for id in &turn.attention {
-        ids.push(id.clone());
-        ids.extend(main.and_then(|lane| lane.follows.get(id)).cloned());
+    if let (Some(lane), Some(answer)) = (turn.lanes.get(MAIN_LANE), &turn.answer) {
+        ids.extend(lane.rows(answer));
     }
     ids
 }
 
-/// The last `STEP_WINDOW` steps of a lane, with the newest event of each.
-fn window(turn: &TurnIndex, lane: &str) -> Vec<String> {
+/// Each attention step of a turn, with the rows that show it: the actions
+/// that wait on a person, or the errors.
+fn attention(turn: &TurnIndex, errors: bool) -> Vec<Vec<String>> {
+    let Some(lane) = turn.lanes.get(MAIN_LANE) else {
+        return Vec::new();
+    };
+    let ids = if errors { &turn.errors } else { &turn.actions };
+    ids.iter().map(|id| lane.rows(id)).collect()
+}
+
+/// The last `STEP_WINDOW` steps of a lane, newest first, each with the rows
+/// that show it.
+fn window(turn: &TurnIndex, lane: &str) -> Vec<Vec<String>> {
     let Some(index) = turn.lanes.get(lane) else {
         return Vec::new();
     };
-    let skip = index.openers.len().saturating_sub(STEP_WINDOW);
-    index.openers[skip..]
+    index
+        .openers
         .iter()
-        .flat_map(|id| std::iter::once(id.clone()).chain(index.follows.get(id).cloned()))
+        .rev()
+        .take(STEP_WINDOW)
+        .map(|opener| index.rows(&opener.step))
         .collect()
 }
 
+/// Take a window's steps newest first, as far as the budget goes.
+fn take_window(picks: &mut Picks, steps: Vec<Vec<String>>) {
+    for rows in steps {
+        if !picks.take(rows) {
+            return;
+        }
+    }
+}
+
 /// The newest `turns` turns of a session below `before`, or with `before`
-/// unset its newest turns. With `lane`, each turn carries its last steps of
-/// that lane.
+/// unset its newest turns. With `lane`, the newest turns that hold steps of
+/// that lane, each with its last steps of it.
 pub(crate) async fn read_turns(
     store: &Store,
     session_id: &str,
@@ -231,87 +253,121 @@ pub(crate) async fn read_turns(
     let Some(upper) = store.newest_session_event_id(session_id, before).await? else {
         return Ok(Read::default());
     };
-    let starts = turn_starts(store, session_id, &upper).await?;
-    let Some(first_start) = starts.first() else {
+    read_turns_upto(store, session_id, &upper, turns, lane, budget).await
+}
+
+/// [`read_turns`] at the bound `upper`: no event above it is in the read,
+/// whatever the store holds by the time a query of it runs.
+pub(crate) async fn read_turns_upto(
+    store: &Store,
+    session_id: &str,
+    upper: &str,
+    turns: usize,
+    lane: Option<&str>,
+    budget: usize,
+) -> Result<Read, StoreError> {
+    let starts = turn_starts(store, session_id, upper).await?;
+    if starts.is_empty() {
         return Ok(Read::default());
-    };
-    let shown = starts.len().min(turns.max(1));
-    let kept_from = starts[starts.len() - shown].id.clone();
+    }
     let pairs = store
-        .session_event_heads(session_id, None, Some(&upper), PAIR_KINDS)
+        .session_event_heads(session_id, None, Some(upper), PAIR_KINDS)
         .await?;
+    let turn_of = |id: &str| starts.iter().rposition(|start| start.id.as_str() <= id);
+    // The turns that may show: every turn, or the turns of the lane.
+    let candidates: Vec<usize> = match lane {
+        None => (0..starts.len()).collect(),
+        Some(lane) => {
+            let ids = store.session_lane_ids(session_id, lane, upper).await?;
+            let found: BTreeSet<usize> = ids.iter().filter_map(|id| turn_of(id)).collect();
+            found.into_iter().collect()
+        }
+    };
+    let shown = &candidates[candidates.len() - candidates.len().min(turns.max(1))..];
+    let mut held: BTreeSet<usize> = shown.iter().copied().collect();
+    held.extend(attention_turns(&starts, &pairs, shown.first().copied()));
     let mut heads = Vec::new();
-    for (start, end) in outside_starts(&starts, &pairs, &kept_from) {
-        let upto = match end {
-            Some(end) => {
+    for (first, last) in runs(&held) {
+        let upto = match starts.get(last + 1) {
+            Some(next) => {
                 store
-                    .newest_session_event_id(session_id, Some(&end))
+                    .newest_session_event_id(session_id, Some(&next.id))
                     .await?
             }
-            None => Some(upper.clone()),
+            None => Some(upper.to_string()),
         };
         heads.extend(
             store
-                .session_event_heads(session_id, Some(&start), upto.as_deref(), &[])
+                .session_event_heads(session_id, Some(&starts[first].id), upto.as_deref(), &[])
                 .await?,
         );
     }
-    heads.extend(
-        store
-            .session_event_heads(session_id, Some(&kept_from), Some(&upper), &[])
-            .await?,
-    );
 
     let mut fold = scratch(session_id);
     feed(&mut fold, &heads, &pairs);
-    let index = fold.index();
-    let prompts: BTreeSet<&str> = starts
-        .iter()
-        .filter(|start| start.kind == PROMPT)
-        .map(|start| start.id.as_str())
+    let index: BTreeMap<String, TurnIndex> = fold
+        .index()
+        .into_iter()
+        .map(|turn| (turn.id.clone(), turn))
         .collect();
-
+    let prompt = |at: usize| starts[at].kind == PROMPT;
     let mut picks = Picks {
         ids: BTreeSet::new(),
         budget,
     };
-    picks.take(fold.subagent_events());
-    picks.take(first_subagent_events(store, session_id, &fold, &upper).await?);
-    let plans = store
-        .session_event_heads(session_id, None, Some(&upper), &["plan"])
-        .await?;
-    picks.take(newest_per_lane(&plans));
-    // The shown turns, newest first, as far as the budget goes.
-    let mut first_turn = None;
-    for turn in index.iter().rev().filter(|turn| turn.id >= kept_from) {
-        let mut ids = essentials(turn, prompts.contains(turn.id.as_str()));
-        match lane {
-            Some(lane) => ids.extend(window(turn, lane)),
-            None if turn.running => ids.extend(window(turn, MAIN_LANE)),
-            None => {}
-        }
-        if !picks.take(ids) {
+    // The newest turn first, with its step window reserved: then each older
+    // turn's prompt and answer, as far as the budget goes.
+    let mut first_shown = None;
+    for (rank, &at) in shown.iter().rev().enumerate() {
+        let Some(turn) = index.get(&starts[at].id) else {
+            continue;
+        };
+        if !picks.take(mandatory(turn, prompt(at))) {
             break;
         }
-        first_turn = Some(turn.id.clone());
+        match lane {
+            Some(lane) => take_window(&mut picks, window(turn, lane)),
+            None if rank == 0 && turn.running => {
+                take_window(&mut picks, window(turn, MAIN_LANE));
+            }
+            None => {}
+        }
+        first_shown = Some(at);
     }
-    let first_turn = first_turn.unwrap_or_else(|| starts[starts.len() - 1].id.clone());
-    // The attention of the turns before it, as far as the budget goes.
-    for turn in index.iter().rev().filter(|turn| turn.id < first_turn) {
-        let ids: Vec<String> = essentials(turn, false)
-            .into_iter()
-            .filter(|id| Some(id) != turn.answer.as_ref())
-            .collect();
-        picks.take(ids);
+    let first_shown = first_shown.unwrap_or(shown[shown.len() - 1]);
+    // What waits on a person, then the errors, each step on its own, newest
+    // turn first.
+    for errors in [false, true] {
+        for turn in index.values().rev() {
+            for rows in attention(turn, errors) {
+                picks.take(rows);
+            }
+        }
+    }
+    let plans = store
+        .session_event_heads(session_id, None, Some(upper), &["plan"])
+        .await?;
+    for rows in first_and_newest_per_lane(&plans) {
+        picks.take(rows);
+    }
+    for (subagent, rows) in fold.subagent_rows() {
+        if picks.full() {
+            break;
+        }
+        let first = store
+            .first_subagent_event(session_id, &subagent, upper)
+            .await?;
+        picks.take(first.map(|head| head.id).into_iter().chain(rows));
     }
 
     let loaded = store
         .events_by_ids(&picks.ids.into_iter().collect::<Vec<_>>())
         .await?;
+    let first_turn = starts[first_shown].id.clone();
     Ok(Read {
         items: merge(heads, pairs, loaded, &starts),
-        upper: Some(upper),
-        has_older: first_turn.as_str() > first_start.id.as_str(),
+        upper: Some(upper.to_string()),
+        has_older: candidates.first().is_some_and(|&first| first < first_shown),
         first_turn: Some(first_turn),
         successor: None,
     })
@@ -349,8 +405,9 @@ pub(crate) struct StepsRead {
 }
 
 /// One page of the steps of the turn `turn_id` in a lane: the `limit` steps
-/// before the step `before`, or the last ones. None where no turn opens on
-/// `turn_id`.
+/// before the step `before` in the order the lane opened them, or its last
+/// ones, as many as the budget loads. None where no turn opens on
+/// `turn_id`; an empty page where `before` names no step of the lane.
 pub(crate) async fn read_steps(
     store: &Store,
     session_id: &str,
@@ -358,6 +415,7 @@ pub(crate) async fn read_steps(
     lane: &str,
     before: Option<&str>,
     limit: usize,
+    budget: usize,
 ) -> Result<Option<StepsRead>, StoreError> {
     let Some(newest) = store.newest_session_event_id(session_id, None).await? else {
         return Ok(None);
@@ -389,25 +447,54 @@ pub(crate) async fn read_steps(
         return Ok(None);
     };
     let index = turn.lanes.get(lane).cloned().unwrap_or_default();
-    let older: Vec<&String> = index
-        .openers
-        .iter()
-        .filter(|id| before.is_none_or(|before| id.as_str() < before))
-        .collect();
-    let skip = older.len().saturating_sub(limit);
-    let page: Vec<String> = older[skip..].iter().map(|id| (*id).clone()).collect();
-    let mut picks: Vec<String> = page
-        .iter()
-        .flat_map(|id| std::iter::once(id.clone()).chain(index.follows.get(id).cloned()))
-        .collect();
+    let end = match before {
+        None => index.openers.len(),
+        // A cursor that names no step of the lane is an empty page.
+        Some(before) => index
+            .openers
+            .iter()
+            .position(|opener| opener.step == before)
+            .unwrap_or_default(),
+    };
+    let start = end.saturating_sub(limit);
+    let mut picks = Picks {
+        ids: BTreeSet::new(),
+        budget,
+    };
     if starts[at].kind == PROMPT {
-        picks.push(turn_id.to_string());
+        picks.take([turn_id.to_string()]);
     }
-    picks.extend(fold.subagent_events());
-    picks.extend(first_subagent_events(store, session_id, &fold, &upper).await?);
-    picks.sort();
-    picks.dedup();
-    let loaded = store.events_by_ids(&picks).await?;
+    let subagents: BTreeMap<String, Vec<String>> = fold.subagent_rows().into_iter().collect();
+    // The page's steps newest first, as many as the budget loads: a page cut
+    // short keeps its newest steps and counts the rest as earlier.
+    let mut kept = 0;
+    for opener in index.openers[start..end].iter().rev() {
+        let mut rows = index.rows(&opener.step);
+        if let Some(child) = turn
+            .lanes
+            .get(lane)
+            .and_then(|_| subagent_of(&subagents, &opener.step))
+        {
+            if let Some(first) = store
+                .first_subagent_event(session_id, child, &upper)
+                .await?
+            {
+                rows.push(first.id);
+            }
+            rows.extend(subagents[child].iter().cloned());
+        }
+        if !picks.take(rows) {
+            break;
+        }
+        kept += 1;
+    }
+    let page: Vec<String> = index.openers[end - kept..end]
+        .iter()
+        .map(|opener| opener.step.clone())
+        .collect();
+    let loaded = store
+        .events_by_ids(&picks.ids.into_iter().collect::<Vec<_>>())
+        .await?;
     Ok(Some(StepsRead {
         read: Read {
             items: merge(heads, pairs, loaded, &starts),
@@ -417,8 +504,16 @@ pub(crate) async fn read_steps(
             successor: None,
         },
         page,
-        earlier: skip as u64,
+        earlier: (end - kept) as u64,
     }))
+}
+
+/// The subagent whose step `step` is, by the rows the fold keeps of it.
+fn subagent_of<'a>(subagents: &'a BTreeMap<String, Vec<String>>, step: &str) -> Option<&'a str> {
+    subagents
+        .iter()
+        .find(|(_, rows)| rows.first().is_some_and(|row| row == step))
+        .map(|(id, _)| id.as_str())
 }
 
 /// Fold heads in id order, with the pairing heads outside them.
@@ -482,44 +577,42 @@ fn merge(
     items
 }
 
-/// The first event of each subagent the fold knows, where the session
-/// holds one before the fold's: what the subagent's step is, and the turn it
-/// belongs to.
-async fn first_subagent_events(
-    store: &Store,
-    session_id: &str,
-    fold: &Fold,
-    upper: &str,
-) -> Result<Vec<String>, StoreError> {
-    let mut ids = Vec::new();
-    for subagent in fold.subagent_ids() {
-        if let Some(first) = store
-            .first_subagent_event(session_id, &subagent, upper)
-            .await?
-        {
-            ids.push(first.id);
+/// The first and the newest plan of each lane: the first names the plan,
+/// and the newest says what it holds.
+fn first_and_newest_per_lane(plans: &[EventHead]) -> Vec<Vec<String>> {
+    let mut lanes: BTreeMap<Option<&str>, (String, String)> = BTreeMap::new();
+    for plan in plans {
+        lanes
+            .entry(plan.lane.as_deref())
+            .and_modify(|(_, newest)| *newest = plan.id.clone())
+            .or_insert_with(|| (plan.id.clone(), plan.id.clone()));
+    }
+    lanes
+        .into_values()
+        .map(|(first, newest)| vec![first, newest])
+        .collect()
+}
+
+/// Contiguous runs of turn indices, as first and last.
+fn runs(turns: &BTreeSet<usize>) -> Vec<(usize, usize)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for &at in turns {
+        match runs.last_mut() {
+            Some((_, last)) if *last + 1 == at => *last = at,
+            _ => runs.push((at, at)),
         }
     }
-    Ok(ids)
+    runs
 }
 
-/// The newest plan of each lane.
-fn newest_per_lane(plans: &[EventHead]) -> Vec<String> {
-    let mut newest: BTreeMap<Option<&str>, &str> = BTreeMap::new();
-    for plan in plans {
-        newest.insert(plan.lane.as_deref(), &plan.id);
-    }
-    newest.into_values().map(str::to_string).collect()
-}
-
-/// The turns before `kept_from` that hold attention — a permission or a
-/// question that waits, or an error — at most [`OUTSIDE_TURNS`] of the
-/// newest, oldest first, each with the start of the turn after it.
-fn outside_starts(
+/// The turns before `first_shown` that hold attention: every turn with a
+/// permission or a question that waits, and the newest [`ERROR_TURNS`]
+/// turns with an error.
+fn attention_turns(
     starts: &[EventHead],
     pairs: &[EventHead],
-    kept_from: &str,
-) -> Vec<(String, Option<String>)> {
+    first_shown: Option<usize>,
+) -> BTreeSet<usize> {
     let mut pending: Vec<&str> = Vec::new();
     let mut open: BTreeMap<String, &str> = BTreeMap::new();
     let mut errors: Vec<&str> = Vec::new();
@@ -546,26 +639,21 @@ fn outside_starts(
             _ => {}
         }
     }
-    let mut turns: BTreeSet<usize> = BTreeSet::new();
-    for id in pending.into_iter().chain(open.into_values()).chain(errors) {
-        if id >= kept_from {
-            continue;
-        }
-        if let Some(at) = starts.iter().rposition(|start| start.id.as_str() <= id) {
-            turns.insert(at);
-        }
-    }
-    let skip = turns.len().saturating_sub(OUTSIDE_TURNS);
-    turns
+    let first_shown = first_shown.unwrap_or(starts.len());
+    let turn_of = |id: &str| {
+        starts
+            .iter()
+            .rposition(|start| start.id.as_str() <= id)
+            .filter(|&at| at < first_shown)
+    };
+    let mut turns: BTreeSet<usize> = pending
         .into_iter()
-        .skip(skip)
-        .map(|at| {
-            (
-                starts[at].id.clone(),
-                starts.get(at + 1).map(|next| next.id.clone()),
-            )
-        })
-        .collect()
+        .chain(open.into_values())
+        .filter_map(turn_of)
+        .collect();
+    let failed: BTreeSet<usize> = errors.into_iter().filter_map(turn_of).collect();
+    turns.extend(failed.into_iter().rev().take(ERROR_TURNS));
+    turns
 }
 
 #[cfg(test)]
@@ -811,10 +899,18 @@ mod tests {
         }
         stop(&store, &session).await;
 
-        let page = read_steps(&store, &session, &turn, MAIN_LANE, Some(&calls[20]), 10)
-            .await
-            .unwrap()
-            .expect("the turn exists");
+        let page = read_steps(
+            &store,
+            &session,
+            &turn,
+            MAIN_LANE,
+            Some(&calls[20]),
+            10,
+            500,
+        )
+        .await
+        .unwrap()
+        .expect("the turn exists");
         assert_eq!(page.page, calls[10..20]);
         assert_eq!(page.earlier, 10);
         assert!(
@@ -830,7 +926,7 @@ mod tests {
         assert_eq!(held, calls[10..20]);
 
         assert!(
-            read_steps(&store, &session, &calls[3], MAIN_LANE, None, 10)
+            read_steps(&store, &session, &calls[3], MAIN_LANE, None, 10, 500)
                 .await
                 .unwrap()
                 .is_none(),
@@ -1067,5 +1163,343 @@ mod tests {
             "{:?}",
             shown.attention
         );
+    }
+
+    /// A read pinned at a bound holds nothing above it, whatever the store
+    /// holds by the time its queries run (rule 37).
+    #[tokio::test]
+    async fn a_read_holds_nothing_above_its_bound() {
+        let (store, session, _dir) = session().await;
+        let turn = prompt(&store, &session).await;
+        commit(&store, &session, "agent_message", json!({"text": "Done."})).await;
+        let upper = store
+            .newest_session_event_id(&session, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let newer = prompt(&store, &session).await;
+        commit(&store, &session, "agent_message", json!({"text": "Later."})).await;
+
+        let read = super::read_turns_upto(&store, &session, &upper, 20, None, 500)
+            .await
+            .unwrap();
+
+        assert_eq!(read.upper.as_deref(), Some(upper.as_str()));
+        let fold = folded(&session, read);
+        let snapshot = fold.snapshot(0, 20, None);
+        let ids: Vec<&str> = snapshot.turns.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [turn.as_str()],
+            "the newer turn {newer} is above the bound"
+        );
+        assert_eq!(
+            snapshot.turns[0].answer,
+            vec![ariadne_api::trajectory::ContentBlockDto::Text {
+                text: "Done.".into()
+            }]
+        );
+    }
+
+    /// A message whose `item_id` is not its event's id keeps its answer in
+    /// a read, and pages by its wire id (rules 18, 44).
+    #[tokio::test]
+    async fn a_message_with_its_own_item_id_reads_and_pages_by_it() {
+        let (store, session, _dir) = session().await;
+        let turn = prompt(&store, &session).await;
+        let first = call(&store, &session, "c-1", "read", "completed").await;
+        commit(
+            &store,
+            &session,
+            "agent_message",
+            json!({"item_id": "item-a", "text": "Looking."}),
+        )
+        .await;
+        call(&store, &session, "c-2", "read", "completed").await;
+        commit(
+            &store,
+            &session,
+            "agent_message",
+            json!({"item_id": "item-b", "text": "Done."}),
+        )
+        .await;
+        stop(&store, &session).await;
+
+        let fold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(
+            fold.snapshot(0, 20, None).turns[0].answer,
+            vec![ariadne_api::trajectory::ContentBlockDto::Text {
+                text: "Done.".into()
+            }]
+        );
+
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, Some("item-b"), 2, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            page.page[0], "item-a",
+            "the cursor is the step's place, not its id's order"
+        );
+        assert_eq!(page.earlier, 1);
+        let fold = folded(&session, page.read);
+        let held: Vec<String> = fold
+            .held_steps(&turn, MAIN_LANE)
+            .iter()
+            .map(|step| crate::trajectory::step_id(step).to_string())
+            .collect();
+        assert!(held.contains(&"item-a".to_string()), "{held:?}");
+        assert!(
+            !held.contains(&first),
+            "the page starts after the first call"
+        );
+    }
+
+    /// A plan keeps the id of its first event in a cold read (rule 32).
+    #[tokio::test]
+    async fn a_cold_read_names_a_plan_by_its_first_event() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        let first = commit(
+            &store,
+            &session,
+            "plan",
+            json!({"entries": [{"content": "a", "status": "pending"}]}),
+        )
+        .await;
+        commit(
+            &store,
+            &session,
+            "plan",
+            json!({"entries": [{"content": "a", "status": "completed"}]}),
+        )
+        .await;
+
+        let fold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+        let plans = fold.snapshot(0, 20, None).plans;
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].plan_id, first);
+        assert_eq!(plans[0].entries[0].status, "completed");
+    }
+
+    /// A turn with more errors than the budget keeps its prompt and its
+    /// answer, and as many of its errors as fit (rules 36, 38).
+    #[tokio::test]
+    async fn a_turn_of_many_errors_keeps_its_prompt_and_answer() {
+        let (store, session, _dir) = session().await;
+        let turn = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "agent_message",
+            json!({"text": "Trying."}),
+        )
+        .await;
+        for _ in 0..30 {
+            commit(
+                &store,
+                &session,
+                "session.error",
+                json!({"message": "boom"}),
+            )
+            .await;
+        }
+
+        let read = read_turns(&store, &session, None, 20, None, 10)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 10);
+        let fold = folded(&session, read);
+        let shown = &fold.snapshot(0, 20, None).turns[0];
+        assert_eq!(shown.id, turn);
+        assert_eq!(
+            shown.prompt.as_ref().unwrap().content,
+            vec![ariadne_api::trajectory::ContentBlockDto::Text { text: "Go".into() }]
+        );
+        assert_eq!(
+            shown.answer,
+            vec![ariadne_api::trajectory::ContentBlockDto::Text {
+                text: "Trying.".into()
+            }]
+        );
+        assert_eq!(shown.attention.len(), 8, "the errors that fit the rest");
+    }
+
+    /// The newest turn's step window comes before the subagents of the
+    /// read: many children do not take the running turn's last steps.
+    #[tokio::test]
+    async fn the_running_turns_window_comes_before_the_subagents() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        for n in 0..40 {
+            let child = json!({"id": format!("child-{n}"), "title": "child"});
+            commit(
+                &store,
+                &session,
+                "subagent_update",
+                json!({"subagent": child, "state": "running"}),
+            )
+            .await;
+            commit(
+                &store,
+                &session,
+                "subagent_update",
+                json!({"subagent": child, "state": "completed"}),
+            )
+            .await;
+        }
+        let mut calls = Vec::new();
+        for n in 0..50 {
+            calls.push(call(&store, &session, &format!("c-{n}"), "read", "completed").await);
+        }
+
+        let read = read_turns(&store, &session, None, 20, None, 110)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 110);
+        let fold = folded(&session, read);
+        let turn = &fold.snapshot(0, 20, None).turns[0];
+        let ids: Vec<&str> = turn.steps.iter().map(crate::trajectory::step_id).collect();
+        let expected: Vec<&str> = calls.iter().map(String::as_str).collect();
+        assert_eq!(ids, expected, "the last fifty steps are the calls");
+        assert_eq!(turn.activity.subagents, 40);
+    }
+
+    /// A question that waits in a turn behind more than twenty failed turns
+    /// stays in the read, and its later answer finds it (rule 39).
+    #[tokio::test]
+    async fn a_question_behind_many_failed_turns_stays_in_the_read() {
+        let (store, session, _dir) = session().await;
+        let old = prompt(&store, &session).await;
+        let question = commit(
+            &store,
+            &session,
+            "question",
+            json!({"question": {"id": "q-1", "message": "Which?", "schema": {}}}),
+        )
+        .await;
+        stop(&store, &session).await;
+        for _ in 0..21 {
+            prompt(&store, &session).await;
+            commit(
+                &store,
+                &session,
+                "session.error",
+                json!({"message": "boom"}),
+            )
+            .await;
+        }
+        prompt(&store, &session).await;
+
+        let read = read_turns(&store, &session, None, 1, None, 500)
+            .await
+            .unwrap();
+        let mut fold = folded(&session, read);
+        let ops = fold.apply(
+            &ariadne_api::events::AgentEventDto {
+                id: "zzzz".into(),
+                session_id: Some(session.clone()),
+                task_id: None,
+                kind: "question.resolved".into(),
+                payload: json!({"question_id": "q-1", "action": "decline"}),
+                summary: String::new(),
+                created_at: "2026-11-27T00:00:00Z".into(),
+            },
+            true,
+        );
+        assert!(
+            ops.iter().any(|op| matches!(op,
+                TrajectoryOpDto::ItemUpsert { step: StepDto::Question(q) }
+                    if q.id == question && q.turn_id == old && q.state == QuestionState::Declined)),
+            "{ops:?}"
+        );
+    }
+
+    /// A subagent's turns are chosen by its lane before the limit: a child
+    /// that ran before many newer turns still shows (rule 43).
+    #[tokio::test]
+    async fn a_subagent_query_chooses_the_turns_of_its_lane() {
+        let (store, session, _dir) = session().await;
+        let parent = prompt(&store, &session).await;
+        let child = json!({"id": "child-1", "title": "explorer"});
+        commit(
+            &store,
+            &session,
+            "subagent_update",
+            json!({"subagent": child, "state": "running"}),
+        )
+        .await;
+        let read_call = commit(
+            &store,
+            &session,
+            "pre_tool_use",
+            json!({"subagent": child, "acp": {"toolCallId": "c-1", "kind": "read", "status": "pending"}}),
+        )
+        .await;
+        stop(&store, &session).await;
+        for _ in 0..21 {
+            prompt(&store, &session).await;
+            stop(&store, &session).await;
+        }
+
+        let read = read_turns(&store, &session, None, 20, Some("child-1"), 500)
+            .await
+            .unwrap();
+        let fold = folded(&session, read);
+        let snapshot = fold.snapshot(0, 20, Some("child-1"));
+        let [turn] = snapshot.turns.as_slice() else {
+            panic!("the child's one turn: {:?}", snapshot.turns);
+        };
+        assert_eq!(turn.id, parent);
+        assert_eq!(crate::trajectory::step_id(&turn.steps[0]), read_call);
+        assert!(!snapshot.has_older, "no older turn holds the child");
+    }
+
+    /// A page of a turn's steps loads the budget at most, many subagents or
+    /// not, and counts what it leaves before it (rule 36).
+    #[tokio::test]
+    async fn a_page_of_steps_loads_the_budget_at_most() {
+        let (store, session, _dir) = session().await;
+        let turn = prompt(&store, &session).await;
+        for n in 0..30 {
+            let child = json!({"id": format!("child-{n}"), "title": "child"});
+            commit(
+                &store,
+                &session,
+                "subagent_update",
+                json!({"subagent": child, "state": "running"}),
+            )
+            .await;
+            commit(
+                &store,
+                &session,
+                "subagent_update",
+                json!({"subagent": child, "state": "completed"}),
+            )
+            .await;
+        }
+
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, None, 50, 20)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(page.read.loaded() <= 20, "{}", page.read.loaded());
+        assert_eq!(
+            page.page.len(),
+            9,
+            "a prompt and nine subagents of two rows each"
+        );
+        assert_eq!(page.earlier, 21);
     }
 }

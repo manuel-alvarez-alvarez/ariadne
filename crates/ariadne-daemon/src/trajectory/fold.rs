@@ -53,9 +53,6 @@ pub(crate) struct Fold {
     pending: Vec<Pending>,
     /// The open questions, by question or request id: the turn and the step.
     questions: HashMap<String, (String, String)>,
-    /// The id of the newest stored event: what a run of text that has no
-    /// `item_id` is named after while it streams.
-    last_stored: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,8 +72,11 @@ struct Turn {
 /// What a lane of a turn did, counted from every event, full or head.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Lane {
-    /// The ids of the events that opened a step, in order.
-    pub(crate) openers: Vec<String>,
+    /// The steps the lane opened, in order.
+    pub(crate) openers: Vec<Opener>,
+    /// How many text steps the lane opened: what names a run that has no
+    /// `item_id` while it streams.
+    texts: u64,
     /// Each call by its ACP id: its state.
     calls: HashMap<String, Call>,
     thoughts: u64,
@@ -92,6 +92,30 @@ pub(crate) struct Lane {
     /// update, a permission's reply, a question's resolution, an error's
     /// diagnosis — by the step's id.
     pub(crate) follows: HashMap<String, String>,
+}
+
+/// One step a lane opened: its id on the wire, and the stored row that
+/// opened it. A step a live event opened has no row until one is stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Opener {
+    pub(crate) step: String,
+    pub(crate) row: Option<String>,
+}
+
+impl Lane {
+    /// The stored rows a read loads to show a step: its opener and its
+    /// newest change.
+    pub(crate) fn rows(&self, step: &str) -> Vec<String> {
+        let opener = self
+            .openers
+            .iter()
+            .find(|opener| opener.step == step)
+            .and_then(|opener| opener.row.clone());
+        opener
+            .into_iter()
+            .chain(self.follows.get(step).cloned())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +151,15 @@ struct Input<'a> {
     lane: String,
     facts: EventFacts,
     full: Option<&'a AgentEventDto>,
+    /// Whether the store holds the event, or it is live.
+    stored: bool,
+}
+
+impl Input<'_> {
+    /// The stored row of the event, where the store holds it.
+    fn row(&self) -> Option<&str> {
+        self.stored.then_some(self.id)
+    }
 }
 
 /// What the selection of a read needs to know of one turn.
@@ -135,8 +168,11 @@ pub(crate) struct TurnIndex {
     pub(crate) id: String,
     pub(crate) running: bool,
     pub(crate) answer: Option<String>,
-    /// The steps waiting on a person, and the errors.
-    pub(crate) attention: Vec<String>,
+    /// The steps that wait on a person: pending permissions and open
+    /// questions.
+    pub(crate) actions: Vec<String>,
+    /// The error steps.
+    pub(crate) errors: Vec<String>,
     pub(crate) lanes: HashMap<String, Lane>,
 }
 
@@ -176,7 +212,6 @@ impl Fold {
             session,
             pending: Vec::new(),
             questions: HashMap::new(),
-            last_stored: None,
         }
     }
 
@@ -195,12 +230,10 @@ impl Fold {
             lane: event_lane(&event.kind, &event.payload).unwrap_or_else(|| MAIN_LANE.into()),
             facts: facts_of(&event.kind, &event.payload),
             full: Some(event),
+            stored,
         };
         let mut ops = Ops::default();
         self.step(&input, &mut ops);
-        if stored {
-            self.last_stored = Some(event.id.clone());
-        }
         self.finish(ops)
     }
 
@@ -213,9 +246,9 @@ impl Fold {
             lane: head.lane.clone().unwrap_or_else(|| MAIN_LANE.into()),
             facts: head_facts(head),
             full: None,
+            stored: true,
         };
         self.step(&input, &mut Ops::default());
-        self.last_stored = Some(head.id.clone());
     }
 
     /// Pair a permission or a question outside the turns the fold reads:
@@ -287,26 +320,28 @@ impl Fold {
                     .lanes
                     .get(MAIN_LANE)
                     .and_then(|lane| lane.answer.clone()),
-                attention: self.attention_ids(turn),
+                actions: self.action_ids(turn),
+                errors: turn
+                    .lanes
+                    .get(MAIN_LANE)
+                    .map(|lane| lane.errors.clone())
+                    .unwrap_or_default(),
                 lanes: turn.lanes.clone(),
             })
             .collect()
     }
 
-    /// The first event and the newest update of each subagent the fold
-    /// knows, so that a read loads them.
-    pub(crate) fn subagent_events(&self) -> Vec<String> {
+    /// Each subagent the fold knows, with the rows of its first event and
+    /// its newest update, so that a read loads them.
+    pub(crate) fn subagent_rows(&self) -> Vec<(String, Vec<String>)> {
         self.subagents
             .iter()
-            .flat_map(|child| std::iter::once(child.step.id.clone()).chain(child.latest.clone()))
-            .collect()
-    }
-
-    /// The ids of the subagents the fold knows.
-    pub(crate) fn subagent_ids(&self) -> Vec<String> {
-        self.subagents
-            .iter()
-            .map(|child| child.step.subagent_id.clone())
+            .map(|child| {
+                let rows = std::iter::once(child.step.id.clone())
+                    .chain(child.latest.clone())
+                    .collect();
+                (child.step.subagent_id.clone(), rows)
+            })
             .collect()
     }
 
@@ -424,7 +459,7 @@ impl Fold {
         }
     }
 
-    fn attention_ids(&self, turn: &Turn) -> Vec<String> {
+    fn action_ids(&self, turn: &Turn) -> Vec<String> {
         let mut ids: Vec<String> = self
             .pending
             .iter()
@@ -436,12 +471,6 @@ impl Fold {
                 .values()
                 .filter(|(owner, _)| owner == &turn.id)
                 .map(|(_, step)| step.clone()),
-        );
-        ids.extend(
-            turn.lanes
-                .get(MAIN_LANE)
-                .into_iter()
-                .flat_map(|lane| lane.errors.clone()),
         );
         ids.sort();
         ids
@@ -640,11 +669,13 @@ impl Fold {
 
     /// A step opens in a lane: the index counts it, and a full event makes
     /// it.
+    #[allow(clippy::too_many_arguments)]
     fn open_step(
         &mut self,
         index: usize,
         lane: &str,
         id: &str,
+        row: Option<&str>,
         step: Option<StepDto>,
         ops: &mut Ops,
     ) {
@@ -654,7 +685,10 @@ impl Fold {
             .entry(lane.to_string())
             .or_default()
             .openers
-            .push(id.to_string());
+            .push(Opener {
+                step: id.to_string(),
+                row: row.map(str::to_string),
+            });
         ops.touch(&turn.id);
         if let Some(step) = step {
             ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
@@ -695,10 +729,11 @@ impl Fold {
         }
         // A run with no `item_id` is named after the stored event before it,
         // which every open of the session reads the same while it streams.
-        let id = item.unwrap_or_else(|| {
-            let after = self.last_stored.clone().unwrap_or_else(|| turn.id.clone());
-            format!("{after}~{}", if thought { "thought" } else { "message" })
-        });
+        // A run with no `item_id` is named after its turn, its lane and how
+        // many text steps the lane opened before it, which every open of
+        // the session counts the same while the run streams.
+        let texts = turn.lanes.get(&input.lane).map_or(0, |lane| lane.texts);
+        let id = item.unwrap_or_else(|| format!("{}~{}~{texts}", turn.id, input.lane));
         let step = text_step(
             thought,
             id.clone(),
@@ -708,11 +743,12 @@ impl Fold {
             vec![ContentBlockDto::Text { text }],
             true,
         );
-        self.open_step(index, &input.lane, &id, Some(step), ops);
+        self.open_step(index, &input.lane, &id, None, Some(step), ops);
         let lane = self.turns[index]
             .lanes
             .entry(input.lane.clone())
             .or_default();
+        lane.texts += 1;
         lane.items.insert(id.clone());
         lane.streaming = Some((thought, id.clone()));
         if thought {
@@ -758,11 +794,12 @@ impl Fold {
                     false,
                 )
             });
-            self.open_step(index, &input.lane, &id, step, ops);
+            self.open_step(index, &input.lane, &id, input.row(), step, ops);
             let lane = self.turns[index]
                 .lanes
                 .entry(input.lane.clone())
                 .or_default();
+            lane.texts += 1;
             lane.items.insert(id.clone());
             if thought {
                 lane.thoughts += 1;
@@ -781,14 +818,20 @@ impl Fold {
         };
         lane.streaming = None;
         lane.items.insert(id.clone());
-        if renamed
-            && let Some(opener) = lane
-                .openers
-                .iter_mut()
-                .rev()
-                .find(|opener| **opener == closed)
+        if let Some(opener) = lane
+            .openers
+            .iter_mut()
+            .rev()
+            .find(|opener| opener.step == closed)
         {
-            *opener = id.clone();
+            opener.step = id.clone();
+            match (&opener.row, input.row()) {
+                (None, Some(row)) => opener.row = Some(row.to_string()),
+                (Some(first), Some(row)) if first != row => {
+                    lane.follows.insert(id.clone(), row.to_string());
+                }
+                _ => {}
+            }
         }
         if !thought {
             lane.answer = Some(id.clone());
@@ -861,7 +904,7 @@ impl Fold {
                     });
                     StepDto::ToolCall(call)
                 });
-                self.open_step(index, &input.lane, input.id, step, ops);
+                self.open_step(index, &input.lane, input.id, input.row(), step, ops);
                 self.turns[index]
                     .lanes
                     .entry(input.lane.clone())
@@ -892,8 +935,10 @@ impl Fold {
                 call.paths = input.facts.paths.clone();
             }
         }
-        if target != input.id {
-            lane.follows.insert(target.clone(), input.id.to_string());
+        if target != input.id
+            && let Some(row) = input.row()
+        {
+            lane.follows.insert(target.clone(), row.to_string());
         }
         ops.touch(&turn.id);
         let Some(event) = input.full else {
@@ -948,7 +993,7 @@ impl Fold {
                 subagent: subagent.clone(),
             })
         });
-        self.open_step(index, MAIN_LANE, input.id, step, ops);
+        self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.pending.push(Pending {
             id: input.id.to_string(),
             turn: turn_id,
@@ -986,13 +1031,14 @@ impl Fold {
         };
         ops.touch(&turn.id);
         let lane = turn.lanes.entry(MAIN_LANE.into()).or_default();
-        lane.follows
-            .insert(request.id.clone(), input.id.to_string());
+        if let Some(row) = input.row() {
+            lane.follows.insert(request.id.clone(), row.to_string());
+        }
         if removed {
             // A permission on one of Ariadne's own tools that the daemon
             // allowed by itself asked nobody anything: the call's step says
             // what the agent did.
-            lane.openers.retain(|opener| *opener != request.id);
+            lane.openers.retain(|opener| opener.step != request.id);
             if let Some(at) = turn
                 .steps
                 .iter()
@@ -1090,7 +1136,7 @@ impl Fold {
         let step = input
             .full
             .map(|event| StepDto::Question(question_step(event, &turn_id, &key)));
-        self.open_step(index, MAIN_LANE, input.id, step, ops);
+        self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.questions.insert(key, (turn_id, input.id.to_string()));
     }
 
@@ -1150,7 +1196,7 @@ impl Fold {
                 diagnosis: None,
             })
         });
-        self.open_step(index, MAIN_LANE, input.id, step, ops);
+        self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.turns[index]
             .lanes
             .entry(MAIN_LANE.into())
@@ -1207,7 +1253,7 @@ impl Fold {
                 text,
             })
         });
-        self.open_step(index, MAIN_LANE, input.id, step, ops);
+        self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
     }
 
     fn plan(&mut self, input: &Input, ops: &mut Ops) {
@@ -1322,6 +1368,7 @@ impl Fold {
             index,
             MAIN_LANE,
             input.id,
+            input.row(),
             input.full.map(|_| StepDto::Subagent(step)),
             ops,
         );
@@ -1427,7 +1474,7 @@ impl Fold {
                 error,
             })
         });
-        self.open_step(index, &input.lane, input.id, step, ops);
+        self.open_step(index, &input.lane, input.id, input.row(), step, ops);
     }
 }
 
@@ -2402,5 +2449,28 @@ mod tests {
             s.fold.patch_session(&row).is_none(),
             "nothing changed again"
         );
+    }
+
+    /// A stored event that opens no step does not move the name of a run
+    /// that streams: a reopen after it names the run the same.
+    #[test]
+    fn an_unrelated_stored_event_does_not_rename_a_streaming_run() {
+        let mut live = Session::new();
+        live.prompt("Go");
+        let (_, opened) = live.event("agent_message_chunk", json!({"text": "Half "}));
+        let TrajectoryOpDto::ItemUpsert { step } = &opened[0] else {
+            panic!("{opened:?}");
+        };
+        let streaming = step_id(step).to_string();
+        live.event("session.diagnosis", json!({"error_event_id": "none"}));
+
+        // A reopen reads the prompt and the unrelated event, then the text.
+        let mut again = Session::new();
+        again.prompt("Go");
+        again.event("session.diagnosis", json!({"error_event_id": "none"}));
+        again.event("agent_message_chunk", json!({"text": "Half "}));
+
+        let reopened = again.fold.snapshot(0, 20, None).turns[0].steps[0].clone();
+        assert_eq!(step_id(&reopened), streaming);
     }
 }

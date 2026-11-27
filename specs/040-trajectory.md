@@ -115,9 +115,10 @@ Out:
     `streaming` true. Each later chunk of the run is a `text_append` op. The
     stored whole replaces the content and ends `streaming`. Anything else in
     the same lane also ends `streaming`.
-20. A run with no `item_id` streams under the id `<stored>~message` or
-    `<stored>~thought`, where `<stored>` is the newest stored event before
-    it. Every open of the session reads that same id. When its whole is
+20. A run with no `item_id` streams under the id `<turn>~<lane>~<n>`, where
+    `n` counts the text steps its lane opened before it in the turn. Every
+    open of the session counts the same `n` while the run streams, whatever
+    else the store holds by then. When its whole is
     stored, the step takes the whole's id and time: an `item_remove` of the
     streaming id and an `item_upsert` of the whole's id. A read of the store
     names the step by the whole's id too.
@@ -178,7 +179,10 @@ Out:
     lane, facts and time, and no payload. The fold keeps the index of each
     turn — its step openers, its calls, its counts — from both by one path,
     so a turn read as a few full events among many heads counts as a turn
-    read whole does. A full event also makes and changes steps.
+    read whole does. A full event also makes and changes steps. Each opener
+    keeps the step's id on the wire and the stored row that opened it, and
+    the index keeps each step's newest stored change apart: a message whose
+    `item_id` is not its event's id is loaded by its rows.
 35. The fold pairs every permission request and reply, and every question
     and resolution, of the session, also those outside the turns it holds.
 
@@ -189,14 +193,20 @@ Out:
     megabytes at the ten-kilobyte average of a tool end.
 37. A read takes the newest event id first, and every query of the read
     stops at it.
-38. A read folds the heads of the turns it shows, then loads the events
-    that a client sees: each turn's prompt, its answer, and its attention
-    with the replies and resolutions that changed it; the last 50 steps of a
-    running turn, each with its newest event; the first and the newest event
-    of each subagent; and the newest plan of each lane. It shows the newest
-    turns whose events fit, the newest turn first.
-39. A read also holds up to 20 older turns with attention, outside the
-    turns it shows, so that a later answer or diagnosis finds its step.
+38. A read folds the heads of the turns it shows, then loads the rows a
+    client sees, in this order, as far as the budget goes:
+    - the newest turn's prompt and answer, then the last 50 steps of its
+      lane if it runs, each with its newest change, newest step first;
+    - each older turn's prompt and answer, newest turn first. The first turn
+      whose prompt and answer do not fit, and every older one, is not shown;
+    - each step that waits on a person, then each error, one step at a time,
+      newest turn first;
+    - the first and the newest plan of each lane;
+    - the first event and the newest update of each subagent.
+39. A read also holds the older turns with attention, outside the turns it
+    shows, so that a later answer or diagnosis finds its step: every turn
+    with a permission or a question that waits, and the newest 20 turns with
+    an error. Twenty keeps a day of failed turns.
 40. A first event of a subagent or a plan from before the turns a read
     shows keeps the turn it came in.
 
@@ -208,13 +218,18 @@ Out:
 42. With `before=<turn_id>`, it answers the whole turns older than that
     turn, read from the store, at `rev` 0. The prompt of `before` closes the
     last of them as it closed it in the session.
-43. With `subagent=<id>`, it reads the store, and each turn where that
-    subagent has steps carries the last 50 of them.
+43. With `subagent=<id>`, it reads the store. It chooses the newest `limit`
+    turns that hold events of that lane, and each carries the last 50 of
+    them.
 44. `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps` answers one page
     of a turn's steps, oldest first: the `limit` steps before the step
     `before` (50 by default, at most 200), and `earlier_steps`. The page
-    comes from the cursor, whatever an open holds. With `subagent`, it pages
-    that subagent's steps. A `turn_id` that opens no turn is a 404.
+    comes from the cursor, whatever an open holds: `before` names a step,
+    and the page holds the steps the lane opened before it, by their place.
+    A `before` that names no step of the lane is an empty page. A page cut
+    short by the budget keeps its newest steps, and `earlier_steps` counts
+    the rest. With `subagent`, it pages that subagent's steps. A `turn_id`
+    that opens no turn is a 404.
 45. `GET /v1/sessions/{id}/trajectory/stream` sends one `snapshot`, then an
     `update` frame `{rev, ops}` per revision. Each `rev` is one more than the
     revision before it. A `turn_upsert` carries the turn with no steps. A
@@ -312,6 +327,25 @@ Out:
     `::a_block_with_bytes_carries_a_blob_url_and_not_the_bytes`,
     `::a_plan_keeps_the_id_of_its_first_event` and
     `::the_session_state_follows_the_row_the_running_turn_and_the_commands`.
+32. A read holds nothing above its bound (rule 37):
+    `read.rs::a_read_holds_nothing_above_its_bound`.
+33. A message whose `item_id` is not its event's id keeps its answer and
+    pages by its place (rules 34, 44):
+    `read.rs::a_message_with_its_own_item_id_reads_and_pages_by_it`.
+34. An unrelated stored event does not rename a run that streams (rule 20):
+    `fold.rs::an_unrelated_stored_event_does_not_rename_a_streaming_run`.
+35. A cold read names a plan by its first event (rules 32, 38):
+    `read.rs::a_cold_read_names_a_plan_by_its_first_event`.
+36. A turn of more errors than the budget keeps its prompt and answer
+    (rule 38): `read.rs::a_turn_of_many_errors_keeps_its_prompt_and_answer`.
+37. The running turn's window comes before the subagents (rule 38):
+    `read.rs::the_running_turns_window_comes_before_the_subagents`.
+38. A question behind more than twenty failed turns stays in the read
+    (rule 39): `read.rs::a_question_behind_many_failed_turns_stays_in_the_read`.
+39. A subagent query chooses the turns of its lane (rule 43):
+    `read.rs::a_subagent_query_chooses_the_turns_of_its_lane`.
+40. A page of steps loads the budget at most (rules 36, 44):
+    `read.rs::a_page_of_steps_loads_the_budget_at_most`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and
@@ -321,10 +355,10 @@ their calls.
 
 ## Known gap
 
-Rule 37 has no test of its own: no test can stop a read between two of its
-queries. Every query of `read.rs` takes the one bound the read began with.
+A read with more attention steps than its budget holds loads as many as fit;
+the turns show the rest when a page reads them.
 
-A diagnosis of an error older than the 20 turns with attention that a hub
+A diagnosis of an error older than the 20 turns with an error that a hub
 holds changes no step the stream sends. A page that holds the error shows the
 diagnosis.
 
