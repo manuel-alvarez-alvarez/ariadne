@@ -1763,7 +1763,7 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     the `session.status` of the trajectory, and the status of the session row
     only until the first snapshot. After the first snapshot the row shows a turn
     activity (`thinking`, `running <tool>` and its clock) only while
-    `session.running_turn_id` names a turn, and the composer shows Stop only
+    `session.running_turn_id` names a turn (`waiting for you` too, whatever the session's liveness), and the composer shows Stop only
     then (rule 22). When the facts do not fit, the row drops whole facts, the
     lowest rank first. It never cuts a fact to a part of its words and it
     draws no text over other text. The turn activity is cut with an ellipsis
@@ -1780,6 +1780,7 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     `::shows the mode one time when the mode state and a mode option both name it`,
     `ui/src/features/sessions/console/status.test.tsx::holds the turn activity to half of the row, cut with an ellipsis, and never cuts a fact`,
     `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::takes the state word and the busy state from the trajectory once its snapshot came`,
+    `::shows no waiting-for-you activity for an open question while no turn runs`,
     `::shows a turn activity and Stop while running_turn_id names a turn, whatever the session row says`).
     The widths have a browser proof, as jsdom lays out nothing: a Playwright
     probe on a temporary daemon, with a long running command and four config

@@ -502,6 +502,16 @@ it("shows a turn activity and Stop while running_turn_id names a turn, whatever 
   screen.getByRole("button", { name: "Stop the turn" })
 })
 
+it("shows no waiting-for-you activity for an open question while no turn runs", () => {
+  const turn = aTurn()
+  const snapshot = aSnapshot([{ ...turn, attention: [aQuestionStep(turn.id)] }])
+  renderConsole(snapshot, "running")
+
+  const row = screen.getByRole("region", { name: "Session status" })
+  expect(within(row).queryByText("waiting for you")).toBeNull()
+  expect(screen.queryByRole("button", { name: "Stop the turn" })).toBeNull()
+})
+
 it("moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing", async () => {
   const user = userEvent.setup()
   const heard: string[] = []

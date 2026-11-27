@@ -342,8 +342,9 @@ function TrajectoryPane({
   const live = isLiveStatus(status)
   const sessionState = state.session
   // Once a snapshot came, a turn runs only where the trajectory names it.
-  const running =
-    live && (sessionState ? (sessionState.running_turn_id ?? null) !== null : status === "running")
+  const running = sessionState
+    ? (sessionState.running_turn_id ?? null) !== null
+    : status === "running"
   const runningTurn = state.turns.find((turn) => turn.state === "running")
   const startedAt = running ? runningTurn?.started_at : undefined
 
@@ -770,7 +771,7 @@ function TrajectoryPane({
     ? { input: usageNow.input_tokens, output: usageNow.output_tokens }
     : (usage ?? { input: 0, output: 0 })
   const waiting =
-    live &&
+    running &&
     state.turns.some((turn) =>
       turn.attention.some((step) => step.type === "question" && step.state === "open"),
     )
