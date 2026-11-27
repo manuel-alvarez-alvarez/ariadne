@@ -2741,6 +2741,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/trajectory/blobs/{event_id}/{index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The bytes of one image, audio or resource block, with its MIME type: the
+         *     `blob` URL of a content block names it by its stored event and its place.
+         */
+        get: operations["sessions_trajectory_blob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/trajectory/items/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The full detail of one `tool_call` step, by its kind: the command and
+         *     its output, the change of each file, the text read, a search's or a
+         *     fetch's result, or the content blocks of any other call. A running call
+         *     shows its latest stored progress. With `raw=true`, the raw input and
+         *     output as well.
+         */
+        get: operations["sessions_trajectory_item"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/trajectory/stream": {
         parameters: {
             query?: never;
@@ -3595,6 +3638,18 @@ export interface components {
             repository: string;
             tag: string;
         };
+        CommandDetailDto: {
+            /** @description The whole command, else the call's title. */
+            command: string;
+            /** @description The working directory, where the input names one. */
+            cwd?: string | null;
+            /** Format: int64 */
+            exit_code?: number | null;
+            /** @description What the command gave back, as far as it ran. */
+            output?: string | null;
+            /** @description The output was longer than a detail carries: `output` holds its end. */
+            truncated: boolean;
+        };
         /** @description A slash command the agent offers. */
         CommandDto: {
             description: string;
@@ -3922,6 +3977,24 @@ export interface components {
             /** @description A note only: the flavour can still be chosen on this device. */
             slow: boolean;
         };
+        DiffDetailDto: {
+            files: components["schemas"]["DiffFileDto"][];
+        };
+        /** @description The change of one file. */
+        DiffFileDto: {
+            /** @description The language of the file, by its extension. */
+            language?: string | null;
+            /** @description The text after the change: none where the agent sent a patch. */
+            new_text?: string | null;
+            /**
+             * @description The text before the change: none for a new file, or where the agent
+             *     sent a patch.
+             */
+            old_text?: string | null;
+            path: string;
+            /** @description The change as a unified diff under its file header. */
+            unified: string;
+        };
         DiffStatDto: {
             /** Format: int64 */
             added: number;
@@ -4150,6 +4223,21 @@ export interface components {
             /** @description Where the forge shows the check's run; empty where it names none. */
             url: string;
         };
+        FetchDetailDto: {
+            text?: string | null;
+            url?: string | null;
+        };
+        FileDetailDto: {
+            language?: string | null;
+            /**
+             * Format: int64
+             * @description The number of the first line of `text`.
+             */
+            line?: number | null;
+            path?: string | null;
+            /** @description The text read, without the agent's line-number prefixes. */
+            text?: string | null;
+        };
         /**
          * @description Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and
          *     execution starts. The orchestrator's call, not the user's, and it carries
@@ -4231,6 +4319,10 @@ export interface components {
         /** @description A change to the forge integration; absent fields stay unchanged. */
         ForgeUpdate: {
             enabled?: boolean | null;
+        };
+        GenericDetailDto: {
+            /** @description The call's content blocks. A block with bytes carries a `blob` URL. */
+            content: components["schemas"]["ContentBlockDto"][];
         };
         GoalDto: {
             created_at: string;
@@ -5053,6 +5145,11 @@ export interface components {
             state: components["schemas"]["QuestionState"];
             turn_id: string;
         };
+        /** @description A call's raw input and raw output, as the agent sent them. */
+        RawToolDto: {
+            input?: unknown;
+            output?: unknown;
+        };
         /**
          * @description One learned permission to write whole, as another daemon pushes it (037).
          *     A row with the same repository, tool name, level and key keeps its id and
@@ -5157,6 +5254,10 @@ export interface components {
             priority: string;
             /** @description A short title of the defect; the comment opens on `[P0] Title`. */
             title?: string;
+        };
+        SearchDetailDto: {
+            query?: string | null;
+            text?: string | null;
         };
         /**
          * @description Where an agent sits: the orchestrator of a goal, the agent of one workflow
@@ -5825,6 +5926,26 @@ export interface components {
              */
             output_tokens: number;
         };
+        /**
+         * @description The full detail of one `tool_call` step: what
+         *     `GET /v1/sessions/{id}/trajectory/items/{item_id}` answers. A change of
+         *     the step's `detail_rev` tells a client to read it again.
+         */
+        ToolCallDetailDto: {
+            detail: components["schemas"]["ToolDetailDto"];
+            /**
+             * Format: int64
+             * @description The `detail_rev` of the step this detail stands at.
+             */
+            detail_rev: number;
+            /** @description The id of the step: the stored event that opened the call. */
+            id: string;
+            kind?: string | null;
+            raw?: components["schemas"]["RawToolDto"] | null;
+            status: components["schemas"]["ToolCallStatus"];
+            title: string;
+            tool_call_id: string;
+        };
         /** @enum {string} */
         ToolCallStatus: "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
         ToolCallStepDto: {
@@ -5856,6 +5977,26 @@ export interface components {
             tool_call_id: string;
             turn_id: string;
         };
+        /** @description The detail of a call by its kind, tagged by `type`. */
+        ToolDetailDto: (components["schemas"]["CommandDetailDto"] & {
+            /** @enum {string} */
+            type: "command";
+        }) | (components["schemas"]["DiffDetailDto"] & {
+            /** @enum {string} */
+            type: "diff";
+        }) | (components["schemas"]["FileDetailDto"] & {
+            /** @enum {string} */
+            type: "file";
+        }) | (components["schemas"]["SearchDetailDto"] & {
+            /** @enum {string} */
+            type: "search";
+        }) | (components["schemas"]["FetchDetailDto"] & {
+            /** @enum {string} */
+            type: "fetch";
+        }) | (components["schemas"]["GenericDetailDto"] & {
+            /** @enum {string} */
+            type: "generic";
+        });
         /** @description One change of a trajectory, tagged by `op`. */
         TrajectoryOpDto: {
             /** @enum {string} */
@@ -9461,6 +9602,72 @@ export interface operations {
             };
             /** @description the session streamed faster than its trajectory could be read, every time it was tried; ask again */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_trajectory_blob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+                /** @description the stored event that holds the block */
+                event_id: string;
+                /** @description the place of the block in the event */
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the bytes of the block, with its MIME type */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_trajectory_item: {
+        parameters: {
+            query?: {
+                /** @description Add the call's raw input and raw output as `raw`. */
+                raw?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+                /** @description the id of a `tool_call` step */
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolCallDetailDto"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

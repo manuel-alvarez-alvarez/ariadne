@@ -451,3 +451,208 @@ async fn an_answer_and_the_refill_it_calls_for_are_one_revision() {
         100
     );
 }
+
+/// The detail of a call: a running call shows its latest stored progress,
+/// an ended one its command, directory, output and exit code, and the raw
+/// data comes only with `raw=true`. A progress row of the call names no
+/// item (040, rules 49 to 52, 54).
+#[tokio::test]
+async fn a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand() {
+    let h = harness().await;
+    let session = h.lone_session("call-detail").await;
+    let store_event = |kind: &str, payload: Value| ariadne_store::NewAgentEvent {
+        session_id: Some(session.id.clone()),
+        task_id: None,
+        kind: kind.into(),
+        payload,
+    };
+    h.store
+        .create_event(store_event("user_prompt_submit", json!({"text": "Build"})))
+        .await
+        .unwrap();
+    let input = json!({"command": "cargo build\n  --release", "cwd": "/work"});
+    let call = json!({"toolCallId": "call-1", "title": "Bash", "kind": "execute",
+                      "status": "pending", "rawInput": input});
+    let opener = h
+        .store
+        .create_event(store_event(
+            "pre_tool_use",
+            json!({"tool_name": "Bash", "tool_input": input, "acp": call}),
+        ))
+        .await
+        .unwrap();
+    let mut progress = call.clone();
+    progress["status"] = "in_progress".into();
+    progress["content"] =
+        json!([{"type": "content", "content": {"type": "text", "text": "Compiling a"}}]);
+    let progress_row = h
+        .store
+        .create_event(store_event(
+            "tool_call_update",
+            json!({"tool_call_id": "call-1", "acp": progress}),
+        ))
+        .await
+        .unwrap();
+    let path = format!("/v1/sessions/{}/trajectory/items/{}", session.id, opener.id);
+
+    let running: Value = h.get(&path).await;
+
+    assert_eq!(running["status"], "running");
+    assert_eq!(running["detail_rev"], 1);
+    assert_eq!(running["detail"]["type"], "command");
+    assert_eq!(running["detail"]["output"], "Compiling a");
+    assert!(running["detail"]["exit_code"].is_null());
+
+    let raw_output = json!({"stdout": "Compiling a\nFinished", "stderr": "", "exit_code": 101});
+    h.store
+        .create_event(store_event(
+            "post_tool_use",
+            json!({"tool_name": "Bash", "tool_input": input,
+                   "acp": {"toolCallId": "call-1", "title": "Bash", "kind": "execute",
+                           "status": "failed", "content": [], "rawOutput": raw_output}}),
+        ))
+        .await
+        .unwrap();
+
+    let ended: Value = h.get(&path).await;
+
+    assert_eq!(ended["status"], "failed");
+    assert_eq!(ended["detail_rev"], 2);
+    assert_eq!(
+        ended["detail"],
+        json!({"type": "command", "command": "cargo build\n  --release", "cwd": "/work",
+               "output": "Compiling a\nFinished", "exit_code": 101, "truncated": false})
+    );
+    assert!(ended.get("raw").is_none(), "no raw data unasked: {ended}");
+    let refused: Value = h.get(&format!("{path}?raw=false")).await;
+    assert!(
+        refused.get("raw").is_none(),
+        "no raw data refused: {refused}"
+    );
+    let raw: Value = h.get(&format!("{path}?raw=true")).await;
+    assert_eq!(raw["raw"], json!({"input": input, "output": raw_output}));
+    let (status, _) = h
+        .send(get(&format!(
+            "/v1/sessions/{}/trajectory/items/{}",
+            session.id, progress_row.id
+        )))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a progress row of an open call opens no step"
+    );
+}
+
+/// A call's content block with bytes names a blob, and the blob route
+/// answers its bytes with its MIME type. An unknown item, an item that is
+/// no call, and an unknown blob are each a 404 (040, rules 53, 54).
+#[tokio::test]
+async fn a_blob_answers_the_bytes_of_its_block_and_unknown_ids_are_not_found() {
+    let h = harness().await;
+    let session = h.lone_session("call-blob").await;
+    let store_event = |kind: &str, payload: Value| ariadne_store::NewAgentEvent {
+        session_id: Some(session.id.clone()),
+        task_id: None,
+        kind: kind.into(),
+        payload,
+    };
+    let prompt = h
+        .store
+        .create_event(store_event("user_prompt_submit", json!({"text": "Look"})))
+        .await
+        .unwrap();
+    let opener = h
+        .store
+        .create_event(store_event(
+            "pre_tool_use",
+            json!({"tool_name": "Screenshot",
+                   "acp": {"toolCallId": "call-1", "title": "Screenshot", "kind": "other",
+                           "status": "completed",
+                           "content": [
+                               {"type": "content", "content": {"type": "text", "text": "Taken"}},
+                               {"type": "content", "content": {"type": "image",
+                                "mimeType": "image/png", "data": "aGVsbG8="}}]}}),
+        ))
+        .await
+        .unwrap();
+    let base = format!("/v1/sessions/{}/trajectory", session.id);
+
+    let detail: Value = h.get(&format!("{base}/items/{}", opener.id)).await;
+
+    assert_eq!(detail["detail"]["type"], "generic");
+    assert_eq!(detail["detail"]["content"][0]["text"], "Taken");
+    let blob = detail["detail"]["content"][1]["blob"].as_str().unwrap();
+    assert_eq!(blob, format!("{base}/blobs/{}/1", opener.id));
+    let response = h.response(get(blob)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    let bytes = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    assert_eq!(&bytes[..], b"hello");
+
+    for missing in [
+        format!("{base}/items/no-such-item"),
+        format!("{base}/items/{}", prompt.id),
+        format!("{base}/blobs/{}/0", opener.id),
+        format!("{base}/blobs/{}/7", opener.id),
+        format!("{base}/blobs/no-such-event/0"),
+    ] {
+        let (status, _) = h.send(get(&missing)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
+    }
+}
+
+/// A stop that ends a turn over an open call interrupts the call: its step
+/// and its detail give the same status and the same `detail_rev`
+/// (040, rules 12, 49).
+#[tokio::test]
+async fn a_call_its_turn_interrupts_has_one_revision_in_its_step_and_its_detail() {
+    let h = harness().await;
+    let session = h.lone_session("call-interrupted").await;
+    let store_event = |kind: &str, payload: Value| ariadne_store::NewAgentEvent {
+        session_id: Some(session.id.clone()),
+        task_id: None,
+        kind: kind.into(),
+        payload,
+    };
+    let prompt = h
+        .store
+        .create_event(store_event("user_prompt_submit", json!({"text": "Run"})))
+        .await
+        .unwrap();
+    let opener = h
+        .store
+        .create_event(store_event(
+            "pre_tool_use",
+            json!({"tool_name": "Bash", "tool_input": {"command": "sleep 9"},
+                   "acp": {"toolCallId": "call-1", "title": "Bash", "kind": "execute",
+                           "status": "pending", "rawInput": {"command": "sleep 9"}}}),
+        ))
+        .await
+        .unwrap();
+    h.store
+        .create_event(store_event("stop", json!({"stop_reason": "end_turn"})))
+        .await
+        .unwrap();
+    let base = format!("/v1/sessions/{}/trajectory", session.id);
+
+    let page: Value = h.get(&format!("{base}/turns/{}/steps", prompt.id)).await;
+    let detail: Value = h.get(&format!("{base}/items/{}", opener.id)).await;
+
+    let step = page["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == opener.id.as_str())
+        .unwrap_or_else(|| panic!("the call's step: {page}"));
+    assert_eq!(step["status"], "interrupted");
+    assert_eq!(detail["status"], "interrupted");
+    assert_eq!(
+        step["detail_rev"], 1,
+        "the end of the turn changed the call"
+    );
+    assert_eq!(detail["detail_rev"], step["detail_rev"]);
+}
