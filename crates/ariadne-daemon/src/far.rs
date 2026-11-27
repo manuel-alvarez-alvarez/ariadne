@@ -979,7 +979,11 @@ impl Follower<'_> {
             )
             .await?;
         self.ctx.wake(&reference.id);
-        if let Some(sched) = &self.ctx.sched {
+        // A goal-less task (037 rule 111) has no goal to reconcile: waking
+        // one for the empty id fails on every refresh of its cache.
+        if let Some(sched) = &self.ctx.sched
+            && !reference.goal_id.is_empty()
+        {
             let _ = sched.send(SchedEvent::GoalChanged(reference.goal_id.clone()));
         }
         Ok(())

@@ -765,12 +765,14 @@ picker, the Hosts screen and one stream per host — is spec
      An empty workflow name and empty columns represent no workflow in the remote protocol.
      The source reports worker status, step, and reason through the existing reference cache.
      Source cancel and retry use the existing worker controls. Goal tasks retain their rules.
+     A goal-less reference wakes no goal reconciliation when its cache refreshes.
 
 ## Acceptance criteria
 
 - Admission: `far_tasks::source_references::goal_less_admission_checks_the_host_and_saves_its_workflow`.
 - Rule 111: `far_tasks::source_references::a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry`.
   Worker columns and gates: `remote_tasks::goal_less_remote_columns_keep_their_gates_and_can_retry`.
+  No goal wake: `far_tasks::source_references::a_goal_less_far_task_wakes_no_goal_reconciliation`.
   No workflow: `remote_tasks::a_remote_task_without_a_workflow_finishes_or_fails_at_its_agent_call`.
 
 - Rules 102 and 105: `far_tasks::source_references::new_remote_tasks_are_worker_drafts_during_source_planning`.
