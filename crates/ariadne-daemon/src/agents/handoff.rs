@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 
 use ariadne_api::trajectory::{
-    ContentBlockDto, PermissionStepDto, PlanEntryDto, QuestionState, QuestionStepDto, StepDto,
-    ToolCallStatus, ToolCallStepDto,
+    ContentBlockDto, PermissionStepDto, PlanEntryDto, PromptDto, QuestionState, QuestionStepDto,
+    StepDto, ToolCallStatus, ToolCallStepDto,
 };
 use ariadne_core::event_facts::output_text;
 use ariadne_core::{PromptKind, SessionStatus};
@@ -180,7 +180,7 @@ struct RankedEntry {
 fn priority(moment: &Moment, rendered: &str) -> u8 {
     match moment {
         Moment::Prompt(prompt) if prompt.source.as_deref() != Some("daemon") => {
-            if correction(&text_of(&prompt.content)) {
+            if correction(&submitted_text(prompt)) {
                 100
             } else {
                 90
@@ -242,7 +242,11 @@ fn is_ended(call: &ToolCallStepDto) -> bool {
 fn render_entry(moment: &Moment, details: &HashMap<String, CallDetail>) -> Option<String> {
     let body = match moment {
         Moment::Prompt(prompt) => user_prompt_body(
-            &text_of(&prompt.content),
+            &if carries_handoff(moment) {
+                text_of(&prompt.content)
+            } else {
+                submitted_text(prompt)
+            },
             prompt.source.as_deref(),
             carries_handoff(moment),
         ),
@@ -262,6 +266,16 @@ fn render_entry(moment: &Moment, details: &HashMap<String, CallDetail>) -> Optio
         },
     };
     Some(fenced(body))
+}
+
+/// The text a prompt submitted, without the seat brief that `content` carries
+/// ahead of it on the first turn of a launch. A record with no `text` falls
+/// back to `content`.
+fn submitted_text(prompt: &PromptDto) -> String {
+    prompt
+        .text
+        .clone()
+        .unwrap_or_else(|| text_of(&prompt.content))
 }
 
 /// A `user_prompt_submit`: whole under the `user` marker from the console,
@@ -769,6 +783,21 @@ mod tests {
             "user_prompt_submit",
             json!({"text": text, "source": "daemon", "prompt_kind": kind}),
         )
+    }
+
+    #[test]
+    fn a_first_console_prompt_keeps_its_request_without_the_seat_brief() {
+        let events = [event(
+            "a",
+            "user_prompt_submit",
+            json!({"text": "the request", "source": "console",
+                   "content": [{"type": "text", "text": "SEAT BRIEF\n\nthe request"}]}),
+        )];
+
+        let out = handoff_text(&events, 10_000);
+
+        assert!(out.contains("the request"), "{out}");
+        assert!(!out.contains("SEAT BRIEF"), "{out}");
     }
 
     #[test]
