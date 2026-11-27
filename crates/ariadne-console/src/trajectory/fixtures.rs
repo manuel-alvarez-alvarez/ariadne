@@ -14,7 +14,7 @@ fn merged(mut base: Value, extra: Value) -> Value {
 }
 
 /// A step of `kind`, with the fields `extra` gives over plain ones.
-pub(super) fn step(kind: &str, id: &str, turn_id: &str, extra: Value) -> Value {
+pub(crate) fn step(kind: &str, id: &str, turn_id: &str, extra: Value) -> Value {
     let common =
         json!({"type": kind, "id": id, "turn_id": turn_id, "lane": "main", "created_at": AT});
     let own = match kind {
@@ -55,7 +55,7 @@ fn activity() -> Value {
 }
 
 /// A turn in `state`, with the fields `extra` gives over plain ones.
-pub(super) fn turn(id: &str, state: &str, extra: Value) -> Value {
+pub(crate) fn turn(id: &str, state: &str, extra: Value) -> Value {
     merged(
         json!({
             "id": id, "lane": "main",
@@ -70,7 +70,7 @@ pub(super) fn turn(id: &str, state: &str, extra: Value) -> Value {
     )
 }
 
-pub(super) fn snapshot(rev: u64, turns: Vec<Value>) -> TrajectorySnapshotDto {
+pub(crate) fn snapshot(rev: u64, turns: Vec<Value>) -> TrajectorySnapshotDto {
     serde_json::from_value(json!({
         "rev": rev,
         "session": {
@@ -84,6 +84,6 @@ pub(super) fn snapshot(rev: u64, turns: Vec<Value>) -> TrajectorySnapshotDto {
     .expect("a snapshot fixture")
 }
 
-pub(super) fn update(rev: u64, ops: Value) -> TrajectoryUpdateDto {
+pub(crate) fn update(rev: u64, ops: Value) -> TrajectoryUpdateDto {
     serde_json::from_value(json!({"rev": rev, "ops": ops})).expect("an update fixture")
 }

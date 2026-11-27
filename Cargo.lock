@@ -162,6 +162,7 @@ dependencies = [
  "ariadne-core",
  "ariadne-store",
  "axum",
+ "base64 0.23.1",
  "chrono",
  "clap",
  "clap_complete",
