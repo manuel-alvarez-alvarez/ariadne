@@ -1,7 +1,7 @@
 ---
 id: advisory-failure-diagnosis
 status: current
-updated: 2026-10-10
+updated: 2026-11-27
 areas: [daemon, api, core, store, ui]
 commits: []
 tests:
@@ -54,9 +54,11 @@ policy, none of which this changes or informs.
 4. At most one diagnosis request runs at a time, daemon-wide, claimed with a
    compare-and-swap; a failure considered while one is already running is
    left undiagnosed rather than queued. The request itself is bounded by
-   `Timeouts::failure_diagnosis_decision` and carries a bounded snapshot of
-   the one error's message and structured data — never a repository file,
-   another event, or a transcript.
+   `Timeouts::failure_diagnosis_decision` (five seconds by default) and
+   carries a bounded snapshot of the one error's message and structured data,
+   with no repository files, other events, or transcripts. Expiry drops the
+   request and records no diagnosis. The integration test can supply a
+   deadline signal and fire it after the model receives the request.
 5. A permission decision needing the same model aborts a diagnosis request
    reaching it first, so the decision an agent's turn is blocked on never
    waits behind an advisory nothing is blocked on. The aborted request frees
@@ -97,8 +99,10 @@ policy, none of which this changes or informs.
   exactly as 021 alone would
   (`failure_diagnosis.rs::disabled_by_default_produces_no_diagnosis`,
   `::an_absent_model_produces_no_diagnosis_the_same_as_one_still_loading`,
-  `::a_malformed_answer_produces_no_diagnosis`), and so does one that times
-  out (`::a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none`).
+  `::a_malformed_answer_produces_no_diagnosis`).
+- When the test expires the deadline after the model receives the request,
+  the connection closes and the store contains no diagnosis
+  (`failure_diagnosis.rs::a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none`).
 - The original error and the session's end do not wait on a diagnosis, and a
   busy classifier leaves a concurrent failure undiagnosed rather than queued
   (`failure_diagnosis.rs::a_failed_sessions_diagnosis_is_correlated_with_its_own_error`,
