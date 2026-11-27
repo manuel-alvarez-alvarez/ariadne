@@ -14,7 +14,7 @@ use tokio::sync::Semaphore;
 
 use ariadne_core::{PermissionMode, SessionStatus, TaskStatus};
 use ariadne_daemon::timeouts::Timeouts;
-use ariadne_store::{AgentPin, AgentSession, EventFilter, Store, Task};
+use ariadne_store::{AgentPin, AgentSession, EventFilter, Goal, Repository, Store, Task};
 
 use crate::common::acp::{discovery_accepted, script, stub_acp_agent};
 use crate::common::{Harness, QUIET, TIMEOUT, eventually, harness, put_json, test_pin};
@@ -220,6 +220,27 @@ async fn world_with(
     timeouts: Timeouts,
     ai_permissions_enabled: bool,
 ) -> (Harness, AgentSession) {
+    let (h, agent, ..) = world_cast(
+        error,
+        ai_failure_diagnosis,
+        server,
+        timeouts,
+        ai_permissions_enabled,
+    )
+    .await;
+    (h, agent)
+}
+
+/// [`world_with`], and the goal and repository the failed agent's task is
+/// on, and the directory of the agent and the home, which a test that fails
+/// more tasks beside it keeps for as long as it does.
+async fn world_cast(
+    error: Value,
+    ai_failure_diagnosis: bool,
+    server: &ModelServer,
+    timeouts: Timeouts,
+    ai_permissions_enabled: bool,
+) -> (Harness, AgentSession, Goal, Repository, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
     let agent_dir = root.path().join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
@@ -264,7 +285,7 @@ async fn world_with(
         h.session_status(&agent).await == SessionStatus::Exited
     })
     .await;
-    (h, agent)
+    (h, agent, goal, repo, root)
 }
 
 /// Every event of `kind` a session reported, as parsed JSON payloads.
@@ -578,7 +599,7 @@ async fn a_second_failure_while_one_is_in_flight_is_skipped_not_queued() {
 #[tokio::test]
 async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
     let server = ModelServer::hanging().await;
-    let (h, agent) = world_with(
+    let (h, agent, goal, repo, _root) = world_cast(
         quota_error(),
         true,
         &server,
@@ -590,28 +611,43 @@ async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
     )
     .await;
 
-    // The model never answers, so the bound is the only thing that ends the
-    // request: the end is waited for, not guessed at from a clock a loaded
-    // machine stretches. A request that is cut before it reaches the model
-    // ended by the bound too, so that race is no part of what is proved.
-    eventually(TIMEOUT, "the bound to end the diagnosis", || async {
-        h.failure_diagnosis.ended() == 1
+    // The bound runs from the start of the request, and on a machine that is
+    // loaded enough it ends the request before the model has seen it: that
+    // diagnosis proves nothing, and the bound drops its connection with no
+    // event to mark it. A failed session whose diagnosis is not wanted costs
+    // nothing, so another one is failed until a request reaches the model.
+    let mut agents = vec![agent.id.clone()];
+    eventually(TIMEOUT, "a request to reach the model", async || {
+        if !server.requests.lock().unwrap().is_empty() {
+            return true;
+        }
+        let task = h.task_on(&goal, &repo, "another-task", test_pin()).await;
+        h.advance(&task, TaskStatus::InProgress).await;
+        let again = started(&h, &task).await;
+        eventually(TIMEOUT, "the failed agent to end", || async {
+            h.session_status(&again).await == SessionStatus::Exited
+        })
+        .await;
+        agents.push(again.id);
+        !server.requests.lock().unwrap().is_empty()
     })
     .await;
-    // Where the request did reach the model, its connection ended with it,
-    // which frees the one worker the hanging handler holds.
-    eventually(TIMEOUT, "the model to see the request end", || async {
+    // The model never answers, so only the bound closes the connection the
+    // hanging handler holds the one worker for: the end is seen, not guessed
+    // at from a clock a loaded machine stretches.
+    eventually(TIMEOUT, "the bound to close the request", || async {
         server.worker.available_permits() == 1
     })
     .await;
     // A timed-out request reports nothing, so no later event marks it: only
     // the continued absence of a diagnosis proves it never arrived.
     tokio::time::sleep(QUIET).await;
-    assert!(
-        events_of(&h, &agent.id, "session.diagnosis")
-            .await
-            .is_empty()
-    );
+    for agent in &agents {
+        assert!(
+            events_of(&h, agent, "session.diagnosis").await.is_empty(),
+            "{agent}"
+        );
+    }
 }
 
 /// A diagnosis correlated with a launch a session has since moved past is
