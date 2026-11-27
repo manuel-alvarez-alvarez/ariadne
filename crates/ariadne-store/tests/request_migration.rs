@@ -103,11 +103,13 @@ async fn an_upgrade_drops_the_requests_and_keeps_every_other_row() {
     pool.close().await;
     // Opening a store seeds the shipped skills and workflows, so a table
     // can gain rows. No table loses one.
-    let after = row_counts(&path).await;
-    let tables =
-        |counts: &[(String, i64)]| counts.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
-    assert_eq!(tables(&after), tables(&before));
-    for ((table, was), (_, is)) in before.iter().zip(&after) {
+    // A later migration can add a table; none of the tables before is gone.
+    let after: std::collections::BTreeMap<String, i64> =
+        row_counts(&path).await.into_iter().collect();
+    for (table, was) in &before {
+        let is = after
+            .get(table)
+            .unwrap_or_else(|| panic!("{table} is gone"));
         assert!(is >= was, "{table} had {was} rows and has {is}");
     }
 }
