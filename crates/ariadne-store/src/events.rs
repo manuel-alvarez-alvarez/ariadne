@@ -236,7 +236,7 @@ impl Store {
         Ok(n.max(0) as u64)
     }
 
-    /// Fill the facts of the events stored before migration 0030, from
+    /// Fill the facts of the events stored before migration 0031, from
     /// their payloads, once. Each batch commits on its own, so a fill that
     /// stops keeps what it did and goes on from there at the next open. A
     /// finished fill leaves its row in `store_fills` and never runs again.

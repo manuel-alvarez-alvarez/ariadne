@@ -272,7 +272,7 @@ impl Store {
             attention_order: Arc::default(),
             pr_locks: Arc::default(),
         };
-        // The facts migration 0030 added are filled for the rows before it
+        // The facts migration 0031 added are filled for the rows before it
         // once, here, before any read leans on them (040).
         store.fill_event_facts().await?;
         store.seed_builtin_skills().await?;
