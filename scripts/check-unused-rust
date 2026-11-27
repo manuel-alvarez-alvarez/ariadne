@@ -63,6 +63,9 @@ IGNORED = {
     "crates/ariadne-api/src/trajectory.rs: ConfigValueDto": (
         "the element type of the public field `ConfigOptionDto::values`; utoipa names it (040)"
     ),
+    "crates/ariadne-console/src/transcript.rs: FormClosed": (
+        "the type of the public field `closed` of `TranscriptItem::FormQuestion`"
+    ),
     "crates/ariadne-console/src/transcript.rs: Location": (
         "the element type of the public field `Tool::locations`"
     ),

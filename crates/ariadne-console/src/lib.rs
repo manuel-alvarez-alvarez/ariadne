@@ -17,6 +17,7 @@
 pub mod ansi;
 pub mod markdown;
 pub mod theme;
+pub mod trajectory;
 pub mod transcript;
 pub mod tui;
 mod wrap;
