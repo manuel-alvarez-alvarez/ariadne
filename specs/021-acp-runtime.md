@@ -213,9 +213,13 @@ it leaves nothing to delete.
    A direct child's runs take a new id. The `item_id` of a
    `user_prompt_submit` is its turn's id, which a reconnect keeps.
    No chunk is stored, and none reaches `/v1/events` or `/v1/events/stream`.
-   A console stream open before the turn starts receives every chunk of it,
-   each below the stored whole that follows it: a stored event never goes out
-   while a chunk sent before its commit is still waiting on the live channel
+   A console stream open before the turn starts receives every chunk of it
+   unless it falls behind the live buffer, which is a `resync` and the end of
+   the stream (012,
+   `http/console.rs::tests::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`).
+   Each chunk it receives comes below the stored whole that
+   follows it: a stored event never goes out while a chunk sent before its
+   commit is still waiting on the live channel
    (`http/console.rs::tests::a_chunk_sent_while_another_waits_for_the_pump_goes_out_below_the_next_commit`).
 7. Tool call updates are merged per `toolCallId`: every field an update sets
    replaces the one on record, `content` included. `pre_tool_use` carries
@@ -1052,7 +1056,9 @@ it leaves nothing to delete.
 - Each live chunk carries the `item_id` of its stored whole
   (`acp_items.rs::each_live_chunk_and_its_stored_whole_carry_one_item_id`).
 - Each live chunk reaches a console stream open before the turn, below the
-  stored whole that follows it
+  stored whole that follows it, unless the stream falls behind the live
+  buffer and is told to resync
+  (`http/console.rs::tests::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`)
   (`http/console.rs::tests::a_chunk_sent_while_another_waits_for_the_pump_goes_out_below_the_next_commit`).
 - A running call's progress is stored once its interval has passed, goes
   live alone inside it, and the interval starts again at each stored update
