@@ -52,10 +52,12 @@ Out:
    session's lane whoever they name: the session answers and announces them.
 3. `facts` holds what a read counts by: a tool call's id, status, kind and
    paths; a message's `item_id`; a subagent announcement's id and state; a
-   question's or a legacy request's id; an error's message, cut to its first
-   2000 characters; a diagnosis's error, category and percent; a stop's
+   question's or a legacy request's id; a diagnosis's error; a stop's
    reason; a compaction's id; a permission request's options and whether it
-   names an Ariadne tool; and a reply's option, decider and label.
+   names an Ariadne tool; and a reply's option, decider and label. Facts are
+   ids, states and kinds alone: no attention step's content is copied there,
+   so a permission, a question and an error show from their payloads. The
+   user decided this, through the orchestrator.
 4. The store derives both columns from the kind and the payload at insert,
    so the code that emits an event does not know them. A stored
    `tool_call_update` `{session_id, tool_call_id, acp}` and a
@@ -97,9 +99,12 @@ Out:
 15. `answer` is the content of the newest message of the session's own agent
     in the turn.
 16. `attention` holds, open turn or closed, the waiting permissions and the
-    open questions of the turn, newest first, up to the read limit (rule
-    38), and then the newest 20 errors of the turn, newest first, and no
-    more. `attention_more` counts each attention step of the turn that
+    open questions of the turn, newest first, up to the read limit of 100,
+    and then the newest 20 errors of the turn, newest first, and no more.
+    The limits hold on every path: a cold read, a warm hub's snapshot, and a
+    `turn_upsert`. A hundred waiting steps are five screens, and with the 20
+    errors and a running turn's window they fit the payload budget of one
+    read, so a cold read and a warm hub hold the same steps. `attention_more` counts each attention step of the turn that
     `attention` does not hold: the waiting steps past the read limit and the
     errors past 20. No read leaves an attention step out without this count,
     and the steps route of the turn returns each step `attention` does not
@@ -155,9 +160,9 @@ Out:
     `cancel` is `cancelled`. A legacy `agent_request` with a question folds
     the same way, and one with no question is a `note`.
 25. `session.error` is an `error` step, and `session.diagnosis` sets the
-    `diagnosis` of the error it names (024). Both come from the event's facts
-    alone, so a read holds every error of a turn, for its count and its
-    steps, and loads none of their payloads.
+    `diagnosis` of the error it names (024), both from their payloads. The
+    index counts every error of a turn from its head; a read loads the
+    payloads of the newest 20 and their diagnoses.
 26. `session_start`, `session_end`, `session.switched` and
     `session.pin_fallback` are `note` steps. A pin fallback is a warning.
 27. `compaction_update` opens a `compaction` step by `compaction_id`, and a
@@ -213,8 +218,9 @@ Out:
       lane if it runs, each with its newest change, newest step first;
     - each older turn's prompt and answer, newest turn first. The first turn
       whose prompt and answer do not fit, and every older one, is not shown;
-    - each permission and question that waits, one step at a time, newest
-      turn first and newest step first: the read limit of rule 16;
+    - the newest 100 permissions and questions that wait in each turn, then
+      the newest 20 errors of each turn with their diagnoses, one step at a
+      time, newest turn first and newest step first: the limits of rule 16;
     - the first and the newest plan of each lane;
     - the first event and the newest update of each subagent.
 39. A read also holds the older turns with attention, outside the turns it
@@ -353,10 +359,10 @@ Out:
     `fold.rs::a_stored_whole_reads_its_chunks_as_one_text`.
 35. A cold read names a plan by its first event (rules 32, 38):
     `read.rs::a_cold_read_names_a_plan_by_its_first_event`.
-36. A turn of more than 20 errors holds the newest 20, counts the rest in
-    `attention_more`, and the steps route returns them (rules 3, 16, 25):
-    `read.rs::a_turn_of_many_errors_holds_the_newest_twenty_and_counts_the_rest`
-    and `event_facts.rs::an_error_and_its_diagnosis_keep_what_their_steps_show`.
+36. A turn of more than 20 errors holds the newest 20 from their payloads,
+    counts the rest in `attention_more`, and the steps route returns them
+    (rules 16, 25):
+    `read.rs::a_turn_of_many_errors_holds_the_newest_twenty_and_counts_the_rest`.
 37. The running turn's window comes before the subagents (rule 38):
     `read.rs::the_running_turns_window_comes_before_the_subagents`.
 38. A question behind more than twenty failed turns stays in the read
@@ -374,6 +380,9 @@ Out:
     `read.rs::waiting_questions_past_the_limit_are_counted_and_paged`.
 44. A chunk after its whole changes nothing (rule 19):
     `fold.rs::a_chunk_after_its_whole_changes_nothing`.
+45. A warm fold and a cold read hold the same `attention` and
+    `attention_more`, and a `turn_upsert` carries them (rule 16):
+    `read.rs::a_warm_fold_and_a_cold_read_hold_the_same_attention`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

@@ -33,7 +33,14 @@ use super::steps::{
 
 /// How many errors a turn's `attention` holds, the newest first: a screen of
 /// them. `attention_more` counts the rest, and the steps route returns them.
-const ATTENTION_ERRORS: usize = 20;
+pub(crate) const ATTENTION_ERRORS: usize = 20;
+
+/// How many waiting permissions and questions a turn's `attention` holds,
+/// the newest first: the read limit of 040 rule 16. A hundred is five
+/// screens, and with the 20 errors and a running turn's window it fits the
+/// payload budget of one read, so a cold read and a warm hub hold the same
+/// ones. `attention_more` counts the rest, and the steps route returns them.
+pub(crate) const ATTENTION_WAITS: usize = 100;
 
 /// How many of its last steps a running turn carries. Fifty steps are about
 /// one screen of a client; the rest are a page of the steps route away.
@@ -84,7 +91,7 @@ pub(crate) struct Lane {
     subagents: BTreeSet<String>,
     items: BTreeSet<String>,
     compactions: BTreeSet<String>,
-    errors: Vec<String>,
+    pub(crate) errors: Vec<String>,
     /// The run of text that streams now: a thought or not, and its step.
     streaming: Option<(bool, String)>,
     /// The id of the newest message step: the turn's answer.
@@ -1196,23 +1203,25 @@ impl Fold {
         ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
     }
 
-    /// An error step comes from the event's facts alone, so a read shows
-    /// every error of a turn whatever the payload budget.
+    /// An error step comes from its payload; the index counts every error,
+    /// loaded or not.
     fn error(&mut self, input: &Input, ops: &mut Ops) {
         let index = self.turn_for(input, ops);
-        let step = StepDto::Error(ErrorStepDto {
-            id: input.id.to_string(),
-            turn_id: self.turns[index].id.clone(),
-            lane: MAIN_LANE.into(),
-            created_at: input.created_at.to_string(),
-            text: input
-                .facts
-                .message
-                .clone()
-                .unwrap_or_else(|| "session error".into()),
-            diagnosis: None,
+        let step = input.full.map(|event| {
+            let payload = &event.payload;
+            StepDto::Error(ErrorStepDto {
+                id: event.id.clone(),
+                turn_id: self.turns[index].id.clone(),
+                lane: MAIN_LANE.into(),
+                created_at: event.created_at.clone(),
+                text: string_at(payload, "/error/data/message")
+                    .or_else(|| string_at(payload, "/error/message"))
+                    .or_else(|| string_at(payload, "/message"))
+                    .unwrap_or_else(|| event.summary.clone()),
+                diagnosis: None,
+            })
         });
-        self.open_step(index, MAIN_LANE, input.id, input.row(), Some(step), ops);
+        self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
         self.turns[index]
             .lanes
             .entry(MAIN_LANE.into())
@@ -1222,7 +1231,7 @@ impl Fold {
         self.end_running(TurnState::Failed, None, input.created_at, ops);
     }
 
-    /// A diagnosis reads onto its error from its facts alone.
+    /// A diagnosis reads onto the error it names, from its payload.
     fn diagnosis(&mut self, input: &Input, ops: &mut Ops) {
         let Some(error_id) = input.facts.error.clone() else {
             return;
@@ -1240,18 +1249,21 @@ impl Fold {
             return;
         };
         ops.touch(&turn.id);
-        let note = input.facts.category.as_ref().and_then(|category| {
-            let mut payload = serde_json::json!({ "category": category });
-            if let Some(percent) = input.facts.percent {
-                payload["probabilities"] =
-                    serde_json::json!({ category.as_str(): percent as f64 / 100.0 });
-            }
-            ariadne_api::events::diagnosis_note(&payload)
-        });
-        if let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == error_id)
+        if let Some(row) = input.row() {
+            turn.lanes
+                .entry(MAIN_LANE.into())
+                .or_default()
+                .follows
+                .insert(error_id.clone(), row.to_string());
+        }
+        if let Some(event) = input.full
+            && let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == error_id)
             && let StepDto::Error(error) = step
         {
-            error.diagnosis = note.or_else(|| input.full.map(|event| event.summary.clone()));
+            error.diagnosis = Some(
+                ariadne_api::events::diagnosis_note(&event.payload)
+                    .unwrap_or_else(|| event.summary.clone()),
+            );
             ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
         }
     }
@@ -1566,8 +1578,11 @@ impl Turn {
             .filter(|step| matches!(step, StepDto::Error(_)))
             .rev()
             .collect();
+        let shown_waits = waits.len().min(ATTENTION_WAITS);
         let shown_errors = errors.len().min(ATTENTION_ERRORS);
-        let attention_more = waiting.saturating_sub(waits.len()) + errors.len() - shown_errors;
+        let attention_more = waiting.max(waits.len()) - shown_waits
+            + main.errors.len().max(errors.len())
+            - shown_errors;
         TurnDto {
             id: self.id.clone(),
             lane: MAIN_LANE.into(),
@@ -1581,6 +1596,7 @@ impl Turn {
             earlier_steps: 0,
             attention: waits
                 .into_iter()
+                .take(shown_waits)
                 .chain(errors.into_iter().take(shown_errors))
                 .cloned()
                 .collect(),

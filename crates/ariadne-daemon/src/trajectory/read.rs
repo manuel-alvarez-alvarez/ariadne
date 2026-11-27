@@ -17,7 +17,7 @@ use ariadne_core::SessionStatus;
 use ariadne_core::event_facts::EventFacts;
 use ariadne_store::{AgentEvent, EventHead, Store, StoreError};
 
-use super::fold::{Fold, STEP_WINDOW, TurnIndex};
+use super::fold::{ATTENTION_ERRORS, ATTENTION_WAITS, Fold, STEP_WINDOW, TurnIndex};
 
 /// The most full event payloads one read loads: an open of a trajectory, a
 /// page of older turns, or a page of a turn's steps. Five hundred events
@@ -205,13 +205,23 @@ fn mandatory(turn: &TurnIndex, prompt: bool) -> Vec<String> {
     ids
 }
 
-/// Each step of a turn that waits on a person, with the rows that show it.
-/// An error needs no row: its step comes from its facts.
-fn attention(turn: &TurnIndex) -> Vec<Vec<String>> {
+/// The steps of a turn's `attention`, newest first, with the rows that show
+/// each: its newest waiting permissions and questions, and its newest
+/// errors with their diagnoses.
+fn attention(turn: &TurnIndex, errors: bool) -> Vec<Vec<String>> {
     let Some(lane) = turn.lanes.get(MAIN_LANE) else {
         return Vec::new();
     };
-    turn.actions.iter().rev().map(|id| lane.rows(id)).collect()
+    let (ids, limit) = if errors {
+        (&lane.errors, ATTENTION_ERRORS)
+    } else {
+        (&turn.actions, ATTENTION_WAITS)
+    };
+    ids.iter()
+        .rev()
+        .take(limit)
+        .map(|id| lane.rows(id))
+        .collect()
 }
 
 /// The last `STEP_WINDOW` steps of a lane, newest first, each with the rows
@@ -342,10 +352,13 @@ pub(crate) async fn read_turns_upto(
         first_shown = Some(at);
     }
     let first_shown = first_shown.unwrap_or(shown[shown.len() - 1]);
-    // What waits on a person, each step on its own, newest turn first.
-    for turn in index.values().rev() {
-        for rows in attention(turn) {
-            picks.take(rows);
+    // What waits on a person, then the errors, each step on its own, newest
+    // turn first, up to the limits of `attention`.
+    for errors in [false, true] {
+        for turn in index.values().rev() {
+            for rows in attention(turn, errors) {
+                picks.take(rows);
+            }
         }
     }
     let plans = store
@@ -1303,8 +1316,8 @@ mod tests {
     }
 
     /// A turn with more than 20 errors holds the newest 20 in `attention`,
-    /// counts the rest in `attention_more`, and the steps route returns
-    /// them; an error's step loads no payload (rules 25, 38).
+    /// loaded from their payloads, counts the rest in `attention_more`, and
+    /// the steps route returns them (rules 16, 25, 38).
     #[tokio::test]
     async fn a_turn_of_many_errors_holds_the_newest_twenty_and_counts_the_rest() {
         let (store, session, _dir) = session().await;
@@ -1326,10 +1339,10 @@ mod tests {
             .await;
         }
 
-        let read = read_turns(&store, &session, None, 20, None, 3)
+        let read = read_turns(&store, &session, None, 20, None, 30)
             .await
             .unwrap();
-        assert!(read.loaded() <= 3);
+        assert!(read.loaded() <= 30);
         let fold = folded(&session, read);
         let shown = &fold.snapshot(0, 20, None).turns[0];
         assert_eq!(shown.id, turn);
@@ -1623,5 +1636,51 @@ mod tests {
             "a prompt and nine subagents of two rows each"
         );
         assert_eq!(page.earlier, 21);
+    }
+
+    /// A warm fold that saw every event whole and a cold read hold the same
+    /// `attention` and `attention_more`, and a turn update carries them too:
+    /// the waiting limit holds on every path (rule 16).
+    #[tokio::test]
+    async fn a_warm_fold_and_a_cold_read_hold_the_same_attention() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        for n in 0..(super::ATTENTION_WAITS + 20) {
+            commit(
+                &store,
+                &session,
+                "question",
+                json!({"question": {"id": format!("q-{n}"), "message": "Which?", "schema": {}}}),
+            )
+            .await;
+        }
+
+        let mut warm = scratch(&session);
+        let mut last_ops = Vec::new();
+        for event in store.list_session_events(&session).await.unwrap() {
+            last_ops = warm.apply(&crate::http::convert::event_dto(event), true);
+        }
+        let cold = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        );
+
+        let warm_turn = warm.snapshot(0, 20, None).turns[0].clone();
+        let cold_turn = cold.snapshot(0, 20, None).turns[0].clone();
+        assert_eq!(warm_turn.attention.len(), super::ATTENTION_WAITS);
+        assert_eq!(warm_turn.attention_more, 20);
+        assert_eq!(cold_turn.attention, warm_turn.attention);
+        assert_eq!(cold_turn.attention_more, warm_turn.attention_more);
+        let update = last_ops
+            .iter()
+            .find_map(|op| match op {
+                TrajectoryOpDto::TurnUpsert { turn } => Some(turn),
+                _ => None,
+            })
+            .expect("the last question updates its turn");
+        assert_eq!(update.attention.len(), super::ATTENTION_WAITS);
+        assert_eq!(update.attention_more, 20);
     }
 }
