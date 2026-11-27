@@ -138,8 +138,13 @@ fn facts_columns(kind: &str, payload: &serde_json::Value) -> (Option<String>, St
     )
 }
 
-/// How many rows one pass of [`Store::fill_event_facts`] reads.
+/// How many rows one batch of [`Store::fill_event_facts`] reads: one
+/// transaction of about five megabytes of payload, short enough that a fill
+/// stopped halfway loses no more than one batch.
 const FILL_BATCH: i64 = 500;
+
+/// The name of the facts fill in `store_fills`.
+const FACTS_FILL: &str = "agent_event_facts";
 
 /// What `create_event` runs, whole: one statement, which is what keeps the
 /// lock over it short.
@@ -232,38 +237,63 @@ impl Store {
     }
 
     /// Fill the facts of the events stored before migration 0029, from
-    /// their payloads, a batch at a time. Answers how many it filled. A row
-    /// whose payload this build cannot read gets empty facts.
+    /// their payloads, once. Each batch commits on its own, so a fill that
+    /// stops keeps what it did and goes on from there at the next open. A
+    /// finished fill leaves its row in `store_fills` and never runs again.
+    /// A row whose payload this build cannot read gets empty facts. Answers
+    /// how many rows it filled.
     pub async fn fill_event_facts(&self) -> Result<u64> {
+        let done: Option<String> =
+            sqlx::query_scalar("SELECT done_at FROM store_fills WHERE name = ?")
+                .bind(FACTS_FILL)
+                .fetch_optional(self.w())
+                .await?;
+        if done.is_some() {
+            return Ok(0);
+        }
         let mut filled = 0;
         loop {
-            let rows: Vec<(String, String, Vec<u8>, String)> = sqlx::query_as(
-                "SELECT id, kind, payload, payload_codec FROM agent_events
-                   WHERE facts IS NULL LIMIT ?",
-            )
-            .bind(FILL_BATCH)
-            .fetch_all(self.w())
-            .await?;
-            if rows.is_empty() {
-                return Ok(filled);
+            let batch = self.fill_event_facts_batch().await?;
+            if batch == 0 {
+                break;
             }
-            let mut tx = self.w().begin().await?;
-            for (id, kind, stored, codec) in rows {
-                let payload = unpack(stored, &codec)
-                    .ok()
-                    .and_then(|text| serde_json::from_str(&text).ok())
-                    .unwrap_or(serde_json::Value::Null);
-                let (lane, facts) = facts_columns(&kind, &payload);
-                sqlx::query("UPDATE agent_events SET lane = ?, facts = ? WHERE id = ?")
-                    .bind(lane)
-                    .bind(facts)
-                    .bind(id)
-                    .execute(&mut *tx)
-                    .await?;
-                filled += 1;
-            }
-            tx.commit().await?;
+            filled += batch;
         }
+        sqlx::query("INSERT OR IGNORE INTO store_fills (name, done_at) VALUES (?, ?)")
+            .bind(FACTS_FILL)
+            .bind(now())
+            .execute(self.w())
+            .await?;
+        Ok(filled)
+    }
+
+    /// One batch of the fill, in one transaction: at most [`FILL_BATCH`]
+    /// rows, each read once.
+    async fn fill_event_facts_batch(&self) -> Result<u64> {
+        let rows: Vec<(String, String, Vec<u8>, String)> = sqlx::query_as(
+            "SELECT id, kind, payload, payload_codec FROM agent_events
+               INDEXED BY idx_events_unfilled WHERE facts IS NULL ORDER BY id LIMIT ?",
+        )
+        .bind(FILL_BATCH)
+        .fetch_all(self.w())
+        .await?;
+        let mut tx = self.w().begin().await?;
+        let count = rows.len() as u64;
+        for (id, kind, stored, codec) in rows {
+            let payload = unpack(stored, &codec)
+                .ok()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .unwrap_or(serde_json::Value::Null);
+            let (lane, facts) = facts_columns(&kind, &payload);
+            sqlx::query("UPDATE agent_events SET lane = ?, facts = ? WHERE id = ?")
+                .bind(lane)
+                .bind(facts)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(count)
     }
 
     /// The newest event id of a session, payload unread: the one boundary
@@ -488,8 +518,20 @@ mod tests {
             Some(r#"{"call":"c-1","status":"failed"}"#)
         );
 
+        // A fill that has run once does not run again, whatever a row holds.
         sqlx::query("UPDATE agent_events SET lane = NULL, facts = NULL WHERE id = ?")
             .bind(&event.id)
+            .execute(store.w())
+            .await
+            .unwrap();
+        assert_eq!(
+            store.fill_event_facts().await.unwrap(),
+            0,
+            "the fill ran once"
+        );
+
+        // A row from before the migration, in a store that never filled.
+        sqlx::query("DELETE FROM store_fills")
             .execute(store.w())
             .await
             .unwrap();
@@ -499,7 +541,60 @@ mod tests {
             stored,
             "filled from the payload"
         );
-        assert_eq!(store.fill_event_facts().await.unwrap(), 0, "once");
+    }
+
+    /// The fill reads each old row once, a batch per transaction, so a fill
+    /// stopped after a batch goes on from the next row and ends once.
+    #[tokio::test]
+    async fn a_fill_stopped_after_a_batch_goes_on_where_it_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("test.db")).await.unwrap();
+        let rows = FILL_BATCH as usize + 200;
+        for n in 0..rows {
+            store
+                .create_event(NewAgentEvent {
+                    session_id: None,
+                    task_id: None,
+                    kind: "pre_tool_use".into(),
+                    payload: serde_json::json!({"acp": {"toolCallId": format!("c-{n}")}}),
+                })
+                .await
+                .unwrap();
+        }
+        sqlx::query("UPDATE agent_events SET lane = NULL, facts = NULL")
+            .execute(store.w())
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM store_fills")
+            .execute(store.w())
+            .await
+            .unwrap();
+
+        // The first batch, and then a stop.
+        assert_eq!(
+            store.fill_event_facts_batch().await.unwrap(),
+            FILL_BATCH as u64
+        );
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_events WHERE facts IS NULL")
+            .fetch_one(store.w())
+            .await
+            .unwrap();
+        assert_eq!(left, 200, "the batch is kept");
+
+        // The next open goes on, and fills each row once.
+        drop(store);
+        let store = Store::open(dir.path().join("test.db")).await.unwrap();
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_events WHERE facts IS NULL")
+            .fetch_one(store.r())
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+        let done: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM store_fills")
+            .fetch_one(store.r())
+            .await
+            .unwrap();
+        assert_eq!(done, 1, "and is done");
+        assert_eq!(store.fill_event_facts().await.unwrap(), 0);
     }
 
     /// A row this build cannot read is reported, not guessed at: a codec a

@@ -1000,4 +1000,72 @@ mod tests {
         assert_eq!(turn.steps.len(), 50);
         assert_eq!(turn.earlier_steps, 1450);
     }
+
+    /// A session stored before the facts existed reads as exactly as a new
+    /// one: the store fills its facts once, when it opens.
+    #[tokio::test]
+    async fn an_old_session_reads_exactly_once_its_facts_are_filled() {
+        let (store, session, dir) = session().await;
+        let turn = prompt(&store, &session).await;
+        call(&store, &session, "edit-1", "edit", "completed").await;
+        call(&store, &session, "edit-2", "edit", "failed").await;
+        let question = commit(
+            &store,
+            &session,
+            "question",
+            json!({"question": {"id": "q-1", "message": "Which?", "schema": {}}}),
+        )
+        .await;
+        commit(&store, &session, "agent_message", json!({"text": "Done."})).await;
+        stop(&store, &session).await;
+        let fresh = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        )
+        .snapshot(0, 20, None);
+        store.close().await;
+
+        // As a release before migration 0029 left it: no facts, no fill.
+        let path = dir.path().join("test.db");
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        sqlx::query("UPDATE agent_events SET lane = NULL, facts = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM store_fills")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let store = Store::open(&path).await.unwrap();
+        let old = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        )
+        .snapshot(0, 20, None);
+
+        assert_eq!(old, fresh, "the old session reads as it did when new");
+        let shown = &old.turns[0];
+        assert_eq!(shown.id, turn);
+        assert_eq!(
+            (
+                shown.activity.tool_calls,
+                shown.activity.failed,
+                shown.activity.files_changed
+            ),
+            (2, 1, 1)
+        );
+        assert!(
+            matches!(shown.attention.as_slice(), [StepDto::Question(q)] if q.id == question),
+            "{:?}",
+            shown.attention
+        );
+    }
 }

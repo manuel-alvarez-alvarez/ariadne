@@ -250,4 +250,39 @@ mod tests {
         assert!(!reject.daemon_allowed(&request));
         assert!(!person.daemon_allowed(&request));
     }
+
+    /// The stored `tool_call_update` and `tool_call_abandoned` of the ticket
+    /// contract, `{session_id, tool_call_id, acp}` and
+    /// `{session_id, tool_call_id, reason, acp}`, give the facts of their call
+    /// whether or not `acp` repeats the id.
+    #[test]
+    fn the_stored_call_updates_give_the_facts_of_their_call() {
+        let update = facts_of(
+            "tool_call_update",
+            &json!({"session_id": "s", "tool_call_id": "c-1",
+                    "acp": {"status": "in_progress", "kind": "edit",
+                            "locations": [{"path": "a.rs"}]}}),
+        );
+        assert_eq!(update.call.as_deref(), Some("c-1"));
+        assert_eq!(update.status.as_deref(), Some("in_progress"));
+        assert_eq!(update.tool_kind.as_deref(), Some("edit"));
+        assert_eq!(update.paths, ["a.rs"]);
+
+        let cancelled = facts_of(
+            "tool_call_abandoned",
+            &json!({"session_id": "s", "tool_call_id": "c-2", "reason": "cancelled",
+                    "acp": {"toolCallId": "c-2", "status": "in_progress", "kind": "execute"}}),
+        );
+        assert_eq!(cancelled.call.as_deref(), Some("c-2"));
+        assert_eq!(
+            cancelled.status.as_deref(),
+            Some("cancelled"),
+            "the reason wins"
+        );
+        assert_eq!(cancelled.tool_kind.as_deref(), Some("execute"));
+        assert_eq!(
+            lane_of("tool_call_abandoned", &json!({"tool_call_id": "c-2"})),
+            None
+        );
+    }
 }
