@@ -1838,9 +1838,13 @@ the default until the turn console replaces it.
     that echo left behind (rule 23e). Stop and Escape post the cancel, and
     ⌘Escape moves the keyboard to the pane's Close button and closes
     nothing (rule 23). The slash commands come from the `commands` of the
-    session's state
+    session's state. The draft and the refused prompts are retained in memory
+    per daemon address and session, as rule 24i says: another session starts
+    with its own, and a refusal that lands after the pane moved goes to the
+    session that sent it
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::sends a prompt as queued, and drops the queued block once a turn holds it`,
     `::keeps a refused prompt with Retry and Edit`,
+    `::keeps the draft and the refused prompts apart for each session`,
     `::cancels a running turn with Stop and with Escape`,
     `::moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing`,
     `::lists the agent's slash commands from the session state`,

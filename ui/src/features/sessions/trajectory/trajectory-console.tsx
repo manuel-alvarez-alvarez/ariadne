@@ -50,7 +50,13 @@ import { PromptBox } from "../console/blocks"
 import { Composer, suggest } from "../console/composer"
 import { ComposerMenu } from "../console/composer-menu"
 import type { ConsoleStreamStatus } from "../console/console-stream"
-import type { FailedSend } from "../console/console-view-state"
+import {
+  consoleViewKey,
+  type FailedSend,
+  readViewState,
+  updateViewState,
+  watchViewState,
+} from "../console/console-view-state"
 import { listQuestions } from "../console/form-questions"
 import {
   elapsedSeconds,
@@ -138,11 +144,29 @@ export function TrajectoryConsole({
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [loads, setLoads] = useState<Record<string, PageLoad>>({})
   const [history, setHistory] = useState<History>({ state: "idle" })
-  const [draft, setDraft] = useState("")
+  const key = consoleViewKey(host, baseUrl ?? "", sessionId)
+  const keyRef = useRef(key)
+  keyRef.current = key
+  const [draft, setDraft] = useState(() => readViewState(key).draft)
   const [cursor, setCursor] = useState(0)
   const [suggested, setSuggested] = useState(0)
   const [dismissed, setDismissed] = useState(false)
-  const [failed, setFailed] = useState<FailedSend[]>([])
+  const [failed, setFailed] = useState<FailedSend[]>(() => readViewState(key).failed)
+  // Another daemon or session in the same pane brings its own retained composer.
+  const [loadedKey, setLoadedKey] = useState(key)
+  if (loadedKey !== key) {
+    setLoadedKey(key)
+    const kept = readViewState(key)
+    setDraft(kept.draft)
+    setFailed(kept.failed)
+  }
+  // A send that fails after this pane replaced another lands in the retained
+  // state, and this pane follows it.
+  useEffect(() => {
+    const read = () => setFailed(readViewState(key).failed)
+    read()
+    return watchViewState(key, read)
+  }, [key])
   const [selected, setSelected] = useState(0)
   const [answering, setAnswering] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -418,6 +442,7 @@ export function TrajectoryConsole({
 
   function edit(text: string, at: number) {
     setDraft(text)
+    updateViewState(keyRef.current, { draft: text })
     setCursor(at)
     setSuggested(0)
     setDismissed(false)
@@ -445,13 +470,20 @@ export function TrajectoryConsole({
     sendCount += 1
     const id = `queued:${sendCount}`
     setState((current) => queuePrompt(current, text, id))
+    // A failure can land after the pane is gone: it goes to the retained state.
+    const owner = keyRef.current
     post(text).catch((error) => {
       setState((current) => dequeuePrompt(current, id, text))
-      setFailed((now) => [
+      changeFailed(owner, (now) => [
         ...now,
         { id, text, message: `Could not send the prompt: ${describeError(error)}` },
       ])
     })
+  }
+
+  /** Change the refused sends of the console `owner`, shown or not. */
+  function changeFailed(owner: string, change: (now: FailedSend[]) => FailedSend[]) {
+    updateViewState(owner, { failed: change(readViewState(owner).failed) })
   }
 
   function send() {
@@ -463,13 +495,13 @@ export function TrajectoryConsole({
   }
 
   function retry(one: FailedSend) {
-    setFailed((now) => now.filter((other) => other.id !== one.id))
+    changeFailed(keyRef.current, (now) => now.filter((other) => other.id !== one.id))
     dispatch(one.text)
   }
 
   /** Take a refused prompt back into the composer, in front of any newer draft. */
   function editFailed(one: FailedSend) {
-    setFailed((now) => now.filter((other) => other.id !== one.id))
+    changeFailed(keyRef.current, (now) => now.filter((other) => other.id !== one.id))
     fill(draft.length === 0 ? one.text : `${one.text}\n${draft}`, one.text.length)
   }
 

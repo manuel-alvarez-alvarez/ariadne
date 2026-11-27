@@ -27,6 +27,7 @@ import {
   text,
 } from "@/test/trajectory"
 
+import { consoleViewKey, updateViewState } from "../console/console-view-state"
 import { SessionDetailView } from "../session-detail-view"
 import { TrajectoryConsole } from "./trajectory-console"
 
@@ -41,6 +42,13 @@ let replies: Record<string, Reply[]> = {}
 let listed: QuestionDto[] = []
 
 beforeEach(() => {
+  // The console retains its composer per session: forget it between tests.
+  for (const id of [SESSION_ID, "01JSESS0000000000000000002"]) {
+    updateViewState(consoleViewKey("local", "http://127.0.0.1:7676", id), {
+      draft: "",
+      failed: [],
+    })
+  }
   stubEventSource()
   requests.length = 0
   replies = {}
@@ -123,6 +131,23 @@ it("opens the turn console with the hidden parameter, and the console of today w
     route: `/sessions?session=${SESSION_ID}`,
   })
   expect(latestSource().url).toBe(`http://127.0.0.1:7676/v1/sessions/${SESSION_ID}/console/stream`)
+})
+
+it("keeps the draft and the refused prompts apart for each session", async () => {
+  const other = "01JSESS0000000000000000002"
+  const user = userEvent.setup()
+  const view = renderScreen(<TrajectoryConsole host="local" sessionId={SESSION_ID} status="idle" />)
+  act(() => {
+    latestSource().succeed()
+    latestSource().emit("snapshot", aSnapshot([aTurn()]))
+  })
+  await user.type(input(), "Only for session A")
+
+  view.rerender(<TrajectoryConsole host="local" sessionId={other} status="idle" />)
+  expect((input() as HTMLTextAreaElement).value).toBe("")
+
+  view.rerender(<TrajectoryConsole host="local" sessionId={SESSION_ID} status="idle" />)
+  expect((input() as HTMLTextAreaElement).value).toBe("Only for session A")
 })
 
 it("draws a closed turn as its prompt, one activity line and its answer", () => {
