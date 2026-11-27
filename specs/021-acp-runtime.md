@@ -667,7 +667,10 @@ it leaves nothing to delete.
       `{mode {current_id, available}, config_options, title,
       cost {amount, currency}, commands}`. Each mode, option and command is
       the ACP JSON. The state is in the store, so it survives a daemon
-      restart.
+      restart. `Store::reported_display_state` reads it as none where the
+      current launch has reported none, so a reader tells an empty report
+      from no report
+      (`store.rs::a_reported_empty_state_is_told_from_no_report`).
     - A launch writes the modes and the options that the session opened
       with, after the pins of rule 3 and the plan mode of rule 22. A mode
       change that the agent reported before that write keeps its mode. A

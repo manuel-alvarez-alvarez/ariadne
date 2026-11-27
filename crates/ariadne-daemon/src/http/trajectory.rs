@@ -201,6 +201,9 @@ impl Hub {
                 session_dto_of(&state.store, state.store.get_session(session_id).await?).await?;
             let stored = state.events.subscribe();
             let (live, so_far) = state.launcher.acp.subscribe_console(session_id).await;
+            // Read once the console is followed: a display change written
+            // after this read reaches the fold live.
+            let display = state.store.reported_display_state(session_id).await?;
             let store = state.store.clone();
             let id = session_id.to_string();
             let (read, so_far, merge) = Merge::open_on(
@@ -219,7 +222,8 @@ impl Hub {
             if merge.lagged() && tries < OPEN_TRIES {
                 continue;
             }
-            let mut fold = Fold::new(session_id, session_state(&row));
+            let mut fold = Fold::new(session_id, session_state(&row, display.as_ref()));
+            fold.set_display_reported(display.is_some());
             read.fold_into(&mut fold, so_far);
             let (frames, _) = broadcast::channel(CAPACITY);
             let hub = Arc::new(Self {
@@ -437,7 +441,9 @@ fn turns_of(limit: Option<u32>) -> usize {
 /// answers is stored, and nothing live joins it.
 async fn fold_of(state: &AppState, session_id: &str, read: Read) -> Result<Fold, StoreError> {
     let row = session_dto_of(&state.store, state.store.get_session(session_id).await?).await?;
-    let mut fold = Fold::new(session_id, session_state(&row));
+    let display = state.store.reported_display_state(session_id).await?;
+    let mut fold = Fold::new(session_id, session_state(&row, display.as_ref()));
+    fold.set_display_reported(display.is_some());
     read.fold_into(&mut fold, Vec::new());
     Ok(fold)
 }
@@ -615,7 +621,11 @@ pub(super) async fn item(
         .position(|head| head.id == item_id)
         .ok_or_else(not_found)?;
     let row = session_dto_of(&state.store, state.store.get_session(&id).await?).await?;
-    if !opens_a_step(Fold::new(&id, session_state(&row)), &heads[..=at], &item_id) {
+    if !opens_a_step(
+        Fold::new(&id, session_state(&row, None)),
+        &heads[..=at],
+        &item_id,
+    ) {
         return Err(not_found());
     }
     let call = call_events(&heads[at..], &item_id, READ_EVENTS).ok_or_else(not_found)?;
