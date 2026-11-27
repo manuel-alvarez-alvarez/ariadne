@@ -3,7 +3,13 @@
  * the goals board draw an item with.
  */
 
-import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  useIsMutating,
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
 import { api, type GoalDto, type Host, qk, unwrap } from "@/api"
@@ -368,7 +374,10 @@ function PermissionAnswers({ host, sessionId }: { host: Host; sessionId: string 
   const posting = useIsMutating({ mutationKey: answerKey }) > 0
   const answer = useMutation({
     mutationKey: answerKey,
-    mutationFn: (optionId: string) =>
+    // A sent answer stays in the mutation cache, so the permission it closed
+    // stays answered in every view even when the list refresh fails.
+    gcTime: Number.POSITIVE_INFINITY,
+    mutationFn: ({ optionId }: { optionId: string; permissionId: string }) =>
       unwrap(
         api(host).POST("/v1/sessions/{id}/console/input", {
           params: { path: { id: sessionId } },
@@ -377,8 +386,13 @@ function PermissionAnswers({ host, sessionId }: { host: Host; sessionId: string 
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.attention.lists(host) }),
   })
+  const answered = useMutationState({
+    filters: { mutationKey: answerKey, status: "success" },
+    select: (mutation) => (mutation.state.variables as { permissionId: string }).permissionId,
+  })
   const step = trajectory.data
   if (!step) return null
+  const closed = answered.includes(step.id)
   return (
     <section aria-label="Pending permission" className="flex flex-col gap-1 px-3 pb-2 text-sm">
       <p className="font-medium break-words">
@@ -405,8 +419,8 @@ function PermissionAnswers({ host, sessionId }: { host: Host; sessionId: string 
             type="button"
             size="sm"
             variant="outline"
-            disabled={posting}
-            onClick={() => answer.mutate(option.id)}
+            disabled={posting || closed}
+            onClick={() => answer.mutate({ optionId: option.id, permissionId: step.id })}
           >
             {option.name}
           </Button>

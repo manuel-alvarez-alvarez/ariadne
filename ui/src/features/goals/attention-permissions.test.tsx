@@ -195,6 +195,42 @@ it("disables the buttons of every view of the permission while one view posts", 
   })
 })
 
+it("keeps an answered permission disabled when the attention list refresh fails", async () => {
+  let answered = false
+  stubHosts({
+    local: {
+      "/v1/tasks": [task],
+      "/v1/goals": [goal],
+      "/v1/sessions": aSessionPage([session]),
+      "/v1/attention": () =>
+        answered
+          ? new Response(JSON.stringify({ error: { code: "down", message: "Unavailable" } }), {
+              status: 503,
+              headers: { "content-type": "application/json" },
+            })
+          : new Response(JSON.stringify({ items: [ITEM], complete: true }), {
+              headers: { "content-type": "application/json" },
+            }),
+      "/v1/sessions/S1/trajectory": aSnapshot([turnWith(aPermissionStep("T"))]),
+      "/v1/sessions/S1/console/input": () => {
+        answered = true
+        return new Response(null, { status: 204 })
+      },
+    },
+  })
+  const { queryClient } = board()
+
+  const block = await card()
+  fireEvent.click(within(block).getByRole("button", { name: "Allow once" }))
+
+  await waitFor(() => {
+    const lists = queryClient.getQueryCache().findAll({ queryKey: ["local", "attention", "list"] })
+    expect(lists.some((list) => list.state.fetchStatus === "idle" && list.state.error)).toBe(true)
+  })
+  for (const button of within(block).getAllByRole("button"))
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+})
+
 it("shows the permission now pending after the attention list changes", async () => {
   const first = aPermissionStep("T", { tool: { title: "Bash", subject: "first", kind: "execute" } })
   const second = aPermissionStep("T", {
