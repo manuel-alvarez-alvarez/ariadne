@@ -16,8 +16,6 @@ tests:
   - crates/ariadne-console/src/tui/blocks.rs
   - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-console/src/tui/subagents.rs
-- crates/ariadne-console/src/app/mod.rs
-- crates/ariadne-cli/src/commands/console/app.rs
   - crates/ariadne-console/src/tui/form.rs
   - crates/ariadne-cli/src/commands/transcript.rs
   - crates/ariadne-console/src/trajectory/print.rs
@@ -111,19 +109,19 @@ Its code is `crates/ariadne-console/src/app/`.
 The inline pane of rules 19 to 37 stays the default.
 
 39. On a terminal, `--full-screen` takes the alternate screen, raw mode, the mouse and bracketed paste.
-    The console gives the terminal back on each way out: a leave, an error and Ctrl-C.
+    The console gives the terminal back on each way out: a leave, an error, a panic and Ctrl-C.
     Without a terminal on both ends, `attach` prints the line protocol and ignores the flag.
 40. The console reads the trajectory stream (040) and draws the client view of the trajectory.
     A drop, a `resync`, or an update that skips a revision shows `reconnecting` and dials the stream again.
     The next snapshot replaces the view. Thus a reconnect shows no item two times.
 41. The transcript shows each turn as its prompt, one activity line and its answer.
     The activity line has the fold mark, the state mark, the counts of the turn and its duration.
-    The answer is markdown. A daemon prompt shows its first line only.
+    The answer is markdown and appears while the turn runs. A daemon prompt shows its first line only.
     A folded running turn shows its last three steps, live.
 42. An open turn shows a row for each step under its activity line.
     A row has the status mark, the kind, the subject and the duration.
     The kind of a tool call is the kind of its tool.
-    The console reads the steps of a closed turn from the steps route (040).
+    The console reads the complete steps from the steps route (040), including when an open turn finishes.
 43. The screen has two zones: the transcript and the input. The input zone has the keys at the start.
     Tab gives the keys to the transcript, with the cursor on the newest turn.
     In the transcript, Tab, Escape or a typed character gives the keys back to the input.
@@ -143,9 +141,11 @@ The inline pane of rules 19 to 37 stays the default.
 47. A resize draws the whole screen again from the view, at the new size. No line is lost.
     The screen on an ANSI terminal is the screen that the test backend draws.
 48. A pending permission and an open question show above the input.
+    The selected permission option stays visible after resize when there is room for it.
     The permission takes the keys of rule 12: Up, Down and a number pick, and Enter sends the option.
     The question is the form of rule 38. The console reads its form from `GET /v1/sessions/{id}/questions`.
 49. The input box, the prompt history, the slash commands, the queued prompts and Ctrl-C work as in the inline pane.
+    On a truncated trajectory, attach reads prompt history from the inline console snapshot when available.
     The slash commands are the commands of the session in the trajectory.
     A sent prompt shows `queued` until a new console turn holds its text.
     A refused prompt leaves the queue, and the console shows the refusal under the transcript.
@@ -189,21 +189,23 @@ Number selection and question navigation use
 24. Required multi-select custom answers contain no unchecked choices
 (`ariadne-console::tui::form::tests::required_multi_custom_answers_do_not_add_unselected_choices`).
 
-25. Rule 39: `ariadne-cli::commands::console::app::tests::the_console_takes_the_alternate_screen_and_the_mouse_and_gives_both_back`, `::the_terminal_is_given_back_when_ctrl_c_leaves_the_console_and_on_an_error`, `ariadne-cli::cli::tests::the_full_screen_flag_of_attach_is_parsed_and_hidden`, `ariadne-cli::commands::console::tui::tests::only_a_terminal_on_both_ends_gets_the_inline_console`.
+25. Rule 39: `ariadne-cli::commands::console::app::tests::the_console_takes_the_alternate_screen_and_the_mouse_and_gives_both_back`, `::the_terminal_is_given_back_when_ctrl_c_leaves_the_console_and_on_an_error`, `::the_terminal_is_given_back_when_setup_or_drive_panics`, `::terminal_restore_continues_after_a_failed_write`, `ariadne-cli::cli::tests::the_full_screen_flag_of_attach_is_parsed_and_hidden`, `ariadne-cli::commands::console::tui::tests::only_a_terminal_on_both_ends_gets_the_inline_console`.
 26. Rule 40: `ariadne-cli::commands::console::app::tests::an_update_that_skips_a_revision_dials_the_stream_again`, `ariadne-console::app::tests::a_reconnect_shows_no_item_two_times`.
-27. Rule 41: `ariadne-console::app::tests::a_turn_shows_its_prompt_one_activity_line_and_its_answer`, `::a_running_turn_shows_its_last_steps_live`.
-28. Rule 42: `ariadne-console::app::tests::an_open_turn_shows_a_row_per_step_with_its_status_kind_subject_and_duration`.
+27. Rule 41: `ariadne-console::app::tests::a_turn_shows_its_prompt_one_activity_line_and_its_answer`, `::a_running_turn_shows_its_last_steps_live`, `::a_running_turn_draws_the_whole_answer_and_live_steps`.
+28. Rule 42: `ariadne-console::app::tests::an_open_turn_shows_a_row_per_step_with_its_status_kind_subject_and_duration`, `::an_open_running_turn_reads_all_steps_after_it_finishes`.
 29. Rule 43: `ariadne-console::app::tests::tab_gives_the_keys_to_the_transcript_and_tab_escape_or_a_typed_character_gives_them_back`.
 30. Rule 44: `ariadne-console::app::tests::enter_sends_the_prompt_and_it_shows_queued_until_a_turn_holds_it`, `::up_and_down_move_through_the_rows_then_through_the_prompt_history`, `::page_up_and_page_down_scroll_the_transcript_and_the_end_follows`, `::ctrl_o_opens_and_closes_the_newest_turn`, `::escape_cancels_the_running_turn`, `::a_slash_opens_the_session_commands_and_tab_completes_the_pick`.
 31. Rule 45: `ariadne-console::app::tests::the_cursor_walks_turns_and_steps_with_the_arrows_and_j_and_k`, `::enter_and_right_open_the_item_and_left_closes_it_or_goes_to_its_turn`, `::home_and_end_go_to_the_first_and_the_newest_turn`, `::y_copies_the_item_at_the_cursor_to_the_clipboard`, `ariadne-cli::commands::console::app::tests::y_puts_the_text_on_the_clipboard_through_osc_52`.
 32. Rule 46: `ariadne-console::app::tests::the_wheel_scrolls_in_both_zones_and_a_click_opens_or_closes_an_item`, `::page_up_and_page_down_scroll_the_transcript_and_the_end_follows`.
 33. Rule 47: `ariadne-console::app::tests::a_resize_draws_the_whole_screen_again_and_loses_no_line`, `::the_screen_on_an_ansi_terminal_reads_back_as_the_test_backend_draws_it`.
-34. Rule 48: `ariadne-console::app::tests::a_pending_permission_shows_above_the_input_and_enter_sends_the_picked_option`, `::an_open_question_shows_its_form_above_the_input_and_the_keys_answer_it`, `::escape_declines_the_open_question`.
-35. Rule 49: `ariadne-console::app::tests::a_slash_opens_the_session_commands_and_tab_completes_the_pick`, `::enter_sends_the_prompt_and_it_shows_queued_until_a_turn_holds_it`, `::a_refused_prompt_is_said_under_the_transcript_and_is_no_longer_queued`, `::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`, `::up_and_down_move_through_the_rows_then_through_the_prompt_history`.
+34. Rule 48: `ariadne-console::app::tests::a_pending_permission_shows_above_the_input_and_enter_sends_the_picked_option`, `::an_open_question_shows_its_form_above_the_input_and_the_keys_answer_it`, `::escape_declines_the_open_question`, `::the_selected_permission_option_stays_visible_after_resize_and_answers`.
+35. Rule 49: `ariadne-cli::commands::console::app::tests::prompt_history_reaches_past_the_trajectory_page`, `ariadne-console::app::tests::a_slash_opens_the_session_commands_and_tab_completes_the_pick`, `::enter_sends_the_prompt_and_it_shows_queued_until_a_turn_holds_it`, `::a_refused_prompt_is_said_under_the_transcript_and_is_no_longer_queued`, `::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`, `::up_and_down_move_through_the_rows_then_through_the_prompt_history`.
 36. Rule 50: `ariadne-console::app::tests::the_farewell_prints_at_most_twenty_folded_turns_and_a_hint_to_the_log`, `::a_session_that_has_ended_leaves_after_its_snapshot`, `ariadne-cli::commands::console::app::tests::the_console_closing_says_whether_the_session_still_runs`.
 
 ## Sources
 
+- crates/ariadne-console/src/app/mod.rs
+- crates/ariadne-cli/src/commands/console/app.rs
 - crates/ariadne-daemon/src/http/console.rs
 - crates/ariadne-daemon/src/http/terminal.rs
 - crates/ariadne-daemon/src/http/sessions.rs

@@ -102,7 +102,7 @@ fn call(id: &str, turn: &str, title: &str, status: &str) -> Value {
 }
 
 fn snap(rev: u64, turns: Vec<Value>) -> Frame {
-    Frame::Snapshot(Box::new(snapshot(rev, turns)))
+    Frame::Snapshot(Box::new(snapshot(rev, turns)), None)
 }
 
 fn app_with(turns: Vec<Value>) -> App {
@@ -259,6 +259,40 @@ fn a_running_turn_shows_its_last_steps_live() {
     let screen = draw(&app, WIDTH, HEIGHT);
     assert_eq!(count(&screen, "Second"), 0, "{screen:#?}");
     assert!(screen[4].contains("Fifth"), "{screen:#?}");
+}
+
+#[test]
+fn a_running_turn_draws_the_whole_answer_and_live_steps() {
+    let mut turn = running("t1", "Build it", vec![call("c1", "t1", "Work", "running")]);
+    turn["answer"] = json!([{"type": "text", "text": "First paragraph.\n\nSecond paragraph."}]);
+    let screen = draw(&app_with(vec![turn]), WIDTH, HEIGHT);
+    assert_eq!(count(&screen, "First paragraph."), 1);
+    assert_eq!(count(&screen, "Second paragraph."), 1);
+    assert_eq!(count(&screen, "Work subject"), 1);
+}
+
+#[tokio::test]
+async fn an_open_running_turn_reads_all_steps_after_it_finishes() {
+    let latest = call("c2", "t1", "Latest", "completed");
+    let mut app = app_with(vec![running("t1", "Build it", vec![latest.clone()])]);
+    app.event(ctrl('o'));
+    let mut stub = Stub::default();
+    stub.steps.lock().unwrap().push((
+        "t1".into(),
+        vec![
+            serde_json::from_value(call("c1", "t1", "Earlier", "completed")).unwrap(),
+            serde_json::from_value(latest).unwrap(),
+        ],
+    ));
+    let closed = Frame::Update(update(
+        2,
+        json!([{
+            "op": "turn_upsert", "turn": done("t1", "Build it", "Done.")
+        }]),
+    ));
+    let screen = run(&mut app, &mut stub, vec![closed], vec![]).await;
+    assert_eq!(count(&screen, "Earlier subject"), 1);
+    assert_eq!(count(&screen, "Latest subject"), 1);
 }
 
 #[tokio::test]
@@ -662,6 +696,40 @@ async fn a_pending_permission_shows_above_the_input_and_enter_sends_the_picked_o
     assert!(rule < input, "{screen:#?}");
 }
 
+#[tokio::test]
+async fn the_selected_permission_option_stays_visible_after_resize_and_answers() {
+    let mut permission = permission();
+    permission["options"] = json!([
+        {"id": "yes", "name": "Allow"},
+        {"id": "no", "name": "Reject"},
+        {"id": "always", "name": "Always allow"},
+        {"id": "never", "name": "Always reject"}
+    ]);
+    let snapshot = snap(
+        1,
+        vec![turn("t1", "running", json!({"attention": [permission]}))],
+    );
+    let mut app = App::new("s1");
+    app.frame(snapshot.clone());
+    assert_eq!(count(&draw(&app, WIDTH, HEIGHT), "❯ 1. Allow"), 1);
+
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, 12)).unwrap();
+    let source = stream::iter([Ok(snapshot)]).chain(stream::pending());
+    let keys = stream::iter([
+        Ok(TermEvent::Resize(WIDTH, 12)),
+        Ok(key(KeyCode::Enter)),
+        Ok(ctrl('c')),
+        Ok(ctrl('c')),
+    ]);
+    let mut stub = Stub::default();
+    drive(&mut terminal, source, &mut stub, Box::pin(keys), &mut app)
+        .await
+        .unwrap();
+    let small = rows(terminal.backend().buffer());
+    assert_eq!(count(&small, "❯ 1. Allow"), 1, "{small:#?}");
+    assert_eq!(*stub.sent.lock().unwrap(), ["yes"]);
+}
+
 fn form() -> QuestionDto {
     serde_json::from_value(json!({
         "id": "q1", "session_id": "s1", "message": "Codex needs your input.",
@@ -762,7 +830,7 @@ fn a_slash_opens_the_session_commands_and_tab_completes_the_pick() {
     ]))
     .unwrap();
     let mut app = App::new("s1");
-    app.frame(Frame::Snapshot(Box::new(snapshot)));
+    app.frame(Frame::Snapshot(Box::new(snapshot), None));
 
     typed(&mut app, "/pl");
     let listed = draw(&app, WIDTH, HEIGHT);
@@ -874,7 +942,7 @@ async fn a_session_that_has_ended_leaves_after_its_snapshot() {
 
     drive(
         &mut terminal,
-        stream::iter([Ok(Frame::Snapshot(Box::new(ended)))]).chain(stream::pending()),
+        stream::iter([Ok(Frame::Snapshot(Box::new(ended), None))]).chain(stream::pending()),
         &mut Stub::default(),
         Box::pin(stream::pending()),
         &mut app,

@@ -70,12 +70,8 @@ impl App {
         let width = usize::from(area.width);
         let input = self.input.height(area.width).min(area.height);
         let footer = u16::from(area.height > input);
-        let mut attention = self.attention_lines(width);
         let most = (area.height.saturating_sub(input + footer) / 2) as usize;
-        if attention.len() > most {
-            // The end of a permission is its options: keep them.
-            attention.drain(..attention.len() - most);
-        }
+        let attention = self.attention_lines(width, most);
         let attention_rows = attention.len() as u16;
         let room = area
             .height
@@ -283,14 +279,12 @@ impl App {
             }
         }
 
-        if turn.state != TurnState::Running {
-            let answer = text(&turn.answer);
-            if !answer.trim().is_empty() {
-                for line in self.answer(&turn.id, &answer, body) {
-                    let mut spans = vec![Span::raw("  ")];
-                    spans.extend(line.spans);
-                    rows.push(Row::of(Line::from(spans).style(line.style), Some(&item)));
-                }
+        let answer = text(&turn.answer);
+        if !answer.trim().is_empty() {
+            for line in self.answer(&turn.id, &answer, body) {
+                let mut spans = vec![Span::raw("  ")];
+                spans.extend(line.spans);
+                rows.push(Row::of(Line::from(spans).style(line.style), Some(&item)));
             }
         }
         rows.push(Row::of(Line::default(), None));
@@ -350,11 +344,13 @@ impl App {
     }
 
     /// The pending permission or the open question, above the input.
-    fn attention_lines(&self, width: usize) -> Vec<Line<'static>> {
+    fn attention_lines(&self, width: usize, most: usize) -> Vec<Line<'static>> {
         if let Some(permission) = self.permission() {
-            return permission_lines(permission, self.picked.1, width);
+            return permission_lines(permission, self.picked.1, width, most);
         }
-        self.form_lines(width).unwrap_or_default()
+        let mut lines = self.form_lines(width).unwrap_or_default();
+        lines.drain(..lines.len().saturating_sub(most));
+        lines
     }
 
     /// The keys of the zone that has them, and the state of the link.
@@ -527,6 +523,7 @@ fn permission_lines(
     permission: &PermissionStepDto,
     picked: usize,
     width: usize,
+    most: usize,
 ) -> Vec<Line<'static>> {
     let width = width.max(8);
     let lead = format!("{} ", theme::RULE);
@@ -563,8 +560,12 @@ fn permission_lines(
             lines.push(Line::from(vec![Span::raw("  "), Span::styled(part, DIM)]));
         }
     }
+    let mut selected = None;
     for (at, option) in permission.options.iter().enumerate() {
         let chosen = at == picked;
+        if chosen {
+            selected = Some(lines.len());
+        }
         let (mark, style) = match chosen {
             true => (theme::OPTION_PICKED, PICKED),
             false => (theme::OPTION_IDLE, Style::new()),
@@ -583,7 +584,9 @@ fn permission_lines(
         }
     }
     lines.push(Line::styled(theme::RULE.repeat(width), FRAME));
-    lines
+    let tail = lines.len().saturating_sub(most);
+    let start = selected.map_or(tail, |row| tail.min(row));
+    lines.into_iter().skip(start).take(most).collect()
 }
 
 /// How long something took from `started` to `ended`, or until now while it

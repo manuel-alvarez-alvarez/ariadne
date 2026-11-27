@@ -314,12 +314,7 @@ impl<W: Write> Raw<W> {
 impl<W: Write> Terminals for Raw<W> {
     fn enter(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()?;
-        // Nothing holds the terminal yet: a failure here gives raw mode
-        // back itself, since no `leave` will.
-        if let Err(e) = crossterm::execute!(self.out, EnableBracketedPaste) {
-            let _ = crossterm::terminal::disable_raw_mode();
-            return Err(e.into());
-        }
+        crossterm::execute!(self.out, EnableBracketedPaste)?;
         // Only a terminal that speaks the keyboard protocol can report
         // Shift+Enter at all; Alt+Enter is the newline everywhere else.
         self.enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
@@ -350,9 +345,10 @@ impl<W: Write> Terminals for Raw<W> {
 pub(super) struct Held<T: Terminals>(T);
 
 impl<T: Terminals> Held<T> {
-    pub(super) fn take(mut terminal: T) -> Result<Self> {
-        terminal.enter()?;
-        Ok(Self(terminal))
+    pub(super) fn take(terminal: T) -> Result<Self> {
+        let mut held = Self(terminal);
+        held.0.enter()?;
+        Ok(held)
     }
 }
 

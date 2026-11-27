@@ -73,8 +73,9 @@ const FAREWELL_TURNS: usize = 20;
 #[derive(Debug, Clone)]
 pub enum Frame {
     /// The trajectory as it stands: what every stream opens with, and what
-    /// a redial brings again.
-    Snapshot(Box<TrajectorySnapshotDto>),
+    /// a redial brings again. The optional prompt history comes from the host
+    /// when its event window reaches beyond the trajectory page.
+    Snapshot(Box<TrajectorySnapshotDto>, Option<Vec<String>>),
     /// One revision of the trajectory.
     Update(TrajectoryUpdateDto),
     /// The stream dropped. The source dials it again, and the next snapshot
@@ -293,17 +294,17 @@ impl App {
     /// which is the loop's cue to leave.
     pub fn frame(&mut self, frame: Frame) -> bool {
         match frame {
-            Frame::Snapshot(snapshot) => {
+            Frame::Snapshot(snapshot, history) => {
                 let view = View::new(*snapshot);
                 self.live = true;
                 let ids: Vec<String> = view.turns().iter().map(|turn| turn.id.clone()).collect();
-                self.input.sync_history(
+                self.input.sync_history(history.unwrap_or_else(|| {
                     view.turns()
                         .iter()
                         .filter(|turn| from_console(turn))
                         .filter_map(prompt_text)
-                        .collect(),
-                );
+                        .collect()
+                }));
                 self.view = Some(view);
                 for id in ids {
                     self.saw(&id);
@@ -313,27 +314,8 @@ impl App {
                 let Some(view) = self.view.as_mut() else {
                     return false;
                 };
-                // The steps of an open turn while it runs: the view drops
-                // them when the turn closes, and the turn shows them until
-                // the host has read them whole.
-                let running: Vec<(String, Vec<StepDto>)> = view
-                    .turns()
-                    .iter()
-                    .filter(|turn| turn.state == TurnState::Running)
-                    .filter(|turn| self.open.contains(&Item::Turn(turn.id.clone())))
-                    .map(|turn| (turn.id.clone(), turn.steps.clone()))
-                    .collect();
                 match view.apply(update) {
                     Ok(touched) => {
-                        for (id, steps) in running {
-                            if view
-                                .turn(&id)
-                                .is_some_and(|turn| turn.state != TurnState::Running)
-                            {
-                                self.loaded.insert(id.clone(), steps);
-                                self.asked_steps.remove(&id);
-                            }
-                        }
                         for touched in touched {
                             if let Touched::Turn(id) = touched {
                                 self.saw(&id);

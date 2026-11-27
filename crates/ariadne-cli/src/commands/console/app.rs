@@ -25,6 +25,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::time::{Instant, sleep_until};
 
+use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto};
 use ariadne_api::trajectory::{StepDto, TrajectoryStreamQuery};
 use ariadne_client::{Client, SseStream};
@@ -116,7 +117,15 @@ async fn step(client: &Client, id: &str, mut link: Link) -> Option<(Result<Frame
                 Some(Ok(event)) => match super::frame(&event) {
                     Ok(super::Frame::Snapshot(snapshot)) => {
                         let rev = Some(snapshot.rev);
-                        return Some((Ok(Frame::Snapshot(snapshot)), Link::Open(stream, rev)));
+                        let history = if snapshot.has_older {
+                            prompt_history(client, id).await
+                        } else {
+                            None
+                        };
+                        return Some((
+                            Ok(Frame::Snapshot(snapshot, history)),
+                            Link::Open(stream, rev),
+                        ));
                     }
                     Ok(super::Frame::Update(update))
                         if rev.is_some_and(|rev| update.rev == rev + 1) =>
@@ -144,6 +153,22 @@ async fn step(client: &Client, id: &str, mut link: Link) -> Option<(Result<Frame
             Link::Ended => return None,
         };
     }
+}
+
+/// Use the inline console's event window when the trajectory omits older turns.
+async fn prompt_history(client: &Client, id: &str) -> Option<Vec<String>> {
+    let events: Vec<AgentEventDto> = client
+        .get_json(&format!("/v1/sessions/{id}/console"))
+        .await
+        .ok()?;
+    Some(
+        events
+            .into_iter()
+            .filter(|event| event.kind == "user_prompt_submit")
+            .filter(|event| event.payload["source"].as_str() == Some("console"))
+            .filter_map(|event| event.payload["text"].as_str().map(str::to_owned))
+            .collect(),
+    )
 }
 
 /// The session's routes as the console's host.
@@ -260,12 +285,7 @@ impl<W: Write> Screen<W> {
 impl<W: Write> Terminals for Screen<W> {
     fn enter(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()?;
-        // Nothing holds the terminal yet: a failure here gives it back
-        // itself, since no `leave` will.
-        if let Err(e) = self.modes() {
-            self.leave();
-            return Err(e.into());
-        }
+        self.modes()?;
         self.enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
             && crossterm::execute!(
                 self.out,
@@ -279,12 +299,9 @@ impl<W: Write> Terminals for Screen<W> {
         if self.enhanced {
             let _ = crossterm::execute!(self.out, PopKeyboardEnhancementFlags);
         }
-        let _ = crossterm::execute!(
-            self.out,
-            DisableBracketedPaste,
-            DisableMouseCapture,
-            LeaveAlternateScreen
-        );
+        let _ = crossterm::execute!(self.out, DisableBracketedPaste);
+        let _ = crossterm::execute!(self.out, DisableMouseCapture);
+        let _ = crossterm::execute!(self.out, LeaveAlternateScreen);
         let _ = crossterm::terminal::disable_raw_mode();
         let _ = crossterm::execute!(self.out, crossterm::cursor::Show);
         let _ = self.out.flush();
@@ -400,9 +417,10 @@ mod tests {
             let _held = Held::take(left.clone()).unwrap();
             let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
             let source = stream::once(async {
-                Ok(Frame::Snapshot(Box::new(
-                    serde_json::from_value(snapshot(1)).unwrap(),
-                )))
+                Ok(Frame::Snapshot(
+                    Box::new(serde_json::from_value(snapshot(1)).unwrap()),
+                    None,
+                ))
             })
             .chain(stream::pending());
             let keys = stream::iter([Ok(ctrl_c.clone()), Ok(ctrl_c)]).chain(stream::pending());
@@ -435,6 +453,117 @@ mod tests {
         .await;
         assert!(outcome.is_err());
         assert_eq!(failed.0.load(Ordering::SeqCst), 1, "an error");
+    }
+
+    #[tokio::test]
+    async fn the_terminal_is_given_back_when_setup_or_drive_panics() {
+        use futures_util::FutureExt;
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        struct PanicDuringSetup(Recorder);
+        impl Terminals for PanicDuringSetup {
+            fn enter(&mut self) -> Result<()> {
+                panic!("after changing terminal modes");
+            }
+
+            fn leave(&mut self) {
+                self.0.leave();
+            }
+        }
+
+        let setup = Recorder::default();
+        assert!(catch_unwind(|| Held::take(PanicDuringSetup(setup.clone()))).is_err());
+
+        let running = Recorder::default();
+        let outcome = AssertUnwindSafe(async {
+            let _held = Held::take(running.clone()).unwrap();
+            let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+            let source = stream::poll_fn(|_| panic!("while driving the console"));
+            drive(
+                &mut terminal,
+                source,
+                &mut Quiet,
+                Box::pin(stream::pending()),
+                &mut App::new("s1"),
+            )
+            .await
+        })
+        .catch_unwind()
+        .await;
+        assert!(outcome.is_err());
+        assert_eq!(running.0.load(Ordering::SeqCst), 1, "drive panic");
+        assert_eq!(setup.0.load(Ordering::SeqCst), 1, "setup panic");
+    }
+
+    #[test]
+    fn terminal_restore_continues_after_a_failed_write() {
+        #[derive(Default)]
+        struct FailFirstWrite(Vec<u8>, bool);
+
+        impl Write for FailFirstWrite {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if !std::mem::replace(&mut self.1, true) {
+                    return Err(std::io::Error::other("first write failed"));
+                }
+                self.0.write(bytes)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut screen = Screen::on(FailFirstWrite::default());
+        screen.leave();
+        assert!(holds(&screen.out.0, MOUSE_OFF));
+        assert!(holds(&screen.out.0, ALTERNATE_OFF));
+    }
+
+    #[tokio::test]
+    async fn prompt_history_reaches_past_the_trajectory_page() {
+        let history = (1..=51)
+            .map(|n| {
+                json!({
+                    "id": n.to_string(),
+                    "kind": "user_prompt_submit",
+                    "payload": {"source": "console", "text": format!("prompt {n}")},
+                    "summary": "", "created_at": ""
+                })
+            })
+            .collect::<Vec<_>>();
+        let router = Router::new()
+            .route(
+                "/v1/sessions/s1/trajectory/stream",
+                get(|| async {
+                    let mut first = snapshot(1);
+                    first["has_older"] = json!(true);
+                    Sse::new(stream::iter([Ok::<_, Infallible>(
+                        SseFrame::default()
+                            .event("snapshot")
+                            .data(first.to_string()),
+                    )]))
+                }),
+            )
+            .route(
+                "/v1/sessions/s1/console",
+                get(move || async { axum::Json(history) }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let mut source = Box::pin(frames(&client, "s1"));
+        let mut console = App::new("s1");
+        console.frame(source.next().await.unwrap().unwrap());
+        server.abort();
+
+        for _ in 0..51 {
+            console.key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        }
+        assert!(matches!(
+            console.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            ariadne_console::app::Action::Send(text) if text == "prompt 1"
+        ));
     }
 
     #[test]
@@ -472,7 +601,7 @@ mod tests {
     /// What a frame reads as.
     fn kind_of(frame: &Frame) -> String {
         match frame {
-            Frame::Snapshot(snapshot) => format!("snapshot {}", snapshot.rev),
+            Frame::Snapshot(snapshot, _) => format!("snapshot {}", snapshot.rev),
             Frame::Update(update) => format!("update {}", update.rev),
             Frame::Dropped => "dropped".into(),
         }
@@ -511,13 +640,15 @@ mod tests {
         let mut ended = snapshot(1);
         ended["session"]["status"] = json!("exited");
         let mut gone = App::new("s1");
-        gone.frame(Frame::Snapshot(Box::new(
-            serde_json::from_value(ended).unwrap(),
-        )));
+        gone.frame(Frame::Snapshot(
+            Box::new(serde_json::from_value(ended).unwrap()),
+            None,
+        ));
         let mut live = App::new("s1");
-        live.frame(Frame::Snapshot(Box::new(
-            serde_json::from_value(snapshot(1)).unwrap(),
-        )));
+        live.frame(Frame::Snapshot(
+            Box::new(serde_json::from_value(snapshot(1)).unwrap()),
+            None,
+        ));
 
         assert!(farewell(&live, "s1").contains("still running"));
         assert!(farewell(&gone, "s1").contains("has ended"));
