@@ -177,10 +177,14 @@ pub(crate) fn detail_of(
             merged.insert("rawInput".into(), input.clone());
         }
     }
+    // The end of the turn closes an open call, and that change counts in
+    // its `detail_rev` as the fold counts it (rule 12).
+    let mut detail_rev = call.updates;
     if !is_terminal(step.status)
         && let Some(ended) = call.ended
     {
         step.status = ended;
+        detail_rev += 1;
     }
     let acp = Value::Object(merged);
     let input = acp.get("rawInput").cloned().unwrap_or(Value::Null);
@@ -214,7 +218,7 @@ pub(crate) fn detail_of(
         title: step.title,
         kind: step.kind,
         status: step.status,
-        detail_rev: call.updates,
+        detail_rev,
         detail,
         raw: raw.then(|| RawToolDto {
             input: present(acp.get("rawInput")),
@@ -428,29 +432,28 @@ fn title_query(title: &str) -> Option<String> {
 fn numbered_text(output: &str) -> Option<(String, u64)> {
     let mut lines: Vec<&str> = output.split('\n').collect();
     let fence = |line: &str| line.len() >= 3 && line.trim_end().chars().all(|c| c == '`');
-    if lines.first().is_some_and(|line| fence(line)) {
+    // The wrapper names the format, and the format names the separator: a
+    // text in no wrapper is the file's own, numbers and all.
+    let separator = if lines.first().is_some_and(|line| fence(line)) {
         lines.remove(0);
         if lines.last().is_some_and(|line| fence(line)) {
             lines.pop();
         }
-    } else if lines.first().is_some_and(|line| {
-        line.starts_with("Read file ") || line.starts_with("<path>") || line.starts_with("<type>")
-    }) {
-        while lines.first().is_some_and(|line| {
-            line.starts_with("Read file ")
-                || line.starts_with("<path>")
-                || line.starts_with("<type>")
-                || line.starts_with("<content>")
-        }) {
-            lines.remove(0);
-        }
-    }
+        "\t"
+    } else if lines
+        .first()
+        .is_some_and(|line| line.starts_with("Read file ") && line.contains(", lines "))
+    {
+        lines.remove(0);
+        ": "
+    } else {
+        return None;
+    };
     let notice = |line: &str| {
         let line = line.trim();
         line.is_empty()
             || (line.starts_with('[') && line.ends_with(']'))
             || (line.starts_with('(') && line.ends_with(')'))
-            || line == "</content>"
     };
     while lines.last().is_some_and(|line| notice(line)) {
         lines.pop();
@@ -467,9 +470,8 @@ fn numbered_text(output: &str) -> Option<(String, u64)> {
         let number = trimmed[..digits].parse::<u64>().ok()?;
         let rest = &trimmed[digits..];
         let text = rest
-            .strip_prefix('\t')
-            .or_else(|| rest.strip_prefix(": "))
-            .or_else(|| (rest == ":").then_some(""))?;
+            .strip_prefix(separator)
+            .or_else(|| (separator == ": " && rest == ":").then_some(""))?;
         Some((number, text.to_string()))
     };
     let parts: Vec<(u64, String)> = lines
@@ -955,5 +957,24 @@ mod tests {
         assert!(!opens("0003"), "a progress row");
         assert!(!opens("0004"), "the completion");
         assert!(opens("0005"), "an update with no open call");
+    }
+
+    /// A read whose text sits in no wrapper of a known agent is the file's
+    /// own text: a line that starts with a number keeps it, and the line is
+    /// the call's location line (rule 50).
+    #[test]
+    fn an_unwrapped_read_keeps_its_text_as_it_is() {
+        let ToolDetailDto::File(file) = detail(
+            "read",
+            json!({"file_path": "notes.txt"}),
+            json!({"locations": [{"path": "notes.txt", "line": 1}],
+                   "content": [{"type": "content",
+                                "content": {"type": "text", "text": "12: keep this"}}]}),
+        ) else {
+            panic!("a read is a file");
+        };
+
+        assert_eq!(file.text.as_deref(), Some("12: keep this"));
+        assert_eq!(file.line, Some(1));
     }
 }

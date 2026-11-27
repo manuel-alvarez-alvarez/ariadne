@@ -295,7 +295,8 @@ Out:
     turn. The end of its turn leaves an open call `cancelled` for a stop
     reason `cancelled` and `interrupted` for every other end, as rule 12
     does. The route loads at most 500 of those payloads, the opener and the
-    newest, and `detail_rev` counts every update. The ACP runtime stores
+    newest. `detail_rev` counts every update, and one more where the end of
+    the turn closed the call: the `detail_rev` of the call's step. The ACP runtime stores
     each update with the whole call so far (021), so the newest holds it.
 50. `detail` is tagged by `type`, by the call's kind. A later field of the
     call replaces an earlier one, as an ACP update does:
@@ -311,9 +312,10 @@ Out:
       under a file header from the entry's path where it has none, else the
       hunks between the old and the new text with three lines of context.
     - `read` is `file`: the path, the number of the first line, the
-      language and the text. Where every line of the text carries its
-      number, the text loses the numbers and the agent's wrapper, and the
-      first number is the line, whatever offset the input asked for:
+      language and the text. Where the text sits in the wrapper of a known
+      agent and every line in it carries its number, the text loses the
+      numbers and the wrapper, and the first number is the line, whatever
+      offset the input asked for:
       - Claude Code puts each line after its number and a tab, in a fence
         of three backticks or more, and can end it with a notice such as
         `[File truncated: showing 2 of 90 lines]`.
@@ -321,9 +323,10 @@ Out:
         under a header `Read file <path>, lines <from>-<to>`, and can end
         it with a notice such as `[Output truncated. …]`. Its range can
         start before the offset asked for, when the offset is past the end.
-      A notice is no line of the file, and the text leaves it out. Any
-      other text stays as it is, and the line is the call's first location
-      line, else the input's `line` or `offset`.
+      A notice is no line of the file, and the text leaves it out. A text
+      in no such wrapper is the file's own, a number at the start of a line
+      included: it stays as it is, and the line is the call's first
+      location line, else the input's `line` or `offset`.
     - `search` is `search`: the input's `pattern`, `query` or `regex`, else
       the query of a title `Search for '<query>'` or `Search for '<query>'
       in <path>`, as Codex names a search it ran in a shell; and the output
@@ -523,8 +526,12 @@ Out:
     OpenCode read, `detail.rs::an_opencode_read_gives_the_range_it_read`; a
     Claude Code read with a notice,
     `detail.rs::a_claude_read_keeps_its_lines_before_a_truncation_notice`;
-    and an opaque raw output,
-    `detail.rs::an_opaque_raw_output_stays_out_of_a_typed_detail`.
+    an opaque raw output,
+    `detail.rs::an_opaque_raw_output_stays_out_of_a_typed_detail`; and a
+    read in no wrapper, `detail.rs::an_unwrapped_read_keeps_its_text_as_it_is`.
+57. A call that the end of its turn interrupts has the same status and
+    `detail_rev` in its step and in its detail, over HTTP (rules 12, 49):
+    `tests/it/trajectory.rs::a_call_its_turn_interrupts_has_one_revision_in_its_step_and_its_detail`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

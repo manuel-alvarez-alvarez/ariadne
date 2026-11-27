@@ -604,3 +604,55 @@ async fn a_blob_answers_the_bytes_of_its_block_and_unknown_ids_are_not_found() {
         assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
     }
 }
+
+/// A stop that ends a turn over an open call interrupts the call: its step
+/// and its detail give the same status and the same `detail_rev`
+/// (040, rules 12, 49).
+#[tokio::test]
+async fn a_call_its_turn_interrupts_has_one_revision_in_its_step_and_its_detail() {
+    let h = harness().await;
+    let session = h.lone_session("call-interrupted").await;
+    let store_event = |kind: &str, payload: Value| ariadne_store::NewAgentEvent {
+        session_id: Some(session.id.clone()),
+        task_id: None,
+        kind: kind.into(),
+        payload,
+    };
+    let prompt = h
+        .store
+        .create_event(store_event("user_prompt_submit", json!({"text": "Run"})))
+        .await
+        .unwrap();
+    let opener = h
+        .store
+        .create_event(store_event(
+            "pre_tool_use",
+            json!({"tool_name": "Bash", "tool_input": {"command": "sleep 9"},
+                   "acp": {"toolCallId": "call-1", "title": "Bash", "kind": "execute",
+                           "status": "pending", "rawInput": {"command": "sleep 9"}}}),
+        ))
+        .await
+        .unwrap();
+    h.store
+        .create_event(store_event("stop", json!({"stop_reason": "end_turn"})))
+        .await
+        .unwrap();
+    let base = format!("/v1/sessions/{}/trajectory", session.id);
+
+    let page: Value = h.get(&format!("{base}/turns/{}/steps", prompt.id)).await;
+    let detail: Value = h.get(&format!("{base}/items/{}", opener.id)).await;
+
+    let step = page["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == opener.id.as_str())
+        .unwrap_or_else(|| panic!("the call's step: {page}"));
+    assert_eq!(step["status"], "interrupted");
+    assert_eq!(detail["status"], "interrupted");
+    assert_eq!(
+        step["detail_rev"], 1,
+        "the end of the turn changed the call"
+    );
+    assert_eq!(detail["detail_rev"], step["detail_rev"]);
+}
