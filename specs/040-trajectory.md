@@ -7,11 +7,14 @@ commits: []
 tests:
   - crates/ariadne-core/src/event_facts.rs
   - crates/ariadne-store/src/events.rs
+  - crates/ariadne-store/tests/plan_facts_migration.rs
+  - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/src/trajectory/fold.rs
   - crates/ariadne-daemon/src/trajectory/read.rs
   - crates/ariadne-daemon/src/trajectory/detail.rs
   - crates/ariadne-daemon/src/http/trajectory.rs
   - crates/ariadne-daemon/tests/it/trajectory.rs
+  - crates/ariadne-daemon/tests/it/trajectory_acp.rs
   - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
   - crates/ariadne-daemon/tests/it/docs.rs
 ---
@@ -35,8 +38,8 @@ Out:
 - The events themselves and their payloads. They are the ACP runtime's (021).
 - The console routes and the two consoles that read them (008).
 - How a console draws the detail of a call.
-- The fold of event kinds that do not exist yet, such as a mode, a config
-  option or a session title. The types hold them; a later task folds them.
+- The stored kinds of the session state an agent reports, and the display
+  state the session row keeps. They are the ACP runtime's (021, rule 24).
 
 ## Behavior
 
@@ -55,7 +58,7 @@ Out:
    reads (a command's first line, a path, a line, a pattern, a URL), and
    whether it gives a preview and carries diffs, never the output itself; a message's `item_id`; a subagent announcement's id and state; a
    question's or a legacy request's id; a diagnosis's error; a stop's
-   reason; a compaction's id; a permission request's options and whether it
+   reason; a compaction's id; a plan event's ACP `plan_id`; a permission request's options and whether it
    names an Ariadne tool; and a reply's option, decider and label. Facts are
    ids, states and kinds alone: no attention step's content is copied there,
    so a permission, a question and an error show from their payloads. The
@@ -70,7 +73,10 @@ Out:
    migration 0031 from its payload, before it serves a read. So an old
    session reads as exactly as a new one.
 6. The fill runs once. A finished fill writes its row in `store_fills`, and
-   a store with that row does not fill again.
+   a store with that row does not fill again. A later fact of an older kind
+   comes with a migration that clears the facts of that kind and the row of
+   the fill, so the fill runs again on those rows alone. Migration 0032 does
+   this for `plan_update` and `plan_removed`, whose facts now name the plan.
 7. The fill is safe to stop. It reads 500 rows a batch, each batch in a
    transaction of its own, through a partial index of the rows with no
    facts. A fill that stops keeps its finished batches and goes on from the
@@ -151,7 +157,11 @@ Out:
 21. `pre_tool_use` opens a `tool_call` step. A `tool_call_update`, live or
     stored, a `post_tool_use` and a `tool_call_abandoned` change the open call
     of the same lane and tool call id. Each change adds one to `detail_rev`.
-    An update with no open call opens a step.
+    An update with no open call opens a step. A `tool_call_abandoned` ends
+    its call `cancelled` for the reason `cancelled`, and `interrupted` for
+    every other reason (rule 4). A new open shows a running call with the
+    status of its newest stored progress and the preview of the newest
+    stored update that gives one (rule 22).
 22. A call keeps the fields that an update does not send again. A cold
     read gives a call of any count of updates the step a warm fold gives
     it: it takes the title, kind, locations, subject and status of each
@@ -181,8 +191,25 @@ Out:
     payloads of the newest 20 and their diagnoses.
 26. `session_start`, `session_end`, `session.switched` and
     `session.pin_fallback` are `note` steps. A pin fallback is a warning.
+    A note is in the lane of its event, so a subagent's notice is a step of
+    that subagent's lane and the main lane does not count it (rule 31).
+    A `notice` (021, rule 24) is a `note` step with the origin `notice`. Its
+    text is the title, then ` · ` and the description where it has one. A
+    `warning` or an `error` notice is a warning, and every other severity
+    is info: a note has no stronger severity.
 27. `compaction_update` opens a `compaction` step by `compaction_id`, and a
-    later one changes it.
+    later one changes it: its status, its summary and its error. A stored
+    update holds the whole summary so far, so its summary replaces the
+    step's, an empty one included. The later one is the step's newest
+    change, so a read loads it beside the opener. A compaction holds one
+    step in its lane, found by the step its lane opened for it: another lane
+    may run a compaction of the same ACP id.
+    - A compaction belongs to the turn of its first event. An update after a
+      later prompt changes that step, and the later turn counts no step for
+      it. A read seeds the first event of each compaction from the heads, so
+      an update whose first event the read does not hold opens no step.
+    - The steps route loads the newest update of each compaction its page
+      shows, up to the read's bound, also past the turn.
 28. A content block with bytes carries a `blob` URL under
     `/v1/sessions/{id}/trajectory/blobs/`, and never the bytes. Adjacent text
     blocks read as one: a stored whole keeps a block per chunk (021, rule 6),
@@ -196,18 +223,53 @@ Out:
     first event of the session that names it. `subagent_update` changes its
     title, task, state and `can_cancel`. The snapshot lists every subagent in
     `subagents`.
+    - A read seeds each subagent by the first event of the session that
+      names it (`Store::first_subagent_events`), before it folds any head. An
+      event of the subagent in a later turn then finds it, and opens no
+      step in that turn: the turn's count, its page and its activity hold no
+      phantom subagent step, also where the first event is past the budget.
+    - The step opens where that first event folds. A subagent whose first
+      event no fold of the read holds has no step, and the snapshot does
+      not list it.
 31. An event that names a subagent is in that subagent's lane. A subagent's
     `activity` counts its lane.
-32. `plan` replaces the plan of its lane. `plan_id` is the id of the first
-    `plan` event of the lane.
+32. A plan is the plan of a lane and an ACP `plan_id`. Its `plan_id` on the
+    wire is the id of its first stored event, so every fold of the session
+    names it the same.
+    - A plan is named by its first event, a `plan_removed` included: a
+      removal that comes before the plan's first update names the plan. A
+      read names each plan by its first event from the heads, whatever
+      payloads its budget loads. A later update of a plan the read did not
+      load keeps that id.
+    - A `plan_update` replaces the plan of its lane and `plan_id`: an
+      `items` plan with its entries, and a `markdown` plan with its content
+      and its path. A plan of another type folds as an `items` plan with
+      the entries it has.
+    - A `plan` of the old kind carries no `plan_id`. It replaces the one
+      old-form plan of its lane.
+    - A `plan_removed` marks the plan of its lane and `plan_id` removed. A
+      later `plan_update` of that `plan_id` opens it again.
+    - Each change is a `plan_upsert` with the whole plan, and the turn that
+      made it.
 
 ### Session
 
 33. `session` starts from the row: status, attention, usage and context. A
     `session_updated` domain event of the session is a `session_patch`.
-    `running_turn_id` names the running turn. The agent's own
-    `available_commands_update` sets `commands`; a cold read loads the
-    newest one of the session.
+    `running_turn_id` names the running turn.
+    - `mode`, `config_options`, `title`, `cost` and `commands` start from the
+      display state that the current launch reported (021, rule 24). A hub
+      reads it after it follows the console, so a change after that read
+      reaches it live.
+    - A live `display_state_update` sets each field it carries, and a
+      change is a `session_patch`.
+    - A config option lists the values of every group of a grouped select.
+      A value that is not text, such as a boolean, reads as its JSON.
+    - The agent's own `available_commands_update` sets `commands`. A stored
+      one, from a daemon before the display state, sets them only where the
+      current launch reported no display state. A reported state is the
+      agent's word, an empty list of commands included. A cold read loads
+      the newest stored one of the session.
 
 ### The fold
 
@@ -241,7 +303,8 @@ Out:
       newest change, newest step first;
     - the attention of the older turns that a read holds outside the shown
       ones (rule 39), one step at a time;
-    - the first and the newest plan of each lane;
+    - the first event of each plan, its newest update and its newest
+      event, which can be a `plan_removed` (rule 32);
     - the first event and the newest update of each subagent.
 39. A read also holds the older turns with attention, outside the turns it
     shows, so that a later answer or diagnosis finds its step: every turn
@@ -431,8 +494,9 @@ Out:
     (rules 17, 38): `read.rs::an_oversized_closed_turn_keeps_its_answer_and_exact_activity`.
 21. A running turn's window is its last steps, whatever events follow them
     (rule 38): `read.rs::a_running_turns_window_is_its_last_steps_whatever_follows_them`.
-22. A turn of thousands of events loads the budget at most (rule 36):
-    `read.rs::a_turn_of_thousands_of_events_loads_the_budget_at_most`.
+22. A turn of many more events than the budget loads the budget at most
+    (rule 36):
+    `read.rs::a_turn_of_many_more_events_than_the_budget_loads_the_budget_at_most`.
 23. Attention outside the window keeps its turn, and a later answer finds
     it (rules 16, 35, 39): `read.rs::attention_outside_the_window_keeps_its_turn`.
 24. A subagent opened before the window keeps its step and parent
@@ -545,6 +609,66 @@ Out:
 57. A call that the end of its turn interrupts has the same status and
     `detail_rev` in its step and in its detail, over HTTP (rules 12, 49):
     `tests/it/trajectory.rs::a_call_its_turn_interrupts_has_one_revision_in_its_step_and_its_detail`.
+58. A plan event names its plan in its facts, and the upgrade fills the
+    facts of the plan events stored before it (rules 3, 6):
+    `event_facts.rs::a_plan_update_and_a_removed_plan_name_their_plan` and
+    `plan_facts_migration.rs::the_upgrade_fills_the_plan_facts_of_older_plan_events`.
+59. The updates of one `plan_id` change one plan in place, an old-form
+    `plan` is one fixed plan, a `plan_removed` marks its plan, and a fold
+    built again names each plan the same (rules 32, 38):
+    `trajectory_acp.rs::the_updates_of_a_plan_change_it_in_place_and_a_removed_plan_is_marked`.
+60. A notice is a `note` with its severity, a compaction is one step with
+    its status and summary, and a fold built again gives each the same id
+    (rules 26, 27):
+    `trajectory_acp.rs::a_notice_is_a_note_and_a_compaction_is_one_step_with_its_status_and_summary`.
+61. A message with an image gives an `image` block with a blob URL and no
+    bytes (rule 28):
+    `trajectory_acp.rs::a_message_with_an_image_gives_an_image_block_with_a_blob_url`.
+62. A new open shows a running call's newest stored progress, and a
+    compaction's newest update (rules 21, 22, 27):
+    `trajectory_acp.rs::a_new_open_shows_the_newest_stored_progress_of_a_running_call`.
+63. A `tool_call_abandoned` ends its call `interrupted` or `cancelled`
+    (rule 21): `trajectory_acp.rs::an_abandoned_call_ends_interrupted_with_its_turn`
+    and `::an_abandoned_call_ends_cancelled_with_a_cancelled_turn`.
+64. The session state holds the mode, the config options, the title, the
+    cost and the commands, and a change is a `session_patch` (rule 33):
+    `trajectory_acp.rs::the_session_state_holds_what_the_agent_reports_and_changes_by_patch`
+    and `fold.rs::a_display_change_is_a_session_patch_and_a_stored_list_yields_to_it`.
+65. The header of a closed turn is exact from its heads, with notices, a
+    compaction, a plan and an abandoned call in it (rules 17, 34, 38):
+    `trajectory_acp.rs::the_header_of_a_closed_turn_stays_exact`. A turn of
+    many more events than the budget takes the same path:
+    `read.rs::a_turn_of_many_more_events_than_the_budget_loads_the_budget_at_most`.
+66. A plan of each kind folds by its lane and `plan_id`
+    (rule 32): `fold.rs::a_plan_keeps_the_id_of_its_first_event`.
+67. A plan past the read budget keeps its first id for a later update
+    (rules 32, 36):
+    `read.rs::a_plan_past_the_budget_keeps_its_first_id_for_a_later_update`.
+68. A compaction takes each whole summary, an empty one included, and
+    changes the step of its own lane alone (rule 27):
+    `fold.rs::a_compaction_takes_each_whole_summary_and_keeps_to_its_lane`.
+69. A subagent's notice is a note of its lane (rules 26, 31):
+    `fold.rs::a_subagents_notice_is_a_note_of_its_lane`.
+70. A compaction across a prompt changes the step of the turn it began in,
+    and the later turn counts no step for it, in a warm fold and a rebuilt
+    one, the steps route included (rules 17, 27):
+    `fold.rs::a_compaction_across_a_prompt_changes_its_first_step` and
+    `read.rs::a_rebuilt_fold_names_plans_and_compactions_by_their_first_event`.
+    A child's compaction across a prompt does the same in the child's lane:
+    `read.rs::a_child_known_from_an_earlier_turn_opens_no_step_in_a_later_one`.
+71. A removal before a plan's first update names the plan, in a warm fold
+    and a rebuilt one (rule 32):
+    `fold.rs::a_removal_before_a_plans_first_update_names_the_plan` and
+    `read.rs::a_rebuilt_fold_names_plans_and_compactions_by_their_first_event`.
+72. A reported empty command list stands against a stored one, and a store
+    tells a reported empty state from no report (rule 33):
+    `fold.rs::a_reported_empty_command_list_stands_against_a_stored_one` and
+    `crates/ariadne-store/tests/store.rs::a_reported_empty_state_is_told_from_no_report`.
+73. A child known from an earlier turn opens no step in a later one: the
+    later turn's page holds its own steps, and every read counts each turn
+    as a warm fold does, with the earlier turn shown, left out, or past the
+    budget (rules 27, 30, 34, 44):
+    `read.rs::a_child_known_from_an_earlier_turn_opens_no_step_in_a_later_one`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and
