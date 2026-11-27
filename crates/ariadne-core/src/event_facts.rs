@@ -77,7 +77,7 @@ pub struct EventFacts {
 
 /// How much of an error's message its facts keep: a step shows that much,
 /// and the whole message is the item detail, which a later route serves.
-pub const MESSAGE_CHARS: usize = 2000;
+const MESSAGE_CHARS: usize = 2000;
 
 /// The kinds that stay in the session's own lane whoever they name: the
 /// session answers a permission and a question, and announces a subagent.
