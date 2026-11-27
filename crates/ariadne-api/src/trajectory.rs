@@ -173,6 +173,13 @@ pub struct TurnDto {
     /// waiting steps past the read's limit, and the errors past 20. The
     /// steps route of the turn returns each of them.
     pub attention_more: u64,
+    /// The warning notes and the compactions of the turn, newest first, up
+    /// to 20, whatever the state of the turn. A compaction shows the status
+    /// and the summary of its newest update.
+    pub notices: Vec<StepDto>,
+    /// How many warning notes and compactions of the turn `notices` does
+    /// not hold. The steps route of the turn returns each of them.
+    pub notices_more: u64,
     /// The last message of the session's own agent in the turn.
     pub answer: Vec<ContentBlockDto>,
 }

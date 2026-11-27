@@ -21,6 +21,7 @@ import {
   addStepPage,
   applySnapshot,
   applyUpdate,
+  childSteps,
   contentText,
   dequeuePrompt,
   emptyTrajectory,
@@ -197,6 +198,33 @@ it("keeps the steps of a subagent out of its parent's live steps", () => {
   const parent = state.turns[0]
   expect(parent?.steps).toEqual([])
   expect(parent && foldSteps(parent, undefined).steps).toEqual([])
+})
+
+it("keeps the live version of each step of a subagent's lane, and a snapshot drops them", () => {
+  const turn = aTurn({ state: "running", ended_at: null })
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([turn]))
+  const child = aToolStep(turn.id, { lane: "01CHILD", status: "running", detail_rev: 1 })
+  const other = aToolStep(turn.id, { lane: "01OTHER" })
+
+  state = applyUpdate(
+    state,
+    anUpdate(2, [
+      { op: "item_upsert", step: child },
+      { op: "item_upsert", step: other },
+      { op: "item_upsert", step: { ...child, detail_rev: 2 } },
+    ]),
+  )
+  expect(childSteps(state.children, turn.id, "01CHILD")).toEqual([{ ...child, detail_rev: 2 }])
+
+  state = applyUpdate(
+    state,
+    anUpdate(3, [{ op: "item_remove", turn_id: turn.id, item_id: child.id }]),
+  )
+  expect(childSteps(state.children, turn.id, "01CHILD")).toEqual([])
+  expect(childSteps(state.children, turn.id, "01OTHER")).toEqual([other])
+
+  state = applySnapshot(state, aSnapshot([turn], { rev: 4 }))
+  expect(state.children).toEqual({})
 })
 
 it("takes one queued prompt per echo, whatever revision follows", () => {

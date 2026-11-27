@@ -286,26 +286,12 @@ fn diff_files(acp: &Value) -> Vec<DiffFileDto> {
             let path = string_at(entry, "/path");
             let old_text = string_at(entry, "/oldText");
             let new_text = string_at(entry, "/newText");
-            let unified = match string_at(entry, "/patch/text") {
-                Some(patch) => {
-                    let headed = patch
-                        .lines()
-                        .take_while(|line| !line.starts_with("@@"))
-                        .any(|line| line.starts_with("--- ") || line.starts_with("+++ "));
-                    match &path {
-                        Some(path) if !headed => format!("--- {path}\n+++ {path}\n{patch}"),
-                        _ => patch,
-                    }
-                }
-                None => {
-                    let path = path.as_deref()?;
-                    unified(
-                        path,
-                        old_text.as_deref().unwrap_or_default(),
-                        new_text.as_deref().unwrap_or_default(),
-                    )
-                }
-            };
+            let unified = unified_entry(
+                entry,
+                path.as_deref(),
+                old_text.as_deref().unwrap_or_default(),
+                new_text.as_deref().unwrap_or_default(),
+            )?;
             let path = path.or_else(|| patch_path(&unified)).unwrap_or_default();
             Some(DiffFileDto {
                 language: language_of(&path),
@@ -316,6 +302,30 @@ fn diff_files(acp: &Value) -> Vec<DiffFileDto> {
             })
         })
         .collect()
+}
+
+/// The first diff of a call, whole for the handoff to fold to its line limit.
+pub(crate) fn diff_text_of(acp: &Value) -> Option<String> {
+    let entry = entries(acp).find(|entry| string_at(entry, "/type").as_deref() == Some("diff"))?;
+    let path = string_at(entry, "/path");
+    let old = string_at(entry, "/oldText").unwrap_or_default();
+    let new = string_at(entry, "/newText").unwrap_or_default();
+    let text = unified_entry(entry, path.as_deref(), &old, &new)?;
+    (!text.is_empty() || entry.pointer("/patch/text").is_some_and(Value::is_string)).then_some(text)
+}
+
+fn unified_entry(entry: &Value, path: Option<&str>, old: &str, new: &str) -> Option<String> {
+    if let Some(patch) = string_at(entry, "/patch/text") {
+        let headed = patch
+            .lines()
+            .take_while(|line| !line.starts_with("@@"))
+            .any(|line| line.starts_with("--- ") || line.starts_with("+++ "));
+        return Some(match path {
+            Some(path) if !headed => format!("--- {path}\n+++ {path}\n{patch}"),
+            _ => patch,
+        });
+    }
+    Some(unified(path?, old, new))
 }
 
 /// The hunks between two texts of one file, with three lines of context,
