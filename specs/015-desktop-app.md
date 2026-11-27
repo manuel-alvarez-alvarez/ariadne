@@ -1014,7 +1014,8 @@ Out: the daemon endpoints themselves (012).
     adjacent, in a named group (`<goal>: Tasks`), so their segments join into
     one rail. A gap separates one group from the next. A task with no goal is
     a group of one row, with its own segment.
-    The board never scrolls sideways. It is a CSS container, so its own width
+    From 33.9rem wide up, the board never scrolls sideways. Below 33.9rem it
+    scrolls sideways and cuts no column. It is a CSS container, so its own width
     decides the columns, and a pinned inspector narrows it like a narrow
     window. Below 60rem the step names hide, below 54rem the last activity,
     below 48rem the host, and below 42rem the PR link. A hidden column takes
@@ -2690,7 +2691,8 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
 - The token figures share one column sized to the largest figure, the
   goal's total directly above its rows', and no cell cuts a figure
   (`ui/src/features/goals/goal-board.test.tsx::puts the token figures in one column, the goal's total over its rows', never cut`).
-- The board never scrolls sideways and hides whole columns by its own
+- From 33.9rem wide up, the board never scrolls sideways; below that it
+  scrolls sideways and cuts no column. It hides whole columns by its own
   container width: step names, then last activity, host and PR link, all
   four at a pinned inspector's width; the title, state, step dots and tokens
   stay, and the title ends in an ellipsis
@@ -2976,6 +2978,10 @@ through `detail-panels.test.tsx`, `pane-focus.test.tsx` and
 account of the sessions screen in particular rests on reading
 `sessions-page.tsx` rather than on a test asserting it, apart from the host
 behaviour of rule 61.
+
+The tests run in jsdom and measure no layout. No test proves that the board's
+columns fit at 33.9rem, the floor of rule 39. The test of rule 39 reads the
+classes that set the floor and the hide widths, not the drawn widths.
 
 ## Sources
 

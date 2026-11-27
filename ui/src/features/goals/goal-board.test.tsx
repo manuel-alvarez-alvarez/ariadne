@@ -264,9 +264,13 @@ it("hides whole columns by the board's own width: step names, then activity, hos
 
   const row = (await screen.findByText("Narrow")).closest("[data-task-row]") as HTMLElement
   const section = screen.getByRole("region", { name: "Goals board" })
-  // The board is the container the widths are read from, and it never scrolls sideways.
+  // The board is the container the widths are read from, and it scrolls sideways only below its 33.9rem floor.
   expect(section.className).toContain("@container/board")
-  expect(section.className).toContain("overflow-x-hidden")
+  expect(section.className).toContain("overflow-x-auto")
+  expect(section.className).not.toContain("overflow-x-hidden")
+  // The rows hold the floor, so a board narrower than it scrolls and cuts no column.
+  const list = section.children[1] as HTMLElement
+  expect(list.className).toContain("min-w-[33.9rem]")
   const below = (column: string) => {
     const cell = row.querySelector(`[data-column=${column}]`) as HTMLElement
     const at = cell.className.match(

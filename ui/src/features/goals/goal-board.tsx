@@ -10,7 +10,8 @@
  *
  * The board is one grid and every line a subgrid of it (see `task-row.tsx`),
  * so the goal's token total sits in the token column over its rows' figures.
- * The board never scrolls sideways: a narrow board hides whole columns.
+ * From the 33.9rem floor up the board never scrolls sideways: a narrow board hides
+ * whole columns. Below the floor it scrolls sideways and cuts none.
  */
 
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
@@ -90,7 +91,7 @@ const BOARD_BOX = "h-full rounded-lg border contain-paint"
 const BOARD_FRAME = "relative min-h-0 flex-1"
 
 /** The list: the board's columns, a gap between groups, none inside one. */
-const BOARD_LIST = cn(BOARD_COLUMNS, "gap-y-2 px-3 pb-3")
+const BOARD_LIST = cn(BOARD_COLUMNS, "min-w-[33.9rem] gap-y-2 px-3 pb-3")
 
 type BoardTask = HostRow<TaskDto & { executionHost: string }>
 
@@ -227,7 +228,7 @@ export function GoalBoard({
           className={cn(
             BOARD_BOX,
             BOARD_CONTAINER,
-            "overflow-x-hidden overflow-y-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+            "overflow-x-auto overflow-y-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
           )}
         >
           <div className="sticky top-0 z-30 bg-background px-5 py-2">

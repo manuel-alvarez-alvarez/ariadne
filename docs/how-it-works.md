@@ -125,9 +125,10 @@ status. A task with no goal is a row of its own.
 - The goal line's chevron folds the goal. A folded goal shows its summary on
   the goal line.
 - A goal with no task to show adds one muted line that says why.
-- The board never scrolls sideways. A narrow board hides whole columns: step
-  names first, then last activity, host and the pull request. A pinned task
-  panel narrows the board the same way as a narrow window.
+- From 33.9rem wide up, the board never scrolls sideways. A narrow board
+  hides whole columns: step names first, then last activity, host and the
+  pull request. A pinned task panel narrows the board the same way as a
+  narrow window. Below 33.9rem the board scrolls sideways and cuts no column.
 
 Goals and tasks that need you come first, then the work that runs, then the
 finished work. The **New** menu in the header creates a goal or a task with
