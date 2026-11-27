@@ -273,6 +273,9 @@ pub struct App {
     /// The first entry line of the checklist on the screen. The wheel over
     /// the plan moves it, and the draw keeps it in range.
     plan_scroll: Cell<usize>,
+    /// How many entry lines the open checklist showed at the last draw: the
+    /// most one notch of the wheel moves it, so no entry is skipped.
+    plan_shown: Cell<usize>,
     /// The model the session was launched with, as the host read it: what
     /// the status row names where the agent reports no model option.
     model: Option<String>,
@@ -339,6 +342,7 @@ impl App {
             whole: HashSet::new(),
             plan_open: false,
             plan_scroll: Cell::new(0),
+            plan_shown: Cell::new(WHEEL),
             model: None,
             scroll: Cell::new(None),
             reveal: Cell::new(false),
@@ -712,6 +716,14 @@ impl App {
             let item = Item::Turn(turn.id.clone());
             let open = self.open.contains(&item);
             items.push(item);
+            // A turn's notices are rows of their own, open or folded, oldest
+            // first, as the transcript draws them.
+            for notice in turn.notices.iter().rev() {
+                items.push(Item::Step {
+                    turn: turn.id.clone(),
+                    step: step_id(notice).to_string(),
+                });
+            }
             if open {
                 for (_, step) in self.shown_steps(turn).unwrap_or_default() {
                     items.push(Item::Step {
@@ -733,7 +745,10 @@ impl App {
             .iter()
             .filter(|((held, _), _)| *held == turn.id)
             .flat_map(|(_, steps)| steps.iter());
-        own.chain(turn.steps.iter())
+        turn.notices
+            .iter()
+            .chain(own)
+            .chain(turn.steps.iter())
             .chain(lanes)
             .find(|held| step_id(held) == step)
     }
@@ -1113,9 +1128,10 @@ impl App {
             // anywhere else the transcript.
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if self.over_plan(mouse.row) => {
                 let at = self.plan_scroll.get();
+                let notch = WHEEL.min(self.plan_shown.get()).max(1);
                 self.plan_scroll.set(match mouse.kind {
-                    MouseEventKind::ScrollUp => at.saturating_sub(WHEEL),
-                    _ => at + WHEEL,
+                    MouseEventKind::ScrollUp => at.saturating_sub(notch),
+                    _ => at + notch,
                 });
             }
             MouseEventKind::ScrollUp => self.scroll_by(WHEEL, false),

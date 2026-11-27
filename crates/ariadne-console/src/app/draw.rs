@@ -84,7 +84,7 @@ impl App {
                     false => 1,
                 };
                 let room = usize::from(area.height.saturating_sub(below + attention_rows + 1));
-                let (lines, scroll) = status::plan_lines(
+                let (lines, scroll, shown) = status::plan_lines(
                     plan,
                     self.plan_open,
                     self.plan_scroll.get(),
@@ -92,6 +92,7 @@ impl App {
                     most.min(room),
                 );
                 self.plan_scroll.set(scroll);
+                self.plan_shown.set(shown);
                 lines
             }
             None => Vec::new(),
@@ -292,10 +293,19 @@ impl App {
         // open or not, read from the turn and not from its steps: an open
         // turn whose steps cannot be read shows them too.
         for step in turn.notices.iter().rev() {
-            rows.push(Row::of(
+            let notice = Item::Step {
+                turn: turn.id.clone(),
+                step: crate::trajectory::step_id(step).to_string(),
+            };
+            rows.push(Row::head(
                 self.step_row(turn, step, 0, width, false),
-                Some(&item),
+                &notice,
             ));
+            if self.open.contains(&notice) {
+                for line in self.open_step(step, &notice, 0, width) {
+                    rows.push(Row::of(line, Some(&notice)));
+                }
+            }
         }
         if turn.notices_more > 0 {
             let more = match turn.notices_more {
@@ -767,7 +777,10 @@ fn step_body(step: &StepDto, width: usize) -> Vec<Line<'static>> {
             .collect(),
         _ => {
             let printed = crate::trajectory::Printer::new(chrono::Utc).step(step);
-            let mut said = vec![subject(step)];
+            // The printer writes the first line of the step after its kind,
+            // and the rest of its text under it.
+            let subject = subject(step);
+            let mut said = vec![subject.lines().next().unwrap_or_default().to_string()];
             said.extend(
                 printed
                     .lines()

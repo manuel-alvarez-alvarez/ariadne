@@ -135,10 +135,11 @@ first line after `» daemon`. The answer is markdown, and it streams while the
 turn runs. A turn that runs and is closed shows its last three steps, live.
 
 A warning note and a compaction always show under the activity line of
-their turn, also while the turn is closed. Where a turn has more of them
-than it carries, one row gives the count: `2 more notices · open the turn
-to read them`. Errors show under a closed turn too. An info note shows only
-when you open the turn.
+their turn, also while the turn is closed. Each one is a row the cursor can
+reach: open it to read its whole text. Where a turn has more of them than it
+carries, one row gives the count: `2 more notices in the steps of the turn`.
+Open the turn to read them as its steps. Errors show under a closed turn
+too. An info note shows only when you open the turn.
 
 An image, an audio block, a resource and a resource link show as one line
 with their type and their name, such as `[image] shot.png` or
@@ -200,7 +201,11 @@ shows above the input with the name of the subagent:
 While the agent has a plan with an entry that is not done, one line shows
 above the input: `▸ plan 2/5 · <the entry in progress>`. Press Ctrl-T, or
 click the line, to open the checklist: `☐` pending, `◐` in progress, `☑`
-done. Press Ctrl-T again to close it.
+done. Press Ctrl-T again to close it. A checklist that does not fit shows a
+part of its entries, and a last row such as `0 above · 23 below · the wheel
+scrolls the plan`. Turn the wheel over the checklist to see the other
+entries. One notch moves no more lines than the checklist shows, so no
+entry is skipped.
 
 ### The status row
 
@@ -227,7 +232,8 @@ the item at the cursor is reversed. The footer names the keys of the zone.
 | `y` | Copies the item at the cursor as `ariadne session logs` prints it, to the clipboard of the terminal (OSC 52) |
 | Home, End | Moves the cursor to the first or the newest turn |
 
-The wheel scrolls the transcript three lines, in both zones. A click on a
+The wheel scrolls the transcript three lines, in both zones. Over an open
+checklist of the plan, it scrolls the checklist instead. A click on a
 turn or a step opens or closes it, and moves the cursor there. A transcript
 scrolled to its end follows the new lines. A resize draws the whole screen
 again at the new size, and loses no line.

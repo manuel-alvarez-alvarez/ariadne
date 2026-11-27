@@ -1907,3 +1907,140 @@ fn a_permission_draws_its_call_undimmed_and_names_the_subagent_that_asks() {
     );
     assert_eq!(style.fg, Some(ratatui::style::Color::Yellow));
 }
+
+#[test]
+fn a_notice_is_an_item_the_cursor_reaches_and_it_opens_in_place_to_its_whole_text() {
+    let mut closed = done("t1", "Work", "Done.");
+    closed["notices"] = json!([step(
+        "note",
+        "n1",
+        "t1",
+        json!({"severity": "warning", "text": "disk almost full\nfree 2 GB now"})
+    )]);
+    let mut app = app_with(vec![closed]);
+    app.event(key(KeyCode::Tab));
+    app.event(key(KeyCode::Down));
+    let notice = Item::Step {
+        turn: "t1".into(),
+        step: "n1".into(),
+    };
+    assert_eq!(app.cursor, Some(notice.clone()));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(count(&screen, "free 2 GB now"), 0, "{screen:#?}");
+
+    app.event(key(KeyCode::Enter));
+    assert!(app.open.contains(&notice));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(
+        screen[2], "    ! note       disk almost full",
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "      free 2 GB now"),
+        "{screen:#?}"
+    );
+
+    // The notice stays one row when its turn opens too.
+    app.event(ctrl('o'));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(count(&screen, "! note"), 1, "{screen:#?}");
+    assert_eq!(count(&screen, "free 2 GB now"), 1, "{screen:#?}");
+}
+
+#[test]
+fn the_wheel_reaches_every_entry_of_a_plan_on_a_short_terminal() {
+    const SHORT: u16 = 13;
+    let entries: Vec<Value> = (1..=30)
+        .map(|n| json!({"content": format!("Entry {n}"), "status": "pending", "priority": null}))
+        .collect();
+    let mut app = App::new("s1");
+    app.frame(planned(Value::Array(entries)));
+    app.event(ctrl('t'));
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..40 {
+        let screen = draw(&app, WIDTH, SHORT);
+        for row in &screen {
+            if let Some(n) = row.strip_prefix("  ☐ Entry ") {
+                seen.insert(n.parse::<usize>().unwrap());
+            }
+        }
+        let row = screen
+            .iter()
+            .position(|row| row.starts_with("  ☐ Entry "))
+            .unwrap() as u16;
+        app.event(TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 4,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+    assert_eq!(seen, (1..=30).collect(), "every entry shows at some notch");
+}
+
+/// A host with only the methods every host must have, as the daemon's
+/// terminal host is: it reads no detail and no subagent steps.
+struct Bare(Vec<StepDto>);
+
+impl Host for Bare {
+    async fn send(&mut self, _: String) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn answer(&mut self, _: &str, _: AnswerQuestionRequest) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn cancel(&mut self) {}
+
+    async fn steps(&mut self, _: &str) -> Result<Vec<StepDto>, String> {
+        Ok(self.0.clone())
+    }
+
+    async fn questions(&mut self) -> Result<Vec<QuestionDto>, String> {
+        Ok(Vec::new())
+    }
+
+    fn copy(&mut self, _: String) {}
+}
+
+#[tokio::test]
+async fn a_host_that_reads_no_detail_shows_the_step_text_and_the_reason() {
+    let steps = vec![serde_json::from_value(call("c1", "t1", "Bash", "completed")).unwrap()];
+    let mut app = App::new("s1");
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).unwrap();
+    let frames = vec![snap(1, vec![done("t1", "Fix it", "Fixed.")])];
+    let source = stream::iter(frames.into_iter().map(Ok)).chain(stream::pending());
+    let keys = [
+        ctrl('o'),
+        key(KeyCode::Tab),
+        key(KeyCode::Down),
+        key(KeyCode::Enter),
+        ctrl('c'),
+        ctrl('c'),
+    ];
+    let events = stream::iter(keys.into_iter().map(Ok)).chain(stream::pending());
+    drive(
+        &mut terminal,
+        source,
+        &mut Bare(steps),
+        Box::pin(events),
+        &mut app,
+    )
+    .await
+    .unwrap();
+    let screen = rows(terminal.backend().buffer());
+
+    assert!(
+        screen.iter().any(|row| row == "      Bash · Bash subject"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "      this console reads no step detail"),
+        "{screen:#?}"
+    );
+    // No stored model and no model option: the status row has none.
+    assert_eq!(status_row(&screen), " running");
+}

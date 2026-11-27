@@ -15,16 +15,16 @@ use super::draw::{FOLDED, UNFOLDED};
 /// the checklist under it while it is open, no more than `most` rows. A
 /// checklist taller than its room shows the entry lines from `scroll` on,
 /// and a last row that counts the lines above and below. The answer holds
-/// `scroll` kept in range.
+/// `scroll` kept in range, and how many entry lines show.
 pub(super) fn plan_lines(
     plan: &PlanDto,
     open: bool,
     scroll: usize,
     width: usize,
     most: usize,
-) -> (Vec<Line<'static>>, usize) {
+) -> (Vec<Line<'static>>, usize, usize) {
     if most == 0 {
-        return (Vec::new(), 0);
+        return (Vec::new(), 0, 0);
     }
     let done = plan
         .entries
@@ -54,7 +54,7 @@ pub(super) fn plan_lines(
         Span::raw(wrap::clip(current.lines().next().unwrap_or_default(), room)),
     ])];
     if !open {
-        return (lines, 0);
+        return (lines, 0, 0);
     }
     let mut entries = Vec::new();
     for entry in &plan.entries {
@@ -77,8 +77,9 @@ pub(super) fn plan_lines(
         }
     }
     if entries.len() < most {
+        let shown = entries.len();
         lines.extend(entries);
-        return (lines, 0);
+        return (lines, 0, shown);
     }
     // The head and the count take two rows; the entries get the rest, and
     // at least one.
@@ -95,7 +96,7 @@ pub(super) fn plan_lines(
             DIM,
         ));
     }
-    (lines, scroll)
+    (lines, scroll, shown)
 }
 
 /// The status row: the session's status, its mode, its model — the agent's
