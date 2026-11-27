@@ -248,8 +248,10 @@ pub struct ConsoleCancelRequest {
 ///
 /// The daemon draws the console into the terminal the client emulates, so
 /// the first message is the terminal's size, and every change of it is
-/// another. A key and a paste are what the terminal read, as the console
-/// takes them; the daemon reads nothing else.
+/// another. A key, a paste and a mouse event are what the terminal read, as
+/// the console takes them; the daemon reads nothing else. The console asks
+/// the terminal for the mouse as it opens, so a terminal that reports it
+/// sends `mouse` messages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TerminalClientMessage {
@@ -264,6 +266,24 @@ pub enum TerminalClientMessage {
     },
     /// Text pasted whole, line breaks and all.
     Paste { text: String },
+    /// One mouse event on the terminal's cell `col`, `row`, counted from
+    /// zero at the top left: a step of the wheel, or a click of the left
+    /// button.
+    Mouse {
+        kind: TerminalMouse,
+        col: u16,
+        row: u16,
+    },
+}
+
+/// What a [`TerminalClientMessage::Mouse`] did: one step of the wheel up or
+/// down, or a press of the left button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalMouse {
+    WheelUp,
+    WheelDown,
+    Click,
 }
 
 /// The key a [`TerminalClientMessage::Key`] names: crossterm's `KeyCode`,

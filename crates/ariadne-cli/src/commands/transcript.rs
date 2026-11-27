@@ -555,7 +555,7 @@ mod tests {
             "ended_at": null,
             "activity": {"steps": 0, "tool_calls": 0, "files_changed": 0, "failed": 0,
                          "cancelled": 0, "thoughts": 0, "subagents": 0},
-            "steps": [], "earlier_steps": 0, "attention": [], "attention_more": 0, "answer": []
+            "steps": [], "earlier_steps": 0, "attention": [], "attention_more": 0, "notices": [], "notices_more": 0, "answer": []
         });
         turn.as_object_mut()
             .unwrap()

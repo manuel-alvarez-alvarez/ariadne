@@ -9,10 +9,8 @@
  * id, so no item shows two times. A snapshot, the one a reconnect brings
  * included, drops the older turns and the step pages loaded before it.
  *
- * Five things are the console's own: the step pages it loaded for a turn,
- * the notices it read from the older steps of a turn, the prompts it sent that no turn holds yet, the turns
- * that already took a queued prompt away, and the cursor of the history it
- * read whole.
+ * Six things are the console's own: step pages, notices, live subagent steps,
+ * queued prompts, echoed turns and the history cursor.
  *
  * A turn keeps each step of its own lane that an update brought, after it
  * ends too, and that live version wins over a page that the steps route
@@ -33,6 +31,9 @@ import type {
   TrajectoryUpdateDto,
   TurnDto,
 } from "@/api"
+
+/** The lane of the session's own agent (040). A subagent's lane is its id. */
+const MAIN_LANE = "main"
 
 type SessionState = TrajectorySnapshotDto["session"]
 type Plan = TrajectorySnapshotDto["plans"][number]
@@ -66,6 +67,11 @@ export interface TrajectoryState {
   subagents: Subagent[]
   /** The steps the steps route gave, by turn id. */
   pages: Record<string, StepPage>
+  /**
+   * The steps of a subagent's lane that an update brought, by step id: no
+   * turn holds them, and an open subagent step shows their live version.
+   */
+  children: Record<string, StepDto>
   /** The notices of the steps before a turn's page, by turn id, oldest first. */
   notices: Record<string, StepDto[]>
   queued: QueuedPrompt[]
@@ -81,6 +87,7 @@ export function emptyTrajectory(): TrajectoryState {
     plans: [],
     subagents: [],
     pages: {},
+    children: {},
     notices: {},
     queued: [],
     echoed: [],
@@ -109,6 +116,7 @@ export function applySnapshot(
     plans: snapshot.plans,
     subagents: snapshot.subagents,
     pages: {},
+    children: {},
     notices: {},
     queued: state.queued,
     echoed: state.echoed,
@@ -126,16 +134,25 @@ export function applyUpdate(state: TrajectoryState, update: TrajectoryUpdateDto)
         break
       case "item_upsert":
         next = changeSteps(next, op.step.turn_id, (steps) => upsertStep(steps, op.step), op.step)
+        next = keepChild(next, op.step)
         break
-      case "text_append":
+      case "text_append": {
         next = changeSteps(next, op.turn_id, (steps) =>
           steps.map((step) => (step.id === op.item_id ? appendText(step, op.text) : step)),
         )
+        const child = next.children[op.item_id]
+        if (child)
+          next = { ...next, children: { ...next.children, [child.id]: appendText(child, op.text) } }
         break
+      }
       case "item_remove":
         next = changeSteps(next, op.turn_id, (steps) =>
           steps.filter((step) => step.id !== op.item_id),
         )
+        if (next.children[op.item_id]) {
+          const { [op.item_id]: _gone, ...children } = next.children
+          next = { ...next, children }
+        }
         break
       case "plan_upsert":
         next = {
@@ -266,6 +283,17 @@ export function foldSteps(
   return { steps: [...steps, ...waiting], earlier: Math.max(0, page.earlier - leading) }
 }
 
+/** The live steps of one subagent in one turn, oldest first. */
+export function childSteps(
+  children: Readonly<Record<string, StepDto>>,
+  turnId: string,
+  subagentId: string,
+): StepDto[] {
+  return Object.values(children)
+    .filter((step) => step.turn_id === turnId && step.lane === subagentId)
+    .sort(byId)
+}
+
 /** The permissions that wait for an answer, oldest first, from the attention of every turn. */
 export function pendingPermissions(state: TrajectoryState) {
   return state.turns.flatMap((turn) =>
@@ -371,6 +399,13 @@ function changeSteps(
 function changeHeld(steps: StepDto[], change: (steps: StepDto[]) => StepDto[]): StepDto[] {
   const held = new Set(steps.map((step) => step.id))
   return change(steps).filter((step) => held.has(step.id))
+}
+
+/** Keep a step of a lane that is not its turn's own: a subagent's. */
+function keepChild(state: TrajectoryState, step: StepDto): TrajectoryState {
+  const turn = state.turns.find((one) => one.id === step.turn_id)
+  if (step.lane === (turn?.lane ?? MAIN_LANE)) return state
+  return { ...state, children: { ...state.children, [step.id]: step } }
 }
 
 function upsertStep(steps: StepDto[], step: StepDto): StepDto[] {

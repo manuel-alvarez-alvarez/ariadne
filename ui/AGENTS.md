@@ -297,6 +297,8 @@ the host first; below, the host is left out of each key for brevity:
 ["tasks",        "detail", id, "transitions" | "diff"]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
 ["sessions",     "detail", id, "questions"]
+["sessions",     "detail", id, "trajectory-item", itemId, { rev, raw }]
+["sessions",     "detail", id, "trajectory-steps", turnId, { subagentId, steps }]
 ["hosts",        "list", {}]         (always under "local")
 ["skills",       "list", filters]   ["skills",   "detail", name]
 ["workflows",    "list", {}]        ["workflows", "detail", name]
@@ -537,7 +539,7 @@ modal's Collapse button. The tests drive the console through the
 
 `?console=turns` on the session view opens the turn console of
 `src/features/sessions/trajectory/` in place of the console above (spec 015,
-rules 89 to 99h). It reads the daemon's trajectory (040), which folds the
+rules 89 to 109). It reads the daemon's trajectory (040), which folds the
 events, so write no fold of events here:
 
 - `trajectory-stream.ts` reads `GET /v1/sessions/{id}/trajectory/stream`, a
@@ -547,12 +549,23 @@ events, so write no fold of events here:
   pages of an open fold, the prompts sent that no turn holds yet, the turns
   that took a queued prompt, so each echo takes one prompt once, and the
   cursor of the history read whole: `shownTurns` is what the reader sees.
+  `children` holds the live steps of the subagents' lanes, which no turn
+  holds, for an open subagent step.
 - `turn-view.tsx` draws a turn: the prompt, one activity line and the
   answer, the step rows of an open fold, and the turn's `attention`.
   `permission-card.tsx` draws a pending permission above the composer.
-- `step-detail.tsx` is the slot for the detail of a step. `status-slot.tsx`,
-  `dock-slot.tsx` and `find-slot.tsx` are the mount points of the status row
-  and the subtitle, the dock above the composer and the find control.
+- `step-detail.tsx` draws a step: its row (`step-row.tsx`), and the detail
+  that the row opens in place, by the step's kind, from the detail route
+  (spec 015, rules 100 to 109). It reads a call's detail again at each new
+  `detail_rev`, and with `raw=true` only behind `Raw`. `content-blocks.tsx`
+  draws the content blocks that are not text. `full-view.tsx` is the full
+  view that `Open` fills: beside the transcript on a panel of 880 CSS pixels
+  or wider, else a drawer. Its Escape stops at the view, so it never cancels
+  the turn. A detail reaches it, and the live subagent steps, through
+  `full-view-context.ts`. `status-slot.tsx`,
+  `dock-slot.tsx` and `find-slot.tsx` are the mount points of the status row,
+  the dock above the composer and the find control.
+
   `plan.tsx` draws a plan line and its checklist, and `notices.tsx` the
   warning and compaction lines and the mark of an answered permission.
 - The console keeps its draft, folds and scroll place in

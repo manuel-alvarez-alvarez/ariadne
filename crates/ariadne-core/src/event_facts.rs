@@ -70,6 +70,10 @@ pub struct EventFacts {
     /// loads the first and the newest event of each plan by it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
+    /// The ACP severity of a `notice`, such as `warning`. A read counts the
+    /// warning notes of a turn by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
     /// Whether a permission request is about one of Ariadne's own tools,
     /// and the ACP kind of each option it offers, by option id.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -174,6 +178,7 @@ pub fn facts_of(kind: &str, payload: &Value) -> EventFacts {
         "compaction_update" => facts.compaction = text(payload, "/compaction_id"),
         "plan_update" => facts.plan = text(payload, "/plan/plan_id"),
         "plan_removed" => facts.plan = text(payload, "/plan_id"),
+        "notice" => facts.severity = text(payload, "/severity"),
         "permission_request" => {
             facts.call = text(acp, "/toolCallId");
             let title = text(payload, "/tool_name").or_else(|| text(acp, "/title"));
@@ -493,5 +498,22 @@ mod tests {
         );
         assert_eq!(removed.plan.as_deref(), Some("plan-1"));
         assert_eq!(facts_of("plan", &json!({"entries": []})).plan, None);
+    }
+
+    /// A notice names its severity, so a read counts the warnings of a turn
+    /// without its payload.
+    #[test]
+    fn a_notice_names_its_severity() {
+        let notice = facts_of(
+            "notice",
+            &json!({"session_id": "s", "severity": "warning", "title": "Slow"}),
+        );
+        assert_eq!(notice.severity.as_deref(), Some("warning"));
+        assert_eq!(
+            serde_json::to_string(&notice).unwrap(),
+            r#"{"severity":"warning"}"#,
+            "the title is no fact"
+        );
+        assert_eq!(facts_of("notice", &json!({"title": "Hi"})).severity, None);
     }
 }

@@ -115,8 +115,9 @@ and the ACP runtime that reports the agent events (021).
    (`GET /v1/sessions/{id}/trajectory`, `/trajectory/stream`,
    `/trajectory/turns/{turn_id}/steps`, `/trajectory/items/{item_id}` and
    `/trajectory/blobs/{event_id}/{index}`, 040). The one WebSocket,
-   `/console/terminal` (008), serves that same console drawn as terminal
-   bytes for an emulator, and reads the emulator's keys and size; its
+   `/console/terminal` (008), serves the full-screen console drawn as
+   terminal bytes for an emulator, and reads the emulator's keys, mouse and
+   size; its
    messages are DTOs of `ariadne-api` like every other. No endpoint types
    into, resizes or reads an agent's own terminal, and no endpoint is one an
    agent reports events to: the daemon's own ACP runtime is the one

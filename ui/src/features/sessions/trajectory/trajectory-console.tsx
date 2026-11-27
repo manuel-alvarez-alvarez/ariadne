@@ -80,6 +80,7 @@ import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
 import { TrajectoryDock } from "./dock-slot"
 import { TrajectoryFind } from "./find-slot"
+import { StepWorkspace } from "./full-view"
 import { isNotice } from "./notices"
 import { PermissionCard } from "./permission-card"
 import { finishedPlans, openPlan, type Plan, PlanLine, planFoldId } from "./plan"
@@ -844,7 +845,12 @@ function TrajectoryPane({
         loadOlder={() => void loadOlder()}
       />
       <HistoryLine history={history} onRetry={() => void loadOlder()} />
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <StepWorkspace
+        host={host}
+        sessionId={sessionId}
+        trajectory={state}
+        className="relative flex min-h-0 flex-1 flex-col"
+      >
         <div
           ref={log}
           role="log"
@@ -931,7 +937,7 @@ function TrajectoryPane({
             ) : null}
           </Button>
         ) : null}
-      </div>
+      </StepWorkspace>
       <TrajectoryDock>
         {docked ? (
           <PlanLine
