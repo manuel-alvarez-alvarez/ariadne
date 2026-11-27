@@ -13,7 +13,7 @@ use ariadne_api::trajectory::{
     CommandDetailDto, DiffDetailDto, DiffFileDto, FetchDetailDto, FileDetailDto, GenericDetailDto,
     RawToolDto, SearchDetailDto, ToolCallDetailDto, ToolCallStatus, ToolDetailDto,
 };
-use ariadne_core::event_facts::{EventFacts, output_text};
+use ariadne_core::event_facts::EventFacts;
 use ariadne_store::EventHead;
 
 use super::steps::{blocks_of, is_terminal, merge_call, new_call, status_of, string_at};
@@ -117,6 +117,24 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
     })
 }
 
+/// Whether the event `item_id` opens a step as the fold opens them: `heads`
+/// are the heads of the session from the turn of `item_id` on, of
+/// [`detail_kinds`]. An update of a call that is open joins its step and
+/// opens none (rule 21), so its id names no item.
+pub(crate) fn opens_a_step(mut fold: super::Fold, heads: &[EventHead], item_id: &str) -> bool {
+    for head in heads {
+        fold.apply_head(head);
+        if head.id == item_id {
+            break;
+        }
+    }
+    fold.index().iter().any(|turn| {
+        turn.lanes
+            .values()
+            .any(|lane| lane.openers.iter().any(|opener| opener.step == item_id))
+    })
+}
+
 /// The detail of a call from its loaded events, oldest first, the opener
 /// first.
 pub(crate) fn detail_of(
@@ -173,12 +191,17 @@ pub(crate) fn detail_of(
         }),
         Some("read") => file_detail(&acp, &input),
         Some("search") => ToolDetailDto::Search(SearchDetailDto {
-            query: field(&input, &["pattern", "query", "regex"]),
-            text: output_text(&acp),
+            query: field(&input, &["pattern", "query", "regex"]).or_else(|| {
+                string_at(&acp, "/title")
+                    .as_deref()
+                    .or(Some(step.title.as_str()))
+                    .and_then(title_query)
+            }),
+            text: output_of(&acp),
         }),
         Some("fetch") => ToolDetailDto::Fetch(FetchDetailDto {
             url: field(&input, &["url"]),
-            text: output_text(&acp),
+            text: output_of(&acp),
         }),
         _ => ToolDetailDto::Generic(GenericDetailDto {
             content: call_blocks(&acp, session_id, &content_event),
@@ -220,7 +243,7 @@ fn command_detail(acp: &Value, input: &Value, title: &str) -> ToolDetailDto {
             acp.pointer("/_meta/terminal_exit/exit_code")
                 .and_then(Value::as_i64)
         });
-    let (output, truncated) = match output_text(acp) {
+    let (output, truncated) = match output_of(acp) {
         Some(text) => {
             let (text, truncated) = tail(text, OUTPUT_BYTES);
             (Some(text), truncated)
@@ -316,8 +339,8 @@ fn file_detail(acp: &Value, input: &Value) -> ToolDetailDto {
     let first = locations.first();
     let path = field(input, &["path", "file_path", "filePath", "file"])
         .or_else(|| first.map(|location| location.path.clone()));
-    let output = output_text(acp);
-    let stripped = output.as_deref().and_then(strip_numbered);
+    let output = output_of(acp);
+    let stripped = output.as_deref().and_then(numbered_text);
     let line = stripped
         .as_ref()
         .map(|(_, line)| *line)
@@ -335,26 +358,124 @@ fn file_detail(acp: &Value, input: &Value) -> ToolDetailDto {
     })
 }
 
-/// A read's output whose lines sit in a fence, each after its number and a
-/// tab, as Claude Code's Read gives them: the text without them, and the
-/// first line's number.
-fn strip_numbered(output: &str) -> Option<(String, u64)> {
-    let lines: Vec<&str> = output.split('\n').collect();
-    if !lines.first()?.starts_with("```") {
-        return None;
+/// The text of what a call gave back, read by its type alone: the text of
+/// its content, else its `rawOutput` where that is text, a stdout and
+/// stderr pair or an object with an output text, else the output of its
+/// terminal. A structure with none of these is raw data, which only
+/// `raw=true` gives; a detail never writes it out as JSON.
+fn output_of(acp: &Value) -> Option<String> {
+    let texts: Vec<String> = entries(acp)
+        .filter(|entry| string_at(entry, "/type").as_deref() == Some("content"))
+        .filter_map(|entry| string_at(entry, "/content/text"))
+        .filter(|text| !text.is_empty())
+        .collect();
+    if !texts.is_empty() {
+        return Some(texts.join("\n"));
     }
-    let end = if lines.len() > 1 && lines.last()?.trim() == "```" {
-        lines.len() - 1
-    } else {
-        lines.len()
+    let raw = acp.get("rawOutput").unwrap_or(&Value::Null);
+    if let Some(text) = raw.as_str() {
+        return Some(text.to_string());
+    }
+    if raw.is_object() {
+        let streams: Vec<&str> = ["stdout", "stderr"]
+            .iter()
+            .filter_map(|key| raw.get(*key)?.as_str())
+            .filter(|text| !text.is_empty())
+            .collect();
+        if !streams.is_empty() {
+            return Some(streams.join("\n"));
+        }
+        if let Some(text) = ["output", "aggregated_output", "formatted_output", "text"]
+            .iter()
+            .find_map(|key| raw.get(*key)?.as_str())
+        {
+            return Some(text.to_string());
+        }
+    }
+    [
+        "/_meta/terminal_output/data",
+        "/_meta/terminal_output_delta/data",
+    ]
+    .iter()
+    .find_map(|pointer| acp.pointer(pointer)?.as_str())
+    .map(str::to_string)
+}
+
+/// The query a search's title names, where its input names none: Codex
+/// names a search it ran in a shell only so, as `Search for 'query'` or
+/// `Search for 'query' in path`.
+fn title_query(title: &str) -> Option<String> {
+    let rest = title.strip_prefix("Search for '")?;
+    let query = match rest.strip_suffix('\'') {
+        Some(query) if !query.contains("' in ") => query,
+        _ => &rest[..rest.rfind("' in ")?],
     };
-    let body = &lines[1..end];
-    let split = |line: &str| {
-        let (number, text) = line.split_once('\t')?;
-        let number = number.trim_start().parse::<u64>().ok()?;
+    (!query.is_empty()).then(|| query.to_string())
+}
+
+/// The text a read gave back, without the agent's line numbers, and the
+/// number of its first line, where every line of it carries one:
+///
+/// - Claude Code's lines sit in a fence of three backticks or more, each
+///   after its number and a tab, and a notice such as `[File truncated: …]`
+///   can follow them.
+/// - OpenCode's lines follow a `Read file <path>, lines <from>-<to>` header,
+///   each after its number, a colon and a space, and a notice such as
+///   `[Output truncated. …]` can follow them. Its first line is the line it
+///   read from, also where that is before the offset asked for.
+///
+/// A notice is no line of the file, and the text leaves it out.
+fn numbered_text(output: &str) -> Option<(String, u64)> {
+    let mut lines: Vec<&str> = output.split('\n').collect();
+    let fence = |line: &str| line.len() >= 3 && line.trim_end().chars().all(|c| c == '`');
+    if lines.first().is_some_and(|line| fence(line)) {
+        lines.remove(0);
+        if lines.last().is_some_and(|line| fence(line)) {
+            lines.pop();
+        }
+    } else if lines.first().is_some_and(|line| {
+        line.starts_with("Read file ") || line.starts_with("<path>") || line.starts_with("<type>")
+    }) {
+        while lines.first().is_some_and(|line| {
+            line.starts_with("Read file ")
+                || line.starts_with("<path>")
+                || line.starts_with("<type>")
+                || line.starts_with("<content>")
+        }) {
+            lines.remove(0);
+        }
+    }
+    let notice = |line: &str| {
+        let line = line.trim();
+        line.is_empty()
+            || (line.starts_with('[') && line.ends_with(']'))
+            || (line.starts_with('(') && line.ends_with(')'))
+            || line == "</content>"
+    };
+    while lines.last().is_some_and(|line| notice(line)) {
+        lines.pop();
+    }
+    let split = |line: &str| -> Option<(u64, String)> {
+        let trimmed = line.trim_start();
+        let digits = trimmed.len()
+            - trimmed
+                .trim_start_matches(|c: char| c.is_ascii_digit())
+                .len();
+        if digits == 0 {
+            return None;
+        }
+        let number = trimmed[..digits].parse::<u64>().ok()?;
+        let rest = &trimmed[digits..];
+        let text = rest
+            .strip_prefix('\t')
+            .or_else(|| rest.strip_prefix(": "))
+            .or_else(|| (rest == ":").then_some(""))?;
         Some((number, text.to_string()))
     };
-    let parts: Vec<(u64, String)> = body.iter().map(|line| split(line)).collect::<Option<_>>()?;
+    let parts: Vec<(u64, String)> = lines
+        .iter()
+        .map(|line| split(line))
+        .collect::<Option<_>>()?;
     let first = parts.first()?.0;
     let text: Vec<String> = parts.into_iter().map(|(_, text)| text).collect();
     Some((text.join("\n"), first))
@@ -492,7 +613,8 @@ mod tests {
     };
     use ariadne_store::EventHead;
 
-    use super::{CallEvents, call_events, detail_of};
+    use super::{CallEvents, call_events, detail_of, opens_a_step};
+    use crate::trajectory::Fold;
 
     fn event(id: &str, kind: &str, payload: Value) -> AgentEventDto {
         AgentEventDto {
@@ -686,5 +808,152 @@ mod tests {
         assert_eq!(call.load, ["0000", "0008", "0009"]);
         assert_eq!(call.updates, 9);
         assert_eq!(call.ended, None);
+    }
+
+    /// Codex reports a search it ran in a shell with its query in the title
+    /// alone, and its output as a raw text (rule 50).
+    #[test]
+    fn a_codex_shell_search_takes_its_query_from_its_title() {
+        let search = |title: &str| {
+            detail(
+                "search",
+                Value::Null,
+                json!({"title": title, "rawOutput": "src/a.rs:3: TODO"}),
+            )
+        };
+
+        assert_eq!(
+            search("Search for 'TODO' in src"),
+            ToolDetailDto::Search(SearchDetailDto {
+                query: Some("TODO".into()),
+                text: Some("src/a.rs:3: TODO".into()),
+            })
+        );
+        let ToolDetailDto::Search(bare) = search("Search for 'it's here'") else {
+            panic!("a search");
+        };
+        assert_eq!(bare.query.as_deref(), Some("it's here"));
+        let ToolDetailDto::Search(untitled) = search("Search") else {
+            panic!("a search");
+        };
+        assert_eq!(untitled.query, None);
+    }
+
+    /// OpenCode numbers each line after a header that names the range it
+    /// read, which can start before the offset asked for: the text loses
+    /// the header, the numbers and the notice, and the line is the first it
+    /// read (rule 50).
+    #[test]
+    fn an_opencode_read_gives_the_range_it_read() {
+        let output = "Read file src/a.rs, lines 8-9 (offset 20 is past the end; the file has 9 lines)\n8: fn a() {\n9: }\n[Output truncated. Continue reading with offset: 10]";
+
+        let detail = detail(
+            "read",
+            json!({"path": "src/a.rs", "offset": 20}),
+            json!({"content": [{"type": "content", "content": {"type": "text", "text": output}}]}),
+        );
+
+        assert_eq!(
+            detail,
+            ToolDetailDto::File(FileDetailDto {
+                path: Some("src/a.rs".into()),
+                line: Some(8),
+                language: Some("rust".into()),
+                text: Some("fn a() {\n}".into()),
+            })
+        );
+    }
+
+    /// Claude Code can put a truncation notice after its numbered lines in
+    /// the fence: the lines and the first number stay (rule 50).
+    #[test]
+    fn a_claude_read_keeps_its_lines_before_a_truncation_notice() {
+        let output = "````\n     5\tlet a = 1;\n     6\tlet b = 2;\n[File truncated: showing 2 of 90 lines]\n````";
+
+        let ToolDetailDto::File(file) = detail(
+            "read",
+            json!({"file_path": "src/a.rs"}),
+            json!({"content": [{"type": "content", "content": {"type": "text", "text": output}}]}),
+        ) else {
+            panic!("a read is a file");
+        };
+
+        assert_eq!(file.line, Some(5));
+        assert_eq!(file.text.as_deref(), Some("let a = 1;\nlet b = 2;"));
+    }
+
+    /// A raw output that is no text, no stdout and stderr and no output text
+    /// is raw data: a typed detail does not write it out (rule 51).
+    #[test]
+    fn an_opaque_raw_output_stays_out_of_a_typed_detail() {
+        let opaque = json!({"rawOutput": {"status": 200, "body": {"token": "secret"}}});
+
+        let command = detail("execute", json!({"command": "curl x"}), opaque.clone());
+        let fetch = detail("fetch", json!({"url": "https://x"}), opaque);
+
+        let ToolDetailDto::Command(command) = command else {
+            panic!("a command");
+        };
+        assert_eq!(command.output, None);
+        assert_eq!(
+            fetch,
+            ToolDetailDto::Fetch(FetchDetailDto {
+                url: Some("https://x".into()),
+                text: None,
+            })
+        );
+    }
+
+    /// An opener opens a step, and so does an update of a call that is not
+    /// open; an update or the end of an open call joins its step and opens
+    /// none (rules 21, 54).
+    #[test]
+    fn only_an_event_that_opens_a_step_is_an_item() {
+        let heads = [
+            head("0001", "user_prompt_submit", json!({})),
+            head(
+                "0002",
+                "pre_tool_use",
+                json!({"call": "c-1", "status": "pending"}),
+            ),
+            head(
+                "0003",
+                "tool_call_update",
+                json!({"call": "c-1", "status": "in_progress"}),
+            ),
+            head(
+                "0004",
+                "post_tool_use",
+                json!({"call": "c-1", "status": "completed"}),
+            ),
+            head(
+                "0005",
+                "tool_call_update",
+                json!({"call": "c-2", "status": "in_progress"}),
+            ),
+        ];
+        let opens = |id: &str| {
+            let fold = Fold::new(
+                "session",
+                ariadne_api::trajectory::SessionStateDto {
+                    status: ariadne_core::SessionStatus::Running,
+                    attention_reason: None,
+                    running_turn_id: None,
+                    title: None,
+                    mode: None,
+                    config_options: Vec::new(),
+                    context: None,
+                    usage: Default::default(),
+                    cost: None,
+                    commands: Vec::new(),
+                },
+            );
+            opens_a_step(fold, &heads, id)
+        };
+
+        assert!(opens("0002"), "the opener");
+        assert!(!opens("0003"), "a progress row");
+        assert!(!opens("0004"), "the completion");
+        assert!(opens("0005"), "an update with no open call");
     }
 }

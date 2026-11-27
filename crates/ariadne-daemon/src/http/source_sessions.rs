@@ -183,7 +183,16 @@ pub(super) async fn route(
         && !suffix.starts_with("trajectory/blobs/")
         && let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body)
     {
+        // A call's raw data is the agent's, as it sent it: it names no
+        // session of this host, so it passes as it is.
+        let raw = suffix
+            .starts_with("trajectory/items/")
+            .then(|| value.as_object_mut()?.remove("raw"))
+            .flatten();
         rewrite(&mut value, &reference.id, session_id);
+        if let (Some(raw), Some(object)) = (raw, value.as_object_mut()) {
+            object.insert("raw".into(), raw);
+        }
         body = serde_json::to_vec(&value).unwrap();
     }
     let mut answer = (StatusCode::from_u16(response.status).unwrap(), body).into_response();
@@ -199,7 +208,19 @@ fn rewrite(value: &mut serde_json::Value, task: &str, session: &str) {
     match value {
         serde_json::Value::Object(object) => {
             for (key, value) in object {
-                if (key == "id" || key == "session_id") && value.as_str() == Some(session) {
+                if key == "blob"
+                    && let Some(url) = value.as_str().map(str::to_owned)
+                {
+                    // A blob URL of a trajectory names the session by its
+                    // alias, so a client reads the bytes through this
+                    // forwarder as well.
+                    let prefix = format!("/v1/sessions/{session}/trajectory/blobs/");
+                    if let Some(rest) = url.strip_prefix(&prefix) {
+                        *value =
+                            format!("/v1/sessions/far~{task}~{session}/trajectory/blobs/{rest}")
+                                .into();
+                    }
+                } else if (key == "id" || key == "session_id") && value.as_str() == Some(session) {
                     *value = format!("far~{task}~{session}").into();
                 } else if key == "switched_from"
                     && let Some(id) = value.as_str()
@@ -213,14 +234,6 @@ fn rewrite(value: &mut serde_json::Value, task: &str, session: &str) {
         serde_json::Value::Array(values) => {
             for value in values {
                 rewrite(value, task, session);
-            }
-        }
-        // A blob URL of a trajectory names the session by its alias, so a
-        // client reads the bytes through this forwarder as well.
-        serde_json::Value::String(text) => {
-            let prefix = format!("/v1/sessions/{session}/trajectory/blobs/");
-            if let Some(rest) = text.strip_prefix(&prefix) {
-                *text = format!("/v1/sessions/far~{task}~{session}/trajectory/blobs/{rest}");
             }
         }
         _ => {}

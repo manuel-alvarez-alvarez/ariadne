@@ -32,7 +32,7 @@ use super::console::Merge;
 use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
 use super::sse;
-use crate::trajectory::detail::{blob_of, call_events, detail_kinds, detail_of};
+use crate::trajectory::detail::{blob_of, call_events, detail_kinds, detail_of, opens_a_step};
 use crate::trajectory::read::{READ_EVENTS, Read, read_page, read_steps, read_turns};
 use crate::trajectory::{Fold, session_state, step_id};
 
@@ -585,11 +585,26 @@ pub(super) async fn item(
     let Some(upper) = upper else {
         return Err(not_found());
     };
+    // The turn of the item opens on the newest prompt at or before it, so
+    // the fold that tells whether it opens a step starts there.
+    let prompts = state
+        .store
+        .session_event_heads(&id, None, Some(&item_id), &["user_prompt_submit"])
+        .await?;
+    let from = prompts.last().map(|prompt| prompt.id.clone());
     let heads = state
         .store
-        .session_event_heads(&id, Some(&item_id), Some(&upper), &detail_kinds())
+        .session_event_heads(&id, from.as_deref(), Some(&upper), &detail_kinds())
         .await?;
-    let call = call_events(&heads, &item_id, READ_EVENTS).ok_or_else(not_found)?;
+    let at = heads
+        .iter()
+        .position(|head| head.id == item_id)
+        .ok_or_else(not_found)?;
+    let row = session_dto_of(&state.store, state.store.get_session(&id).await?).await?;
+    if !opens_a_step(Fold::new(&id, session_state(&row)), &heads[..=at], &item_id) {
+        return Err(not_found());
+    }
+    let call = call_events(&heads[at..], &item_id, READ_EVENTS).ok_or_else(not_found)?;
     let events: Vec<AgentEventDto> = state
         .store
         .events_by_ids(&call.load)

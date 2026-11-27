@@ -300,8 +300,8 @@ Out:
 50. `detail` is tagged by `type`, by the call's kind. A later field of the
     call replaces an earlier one, as an ACP update does:
     - `execute` is `command`: the whole command, else the title; `cwd`, the
-      input's `cwd`, `workdir` or `working_directory`; `output`, the text of
-      its content, else its `rawOutput` (rule 22); `exit_code`, the
+      input's `cwd`, `workdir` or `working_directory`; `output`, the
+      call's output text (rule 51); `exit_code`, the
       `rawOutput`'s `exit_code`, `exitCode` or `metadata.exit`, else
       `_meta.terminal_exit.exit_code`; and `truncated`. An output longer
       than one megabyte keeps its last megabyte, where the result and the
@@ -311,18 +311,36 @@ Out:
       under a file header from the entry's path where it has none, else the
       hunks between the old and the new text with three lines of context.
     - `read` is `file`: the path, the number of the first line, the
-      language and the text. A text whose lines sit in a fence after a
-      number and a tab loses them, and the first number is the line.
-    - `search` is `search`: the input's `pattern`, `query` or `regex`, and
-      the output text. `fetch` is `fetch`: the input's `url`, and the
-      output text.
+      language and the text. Where every line of the text carries its
+      number, the text loses the numbers and the agent's wrapper, and the
+      first number is the line, whatever offset the input asked for:
+      - Claude Code puts each line after its number and a tab, in a fence
+        of three backticks or more, and can end it with a notice such as
+        `[File truncated: showing 2 of 90 lines]`.
+      - OpenCode puts each line after its number, a colon and a space,
+        under a header `Read file <path>, lines <from>-<to>`, and can end
+        it with a notice such as `[Output truncated. …]`. Its range can
+        start before the offset asked for, when the offset is past the end.
+      A notice is no line of the file, and the text leaves it out. Any
+      other text stays as it is, and the line is the call's first location
+      line, else the input's `line` or `offset`.
+    - `search` is `search`: the input's `pattern`, `query` or `regex`, else
+      the query of a title `Search for '<query>'` or `Search for '<query>'
+      in <path>`, as Codex names a search it ran in a shell; and the output
+      text. `fetch` is `fetch`: the input's `url`, and the output text.
     - Every other kind is `generic`: the call's content blocks, with a
       `blob` URL that names the event that last set the content.
     - `language` is the name the web console's highlighter knows for the
       file's extension, such as `rust` or `typescript`, or none.
     These are the rules of the two consoles' folds (Sources).
-51. With `raw=true`, the answer adds `raw`: the call's raw input and raw
-    output. Without it, the answer has no `raw`.
+51. A call's output text is the text of its content entries, else its
+    `rawOutput` where that is text, else the `stdout` and `stderr` of a
+    `rawOutput` object, else its `output`, `aggregated_output`,
+    `formatted_output` or `text`, else the `_meta.terminal_output` data. A
+    `rawOutput` with none of these is raw data: no typed detail writes it
+    out. With `raw=true`, the answer adds `raw`: the call's raw input and
+    raw output. With `raw=false`, and without the parameter, the answer
+    has no `raw`.
 52. A running call shows the newest stored update of it. Progress that the
     ACP runtime has not stored yet is in the stream alone (021).
 53. `GET /v1/sessions/{id}/trajectory/blobs/{event_id}/{index}` answers the
@@ -331,11 +349,16 @@ Out:
     `index` is the place of the block in the event's `content`, in a call's
     `content` entries, or in a compaction's `summary`: the place a `blob`
     URL names (rule 28).
-54. An `item_id` that opens no call of the session, and a blob that names
-    no event of the session or no block with bytes, are a 404.
+54. An `item_id` that opens no `tool_call` step of the session, and a blob
+    that names no event of the session or no block with bytes, are a 404.
+    The route folds the heads of the item's turn, from its prompt to the
+    item, and the item must be one of the step openers the fold indexes
+    (rule 34). So a progress or a completion row of an open call, which
+    joins its step, names no item.
 55. A session on a remote host serves both routes through the forwarder
     (rule 48). The forwarder passes a blob's bytes as they are, and gives
-    every blob URL the session's alias.
+    the session's alias to each `blob` URL of a content block. It passes a
+    call's `raw` as the agent sent it: no session id or URL in it changes.
 
 ## Acceptance criteria
 
@@ -484,12 +507,24 @@ Out:
 53. Another call gives its content blocks, a blob answers its bytes and
     MIME type, and an unknown item or blob is a 404 (rules 50, 53, 54):
     `tests/it/trajectory.rs::a_blob_answers_the_bytes_of_its_block_and_unknown_ids_are_not_found`.
+    A progress row is no item, over HTTP and by the fold (rule 54):
+    `tests/it/trajectory.rs::a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand`
+    and `detail.rs::only_an_event_that_opens_a_step_is_an_item`.
 54. A remote session serves a call's detail and a blob through the
-    forwarder, and the blob URL names the alias (rule 55):
+    forwarder, the blob URL names the alias, and `raw` is absent without
+    the parameter and with `raw=false`, and passes as it is with
+    `raw=true` (rules 51, 55):
     `far_tasks/source_references.rs::source_trajectory_routes_reach_the_worker_session`.
 55. `ui/openapi.json` and `ui/src/api/schema.d.ts` hold every detail type,
     every detail kind and both routes:
     `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
+56. The provider shapes of a call (rules 50, 51): a Codex shell search,
+    `detail.rs::a_codex_shell_search_takes_its_query_from_its_title`; an
+    OpenCode read, `detail.rs::an_opencode_read_gives_the_range_it_read`; a
+    Claude Code read with a notice,
+    `detail.rs::a_claude_read_keeps_its_lines_before_a_truncation_notice`;
+    and an opaque raw output,
+    `detail.rs::an_opaque_raw_output_stays_out_of_a_typed_detail`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

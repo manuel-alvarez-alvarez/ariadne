@@ -454,7 +454,8 @@ async fn an_answer_and_the_refill_it_calls_for_are_one_revision() {
 
 /// The detail of a call: a running call shows its latest stored progress,
 /// an ended one its command, directory, output and exit code, and the raw
-/// data comes only with `raw=true` (040, rules 49 to 52).
+/// data comes only with `raw=true`. A progress row of the call names no
+/// item (040, rules 49 to 52, 54).
 #[tokio::test]
 async fn a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand() {
     let h = harness().await;
@@ -484,7 +485,8 @@ async fn a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand() {
     progress["status"] = "in_progress".into();
     progress["content"] =
         json!([{"type": "content", "content": {"type": "text", "text": "Compiling a"}}]);
-    h.store
+    let progress_row = h
+        .store
         .create_event(store_event(
             "tool_call_update",
             json!({"tool_call_id": "call-1", "acp": progress}),
@@ -522,8 +524,24 @@ async fn a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand() {
                "output": "Compiling a\nFinished", "exit_code": 101, "truncated": false})
     );
     assert!(ended.get("raw").is_none(), "no raw data unasked: {ended}");
+    let refused: Value = h.get(&format!("{path}?raw=false")).await;
+    assert!(
+        refused.get("raw").is_none(),
+        "no raw data refused: {refused}"
+    );
     let raw: Value = h.get(&format!("{path}?raw=true")).await;
     assert_eq!(raw["raw"], json!({"input": input, "output": raw_output}));
+    let (status, _) = h
+        .send(get(&format!(
+            "/v1/sessions/{}/trajectory/items/{}",
+            session.id, progress_row.id
+        )))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a progress row of an open call opens no step"
+    );
 }
 
 /// A call's content block with bytes names a blob, and the blob route
