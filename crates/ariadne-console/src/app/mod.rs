@@ -270,6 +270,12 @@ pub struct App {
     whole: HashSet<Item>,
     /// The plan above the input shows its checklist.
     plan_open: bool,
+    /// The first entry line of the checklist on the screen. The wheel over
+    /// the plan moves it, and the draw keeps it in range.
+    plan_scroll: Cell<usize>,
+    /// The model the session was launched with, as the host read it: what
+    /// the status row names where the agent reports no model option.
+    model: Option<String>,
     /// The first line of the transcript on the screen. `None` follows the
     /// end of the transcript.
     scroll: Cell<Option<usize>>,
@@ -332,6 +338,8 @@ impl App {
             raw: HashSet::new(),
             whole: HashSet::new(),
             plan_open: false,
+            plan_scroll: Cell::new(0),
+            model: None,
             scroll: Cell::new(None),
             reveal: Cell::new(false),
             layout: RefCell::new(Layout::default()),
@@ -352,6 +360,13 @@ impl App {
             armed: false,
             tick: 0,
         }
+    }
+
+    /// The model the session was launched with, `<agent>:<model>`, which
+    /// the status row names where the agent reports no model option.
+    pub fn stored_model(&mut self, model: &str) {
+        let model = model.split_once(':').map_or(model, |(_, model)| model);
+        self.model = (!model.is_empty()).then(|| model.to_string());
     }
 
     /// The zone that has the keys.
@@ -641,9 +656,13 @@ impl App {
                 _ => None,
             })
             .collect();
+        // The notices the turn carries show above its steps (rule 55), so a
+        // step that is one of them has no second row.
+        let noticed: HashSet<&str> = turn.notices.iter().map(step_id).collect();
         let top: Vec<&StepDto> = steps
             .iter()
             .filter(|step| lane_of(step) == MAIN_LANE || !announced.contains(lane_of(step)))
+            .filter(|step| !noticed.contains(step_id(step)))
             .collect();
         let mut shown = Vec::new();
         self.push_steps(turn, top, 0, &mut shown);
@@ -1082,8 +1101,23 @@ impl App {
         self.scroll.set((top < layout.bottom()).then_some(top));
     }
 
+    /// Whether `row` is on the open checklist of the plan.
+    fn over_plan(&self, row: u16) -> bool {
+        let plan = self.layout.borrow().plan;
+        self.plan_open && row >= plan.y && row < plan.y + plan.height
+    }
+
     fn mouse(&mut self, mouse: MouseEvent) -> Action {
         match mouse.kind {
+            // The wheel over an open checklist scrolls the plan, and
+            // anywhere else the transcript.
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if self.over_plan(mouse.row) => {
+                let at = self.plan_scroll.get();
+                self.plan_scroll.set(match mouse.kind {
+                    MouseEventKind::ScrollUp => at.saturating_sub(WHEEL),
+                    _ => at + WHEEL,
+                });
+            }
             MouseEventKind::ScrollUp => self.scroll_by(WHEEL, false),
             MouseEventKind::ScrollDown => self.scroll_by(WHEEL, true),
             MouseEventKind::Down(MouseButton::Left) => {

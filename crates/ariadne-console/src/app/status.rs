@@ -12,15 +12,19 @@ use crate::wrap::{self, wrap};
 use super::draw::{FOLDED, UNFOLDED};
 
 /// The plan above the input: one line while it is closed, and the line with
-/// the checklist under it while it is open, no more than `most` rows.
+/// the checklist under it while it is open, no more than `most` rows. A
+/// checklist taller than its room shows the entry lines from `scroll` on,
+/// and a last row that counts the lines above and below. The answer holds
+/// `scroll` kept in range.
 pub(super) fn plan_lines(
     plan: &PlanDto,
     open: bool,
+    scroll: usize,
     width: usize,
     most: usize,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, usize) {
     if most == 0 {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     let done = plan
         .entries
@@ -49,36 +53,61 @@ pub(super) fn plan_lines(
         Span::styled(lead, PLAN),
         Span::raw(wrap::clip(current.lines().next().unwrap_or_default(), room)),
     ])];
-    if open {
-        for entry in &plan.entries {
-            let (mark, style) = match entry.status.as_str() {
-                "completed" => (theme::PLAN_DONE, DIM),
-                "in_progress" => (theme::PLAN_DOING, TOOL),
-                _ => (theme::PLAN_TODO, Style::new()),
+    if !open {
+        return (lines, 0);
+    }
+    let mut entries = Vec::new();
+    for entry in &plan.entries {
+        let (mark, style) = match entry.status.as_str() {
+            "completed" => (theme::PLAN_DONE, DIM),
+            "in_progress" => (theme::PLAN_DOING, TOOL),
+            _ => (theme::PLAN_TODO, Style::new()),
+        };
+        let room = width.saturating_sub(wrap::width(mark));
+        for (at, part) in wrap(&entry.content, room).into_iter().enumerate() {
+            let lead = if at == 0 {
+                mark.to_string()
+            } else {
+                " ".repeat(wrap::width(mark))
             };
-            let room = width.saturating_sub(wrap::width(mark));
-            for (at, part) in wrap(&entry.content, room).into_iter().enumerate() {
-                let lead = if at == 0 {
-                    mark.to_string()
-                } else {
-                    " ".repeat(wrap::width(mark))
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(lead, style),
-                    Span::styled(part, style),
-                ]));
-            }
+            entries.push(Line::from(vec![
+                Span::styled(lead, style),
+                Span::styled(part, style),
+            ]));
         }
     }
-    lines.truncate(most);
-    lines
+    if entries.len() < most {
+        lines.extend(entries);
+        return (lines, 0);
+    }
+    // The head and the count take two rows; the entries get the rest, and
+    // at least one.
+    let shown = most.saturating_sub(2).max(1);
+    let scroll = scroll.min(entries.len() - shown);
+    let below = entries.len() - shown - scroll;
+    lines.extend(entries.into_iter().skip(scroll).take(shown));
+    if lines.len() < most {
+        lines.push(Line::styled(
+            wrap::clip(
+                &format!("  {scroll} above · {below} below · the wheel scrolls the plan"),
+                width,
+            ),
+            DIM,
+        ));
+    }
+    (lines, scroll)
 }
 
-/// The status row: the session's status, its mode, its model, the context
+/// The status row: the session's status, its mode, its model — the agent's
+/// model option, else the model the session was launched with — the context
 /// it uses, its cost and its tokens. Where the row does not fit, it drops
 /// whole items, the least important first: the cost, then the tokens, the
 /// context, the mode and the model. The status stays to the last.
-pub(super) fn status_line(session: &SessionStateDto, width: usize) -> Line<'static> {
+pub(super) fn status_line(
+    session: &SessionStateDto,
+    stored_model: Option<&str>,
+    width: usize,
+) -> Line<'static> {
     // Each item, in its place on the row, with its rank: the lowest rank
     // goes first.
     let mut items: Vec<(u8, String, Style)> = Vec::new();
@@ -115,6 +144,7 @@ pub(super) fn status_line(session: &SessionStateDto, width: usize) -> Line<'stat
                     .map_or(value.to_string(), |held| held.name.clone()),
             )
         })
+        .or_else(|| stored_model.map(str::to_string))
     {
         items.push((4, model, DIM));
     }

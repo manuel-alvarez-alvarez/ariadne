@@ -502,8 +502,9 @@ pub(crate) enum Command {
     },
     /// Attach to the console of a session, task or goal id
     ///
-    /// The console of whichever agent that id names, revived first when it is
-    /// gone. Leave the console with Ctrl-C; the agent keeps working.
+    /// The console of whichever agent that id names. A session that has ended
+    /// is revived first. Leave the console with Ctrl-C twice or Ctrl-D; the
+    /// agent keeps working.
     #[command(after_help = ATTACH_EXAMPLES)]
     Attach {
         /// Session, task or goal id

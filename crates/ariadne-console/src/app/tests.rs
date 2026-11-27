@@ -1528,7 +1528,7 @@ async fn warnings_and_compactions_show_in_their_turn_from_its_notices_without_a_
         "{screen:#?}"
     );
     assert_eq!(
-        screen[4], "    2 more notices · open the turn to read them",
+        screen[4], "    2 more notices in the steps of the turn",
         "{screen:#?}"
     );
     assert!(stub.step_reads.lock().unwrap().is_empty());
@@ -1659,4 +1659,251 @@ fn an_image_audio_resource_and_link_show_as_one_line_with_type_and_name() {
         ],
         "{screen:#?}"
     );
+}
+
+/// A closed turn with a warning, a compaction, and two notices it does not
+/// carry.
+fn noticed() -> Value {
+    let mut closed = done("t1", "Work", "Done.");
+    closed["notices"] = json!([
+        step("compaction", "k1", "t1", json!({})),
+        step(
+            "note",
+            "n1",
+            "t1",
+            json!({"severity": "warning", "text": "disk almost full"})
+        ),
+    ]);
+    closed["notices_more"] = json!(2);
+    closed
+}
+
+#[tokio::test]
+async fn an_open_turn_shows_its_notices_and_their_count_once_whether_its_steps_read_or_not() {
+    // The host reads no steps of the turn: the notices show all the same.
+    let mut app = App::new("s1");
+    let mut stub = Stub::default();
+    let screen = run(
+        &mut app,
+        &mut stub,
+        vec![snap(1, vec![noticed()])],
+        vec![ctrl('o')],
+    )
+    .await;
+    assert_eq!(screen[1], "  ▾ ✓ completed · 2 steps · 1 tool call · 2s");
+    assert_eq!(
+        screen[2], "    ! note       disk almost full",
+        "{screen:#?}"
+    );
+    assert_eq!(
+        screen[3], "    ✓ compaction context compacted",
+        "{screen:#?}"
+    );
+    assert_eq!(
+        screen[4], "    2 more notices in the steps of the turn",
+        "{screen:#?}"
+    );
+    assert_eq!(*stub.step_reads.lock().unwrap(), ["t1"]);
+
+    // The steps read: a step that is a notice has no second row.
+    let mut stub = Stub::default();
+    let steps: Vec<StepDto> = [
+        step(
+            "note",
+            "n1",
+            "t1",
+            json!({"severity": "warning", "text": "disk almost full"}),
+        ),
+        call("c1", "t1", "Bash", "completed"),
+    ]
+    .into_iter()
+    .map(|value| serde_json::from_value(value).unwrap())
+    .collect();
+    stub.steps.lock().unwrap().push(("t1".into(), steps));
+    let mut app = App::new("s1");
+    let screen = run(
+        &mut app,
+        &mut stub,
+        vec![snap(1, vec![noticed()])],
+        vec![ctrl('o')],
+    )
+    .await;
+    assert_eq!(count(&screen, "disk almost full"), 1, "{screen:#?}");
+    assert_eq!(count(&screen, "2 more notices"), 1, "{screen:#?}");
+    assert_eq!(
+        screen[5], "    ✓ execute    Bash · Bash subject  2s",
+        "{screen:#?}"
+    );
+}
+
+#[test]
+fn every_entry_of_a_checklist_taller_than_its_room_is_reached_with_the_wheel() {
+    let entries: Vec<Value> = (1..=30)
+        .map(|n| json!({"content": format!("Entry {n}"), "status": "pending", "priority": null}))
+        .collect();
+    let mut app = App::new("s1");
+    app.frame(planned(Value::Array(entries)));
+    app.event(ctrl('t'));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert!(screen.iter().any(|row| row == "  ☐ Entry 1"), "{screen:#?}");
+    assert_eq!(count(&screen, "Entry 30"), 0, "{screen:#?}");
+    let counted = screen
+        .iter()
+        .find(|row| row.contains("the wheel scrolls the plan"))
+        .unwrap_or_else(|| panic!("{screen:#?}"));
+    assert!(counted.starts_with("  0 above · "), "{counted}");
+
+    let plan_row = screen
+        .iter()
+        .position(|row| row.contains("☐ Entry 2"))
+        .unwrap() as u16;
+    for _ in 0..20 {
+        app.event(TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 4,
+            row: plan_row,
+            modifiers: KeyModifiers::NONE,
+        }));
+        draw(&app, WIDTH, HEIGHT);
+    }
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert!(
+        screen.iter().any(|row| row == "  ☐ Entry 30"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen
+            .iter()
+            .any(|row| row.ends_with(" above · 0 below · the wheel scrolls the plan")),
+        "{screen:#?}"
+    );
+    // The wheel over the plan leaves the transcript where it was.
+    assert_eq!(app.scroll.get(), None);
+}
+
+#[test]
+fn the_status_row_names_the_stored_model_where_the_agent_sends_no_model_option() {
+    let mut app = app_with(vec![done("t1", "Work", "Done.")]);
+    app.stored_model("claude-acp:opus-5");
+    assert_eq!(status_row(&draw(&app, 80, HEIGHT)), " running · opus-5");
+
+    // The agent's model option wins over the stored model.
+    let mut app = with_state();
+    app.stored_model("claude-acp:opus-5");
+    assert!(
+        status_row(&draw(&app, 80, HEIGHT)).starts_with(" running · Code · Opus 5.5 · "),
+        "{:?}",
+        status_row(&draw(&app, 80, HEIGHT))
+    );
+}
+
+#[test]
+fn a_changed_image_name_or_link_title_draws_again_while_the_text_stays() {
+    let answer = |uri: &str, title: &str| {
+        let mut turn = running("t1", "Show it", vec![]);
+        turn["answer"] = json!([
+            {"type": "text", "text": "Here."},
+            {"type": "image", "mime_type": null, "blob": null, "uri": uri},
+            {"type": "resource_link", "uri": "https://x/spec", "name": "spec", "title": title,
+             "mime_type": null, "size": null}
+        ]);
+        turn
+    };
+    let mut app = app_with(vec![answer("file:///old.png", "Old spec")]);
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert!(
+        screen.iter().any(|row| row == "  [image] old.png"),
+        "{screen:#?}"
+    );
+
+    app.frame(Frame::Update(update(
+        2,
+        json!([{"op": "turn_upsert", "turn": answer("file:///new.png", "New spec")}]),
+    )));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert!(
+        screen.iter().any(|row| row == "  [image] new.png"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "  [resource link] New spec"),
+        "{screen:#?}"
+    );
+    assert_eq!(count(&screen, "old.png"), 0, "{screen:#?}");
+}
+
+#[test]
+fn an_update_of_a_call_changes_its_row_in_place() {
+    let mut app = app_with(vec![running(
+        "t1",
+        "Build it",
+        vec![call("c1", "t1", "Work", "running")],
+    )]);
+    app.frame(Frame::Update(update(
+        2,
+        json!([{"op": "item_upsert", "step": call("c1", "t1", "Work", "completed")}]),
+    )));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(count(&screen, "Work subject"), 1, "{screen:#?}");
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "    ✓ execute    Work · Work subject  2s"),
+        "{screen:#?}"
+    );
+}
+
+#[tokio::test]
+async fn an_open_thought_shows_its_whole_markdown_dimmed() {
+    let thought = step(
+        "thought",
+        "h1",
+        "t1",
+        json!({"content": [{"type": "text", "text": "First **idea**.\n\nSecond idea."}]}),
+    );
+    let (app, screen) = opened(
+        &mut Stub::default(),
+        vec![thought],
+        vec![key(KeyCode::Enter)],
+    )
+    .await;
+    assert!(
+        screen.iter().any(|row| row == "      First idea."),
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "      Second idea."),
+        "{screen:#?}"
+    );
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+    assert!(
+        style_of(&drawn, "Second idea.")
+            .add_modifier
+            .contains(ratatui::style::Modifier::DIM)
+    );
+}
+
+#[test]
+fn a_permission_draws_its_call_undimmed_and_names_the_subagent_that_asks() {
+    let mut asking = permission();
+    asking["subagent"] = json!({"id": "sub1", "title": "explorer"});
+    let app = app_with(vec![turn(
+        "t1",
+        "running",
+        json!({"attention": [asking.clone()], "steps": [asking]}),
+    )]);
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "❯ Allow Bash? · asked by subagent explorer"),
+        "{screen:#?}"
+    );
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+    let style = style_of(&drawn, "Bash · cargo test");
+    assert!(
+        !style.add_modifier.contains(ratatui::style::Modifier::DIM),
+        "{style:?}"
+    );
+    assert_eq!(style.fg, Some(ratatui::style::Color::Yellow));
 }

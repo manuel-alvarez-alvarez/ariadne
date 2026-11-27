@@ -26,7 +26,7 @@ use ratatui::backend::CrosstermBackend;
 use tokio::time::{Instant, sleep_until};
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto};
+use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto, SessionDto};
 use ariadne_api::trajectory::{
     StepDto, ToolCallDetailDto, TrajectoryItemQuery, TrajectoryStreamQuery,
 };
@@ -41,6 +41,9 @@ use crate::output::note;
 /// Open the full-screen console on the process terminal.
 pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     let mut app = App::new(id);
+    if let Some(model) = stored_model(client, id).await {
+        app.stored_model(&model);
+    }
     // The terminal is held before the screen is drawn, so a terminal that
     // cannot be drawn on at all is still given back.
     let held = Held::take(Screen::default())?;
@@ -62,6 +65,17 @@ pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     let _ = std::io::stdout().flush();
     note(&farewell(&app, id));
     outcome
+}
+
+/// The model the session was launched with, which the status row names where
+/// the agent reports no model option. A session the daemon will not describe
+/// costs the status row its model and nothing else.
+async fn stored_model(client: &Client, id: &str) -> Option<String> {
+    client
+        .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))
+        .await
+        .ok()
+        .map(|session| session.model)
 }
 
 /// What is said as the console closes: that the session is still running,
@@ -638,6 +652,35 @@ mod tests {
         assert_eq!(detail.detail_rev, 2);
         assert_eq!(*asked.lock().unwrap(), vec!["raw=true".to_string()]);
         assert_eq!(steps.len(), 1);
+    }
+
+    /// The stored model is the session row's, and a session the daemon does
+    /// not describe has none.
+    #[tokio::test]
+    async fn the_stored_model_is_read_from_the_session_row() {
+        let router = Router::new().route(
+            "/v1/sessions/s1",
+            get(|| async {
+                axum::Json(json!({
+                    "id": "s1", "goal_id": null, "task_id": null, "seat": "agent",
+                    "worktree": "/w", "model": "claude-acp:opus", "effort": null,
+                    "agent_session_id": null, "status": "running",
+                    "created_at": "2026-11-27T10:00:00Z", "updated_at": "2026-11-27T10:00:00Z",
+                    "usage": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+
+        let known = stored_model(&client, "s1").await;
+        let unknown = stored_model(&client, "s2").await;
+        server.abort();
+
+        assert_eq!(known.as_deref(), Some("claude-acp:opus"));
+        assert_eq!(unknown, None);
     }
 
     #[test]

@@ -88,7 +88,9 @@ session](resuming-sessions.md) for finding and continuing one of these.
 `ariadne attach` is an interactive console, not a shell inside the agent. It
 shows the session's recorded events and sends each line you type as the next
 prompt. The agent keeps working after you leave. It takes a session id, a
-task id or a goal id from the table above.
+task id or a goal id from the table above. A session that has ended is
+revived first, and then its console opens. Leave the console with Ctrl-C
+twice or Ctrl-D.
 
 ```sh
 ariadne attach <goal-id>                 # the orchestrator

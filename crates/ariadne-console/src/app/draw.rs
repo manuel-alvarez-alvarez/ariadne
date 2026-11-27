@@ -84,7 +84,15 @@ impl App {
                     false => 1,
                 };
                 let room = usize::from(area.height.saturating_sub(below + attention_rows + 1));
-                status::plan_lines(plan, self.plan_open, width, most.min(room))
+                let (lines, scroll) = status::plan_lines(
+                    plan,
+                    self.plan_open,
+                    self.plan_scroll.get(),
+                    width,
+                    most.min(room),
+                );
+                self.plan_scroll.set(scroll);
+                lines
             }
             None => Vec::new(),
         };
@@ -121,7 +129,11 @@ impl App {
             .draw(frame, input_area, self.hint(), self.zone == Zone::Input);
         if let Some(view) = &self.view {
             frame.render_widget(
-                Paragraph::new(status::status_line(view.session(), width)),
+                Paragraph::new(status::status_line(
+                    view.session(),
+                    self.model.as_deref(),
+                    width,
+                )),
                 status_area,
             );
         }
@@ -276,6 +288,26 @@ impl App {
         };
         let mut answer_in_step = false;
 
+        // A warning note and a compaction show in their turn whether it is
+        // open or not, read from the turn and not from its steps: an open
+        // turn whose steps cannot be read shows them too.
+        for step in turn.notices.iter().rev() {
+            rows.push(Row::of(
+                self.step_row(turn, step, 0, width, false),
+                Some(&item),
+            ));
+        }
+        if turn.notices_more > 0 {
+            let more = match turn.notices_more {
+                1 => "1 more notice".to_string(),
+                more => format!("{more} more notices"),
+            };
+            rows.push(Row::of(
+                Line::styled(format!("{STEP_INDENT}{more} in the steps of the turn"), DIM),
+                Some(&item),
+            ));
+        }
+
         if open {
             if turn.earlier_steps > 0 && turn.state == TurnState::Running {
                 rows.push(Row::of(
@@ -312,32 +344,11 @@ impl App {
                 )),
             }
         } else {
-            // A warning note and a compaction show in their turn whether it
-            // is open or not, read from the turn and not from its steps.
             let noticed: Vec<&str> = turn
                 .notices
                 .iter()
                 .map(crate::trajectory::step_id)
                 .collect();
-            for step in turn.notices.iter().rev() {
-                rows.push(Row::of(
-                    self.step_row(turn, step, 0, width, false),
-                    Some(&item),
-                ));
-            }
-            if turn.notices_more > 0 {
-                let more = match turn.notices_more {
-                    1 => "1 more notice".to_string(),
-                    more => format!("{more} more notices"),
-                };
-                rows.push(Row::of(
-                    Line::styled(
-                        format!("{STEP_INDENT}{more} · open the turn to read them"),
-                        DIM,
-                    ),
-                    Some(&item),
-                ));
-            }
             if turn.state == TurnState::Running {
                 let live: Vec<&StepDto> = turn
                     .steps
@@ -376,9 +387,15 @@ impl App {
         rows.push(Row::of(Line::default(), None));
     }
 
-    /// A turn's answer as markdown, drawn once for each width and text.
+    /// A turn's answer as markdown, drawn once for each width and content.
     fn answer(&self, id: &str, blocks: &[ContentBlockDto], width: usize) -> Vec<Line<'static>> {
-        let answer = text(blocks);
+        // The key holds what the lines show: the text, and the line of each
+        // block that is not text, so a new name of an image draws again.
+        let answer: String = blocks
+            .iter()
+            .map(|block| detail::media(block).unwrap_or_else(|| text(std::slice::from_ref(block))))
+            .collect::<Vec<_>>()
+            .join("\u{0}");
         let mut answers = self.answers.borrow_mut();
         if let Some((drawn_width, drawn, lines)) = answers.get(id)
             && *drawn_width == width
