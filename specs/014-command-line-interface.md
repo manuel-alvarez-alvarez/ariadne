@@ -245,6 +245,10 @@ same binary also serves (013).
       It also reads the stored steps of each turn with a permission or a
       question that it printed while it waited, so a close that came while
       the stream was down prints too. Only what was not printed prints.
+    - The daemon sends the steps of a revision before the header of a turn
+      they open, as the note of `session_start` before its turn. The view
+      and the follower keep such a step until its turn comes, and it prints
+      under that turn, open or closed, in text, JSON and the piped console.
     - A close that comes on the live stream after its turn closed prints
       too, from the step the update sends. A close after its turn closed
       prints whole, under a line that names its turn by time and prompt. A follow ends when the session is
@@ -908,6 +912,11 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `::a_reconnect_prints_the_turns_that_came_and_went_while_the_stream_was_down`,
   `::a_question_that_closes_while_the_stream_is_down_prints_its_close_after_the_reconnect`,
   `::a_question_that_closes_on_the_live_stream_after_its_turn_closed_prints_its_close`,
+  `::the_first_step_of_a_starting_session_prints_under_its_turn`,
+  `::a_json_follow_keeps_the_first_step_of_a_starting_session_in_its_turn`,
+  `::a_piped_console_prints_the_first_step_of_a_starting_session`,
+  `commands/transcript.rs::tests::a_step_before_a_header_that_comes_closed_prints_in_its_turn`,
+  `ariadne-console::trajectory::view::tests::a_step_before_the_header_of_its_turn_joins_the_turn_when_it_comes`,
   `ariadne-console::trajectory::view::tests::an_answer_on_a_closed_turn_names_the_step_it_takes_out_of_attention`,
   `ariadne-console::trajectory::print::tests::an_owner_line_names_a_turn_by_its_time_and_the_start_of_its_prompt`,
   `commands/transcript.rs::tests::a_follow_prints_each_item_once_across_snapshots`,

@@ -1,6 +1,8 @@
 //! The client view of a trajectory: a snapshot, and each update applied to
 //! it in its revision order.
 
+use std::collections::HashMap;
+
 use ariadne_api::trajectory::{
     ContentBlockDto, PermissionState, PlanDto, QuestionState, SessionStateDto, StepDto,
     SubagentStepDto, TrajectoryOpDto, TrajectorySnapshotDto, TrajectoryUpdateDto, TurnDto,
@@ -15,6 +17,9 @@ pub struct View {
     turns: Vec<TurnDto>,
     subagents: Vec<SubagentStepDto>,
     plans: Vec<PlanDto>,
+    /// The steps that came before the header of their turn, by turn id: the
+    /// daemon sends a turn's `turn_upsert` after the steps of its revision.
+    orphans: HashMap<String, Vec<StepDto>>,
 }
 
 /// What one op of an update changed.
@@ -63,6 +68,7 @@ impl View {
             turns: snapshot.turns,
             subagents: snapshot.subagents,
             plans: snapshot.plans,
+            orphans: HashMap::new(),
         }
     }
 
@@ -215,6 +221,22 @@ impl View {
                 *held = turn;
             }
             None => {
+                // The steps that came before this header join the new turn
+                // while it runs.
+                if let Some(orphans) = self.orphans.remove(&id)
+                    && turn.state == TurnState::Running
+                {
+                    for step in orphans {
+                        if waits(&step) {
+                            turn.attention.insert(0, step.clone());
+                        }
+                        let id = step_id(&step).to_string();
+                        match turn.steps.iter_mut().find(|held| step_id(held) == id) {
+                            Some(held) => *held = step,
+                            None => turn.steps.push(step),
+                        }
+                    }
+                }
                 let at = self
                     .turns
                     .iter()
@@ -232,6 +254,14 @@ impl View {
     fn upsert_step(&mut self, step: StepDto) -> Option<Touched> {
         let id = step_id(&step).to_string();
         let Some(turn) = self.turn_mut(step_turn(&step)) else {
+            let orphans = self
+                .orphans
+                .entry(step_turn(&step).to_string())
+                .or_default();
+            match orphans.iter_mut().find(|held| step_id(held) == id) {
+                Some(held) => *held = step.clone(),
+                None => orphans.push(step.clone()),
+            }
             return Some(Touched::Item(Box::new(step)));
         };
         let touched = Touched::Item(Box::new(step.clone()));
@@ -483,6 +513,22 @@ mod tests {
                 serde_json::from_value(answered).unwrap()
             ))]
         );
+    }
+
+    #[test]
+    fn a_step_before_the_header_of_its_turn_joins_the_turn_when_it_comes() {
+        let mut view = View::new(snapshot(0, vec![]));
+
+        view.apply(update(
+            1,
+            json!([
+                {"op": "item_upsert", "step": step("note", "n0", "t0", json!({"text": "session started"}))},
+                {"op": "turn_upsert", "turn": turn("t0", "running", json!({"prompt": null}))},
+            ]),
+        ))
+        .unwrap();
+
+        assert_eq!(texts(&view, "t0"), ["n0"]);
     }
 
     #[test]

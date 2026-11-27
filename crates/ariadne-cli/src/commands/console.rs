@@ -1174,4 +1174,109 @@ mod tests {
             );
         }
     }
+
+    /// A session that starts: the daemon sends the note of `session_start`,
+    /// then the header of the turn it opens, in one update (040, `finish`).
+    fn starting() -> Vec<Script> {
+        let pre_prompt = |state: &str| {
+            turn(
+                "t0",
+                state,
+                json!({"prompt": null, "answer": [],
+                       "activity": {"steps": 0, "tool_calls": 0, "files_changed": 0, "failed": 0,
+                                    "cancelled": 0, "thoughts": 0, "subagents": 0}}),
+            )
+        };
+        let started = json!({"type": "note", "id": "n0", "turn_id": "t0", "lane": "main",
+                             "created_at": "2026-11-27T10:00:00Z", "origin": "session_start",
+                             "severity": "info", "text": "session started"});
+        vec![vec![
+            ("snapshot", snapshot(0, "starting", vec![], false)),
+            (
+                "update",
+                json!({"rev": 1, "ops": [
+                    {"op": "item_upsert", "step": started},
+                    {"op": "turn_upsert", "turn": pre_prompt("running")},
+                ]}),
+            ),
+            (
+                "update",
+                json!({"rev": 2, "ops": [
+                    {"op": "turn_upsert", "turn": pre_prompt("interrupted")},
+                    {"op": "session_patch", "session": session("exited")},
+                ]}),
+            ),
+        ]]
+    }
+
+    #[tokio::test]
+    async fn the_first_step_of_a_starting_session_prints_under_its_turn() {
+        let stub = Stub {
+            streams: streams(starting()),
+            ..Stub::default()
+        };
+
+        let out = follow_with(stub, Layout::Blocks, true, Filters::default()).await;
+
+        assert_eq!(
+            out,
+            "10:00:00  SESSION  before the first prompt\n\
+             \x20 10:00:00  note  session started\n\
+             \x20 interrupted\n\
+             \n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_json_follow_keeps_the_first_step_of_a_starting_session_in_its_turn() {
+        let stub = Stub {
+            streams: streams(starting()),
+            ..Stub::default()
+        };
+
+        let out = follow_with(stub, Layout::Json, true, Filters::default()).await;
+
+        let turns: Vec<TurnDto> = out
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(turns.len(), 1, "{out}");
+        let ids: Vec<_> = turns[0]
+            .steps
+            .iter()
+            .map(ariadne_console::trajectory::step_id)
+            .collect();
+        assert_eq!(ids, ["n0"]);
+    }
+
+    #[tokio::test]
+    async fn a_piped_console_prints_the_first_step_of_a_starting_session() {
+        let stub = Stub {
+            streams: streams(starting()),
+            hold: true,
+            ..Stub::default()
+        };
+        let (client, server) = serve(stub).await;
+        let (mut input_writer, input_reader) = duplex(128);
+        let (output_writer, mut output_reader) = duplex(4096);
+        let console = tokio::spawn(async move {
+            run_with_io(&client, "s", BufReader::new(input_reader), output_writer).await
+        });
+
+        let mut output = String::new();
+        while !output.contains("turn · interrupted\n") {
+            let mut buffer = [0; 1024];
+            let read = output_reader.read(&mut buffer).await.unwrap();
+            assert!(read > 0, "the console ended early: {output}");
+            output.push_str(std::str::from_utf8(&buffer[..read]).unwrap());
+        }
+        input_writer.shutdown().await.unwrap();
+        console.await.unwrap().unwrap();
+
+        assert_eq!(
+            output,
+            "session · before the first prompt\nnote · session started\nturn · interrupted\n"
+        );
+        server.abort();
+    }
 }

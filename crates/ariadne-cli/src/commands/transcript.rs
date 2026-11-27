@@ -261,6 +261,9 @@ pub(crate) struct Follower<Tz> {
     waiting: HashMap<String, String>,
     /// The line that names each opened turn, over a close printed after it.
     owners: HashMap<String, String>,
+    /// The steps an update sent before the header of their turn: they print
+    /// under the turn when it comes, open or closed.
+    orphans: HashMap<String, Vec<StepDto>>,
 }
 
 impl<Tz> Follower<Tz>
@@ -285,6 +288,7 @@ where
             held: HashMap::new(),
             waiting: HashMap::new(),
             owners: HashMap::new(),
+            orphans: HashMap::new(),
         }
     }
 
@@ -393,8 +397,19 @@ where
         for (id, steps) in turns {
             match view.turn(id) {
                 Some(turn) => out.push_str(&self.sweep(turn, &steps)),
-                // A turn the view does not hold can still close a waiting step.
+                // A turn the view does not hold yet, or no longer: a step of
+                // it waits for its header, and it can close a waiting step.
                 None => {
+                    let orphans = self.orphans.entry(id.to_string()).or_default();
+                    for step in &steps {
+                        match orphans
+                            .iter_mut()
+                            .find(|held| step_id(held) == step_id(step))
+                        {
+                            Some(held) => *held = step.clone(),
+                            None => orphans.push(step.clone()),
+                        }
+                    }
                     for step in &steps {
                         if self.waiting.contains_key(step_id(step)) {
                             out.push_str(&self.step(step));
@@ -410,6 +425,9 @@ where
         if self.skipped.contains(&turn.id) {
             return String::new();
         }
+        let orphans = self.orphans.remove(&turn.id).unwrap_or_default();
+        let stored: Vec<StepDto> = orphans.into_iter().chain(stored.iter().cloned()).collect();
+        let stored = stored.as_slice();
         let mut out = String::new();
         if self.opened.insert(turn.id.clone()) {
             self.owners
@@ -695,5 +713,26 @@ mod tests {
         let whole = json_turn(&turn, Some(turn.steps.clone()), &Filters::default());
         assert_eq!(whole.steps.len(), 1);
         assert_eq!(whole.earlier_steps, 0);
+    }
+
+    #[test]
+    fn a_step_before_a_header_that_comes_closed_prints_in_its_turn() {
+        let mut follower = Follower::new(Layout::Json, true, Filters::default(), Printer::new(Utc));
+        let mut view = view(vec![]);
+        follower.admit(&[], &view);
+        let mut out = String::new();
+
+        view.apply_each(
+            typed(json!({"rev": 1, "ops": [
+                {"op": "item_upsert", "step": note("n0", "t0", "2026-11-27T10:00:00Z")},
+                {"op": "turn_upsert", "turn": turn("t0", "interrupted", "2026-11-27T10:00:00Z", json!({}))},
+            ]})),
+            |view, touched| out.push_str(&follower.update(view, std::slice::from_ref(&touched))),
+        )
+        .unwrap();
+
+        let turn: TurnDto = serde_json::from_str(out.trim_end()).unwrap();
+        assert_eq!(turn.steps.len(), 1, "{out}");
+        assert_eq!(step_id(&turn.steps[0]), "n0");
     }
 }
