@@ -107,6 +107,20 @@ impl Drop for Subscription {
 }
 
 impl Subscription {
+    /// The snapshot the subscription opened on. Taken once.
+    pub(super) fn opening(&mut self) -> Option<TrajectorySnapshotDto> {
+        self.snapshot.take()
+    }
+
+    /// The next revision. `Err` carries how many a receiver that fell behind
+    /// missed, and `None` is the hub's end.
+    pub(super) async fn revision(&mut self) -> Option<Result<Arc<TrajectoryUpdateDto>, u64>> {
+        match self.next().await? {
+            Frame::Update(update) => Some(Ok(update)),
+            Frame::Resync(missed) => Some(Err(missed)),
+        }
+    }
+
     /// The next frame. A receiver that fell behind the broadcast is a
     /// resync, and `None` is the hub's end.
     async fn next(&mut self) -> Option<Frame> {
@@ -133,7 +147,7 @@ enum Input {
 
 impl Trajectories {
     /// Join the session's hub, or open one.
-    async fn subscribe(
+    pub(super) async fn subscribe(
         &self,
         state: &AppState,
         session_id: &str,

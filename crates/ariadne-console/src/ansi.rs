@@ -19,11 +19,23 @@ use std::io::{self, Write};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
+use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
 use ratatui::style::{Color, Modifier};
 use unicode_width::UnicodeWidthStr;
+
+/// What the full-screen console tells the terminal as it opens: the alternate
+/// screen, the mouse — presses and the wheel, with the coordinates as numbers
+/// — and bracketed paste. A terminal that reports the mouse and a paste as
+/// the client of the terminal route does sends them as messages.
+pub const FULL_SCREEN_ON: &[u8] = b"\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h";
+
+/// What the console tells the terminal as it closes: the modes of
+/// [`FULL_SCREEN_ON`] given back, in the opposite order, and the cursor
+/// shown.
+pub const FULL_SCREEN_OFF: &[u8] = b"\x1b[?2004l\x1b[?1006l\x1b[?1000l\x1b[?1049l\x1b[?25h";
 
 /// The size of the terminal at the far end, as the client last reported it.
 ///
@@ -66,6 +78,12 @@ impl<W: Write> AnsiBackend<W> {
             window,
             cursor: Position::ORIGIN,
         }
+    }
+
+    /// A ratatui terminal over the whole of the window, for the full-screen
+    /// console. Its size is the window's, which the host has set first.
+    pub fn full_screen(out: W, window: Window) -> io::Result<Terminal<Self>> {
+        Terminal::new(Self::new(out, window))
     }
 
     fn move_to(&mut self, at: Position) -> io::Result<()> {

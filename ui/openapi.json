@@ -4675,8 +4675,8 @@
         "tags": [
           "sessions"
         ],
-        "summary": "A session's console as a terminal.",
-        "description": "Upgrades to a WebSocket. The client sends JSON text frames — a `resize`\nwith the terminal's columns and rows first and on every change, a `key`\nper key press and a `paste` per pasted text (`TerminalClientMessage`) —\nand reads binary frames of terminal bytes that draw the console, plus a\ntext frame carrying the session's status as the socket opens and as it\nends (`TerminalServerMessage`). Closing the socket ends the console and\nleaves the session running; the session ending, Ctrl-C twice or Ctrl-D\nclose the socket.",
+        "summary": "A session's full-screen console as a terminal.",
+        "description": "Upgrades to a WebSocket. The client sends JSON text frames — a `resize`\nwith the terminal's columns and rows first and on every change, a `key`\nper key press, a `paste` per pasted text and a `mouse` per wheel step or\nclick (`TerminalClientMessage`) — and reads binary frames of terminal\nbytes that draw the console, plus a text frame carrying the session's\nstatus as the socket opens and as it ends (`TerminalServerMessage`).\nClosing the socket ends the console and leaves the session running; the\nsession ending, Ctrl-C twice or Ctrl-D close the socket.",
         "operationId": "console_terminal",
         "parameters": [
           {
@@ -4691,7 +4691,7 @@
         ],
         "responses": {
           "101": {
-            "description": "WebSocket. Client to server: JSON text frames, one `TerminalClientMessage` each — `resize` first, then `key` and `paste`. Server to client: binary frames of the terminal bytes that draw the console, and JSON text frames of `TerminalServerMessage`."
+            "description": "WebSocket. Client to server: JSON text frames, one `TerminalClientMessage` each — `resize` first, then `key`, `paste` and `mouse`. Server to client: binary frames of the terminal bytes that draw the full-screen console, and JSON text frames of `TerminalServerMessage`."
           },
           "404": {}
         }
@@ -13184,6 +13184,277 @@
           }
         },
         "additionalProperties": false
+      },
+      "TerminalClientMessage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The size of the terminal the bytes are drawn on, in cells. Sent\nfirst, before the daemon draws anything, and on every change.",
+            "required": [
+              "cols",
+              "rows",
+              "type"
+            ],
+            "properties": {
+              "cols": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "rows": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resize"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One key press: what crossterm's `KeyEvent` holds, one to one.",
+            "required": [
+              "code",
+              "type"
+            ],
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/TerminalKey"
+              },
+              "modifiers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TerminalModifier"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "key"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Text pasted whole, line breaks and all.",
+            "required": [
+              "text",
+              "type"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "paste"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One mouse event on the terminal's cell `col`, `row`, counted from\nzero at the top left: a step of the wheel, or a click of the left\nbutton.",
+            "required": [
+              "kind",
+              "col",
+              "row",
+              "type"
+            ],
+            "properties": {
+              "col": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "$ref": "#/components/schemas/TerminalMouse"
+              },
+              "row": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "mouse"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What a client sends over `GET /v1/sessions/{id}/console/terminal`, the\nsession's console as a terminal: one of these per JSON text frame.\n\nThe daemon draws the console into the terminal the client emulates, so\nthe first message is the terminal's size, and every change of it is\nanother. A key, a paste and a mouse event are what the terminal read, as\nthe console takes them; the daemon reads nothing else. The console asks\nthe terminal for the mouse as it opens, so a terminal that reports it\nsends `mouse` messages."
+      },
+      "TerminalKey": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "char"
+            ],
+            "properties": {
+              "char": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "f"
+            ],
+            "properties": {
+              "f": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "string",
+            "enum": [
+              "enter"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "backspace"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "tab"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "back_tab"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "esc"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "left"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "right"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "up"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "down"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "home"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "end"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "page_up"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "page_down"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "delete"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "insert"
+            ]
+          }
+        ],
+        "description": "The key a [`TerminalClientMessage::Key`] names: crossterm's `KeyCode`,\nas far as the console reads it. A printable character is\n`{\"char\": \"a\"}`, a function key `{\"f\": 5}`, and every other key its name."
+      },
+      "TerminalModifier": {
+        "type": "string",
+        "description": "A modifier held with a key: crossterm's `KeyModifiers`, one flag each.",
+        "enum": [
+          "shift",
+          "control",
+          "alt",
+          "super",
+          "hyper",
+          "meta"
+        ]
+      },
+      "TerminalMouse": {
+        "type": "string",
+        "description": "What a [`TerminalClientMessage::Mouse`] did: one step of the wheel up or\ndown, or a press of the left button.",
+        "enum": [
+          "wheel_up",
+          "wheel_down",
+          "click"
+        ]
+      },
+      "TerminalServerMessage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The session's status: once as the socket opens, and again as the\nconsole ends, right before the socket closes.",
+            "required": [
+              "status",
+              "type"
+            ],
+            "properties": {
+              "status": {
+                "$ref": "#/components/schemas/SessionStatus"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "status"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What the daemon sends over `GET /v1/sessions/{id}/console/terminal` as a\nJSON text frame, beside the binary frames of terminal bytes."
       },
       "TestAiPermissionRequest": {
         "type": "object",
