@@ -4119,7 +4119,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nactive goal for the babysit, with one staffed task and no orchestrator,\nin one `babysit` column that Ariadne fixes: the model must be ranked\ninside that column's band, else 400. Asking again keeps the open goal and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The goal completes when the request merges; its task fails on close.\nStopping cancels the goal and its task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
+        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nstaffed task for the babysit, with no goal and no orchestrator, in one\n`babysit` column that Ariadne fixes: the model must be ranked inside that\ncolumn's band, else 400. Asking again keeps the open task and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The task finishes when the request merges and fails on close.\nStopping cancels the task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
         "operationId": "ask_babysit",
         "parameters": [
           {
@@ -4172,7 +4172,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one active goal for the review, with one\nstaffed task and no orchestrator, in one `review` column that Ariadne\nfixes: the model must be ranked inside that column's band, else 400. Asking again keeps\nthe open goal and moves its pin and skills. The session waits while the\nrequest is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The goal completes when the\nrequest merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
+        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one staffed task for the review, with no\ngoal and no orchestrator, in one `review` column that Ariadne fixes: the\nmodel must be ranked inside that column's band, else 400. Asking again\nkeeps the open task and moves its pin and skills. The session waits while\nthe request is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The task finishes when the\nrequest merges, and fails if the request closes. Stopping cancels the task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
         "operationId": "ask_review",
         "parameters": [
           {

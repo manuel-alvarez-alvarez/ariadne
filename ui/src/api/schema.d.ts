@@ -2357,12 +2357,12 @@ export interface paths {
         /**
          * Ask Ariadne to keep any open request by hand on the model the user
          *     picks, or stop asking (032), regardless of its author. Asking starts one
-         *     active goal for the babysit, with one staffed task and no orchestrator,
-         *     in one `babysit` column that Ariadne fixes: the model must be ranked
-         *     inside that column's band, else 400. Asking again keeps the open goal and moves its
+         *     staffed task for the babysit, with no goal and no orchestrator, in one
+         *     `babysit` column that Ariadne fixes: the model must be ranked inside that
+         *     column's band, else 400. Asking again keeps the open task and moves its
          *     pin and skills. A request a task already keeps is refused to avoid
-         *     competing keepers. The goal completes when the request merges; its task fails on close.
-         *     Stopping cancels the goal and its task and ends only the keeper session,
+         *     competing keepers. The task finishes when the request merges and fails on close.
+         *     Stopping cancels the task and ends only the keeper session,
          *     preserving an asked review. Pushes use the head repository and remain
          *     subject to its permissions.
          */
@@ -2385,13 +2385,13 @@ export interface paths {
         /**
          * Ask Ariadne to review any open request on the model the user picks,
          *     or stop asking (029). Authorship and GitHub review assignments do not
-         *     restrict the ask. Asking starts one active goal for the review, with one
-         *     staffed task and no orchestrator, in one `review` column that Ariadne
-         *     fixes: the model must be ranked inside that column's band, else 400. Asking again keeps
-         *     the open goal and moves its pin and skills. The session waits while the
-         *     request is a draft. A review of the user's own request posts as a
-         *     comment; other reviews may request changes. The goal completes when the
-         *     request merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends
+         *     restrict the ask. Asking starts one staffed task for the review, with no
+         *     goal and no orchestrator, in one `review` column that Ariadne fixes: the
+         *     model must be ranked inside that column's band, else 400. Asking again
+         *     keeps the open task and moves its pin and skills. The session waits while
+         *     the request is a draft. A review of the user's own request posts as a
+         *     comment; other reviews may request changes. The task finishes when the
+         *     request merges, and fails if the request closes. Stopping cancels the task and ends
          *     only the reviewer session, keeping any task or keeper that also works on
          *     the request.
          */
