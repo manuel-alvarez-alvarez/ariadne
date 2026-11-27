@@ -26,13 +26,13 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState, hostTitle, RefreshWarning } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
 import { HostLabel } from "@/components/host-label"
+import { IconButton } from "@/components/icon-button"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { TabCount } from "@/components/tab-count"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
-import { Button } from "@/components/ui/button"
 import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -190,10 +190,11 @@ function GoalView({
         actions={
           <div className="flex items-center gap-2">
             {canCreateTask ? (
-              <Button variant="outline" size="sm" onClick={() => setNewTaskOpen(true)}>
-                <PlusIcon />
-                New task
-              </Button>
+              <IconButton
+                icon={<PlusIcon />}
+                label="New task"
+                onClick={() => setNewTaskOpen(true)}
+              />
             ) : null}
             {/* Deleting takes the goal out from under this panel, so the
                 panel's own close is what the action ends on. */}

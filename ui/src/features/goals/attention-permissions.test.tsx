@@ -167,7 +167,7 @@ it("shows no option button and keeps the console link when nothing is pending", 
   })
   expect(screen.queryByRole("region", { name: "Pending permission" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull()
-  expect(screen.getByText("Open console")).toBeTruthy()
+  expect(screen.getByRole("button", { name: "Open console" })).toBeTruthy()
 })
 
 it("disables the buttons of every view of the permission while one view posts", async () => {

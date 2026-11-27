@@ -10,10 +10,12 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
+import { ExternalLinkIcon, XIcon } from "lucide-react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
 import { api, type GoalDto, type Host, qk, unwrap } from "@/api"
 import { HostLabel } from "@/components/host-label"
+import { IconButton } from "@/components/icon-button"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -155,9 +157,6 @@ export function AttentionBlock({
             one thing true of both, and the list is ordered by it. */}
         <When at={item.at} label="last moved" className="text-xs text-muted-foreground" />
         <RowId id={item.id} />
-        {expanded ? (
-          <span className="text-xs font-medium underline">{actionLabel(item)}</span>
-        ) : null}
       </div>
     </>
   )
@@ -165,14 +164,36 @@ export function AttentionBlock({
   return (
     <li>
       {item.recovery ? (
-        <button
-          type="button"
+        <IconButton
+          variant="ghost"
+          size="icon-xs"
+          icon={<XIcon />}
+          label="Dismiss"
           disabled={dismiss.isPending}
           onClick={() => dismiss.mutate()}
-          className="float-right px-3 py-2 text-xs underline"
-        >
-          Dismiss
-        </button>
+          className="float-right m-2"
+        />
+      ) : null}
+      {expanded ? (
+        // Beside the row's own link, not inside it: a link holds no button.
+        <IconButton
+          variant="ghost"
+          size="icon-xs"
+          icon={<ExternalLinkIcon />}
+          label={actionLabel(item)}
+          nativeButton={false}
+          render={
+            <Link
+              to={target}
+              replace={target.replace}
+              onClick={() => {
+                follow(target)
+                onSelect?.()
+              }}
+            />
+          }
+          className="float-right my-2"
+        />
       ) : null}
       {dismiss.error ? <p role="alert">{describeError(dismiss.error)}</p> : null}
       <Link

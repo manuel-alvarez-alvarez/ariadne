@@ -19,7 +19,7 @@ import { useMemo } from "react"
 import type { Host, WorkflowStepDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/icon-button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { compareByAttention, TaskCard, taskListQueryOptions } from "@/features/tasks"
 
@@ -81,10 +81,7 @@ export function GoalTasks({
           title="No tasks yet"
           action={
             onNewTask ? (
-              <Button variant="outline" size="sm" onClick={onNewTask}>
-                <PlusIcon />
-                New task
-              </Button>
+              <IconButton icon={<PlusIcon />} label="New task" onClick={onNewTask} />
             ) : undefined
           }
         />

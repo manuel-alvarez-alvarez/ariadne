@@ -95,3 +95,15 @@ it("keeps the selected session when the daemon returns its id", async () => {
   await waitFor(() => expect(bodies).toHaveLength(1))
   expect(onSwitched).not.toHaveBeenCalled()
 })
+
+it("draws Switch and Kill session as icon-only buttons, and Kill session still asks first", async () => {
+  stubDaemon(() => jsonResponse(SESSION))
+  const user = userEvent.setup()
+  renderScreen(<SessionActions host="local" session={aSession({ status: "running" })} />)
+
+  expect(screen.getByRole("button", { name: "Switch" }).textContent).toBe("")
+  const kill = screen.getByRole("button", { name: "Kill session" })
+  expect(kill.textContent).toBe("")
+  await user.click(kill)
+  expect(await screen.findByRole("dialog", { name: "Kill this session?" })).not.toBeNull()
+})

@@ -1,8 +1,8 @@
-import { CircleHelpIcon, Loader2Icon, PlugZapIcon } from "lucide-react"
+import { CircleHelpIcon, Loader2Icon, PencilIcon, PlugZapIcon, RotateCcwIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
 import type { SessionStatus } from "@/api"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/icon-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatTokens } from "@/lib/format"
 
@@ -31,12 +31,8 @@ export function FailedMessage({
       <p className="text-status-danger-fg">{one.message}</p>
       <p className="whitespace-pre-wrap break-words text-sm">{one.text}</p>
       <div className="flex gap-1.5">
-        <Button size="xs" variant="outline" onClick={onRetry}>
-          Retry
-        </Button>
-        <Button size="xs" variant="outline" onClick={onEdit}>
-          Edit
-        </Button>
+        <IconButton size="icon-xs" icon={<RotateCcwIcon />} label="Retry" onClick={onRetry} />
+        <IconButton size="icon-xs" icon={<PencilIcon />} label="Edit" onClick={onEdit} />
       </div>
     </div>
   )
@@ -61,9 +57,7 @@ export function HistoryLine({ history, onRetry }: { history: History; onRetry: (
         className="flex items-center gap-2 border-b px-3 py-1 font-mono text-xs text-status-danger-fg"
       >
         Could not load older events: {history.message}
-        <Button size="xs" variant="outline" onClick={onRetry}>
-          Retry
-        </Button>
+        <IconButton size="icon-xs" icon={<RotateCcwIcon />} label="Retry" onClick={onRetry} />
       </div>
     )
   }

@@ -1958,6 +1958,49 @@ view.
     `::uses the sidebar's icon for a tab the sidebar names`;
     `::shows an icon on the Forge, Permissions and markdown tabs`;
     `ui/src/features/goals/goals-list-page.test.tsx::leaves every status tab unselected for a custom selection`).
+111. An action is an icon-only button with a tooltip, built from one
+     component, `IconButton` (`ui/src/components/icon-button.tsx`). It takes an
+     icon and a label. The label is the tooltip and the accessible name. A
+     tooltip of its own may add to the name, and a `mark` is a dot with text
+     for a screen reader. It is a `Button`: it keeps `aria-pressed`, `pending`
+     and `disabled`.
+     - The goal actions (New task, Complete goal, Cancel goal, Delete goal),
+       the task actions (Edit task, Retry task, Cancel task) and the session
+       actions (Switch, Kill session, Resume session) use it. Cancel goal,
+       Delete goal, Cancel task and Kill session keep their confirmation.
+       Retry task shows what a retry keeps in its tooltip.
+     - The attention block shows its open action (in the drawer) and Dismiss,
+       and the attention strip shows View all and Retry, as icon buttons.
+     - The step detail shows `Open` and `Raw`, which keeps `aria-pressed`. The
+       console shows Retry and Edit of a failed prompt, and `Jump to latest`,
+       which carries a mark `New output` while output is unread.
+     - The header shows Search, whose tooltip names the palette chord, and
+       Settings and the sidebar toggle. The composer's Send and Stop use it.
+     - The settings dialog shows `Retry connection` and `Reset to default` as
+       icon buttons. `Save address` and `Close` keep their words.
+     - A tooltip opened by focus never keeps the pane open: Escape on an icon
+       button of the pane still closes the pane
+       (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing the replacement goal breadcrumb`).
+     - Tabs, step rows, turn lines and headers, state pills and buttons that
+       submit a form or a dialog stay as they are
+       (`ui/src/components/icon-button.test.tsx::names the button by its label and draws no text`,
+       `::shows the label as the tooltip when the button takes focus`,
+       `::shows a tooltip of its own without changing the accessible name`,
+       `::shows a mark only when it has one`,
+       `::keeps its pressed state and click`;
+       `ui/src/features/goals/goal-action-icons.test.tsx::draws Complete goal and Cancel goal as icon-only buttons on an active goal`,
+       `::draws Delete goal as an icon-only button on a stopped goal`,
+       `::draws New task as an icon-only button in the goal panel header`,
+       `::draws New task as an icon-only button in the empty task list`,
+       `::draws Edit task and Cancel task as icon-only buttons on a task that waits`,
+       `::draws Resume session as an icon-only button on a session that ended`;
+       `ui/src/features/sessions/session-actions.test.tsx::draws Switch and Kill session as icon-only buttons, and Kill session still asks first`;
+       `ui/src/features/tasks/task-action-feedback.test.tsx::draws Retry task as an icon whose tooltip says what a retry keeps`;
+       `ui/src/components/app-shell.test.tsx::shows Search as an icon whose tooltip names the palette chord`;
+       `ui/src/components/settings-dialog.test.tsx::keeps the footer to Reset to default and Close, with no Save button there`;
+       `ui/src/features/goals/attention-blocks.test.tsx::draws the content of a drawer row: summary, action, age, links, target and Dismiss`;
+       `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::follows the newest output, and offers Jump to latest once the reader scrolls away`;
+       `ui/src/features/sessions/trajectory/step-detail.test.tsx::shows the raw input and the raw output only behind Raw`).
 
 ## Acceptance criteria
 

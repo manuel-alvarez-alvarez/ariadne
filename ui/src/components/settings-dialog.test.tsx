@@ -120,7 +120,10 @@ describe("SettingsDialog", () => {
     expect(footer).not.toBeNull()
     expect(footer?.querySelector("button[type=submit]")).toBeNull()
     expect(
-      footer && Array.from(footer.querySelectorAll("button")).map((b) => b.textContent),
+      footer &&
+        Array.from(footer.querySelectorAll("button")).map(
+          (b) => b.getAttribute("aria-label") ?? b.textContent,
+        ),
     ).toEqual(["Reset to default", "Close"])
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull()
   })
@@ -157,7 +160,7 @@ describe("SettingsDialog", () => {
     renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
     expect(screen.getByText(/Configured address:/)).toBeDefined()
     expect(screen.getByText(/Connection: Connecting/)).toBeDefined()
-    expect(screen.getByRole("button", { name: "Retry connection" })).toBeDefined()
+    expect(screen.getByRole("button", { name: "Retry connection" }).textContent).toBe("")
     expect(screen.getByText(/Start the daemon/)).toBeDefined()
   })
 

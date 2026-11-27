@@ -1,8 +1,10 @@
 /** The shell's persistent entry point to the shared live attention list. */
 
+import { ListIcon, RotateCcwIcon } from "lucide-react"
 import { useRef, useState } from "react"
 
 import { HostLabel } from "@/components/host-label"
+import { IconButton } from "@/components/icon-button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Sheet,
@@ -50,16 +52,16 @@ export function AttentionPopover() {
         <PopoverContent align="end" className="w-[min(24rem,calc(100vw-1rem))] p-0">
           <header className="flex items-center justify-between border-b px-3 py-2 font-semibold">
             <span>Needs attention · {attention.items.length}</span>
-            <button
-              type="button"
+            <IconButton
+              variant="ghost"
+              size="icon-xs"
+              icon={<ListIcon />}
+              label="View all"
               onClick={() => {
                 setOpen(false)
                 setDrawerOpen(true)
               }}
-              className="text-xs font-normal underline underline-offset-3 hover:text-foreground"
-            >
-              View all
-            </button>
+            />
           </header>
           {attention.isPending && attention.items.length === 0 ? (
             <p role="status" className="px-3 py-2">
@@ -237,13 +239,13 @@ function HostErrors({
 
 function Retry({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
+    <IconButton
+      variant="ghost"
+      size="icon-xs"
+      icon={<RotateCcwIcon />}
+      label="Retry"
       onClick={onClick}
-      className="underline underline-offset-3 hover:text-foreground"
-    >
-      Retry
-    </button>
+    />
   )
 }
 

@@ -88,3 +88,17 @@ it("reports a retry request awaiting worker acknowledgment", async () => {
     }),
   )
 })
+
+it("draws Retry task as an icon whose tooltip says what a retry keeps", async () => {
+  const user = userEvent.setup()
+  const task = remote("failed")
+  daemonFetch.mockImplementation(async () => jsonResponse([]))
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+
+  const retry = screen.getByRole("button", { name: "Retry task" })
+  expect(retry.textContent).toBe("")
+  await user.hover(retry)
+  expect(await screen.findByText("Retry with the same branch and worktree")).not.toBeNull()
+})

@@ -312,6 +312,7 @@ it("shows the raw input and the raw output only behind Raw", async () => {
   expect(within(detail).queryByText(/secret-/)).toBeNull()
 
   const raw = within(detail).getByRole("button", { name: "Raw" })
+  expect(raw.textContent).toBe("")
   await user.click(raw)
   expect(raw.getAttribute("aria-pressed")).toBe("true")
   await within(section(detail, "raw input")).findByText(/secret-input/)

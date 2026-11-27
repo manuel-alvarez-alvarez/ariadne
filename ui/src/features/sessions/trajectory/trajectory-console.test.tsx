@@ -325,6 +325,8 @@ it("keeps a refused prompt with Retry and Edit", async () => {
   within(failed).getByText(/the agent is busy/)
   expect(within(transcript()).queryByText("queued")).toBeNull()
 
+  expect(within(failed).getByRole("button", { name: "Retry" }).textContent).toBe("")
+  expect(within(failed).getByRole("button", { name: "Edit" }).textContent).toBe("")
   await user.click(within(failed).getByRole("button", { name: "Retry" }))
   await waitFor(() => expect(posts("/console/input")).toHaveLength(2))
   expect(JSON.parse(posts("/console/input")[1]?.body ?? "")).toEqual({ text: "Try this" })
@@ -438,6 +440,7 @@ it("follows the newest output, and offers Jump to latest once the reader scrolls
   act(() => source.emit("update", anUpdate(3, [{ op: "item_upsert", step: aToolStep(turn.id) }])))
   expect(state.top).toBe(100)
   screen.getByText("New output")
+  expect(screen.getByRole("button", { name: /Jump to latest/ }).textContent).toBe("New output")
 
   await user.click(screen.getByRole("button", { name: /Jump to latest/ }))
   expect(state.top).toBe(1000)

@@ -213,8 +213,9 @@ it("draws the content of a drawer row: summary, action, age, links, target and D
   expect(block.querySelector(`time[datetime="${SINCE}"]`)).not.toBeNull()
   expect(within(block).getByRole("link", { name: "first agent" })).toBeTruthy()
   expect(within(block).getByRole("link", { name: "second agent" })).toBeTruthy()
-  expect(within(block).getByText("Open console")).toBeTruthy()
-  expect(within(block).getByRole("button", { name: "Dismiss" })).toBeTruthy()
+  expect(within(block).getByRole("button", { name: "Open console" })).toBeTruthy()
+  expect(within(block).getByRole("button", { name: "Dismiss" }).textContent).toBe("")
+  expect(within(block).getByRole("button", { name: "Open console" }).textContent).toBe("")
 })
 
 it("keeps every link and button of a block in the tab order", async () => {

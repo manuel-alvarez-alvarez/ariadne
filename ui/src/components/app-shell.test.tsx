@@ -26,6 +26,8 @@ import { beforeEach, expect, it } from "vitest"
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { PageHeader } from "@/components/page-header"
 import { PanelSheet } from "@/components/panel-sheet"
+import { PALETTE_SHORTCUT } from "@/hooks/use-global-shortcuts"
+import { shortcutLabel } from "@/lib/shortcuts"
 import { useSettingsStore } from "@/stores/settings"
 import { renderScreen, startAt } from "@/test/harness"
 
@@ -261,4 +263,13 @@ it("reserves shell space and focuses the overview while the inspector stays moun
   expect(screen.getByRole("textbox", { name: "Console draft" })).toBe(draft)
   expect((draft as HTMLTextAreaElement).value).toBe("Keep my draft")
   expect(window.location.href).toBe(address)
+})
+
+it("shows Search as an icon whose tooltip names the palette chord", async () => {
+  const { user } = mountShell()
+
+  const search = screen.getByRole("button", { name: "Search" })
+  expect(search.textContent).toBe("")
+  await user.hover(search)
+  expect(await screen.findByText(shortcutLabel(PALETTE_SHORTCUT))).not.toBeNull()
 })

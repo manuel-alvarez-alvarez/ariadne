@@ -26,7 +26,7 @@
  */
 
 import { skipToken, useQuery } from "@tanstack/react-query"
-import { ArrowDownIcon, Maximize2Icon, Minimize2Icon } from "lucide-react"
+import { ArrowDownIcon, Maximize2Icon, Minimize2Icon, RotateCcwIcon } from "lucide-react"
 import {
   type KeyboardEvent,
   useCallback,
@@ -49,6 +49,7 @@ import {
   type SessionStatus,
   unwrap,
 } from "@/api"
+import { IconButton } from "@/components/icon-button"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { copyText } from "@/lib/clipboard"
@@ -877,9 +878,12 @@ function TrajectoryPane({
               className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
             >
               Could not read the open questions: {questionsError}
-              <Button size="xs" variant="outline" onClick={readQuestions}>
-                Retry
-              </Button>
+              <IconButton
+                size="icon-xs"
+                icon={<RotateCcwIcon />}
+                label="Retry"
+                onClick={readQuestions}
+              />
             </div>
           ) : null}
           {failed.map((one) => (
@@ -892,23 +896,14 @@ function TrajectoryPane({
           ))}
         </div>
         {away ? (
-          <Button
-            size="sm"
+          <IconButton
             variant="secondary"
+            icon={<ArrowDownIcon />}
+            label="Jump to latest"
+            mark={unread ? "New output" : undefined}
             onClick={jumpToLatest}
             className="absolute right-3 bottom-2 shadow-md"
-          >
-            <ArrowDownIcon />
-            Jump to latest
-            {unread ? (
-              <span
-                role="status"
-                className="rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground"
-              >
-                New output
-              </span>
-            ) : null}
-          </Button>
+          />
         ) : null}
       </StepWorkspace>
       <TrajectoryDock>

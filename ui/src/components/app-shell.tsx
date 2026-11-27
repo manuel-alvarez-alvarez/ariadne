@@ -38,12 +38,12 @@ import { ConnectionBanner } from "@/components/connection-banner"
 import { ConnectionStatus } from "@/components/connection-status"
 import { DetailPanels } from "@/components/detail-panels"
 import { HostPicker } from "@/components/host-picker"
+import { IconButton } from "@/components/icon-button"
 import { InspectorLayoutContext } from "@/components/inspector-layout-context"
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog"
 import { PageHeaderContext, type PageHeaderSlot } from "@/components/page-header-context"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { CommandPalette } from "@/features/command-palette/command-palette"
 import { AttentionAlerts } from "@/features/goals/attention-alerts"
@@ -192,15 +192,14 @@ export function AppShell() {
                 {/* Beside the edge it moves, and pressed while the rail is down —
                   a toggle, not a command, and the one control that says which
                   way the sidebar is. */}
-                <Button
+                <IconButton
                   variant="ghost"
                   size="icon"
-                  aria-label={railed ? "Expand sidebar" : "Collapse sidebar"}
+                  icon={railed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+                  label={railed ? "Expand sidebar" : "Collapse sidebar"}
                   aria-pressed={railed}
                   onClick={toggleSidebar}
-                >
-                  {railed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
-                </Button>
+                />
                 {/* The screen's one heading, at the app's one title size. A
                   routed screen's own `PageHeader` hands this its description
                   through `PageHeaderContext`, shown here as the tooltip. */}
@@ -229,22 +228,28 @@ export function AppShell() {
                   <HostPicker />
                   {/* The palette's affordance: a chord nobody can see is a chord
                     nobody uses, so the header carries it with its hint. */}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2 text-muted-foreground font-normal"
+                  <IconButton
+                    size="icon"
+                    icon={<SearchIcon />}
+                    label="Search"
+                    tooltip={
+                      <>
+                        Search
+                        <kbd className="rounded border border-background/30 px-1 font-mono text-[0.7rem] leading-4">
+                          {shortcutLabel(PALETTE_SHORTCUT)}
+                        </kbd>
+                      </>
+                    }
                     onClick={openPalette}
-                  >
-                    <SearchIcon />
-                    Search
-                    <kbd className="rounded border bg-muted px-1 font-mono text-[0.7rem] leading-4">
-                      {shortcutLabel(PALETTE_SHORTCUT)}
-                    </kbd>
-                  </Button>
+                  />
                   <ThemeToggle />
-                  <Button variant="ghost" size="icon" aria-label="Settings" onClick={openSettings}>
-                    <SettingsIcon />
-                  </Button>
+                  <IconButton
+                    variant="ghost"
+                    size="icon"
+                    icon={<SettingsIcon />}
+                    label="Settings"
+                    onClick={openSettings}
+                  />
                 </div>
               </header>
               <ConnectionBanner onOpenSettings={openSettings} />
