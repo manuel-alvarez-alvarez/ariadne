@@ -66,6 +66,10 @@ pub struct EventFacts {
     pub stop_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<String>,
+    /// The ACP `plan_id` of a `plan_update` or a `plan_removed`. A read
+    /// loads the first and the newest event of each plan by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
     /// Whether a permission request is about one of Ariadne's own tools,
     /// and the ACP kind of each option it offers, by option id.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -168,6 +172,8 @@ pub fn facts_of(kind: &str, payload: &Value) -> EventFacts {
         "session.diagnosis" => facts.error = text(payload, "/error_event_id"),
         "stop" => facts.stop_reason = text(payload, "/stop_reason"),
         "compaction_update" => facts.compaction = text(payload, "/compaction_id"),
+        "plan_update" => facts.plan = text(payload, "/plan/plan_id"),
+        "plan_removed" => facts.plan = text(payload, "/plan_id"),
         "permission_request" => {
             facts.call = text(acp, "/toolCallId");
             let title = text(payload, "/tool_name").or_else(|| text(acp, "/title"));
@@ -469,5 +475,23 @@ mod tests {
             lane_of("tool_call_abandoned", &json!({"tool_call_id": "c-2"})),
             None
         );
+    }
+
+    /// A stored plan update and a removed plan name their ACP plan, so a
+    /// read finds the first and the newest event of each plan.
+    #[test]
+    fn a_plan_update_and_a_removed_plan_name_their_plan() {
+        let update = facts_of(
+            "plan_update",
+            &json!({"session_id": "s",
+                    "plan": {"type": "items", "plan_id": "plan-1", "entries": []}}),
+        );
+        assert_eq!(update.plan.as_deref(), Some("plan-1"));
+        let removed = facts_of(
+            "plan_removed",
+            &json!({"session_id": "s", "plan_id": "plan-1"}),
+        );
+        assert_eq!(removed.plan.as_deref(), Some("plan-1"));
+        assert_eq!(facts_of("plan", &json!({"entries": []})).plan, None);
     }
 }

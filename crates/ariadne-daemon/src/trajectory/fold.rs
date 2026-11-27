@@ -23,12 +23,12 @@ use ariadne_api::trajectory::{
     ToolCallStatus, TrajectoryOpDto, TrajectorySnapshotDto, TurnDto, TurnState,
 };
 use ariadne_core::event_facts::{EventFacts, facts_of, lane_of as event_lane};
-use ariadne_store::EventHead;
+use ariadne_store::{EventHead, SessionDisplayState};
 
 use super::steps::{
-    append_text, blocks_of, commands_of, content_of, is_terminal, lane_of, locations_of,
-    merge_call, merge_call_facts, new_call, permission_options, status_of, step_id, string_at,
-    subagent_ref, subject_of, text_step,
+    append_text, apply_display, blocks_of, commands_of, content_of, is_terminal, lane_of,
+    locations_of, merge_call, merge_call_facts, new_call, permission_options, status_of, step_id,
+    string_at, subagent_ref, subject_of, text_step,
 };
 
 /// How many errors a turn's `attention` holds, the newest first: a screen of
@@ -56,14 +56,19 @@ pub(crate) struct Fold {
     outside: Vec<Turn>,
     has_older: bool,
     subagents: Vec<Subagent>,
-    /// Each plan, with the lane it belongs to.
-    plans: Vec<(String, PlanDto)>,
+    /// Each plan, by its lane and its ACP `plan_id`: none for a plan of the
+    /// old `plan` kind, one to a lane.
+    plans: Vec<(PlanKey, PlanDto)>,
     session: SessionStateDto,
     /// The permissions no reply has answered yet, oldest first. A reply
     /// answers the newest.
     pending: Vec<Pending>,
     /// The open questions, by question or request id: the turn and the step.
     questions: HashMap<String, (String, String)>,
+    /// Whether the display state gave the commands. A stored
+    /// `available_commands_update`, from a daemon before the display state,
+    /// then changes nothing.
+    display_commands: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +95,8 @@ pub(crate) struct Lane {
     thoughts: u64,
     subagents: BTreeSet<String>,
     items: BTreeSet<String>,
-    compactions: BTreeSet<String>,
+    /// Each compaction's step, by its compaction id.
+    compactions: HashMap<String, String>,
     pub(crate) errors: Vec<String>,
     /// The run of text that streams now: a thought or not, and its step.
     streaming: Option<(bool, String)>,
@@ -190,8 +196,23 @@ pub(crate) struct TurnIndex {
     pub(crate) lanes: HashMap<String, Lane>,
 }
 
-/// The state of a session as its row says it, before any event.
-pub(crate) fn session_state(session: &SessionDto) -> SessionStateDto {
+/// The state of a session as its row says it, before any event: its
+/// status, attention, usage and context, and the display state its agent
+/// reported (021, rule 24).
+pub(crate) fn session_state(
+    session: &SessionDto,
+    display: &SessionDisplayState,
+) -> SessionStateDto {
+    let mut state = row_state(session);
+    apply_display(
+        &mut state,
+        &serde_json::to_value(display).expect("a display state is JSON"),
+    );
+    state
+}
+
+/// The fields of a session's state that its row holds.
+fn row_state(session: &SessionDto) -> SessionStateDto {
     SessionStateDto {
         status: session.status,
         attention_reason: session.attention_reason,
@@ -209,6 +230,23 @@ pub(crate) fn session_state(session: &SessionDto) -> SessionStateDto {
     }
 }
 
+/// A plan's lane and its ACP `plan_id`.
+type PlanKey = (String, Option<String>);
+
+/// The entries of a plan of entries, or of a `plan` event of the old kind.
+fn entries_of(plan: &Value) -> Vec<PlanEntryDto> {
+    plan.get("entries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|entry| PlanEntryDto {
+            content: string_at(entry, "/content").unwrap_or_default(),
+            status: string_at(entry, "/status").unwrap_or_else(|| "pending".into()),
+            priority: string_at(entry, "/priority"),
+        })
+        .collect()
+}
+
 /// The facts of a head, as stored.
 fn head_facts(head: &EventHead) -> EventFacts {
     serde_json::from_str(&head.facts).unwrap_or_default()
@@ -217,6 +255,7 @@ fn head_facts(head: &EventHead) -> EventFacts {
 impl Fold {
     pub(crate) fn new(session_id: &str, session: SessionStateDto) -> Self {
         Self {
+            display_commands: !session.commands.is_empty(),
             session_id: session_id.to_string(),
             turns: Vec::new(),
             outside: Vec::new(),
@@ -519,7 +558,7 @@ impl Fold {
     /// The session's row changed: its status, attention, usage or context.
     pub(crate) fn patch_session(&mut self, session: &SessionDto) -> Option<TrajectoryOpDto> {
         let mut next = self.session.clone();
-        let row = session_state(session);
+        let row = row_state(session);
         next.status = row.status;
         next.attention_reason = row.attention_reason;
         next.usage = row.usage;
@@ -661,13 +700,29 @@ impl Fold {
                 };
                 self.note(input, text, severity, ops);
             }
-            "plan" => self.plan(input, ops),
+            "plan" | "plan_update" => self.plan(input, ops),
+            "plan_removed" => self.plan_removed(input, ops),
+            "notice" => self.notice(input, ops),
             "subagent_update" => self.subagent(input, ops),
             "compaction_update" => self.compaction(input, ops),
             "available_commands_update" if input.lane == MAIN_LANE => {
-                if let Some(event) = input.full {
+                if let Some(event) = input.full
+                    && !(input.stored && self.display_commands)
+                {
                     self.session.commands = commands_of(&event.payload);
                     ops.push(self.session_op());
+                }
+            }
+            "display_state_update" if input.lane == MAIN_LANE => {
+                if let Some(event) = input.full {
+                    let mut next = self.session.clone();
+                    if apply_display(&mut next, &event.payload) {
+                        self.display_commands = true;
+                    }
+                    if next != self.session {
+                        self.session = next;
+                        ops.push(self.session_op());
+                    }
                 }
             }
             _ => {}
@@ -1340,51 +1395,88 @@ impl Fold {
         self.open_step(index, MAIN_LANE, input.id, input.row(), step, ops);
     }
 
+    /// A plan update: a `plan` of the old kind replaces the one plan of its
+    /// lane, and a `plan_update` the plan of its lane and `plan_id`. The
+    /// plan keeps the id of its first event.
     fn plan(&mut self, input: &Input, ops: &mut Ops) {
         let Some(event) = input.full else {
             return;
         };
-        let turn_id = self
-            .running()
-            .or(self.turns.len().checked_sub(1))
-            .map(|index| self.turns[index].id.clone());
-        let entries = event
-            .payload
-            .get("entries")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .map(|entry| PlanEntryDto {
-                content: string_at(entry, "/content").unwrap_or_default(),
-                status: string_at(entry, "/status").unwrap_or_else(|| "pending".into()),
-                priority: string_at(entry, "/priority"),
-            })
-            .collect();
-        let lane = &input.lane;
+        let key = (input.lane.clone(), input.facts.plan.clone());
+        let (variant, entries, markdown, path) = match input.kind {
+            "plan_update" => {
+                let plan = event.payload.get("plan").unwrap_or(&Value::Null);
+                match string_at(plan, "/type").as_deref() {
+                    Some("markdown") => (
+                        PlanVariant::Markdown,
+                        Vec::new(),
+                        string_at(plan, "/content"),
+                        string_at(plan, "/path"),
+                    ),
+                    _ => (PlanVariant::Entries, entries_of(plan), None, None),
+                }
+            }
+            _ => (PlanVariant::Entries, entries_of(&event.payload), None, None),
+        };
         let plan_id = self
             .plans
             .iter()
-            .find(|(plan_lane, _)| plan_lane == lane)
+            .find(|(kept, _)| *kept == key)
             .map_or_else(|| event.id.clone(), |(_, plan)| plan.plan_id.clone());
         let plan = PlanDto {
             plan_id,
-            variant: PlanVariant::Entries,
+            variant,
             entries,
-            markdown: None,
-            path: None,
-            turn_id,
+            markdown,
+            path,
+            turn_id: self.plan_turn(),
             removed: false,
             updated_at: event.created_at.clone(),
         };
-        match self
-            .plans
-            .iter_mut()
-            .find(|(plan_lane, _)| plan_lane == lane)
-        {
+        match self.plans.iter_mut().find(|(kept, _)| *kept == key) {
             Some((_, kept)) => *kept = plan.clone(),
-            None => self.plans.push((lane.clone(), plan.clone())),
+            None => self.plans.push((key, plan.clone())),
         }
         ops.push(TrajectoryOpDto::PlanUpsert { plan });
+    }
+
+    /// A `plan_removed` marks the plan of its lane and `plan_id` removed.
+    fn plan_removed(&mut self, input: &Input, ops: &mut Ops) {
+        let key = (input.lane.clone(), input.facts.plan.clone());
+        let turn_id = self.plan_turn();
+        let Some((_, plan)) = self.plans.iter_mut().find(|(kept, _)| *kept == key) else {
+            return;
+        };
+        plan.removed = true;
+        plan.turn_id = turn_id;
+        plan.updated_at = input.created_at.to_string();
+        ops.push(TrajectoryOpDto::PlanUpsert { plan: plan.clone() });
+    }
+
+    /// The turn a plan event changes a plan in: the running one, else the
+    /// newest.
+    fn plan_turn(&self) -> Option<String> {
+        self.running()
+            .or(self.turns.len().checked_sub(1))
+            .map(|index| self.turns[index].id.clone())
+    }
+
+    /// An ACP notice is a note with its severity: an `error` notice is a
+    /// warning, the strongest a note says.
+    fn notice(&mut self, input: &Input, ops: &mut Ops) {
+        let payload = input.full.map(|event| &event.payload);
+        let severity = match payload.and_then(|payload| string_at(payload, "/severity")) {
+            Some(severity) if severity == "warning" || severity == "error" => NoteSeverity::Warning,
+            _ => NoteSeverity::Info,
+        };
+        let title = payload
+            .and_then(|payload| string_at(payload, "/title"))
+            .unwrap_or_default();
+        let text = match payload.and_then(|payload| string_at(payload, "/description")) {
+            Some(description) if !description.is_empty() => format!("{title} · {description}"),
+            _ => title,
+        };
+        self.note(input, text, severity, ops);
     }
 
     fn subagent(&mut self, input: &Input, ops: &mut Ops) {
@@ -1526,7 +1618,12 @@ impl Fold {
         let error = payload.and_then(|payload| string_at(payload, "/error"));
         let turn = &mut self.turns[index];
         let lane = turn.lanes.entry(input.lane.clone()).or_default();
-        if !lane.compactions.insert(compaction_id.clone()) {
+        if let Some(step) = lane.compactions.get(&compaction_id).cloned() {
+            // A later update is the compaction's newest change: a read loads
+            // it beside the opener, so the step shows its status and summary.
+            if let Some(row) = input.row() {
+                lane.follows.insert(step, row.to_string());
+            }
             ops.touch(&turn.id);
             let found = turn.steps.iter_mut().find(|step| {
                 matches!(step, StepDto::Compaction(kept) if kept.compaction_id == compaction_id)
@@ -1545,6 +1642,8 @@ impl Fold {
             }
             return;
         }
+        lane.compactions
+            .insert(compaction_id.clone(), input.id.to_string());
         let turn_id = turn.id.clone();
         let step = input.full.map(|event| {
             StepDto::Compaction(CompactionStepDto {
@@ -1899,8 +1998,8 @@ impl Ops {
 mod tests {
     use ariadne_api::events::AgentEventDto;
     use ariadne_api::trajectory::{
-        ActivityDto, ContentBlockDto, MAIN_LANE, PermissionState, QuestionState, SessionStateDto,
-        StepDto, TrajectoryOpDto, TurnState,
+        ActivityDto, ContentBlockDto, MAIN_LANE, PermissionState, PlanVariant, QuestionState,
+        SessionStateDto, StepDto, TrajectoryOpDto, TurnState,
     };
     use ariadne_api::usage::TokenUsageDto;
     use ariadne_core::SessionStatus;
@@ -1937,6 +2036,16 @@ mod tests {
 
         /// Fold one event, and answer its id and its ops.
         fn event(&mut self, kind: &str, payload: Value) -> (String, Vec<TrajectoryOpDto>) {
+            let stored = !kind.ends_with("_chunk") && kind != "display_state_update";
+            self.fold_event(kind, payload, stored)
+        }
+
+        fn fold_event(
+            &mut self,
+            kind: &str,
+            payload: Value,
+            stored: bool,
+        ) -> (String, Vec<TrajectoryOpDto>) {
             self.next += 1;
             let id = format!("{:04}", self.next);
             let event = AgentEventDto {
@@ -1948,7 +2057,7 @@ mod tests {
                 summary: kind.into(),
                 created_at: format!("2026-11-26T00:00:{:02}Z", self.next % 60),
             };
-            let ops = self.fold.apply(&event, !kind.ends_with("_chunk"));
+            let ops = self.fold.apply(&event, stored);
             (id, ops)
         }
 
@@ -2507,6 +2616,91 @@ mod tests {
         assert_eq!(plan.plan_id, first);
         assert_eq!(plan.entries[0].status, "completed");
         assert_eq!(plan.entries[0].priority.as_deref(), Some("high"));
+
+        // A plan of the new kinds is its lane's and its `plan_id`'s.
+        let (items, _) = s.event(
+            "plan_update",
+            json!({"plan": {"type": "items", "plan_id": "p-1",
+                            "entries": [{"content": "b", "status": "pending"}]}}),
+        );
+        let (markdown, _) = s.event(
+            "plan_update",
+            json!({"plan": {"type": "markdown", "plan_id": "p-2", "content": "# P",
+                            "path": "/w/P.md"}}),
+        );
+        s.event(
+            "plan_update",
+            json!({"plan": {"type": "items", "plan_id": "p-1",
+                            "entries": [{"content": "b", "status": "completed"}]}}),
+        );
+        let (_, removed) = s.event("plan_removed", json!({"plan_id": "p-1"}));
+        assert!(
+            removed
+                .iter()
+                .any(|op| matches!(op, TrajectoryOpDto::PlanUpsert { plan }
+                if plan.plan_id == items && plan.removed)),
+            "{removed:?}"
+        );
+        let (_, nothing) = s.event("plan_removed", json!({"plan_id": "p-9"}));
+        assert!(nothing.is_empty(), "no such plan: {nothing:?}");
+
+        let plans = s.fold.snapshot(0, 20, None).plans;
+        let ids: Vec<&str> = plans.iter().map(|plan| plan.plan_id.as_str()).collect();
+        assert_eq!(ids, [first.as_str(), items.as_str(), markdown.as_str()]);
+        assert_eq!(plans[1].entries[0].status, "completed");
+        assert!(plans[1].removed);
+        assert_eq!(plans[2].variant, PlanVariant::Markdown);
+        assert_eq!(plans[2].markdown.as_deref(), Some("# P"));
+        assert_eq!(plans[2].path.as_deref(), Some("/w/P.md"));
+        assert!(!plans[2].removed);
+    }
+
+    /// The display state the session starts from gives its commands, which a
+    /// stored list of an older daemon does not replace; a live display
+    /// change is a `session_patch` (rule 33).
+    #[test]
+    fn a_display_change_is_a_session_patch_and_a_stored_list_yields_to_it() {
+        let mut s = Session::new();
+        let mut state = s.fold.session.clone();
+        state.commands = vec![ariadne_api::trajectory::CommandDto {
+            name: "review".into(),
+            description: "Review".into(),
+            hint: None,
+        }];
+        s.fold = Fold::new("session", state);
+        s.prompt("Go");
+        let (_, stored) = s.event(
+            "available_commands_update",
+            json!({"available_commands": [{"name": "old", "description": "Old"}]}),
+        );
+        assert!(stored.is_empty(), "{stored:?}");
+        assert_eq!(s.fold.session.commands[0].name, "review");
+
+        let (_, ops) = s.event(
+            "display_state_update",
+            json!({"session_id": "agent", "title": "Fix it",
+                   "mode": {"current_id": "ask", "available": [{"id": "ask", "name": "Ask"}]},
+                   "cost": {"amount": 1.5, "currency": "EUR"},
+                   "config_options": [{"id": "effort", "name": "Effort",
+                                       "type": "boolean", "currentValue": true,
+                                       "options": [{"group": "g", "name": "G",
+                                                    "options": [{"value": "x", "name": "X"}]}]}]}),
+        );
+        let [TrajectoryOpDto::SessionPatch { session }] = ops.as_slice() else {
+            panic!("one patch: {ops:?}");
+        };
+        assert_eq!(session.title.as_deref(), Some("Fix it"));
+        let mode = session.mode.as_ref().unwrap();
+        assert_eq!(mode.current_id.as_deref(), Some("ask"));
+        assert_eq!(mode.available[0].name, "Ask");
+        assert_eq!(session.cost.as_ref().map(|cost| cost.amount), Some(1.5));
+        let option = &session.config_options[0];
+        assert_eq!(option.current_value.as_deref(), Some("true"));
+        assert_eq!(option.values[0].value, "x", "a group's values are listed");
+        assert_eq!(session.commands[0].name, "review", "no commands were sent");
+
+        let (_, again) = s.event("display_state_update", json!({"title": "Fix it"}));
+        assert!(again.is_empty(), "nothing changed: {again:?}");
     }
 
     /// The session's state follows its row, its running turn and the

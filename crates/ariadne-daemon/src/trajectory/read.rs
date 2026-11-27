@@ -373,9 +373,14 @@ pub(crate) async fn read_turns_upto(
         }
     }
     let plans = store
-        .session_event_heads(session_id, None, Some(upper), &["plan"])
+        .session_event_heads(
+            session_id,
+            None,
+            Some(upper),
+            &["plan", "plan_update", "plan_removed"],
+        )
         .await?;
-    for rows in first_and_newest_per_lane(&plans) {
+    for rows in rows_per_plan(&plans) {
         picks.take(rows);
     }
     // The commands the agent offers: its newest update of the session.
@@ -623,19 +628,32 @@ fn merge(
     items
 }
 
-/// The first and the newest plan of each lane: the first names the plan,
-/// and the newest says what it holds.
-fn first_and_newest_per_lane(plans: &[EventHead]) -> Vec<Vec<String>> {
-    let mut lanes: BTreeMap<Option<&str>, (String, String)> = BTreeMap::new();
+/// The events that show each plan, by its lane and its ACP `plan_id`: the
+/// first names the plan, the newest update says what it holds, and the
+/// newest event says whether it is removed. A `plan` of the old kind has no
+/// `plan_id`, so a lane has one such plan.
+fn rows_per_plan(plans: &[EventHead]) -> Vec<Vec<String>> {
+    let mut keyed: BTreeMap<(Option<&str>, Option<String>), Vec<String>> = BTreeMap::new();
     for plan in plans {
-        lanes
-            .entry(plan.lane.as_deref())
-            .and_modify(|(_, newest)| *newest = plan.id.clone())
-            .or_insert_with(|| (plan.id.clone(), plan.id.clone()));
+        let facts: EventFacts = serde_json::from_str(&plan.facts).unwrap_or_default();
+        let rows = keyed.entry((plan.lane.as_deref(), facts.plan)).or_default();
+        let update = plan.kind != "plan_removed";
+        match rows.len() {
+            0 => rows.extend([plan.id.clone(), plan.id.clone(), plan.id.clone()]),
+            _ => {
+                if update {
+                    rows[1] = plan.id.clone();
+                }
+                rows[2] = plan.id.clone();
+            }
+        }
     }
-    lanes
+    keyed
         .into_values()
-        .map(|(first, newest)| vec![first, newest])
+        .map(|mut rows| {
+            rows.dedup();
+            rows
+        })
         .collect()
 }
 

@@ -73,6 +73,7 @@ mod task_branches;
 mod task_failure;
 mod telemetry_query;
 mod trajectory;
+mod trajectory_acp;
 mod transcript_usage;
 mod unknown_fields;
 mod workflows;
