@@ -718,6 +718,17 @@ impl Fold {
             .lanes
             .get(&input.lane)
             .and_then(|lane| lane.streaming.clone());
+        // A chunk of an item whose whole already closed its step is late: the
+        // whole holds its text, so it changes nothing.
+        if let Some(item) = &item
+            && turn
+                .lanes
+                .get(&input.lane)
+                .is_some_and(|lane| lane.items.contains(item))
+            && streaming.as_ref().is_none_or(|(_, id)| id != item)
+        {
+            return;
+        }
         if let Some((kind, id)) = streaming
             && kind == thought
             && item.as_ref().is_none_or(|item| item == &id)
@@ -2481,5 +2492,31 @@ mod tests {
             panic!("{held:?}");
         };
         assert_eq!(message.content, text("All good."));
+    }
+
+    /// A chunk that arrives after the whole of its item closed the step is
+    /// late, and changes nothing: the whole holds its text (rule 19).
+    #[test]
+    fn a_chunk_after_its_whole_changes_nothing() {
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        s.event(
+            "agent_message",
+            json!({"item_id": "item-1", "text": "Half done.",
+                   "content": [{"type": "text", "text": "Half done."}]}),
+        );
+
+        let (_, late) = s.event(
+            "agent_message_chunk",
+            json!({"item_id": "item-1", "text": "Half "}),
+        );
+
+        assert!(late.is_empty(), "{late:?}");
+        let held = s.fold.held_steps(&turn, MAIN_LANE);
+        let [StepDto::Message(message)] = held.as_slice() else {
+            panic!("one message: {held:?}");
+        };
+        assert_eq!(message.content, text("Half done."));
+        assert!(!message.streaming);
     }
 }

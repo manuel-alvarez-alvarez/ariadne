@@ -178,11 +178,13 @@ async fn the_stream_sends_a_snapshot_then_updates_and_text_as_appends() {
     let snapshot = expect_sse(&mut body, "snapshot").await;
     let rev = snapshot["rev"].as_u64().unwrap();
 
+    // The held run's whole is stored only once the turn is let go, so its
+    // chunks reach the stream while it streams.
     t.begin_turn().await;
     let mut seen = Vec::new();
     while !ops(&seen, "text_append")
         .iter()
-        .any(|op| op["text"] == "done.")
+        .any(|op| op["text"] == "good.")
     {
         seen.push(expect_sse(&mut body, "update").await);
     }
@@ -197,7 +199,7 @@ async fn the_stream_sends_a_snapshot_then_updates_and_text_as_appends() {
     );
     let append = ops(&seen, "text_append")
         .into_iter()
-        .find(|op| op["text"] == "done.")
+        .find(|op| op["text"] == "good.")
         .unwrap()
         .clone();
     let opened = ops(&seen, "item_upsert")
@@ -206,7 +208,7 @@ async fn the_stream_sends_a_snapshot_then_updates_and_text_as_appends() {
         .expect("the append's step was opened by an upsert");
     assert_eq!(opened["step"]["type"], "message");
     assert_eq!(opened["step"]["streaming"], true);
-    assert_eq!(opened["step"]["content"][0]["text"], "Half ");
+    assert_eq!(opened["step"]["content"][0]["text"], "All ");
 }
 
 /// Two subscribers of one session share one fold: the same snapshot

@@ -121,7 +121,9 @@ Out:
 19. The first chunk of a run opens a `message` or `thought` step with
     `streaming` true. Each later chunk of the run is a `text_append` op. The
     stored whole replaces the content and ends `streaming`. Anything else in
-    the same lane also ends `streaming`.
+    the same lane also ends `streaming`. A chunk can reach the stream after
+    the whole of its item: such a late chunk changes nothing, since the
+    whole holds its text.
 20. A run that streams has its `item_id` as its id on every open, and after
     it ends: its chunks and its stored whole carry the same `item_id` (021,
     rule 6). A run with no `item_id` — from a daemon before that field —
@@ -370,6 +372,8 @@ Out:
 43. Waiting questions past the read limit are counted in `attention_more`
     and paged by the steps route (rules 16, 38):
     `read.rs::waiting_questions_past_the_limit_are_counted_and_paged`.
+44. A chunk after its whole changes nothing (rule 19):
+    `fold.rs::a_chunk_after_its_whole_changes_nothing`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and
