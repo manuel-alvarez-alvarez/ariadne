@@ -33,7 +33,7 @@ pub(crate) const STEP_KINDS: [&str; 9] = [
 
 /// The most turns, and steps, one read of the daemon answers (040, rules 41
 /// and 44).
-const TURN_PAGE: u32 = 50;
+pub(crate) const TURN_PAGE: u32 = 50;
 const STEP_PAGE: u32 = 200;
 
 /// Which turns and steps a log shows.
@@ -79,7 +79,7 @@ impl Filters {
     }
 
     /// Whether an older page can hold a turn these filters keep.
-    fn needs_older(&self, turns: &[TurnDto]) -> bool {
+    pub(crate) fn needs_older(&self, turns: &[TurnDto]) -> bool {
         let short = self
             .tail
             .is_none_or(|tail| turns.iter().filter(|turn| self.keeps_turn(turn)).count() < tail);
@@ -127,28 +127,18 @@ pub(crate) async fn read(
             },
         )
         .await?;
-    let mut turns = newest.turns;
-    let mut has_older = newest.has_older;
-    while has_older && filters.needs_older(&turns) {
-        let Some(oldest) = turns.first() else { break };
-        let older = client
-            .trajectory(
-                session_id,
-                &TrajectoryQuery {
-                    before: Some(oldest.id.clone()),
-                    limit: Some(TURN_PAGE),
-                    subagent: None,
-                },
-            )
-            .await?;
-        if older.turns.is_empty() {
-            break;
-        }
-        has_older = older.has_older;
-        turns.splice(0..0, older.turns);
-    }
+    let mut turns = older(
+        client,
+        session_id,
+        &newest.turns,
+        newest.has_older,
+        |turns: &[TurnDto]| filters.needs_older(turns),
+    )
+    .await?;
+    turns.extend(newest.turns);
     let mut out = Vec::new();
-    for turn in filters.turns(turns) {
+    for mut turn in filters.turns(turns) {
+        turn.attention.retain(|step| filters.keeps_step(step));
         let steps = match steps {
             true => Some(
                 all_steps(client, session_id, &turn.id)
@@ -162,6 +152,42 @@ pub(crate) async fn read(
         out.push((turn, steps));
     }
     Ok(out)
+}
+
+/// The turns older than `newer`, oldest first, a page at a time, for as
+/// long as `wants` asks for more of the turns read so far, these and
+/// `newer` together.
+pub(crate) async fn older(
+    client: &Client,
+    session_id: &str,
+    newer: &[TurnDto],
+    mut has_older: bool,
+    wants: impl Fn(&[TurnDto]) -> bool,
+) -> Result<Vec<TurnDto>> {
+    let mut turns: Vec<TurnDto> = Vec::new();
+    while has_older {
+        let read: Vec<TurnDto> = turns.iter().chain(newer).cloned().collect();
+        if !wants(&read) {
+            break;
+        }
+        let Some(oldest) = read.first() else { break };
+        let page = client
+            .trajectory(
+                session_id,
+                &TrajectoryQuery {
+                    before: Some(oldest.id.clone()),
+                    limit: Some(TURN_PAGE),
+                    subagent: None,
+                },
+            )
+            .await?;
+        if page.turns.is_empty() {
+            break;
+        }
+        has_older = page.has_older;
+        turns.splice(0..0, page.turns);
+    }
+    Ok(turns)
 }
 
 /// Every step of a turn, oldest first, a page at a time.
@@ -203,8 +229,8 @@ pub(crate) enum Layout {
     Blocks,
     /// One `kind · summary` line for each item, for a piped `attach`.
     Lines,
-    /// One typed turn in each line, and with steps one typed step in each
-    /// line.
+    /// One typed turn in each line when it closes, with its steps when the
+    /// follow prints steps.
     Json,
 }
 
@@ -227,6 +253,8 @@ pub(crate) struct Follower<Tz> {
     closed: HashSet<String>,
     printed: HashSet<String>,
     answered: HashSet<String>,
+    /// The settled steps of each open turn, for the JSON line of its close.
+    held: HashMap<String, Vec<StepDto>>,
 }
 
 impl<Tz> Follower<Tz>
@@ -248,24 +276,40 @@ where
             closed: HashSet::new(),
             printed: HashSet::new(),
             answered: HashSet::new(),
+            held: HashMap::new(),
         }
     }
 
-    /// Take a snapshot in. The first one chooses the turns `--tail` and
-    /// `--since` keep. Answers the turns whose stored steps the caller reads
-    /// for [`Follower::snapshot`]: those not yet closed here, where the
-    /// follow prints steps in the block or JSON form.
-    pub(crate) fn admit(&mut self, view: &View) -> Vec<String> {
+    /// Whether older turns than `turns`, the oldest first, can hold what
+    /// this follow prints. Before the first snapshot that is what `--tail`
+    /// and `--since` keep. After it, a turn older than every turn this
+    /// follow has seen: one that opened and closed while the stream was
+    /// down.
+    pub(crate) fn wants_older(&self, turns: &[TurnDto]) -> bool {
+        if !self.admitted {
+            return self.filters.needs_older(turns);
+        }
+        turns.first().is_some_and(|oldest| {
+            !self.opened.contains(&oldest.id) && !self.skipped.contains(&oldest.id)
+        })
+    }
+
+    /// Take a snapshot in, with the `older` turns read before it. The first
+    /// one chooses the turns `--tail` and `--since` keep. Answers the turns
+    /// whose stored steps the caller reads for [`Follower::snapshot`]: those
+    /// not yet closed here, where the follow prints steps in the block or
+    /// JSON form.
+    pub(crate) fn admit(&mut self, older: &[TurnDto], view: &View) -> Vec<String> {
+        let turns: Vec<&TurnDto> = older.iter().chain(view.turns()).collect();
         if !self.admitted {
             self.admitted = true;
             let kept: HashSet<_> = self
                 .filters
-                .turns(view.turns().to_vec())
+                .turns(turns.iter().map(|turn| (*turn).clone()).collect())
                 .into_iter()
                 .map(|turn| turn.id)
                 .collect();
-            self.skipped = view
-                .turns()
+            self.skipped = turns
                 .iter()
                 .filter(|turn| !kept.contains(&turn.id))
                 .map(|turn| turn.id.clone())
@@ -274,22 +318,24 @@ where
         if !self.steps || self.layout == Layout::Lines {
             return Vec::new();
         }
-        view.turns()
+        turns
             .iter()
             .filter(|turn| !self.skipped.contains(&turn.id) && !self.closed.contains(&turn.id))
             .map(|turn| turn.id.clone())
             .collect()
     }
 
-    /// What a snapshot adds: every turn of it, with the stored steps read
-    /// for it, of which each item prints once.
+    /// What a snapshot adds: the `older` turns read before it and every turn
+    /// of it, with the stored steps read for each, of which each item prints
+    /// once.
     pub(crate) fn snapshot(
         &mut self,
+        older: &[TurnDto],
         view: &View,
         stored: &HashMap<String, Vec<StepDto>>,
     ) -> String {
         let mut out = String::new();
-        for turn in view.turns() {
+        for turn in older.iter().chain(view.turns()) {
             let stored = stored.get(&turn.id).map(Vec::as_slice).unwrap_or_default();
             out.push_str(&self.sweep(turn, stored));
         }
@@ -350,7 +396,12 @@ where
                 Layout::Lines => self
                     .printer
                     .closed_line(turn, !self.live.contains(&turn.id)),
-                Layout::Json => json_line(&json_turn(turn, None, &self.filters)),
+                Layout::Json => {
+                    let steps = self
+                        .steps
+                        .then(|| self.held.remove(&turn.id).unwrap_or_default());
+                    json_line(&json_turn(turn, steps, &self.filters))
+                }
             });
         }
         out
@@ -361,6 +412,18 @@ where
             return String::new();
         }
         let id = step_id(step).to_string();
+        if self.layout == Layout::Json {
+            // A JSON follow prints a step in the line of its turn: it keeps
+            // the newest form of each settled step until the turn closes.
+            if self.steps {
+                let held = self.held.entry(step_turn(step).to_string()).or_default();
+                match held.iter_mut().find(|held| step_id(held) == id) {
+                    Some(held) => *held = step.clone(),
+                    None => held.push(step.clone()),
+                }
+            }
+            return String::new();
+        }
         let closing = self.printer.answered(step).is_some();
         if self.printed.insert(id.clone()) {
             if closing {
@@ -369,7 +432,6 @@ where
             return match self.layout {
                 Layout::Blocks => self.printer.step(step),
                 Layout::Lines => self.printer.step_line(step),
-                Layout::Json if self.steps => json_line(step),
                 Layout::Json => String::new(),
             };
         }
@@ -377,7 +439,6 @@ where
             return match self.layout {
                 Layout::Blocks => self.printer.answered(step).unwrap_or_default(),
                 Layout::Lines => self.printer.answered_line(step).unwrap_or_default(),
-                Layout::Json if self.steps => json_line(step),
                 Layout::Json => String::new(),
             };
         }
@@ -507,8 +568,8 @@ mod tests {
             "2026-11-27T10:00:00Z",
             json!({"steps": [note("n1", "t1", "2026-11-27T10:00:01Z")]}),
         )]);
-        follower.admit(&first);
-        let before = follower.snapshot(&first, &HashMap::new());
+        follower.admit(&[], &first);
+        let before = follower.snapshot(&[], &first, &HashMap::new());
 
         let mut again = view(vec![turn(
             "t1",
@@ -517,8 +578,8 @@ mod tests {
             json!({"steps": [note("n1", "t1", "2026-11-27T10:00:01Z"),
                              note("n2", "t1", "2026-11-27T10:00:02Z")]}),
         )]);
-        follower.admit(&again);
-        let after = follower.snapshot(&again, &HashMap::new());
+        follower.admit(&[], &again);
+        let after = follower.snapshot(&[], &again, &HashMap::new());
         let touched = again
             .apply(typed(json!({"rev": 1, "ops": [{"op": "turn_upsert", "turn": turn(
                 "t1", "completed", "2026-11-27T10:00:00Z", json!({"ended_at": "2026-11-27T10:01:00Z"})
@@ -543,8 +604,8 @@ mod tests {
             turn("t2", "running", "2026-11-27T10:00:00Z", json!({})),
         ]);
 
-        follower.admit(&snapshot);
-        let out = follower.snapshot(&snapshot, &HashMap::new());
+        follower.admit(&[], &snapshot);
+        let out = follower.snapshot(&[], &snapshot, &HashMap::new());
 
         assert_eq!(out, "10:00:00  USER  prompt t2\n");
     }

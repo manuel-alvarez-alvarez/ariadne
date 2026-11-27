@@ -229,14 +229,23 @@ same binary also serves (013).
       the last N turns, and reads older pages until it has them. `--since`
       keeps the turns that started, ended or still run at or after its
       instant, and the steps at or after it.
+    - `--kind` and `--since` narrow the attention a folded turn shows, as
+      they narrow its steps.
     - `--format json` prints one typed turn in each line. With `--steps` the
       turn carries all its steps; without, `earlier_steps` counts them.
-    - `-f` follows the trajectory stream. It prints each finished item one
-      time: a prompt when its turn opens, a step when it is settled, and the
-      activity line and answer when the turn closes. A dropped stream, a
-      `resync` and a skipped revision reconnect, and the new snapshot
-      prints only what was not printed. A follow ends when the session is
+    - `-f` follows the trajectory stream, with snapshots of 50 turns. At the
+      start it reads older pages as far as `--tail` and `--since` reach. It
+      prints each finished item one time: a prompt when its turn opens, a
+      step when it is settled, and the activity line and answer when the
+      turn closes. With `--format json` it prints the typed turn when it
+      closes, in one line, with all its steps under `--steps`.
+    - A dropped stream, a `resync` and a skipped revision reconnect. The
+      follow reads older pages until it reaches a turn it has seen, so a
+      turn that opened and closed while the stream was down prints too.
+      Only what was not printed prints. A follow ends when the session is
       no longer live and no turn runs.
+    - A piped console answers with a number only the permission that waits
+      when the line is read, and only once. Any other line is a prompt.
 30. `session inspect` shows a reported context window as `<used> / <size>`
     with the compact token spelling. It shows no context line when the agent
     has not reported one, and it never shows a cost.
@@ -861,6 +870,7 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   chosen
   (`commands/console.rs::a_piped_console_prints_a_line_for_each_finished_item_and_sends_a_line_as_a_prompt`,
   `::a_piped_console_numbers_a_permission_and_sends_the_option_chosen`,
+  `::a_number_after_another_client_answered_the_permission_is_a_prompt`,
   `ariadne-console::trajectory::print::tests::the_line_form_puts_each_item_on_one_line`,
   `::a_permission_prints_its_options_while_it_waits_and_its_answer_once_answered`);
   `session send` takes an id and the text
@@ -879,13 +889,18 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - Rule 27. `--kind`, `--tail` and `--since`
   (`commands/transcript.rs::tests::kind_keeps_the_steps_of_the_kinds_it_names`,
   `::tail_keeps_the_last_turns_and_since_the_turns_at_or_after_it`,
-  `commands/console.rs::tail_reads_older_pages_until_it_has_its_turns`).
+  `commands/console.rs::tail_reads_older_pages_until_it_has_its_turns`,
+  `::kind_narrows_the_attention_a_folded_turn_shows`,
+  `::a_follow_reads_the_older_turns_its_tail_reaches`).
   `--format json` prints one typed turn in each line
   (`commands/console.rs::json_prints_one_typed_turn_in_each_line`,
-  `commands/transcript.rs::tests::a_json_turn_carries_its_steps_or_counts_them`).
+  `commands/transcript.rs::tests::a_json_turn_carries_its_steps_or_counts_them`),
+  and so does a JSON follow, each turn with its steps under `--steps`
+  (`commands/console.rs::a_json_follow_prints_one_typed_turn_in_each_line_with_its_steps`).
 - Rule 27. `-f` prints each finished item one time, also after a reconnect,
   and leaves out the turns `--tail` does not keep
   (`commands/console.rs::a_follow_prints_each_finished_item_once_also_after_a_reconnect`,
+  `::a_reconnect_prints_the_turns_that_came_and_went_while_the_stream_was_down`,
   `commands/transcript.rs::tests::a_follow_prints_each_item_once_across_snapshots`,
   `::a_follow_leaves_out_the_turns_tail_does_not_keep`). The client view
   applies each op of an update, refuses a skipped revision, and shows a

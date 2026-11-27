@@ -141,7 +141,9 @@ where
     Tz: TimeZone,
     Tz::Offset: Display,
 {
-    let query = TrajectoryStreamQuery::default();
+    let query = TrajectoryStreamQuery {
+        limit: Some(transcript::TURN_PAGE),
+    };
     let mut opened_once = false;
     let mut pause = None;
     loop {
@@ -172,13 +174,21 @@ where
             let Some(Ok(next)) = next else { break };
             match frame(&next)? {
                 Frame::Snapshot(snapshot) => {
+                    // The turns the snapshot does not hold: those `--tail`
+                    // and `--since` reach at the start, and those that came
+                    // and went while the stream was down.
+                    let has_older = snapshot.has_older;
                     let fresh = View::new(*snapshot);
+                    let older = transcript::older(client, id, fresh.turns(), has_older, |turns| {
+                        follower.wants_older(turns)
+                    })
+                    .await?;
                     let mut stored = HashMap::new();
-                    for turn_id in follower.admit(&fresh) {
+                    for turn_id in follower.admit(&older, &fresh) {
                         let steps = transcript::all_steps(client, id, &turn_id).await?;
                         stored.insert(turn_id, steps);
                     }
-                    print(follower.snapshot(&fresh, &stored))?;
+                    print(follower.snapshot(&older, &fresh, &stored))?;
                     if fresh.ended() {
                         return Ok(());
                     }
@@ -229,7 +239,9 @@ async fn rest(pause: Option<Duration>) -> bool {
 ///
 /// It prints one line for each finished item of the trajectory and the
 /// numbered options of a permission that waits, and sends each line it
-/// reads as a prompt. A number answers the waiting permission.
+/// reads as a prompt. A number answers the permission that waits when the
+/// line is read, once; any other line, or a number when none waits, is a
+/// prompt.
 async fn run_with_io<R, W>(client: &Client, id: &str, input: R, mut output: W) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
@@ -246,7 +258,8 @@ where
         Printer::new(chrono::Local),
     );
     let mut view: Option<View> = None;
-    let mut options: Option<Vec<PermissionOptionDto>> = None;
+    // The permission a number already answered: a second number is a prompt.
+    let mut answered: Option<String> = None;
 
     // The stream opens with its snapshot. Print it before accepting a line,
     // so a numeric answer has the permission choices it names even when
@@ -255,20 +268,31 @@ where
         return Ok(());
     };
     apply(&mut view, &mut follower, &frame(&first?)?, &mut output).await?;
-    options = waiting(&view).or(options);
 
     loop {
         tokio::select! {
             next = stream.next() => match next {
                 Some(next) => {
                     apply(&mut view, &mut follower, &frame(&next?)?, &mut output).await?;
-                    options = waiting(&view).or(options);
                 }
                 None => return Ok(()),
             },
             line = lines.next_line() => match line? {
                 Some(line) => {
-                    let text = selected_option(&line, options.take()).unwrap_or(line);
+                    let waiting = view
+                        .as_ref()
+                        .and_then(View::waiting_permission)
+                        .filter(|permission| answered.as_ref() != Some(&permission.id));
+                    let text = match waiting.and_then(|permission| {
+                        selected_option(&line, &permission.options)
+                            .map(|option| (permission.id.clone(), option))
+                    }) {
+                        Some((permission, option)) => {
+                            answered = Some(permission);
+                            option
+                        }
+                        None => line,
+                    };
                     client
                         .send_no_content(
                             http::Method::POST,
@@ -299,8 +323,8 @@ where
     let text = match frame {
         Frame::Snapshot(snapshot) => {
             let fresh = View::new(snapshot.as_ref().clone());
-            follower.admit(&fresh);
-            let text = follower.snapshot(&fresh, &HashMap::new());
+            follower.admit(&[], &fresh);
+            let text = follower.snapshot(&[], &fresh, &HashMap::new());
             *view = Some(fresh);
             text
         }
@@ -325,18 +349,11 @@ where
     Ok(())
 }
 
-/// The options of the newest permission that waits.
-fn waiting(view: &Option<View>) -> Option<Vec<PermissionOptionDto>> {
-    view.as_ref()?
-        .waiting_permission()
-        .map(|permission| permission.options.clone())
-}
-
 /// A permission question accepts its displayed number. The selected option
 /// identifier becomes the next prompt, just as text entered at the console.
-fn selected_option(line: &str, options: Option<Vec<PermissionOptionDto>>) -> Option<String> {
+fn selected_option(line: &str, options: &[PermissionOptionDto]) -> Option<String> {
     let index = line.trim().parse::<usize>().ok()?.checked_sub(1)?;
-    options?.get(index).map(|option| option.id.clone())
+    options.get(index).map(|option| option.id.clone())
 }
 
 #[cfg(test)]
@@ -374,6 +391,8 @@ mod tests {
         prompts: Arc<Mutex<Vec<String>>>,
         /// The `before` of each page read, `-` for the newest.
         reads: Arc<Mutex<Vec<String>>>,
+        /// Every stream stays open after its frames, as a quiet session.
+        hold: bool,
     }
 
     async fn page(State(stub): State<Stub>, Query(query): Query<TrajectoryQuery>) -> Json<Value> {
@@ -398,7 +417,7 @@ mod tests {
     ) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
         let script = stub.streams.lock().unwrap().pop_front();
         // A connection past the last script holds still, as a quiet session.
-        let open = script.is_none();
+        let open = stub.hold || script.is_none();
         let frames = script.unwrap_or_default().into_iter().map(|(name, data)| {
             Ok(Event::default()
                 .event(name)
@@ -759,5 +778,262 @@ mod tests {
             "{output}"
         );
         assert_eq!(prompts, ["yes"]);
+    }
+
+    fn error(id: &str, turn_id: &str) -> Value {
+        json!({"type": "error", "id": id, "turn_id": turn_id, "lane": "main",
+               "created_at": "2026-11-27T10:03:00Z", "text": format!("error {id}"),
+               "diagnosis": null})
+    }
+
+    async fn follow_with(stub: Stub, layout: Layout, steps: bool, filters: Filters) -> String {
+        let (client, server) = serve(stub).await;
+        let mut follower = Follower::new(layout, steps, filters, Printer::new(Utc));
+        let mut out = String::new();
+        follow_logs(
+            &client,
+            "s",
+            &mut follower,
+            |_| Duration::ZERO,
+            |text| {
+                out.push_str(&text);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        server.abort();
+        out
+    }
+
+    fn streams(scripts: Vec<Script>) -> Arc<Mutex<VecDeque<Script>>> {
+        Arc::new(Mutex::new(VecDeque::from(scripts)))
+    }
+
+    #[tokio::test]
+    async fn kind_narrows_the_attention_a_folded_turn_shows() {
+        let stub = Stub {
+            pages: HashMap::from([(
+                "-".into(),
+                snapshot(
+                    0,
+                    "idle",
+                    vec![turn(
+                        "t1",
+                        "failed",
+                        json!({"attention": [error("e1", "t1")]}),
+                    )],
+                    false,
+                ),
+            )]),
+            ..Stub::default()
+        };
+        let (client, server) = serve(stub).await;
+        let printer = Printer::new(Utc);
+        let only = |kind: &str| Filters {
+            kinds: vec![kind.into()],
+            ..Filters::default()
+        };
+
+        let calls = transcript::read(&client, "s", &only("tool_call"), false)
+            .await
+            .unwrap();
+        let errors = transcript::read(&client, "s", &only("error"), false)
+            .await
+            .unwrap();
+
+        assert!(!table(&printer, &calls).contains("error e1"));
+        assert!(table(&printer, &errors).contains("  10:03:00  error  error e1\n"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_follow_reads_the_older_turns_its_tail_reaches() {
+        let stub = Stub {
+            streams: streams(vec![vec![(
+                "snapshot",
+                snapshot(0, "exited", vec![turn("t3", "completed", json!({}))], true),
+            )]]),
+            pages: HashMap::from([(
+                "t3".into(),
+                snapshot(
+                    0,
+                    "exited",
+                    vec![
+                        turn("t1", "completed", json!({})),
+                        turn("t2", "completed", json!({})),
+                    ],
+                    false,
+                ),
+            )]),
+            ..Stub::default()
+        };
+        let filters = Filters {
+            tail: Some(2),
+            ..Filters::default()
+        };
+
+        let out = follow_with(stub, Layout::Lines, false, filters).await;
+
+        assert_eq!(
+            out,
+            "prompt · prompt t2\n\
+             turn · completed · 2 steps · 2 tool calls\n\
+             answer · answer t2\n\
+             prompt · prompt t3\n\
+             turn · completed · 2 steps · 2 tool calls\n\
+             answer · answer t3\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reconnect_prints_the_turns_that_came_and_went_while_the_stream_was_down() {
+        let stub = Stub {
+            streams: streams(vec![
+                vec![(
+                    "snapshot",
+                    snapshot(0, "running", vec![turn("t1", "running", json!({}))], false),
+                )],
+                vec![(
+                    "snapshot",
+                    snapshot(7, "exited", vec![turn("t3", "completed", json!({}))], true),
+                )],
+            ]),
+            pages: HashMap::from([(
+                "t3".into(),
+                snapshot(
+                    0,
+                    "exited",
+                    vec![
+                        turn("t1", "completed", json!({})),
+                        turn("t2", "completed", json!({})),
+                    ],
+                    true,
+                ),
+            )]),
+            ..Stub::default()
+        };
+        let reads = stub.reads.clone();
+
+        let out = follow_with(stub, Layout::Lines, false, Filters::default()).await;
+
+        assert_eq!(
+            out,
+            "prompt · prompt t1\n\
+             turn · completed · 2 steps · 2 tool calls\n\
+             prompt · prompt t2\n\
+             turn · completed · 2 steps · 2 tool calls\n\
+             answer · answer t2\n\
+             prompt · prompt t3\n\
+             turn · completed · 2 steps · 2 tool calls\n\
+             answer · answer t3\n"
+        );
+        assert_eq!(
+            *reads.lock().unwrap(),
+            ["t3"],
+            "the page that reaches t1, a turn it knows, is the last one read"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_json_follow_prints_one_typed_turn_in_each_line_with_its_steps() {
+        let stub = Stub {
+            streams: streams(vec![vec![
+                (
+                    "snapshot",
+                    snapshot(
+                        0,
+                        "running",
+                        vec![turn(
+                            "t1",
+                            "running",
+                            json!({"steps": [call("c1", "t1", "completed")]}),
+                        )],
+                        false,
+                    ),
+                ),
+                (
+                    "update",
+                    json!({"rev": 1, "ops": [
+                        {"op": "item_upsert", "step": call("c2", "t1", "running")},
+                        {"op": "item_upsert", "step": call("c2", "t1", "completed")},
+                        {"op": "turn_upsert", "turn": turn("t1", "completed", json!({}))},
+                        {"op": "session_patch", "session": session("exited")},
+                    ]}),
+                ),
+            ]]),
+            steps: HashMap::from([("t1".into(), json!([call("c1", "t1", "completed")]))]),
+            ..Stub::default()
+        };
+
+        let out = follow_with(stub, Layout::Json, true, Filters::default()).await;
+
+        let turns: Vec<TurnDto> = out
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(turns.len(), 1, "{out}");
+        let ids: Vec<_> = turns[0]
+            .steps
+            .iter()
+            .map(ariadne_console::trajectory::step_id)
+            .collect();
+        assert_eq!(ids, ["c1", "c2"]);
+        assert_eq!(turns[0].earlier_steps, 0);
+    }
+
+    #[tokio::test]
+    async fn a_number_after_another_client_answered_the_permission_is_a_prompt() {
+        let answered = {
+            let mut step = permission("p1", "t1");
+            step["state"] = json!("answered");
+            step["answer"] = json!({"option_id": "yes", "label": "Allow", "decided_by": "console"});
+            step
+        };
+        let stub = Stub {
+            streams: streams(vec![vec![
+                (
+                    "snapshot",
+                    snapshot(
+                        0,
+                        "running",
+                        vec![turn(
+                            "t1",
+                            "running",
+                            json!({"steps": [permission("p1", "t1")],
+                                   "attention": [permission("p1", "t1")]}),
+                        )],
+                        false,
+                    ),
+                ),
+                (
+                    "update",
+                    json!({"rev": 1, "ops": [{"op": "item_upsert", "step": answered}]}),
+                ),
+            ]]),
+            hold: true,
+            ..Stub::default()
+        };
+        let prompts = stub.prompts.clone();
+        let (client, server) = serve(stub).await;
+        let (mut input_writer, input_reader) = duplex(128);
+        let (output_writer, mut output_reader) = duplex(4096);
+        let console = tokio::spawn(async move {
+            run_with_io(&client, "s", BufReader::new(input_reader), output_writer).await
+        });
+
+        let mut output = String::new();
+        while !output.contains("permission · answer: Allow (console)\n") {
+            let mut buffer = [0; 1024];
+            let read = output_reader.read(&mut buffer).await.unwrap();
+            assert!(read > 0, "the console ended early: {output}");
+            output.push_str(std::str::from_utf8(&buffer[..read]).unwrap());
+        }
+        input_writer.write_all(b"1\n").await.unwrap();
+        input_writer.shutdown().await.unwrap();
+        console.await.unwrap().unwrap();
+
+        assert_eq!(*prompts.lock().unwrap(), ["1"]);
+        server.abort();
     }
 }

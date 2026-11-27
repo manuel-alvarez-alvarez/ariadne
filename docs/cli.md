@@ -402,11 +402,13 @@ it, and the steps after it. Repeat `--kind` to keep several step kinds:
 each line, as `GET /v1/sessions/{id}/trajectory` gives it. With `--steps`,
 each turn carries all of its steps.
 
-`--follow` prints the turns, and then each new item one time when it is
-done. A turn prints its prompt when it starts, and its activity line and
-answer when it ends. A lost stream reconnects, and the new snapshot prints
-only what was not printed. With `--format json`, a follow prints each turn
-when it ends, and with `--steps` each step when it is done.
+`--follow` prints the turns that the filters keep, and then each new item
+one time when it is done. A turn prints its prompt when it starts, and its
+activity line and answer when it ends. A lost stream reconnects. The follow
+then reads the turns that started and ended while the stream was down, and
+prints only what was not printed. With `--format json`, a follow prints one
+typed turn in each line when the turn ends, with all its steps when you give
+`--steps`.
 
 Use `ariadne session send <session-id> "Please explain the failure"`
 when a script or a one-line response is enough. When a session is waiting on a
