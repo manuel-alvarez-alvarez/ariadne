@@ -1711,7 +1711,8 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     subagents, and it has no bar of views: the console of events said
     `running N subagents`, and that ends here. A running subagent shows as its
     own step row, with its state and its step count (rule 106)
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::counts no running subagent in the status row, and draws no bar of views for one`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
 99c. A warning note and a compaction always show as lines of their turn,
     whatever the fold, and an error shows as rule 94 says. The console takes
     the warning notes and the compactions from the `notices` field of the
@@ -1759,6 +1760,35 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     loaded by Show earlier in the open fold
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::loads back to the oldest turn it had loaded before it puts the reader's place back`,
     `ui/src/features/sessions/trajectory/console-state.test.tsx::puts the place back once the open folds read their rows, not before`).
+
+#### What the console of events had and the turn console does not
+
+These behaviors of the console of events (rules 21 to 24i before this
+change) end. Each has the place that now serves its need.
+
+- A bar of views for a subagent, and a view of one child: the subagent is a
+  step row that opens to its own steps (rule 106). The `main` lines per child
+  announcement and end, and the status row's `running N subagents`, end.
+- Escape cancelling a running child that may be cancelled, and Escape in a
+  child's view going back to `main`: Escape cancels the running turn, or
+  closes a full view (rules 95 and 108). A child is cancelled from the
+  Cancel control of its row, where `can_cancel` is true (rule 106).
+- Runs of activity rows cut to their last 3 under `Show N earlier`, and the
+  per-run choice kept in the view state: the running turn shows its last 3
+  steps, and an open fold shows the steps read, with `Show N earlier`
+  (rules 91 and 92).
+- Selecting a tool or permission row to read its details beside the
+  conversation, and the `Pending request` control: a step opens under its
+  row, and `Open` shows it whole in the full view (rules 100 to 108). A
+  pending permission is a card above the composer (rule 93).
+- Folds of single thoughts and answered questions by block id, and a footer of
+  keys: a turn's fold is the one fold, and the status row shows the state.
+- Rows for `agent_request` events, `kind · summary` rows for unknown kinds and
+  system notes drawn from raw events: the trajectory holds typed steps
+  (040), and a `note` step is a row of the open fold (rule 99c).
+- The command list read from `available_commands_update` events, and the
+  older pages read from `GET /v1/events`: the commands come from the
+  session state, and older turns from the trajectory route (rules 95 and 96).
 
 ### A step in place
 

@@ -21,6 +21,7 @@ import {
   anUpdate,
   aPermissionStep,
   aSnapshot,
+  aSubagentStep,
   aToolStep,
   aTurn,
   text,
@@ -229,6 +230,17 @@ it("shows the status, the mode, the options, the context use, the cost and the t
   expect(row.className).toContain("whitespace-nowrap")
   expect(row.className).toContain("overflow-hidden")
   expect(row.className).not.toContain("flex-wrap")
+})
+
+it("counts no running subagent in the status row, and draws no bar of views for one", () => {
+  const turn = aTurn({ state: "running", ended_at: null, answer: [] })
+  const child = aSubagentStep(turn.id)
+  renderConsole(aSnapshot([{ ...turn, steps: [child] }], { subagents: [child] }), "running")
+
+  const row = screen.getByRole("region", { name: "Session status" })
+  expect(row.textContent).not.toMatch(/subagent/)
+  expect(screen.queryByRole("tablist", { name: "Console views" })).toBeNull()
+  expect(within(article(turn)).getByText("Explore the tests")).toBeTruthy()
 })
 
 it("always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone", async () => {
