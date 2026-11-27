@@ -11200,7 +11200,14 @@
         "description": "A call's raw input and raw output, as the agent sent them.",
         "properties": {
           "input": {},
-          "output": {}
+          "output": {},
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The original tool name supplied by the agent."
+          }
         }
       },
       "RecordLearnedPermissionRequest": {
@@ -14161,6 +14168,7 @@
           "attention_more",
           "notices",
           "notices_more",
+          "answer_step_id",
           "answer"
         ],
         "properties": {
@@ -14173,6 +14181,13 @@
               "$ref": "#/components/schemas/ContentBlockDto"
             },
             "description": "The last message of the session's own agent in the turn."
+          },
+          "answer_step_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The message step that supplies the answer."
           },
           "attention": {
             "type": "array",

@@ -221,6 +221,10 @@ pub(crate) fn detail_of(
         detail_rev,
         detail,
         raw: raw.then(|| RawToolDto {
+            title: events.iter().rev().find_map(|event| {
+                string_at(&event.payload, "/tool_name")
+                    .or_else(|| string_at(&acp_of(event), "/title"))
+            }),
             input: present(acp.get("rawInput")),
             output: present(acp.get("rawOutput")),
         }),
@@ -247,7 +251,7 @@ fn command_detail(acp: &Value, input: &Value, title: &str) -> ToolDetailDto {
             acp.pointer("/_meta/terminal_exit/exit_code")
                 .and_then(Value::as_i64)
         });
-    let (output, truncated) = match output_of(acp) {
+    let (output, truncated) = match output_of(acp).map(|text| super::steps::clean_output(&text)) {
         Some(text) => {
             let (text, truncated) = tail(text, OUTPUT_BYTES);
             (Some(text), truncated)
@@ -680,6 +684,18 @@ mod tests {
             ended: None,
         };
         detail_of("session", &events, &call, false).unwrap().detail
+    }
+
+    #[test]
+    fn command_output_has_no_outer_fence_or_replaced_progress() {
+        let ToolDetailDto::Command(command) = detail(
+            "execute",
+            json!({"command": "ls"}),
+            json!({"rawOutput": "```console\nold\rnew\nfirst\rsecond\rfinal\n```"}),
+        ) else {
+            panic!("missing command")
+        };
+        assert_eq!(command.output.as_deref(), Some("new\nfinal"));
     }
 
     /// An edit gives each file its old and new text, a unified diff and its

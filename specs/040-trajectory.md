@@ -101,9 +101,9 @@ Out:
    `text`, the text as it was submitted: the first turn of a launch carries
    the seat brief in its content, ahead of that text. The events of a
    session before its first prompt are a turn with no prompt, opened by the
-   first of them.
+   first of them, unless they contain only lifecycle notes.
 10. An event joins the running turn. Where no turn runs, it joins the newest
-   turn.
+   turn. Lifecycle notes received without a running turn wait for the next prompt.
 11. A turn's `state` is `running` until one of these ends it:
    - `stop` makes it `cancelled` for the stop reason `cancelled`, and
      `completed` for every other reason. The turn keeps the reason.
@@ -470,6 +470,25 @@ Out:
     the session's alias to each `blob` URL of a content block. It passes a
     call's `raw` as the agent sent it: no session id or URL in it changes.
 
+### State and text rules
+
+- Report trajectory session status as `idle` when its row is `running` and no turn runs.
+  Keep the session row unchanged.
+- Show an agent's pending tool call as `running` during its turn.
+  Keep calls waiting for permission `pending`.
+- Set `can_cancel` to false when a subagent ends.
+- Keep lifecycle notes received during a turn in that turn.
+  Queue other lifecycle notes at the start of the next turn.
+  Do not create a turn that contains only lifecycle notes before the first prompt.
+- Make path subjects relative to the session working directory.
+  Use `~` for other paths below home.
+  Append line numbers only above 1.
+- Format MCP titles as `<server> · <tool>` for both agent naming conventions.
+  Keep raw names in raw detail data.
+- Set `answer_step_id` to the answer message step ID, or null.
+- Remove whole-output code fences from command details and previews.
+  Keep only text after the last carriage return on each line.
+
 ## Acceptance criteria
 
 1. The facts of an event, its lane, and the daemon's own allow
@@ -756,6 +775,17 @@ A page with `before` holds the subagents and plans of its own read.
 A call of more than 500 stored events shows the fields of its opener and its
 newest 499. An agent that sends each field only once, and not the whole call
 in each update, can lose a field of an update between them.
+
+The state and text rules are proved by
+`quiet_sessions_and_pending_calls_report_execution_state`,
+`lifecycle_notes_wait_for_the_next_prompt`,
+`step_text_and_answer_ids_are_ready_for_clients`, and
+`lifecycle_events_are_notes_and_a_restart_interrupts_the_turn`
+in the fold tests.
+
+Permission waits use `permission_waits_keep_the_call_pending`.
+Ended subagents use `a_subagent_is_a_step_in_its_parents_turn_and_its_steps_are_its_lane`.
+Command details use `command_output_has_no_outer_fence_or_replaced_progress` in the detail tests.
 
 ## Sources
 

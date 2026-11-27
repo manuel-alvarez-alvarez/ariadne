@@ -223,6 +223,7 @@ impl Hub {
                 continue;
             }
             let mut fold = Fold::new(session_id, session_state(&row, display.as_ref()));
+            fold.set_cwd(state.store.get_session(session_id).await?.worktree_path);
             fold.set_display_reported(display.is_some());
             read.fold_into(&mut fold, so_far);
             let (frames, _) = broadcast::channel(CAPACITY);
@@ -443,6 +444,7 @@ async fn fold_of(state: &AppState, session_id: &str, read: Read) -> Result<Fold,
     let row = session_dto_of(&state.store, state.store.get_session(session_id).await?).await?;
     let display = state.store.reported_display_state(session_id).await?;
     let mut fold = Fold::new(session_id, session_state(&row, display.as_ref()));
+    fold.set_cwd(state.store.get_session(session_id).await?.worktree_path);
     fold.set_display_reported(display.is_some());
     read.fold_into(&mut fold, Vec::new());
     Ok(fold)

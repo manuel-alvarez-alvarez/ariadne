@@ -201,7 +201,7 @@ pub(super) fn merge_call(call: &mut ToolCallStepDto, event: &AgentEventDto) {
     if let Some(title) = string_at(payload, "/tool_name").or_else(|| string_at(acp, "/title"))
         && title != UNNAMED_TOOL
     {
-        call.title = title;
+        call.title = display_title(&title);
     }
     if let Some(kind) = string_at(acp, "/kind") {
         call.kind = Some(kind);
@@ -270,7 +270,7 @@ pub(super) fn merge_call_facts(call: &mut ToolCallStepDto, facts: &EventFacts, c
     if let Some(title) = &facts.title
         && title != UNNAMED_TOOL
     {
-        call.title = title.clone();
+        call.title = display_title(title);
     }
     if let Some(kind) = &facts.tool_kind {
         call.kind = Some(kind.clone());
@@ -385,7 +385,7 @@ pub(super) fn diffs_of(acp: &Value) -> Vec<(Option<String>, u64, u64)> {
 /// The start of what a call gave back: the text of its content, else its
 /// raw output.
 pub(super) fn preview_of(acp: &Value) -> Option<String> {
-    let whole = output_text(acp)?;
+    let whole = clean_output(&output_text(acp)?);
     let lines: Vec<&str> = whole.lines().take(PREVIEW_LINES).collect();
     let preview: String = lines.join("\n").chars().take(PREVIEW_CHARS).collect();
     (!preview.is_empty()).then_some(preview)
@@ -424,8 +424,8 @@ pub(super) fn subject_of(
                     .and_then(|location| location.line)
             });
             Some(match line {
-                Some(line) => format!("{path}:{line}"),
-                None => path,
+                Some(line) if line > 1 => format!("{path}:{line}"),
+                _ => path,
             })
         }
         Some("search") => {
@@ -567,4 +567,52 @@ fn config_option_of(option: &Value) -> Option<ConfigOptionDto> {
 
 pub(super) fn string_at(value: &Value, pointer: &str) -> Option<String> {
     value.pointer(pointer)?.as_str().map(str::to_string)
+}
+
+pub(super) fn display_title(title: &str) -> String {
+    for (prefix, separator) in [("mcp__", "__"), ("mcp.", ".")] {
+        if let Some(rest) = title.strip_prefix(prefix)
+            && let Some((server, tool)) = rest.split_once(separator)
+        {
+            return format!("{server} · {tool}");
+        }
+    }
+    title.to_string()
+}
+
+pub(super) fn display_subject(subject: &str, cwd: Option<&str>) -> String {
+    let shorten = |path: &str| {
+        if let Some(cwd) = cwd
+            && let Some(rest) = path.strip_prefix(&format!("{}/", cwd.trim_end_matches('/')))
+        {
+            return rest.to_string();
+        }
+        if let Some(home) = std::env::var_os("HOME")
+            && let Some(rest) = path.strip_prefix(&format!("{}/", home.to_string_lossy()))
+        {
+            return format!("~/{rest}");
+        }
+        path.to_string()
+    };
+    if let Some((pattern, path)) = subject.rsplit_once(" in ") {
+        format!("{pattern} in {}", shorten(path))
+    } else {
+        shorten(subject)
+    }
+}
+
+pub(super) fn clean_output(text: &str) -> String {
+    let trimmed = text.trim_end_matches('\n');
+    let text = if trimmed.starts_with("```") && trimmed.ends_with("\n```") {
+        trimmed
+            .split_once('\n')
+            .map(|(_, body)| &body[..body.len() - 4])
+            .unwrap_or(text)
+    } else {
+        text
+    };
+    text.split('\n')
+        .map(|line| line.rsplit('\r').next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

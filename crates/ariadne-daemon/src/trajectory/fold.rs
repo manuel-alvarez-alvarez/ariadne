@@ -75,6 +75,8 @@ impl Moment {
 #[derive(Debug, Clone)]
 pub(crate) struct Fold {
     session_id: String,
+    cwd: Option<String>,
+    lifecycle: Vec<AgentEventDto>,
     turns: Vec<Turn>,
     /// Turns older than `turns` that hold attention: kept so that a later
     /// reply, resolution or diagnosis finds its step. Never in a snapshot.
@@ -318,8 +320,22 @@ fn head_facts(head: &EventHead) -> EventFacts {
 }
 
 impl Fold {
+    pub(crate) fn set_cwd(&mut self, cwd: Option<String>) {
+        self.cwd = cwd;
+    }
+
+    fn displayed_session(&self) -> SessionStateDto {
+        let mut state = self.session.clone();
+        if state.status == ariadne_core::SessionStatus::Running && state.running_turn_id.is_none() {
+            state.status = ariadne_core::SessionStatus::Idle;
+        }
+        state
+    }
+
     pub(crate) fn new(session_id: &str, session: SessionStateDto) -> Self {
         Self {
+            cwd: None,
+            lifecycle: Vec::new(),
             display_commands: false,
             session_id: session_id.to_string(),
             turns: Vec::new(),
@@ -760,7 +776,7 @@ impl Fold {
         let skip = turns.len().saturating_sub(limit);
         TrajectorySnapshotDto {
             rev,
-            session: self.session.clone(),
+            session: self.displayed_session(),
             turns: turns[skip..]
                 .iter()
                 .map(|turn| match subagent {
@@ -825,7 +841,7 @@ impl Fold {
 
     fn session_op(&self) -> TrajectoryOpDto {
         TrajectoryOpDto::SessionPatch {
-            session: self.session.clone(),
+            session: self.displayed_session(),
         }
     }
 
@@ -906,9 +922,22 @@ impl Fold {
                 );
             }
             "session_start" | "session_end" => {
-                self.end_running(TurnState::Interrupted, None, input.created_at, ops);
+                if self.running().is_none() {
+                    self.lifecycle
+                        .push(input.full.cloned().unwrap_or_else(|| AgentEventDto {
+                            id: input.id.into(),
+                            session_id: None,
+                            task_id: None,
+                            kind: input.kind.into(),
+                            payload: Value::Null,
+                            summary: String::new(),
+                            created_at: input.created_at.into(),
+                        }));
+                    return;
+                }
                 let (text, severity) = note_of(input.kind, &input.facts, input.full);
                 self.note(input, text, severity, ops);
+                self.end_running(TurnState::Interrupted, None, input.created_at, ops);
             }
             "session.switched" | "session.pin_fallback" | "notice" => {
                 let (text, severity) = note_of(input.kind, &input.facts, input.full);
@@ -978,6 +1007,19 @@ impl Fold {
             input.created_at,
             TurnState::Running,
         ));
+        for event in std::mem::take(&mut self.lifecycle) {
+            let queued = Input {
+                id: &event.id,
+                kind: &event.kind,
+                created_at: &event.created_at,
+                lane: MAIN_LANE.into(),
+                facts: facts_of(&event.kind, &event.payload),
+                full: Some(&event),
+                stored: true,
+            };
+            let (text, severity) = note_of(queued.kind, &queued.facts, queued.full);
+            self.note(&queued, text, severity, ops);
+        }
         ops.touch(input.id);
         self.session.running_turn_id = Some(input.id.to_string());
         ops.push(self.session_op());
@@ -1350,6 +1392,18 @@ impl Fold {
                 Some(event) => merge_call(call, event),
                 None => merge_call_facts(call, &input.facts, input.created_at),
             }
+            if call.status == ToolCallStatus::Pending
+                && !self
+                    .pending
+                    .iter()
+                    .any(|pending| call.permission.as_deref() == Some(pending.id.as_str()))
+                && turn.state == TurnState::Running
+            {
+                call.status = ToolCallStatus::Running;
+            }
+            if let Some(subject) = &call.subject {
+                call.subject = Some(super::steps::display_subject(subject, self.cwd.as_deref()));
+            }
             if target != input.id {
                 call.detail_rev += 1;
             }
@@ -1388,6 +1442,7 @@ impl Fold {
             && let StepDto::ToolCall(call) = step
         {
             call.permission = Some(input.id.to_string());
+            call.status = ToolCallStatus::Pending;
             ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
         }
     }
@@ -1404,6 +1459,16 @@ impl Fold {
         let lane = turn.lanes.entry(MAIN_LANE.into()).or_default();
         if let Some(row) = input.row() {
             lane.follows.insert(request.id.clone(), row.to_string());
+        }
+        for step in &mut turn.steps {
+            if let StepDto::ToolCall(call) = step
+                && call.permission.as_deref() == Some(request.id.as_str())
+                && call.status == ToolCallStatus::Pending
+                && turn.state == TurnState::Running
+            {
+                call.status = ToolCallStatus::Running;
+                ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+            }
         }
         if removed {
             // A permission on one of Ariadne's own tools that the daemon
@@ -1714,6 +1779,9 @@ impl Fold {
             child.step.state.as_deref(),
             Some("completed" | "failed" | "cancelled")
         );
+        if ended {
+            child.step.can_cancel = false;
+        }
         if ended && child.step.ended_at.is_none() {
             child.step.ended_at = Some(input.created_at.to_string());
         }
@@ -2010,6 +2078,7 @@ impl Turn {
             attention_more: attention_more as u64,
             notices_more: (main.notices.len() - notices.len()) as u64,
             notices,
+            answer_step_id: main.answer.clone(),
             answer: held
                 .filter_map(|step| match step {
                     StepDto::Message(message) if Some(&message.id) == main.answer.as_ref() => {
@@ -2709,6 +2778,15 @@ mod tests {
         };
         assert_eq!(read.id, call);
         assert_eq!(read.lane, "child-1");
+        s.event(
+            "subagent_update",
+            json!({
+                "subagent": child, "state": "completed", "capabilities": {"cancel": true}
+            }),
+        );
+        let snapshot = s.fold.snapshot(0, 20, None);
+        assert!(!snapshot.subagents[0].can_cancel);
+        assert!(snapshot.subagents[0].ended_at.is_some());
     }
 
     /// An event of a kind the fold does not know, and a payload without the
@@ -2788,14 +2866,102 @@ mod tests {
         assert_eq!(
             notes,
             [
+                ("session_start".to_string(), NoteSeverity::Info),
                 ("session.pin_fallback".to_string(), NoteSeverity::Warning),
                 ("session_start".to_string(), NoteSeverity::Info),
             ]
         );
+        assert_eq!(snapshot.turns.len(), 1);
+    }
+
+    #[test]
+    fn quiet_sessions_and_pending_calls_report_execution_state() {
+        use ariadne_api::trajectory::ToolCallStatus;
+        let mut s = Session::new();
         assert_eq!(
-            snapshot.turns[0].prompt, None,
-            "the start before a prompt is a turn of its own"
+            s.fold.snapshot(0, 20, None).session.status,
+            SessionStatus::Idle
         );
+        let turn = s.prompt("Go");
+        s.event(
+            "pre_tool_use",
+            json!({"acp": {"toolCallId": "c", "status": "pending"}}),
+        );
+        let snapshot = s.fold.snapshot(0, 20, None);
+        assert_eq!(snapshot.session.status, SessionStatus::Running);
+        let steps = s.fold.held_steps(&turn, MAIN_LANE);
+        let StepDto::ToolCall(call) = &steps[0] else {
+            panic!("missing call")
+        };
+        assert_eq!(call.status, ToolCallStatus::Running);
+    }
+
+    #[test]
+    fn step_text_and_answer_ids_are_ready_for_clients() {
+        let mut s = Session::new();
+        s.fold.set_cwd(Some("/repo".into()));
+        let turn = s.prompt("Go");
+        s.event(
+            "pre_tool_use",
+            json!({"acp": {
+                "toolCallId": "read", "title": "mcp__ariadne__complete_step",
+                "kind": "read", "rawInput": {"path": "/repo/src/main.rs", "line": 1}
+            }}),
+        );
+        s.event("pre_tool_use", json!({"acp": {
+            "toolCallId": "command", "title": "mcp.ariadne.get_pull_request", "kind": "execute",
+            "content": [{"type": "content", "content": {"type": "text", "text": "```text\nold\rnew\n```"}}]
+        }}));
+        let (answer, _) = s.event("agent_message", json!({"text": "Done"}));
+        let snapshot = s.fold.snapshot(0, 20, None);
+        assert_eq!(
+            snapshot.turns[0].answer_step_id.as_deref(),
+            Some(answer.as_str())
+        );
+        let steps = s.fold.held_steps(&turn, MAIN_LANE);
+        let StepDto::ToolCall(read) = &steps[0] else {
+            panic!("missing read")
+        };
+        assert_eq!(read.subject.as_deref(), Some("src/main.rs"));
+        assert_eq!(read.title, "ariadne · complete_step");
+        let StepDto::ToolCall(command) = &steps[1] else {
+            panic!("missing command")
+        };
+        assert_eq!(command.title, "ariadne · get_pull_request");
+        assert_eq!(command.preview.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn permission_waits_keep_the_call_pending() {
+        use ariadne_api::trajectory::ToolCallStatus;
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        s.event(
+            "pre_tool_use",
+            json!({"acp": {"toolCallId": "c", "status": "pending"}}),
+        );
+        s.event(
+            "permission_request",
+            json!({"acp": {"toolCallId": "c"}, "options": []}),
+        );
+        let steps = s.fold.held_steps(&turn, MAIN_LANE);
+        let StepDto::ToolCall(call) = &steps[0] else {
+            panic!("missing call")
+        };
+        assert_eq!(call.status, ToolCallStatus::Pending);
+    }
+
+    #[test]
+    fn lifecycle_notes_wait_for_the_next_prompt() {
+        let mut s = Session::new();
+        s.event("session_start", json!({}));
+        assert!(s.fold.snapshot(0, 20, None).turns.is_empty());
+        let first = s.prompt("Go");
+        s.event("stop", json!({}));
+        s.event("session_end", json!({}));
+        let second = s.prompt("Again");
+        assert_eq!(s.fold.held_steps(&first, MAIN_LANE).len(), 1);
+        assert_eq!(s.fold.held_steps(&second, MAIN_LANE).len(), 1);
     }
 
     /// A compaction is one step by its id, which a later update changes

@@ -27,6 +27,7 @@ export function aTurn(overrides: Partial<TurnDto> = {}): TurnDto {
     ended_at: "2026-11-14T10:01:04Z",
     prompt: { id, content: text("Fix the bug"), source: "console" },
     answer: text("Fixed it"),
+    answer_step_id: null,
     activity: {
       steps: 5,
       files_changed: 2,
