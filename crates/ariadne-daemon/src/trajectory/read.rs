@@ -84,6 +84,16 @@ pub(crate) struct Read {
     /// The prompt after the read, which a page folds to close its last turn
     /// and then drops.
     pub(crate) successor: Option<String>,
+    /// The first stored event of each plan, by its lane and its `plan_id`,
+    /// from the heads: a plan keeps that id whatever the budget loads.
+    pub(crate) plan_firsts: Vec<(Option<String>, Option<String>, String)>,
+    /// The first stored event of each compaction, by its lane and its
+    /// compaction id: an update after a prompt changes the step that event
+    /// opened, and opens none.
+    pub(crate) compaction_firsts: Vec<CompactionRows>,
+    /// The first event of each subagent, by its id: an event of a later
+    /// turn finds the subagent and opens no step of its own.
+    pub(crate) subagent_firsts: Vec<(String, String)>,
 }
 
 impl Read {
@@ -99,6 +109,11 @@ impl Read {
     /// Fold the read, and the live events that joined it, into a fold that
     /// has seen nothing yet.
     pub(crate) fn fold_into(self, fold: &mut Fold, live: Vec<AgentEventDto>) {
+        for (lane, plan, first) in &self.plan_firsts {
+            fold.seed_plan(lane.as_deref().unwrap_or(MAIN_LANE), plan.clone(), first);
+        }
+        seed_compactions(fold, &self.compaction_firsts);
+        seed_subagents(fold, &self.subagent_firsts);
         let mut live = live.into_iter().peekable();
         for item in self.items {
             while let Some(event) = live.next_if(|event| event.id.as_str() < item.id()) {
@@ -320,7 +335,11 @@ pub(crate) async fn read_turns_upto(
         );
     }
 
+    let compaction_firsts = compactions_of(store, session_id, upper).await?;
+    let subagent_firsts = store.first_subagent_events(session_id, upper).await?;
     let mut fold = scratch(session_id);
+    seed_compactions(&mut fold, &compaction_firsts);
+    seed_subagents(&mut fold, &subagent_firsts);
     feed(&mut fold, &heads, &pairs);
     let index: BTreeMap<String, TurnIndex> = fold
         .index()
@@ -373,9 +392,15 @@ pub(crate) async fn read_turns_upto(
         }
     }
     let plans = store
-        .session_event_heads(session_id, None, Some(upper), &["plan"])
+        .session_event_heads(
+            session_id,
+            None,
+            Some(upper),
+            &["plan", "plan_update", "plan_removed"],
+        )
         .await?;
-    for rows in first_and_newest_per_lane(&plans) {
+    let plan_firsts = first_per_plan(&plans);
+    for rows in rows_per_plan(&plans) {
         picks.take(rows);
     }
     // The commands the agent offers: its newest update of the session.
@@ -390,14 +415,12 @@ pub(crate) async fn read_turns_upto(
     if let Some(head) = commands.iter().rev().find(|head| head.lane.is_none()) {
         picks.take([head.id.clone()]);
     }
-    for (subagent, rows) in fold.subagent_rows() {
+    // Each subagent's rows start with its first event: the read seeded it.
+    for (_, rows) in fold.subagent_rows() {
         if picks.full() {
             break;
         }
-        let first = store
-            .first_subagent_event(session_id, &subagent, upper)
-            .await?;
-        picks.take(first.map(|head| head.id).into_iter().chain(rows));
+        picks.take(rows);
     }
 
     let loaded = store
@@ -410,6 +433,9 @@ pub(crate) async fn read_turns_upto(
         has_older: candidates.first().is_some_and(|&first| first < first_shown),
         first_turn: Some(first_turn),
         successor: None,
+        plan_firsts,
+        compaction_firsts,
+        subagent_firsts,
     })
 }
 
@@ -470,7 +496,7 @@ pub(crate) async fn read_steps(
                 .newest_session_event_id(session_id, Some(&next.id))
                 .await?
         }
-        None => Some(newest),
+        None => Some(newest.clone()),
     };
     let Some(upper) = upper else {
         return Ok(None);
@@ -481,7 +507,13 @@ pub(crate) async fn read_steps(
     let pairs = store
         .session_event_heads(session_id, None, Some(&upper), PAIR_KINDS)
         .await?;
+    // Up to the read's own bound, past the turn: an update after a later
+    // prompt is the newest change of a compaction this turn began.
+    let compaction_firsts = compactions_of(store, session_id, &newest).await?;
+    let subagent_firsts = store.first_subagent_events(session_id, &upper).await?;
     let mut fold = scratch(session_id);
+    seed_compactions(&mut fold, &compaction_firsts);
+    seed_subagents(&mut fold, &subagent_firsts);
     feed(&mut fold, &heads, &pairs);
     let Some(turn) = fold.index().into_iter().find(|turn| turn.id == turn_id) else {
         return Ok(None);
@@ -510,17 +542,19 @@ pub(crate) async fn read_steps(
     let mut kept = 0;
     for opener in index.openers[start..end].iter().rev() {
         let mut rows = index.rows(&opener.step);
+        rows.extend(
+            compaction_firsts
+                .iter()
+                .filter(|kept| {
+                    kept.first == opener.step && kept.lane.as_deref().unwrap_or(MAIN_LANE) == lane
+                })
+                .map(|kept| kept.newest.clone()),
+        );
         if let Some(child) = turn
             .lanes
             .get(lane)
             .and_then(|_| subagent_of(&subagents, &opener.step))
         {
-            if let Some(first) = store
-                .first_subagent_event(session_id, child, &upper)
-                .await?
-            {
-                rows.push(first.id);
-            }
             rows.extend(subagents[child].iter().cloned());
         }
         if !picks.take(rows) {
@@ -548,6 +582,9 @@ pub(crate) async fn read_steps(
             first_turn: Some(turn_id.to_string()),
             has_older: at > 0,
             successor: successor_id,
+            plan_firsts: Vec::new(),
+            compaction_firsts,
+            subagent_firsts,
         },
         page,
         earlier: (end - kept) as u64,
@@ -623,19 +660,104 @@ fn merge(
     items
 }
 
-/// The first and the newest plan of each lane: the first names the plan,
-/// and the newest says what it holds.
-fn first_and_newest_per_lane(plans: &[EventHead]) -> Vec<Vec<String>> {
-    let mut lanes: BTreeMap<Option<&str>, (String, String)> = BTreeMap::new();
-    for plan in plans {
-        lanes
-            .entry(plan.lane.as_deref())
-            .and_modify(|(_, newest)| *newest = plan.id.clone())
-            .or_insert_with(|| (plan.id.clone(), plan.id.clone()));
+/// One compaction of a session: its lane and its compaction id, its first
+/// stored event and its newest.
+#[derive(Debug, Clone)]
+pub(crate) struct CompactionRows {
+    lane: Option<String>,
+    compaction: String,
+    first: String,
+    newest: String,
+}
+
+/// Each compaction of a session up to `upper`, by its lane and its
+/// compaction id.
+async fn compactions_of(
+    store: &Store,
+    session_id: &str,
+    upper: &str,
+) -> Result<Vec<CompactionRows>, StoreError> {
+    let heads = store
+        .session_event_heads(session_id, None, Some(upper), &["compaction_update"])
+        .await?;
+    let mut keyed: BTreeMap<(Option<String>, String), (String, String)> = BTreeMap::new();
+    for head in heads {
+        let facts: EventFacts = serde_json::from_str(&head.facts).unwrap_or_default();
+        if let Some(compaction) = facts.compaction {
+            keyed
+                .entry((head.lane, compaction))
+                .and_modify(|(_, newest)| *newest = head.id.clone())
+                .or_insert_with(|| (head.id.clone(), head.id));
+        }
     }
-    lanes
+    Ok(keyed
+        .into_iter()
+        .map(|((lane, compaction), (first, newest))| CompactionRows {
+            lane,
+            compaction,
+            first,
+            newest,
+        })
+        .collect())
+}
+
+fn seed_subagents(fold: &mut Fold, firsts: &[(String, String)]) {
+    for (subagent, first) in firsts {
+        fold.seed_subagent(subagent, first);
+    }
+}
+
+fn seed_compactions(fold: &mut Fold, compactions: &[CompactionRows]) {
+    for kept in compactions {
+        fold.seed_compaction(
+            kept.lane.as_deref().unwrap_or(MAIN_LANE),
+            &kept.compaction,
+            &kept.first,
+        );
+    }
+}
+
+/// The first event of each plan, by its lane and its ACP `plan_id`.
+fn first_per_plan(plans: &[EventHead]) -> Vec<(Option<String>, Option<String>, String)> {
+    let mut firsts: BTreeMap<(Option<String>, Option<String>), String> = BTreeMap::new();
+    for plan in plans {
+        let facts: EventFacts = serde_json::from_str(&plan.facts).unwrap_or_default();
+        firsts
+            .entry((plan.lane.clone(), facts.plan))
+            .or_insert_with(|| plan.id.clone());
+    }
+    firsts
+        .into_iter()
+        .map(|((lane, plan), first)| (lane, plan, first))
+        .collect()
+}
+
+/// The events that show each plan, by its lane and its ACP `plan_id`: the
+/// first names the plan, the newest update says what it holds, and the
+/// newest event says whether it is removed. A `plan` of the old kind has no
+/// `plan_id`, so a lane has one such plan.
+fn rows_per_plan(plans: &[EventHead]) -> Vec<Vec<String>> {
+    let mut keyed: BTreeMap<(Option<&str>, Option<String>), Vec<String>> = BTreeMap::new();
+    for plan in plans {
+        let facts: EventFacts = serde_json::from_str(&plan.facts).unwrap_or_default();
+        let rows = keyed.entry((plan.lane.as_deref(), facts.plan)).or_default();
+        let update = plan.kind != "plan_removed";
+        match rows.len() {
+            0 => rows.extend([plan.id.clone(), plan.id.clone(), plan.id.clone()]),
+            _ => {
+                if update {
+                    rows[1] = plan.id.clone();
+                }
+                rows[2] = plan.id.clone();
+            }
+        }
+    }
+    keyed
         .into_values()
-        .map(|(first, newest)| vec![first, newest])
+        .map(|mut rows| {
+            rows.dedup();
+            rows
+        })
         .collect()
 }
 
@@ -709,7 +831,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{Read, read_page, read_steps, read_turns, scratch};
-    use crate::trajectory::Fold;
+    use crate::trajectory::{Fold, step_id};
 
     /// A session of its own in a store of its own.
     async fn session() -> (Store, String, tempfile::TempDir) {
@@ -1123,24 +1245,26 @@ mod tests {
         );
     }
 
-    /// One turn of thousands of events loads no more than the budget.
+    /// One turn of many more events than the budget loads no more than the
+    /// budget, and counts every call. The budget is the read's parameter, so
+    /// a budget of 120 proves what one of 500 does at a fifth of the events.
     #[tokio::test]
-    async fn a_turn_of_thousands_of_events_loads_the_budget_at_most() {
+    async fn a_turn_of_many_more_events_than_the_budget_loads_the_budget_at_most() {
         let (store, session, _dir) = session().await;
         prompt(&store, &session).await;
-        for n in 0..1500 {
+        for n in 0..300 {
             call(&store, &session, &format!("c-{n}"), "read", "completed").await;
         }
 
-        let read = read_turns(&store, &session, None, 20, None, 500)
+        let read = read_turns(&store, &session, None, 20, None, 120)
             .await
             .unwrap();
-        assert!(read.loaded() <= 500, "{}", read.loaded());
+        assert!(read.loaded() <= 120, "{}", read.loaded());
         let fold = folded(&session, read);
         let turn = &fold.snapshot(0, 20, None).turns[0];
-        assert_eq!(turn.activity.tool_calls, 1500);
+        assert_eq!(turn.activity.tool_calls, 300);
         assert_eq!(turn.steps.len(), 50);
-        assert_eq!(turn.earlier_steps, 1450);
+        assert_eq!(turn.earlier_steps, 250);
     }
 
     /// A session stored before the facts existed reads as exactly as a new
@@ -1437,6 +1561,234 @@ mod tests {
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].plan_id, first);
         assert_eq!(plans[0].entries[0].status, "completed");
+    }
+
+    /// A plan whose events the budget leaves out keeps the id of its first
+    /// event when a later update of it comes (rules 32, 36).
+    #[tokio::test]
+    async fn a_plan_past_the_budget_keeps_its_first_id_for_a_later_update() {
+        let (store, session, _dir) = session().await;
+        prompt(&store, &session).await;
+        let plan = |status: &str| {
+            json!({"plan": {"type": "items", "plan_id": "plan-1",
+                            "entries": [{"content": "a", "status": status}]}})
+        };
+        let first = commit(&store, &session, "plan_update", plan("pending")).await;
+        commit(&store, &session, "plan_update", plan("in_progress")).await;
+
+        // The budget holds the prompt alone.
+        let read = read_turns(&store, &session, None, 20, None, 1)
+            .await
+            .unwrap();
+        assert_eq!(read.loaded(), 1);
+        let mut fold = folded(&session, read);
+        assert!(fold.snapshot(0, 20, None).plans.is_empty());
+
+        let later = store
+            .create_event(NewAgentEvent {
+                session_id: Some(session.clone()),
+                task_id: None,
+                kind: "plan_update".into(),
+                payload: plan("completed"),
+            })
+            .await
+            .unwrap();
+        fold.apply(&crate::http::convert::event_dto(later), true);
+        let plans = fold.snapshot(0, 20, None).plans;
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].plan_id, first, "the plan keeps its first id");
+        assert_eq!(plans[0].entries[0].status, "completed");
+    }
+
+    /// A rebuilt fold names a plan whose removal came first by that removal,
+    /// as a warm fold does, and finds a compaction across a prompt in the
+    /// turn it began in, whether or not it reads that turn (rules 27, 32).
+    #[tokio::test]
+    async fn a_rebuilt_fold_names_plans_and_compactions_by_their_first_event() {
+        let (store, session, _dir) = session().await;
+        let first = prompt(&store, &session).await;
+        let removal = commit(&store, &session, "plan_removed", json!({"plan_id": "p-1"})).await;
+        commit(
+            &store,
+            &session,
+            "plan_update",
+            json!({"plan": {"type": "items", "plan_id": "p-1", "entries": []}}),
+        )
+        .await;
+        let opened = commit(
+            &store,
+            &session,
+            "compaction_update",
+            json!({"compaction_id": "c-2", "status": "in_progress"}),
+        )
+        .await;
+        stop(&store, &session).await;
+        let second = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "compaction_update",
+            json!({"compaction_id": "c-2", "status": "completed"}),
+        )
+        .await;
+        stop(&store, &session).await;
+
+        let both = folded(
+            &session,
+            read_turns(&store, &session, None, 20, None, 500)
+                .await
+                .unwrap(),
+        )
+        .snapshot(0, 20, None);
+        assert_eq!(both.plans[0].plan_id, removal);
+        let counts: Vec<(&str, u64)> = both
+            .turns
+            .iter()
+            .map(|turn| (turn.id.as_str(), turn.earlier_steps))
+            .collect();
+        assert_eq!(counts, [(first.as_str(), 1), (second.as_str(), 0)]);
+        let page = read_steps(&store, &session, &first, MAIN_LANE, None, 50, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        let steps = folded(&session, page.read).held_steps(&first, MAIN_LANE);
+        let [StepDto::Compaction(kept)] = steps.as_slice() else {
+            panic!("the compaction: {steps:?}");
+        };
+        assert_eq!(kept.id, opened);
+        assert_eq!(
+            kept.status,
+            ariadne_api::trajectory::CompactionStatus::Completed
+        );
+
+        // The newest turn alone: the update opens no step of its own.
+        let newest = folded(
+            &session,
+            read_turns(&store, &session, None, 1, None, 500)
+                .await
+                .unwrap(),
+        )
+        .snapshot(0, 1, None);
+        assert_eq!(newest.turns[0].id, second);
+        assert_eq!(newest.turns[0].earlier_steps, 0);
+    }
+
+    /// A child announced in one turn whose compaction ends after the next
+    /// prompt is the child's: the later turn opens no step for it, a page of
+    /// it holds its own steps, and every read counts each turn as a warm
+    /// fold does, with the earlier turn shown, left out, or past the budget
+    /// (rules 27, 30, 34, 44).
+    #[tokio::test]
+    async fn a_child_known_from_an_earlier_turn_opens_no_step_in_a_later_one() {
+        let (store, session, _dir) = session().await;
+        let child = json!({"id": "child-1", "title": "explorer"});
+        let first = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "subagent_update",
+            json!({"subagent": child, "state": "running"}),
+        )
+        .await;
+        let opened = commit(
+            &store,
+            &session,
+            "compaction_update",
+            json!({"compaction_id": "c-9", "status": "in_progress", "subagent": child}),
+        )
+        .await;
+        stop(&store, &session).await;
+        let second = prompt(&store, &session).await;
+        let message = commit(&store, &session, "agent_message", json!({"text": "Hi."})).await;
+        commit(
+            &store,
+            &session,
+            "compaction_update",
+            json!({"compaction_id": "c-9", "status": "completed", "subagent": child}),
+        )
+        .await;
+        stop(&store, &session).await;
+
+        // The warm fold: every event, in order.
+        let mut warm = scratch(&session);
+        for event in store.list_session_events(&session).await.unwrap() {
+            warm.apply(&crate::http::convert::event_dto(event), true);
+        }
+        let counts = |fold: &Fold, limit: usize| -> Vec<(String, u64, u64)> {
+            fold.snapshot(0, limit, None)
+                .turns
+                .iter()
+                .map(|turn| (turn.id.clone(), turn.earlier_steps, turn.activity.subagents))
+                .collect()
+        };
+        let expected = vec![(first.clone(), 1, 1), (second.clone(), 1, 0)];
+        assert_eq!(counts(&warm, 20), expected, "the warm fold");
+        // Three rows hold both prompts and the answer, and leave out the
+        // child's first event and its compaction.
+        for (label, budget) in [("whole", 500), ("past the budget", 3)] {
+            let read = read_turns(&store, &session, None, 20, None, budget)
+                .await
+                .unwrap();
+            let cold = folded(&session, read);
+            assert_eq!(counts(&cold, 20), expected, "{label}");
+        }
+        let starved = read_turns(&store, &session, None, 20, None, 3)
+            .await
+            .unwrap();
+        assert!(
+            starved.items.iter().all(|item| !matches!(
+                item,
+                super::Item::Full(event) | super::Item::Seed(event, _) if event.id == opened
+            )),
+            "the child's compaction is past the budget"
+        );
+        let newest = folded(
+            &session,
+            read_turns(&store, &session, None, 1, None, 500)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(counts(&newest, 1), expected[1..], "the later turn alone");
+
+        let page = read_steps(&store, &session, &second, MAIN_LANE, None, 1, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            page.page,
+            std::slice::from_ref(&message),
+            "the main lane's own step"
+        );
+        assert_eq!(page.earlier, 0);
+        let steps = folded(&session, page.read).held_steps(&second, MAIN_LANE);
+        let ids: Vec<&str> = steps.iter().map(step_id).collect();
+        assert_eq!(ids, [message.as_str()]);
+
+        // The child's page of the earlier turn holds its compaction, ended.
+        let page = read_steps(&store, &session, &first, "child-1", None, 50, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        let steps = folded(&session, page.read).held_steps(&first, "child-1");
+        let [StepDto::Compaction(kept)] = steps.as_slice() else {
+            panic!("the child's compaction: {steps:?}");
+        };
+        assert_eq!(kept.id, opened);
+        assert_eq!(
+            kept.status,
+            ariadne_api::trajectory::CompactionStatus::Completed
+        );
+        assert_eq!(
+            store
+                .first_subagent_events(&session, &message)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(child, _)| child)
+                .collect::<Vec<_>>(),
+            ["child-1"],
+            "the store names each subagent once"
+        );
     }
 
     /// A turn with more than 20 errors holds the newest 20 in `attention`,
