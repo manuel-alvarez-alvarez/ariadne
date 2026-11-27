@@ -29,6 +29,15 @@ pub struct TrajectoryQuery {
     pub subagent: Option<String>,
 }
 
+/// Query of `GET /v1/sessions/{id}/trajectory/stream`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct TrajectoryStreamQuery {
+    /// How many turns the snapshot carries: 20 when omitted, at most 50.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
 /// Query of `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -377,9 +386,13 @@ pub struct QuestionOptionDto {
 #[serde(rename_all = "snake_case")]
 pub enum QuestionState {
     Open,
+    /// The person answered with the form content.
     Answered,
-    Withdrawn,
-    Expired,
+    /// The person refused to answer.
+    Declined,
+    /// The question closed without an answer: dismissed, cancelled with its
+    /// turn, or withdrawn.
+    Cancelled,
 }
 
 /// A line the daemon says about the session.

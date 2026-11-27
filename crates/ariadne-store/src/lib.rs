@@ -42,7 +42,7 @@ pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;
 pub use dashboards::NewDashboard;
 pub use entities::*;
-pub use events::{EventFilter, EventOrder, NewAgentEvent};
+pub use events::{EventFilter, EventHead, EventOrder, NewAgentEvent};
 pub use far_tasks::{FarTaskState, is_final};
 pub use forge::{ForgeWrite, SetForgeIntegration};
 pub use goal_parts::{GoalParts, TaskParts};
@@ -270,6 +270,9 @@ impl Store {
             attention_order: Arc::default(),
             pr_locks: Arc::default(),
         };
+        // The facts migration 0029 added are filled for the rows before it
+        // once, here, before any read leans on them (040).
+        store.fill_event_facts().await?;
         store.seed_builtin_skills().await?;
         store.seed_builtin_workflows().await?;
         store.seed_builtin_dashboards().await?;

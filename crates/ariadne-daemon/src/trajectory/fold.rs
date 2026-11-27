@@ -1,45 +1,61 @@
 //! The fold: a session's events, one at a time, into turns and the ops that
 //! say what each event changed (040).
+//!
+//! A fold takes two kinds of input. A full event carries its payload, and
+//! makes and changes steps. A head carries only the event's facts
+//! (`ariadne_core::event_facts`), and changes the index alone. The index of
+//! a turn — its step openers, its calls, its counts, its pending
+//! permissions and questions — is kept from both by the one path below, so a
+//! turn read as a few full events among many heads counts what a turn read
+//! whole counts.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use serde_json::Value;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::trajectory::{
-    ActivityDto, CommandDto, CompactionStatus, CompactionStepDto, ContentBlockDto,
-    ContextWindowDto, DiffStatDto, ErrorStepDto, LocationDto, MAIN_LANE, MessageStepDto,
-    NoteSeverity, NoteStepDto, PermissionAnswerDto, PermissionOptionDto, PermissionState,
+    ActivityDto, CompactionStatus, CompactionStepDto, ContentBlockDto, ContextWindowDto,
+    ErrorStepDto, MAIN_LANE, NoteSeverity, NoteStepDto, PermissionAnswerDto, PermissionState,
     PermissionStepDto, PermissionToolDto, PlanDto, PlanEntryDto, PlanVariant, PromptDto,
-    QuestionOptionDto, QuestionState, QuestionStepDto, SessionStateDto, StepDto, SubagentRefDto,
-    SubagentStepDto, ThoughtStepDto, ToolCallStatus, ToolCallStepDto, TrajectoryOpDto,
-    TrajectorySnapshotDto, TrajectoryStepsDto, TurnDto, TurnState,
+    QuestionOptionDto, QuestionState, QuestionStepDto, SessionStateDto, StepDto, SubagentStepDto,
+    ToolCallStatus, TrajectoryOpDto, TrajectorySnapshotDto, TurnDto, TurnState,
+};
+use ariadne_core::event_facts::{EventFacts, facts_of, lane_of as event_lane};
+use ariadne_store::EventHead;
+
+use super::steps::{
+    append_text, blocks_of, commands_of, content_of, is_terminal, lane_of, locations_of,
+    merge_call, new_call, permission_options, step_id, string_at, subagent_ref, subject_of,
+    text_step,
 };
 
-/// How many of its last steps a running turn carries. The rest are a page
-/// of the steps route away: a turn that ran for an hour holds thousands, and
-/// a client draws the last screenful first.
+/// How many of its last steps a running turn carries. Fifty steps are about
+/// one screen of a client; the rest are a page of the steps route away.
 pub(crate) const STEP_WINDOW: usize = 50;
 
-/// What a tool call reads as when its event names no tool.
-const UNNAMED_TOOL: &str = "ACP tool";
-
-/// How much of a call's output its step previews. The whole output is the
-/// item detail, which a later route serves.
-const PREVIEW_CHARS: usize = 400;
-const PREVIEW_LINES: usize = 5;
-
-/// The kinds of a session's events, folded into turns.
+/// A session's events, folded into turns.
 #[derive(Debug, Clone)]
 pub(crate) struct Fold {
     session_id: String,
     turns: Vec<Turn>,
+    /// Turns older than `turns` that hold attention: kept so that a later
+    /// reply, resolution or diagnosis finds its step. Never in a snapshot.
+    outside: Vec<Turn>,
     has_older: bool,
-    subagents: Vec<SubagentStepDto>,
+    subagents: Vec<Subagent>,
     /// Each plan, with the lane it belongs to.
     plans: Vec<(String, PlanDto)>,
     session: SessionStateDto,
+    /// The permissions no reply has answered yet, oldest first. A reply
+    /// answers the newest.
+    pending: Vec<Pending>,
+    /// The open questions, by question or request id: the turn and the step.
+    questions: HashMap<String, (String, String)>,
+    /// The id of the newest stored event: what a run of text that has no
+    /// `item_id` is named after while it streams.
+    last_stored: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,10 +66,78 @@ struct Turn {
     stop_reason: Option<String>,
     started_at: String,
     ended_at: Option<String>,
-    /// Every step of every lane, in the order they opened.
+    /// The steps the fold holds: what full events made.
     steps: Vec<StepDto>,
-    /// Steps that came before the first event the fold read.
-    cut: u64,
+    /// The index of each lane, from every event of the turn.
+    lanes: HashMap<String, Lane>,
+}
+
+/// What a lane of a turn did, counted from every event, full or head.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Lane {
+    /// The ids of the events that opened a step, in order.
+    pub(crate) openers: Vec<String>,
+    /// Each call by its ACP id: its state.
+    calls: HashMap<String, Call>,
+    thoughts: u64,
+    subagents: BTreeSet<String>,
+    items: BTreeSet<String>,
+    compactions: BTreeSet<String>,
+    errors: Vec<String>,
+    /// The run of text that streams now: a thought or not, and its step.
+    streaming: Option<(bool, String)>,
+    /// The id of the newest message step: the turn's answer.
+    answer: Option<String>,
+    /// The newest event of each step after its opener — a call's last
+    /// update, a permission's reply, a question's resolution, an error's
+    /// diagnosis — by the step's id.
+    pub(crate) follows: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct Call {
+    step: String,
+    status: ToolCallStatus,
+    kind: Option<String>,
+    paths: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct Pending {
+    id: String,
+    /// The turn of the request; empty for one outside every turn the fold
+    /// reads.
+    turn: String,
+    facts: EventFacts,
+}
+
+#[derive(Debug, Clone)]
+struct Subagent {
+    step: SubagentStepDto,
+    /// The newest `subagent_update` of it.
+    latest: Option<String>,
+}
+
+/// One event, as the fold reads it: its facts always, its payload where the
+/// read loaded it.
+struct Input<'a> {
+    id: &'a str,
+    kind: &'a str,
+    created_at: &'a str,
+    lane: String,
+    facts: EventFacts,
+    full: Option<&'a AgentEventDto>,
+}
+
+/// What the selection of a read needs to know of one turn.
+#[derive(Debug, Clone)]
+pub(crate) struct TurnIndex {
+    pub(crate) id: String,
+    pub(crate) running: bool,
+    pub(crate) answer: Option<String>,
+    /// The steps waiting on a person, and the errors.
+    pub(crate) attention: Vec<String>,
+    pub(crate) lanes: HashMap<String, Lane>,
 }
 
 /// The state of a session as its row says it, before any event.
@@ -75,15 +159,24 @@ pub(crate) fn session_state(session: &SessionDto) -> SessionStateDto {
     }
 }
 
+/// The facts of a head, as stored.
+fn head_facts(head: &EventHead) -> EventFacts {
+    serde_json::from_str(&head.facts).unwrap_or_default()
+}
+
 impl Fold {
     pub(crate) fn new(session_id: &str, session: SessionStateDto) -> Self {
         Self {
             session_id: session_id.to_string(),
             turns: Vec::new(),
+            outside: Vec::new(),
             has_older: false,
             subagents: Vec::new(),
             plans: Vec::new(),
             session,
+            pending: Vec::new(),
+            questions: HashMap::new(),
+            last_stored: None,
         }
     }
 
@@ -92,21 +185,165 @@ impl Fold {
         self.has_older = has_older;
     }
 
-    /// Count `steps` that the read left out of a turn, before its first
-    /// read step.
-    pub(crate) fn cut_turn(&mut self, turn_id: &str, steps: u64) {
-        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
-            turn.cut += steps;
+    /// Fold one full event in, and answer what it changed. `stored` says
+    /// whether the store holds it, or it is live.
+    pub(crate) fn apply(&mut self, event: &AgentEventDto, stored: bool) -> Vec<TrajectoryOpDto> {
+        let input = Input {
+            id: &event.id,
+            kind: &event.kind,
+            created_at: &event.created_at,
+            lane: event_lane(&event.kind, &event.payload).unwrap_or_else(|| MAIN_LANE.into()),
+            facts: facts_of(&event.kind, &event.payload),
+            full: Some(event),
+        };
+        let mut ops = Ops::default();
+        self.step(&input, &mut ops);
+        if stored {
+            self.last_stored = Some(event.id.clone());
+        }
+        self.finish(ops)
+    }
+
+    /// Fold one head in: the index changes, and no step does.
+    pub(crate) fn apply_head(&mut self, head: &EventHead) {
+        let input = Input {
+            id: &head.id,
+            kind: &head.kind,
+            created_at: &head.created_at,
+            lane: head.lane.clone().unwrap_or_else(|| MAIN_LANE.into()),
+            facts: head_facts(head),
+            full: None,
+        };
+        self.step(&input, &mut Ops::default());
+        self.last_stored = Some(head.id.clone());
+    }
+
+    /// Pair a permission or a question outside the turns the fold reads:
+    /// the stack of pending permissions and the open questions change, and
+    /// nothing else.
+    pub(crate) fn pair_head(&mut self, head: &EventHead) {
+        let facts = head_facts(head);
+        match head.kind.as_str() {
+            "permission_request" => self.pending.push(Pending {
+                id: head.id.clone(),
+                turn: String::new(),
+                facts,
+            }),
+            "permission.replied" => {
+                self.pending.pop();
+            }
+            "question.resolved" | "agent_request.resolved" => {
+                if let Some(id) = facts.question.or(facts.request) {
+                    self.questions.remove(&id);
+                }
+            }
+            _ => {}
         }
     }
 
-    /// Forget all but the newest `keep` turns. A hub that follows a session
-    /// for a day holds what a snapshot can show, not the whole day.
-    pub(crate) fn prune(&mut self, keep: usize) {
-        if self.turns.len() > keep {
-            self.turns.drain(..self.turns.len() - keep);
+    /// Move every turn older than `turn_id` out of the snapshot, keeping
+    /// those that hold attention for the replies that may still come.
+    pub(crate) fn retire_before(&mut self, turn_id: &str) {
+        let keep = self
+            .turns
+            .iter()
+            .position(|turn| turn.id.as_str() >= turn_id)
+            .unwrap_or(self.turns.len());
+        let older: Vec<Turn> = self.turns.drain(..keep).collect();
+        if !older.is_empty() {
             self.has_older = true;
         }
+        self.outside
+            .extend(older.into_iter().filter(Turn::holds_attention));
+        self.outside.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+
+    /// Forget the turn `turn_id`: a page folds the prompt after it to close
+    /// the turn before, and then drops the turn that prompt opened.
+    pub(crate) fn drop_turn(&mut self, turn_id: &str) {
+        self.turns.retain(|turn| turn.id != turn_id);
+        if self.session.running_turn_id.as_deref() == Some(turn_id) {
+            self.session.running_turn_id = None;
+        }
+    }
+
+    /// Forget all but the newest `keep` turns; the turns that hold
+    /// attention stay, outside the snapshot.
+    pub(crate) fn prune(&mut self, keep: usize) {
+        if self.turns.len() > keep {
+            let first = self.turns[self.turns.len() - keep].id.clone();
+            self.retire_before(&first);
+        }
+    }
+
+    /// What the selection of a read needs of every turn, oldest first.
+    pub(crate) fn index(&self) -> Vec<TurnIndex> {
+        self.turns
+            .iter()
+            .map(|turn| TurnIndex {
+                id: turn.id.clone(),
+                running: turn.state == TurnState::Running,
+                answer: turn
+                    .lanes
+                    .get(MAIN_LANE)
+                    .and_then(|lane| lane.answer.clone()),
+                attention: self.attention_ids(turn),
+                lanes: turn.lanes.clone(),
+            })
+            .collect()
+    }
+
+    /// The first event and the newest update of each subagent the fold
+    /// knows, so that a read loads them.
+    pub(crate) fn subagent_events(&self) -> Vec<String> {
+        self.subagents
+            .iter()
+            .flat_map(|child| std::iter::once(child.step.id.clone()).chain(child.latest.clone()))
+            .collect()
+    }
+
+    /// The ids of the subagents the fold knows.
+    pub(crate) fn subagent_ids(&self) -> Vec<String> {
+        self.subagents
+            .iter()
+            .map(|child| child.step.subagent_id.clone())
+            .collect()
+    }
+
+    /// Fold a stored event that comes before every turn a read holds, in
+    /// the turn `turn_id` it belongs to: a plan, or the first event of a
+    /// subagent, keeps the turn it opened in.
+    pub(crate) fn apply_in(&mut self, turn_id: &str, event: &AgentEventDto) {
+        if self.turns.last().is_none_or(|turn| turn.id != turn_id) {
+            self.end_running(
+                TurnState::Interrupted,
+                None,
+                &event.created_at,
+                &mut Ops::default(),
+            );
+            self.turns.push(Turn::new(
+                turn_id,
+                None,
+                &event.created_at,
+                TurnState::Completed,
+            ));
+        }
+        self.apply(event, true);
+    }
+
+    /// The steps of a turn's lane that the fold holds, oldest first.
+    pub(crate) fn held_steps(&self, turn_id: &str, lane: &str) -> Vec<StepDto> {
+        self.turns
+            .iter()
+            .find(|turn| turn.id == turn_id)
+            .map(|turn| {
+                turn.steps
+                    .iter()
+                    .filter(|step| lane_of(step) == lane)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The trajectory at revision `rev`: the newest `limit` turns, or with a
@@ -121,7 +358,11 @@ impl Fold {
             Some(lane) => self
                 .turns
                 .iter()
-                .filter(|turn| turn.steps.iter().any(|step| lane_of(step) == lane))
+                .filter(|turn| {
+                    turn.lanes
+                        .get(lane)
+                        .is_some_and(|index| !index.openers.is_empty())
+                })
                 .collect(),
             None => self.turns.iter().collect(),
         };
@@ -132,37 +373,18 @@ impl Fold {
             turns: turns[skip..]
                 .iter()
                 .map(|turn| match subagent {
-                    Some(lane) => turn.dto_with(lane, STEP_WINDOW),
+                    Some(lane) => turn.dto_with(lane),
                     None => turn.dto(),
                 })
                 .collect(),
             has_older: self.has_older || skip > 0,
-            subagents: self.subagents.clone(),
+            subagents: self
+                .subagents
+                .iter()
+                .map(|child| child.step.clone())
+                .collect(),
             plans: self.plans.iter().map(|(_, plan)| plan.clone()).collect(),
         }
-    }
-
-    /// One page of the steps of a turn in one lane: the `limit` steps before
-    /// the step `before`, or the last `limit` steps.
-    pub(crate) fn steps(
-        &self,
-        turn_id: &str,
-        lane: &str,
-        before: Option<&str>,
-        limit: usize,
-    ) -> Option<TrajectoryStepsDto> {
-        let turn = self.turns.iter().find(|turn| turn.id == turn_id)?;
-        let older: Vec<&StepDto> = turn
-            .steps
-            .iter()
-            .filter(|step| lane_of(step) == lane)
-            .filter(|step| before.is_none_or(|before| step_id(step) < before))
-            .collect();
-        let skip = older.len().saturating_sub(limit);
-        Some(TrajectoryStepsDto {
-            steps: older[skip..].iter().map(|step| (*step).clone()).collect(),
-            earlier_steps: skip as u64 + if lane == MAIN_LANE { turn.cut } else { 0 },
-        })
     }
 
     /// The session's row changed: its status, attention, usage or context.
@@ -179,61 +401,15 @@ impl Fold {
         })
     }
 
-    /// Fold one event in, and answer what it changed. An event of a kind the
-    /// fold does not know changes nothing.
-    pub(crate) fn apply(&mut self, event: &AgentEventDto) -> Vec<TrajectoryOpDto> {
-        let mut ops = Ops::default();
-        let lane = event_lane(event);
-        match event.kind.as_str() {
-            "user_prompt_submit" => self.open_turn(event, &mut ops),
-            "agent_message_chunk" | "agent_thought_chunk" => self.chunk(event, &lane, &mut ops),
-            "agent_message" | "agent_thought" => self.whole(event, &lane, &mut ops),
-            "pre_tool_use" | "tool_call_update" | "post_tool_use" | "tool_call_abandoned" => {
-                self.tool(event, &lane, &mut ops)
-            }
-            "permission_request" => self.permission(event, &mut ops),
-            "permission.replied" => self.reply(event, &mut ops),
-            "agent_request" => self.request(event, &mut ops),
-            "agent_request.resolved" => self.resolved(event, &mut ops),
-            "session.error" => self.error(event, &mut ops),
-            "session.diagnosis" => self.diagnosis(event, &mut ops),
-            "stop" => self.stop(event, &mut ops),
-            "session_start" | "session_end" => {
-                self.end_running(TurnState::Interrupted, None, &event.created_at, &mut ops);
-                let text = match event.kind.as_str() {
-                    "session_start" => "session started",
-                    _ => "session ended",
-                };
-                self.note(event, text.into(), NoteSeverity::Info, &mut ops);
-            }
-            "session.switched" => {
-                self.note(event, event.summary.clone(), NoteSeverity::Info, &mut ops)
-            }
-            "session.pin_fallback" => self.note(
-                event,
-                event.summary.clone(),
-                NoteSeverity::Warning,
-                &mut ops,
-            ),
-            "plan" => self.plan(event, &lane, &mut ops),
-            "subagent_update" => self.subagent(event, &mut ops),
-            "compaction_update" => self.compaction(event, &lane, &mut ops),
-            "available_commands_update" if lane == MAIN_LANE => {
-                self.session.commands = commands_of(&event.payload);
-                ops.push(self.session_op());
-            }
-            _ => {}
-        }
-        if lane != MAIN_LANE {
-            self.recount_subagent(&lane, &mut ops);
-        }
-        self.finish(ops)
-    }
-
     fn finish(&self, ops: Ops) -> Vec<TrajectoryOpDto> {
         let mut out = ops.ops;
         for id in ops.turns {
-            if let Some(turn) = self.turns.iter().find(|turn| turn.id == id) {
+            if let Some(turn) = self
+                .turns
+                .iter()
+                .chain(&self.outside)
+                .find(|turn| turn.id == id)
+            {
                 let mut header = turn.dto();
                 header.steps.clear();
                 out.push(TrajectoryOpDto::TurnUpsert { turn: header });
@@ -248,6 +424,29 @@ impl Fold {
         }
     }
 
+    fn attention_ids(&self, turn: &Turn) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|pending| pending.turn == turn.id)
+            .map(|pending| pending.id.clone())
+            .collect();
+        ids.extend(
+            self.questions
+                .values()
+                .filter(|(owner, _)| owner == &turn.id)
+                .map(|(_, step)| step.clone()),
+        );
+        ids.extend(
+            turn.lanes
+                .get(MAIN_LANE)
+                .into_iter()
+                .flat_map(|lane| lane.errors.clone()),
+        );
+        ids.sort();
+        ids
+    }
+
     fn running(&self) -> Option<usize> {
         self.turns
             .iter()
@@ -255,58 +454,122 @@ impl Fold {
     }
 
     /// The turn an event belongs to: the running one, else the newest one,
-    /// else a turn the event opens with no prompt — what a session does
-    /// before its first prompt.
-    fn turn_for(&mut self, event: &AgentEventDto, ops: &mut Ops) -> usize {
+    /// else a turn the event opens with no prompt.
+    fn turn_for(&mut self, input: &Input, ops: &mut Ops) -> usize {
         if let Some(at) = self.running().or(self.turns.len().checked_sub(1)) {
             return at;
         }
-        self.turns.push(Turn {
-            id: event.id.clone(),
-            prompt: None,
-            state: TurnState::Completed,
-            stop_reason: None,
-            started_at: event.created_at.clone(),
-            ended_at: Some(event.created_at.clone()),
-            steps: Vec::new(),
-            cut: 0,
-        });
-        ops.touch(&event.id);
+        self.turns.push(Turn::new(
+            input.id,
+            None,
+            input.created_at,
+            TurnState::Completed,
+        ));
+        ops.touch(input.id);
         self.turns.len() - 1
     }
 
-    fn open_turn(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        self.end_running(TurnState::Interrupted, None, &event.created_at, ops);
-        let payload = &event.payload;
-        self.turns.push(Turn {
-            id: event.id.clone(),
-            prompt: Some(PromptDto {
-                id: event.id.clone(),
-                source: string_at(payload, "/source"),
-                prompt_kind: string_at(payload, "/prompt_kind"),
-                content: content_of(payload, &self.session_id, &event.id),
-            }),
-            state: TurnState::Running,
-            stop_reason: None,
-            started_at: event.created_at.clone(),
-            ended_at: None,
-            steps: Vec::new(),
-            cut: 0,
-        });
-        ops.touch(&event.id);
-        self.session.running_turn_id = Some(event.id.clone());
+    fn turn_mut(&mut self, turn_id: &str) -> Option<&mut Turn> {
+        self.turns
+            .iter_mut()
+            .chain(self.outside.iter_mut())
+            .find(|turn| turn.id == turn_id)
+    }
+
+    fn step(&mut self, input: &Input, ops: &mut Ops) {
+        if input.lane != MAIN_LANE && input.kind != "available_commands_update" {
+            let id = input.lane.clone();
+            self.subagent_at(input, &id, ops);
+        }
+        match input.kind {
+            "user_prompt_submit" => self.open_turn(input, ops),
+            "agent_message_chunk" | "agent_thought_chunk" => self.chunk(input, ops),
+            "agent_message" | "agent_thought" => self.whole(input, ops),
+            "pre_tool_use" | "tool_call_update" | "post_tool_use" | "tool_call_abandoned" => {
+                self.tool(input, ops)
+            }
+            "permission_request" => self.permission(input, ops),
+            "permission.replied" => self.reply(input, ops),
+            "question" | "agent_request" => self.question(input, ops),
+            "question.resolved" | "agent_request.resolved" => self.resolved(input, ops),
+            "session.error" => self.error(input, ops),
+            "session.diagnosis" => self.diagnosis(input, ops),
+            "stop" => {
+                let state = match input.facts.stop_reason.as_deref() {
+                    Some("cancelled") => TurnState::Cancelled,
+                    _ => TurnState::Completed,
+                };
+                self.end_running(
+                    state,
+                    input.facts.stop_reason.clone(),
+                    input.created_at,
+                    ops,
+                );
+            }
+            "session_start" | "session_end" => {
+                self.end_running(TurnState::Interrupted, None, input.created_at, ops);
+                let text = match input.kind {
+                    "session_start" => "session started",
+                    _ => "session ended",
+                };
+                self.note(input, text.into(), NoteSeverity::Info, ops);
+            }
+            "session.switched" | "session.pin_fallback" => {
+                let text = input
+                    .full
+                    .map(|event| event.summary.clone())
+                    .unwrap_or_default();
+                let severity = match input.kind {
+                    "session.pin_fallback" => NoteSeverity::Warning,
+                    _ => NoteSeverity::Info,
+                };
+                self.note(input, text, severity, ops);
+            }
+            "plan" => self.plan(input, ops),
+            "subagent_update" => self.subagent(input, ops),
+            "compaction_update" => self.compaction(input, ops),
+            "available_commands_update" if input.lane == MAIN_LANE => {
+                if let Some(event) = input.full {
+                    self.session.commands = commands_of(&event.payload);
+                    ops.push(self.session_op());
+                }
+            }
+            _ => {}
+        }
+        if input.lane != MAIN_LANE {
+            self.recount_subagent(&input.lane, ops);
+        }
+    }
+
+    fn open_turn(&mut self, input: &Input, ops: &mut Ops) {
+        self.end_running(TurnState::Interrupted, None, input.created_at, ops);
+        let prompt = PromptDto {
+            id: input.id.to_string(),
+            source: input
+                .full
+                .and_then(|event| string_at(&event.payload, "/source")),
+            prompt_kind: input
+                .full
+                .and_then(|event| string_at(&event.payload, "/prompt_kind")),
+            content: input
+                .full
+                .map(|event| content_of(&event.payload, &self.session_id, &event.id))
+                .unwrap_or_default(),
+        };
+        self.turns.push(Turn::new(
+            input.id,
+            Some(prompt),
+            input.created_at,
+            TurnState::Running,
+        ));
+        ops.touch(input.id);
+        self.session.running_turn_id = Some(input.id.to_string());
         ops.push(self.session_op());
     }
 
     /// End the running turn, if one runs: its text stops streaming and the
     /// calls still open end with it.
-    fn end_running(
-        &mut self,
-        state: TurnState,
-        stop_reason: Option<String>,
-        at: &str,
-        ops: &mut Ops,
-    ) {
+    fn end_running(&mut self, state: TurnState, reason: Option<String>, at: &str, ops: &mut Ops) {
         let Some(index) = self.running() else {
             return;
         };
@@ -316,8 +579,16 @@ impl Fold {
         };
         let turn = &mut self.turns[index];
         turn.state = state;
-        turn.stop_reason = stop_reason;
+        turn.stop_reason = reason;
         turn.ended_at = Some(at.to_string());
+        for lane in turn.lanes.values_mut() {
+            lane.streaming = None;
+            for call in lane.calls.values_mut() {
+                if !is_terminal(call.status) {
+                    call.status = call_state;
+                }
+            }
+        }
         for step in &mut turn.steps {
             let changed = match step {
                 StepDto::Message(message) if message.streaming => {
@@ -349,263 +620,393 @@ impl Fold {
 
     /// Stop the text streaming in a lane: something else happened there.
     fn end_streaming(&mut self, index: usize, lane: &str, ops: &mut Ops) {
-        for step in self.turns[index].steps.iter_mut().rev() {
-            if lane_of(step) != lane {
-                continue;
-            }
-            let streaming = match step {
-                StepDto::Message(message) => &mut message.streaming,
-                StepDto::Thought(thought) => &mut thought.streaming,
+        let turn = &mut self.turns[index];
+        let Some((_, id)) = turn
+            .lanes
+            .get_mut(lane)
+            .and_then(|lane| lane.streaming.take())
+        else {
+            return;
+        };
+        if let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == id) {
+            match step {
+                StepDto::Message(message) => message.streaming = false,
+                StepDto::Thought(thought) => thought.streaming = false,
                 _ => return,
-            };
-            if *streaming {
-                *streaming = false;
-                ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
             }
+            ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+        }
+    }
+
+    /// A step opens in a lane: the index counts it, and a full event makes
+    /// it.
+    fn open_step(
+        &mut self,
+        index: usize,
+        lane: &str,
+        id: &str,
+        step: Option<StepDto>,
+        ops: &mut Ops,
+    ) {
+        self.end_streaming(index, lane, ops);
+        let turn = &mut self.turns[index];
+        turn.lanes
+            .entry(lane.to_string())
+            .or_default()
+            .openers
+            .push(id.to_string());
+        ops.touch(&turn.id);
+        if let Some(step) = step {
+            ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+            turn.steps.push(step);
+        }
+    }
+
+    fn chunk(&mut self, input: &Input, ops: &mut Ops) {
+        let Some(event) = input.full else {
+            return;
+        };
+        let index = self.turn_for(input, ops);
+        let thought = input.kind == "agent_thought_chunk";
+        let text = string_at(&event.payload, "/text").unwrap_or_default();
+        let item = input.facts.item.clone();
+        let turn = &mut self.turns[index];
+        let streaming = turn
+            .lanes
+            .get(&input.lane)
+            .and_then(|lane| lane.streaming.clone());
+        if let Some((kind, id)) = streaming
+            && kind == thought
+            && item.as_ref().is_none_or(|item| item == &id)
+        {
+            if let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == id) {
+                match step {
+                    StepDto::Message(message) => append_text(&mut message.content, &text),
+                    StepDto::Thought(thought) => append_text(&mut thought.content, &text),
+                    _ => {}
+                }
+            }
+            ops.push(TrajectoryOpDto::TextAppend {
+                turn_id: turn.id.clone(),
+                item_id: id,
+                text,
+            });
             return;
         }
-    }
-
-    fn push_step(&mut self, index: usize, step: StepDto, ops: &mut Ops) {
-        self.end_streaming(index, lane_of(&step), ops);
-        ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
-        let turn = &mut self.turns[index];
-        ops.touch(&turn.id);
-        turn.steps.push(step);
-    }
-
-    fn chunk(&mut self, event: &AgentEventDto, lane: &str, ops: &mut Ops) {
-        let index = self.turn_for(event, ops);
-        let thought = event.kind == "agent_thought_chunk";
-        let text = string_at(&event.payload, "/text").unwrap_or_default();
-        let item_id = string_at(&event.payload, "/item_id");
-        let turn = &mut self.turns[index];
-        if let Some(step) = turn
-            .steps
-            .iter_mut()
-            .rev()
-            .find(|step| lane_of(step) == lane)
-        {
-            let open = match step {
-                StepDto::Message(message) if !thought && message.streaming => {
-                    Some((&message.id, &mut message.content))
-                }
-                StepDto::Thought(thought_step) if thought && thought_step.streaming => {
-                    Some((&thought_step.id, &mut thought_step.content))
-                }
-                _ => None,
-            };
-            if let Some((id, content)) = open
-                && item_id.as_ref().is_none_or(|item| item == id)
-            {
-                append_text(content, &text);
-                ops.push(TrajectoryOpDto::TextAppend {
-                    turn_id: turn.id.clone(),
-                    item_id: id.clone(),
-                    text,
-                });
-                return;
-            }
-        }
-        let id = item_id.unwrap_or_else(|| event.id.clone());
+        // A run with no `item_id` is named after the stored event before it,
+        // which every open of the session reads the same while it streams.
+        let id = item.unwrap_or_else(|| {
+            let after = self.last_stored.clone().unwrap_or_else(|| turn.id.clone());
+            format!("{after}~{}", if thought { "thought" } else { "message" })
+        });
         let step = text_step(
             thought,
-            id,
+            id.clone(),
             turn.id.clone(),
-            lane,
+            &input.lane,
             event,
             vec![ContentBlockDto::Text { text }],
             true,
         );
-        self.push_step(index, step, ops);
+        self.open_step(index, &input.lane, &id, Some(step), ops);
+        let lane = self.turns[index]
+            .lanes
+            .entry(input.lane.clone())
+            .or_default();
+        lane.items.insert(id.clone());
+        lane.streaming = Some((thought, id.clone()));
+        if thought {
+            lane.thoughts += 1;
+        } else {
+            lane.answer = Some(id);
+        }
     }
 
-    fn whole(&mut self, event: &AgentEventDto, lane: &str, ops: &mut Ops) {
-        let index = self.turn_for(event, ops);
-        let thought = event.kind == "agent_thought";
-        let content = content_of(&event.payload, &self.session_id, &event.id);
-        let item_id = string_at(&event.payload, "/item_id");
-        let turn = &mut self.turns[index];
-        let found = turn
-            .steps
-            .iter_mut()
-            .rev()
-            .find(|step| match (step, &item_id) {
-                (StepDto::Message(message), Some(item)) => !thought && &message.id == item,
-                (StepDto::Thought(thought_step), Some(item)) => thought && &thought_step.id == item,
-                (step, None) => {
-                    lane_of(step) == lane
-                        && match step {
-                            StepDto::Message(message) => !thought && message.streaming,
-                            StepDto::Thought(thought_step) => thought && thought_step.streaming,
-                            _ => false,
-                        }
-                }
-                _ => false,
+    fn whole(&mut self, input: &Input, ops: &mut Ops) {
+        let index = self.turn_for(input, ops);
+        let thought = input.kind == "agent_thought";
+        let content = input
+            .full
+            .map(|event| content_of(&event.payload, &self.session_id, &event.id));
+        let item = input.facts.item.clone();
+        let lane = self.turns[index]
+            .lanes
+            .entry(input.lane.clone())
+            .or_default();
+        // The step this whole closes: the one its `item_id` names, else the
+        // run that streams in its lane.
+        let closes = match &item {
+            Some(item) if lane.items.contains(item) => Some(item.clone()),
+            Some(_) => None,
+            None => lane
+                .streaming
+                .clone()
+                .filter(|(kind, _)| *kind == thought)
+                .map(|(_, id)| id),
+        };
+        let Some(closed) = closes else {
+            let id = item.unwrap_or_else(|| input.id.to_string());
+            let turn_id = self.turns[index].id.clone();
+            let step = input.full.map(|event| {
+                text_step(
+                    thought,
+                    id.clone(),
+                    turn_id,
+                    &input.lane,
+                    event,
+                    content.clone().unwrap_or_default(),
+                    false,
+                )
             });
-        if let Some(step) = found {
-            match step {
-                StepDto::Message(message) => {
-                    message.content = content;
-                    message.streaming = false;
-                    if message.message_id.is_none() {
-                        message.message_id = string_at(&event.payload, "/message_id");
-                    }
-                }
-                StepDto::Thought(thought_step) => {
-                    thought_step.content = content;
-                    thought_step.streaming = false;
-                }
-                _ => {}
+            self.open_step(index, &input.lane, &id, step, ops);
+            let lane = self.turns[index]
+                .lanes
+                .entry(input.lane.clone())
+                .or_default();
+            lane.items.insert(id.clone());
+            if thought {
+                lane.thoughts += 1;
+            } else {
+                lane.answer = Some(id);
             }
-            ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
-            ops.touch(&turn.id);
             return;
+        };
+        // A run with no `item_id` takes the id of its stored whole, which is
+        // the id a read of the store gives it.
+        let renamed = item.is_none() && closed != input.id;
+        let id = if renamed {
+            input.id.to_string()
+        } else {
+            closed.clone()
+        };
+        lane.streaming = None;
+        lane.items.insert(id.clone());
+        if renamed
+            && let Some(opener) = lane
+                .openers
+                .iter_mut()
+                .rev()
+                .find(|opener| **opener == closed)
+        {
+            *opener = id.clone();
         }
-        let id = item_id.unwrap_or_else(|| event.id.clone());
-        let step = text_step(thought, id, turn.id.clone(), lane, event, content, false);
-        self.push_step(index, step, ops);
-    }
-
-    fn tool(&mut self, event: &AgentEventDto, lane: &str, ops: &mut Ops) {
-        let payload = &event.payload;
-        let acp = payload.get("acp").unwrap_or(payload);
-        let tool_call_id = string_at(acp, "/toolCallId")
-            .or_else(|| string_at(payload, "/tool_call_id"))
-            .unwrap_or_default();
-        let found = (event.kind != "pre_tool_use")
-            .then(|| self.open_call(lane, &tool_call_id))
-            .flatten();
-        let Some((index, at)) = found else {
-            let index = self.turn_for(event, ops);
-            let mut call = new_call(event, &self.turns[index].id, lane, &tool_call_id);
-            merge_call(&mut call, event);
-            call.permission = self.turns[index].steps.iter().find_map(|step| match step {
-                StepDto::Permission(permission)
-                    if permission.tool_call_id == tool_call_id && !tool_call_id.is_empty() =>
-                {
-                    Some(permission.id.clone())
+        if !thought {
+            lane.answer = Some(id.clone());
+        }
+        let turn = &mut self.turns[index];
+        ops.touch(&turn.id);
+        let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == closed) else {
+            return;
+        };
+        match step {
+            StepDto::Message(message) => {
+                if renamed {
+                    message.created_at = input.created_at.to_string();
                 }
-                _ => None,
-            });
-            self.push_step(index, StepDto::ToolCall(call), ops);
-            return;
-        };
-        self.end_streaming(index, lane, ops);
-        let turn = &mut self.turns[index];
-        if let StepDto::ToolCall(call) = &mut turn.steps[at] {
-            merge_call(call, event);
-            call.detail_rev += 1;
+                message.id = id.clone();
+                if let Some(content) = content {
+                    message.content = content;
+                }
+                message.streaming = false;
+                if message.message_id.is_none() {
+                    message.message_id = input
+                        .full
+                        .and_then(|event| string_at(&event.payload, "/message_id"));
+                }
+            }
+            StepDto::Thought(thought_step) => {
+                if renamed {
+                    thought_step.created_at = input.created_at.to_string();
+                }
+                thought_step.id = id.clone();
+                if let Some(content) = content {
+                    thought_step.content = content;
+                }
+                thought_step.streaming = false;
+            }
+            _ => {}
         }
-        ops.push(TrajectoryOpDto::ItemUpsert {
-            step: turn.steps[at].clone(),
-        });
-        ops.touch(&turn.id);
-    }
-
-    /// The newest call of a lane that has not ended, by its ACP id.
-    fn open_call(&self, lane: &str, tool_call_id: &str) -> Option<(usize, usize)> {
-        self.turns
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(index, turn)| {
-                turn.steps
-                    .iter()
-                    .rposition(|step| match step {
-                        StepDto::ToolCall(call) => {
-                            call.lane == lane
-                                && call.tool_call_id == tool_call_id
-                                && !is_terminal(call.status)
-                        }
-                        _ => false,
-                    })
-                    .map(|at| (index, at))
-            })
-    }
-
-    fn permission(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        let index = self.turn_for(event, ops);
-        let payload = &event.payload;
-        let acp = payload.get("acp").unwrap_or(payload);
-        let tool_call_id = string_at(acp, "/toolCallId").unwrap_or_default();
-        let title = string_at(payload, "/tool_name")
-            .or_else(|| string_at(acp, "/title"))
-            .unwrap_or_else(|| event.summary.clone());
-        let kind = string_at(acp, "/kind");
-        let input = payload
-            .get("tool_input")
-            .or_else(|| acp.get("rawInput"))
-            .unwrap_or(&Value::Null);
-        let subagent = subagent_ref(payload);
-        let question = match &subagent {
-            Some(child) => format!("{title} · asked by subagent {}", child.title),
-            None => title.clone(),
-        };
-        let step = PermissionStepDto {
-            id: event.id.clone(),
-            turn_id: self.turns[index].id.clone(),
-            lane: MAIN_LANE.into(),
-            created_at: event.created_at.clone(),
-            tool_call_id: tool_call_id.clone(),
-            tool: PermissionToolDto {
-                subject: subject_of(kind.as_deref(), input, &locations_of(acp)),
-                title,
-                kind,
-            },
-            question,
-            options: permission_options(payload),
-            state: PermissionState::Pending,
-            answer: None,
-            ai: ariadne_api::permissions::ai_permission_note(payload),
-            learned: None,
-            subagent: subagent.clone(),
-        };
-        let call_lane = subagent.map_or_else(|| MAIN_LANE.to_string(), |child| child.id);
-        if let Some((call_index, at)) = self.open_call(&call_lane, &tool_call_id)
-            && let StepDto::ToolCall(call) = &mut self.turns[call_index].steps[at]
-        {
-            call.permission = Some(event.id.clone());
-            ops.push(TrajectoryOpDto::ItemUpsert {
-                step: StepDto::ToolCall(call.clone()),
-            });
-        }
-        self.push_step(index, StepDto::Permission(step), ops);
-    }
-
-    fn reply(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        let payload = &event.payload;
-        let Some((index, at)) = self.find_step(|step| {
-            matches!(step, StepDto::Permission(permission) if permission.state == PermissionState::Pending)
-        }) else {
-            return;
-        };
-        let turn = &mut self.turns[index];
-        ops.touch(&turn.id);
-        let StepDto::Permission(permission) = &mut turn.steps[at] else {
-            return;
-        };
-        // A permission on one of Ariadne's own tools that the daemon allowed
-        // by itself asked nobody anything: the call's step says what the
-        // agent did. A person's answer, a denial and a cancel stay.
-        if permission
-            .tool
-            .title
-            .to_ascii_lowercase()
-            .contains("ariadne")
-            && daemon_allowed(payload, &permission.options)
-        {
-            let id = permission.id.clone();
-            let tool_call_id = permission.tool_call_id.clone();
-            turn.steps.remove(at);
+        if renamed {
             ops.push(TrajectoryOpDto::ItemRemove {
                 turn_id: turn.id.clone(),
-                item_id: id.clone(),
+                item_id: closed,
             });
+        }
+        ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+    }
+
+    fn tool(&mut self, input: &Input, ops: &mut Ops) {
+        let index = self.turn_for(input, ops);
+        let call_id = input.facts.call.clone().unwrap_or_default();
+        let open = self.turns[index]
+            .lanes
+            .get(&input.lane)
+            .and_then(|lane| lane.calls.get(&call_id))
+            .filter(|call| !is_terminal(call.status))
+            .map(|call| call.step.clone());
+        let target = match open {
+            Some(step) if input.kind != "pre_tool_use" => {
+                self.end_streaming(index, &input.lane, ops);
+                step
+            }
+            _ => {
+                let turn_id = self.turns[index].id.clone();
+                let step = input.full.map(|event| {
+                    let mut call = new_call(event, &turn_id, &input.lane, &call_id);
+                    call.permission = self.pending.iter().rev().find_map(|pending| {
+                        (pending.turn == turn_id
+                            && !call_id.is_empty()
+                            && pending.facts.call.as_deref() == Some(call_id.as_str()))
+                        .then(|| pending.id.clone())
+                    });
+                    StepDto::ToolCall(call)
+                });
+                self.open_step(index, &input.lane, input.id, step, ops);
+                self.turns[index]
+                    .lanes
+                    .entry(input.lane.clone())
+                    .or_default()
+                    .calls
+                    .insert(
+                        call_id.clone(),
+                        Call {
+                            step: input.id.to_string(),
+                            status: ToolCallStatus::Pending,
+                            kind: None,
+                            paths: Vec::new(),
+                        },
+                    );
+                input.id.to_string()
+            }
+        };
+        let turn = &mut self.turns[index];
+        let lane = turn.lanes.entry(input.lane.clone()).or_default();
+        if let Some(call) = lane.calls.get_mut(&call_id) {
+            if let Some(status) = input.facts.status.as_deref().and_then(status_of) {
+                call.status = status;
+            }
+            if input.facts.tool_kind.is_some() {
+                call.kind = input.facts.tool_kind.clone();
+            }
+            if !input.facts.paths.is_empty() {
+                call.paths = input.facts.paths.clone();
+            }
+        }
+        if target != input.id {
+            lane.follows.insert(target.clone(), input.id.to_string());
+        }
+        ops.touch(&turn.id);
+        let Some(event) = input.full else {
+            return;
+        };
+        if let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == target)
+            && let StepDto::ToolCall(call) = step
+        {
+            merge_call(call, event);
+            if target != input.id {
+                call.detail_rev += 1;
+            }
+            ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+        }
+    }
+
+    fn permission(&mut self, input: &Input, ops: &mut Ops) {
+        let index = self.turn_for(input, ops);
+        let turn_id = self.turns[index].id.clone();
+        let subagent = input.full.and_then(|event| subagent_ref(&event.payload));
+        let step = input.full.map(|event| {
+            let payload = &event.payload;
+            let acp = payload.get("acp").unwrap_or(payload);
+            let title = string_at(payload, "/tool_name")
+                .or_else(|| string_at(acp, "/title"))
+                .unwrap_or_else(|| event.summary.clone());
+            let kind = string_at(acp, "/kind");
+            let tool_input = payload
+                .get("tool_input")
+                .or_else(|| acp.get("rawInput"))
+                .unwrap_or(&Value::Null);
+            StepDto::Permission(PermissionStepDto {
+                id: event.id.clone(),
+                turn_id: turn_id.clone(),
+                lane: MAIN_LANE.into(),
+                created_at: event.created_at.clone(),
+                tool_call_id: input.facts.call.clone().unwrap_or_default(),
+                tool: PermissionToolDto {
+                    subject: subject_of(kind.as_deref(), tool_input, &locations_of(acp)),
+                    title: title.clone(),
+                    kind,
+                },
+                question: match &subagent {
+                    Some(child) => format!("{title} · asked by subagent {}", child.title),
+                    None => title,
+                },
+                options: permission_options(payload),
+                state: PermissionState::Pending,
+                answer: None,
+                ai: ariadne_api::permissions::ai_permission_note(payload),
+                learned: None,
+                subagent: subagent.clone(),
+            })
+        });
+        self.open_step(index, MAIN_LANE, input.id, step, ops);
+        self.pending.push(Pending {
+            id: input.id.to_string(),
+            turn: turn_id,
+            facts: input.facts.clone(),
+        });
+        // The open call the permission asks about names it.
+        let call_lane = subagent.map_or_else(|| MAIN_LANE.to_string(), |child| child.id);
+        let call_id = input.facts.call.clone().unwrap_or_default();
+        let turn = &mut self.turns[index];
+        let call_step = turn
+            .lanes
+            .get(&call_lane)
+            .and_then(|lane| lane.calls.get(&call_id))
+            .filter(|call| !call_id.is_empty() && !is_terminal(call.status))
+            .map(|call| call.step.clone());
+        if let Some(call_step) = call_step
+            && let Some(step) = turn
+                .steps
+                .iter_mut()
+                .find(|step| step_id(step) == call_step)
+            && let StepDto::ToolCall(call) = step
+        {
+            call.permission = Some(input.id.to_string());
+            ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+        }
+    }
+
+    fn reply(&mut self, input: &Input, ops: &mut Ops) {
+        let Some(request) = self.pending.pop() else {
+            return;
+        };
+        let removed = request.facts.ariadne && input.facts.daemon_allowed(&request.facts);
+        let Some(turn) = self.turn_mut(&request.turn) else {
+            return;
+        };
+        ops.touch(&turn.id);
+        let lane = turn.lanes.entry(MAIN_LANE.into()).or_default();
+        lane.follows
+            .insert(request.id.clone(), input.id.to_string());
+        if removed {
+            // A permission on one of Ariadne's own tools that the daemon
+            // allowed by itself asked nobody anything: the call's step says
+            // what the agent did.
+            lane.openers.retain(|opener| *opener != request.id);
+            if let Some(at) = turn
+                .steps
+                .iter()
+                .position(|step| step_id(step) == request.id)
+            {
+                turn.steps.remove(at);
+                ops.push(TrajectoryOpDto::ItemRemove {
+                    turn_id: turn.id.clone(),
+                    item_id: request.id.clone(),
+                });
+            }
             for step in &mut turn.steps {
                 if let StepDto::ToolCall(call) = step
-                    && call.tool_call_id == tool_call_id
-                    && call.permission.as_deref() == Some(id.as_str())
+                    && call.permission.as_deref() == Some(request.id.as_str())
                 {
                     call.permission = None;
                     ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
@@ -613,10 +1014,22 @@ impl Fold {
             }
             return;
         }
-        let option_id = string_at(payload, "/option_id");
-        let decided_by = string_at(payload, "/decided_by");
-        let chosen = string_at(payload, "/console_option_id").or_else(|| option_id.clone());
-        let label = match (&option_id, &chosen) {
+        let Some(step) = turn
+            .steps
+            .iter_mut()
+            .find(|step| step_id(step) == request.id)
+        else {
+            return;
+        };
+        let StepDto::Permission(permission) = step else {
+            return;
+        };
+        let facts = &input.facts;
+        let payload = input.full.map(|event| &event.payload);
+        let chosen = payload
+            .and_then(|payload| string_at(payload, "/console_option_id"))
+            .or_else(|| facts.option.clone());
+        let label = match (&facts.option, &chosen) {
             (None, _) => "cancelled".to_string(),
             (Some(id), chosen) => permission
                 .options
@@ -624,160 +1037,183 @@ impl Fold {
                 .find(|option| Some(&option.id) == chosen.as_ref())
                 .map_or_else(|| id.clone(), |option| option.name.clone()),
         };
-        permission.state = match option_id {
+        permission.state = match facts.option {
             Some(_) => PermissionState::Answered,
             None => PermissionState::Cancelled,
         };
-        if decided_by.as_deref() == Some("ai")
-            && let Some(note) = ariadne_api::permissions::ai_permission_note(payload)
-        {
-            permission.ai = Some(note);
-        }
-        if decided_by.as_deref() == Some("learned") {
-            permission.learned = match string_at(payload, "/learned_level").as_deref() {
-                Some("family") => Some(format!(
-                    "family {}",
-                    string_at(payload, "/learned_key").unwrap_or_default()
-                )),
-                Some(level) => Some(level.to_string()),
-                None => None,
-            };
+        if let Some(payload) = payload {
+            if facts.decided_by.as_deref() == Some("ai")
+                && let Some(note) = ariadne_api::permissions::ai_permission_note(payload)
+            {
+                permission.ai = Some(note);
+            }
+            if facts.decided_by.as_deref() == Some("learned") {
+                permission.learned = match string_at(payload, "/learned_level").as_deref() {
+                    Some("family") => Some(format!(
+                        "family {}",
+                        string_at(payload, "/learned_key").unwrap_or_default()
+                    )),
+                    Some(level) => Some(level.to_string()),
+                    None => None,
+                };
+            }
         }
         permission.answer = Some(PermissionAnswerDto {
-            option_id,
+            option_id: facts.option.clone(),
             label,
-            decided_by,
+            decided_by: facts.decided_by.clone(),
         });
-        ops.push(TrajectoryOpDto::ItemUpsert {
-            step: turn.steps[at].clone(),
-        });
+        ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
     }
 
-    fn request(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        let payload = &event.payload;
-        let hint = string_at(payload, "/hint");
-        let Some(question) = payload.get("question").filter(|value| value.is_object()) else {
-            let text = match hint {
+    fn question(&mut self, input: &Input, ops: &mut Ops) {
+        let asks = input.kind == "question" || input.facts.asks;
+        if !asks {
+            let text = match input
+                .full
+                .and_then(|event| string_at(&event.payload, "/hint"))
+            {
                 Some(hint) => format!("waiting for you · {hint}"),
                 None => "waiting for you".into(),
             };
-            self.note(event, text, NoteSeverity::Info, ops);
+            self.note(input, text, NoteSeverity::Info, ops);
             return;
-        };
-        let index = self.turn_for(event, ops);
-        let step = QuestionStepDto {
-            id: event.id.clone(),
-            turn_id: self.turns[index].id.clone(),
-            lane: MAIN_LANE.into(),
-            created_at: event.created_at.clone(),
-            request_id: string_at(payload, "/request_id").unwrap_or_else(|| event.id.clone()),
-            hint: hint.unwrap_or_default(),
-            question: string_at(question, "/text").unwrap_or_default(),
-            options: question
-                .get("options")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|option| {
-                    Some(QuestionOptionDto {
-                        id: string_at(option, "/id")?,
-                        label: string_at(option, "/label")?,
-                        description: string_at(option, "/description"),
-                    })
-                })
-                .collect(),
-            recommended: string_at(question, "/recommended_option_id"),
-            recommendation_reason: string_at(question, "/recommendation_reason"),
-            state: QuestionState::Open,
-            answer: None,
-        };
-        self.push_step(index, StepDto::Question(step), ops);
+        }
+        let index = self.turn_for(input, ops);
+        let turn_id = self.turns[index].id.clone();
+        let key = input
+            .facts
+            .question
+            .clone()
+            .or(input.facts.request.clone())
+            .unwrap_or_else(|| input.id.to_string());
+        let step = input
+            .full
+            .map(|event| StepDto::Question(question_step(event, &turn_id, &key)));
+        self.open_step(index, MAIN_LANE, input.id, step, ops);
+        self.questions.insert(key, (turn_id, input.id.to_string()));
     }
 
-    fn resolved(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        let request = string_at(&event.payload, "/request_id");
-        let Some((index, at)) = self.find_step(|step| {
-            matches!(step, StepDto::Question(question) if Some(&question.request_id) == request.as_ref())
-        }) else {
+    fn resolved(&mut self, input: &Input, ops: &mut Ops) {
+        let Some(key) = input.facts.question.clone().or(input.facts.request.clone()) else {
             return;
         };
-        let turn = &mut self.turns[index];
-        if let StepDto::Question(question) = &mut turn.steps[at] {
-            question.state = match string_at(&event.payload, "/resolution").as_deref() {
-                Some("withdrawn") => QuestionState::Withdrawn,
-                Some("expired") => QuestionState::Expired,
+        let Some((turn_id, step_id_of)) = self.questions.remove(&key) else {
+            return;
+        };
+        let Some(turn) = self.turn_mut(&turn_id) else {
+            return;
+        };
+        ops.touch(&turn_id);
+        turn.lanes
+            .entry(MAIN_LANE.into())
+            .or_default()
+            .follows
+            .insert(step_id_of.clone(), input.id.to_string());
+        let Some(step) = turn
+            .steps
+            .iter_mut()
+            .find(|step| step_id(step) == step_id_of)
+        else {
+            return;
+        };
+        if let StepDto::Question(question) = step {
+            let payload = input.full.map(|event| &event.payload);
+            let action = payload
+                .and_then(|payload| {
+                    string_at(payload, "/action").or_else(|| string_at(payload, "/resolution"))
+                })
+                .unwrap_or_default();
+            question.state = match action.as_str() {
+                "decline" => QuestionState::Declined,
+                "cancel" | "withdrawn" | "expired" => QuestionState::Cancelled,
                 _ => QuestionState::Answered,
             };
-            question.answer = string_at(&event.payload, "/answer/text");
+            question.answer = payload.and_then(answer_of);
         }
-        ops.push(TrajectoryOpDto::ItemUpsert {
-            step: turn.steps[at].clone(),
+        ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+    }
+
+    fn error(&mut self, input: &Input, ops: &mut Ops) {
+        let index = self.turn_for(input, ops);
+        let step = input.full.map(|event| {
+            let payload = &event.payload;
+            StepDto::Error(ErrorStepDto {
+                id: event.id.clone(),
+                turn_id: self.turns[index].id.clone(),
+                lane: MAIN_LANE.into(),
+                created_at: event.created_at.clone(),
+                text: string_at(payload, "/error/data/message")
+                    .or_else(|| string_at(payload, "/error/message"))
+                    .or_else(|| string_at(payload, "/message"))
+                    .unwrap_or_else(|| event.summary.clone()),
+                diagnosis: None,
+            })
         });
-        ops.touch(&turn.id);
+        self.open_step(index, MAIN_LANE, input.id, step, ops);
+        self.turns[index]
+            .lanes
+            .entry(MAIN_LANE.into())
+            .or_default()
+            .errors
+            .push(input.id.to_string());
+        self.end_running(TurnState::Failed, None, input.created_at, ops);
     }
 
-    fn error(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        let index = self.turn_for(event, ops);
-        let payload = &event.payload;
-        let step = ErrorStepDto {
-            id: event.id.clone(),
-            turn_id: self.turns[index].id.clone(),
-            lane: MAIN_LANE.into(),
-            created_at: event.created_at.clone(),
-            text: string_at(payload, "/error/data/message")
-                .or_else(|| string_at(payload, "/error/message"))
-                .or_else(|| string_at(payload, "/message"))
-                .unwrap_or_else(|| event.summary.clone()),
-            diagnosis: None,
-        };
-        self.push_step(index, StepDto::Error(step), ops);
-        self.end_running(TurnState::Failed, None, &event.created_at, ops);
-    }
-
-    fn diagnosis(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        let error_id = string_at(&event.payload, "/error_event_id");
-        let Some((index, at)) = self.find_step(
-            |step| matches!(step, StepDto::Error(error) if Some(&error.id) == error_id.as_ref()),
-        ) else {
+    fn diagnosis(&mut self, input: &Input, ops: &mut Ops) {
+        let Some(error_id) = input.facts.error.clone() else {
             return;
         };
-        let turn = &mut self.turns[index];
-        if let StepDto::Error(error) = &mut turn.steps[at] {
+        let Some(turn) = self
+            .turns
+            .iter_mut()
+            .chain(self.outside.iter_mut())
+            .find(|turn| {
+                turn.lanes
+                    .get(MAIN_LANE)
+                    .is_some_and(|lane| lane.errors.contains(&error_id))
+            })
+        else {
+            return;
+        };
+        ops.touch(&turn.id);
+        turn.lanes
+            .entry(MAIN_LANE.into())
+            .or_default()
+            .follows
+            .insert(error_id.clone(), input.id.to_string());
+        if let Some(event) = input.full
+            && let Some(step) = turn.steps.iter_mut().find(|step| step_id(step) == error_id)
+            && let StepDto::Error(error) = step
+        {
             error.diagnosis = Some(
                 ariadne_api::events::diagnosis_note(&event.payload)
                     .unwrap_or_else(|| event.summary.clone()),
             );
+            ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
         }
-        ops.push(TrajectoryOpDto::ItemUpsert {
-            step: turn.steps[at].clone(),
+    }
+
+    fn note(&mut self, input: &Input, text: String, severity: NoteSeverity, ops: &mut Ops) {
+        let index = self.turn_for(input, ops);
+        let step = input.full.map(|event| {
+            StepDto::Note(NoteStepDto {
+                id: event.id.clone(),
+                turn_id: self.turns[index].id.clone(),
+                lane: MAIN_LANE.into(),
+                created_at: event.created_at.clone(),
+                origin: event.kind.clone(),
+                severity,
+                text,
+            })
         });
-        ops.touch(&turn.id);
+        self.open_step(index, MAIN_LANE, input.id, step, ops);
     }
 
-    fn stop(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        let reason = string_at(&event.payload, "/stop_reason");
-        let state = match reason.as_deref() {
-            Some("cancelled") => TurnState::Cancelled,
-            _ => TurnState::Completed,
+    fn plan(&mut self, input: &Input, ops: &mut Ops) {
+        let Some(event) = input.full else {
+            return;
         };
-        self.end_running(state, reason, &event.created_at, ops);
-    }
-
-    fn note(&mut self, event: &AgentEventDto, text: String, severity: NoteSeverity, ops: &mut Ops) {
-        let index = self.turn_for(event, ops);
-        let step = NoteStepDto {
-            id: event.id.clone(),
-            turn_id: self.turns[index].id.clone(),
-            lane: MAIN_LANE.into(),
-            created_at: event.created_at.clone(),
-            origin: event.kind.clone(),
-            severity,
-            text,
-        };
-        self.push_step(index, StepDto::Note(step), ops);
-    }
-
-    fn plan(&mut self, event: &AgentEventDto, lane: &str, ops: &mut Ops) {
         let turn_id = self
             .running()
             .or(self.turns.len().checked_sub(1))
@@ -794,6 +1230,7 @@ impl Fold {
                 priority: string_at(entry, "/priority"),
             })
             .collect();
+        let lane = &input.lane;
         let plan_id = self
             .plans
             .iter()
@@ -815,77 +1252,99 @@ impl Fold {
             .find(|(plan_lane, _)| plan_lane == lane)
         {
             Some((_, kept)) => *kept = plan.clone(),
-            None => self.plans.push((lane.to_string(), plan.clone())),
+            None => self.plans.push((lane.clone(), plan.clone())),
         }
         ops.push(TrajectoryOpDto::PlanUpsert { plan });
     }
 
-    fn subagent(&mut self, event: &AgentEventDto, ops: &mut Ops) {
-        let payload = &event.payload;
-        let Some(id) = string_at(payload, "/subagent/id") else {
+    fn subagent(&mut self, input: &Input, ops: &mut Ops) {
+        let Some(id) = input.facts.subagent.clone() else {
             return;
         };
-        let at = self.subagent_at(event, &id, ops);
+        let at = self.subagent_at(input, &id, ops);
         let child = &mut self.subagents[at];
-        if let Some(title) = string_at(payload, "/subagent/title") {
-            child.title = title;
+        child.latest = Some(input.id.to_string());
+        if let Some(event) = input.full {
+            let payload = &event.payload;
+            if let Some(title) = string_at(payload, "/subagent/title") {
+                child.step.title = title;
+            }
+            if let Some(task) = string_at(payload, "/subagent/description") {
+                child.step.task = Some(task);
+            }
+            child.step.can_cancel =
+                payload.pointer("/capabilities/cancel") == Some(&Value::Bool(true));
         }
-        if let Some(task) = string_at(payload, "/subagent/description") {
-            child.task = Some(task);
-        }
-        child.state = string_at(payload, "/state");
-        child.can_cancel = payload.pointer("/capabilities/cancel") == Some(&Value::Bool(true));
+        child.step.state = input.facts.state.clone();
         let ended = matches!(
-            child.state.as_deref(),
+            child.step.state.as_deref(),
             Some("completed" | "failed" | "cancelled")
         );
-        if ended && child.ended_at.is_none() {
-            child.ended_at = Some(event.created_at.clone());
+        if ended && child.step.ended_at.is_none() {
+            child.step.ended_at = Some(input.created_at.to_string());
         }
         self.publish_subagent(at, ops);
     }
 
-    /// The index of a subagent, which the first event that names it
-    /// announces.
-    fn subagent_at(&mut self, event: &AgentEventDto, id: &str, ops: &mut Ops) -> usize {
+    /// The index of a subagent, which the first event that names it opens
+    /// as a step of the main lane.
+    fn subagent_at(&mut self, input: &Input, id: &str, ops: &mut Ops) -> usize {
         if let Some(at) = self
             .subagents
             .iter()
-            .position(|child| child.subagent_id == id)
+            .position(|child| child.step.subagent_id == id)
         {
             return at;
         }
-        let index = self.turn_for(event, ops);
+        let index = self.turn_for(input, ops);
+        let payload = input.full.map(|event| &event.payload);
         let step = SubagentStepDto {
-            id: event.id.clone(),
+            id: input.id.to_string(),
             turn_id: self.turns[index].id.clone(),
             lane: MAIN_LANE.into(),
-            created_at: event.created_at.clone(),
+            created_at: input.created_at.to_string(),
             subagent_id: id.to_string(),
-            title: string_at(&event.payload, "/subagent/title").unwrap_or_else(|| id.to_string()),
-            task: string_at(&event.payload, "/subagent/description"),
+            title: payload
+                .and_then(|payload| string_at(payload, "/subagent/title"))
+                .unwrap_or_else(|| id.to_string()),
+            task: payload.and_then(|payload| string_at(payload, "/subagent/description")),
             state: None,
             can_cancel: false,
-            started_at: event.created_at.clone(),
+            started_at: input.created_at.to_string(),
             ended_at: None,
             activity: ActivityDto::default(),
         };
-        self.subagents.push(step.clone());
-        self.push_step(index, StepDto::Subagent(step), ops);
+        self.subagents.push(Subagent {
+            step: step.clone(),
+            latest: None,
+        });
+        self.open_step(
+            index,
+            MAIN_LANE,
+            input.id,
+            input.full.map(|_| StepDto::Subagent(step)),
+            ops,
+        );
+        self.turns[index]
+            .lanes
+            .entry(MAIN_LANE.into())
+            .or_default()
+            .subagents
+            .insert(id.to_string());
         self.subagents.len() - 1
     }
 
     /// Put the registry's copy of a subagent into its step, and say so.
     fn publish_subagent(&mut self, at: usize, ops: &mut Ops) {
-        let child = self.subagents[at].clone();
-        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == child.turn_id)
-            && let Some(step) = turn.steps.iter_mut().find(
-                |step| matches!(step, StepDto::Subagent(kept) if kept.subagent_id == child.subagent_id),
-            )
-        {
-            *step = StepDto::Subagent(child.clone());
-            ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
-            ops.touch(&turn.id);
+        let child = self.subagents[at].step.clone();
+        if let Some(turn) = self.turn_mut(&child.turn_id) {
+            if let Some(step) = turn.steps.iter_mut().find(|step| {
+                matches!(step, StepDto::Subagent(kept) if kept.subagent_id == child.subagent_id)
+            }) {
+                *step = StepDto::Subagent(child.clone());
+                ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+            }
+            ops.touch(&child.turn_id);
         }
         ops.push(TrajectoryOpDto::SubagentUpsert { subagent: child });
     }
@@ -896,119 +1355,146 @@ impl Fold {
         let Some(at) = self
             .subagents
             .iter()
-            .position(|child| child.subagent_id == lane)
+            .position(|child| child.step.subagent_id == lane)
         else {
             return;
         };
-        let steps: Vec<&StepDto> = self
-            .turns
-            .iter()
-            .flat_map(|turn| turn.steps.iter())
-            .filter(|step| lane_of(step) == lane)
-            .collect();
-        let activity = activity_of(steps.into_iter());
-        if activity != self.subagents[at].activity {
-            self.subagents[at].activity = activity;
+        let mut activity = ActivityDto::default();
+        for turn in self.turns.iter().chain(&self.outside) {
+            if let Some(index) = turn.lanes.get(lane) {
+                activity = add(activity, index.activity());
+            }
+        }
+        if activity != self.subagents[at].step.activity {
+            self.subagents[at].step.activity = activity;
             self.publish_subagent(at, ops);
         }
     }
 
-    fn compaction(&mut self, event: &AgentEventDto, lane: &str, ops: &mut Ops) {
-        let payload = &event.payload;
-        let compaction_id =
-            string_at(payload, "/compaction_id").unwrap_or_else(|| event.id.clone());
-        let status = match string_at(payload, "/status").as_deref() {
+    fn compaction(&mut self, input: &Input, ops: &mut Ops) {
+        let index = self.turn_for(input, ops);
+        let compaction_id = input
+            .facts
+            .compaction
+            .clone()
+            .unwrap_or_else(|| input.id.to_string());
+        let payload = input.full.map(|event| &event.payload);
+        let status = match payload
+            .and_then(|payload| string_at(payload, "/status"))
+            .as_deref()
+        {
             Some("running" | "started" | "in_progress") => CompactionStatus::Running,
             Some("failed") => CompactionStatus::Failed,
             _ => CompactionStatus::Completed,
         };
-        let summary = match payload.get("summary") {
+        let summary = match payload.and_then(|payload| payload.get("summary")) {
             Some(Value::String(text)) => vec![ContentBlockDto::Text { text: text.clone() }],
-            Some(Value::Array(blocks)) => blocks_of(blocks, &self.session_id, &event.id),
+            Some(Value::Array(blocks)) => blocks_of(blocks, &self.session_id, input.id),
             _ => Vec::new(),
         };
-        let error = string_at(payload, "/error");
-        if let Some((index, at)) = self.find_step(
-            |step| matches!(step, StepDto::Compaction(kept) if kept.compaction_id == compaction_id),
-        ) {
-            let turn = &mut self.turns[index];
-            if let StepDto::Compaction(kept) = &mut turn.steps[at] {
-                kept.status = status;
-                if !summary.is_empty() {
-                    kept.summary = summary;
-                }
-                kept.error = error;
-            }
-            ops.push(TrajectoryOpDto::ItemUpsert {
-                step: turn.steps[at].clone(),
+        let error = payload.and_then(|payload| string_at(payload, "/error"));
+        let turn = &mut self.turns[index];
+        let lane = turn.lanes.entry(input.lane.clone()).or_default();
+        if !lane.compactions.insert(compaction_id.clone()) {
+            ops.touch(&turn.id);
+            let found = turn.steps.iter_mut().find(|step| {
+                matches!(step, StepDto::Compaction(kept) if kept.compaction_id == compaction_id)
             });
+            if let Some(step) = found
+                && let StepDto::Compaction(kept) = step
+            {
+                if payload.is_some() {
+                    kept.status = status;
+                    if !summary.is_empty() {
+                        kept.summary = summary;
+                    }
+                    kept.error = error;
+                }
+                ops.push(TrajectoryOpDto::ItemUpsert { step: step.clone() });
+            }
             return;
         }
-        let index = self.turn_for(event, ops);
-        let step = CompactionStepDto {
-            id: event.id.clone(),
-            turn_id: self.turns[index].id.clone(),
-            lane: lane.to_string(),
-            created_at: event.created_at.clone(),
-            compaction_id,
-            status,
-            summary,
-            error,
-        };
-        self.push_step(index, StepDto::Compaction(step), ops);
-    }
-
-    /// The newest step that matches, as its turn's index and its own.
-    fn find_step(&self, wanted: impl Fn(&StepDto) -> bool) -> Option<(usize, usize)> {
-        self.turns
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(index, turn)| turn.steps.iter().rposition(&wanted).map(|at| (index, at)))
+        let turn_id = turn.id.clone();
+        let step = input.full.map(|event| {
+            StepDto::Compaction(CompactionStepDto {
+                id: event.id.clone(),
+                turn_id,
+                lane: input.lane.clone(),
+                created_at: event.created_at.clone(),
+                compaction_id,
+                status,
+                summary,
+                error,
+            })
+        });
+        self.open_step(index, &input.lane, input.id, step, ops);
     }
 }
 
 impl Turn {
+    fn new(id: &str, prompt: Option<PromptDto>, at: &str, state: TurnState) -> Self {
+        Self {
+            id: id.to_string(),
+            prompt,
+            state,
+            stop_reason: None,
+            started_at: at.to_string(),
+            ended_at: (state != TurnState::Running).then(|| at.to_string()),
+            steps: Vec::new(),
+            lanes: HashMap::new(),
+        }
+    }
+
+    fn holds_attention(&self) -> bool {
+        self.steps.iter().any(waits_or_failed)
+    }
+
+    fn main(&self) -> Lane {
+        self.lanes.get(MAIN_LANE).cloned().unwrap_or_default()
+    }
+
     /// The turn as a client reads it: a running turn with its last steps,
     /// a closed one with none.
     fn dto(&self) -> TurnDto {
-        let main: Vec<&StepDto> = self
+        let main = self.main();
+        let held: Vec<&StepDto> = self
             .steps
             .iter()
             .filter(|step| lane_of(step) == MAIN_LANE)
             .collect();
         let carried = match self.state {
-            TurnState::Running => main.len().min(STEP_WINDOW),
+            TurnState::Running => held.len().min(STEP_WINDOW),
             _ => 0,
         };
-        let mut dto = self.header(main.iter().copied());
-        dto.steps = main[main.len() - carried..]
+        let mut dto = self.header(&main);
+        dto.steps = held[held.len() - carried..]
             .iter()
             .map(|step| (*step).clone())
             .collect();
-        dto.earlier_steps = self.cut + (main.len() - carried) as u64;
+        dto.earlier_steps = (main.openers.len() as u64).saturating_sub(carried as u64);
         dto
     }
 
-    /// The turn with the last `window` steps of one subagent's lane.
-    fn dto_with(&self, lane: &str, window: usize) -> TurnDto {
-        let main = self.steps.iter().filter(|step| lane_of(step) == MAIN_LANE);
-        let mut dto = self.header(main);
-        let steps: Vec<&StepDto> = self
+    /// The turn with the last steps of one subagent's lane.
+    fn dto_with(&self, lane: &str) -> TurnDto {
+        let mut dto = self.header(&self.main());
+        let held: Vec<&StepDto> = self
             .steps
             .iter()
             .filter(|step| lane_of(step) == lane)
             .collect();
-        let carried = steps.len().min(window);
-        dto.steps = steps[steps.len() - carried..]
+        let carried = held.len().min(STEP_WINDOW);
+        dto.steps = held[held.len() - carried..]
             .iter()
             .map(|step| (*step).clone())
             .collect();
-        dto.earlier_steps = (steps.len() - carried) as u64;
+        let openers = self.lanes.get(lane).map_or(0, |lane| lane.openers.len());
+        dto.earlier_steps = (openers as u64).saturating_sub(carried as u64);
         dto
     }
 
-    fn header<'a>(&self, main: impl Iterator<Item = &'a StepDto> + Clone) -> TurnDto {
+    fn header(&self, main: &Lane) -> TurnDto {
+        let held = self.steps.iter().filter(|step| lane_of(step) == MAIN_LANE);
         TurnDto {
             id: self.id.clone(),
             lane: MAIN_LANE.into(),
@@ -1017,60 +1503,185 @@ impl Turn {
             stop_reason: self.stop_reason.clone(),
             started_at: self.started_at.clone(),
             ended_at: self.ended_at.clone(),
-            activity: activity_of(main.clone()),
+            activity: main.activity(),
             steps: Vec::new(),
             earlier_steps: 0,
-            attention: main
+            attention: held
                 .clone()
-                .filter(|step| match step {
-                    StepDto::Permission(permission) => permission.state == PermissionState::Pending,
-                    StepDto::Question(question) => question.state == QuestionState::Open,
-                    StepDto::Error(_) => true,
-                    _ => false,
-                })
+                .filter(|step| waits_or_failed(step))
                 .cloned()
                 .collect(),
-            answer: main
+            answer: held
                 .filter_map(|step| match step {
-                    StepDto::Message(message) => Some(message.content.clone()),
+                    StepDto::Message(message) if Some(&message.id) == main.answer.as_ref() => {
+                        Some(message.content.clone())
+                    }
                     _ => None,
                 })
-                .last()
+                .next_back()
                 .unwrap_or_default(),
         }
     }
 }
 
-/// What a set of steps did, counted.
-fn activity_of<'a>(steps: impl Iterator<Item = &'a StepDto>) -> ActivityDto {
-    let mut activity = ActivityDto::default();
-    let mut changed = BTreeSet::new();
-    for step in steps {
-        match step {
-            StepDto::ToolCall(call) => {
-                activity.steps += 1;
-                activity.tool_calls += 1;
-                match call.status {
-                    ToolCallStatus::Failed => activity.failed += 1,
-                    ToolCallStatus::Cancelled => activity.cancelled += 1,
-                    ToolCallStatus::Completed
-                        if matches!(call.kind.as_deref(), Some("edit" | "delete" | "move")) =>
-                    {
-                        changed.extend(call.locations.iter().map(|location| &location.path));
-                    }
-                    _ => {}
+impl Lane {
+    /// What the lane did, counted.
+    fn activity(&self) -> ActivityDto {
+        let mut activity = ActivityDto {
+            tool_calls: self.calls.len() as u64,
+            thoughts: self.thoughts,
+            subagents: self.subagents.len() as u64,
+            ..ActivityDto::default()
+        };
+        activity.steps = activity.tool_calls + activity.subagents;
+        let mut changed = BTreeSet::new();
+        for call in self.calls.values() {
+            match call.status {
+                ToolCallStatus::Failed => activity.failed += 1,
+                ToolCallStatus::Cancelled => activity.cancelled += 1,
+                ToolCallStatus::Completed
+                    if matches!(call.kind.as_deref(), Some("edit" | "delete" | "move")) =>
+                {
+                    changed.extend(call.paths.iter());
                 }
+                _ => {}
             }
-            StepDto::Subagent(_) => {
-                activity.steps += 1;
-                activity.subagents += 1;
-            }
-            StepDto::Thought(_) => activity.thoughts += 1,
-            _ => {}
         }
+        activity.files_changed = changed.len() as u64;
+        activity
     }
-    activity.files_changed = changed.len() as u64;
-    activity
+}
+
+fn add(a: ActivityDto, b: ActivityDto) -> ActivityDto {
+    ActivityDto {
+        steps: a.steps + b.steps,
+        tool_calls: a.tool_calls + b.tool_calls,
+        files_changed: a.files_changed + b.files_changed,
+        failed: a.failed + b.failed,
+        cancelled: a.cancelled + b.cancelled,
+        thoughts: a.thoughts + b.thoughts,
+        subagents: a.subagents + b.subagents,
+    }
+}
+
+fn waits_or_failed(step: &StepDto) -> bool {
+    match step {
+        StepDto::Permission(permission) => permission.state == PermissionState::Pending,
+        StepDto::Question(question) => question.state == QuestionState::Open,
+        StepDto::Error(_) => true,
+        _ => false,
+    }
+}
+
+fn status_of(status: &str) -> Option<ToolCallStatus> {
+    Some(match status {
+        "pending" => ToolCallStatus::Pending,
+        "in_progress" => ToolCallStatus::Running,
+        "completed" => ToolCallStatus::Completed,
+        "failed" => ToolCallStatus::Failed,
+        "cancelled" => ToolCallStatus::Cancelled,
+        "interrupted" => ToolCallStatus::Interrupted,
+        _ => return None,
+    })
+}
+
+/// A question step: a native `question` (021, rule 21), or a legacy
+/// `agent_request` with a question.
+fn question_step(event: &AgentEventDto, turn_id: &str, key: &str) -> QuestionStepDto {
+    let payload = &event.payload;
+    let mut step = QuestionStepDto {
+        id: event.id.clone(),
+        turn_id: turn_id.to_string(),
+        lane: MAIN_LANE.into(),
+        created_at: event.created_at.clone(),
+        request_id: key.to_string(),
+        hint: String::new(),
+        question: String::new(),
+        options: Vec::new(),
+        recommended: None,
+        recommendation_reason: None,
+        state: QuestionState::Open,
+        answer: None,
+    };
+    let question = payload.get("question").unwrap_or(&Value::Null);
+    if event.kind == "question" {
+        step.question = string_at(question, "/message").unwrap_or_default();
+        // The first field that offers choices is the one the step lists.
+        let choices = question
+            .pointer("/schema/properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .find_map(|(_, field)| {
+                let options = field
+                    .get("oneOf")
+                    .or_else(|| field.pointer("/items/anyOf"))?
+                    .as_array()?;
+                Some((field, options))
+            });
+        if let Some((field, options)) = choices {
+            step.hint = string_at(field, "/title").unwrap_or_default();
+            step.options = options
+                .iter()
+                .filter_map(|option| {
+                    let id = string_at(option, "/const")?;
+                    Some(QuestionOptionDto {
+                        label: string_at(option, "/title").unwrap_or_else(|| id.clone()),
+                        description: string_at(option, "/description"),
+                        id,
+                    })
+                })
+                .collect();
+        }
+        return step;
+    }
+    step.question = string_at(question, "/text").unwrap_or_default();
+    step.hint = string_at(payload, "/hint").unwrap_or_default();
+    step.options = question
+        .get("options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            Some(QuestionOptionDto {
+                id: string_at(option, "/id")?,
+                label: string_at(option, "/label")?,
+                description: string_at(option, "/description"),
+            })
+        })
+        .collect();
+    step.recommended = string_at(question, "/recommended_option_id");
+    step.recommendation_reason = string_at(question, "/recommendation_reason");
+    step
+}
+
+/// The answer a resolution carries, in words: the legacy answer text, or
+/// each field of an accepted form as `field: value`.
+fn answer_of(payload: &Value) -> Option<String> {
+    if let Some(text) = string_at(payload, "/answer/text") {
+        return Some(text);
+    }
+    let content = payload.get("content")?.as_object()?;
+    let line = |value: &Value| match value {
+        Value::String(text) => text.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_string)
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        other => other.to_string(),
+    };
+    Some(
+        content
+            .iter()
+            .map(|(field, value)| format!("{field}: {}", line(value)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 /// The ops one event makes, and the turns whose header it changed.
@@ -1092,436 +1703,6 @@ impl Ops {
     }
 }
 
-/// The lane an event is in: the subagent it names, or the session's own.
-/// A permission is the session's to answer, so it is in the main lane
-/// whoever asks.
-fn event_lane(event: &AgentEventDto) -> String {
-    match event.kind.as_str() {
-        "permission_request" | "permission.replied" | "subagent_update" => MAIN_LANE.into(),
-        _ => string_at(&event.payload, "/subagent/id").unwrap_or_else(|| MAIN_LANE.into()),
-    }
-}
-
-fn subagent_ref(payload: &Value) -> Option<SubagentRefDto> {
-    let id = string_at(payload, "/subagent/id")?;
-    Some(SubagentRefDto {
-        title: string_at(payload, "/subagent/title").unwrap_or_else(|| id.clone()),
-        id,
-    })
-}
-
-fn step_id(step: &StepDto) -> &str {
-    match step {
-        StepDto::Message(step) => &step.id,
-        StepDto::Thought(step) => &step.id,
-        StepDto::ToolCall(step) => &step.id,
-        StepDto::Permission(step) => &step.id,
-        StepDto::Question(step) => &step.id,
-        StepDto::Note(step) => &step.id,
-        StepDto::Error(step) => &step.id,
-        StepDto::Subagent(step) => &step.id,
-        StepDto::Compaction(step) => &step.id,
-    }
-}
-
-fn lane_of(step: &StepDto) -> &str {
-    match step {
-        StepDto::Message(step) => &step.lane,
-        StepDto::Thought(step) => &step.lane,
-        StepDto::ToolCall(step) => &step.lane,
-        StepDto::Permission(step) => &step.lane,
-        StepDto::Question(step) => &step.lane,
-        StepDto::Note(step) => &step.lane,
-        StepDto::Error(step) => &step.lane,
-        StepDto::Subagent(step) => &step.lane,
-        StepDto::Compaction(step) => &step.lane,
-    }
-}
-
-fn text_step(
-    thought: bool,
-    id: String,
-    turn_id: String,
-    lane: &str,
-    event: &AgentEventDto,
-    content: Vec<ContentBlockDto>,
-    streaming: bool,
-) -> StepDto {
-    if thought {
-        StepDto::Thought(ThoughtStepDto {
-            id,
-            turn_id,
-            lane: lane.to_string(),
-            created_at: event.created_at.clone(),
-            content,
-            streaming,
-        })
-    } else {
-        StepDto::Message(MessageStepDto {
-            id,
-            turn_id,
-            lane: lane.to_string(),
-            created_at: event.created_at.clone(),
-            content,
-            streaming,
-            message_id: string_at(&event.payload, "/message_id"),
-        })
-    }
-}
-
-fn append_text(content: &mut Vec<ContentBlockDto>, text: &str) {
-    match content.last_mut() {
-        Some(ContentBlockDto::Text { text: last }) => last.push_str(text),
-        _ => content.push(ContentBlockDto::Text {
-            text: text.to_string(),
-        }),
-    }
-}
-
-/// The content an event carries: its ACP `content` blocks, else its `text`.
-fn content_of(payload: &Value, session_id: &str, event_id: &str) -> Vec<ContentBlockDto> {
-    if let Some(blocks) = payload.get("content").and_then(Value::as_array) {
-        return blocks_of(blocks, session_id, event_id);
-    }
-    string_at(payload, "/text")
-        .map(|text| vec![ContentBlockDto::Text { text }])
-        .unwrap_or_default()
-}
-
-/// ACP content blocks, with every byte left behind a `blob` URL.
-fn blocks_of(blocks: &[Value], session_id: &str, event_id: &str) -> Vec<ContentBlockDto> {
-    let blob =
-        |index: usize| format!("/v1/sessions/{session_id}/trajectory/blobs/{event_id}/{index}");
-    blocks
-        .iter()
-        .enumerate()
-        .filter_map(|(index, block)| {
-            let has_data =
-                |pointer: &str| block.pointer(pointer).is_some_and(|data| !data.is_null());
-            Some(match string_at(block, "/type")?.as_str() {
-                "text" => ContentBlockDto::Text {
-                    text: string_at(block, "/text").unwrap_or_default(),
-                },
-                "image" => ContentBlockDto::Image {
-                    mime_type: string_at(block, "/mimeType"),
-                    blob: has_data("/data").then(|| blob(index)),
-                    uri: string_at(block, "/uri"),
-                },
-                "audio" => ContentBlockDto::Audio {
-                    mime_type: string_at(block, "/mimeType"),
-                    blob: has_data("/data").then(|| blob(index)),
-                },
-                "resource" => ContentBlockDto::Resource {
-                    uri: string_at(block, "/resource/uri").unwrap_or_default(),
-                    mime_type: string_at(block, "/resource/mimeType"),
-                    text: string_at(block, "/resource/text"),
-                    blob: has_data("/resource/blob").then(|| blob(index)),
-                },
-                "resource_link" => ContentBlockDto::ResourceLink {
-                    uri: string_at(block, "/uri").unwrap_or_default(),
-                    name: string_at(block, "/name").unwrap_or_default(),
-                    title: string_at(block, "/title"),
-                    mime_type: string_at(block, "/mimeType"),
-                    size: block.get("size").and_then(Value::as_u64),
-                },
-                _ => return None,
-            })
-        })
-        .collect()
-}
-
-fn new_call(
-    event: &AgentEventDto,
-    turn_id: &str,
-    lane: &str,
-    tool_call_id: &str,
-) -> ToolCallStepDto {
-    ToolCallStepDto {
-        id: event.id.clone(),
-        turn_id: turn_id.to_string(),
-        lane: lane.to_string(),
-        created_at: event.created_at.clone(),
-        tool_call_id: tool_call_id.to_string(),
-        title: UNNAMED_TOOL.into(),
-        kind: None,
-        status: ToolCallStatus::Pending,
-        subject: None,
-        locations: Vec::new(),
-        preview: None,
-        diff_stat: None,
-        started_at: event.created_at.clone(),
-        ended_at: None,
-        permission: None,
-        detail_rev: 0,
-    }
-}
-
-/// Take what an event of a call says, and keep what it does not say again.
-fn merge_call(call: &mut ToolCallStepDto, event: &AgentEventDto) {
-    let payload = &event.payload;
-    let acp = payload.get("acp").unwrap_or(payload);
-    if let Some(title) = string_at(payload, "/tool_name").or_else(|| string_at(acp, "/title"))
-        && title != UNNAMED_TOOL
-    {
-        call.title = title;
-    }
-    if let Some(kind) = string_at(acp, "/kind") {
-        call.kind = Some(kind);
-    }
-    let mut locations = locations_of(acp);
-    let diffs = diffs_of(acp);
-    if locations.is_empty() {
-        locations = diffs
-            .iter()
-            .filter_map(|(path, _, _)| path.clone())
-            .map(|path| LocationDto { path, line: None })
-            .collect();
-    }
-    if !locations.is_empty() {
-        call.locations = locations;
-    }
-    if !diffs.is_empty() {
-        call.diff_stat = Some(DiffStatDto {
-            files: diffs.len() as u64,
-            added: diffs.iter().map(|(_, added, _)| added).sum(),
-            removed: diffs.iter().map(|(_, _, removed)| removed).sum(),
-        });
-    }
-    let input = payload
-        .get("tool_input")
-        .or_else(|| acp.get("rawInput"))
-        .filter(|input| !input.is_null());
-    if let Some(input) = input {
-        call.subject = subject_of(call.kind.as_deref(), input, &call.locations);
-    } else if call.subject.is_none() && !call.locations.is_empty() {
-        call.subject = subject_of(call.kind.as_deref(), &Value::Null, &call.locations);
-    }
-    if let Some(preview) = preview_of(acp) {
-        call.preview = Some(preview);
-    }
-    let status = match event.kind.as_str() {
-        "tool_call_abandoned" => Some(match string_at(payload, "/reason").as_deref() {
-            Some("cancelled") => ToolCallStatus::Cancelled,
-            _ => ToolCallStatus::Interrupted,
-        }),
-        _ => match string_at(acp, "/status").as_deref() {
-            Some("pending") => Some(ToolCallStatus::Pending),
-            Some("in_progress") => Some(ToolCallStatus::Running),
-            Some("completed") => Some(ToolCallStatus::Completed),
-            Some("failed") => Some(ToolCallStatus::Failed),
-            Some("cancelled") => Some(ToolCallStatus::Cancelled),
-            _ => None,
-        },
-    };
-    if let Some(status) = status {
-        call.status = status;
-    }
-    if is_terminal(call.status) && call.ended_at.is_none() {
-        call.ended_at = Some(event.created_at.clone());
-    }
-}
-
-fn is_terminal(status: ToolCallStatus) -> bool {
-    !matches!(status, ToolCallStatus::Pending | ToolCallStatus::Running)
-}
-
-fn locations_of(acp: &Value) -> Vec<LocationDto> {
-    acp.get("locations")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|location| {
-            Some(LocationDto {
-                path: string_at(location, "/path")?,
-                line: location.get("line").and_then(Value::as_u64),
-            })
-        })
-        .collect()
-}
-
-/// Each diff a call carries: its path, and the lines it adds and removes.
-/// A patch counts its `+` and `-` lines; an old and a new text count the
-/// lines between their common start and their common end.
-fn diffs_of(acp: &Value) -> Vec<(Option<String>, u64, u64)> {
-    acp.get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|entry| string_at(entry, "/type").as_deref() == Some("diff"))
-        .map(|entry| {
-            let path = string_at(entry, "/path");
-            if let Some(patch) = string_at(entry, "/patch/text") {
-                let lines = patch.lines();
-                let added = lines
-                    .clone()
-                    .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
-                    .count() as u64;
-                let removed = lines
-                    .filter(|line| line.starts_with('-') && !line.starts_with("---"))
-                    .count() as u64;
-                return (path, added, removed);
-            }
-            let old = string_at(entry, "/oldText").unwrap_or_default();
-            let new = string_at(entry, "/newText").unwrap_or_default();
-            let old: Vec<&str> = old.lines().collect();
-            let new: Vec<&str> = new.lines().collect();
-            let start = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-            let end = old[start..]
-                .iter()
-                .rev()
-                .zip(new[start..].iter().rev())
-                .take_while(|(a, b)| a == b)
-                .count();
-            (
-                path,
-                (new.len() - start - end) as u64,
-                (old.len() - start - end) as u64,
-            )
-        })
-        .collect()
-}
-
-/// The start of what a call gave back: the text of its content, else its
-/// raw output.
-fn preview_of(acp: &Value) -> Option<String> {
-    let text: Vec<String> = acp
-        .get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|entry| string_at(entry, "/type").as_deref() == Some("content"))
-        .filter_map(|entry| string_at(entry, "/content/text"))
-        .filter(|text| !text.is_empty())
-        .collect();
-    let whole = if !text.is_empty() {
-        text.join("\n")
-    } else {
-        match acp.get("rawOutput") {
-            None | Some(Value::Null) => return None,
-            Some(Value::String(text)) => text.clone(),
-            Some(Value::Object(object))
-                if object.contains_key("stdout") || object.contains_key("stderr") =>
-            {
-                ["stdout", "stderr"]
-                    .into_iter()
-                    .filter_map(|key| object.get(key)?.as_str())
-                    .filter(|text| !text.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            Some(raw) => raw.to_string(),
-        }
-    };
-    let lines: Vec<&str> = whole.lines().take(PREVIEW_LINES).collect();
-    let preview: String = lines.join("\n").chars().take(PREVIEW_CHARS).collect();
-    (!preview.is_empty()).then_some(preview)
-}
-
-/// What a call is about: the command, the path, the pattern in its path or
-/// the URL, by its kind.
-fn subject_of(kind: Option<&str>, input: &Value, locations: &[LocationDto]) -> Option<String> {
-    let field = |keys: &[&str]| {
-        keys.iter()
-            .find_map(|key| string_at(input, &format!("/{key}")))
-    };
-    let first = locations.first();
-    match kind {
-        Some("execute") => match input.get("command") {
-            Some(Value::String(command)) => command.lines().next().map(str::to_string),
-            Some(Value::Array(parts)) => Some(
-                parts
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            ),
-            _ => None,
-        },
-        Some("read" | "edit" | "delete" | "move") => {
-            let path = field(&["path", "file_path", "filePath", "file"])
-                .or_else(|| first.map(|location| location.path.clone()))?;
-            let line = input.get("line").and_then(Value::as_u64).or_else(|| {
-                first
-                    .filter(|location| location.path == path)
-                    .and_then(|location| location.line)
-            });
-            Some(match line {
-                Some(line) => format!("{path}:{line}"),
-                None => path,
-            })
-        }
-        Some("search") => {
-            let pattern = field(&["pattern", "query", "regex"])?;
-            match field(&["path", "file_path", "directory", "cwd"])
-                .or_else(|| first.map(|location| location.path.clone()))
-            {
-                Some(path) => Some(format!("{pattern} in {path}")),
-                None => Some(pattern),
-            }
-        }
-        Some("fetch") => field(&["url"]),
-        _ => first.map(|location| location.path.clone()),
-    }
-}
-
-fn permission_options(payload: &Value) -> Vec<PermissionOptionDto> {
-    payload
-        .get("options")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|option| {
-            let id = string_at(option, "/optionId")?;
-            Some(PermissionOptionDto {
-                name: string_at(option, "/name").unwrap_or_else(|| id.clone()),
-                kind: string_at(option, "/kind"),
-                id,
-            })
-        })
-        .collect()
-}
-
-/// Whether a reply is the daemon's own allow: an option chosen with no
-/// person at the console that is not a denial.
-fn daemon_allowed(payload: &Value, options: &[PermissionOptionDto]) -> bool {
-    let Some(id) = string_at(payload, "/option_id") else {
-        return false;
-    };
-    if string_at(payload, "/decided_by").as_deref() == Some("console")
-        || string_at(payload, "/label").as_deref() == Some("deny")
-    {
-        return false;
-    }
-    match options
-        .iter()
-        .find(|option| option.id == id)
-        .and_then(|option| option.kind.as_deref())
-    {
-        Some(kind) => kind.starts_with("allow"),
-        None => true,
-    }
-}
-
-fn commands_of(payload: &Value) -> Vec<CommandDto> {
-    payload
-        .get("available_commands")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|command| {
-            Some(CommandDto {
-                name: string_at(command, "/name")?,
-                description: string_at(command, "/description").unwrap_or_default(),
-                hint: string_at(command, "/input/hint"),
-            })
-        })
-        .collect()
-}
-
-fn string_at(value: &Value, pointer: &str) -> Option<String> {
-    value.pointer(pointer)?.as_str().map(str::to_string)
-}
-
 #[cfg(test)]
 mod tests {
     use ariadne_api::events::AgentEventDto;
@@ -1534,6 +1715,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{Fold, STEP_WINDOW};
+    use crate::trajectory::step_id;
 
     /// A fold that hands out its events' ids in order, as the store does.
     struct Session {
@@ -1574,7 +1756,7 @@ mod tests {
                 summary: kind.into(),
                 created_at: format!("2026-11-26T00:00:{:02}Z", self.next % 60),
             };
-            let ops = self.fold.apply(&event);
+            let ops = self.fold.apply(&event, !kind.ends_with("_chunk"));
             (id, ops)
         }
 
@@ -1616,16 +1798,19 @@ mod tests {
         let mut s = Session::new();
         let turn = s.prompt("Go");
 
-        let (opened, first) = s.event("agent_message_chunk", json!({"text": "Half "}));
+        let (_, first) = s.event("agent_message_chunk", json!({"text": "Half "}));
         let (_, second) = s.event("agent_message_chunk", json!({"text": "done."}));
-        let (_, whole) = s.event("agent_message", json!({"text": "Half done."}));
+        let (stored, whole) = s.event("agent_message", json!({"text": "Half done."}));
 
-        assert!(
-            first.iter().any(|op| matches!(op,
-                TrajectoryOpDto::ItemUpsert { step: StepDto::Message(m) }
-                    if m.id == opened && m.streaming && m.content == text("Half "))),
-            "{first:?}"
-        );
+        let opened = first
+            .iter()
+            .find_map(|op| match op {
+                TrajectoryOpDto::ItemUpsert {
+                    step: StepDto::Message(m),
+                } if m.streaming && m.content == text("Half ") => Some(m.id.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the first chunk opens a streaming step: {first:?}"));
         assert_eq!(
             second,
             [TrajectoryOpDto::TextAppend {
@@ -1638,8 +1823,8 @@ mod tests {
         assert!(
             whole.iter().any(|op| matches!(op,
                 TrajectoryOpDto::ItemUpsert { step: StepDto::Message(m) }
-                    if m.id == opened && !m.streaming && m.content == text("Half done."))),
-            "{whole:?}"
+                    if m.id == stored && !m.streaming && m.content == text("Half done."))),
+            "the stored whole closes the run under its own id: {whole:?}"
         );
     }
 
@@ -1735,9 +1920,11 @@ mod tests {
         let mut s = Session::new();
         s.prompt("Ask me");
         let (question, _) = s.event(
-            "agent_request",
-            json!({"request_id": "req-1", "hint": "pick one",
-                   "question": {"text": "Which?", "options": [{"id": "a", "label": "A"}]}}),
+            "question",
+            json!({"question": {"id": "q-1", "message": "Which?",
+                                "schema": {"type": "object", "properties": {
+                                    "pick": {"type": "string", "title": "Pick one",
+                                             "oneOf": [{"const": "a", "title": "A"}]}}}}}),
         );
         s.stop();
         s.prompt("Fail");
@@ -1777,8 +1964,9 @@ mod tests {
         );
 
         s.event(
-            "agent_request.resolved",
-            json!({"request_id": "req-1", "resolution": "answered", "answer": {"text": "A"}}),
+            "question.resolved",
+            json!({"question_id": "q-1", "action": "accept", "content": {"pick": "a"},
+                   "closed_by": "user"}),
         );
         s.event(
             "permission.replied",
@@ -1793,23 +1981,20 @@ mod tests {
             snapshot.turns[2].attention.is_empty(),
             "an answered permission waits no more"
         );
-        let StepDto::Permission(answered) = &s
-            .fold
-            .steps(&snapshot.turns[2].id, MAIN_LANE, None, 10)
-            .unwrap()
-            .steps[0]
-        else {
+        let held = s.fold.held_steps(&snapshot.turns[2].id, MAIN_LANE);
+        let StepDto::Permission(answered) = &held[0] else {
             panic!("the permission step");
         };
         assert_eq!(answered.state, PermissionState::Answered);
         assert_eq!(answered.answer.as_ref().unwrap().label, "Allow");
-        let page = s
-            .fold
-            .steps(&snapshot.turns[0].id, MAIN_LANE, None, 10)
-            .unwrap();
-        assert!(
-            matches!(&page.steps[0], StepDto::Question(q) if q.state == QuestionState::Answered)
-        );
+        let held = s.fold.held_steps(&snapshot.turns[0].id, MAIN_LANE);
+        let Some(StepDto::Question(answered)) = held.iter().find(|step| step_id(step) == question)
+        else {
+            panic!("the question step");
+        };
+        assert_eq!(answered.state, QuestionState::Answered);
+        assert_eq!(answered.answer.as_deref(), Some("pick: a"));
+        assert_eq!(answered.options[0].label, "A");
     }
 
     /// A subagent is one step in its parent's turn, counting what it did,
@@ -1855,36 +2040,6 @@ mod tests {
         assert_eq!(read.lane, "child-1");
     }
 
-    /// The steps of a turn come in pages, oldest first, before a step.
-    #[test]
-    fn the_steps_of_a_turn_come_in_pages() {
-        let mut s = Session::new();
-        let turn = s.prompt("Read");
-        for n in 0..5 {
-            s.call(&format!("call-{n}"), "read", "completed", "a.rs");
-        }
-        s.stop();
-
-        let last = s.fold.steps(&turn, MAIN_LANE, None, 2).unwrap();
-        let ids: Vec<String> = last
-            .steps
-            .iter()
-            .map(|step| match step {
-                StepDto::ToolCall(call) => call.tool_call_id.clone(),
-                other => panic!("{other:?}"),
-            })
-            .collect();
-        assert_eq!(ids, ["call-3", "call-4"]);
-        assert_eq!(last.earlier_steps, 3);
-
-        let StepDto::ToolCall(oldest) = &last.steps[0] else {
-            unreachable!()
-        };
-        let before = s.fold.steps(&turn, MAIN_LANE, Some(&oldest.id), 2).unwrap();
-        assert_eq!(before.steps.len(), 2);
-        assert_eq!(before.earlier_steps, 1);
-    }
-
     /// An event of a kind the fold does not know, and a payload without the
     /// fields a later daemon stores, fold without a change or a panic.
     #[test]
@@ -1896,5 +2051,356 @@ mod tests {
 
         assert!(unknown.is_empty());
         assert!(!bare.is_empty(), "a message with no text is still a step");
+    }
+
+    /// A run with no `item_id` streams under one id however often the
+    /// session is opened, and takes the id of its stored whole when it
+    /// ends: the id a read of the store gives it.
+    #[test]
+    fn a_legacy_run_keeps_one_identity_across_opens_and_takes_its_wholes_id() {
+        let mut live = Session::new();
+        let turn = live.prompt("Go");
+        let (_, opened) = live.event("agent_message_chunk", json!({"text": "Half "}));
+        let streaming = match &opened[0] {
+            TrajectoryOpDto::ItemUpsert { step } => step_id(step).to_string(),
+            other => panic!("the run opens: {other:?}"),
+        };
+        // A second open reads the same stored events and the text so far,
+        // under a fresh id of its own.
+        let mut again = Session::new();
+        again.prompt("Go");
+        again.next = 40;
+        again.event("agent_message_chunk", json!({"text": "Half "}));
+        let reopened = again.fold.snapshot(0, 20, None).turns[0].steps[0].clone();
+        assert_eq!(step_id(&reopened), streaming, "the same id on each open");
+
+        let (whole, closed) = live.event("agent_message", json!({"text": "Half done."}));
+        assert!(
+            closed.contains(&TrajectoryOpDto::ItemRemove {
+                turn_id: turn,
+                item_id: streaming.clone(),
+            }),
+            "the streaming id goes: {closed:?}"
+        );
+        let live_step = live.fold.snapshot(0, 20, None).turns[0].steps[0].clone();
+        assert_eq!(step_id(&live_step), whole, "and the whole's id comes");
+
+        let mut replay = Session::new();
+        replay.prompt("Go");
+        replay.next = 2;
+        let (stored, _) = replay.event("agent_message", json!({"text": "Half done."}));
+        assert_eq!(stored, whole, "both folds give the whole the same id");
+        assert_eq!(
+            replay.fold.snapshot(0, 20, None).turns[0].steps[0],
+            live_step,
+            "a replay holds the step the stream ended on"
+        );
+    }
+
+    /// A call's step previews its output and counts the lines of its diffs
+    /// (rule 13).
+    #[test]
+    fn a_call_previews_its_output_and_counts_its_diff() {
+        let mut s = Session::new();
+        s.prompt("Edit");
+        let output: String = (1..=8).map(|n| format!("line {n}\n")).collect();
+        s.event(
+            "pre_tool_use",
+            json!({"tool_name": "Edit", "tool_input": {"file_path": "a.rs"},
+                   "acp": {"toolCallId": "c-1", "kind": "edit", "status": "pending"}}),
+        );
+        s.event(
+            "post_tool_use",
+            json!({"tool_name": "Edit",
+                   "acp": {"toolCallId": "c-1", "kind": "edit", "status": "completed",
+                           "content": [
+                               {"type": "content", "content": {"type": "text", "text": output}},
+                               {"type": "diff", "path": "a.rs",
+                                "patch": {"text": "--- a.rs\n+++ a.rs\n@@ -1,2 +1,3 @@\n-one\n+uno\n+dos\n two\n"}},
+                               {"type": "diff", "path": "b.rs",
+                                "oldText": "a\nb\nc\n", "newText": "a\nB\nc\n"}]}}),
+        );
+
+        let StepDto::ToolCall(call) = &s.fold.snapshot(0, 20, None).turns[0].steps[0] else {
+            panic!("the call");
+        };
+        assert_eq!(
+            call.preview.as_deref(),
+            Some("line 1\nline 2\nline 3\nline 4\nline 5"),
+            "five lines of the output"
+        );
+        let stat = call.diff_stat.unwrap();
+        assert_eq!((stat.files, stat.added, stat.removed), (2, 3, 2));
+        assert_eq!(call.subject.as_deref(), Some("a.rs"));
+        assert_eq!(call.detail_rev, 1, "one update after the opener");
+    }
+
+    /// The lifecycle events are notes, and a pin fallback is a warning
+    /// (rule 17); a start in a running turn interrupts it (rule 3).
+    #[test]
+    fn lifecycle_events_are_notes_and_a_restart_interrupts_the_turn() {
+        use ariadne_api::trajectory::NoteSeverity;
+        let mut s = Session::new();
+        s.event("session_start", json!({}));
+        let turn = s.prompt("Go");
+        s.event("session.pin_fallback", json!({}));
+        s.event("session_start", json!({}));
+
+        let snapshot = s.fold.snapshot(0, 20, None);
+        let shown = snapshot.turns.iter().find(|t| t.id == turn).unwrap();
+        assert_eq!(shown.state, TurnState::Interrupted);
+        let notes: Vec<(String, NoteSeverity)> = s
+            .fold
+            .held_steps(&turn, MAIN_LANE)
+            .into_iter()
+            .map(|step| match step {
+                StepDto::Note(note) => (note.origin, note.severity),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                ("session.pin_fallback".to_string(), NoteSeverity::Warning),
+                ("session_start".to_string(), NoteSeverity::Info),
+            ]
+        );
+        assert_eq!(
+            snapshot.turns[0].prompt, None,
+            "the start before a prompt is a turn of its own"
+        );
+    }
+
+    /// A compaction is one step by its id, which a later update changes
+    /// (rule 18).
+    #[test]
+    fn a_compaction_is_one_step_that_its_updates_change() {
+        use ariadne_api::trajectory::CompactionStatus;
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        s.event(
+            "compaction_update",
+            json!({"compaction_id": "k-1", "status": "running"}),
+        );
+        s.event(
+            "compaction_update",
+            json!({"compaction_id": "k-1", "status": "completed", "summary": "Kept the plan."}),
+        );
+
+        let held = s.fold.held_steps(&turn, MAIN_LANE);
+        let [StepDto::Compaction(step)] = held.as_slice() else {
+            panic!("one compaction step: {held:?}");
+        };
+        assert_eq!(step.status, CompactionStatus::Completed);
+        assert_eq!(step.summary, text("Kept the plan."));
+    }
+
+    /// A turn that holds attention stays outside the snapshot when the fold
+    /// forgets it, and a later answer changes the step in its own turn.
+    #[test]
+    fn a_pruned_turn_keeps_its_open_question_for_a_later_answer() {
+        let mut s = Session::new();
+        let old = s.prompt("Ask");
+        let (question, _) = s.event(
+            "question",
+            json!({"question": {"id": "q-1", "message": "Which?", "schema": {}}}),
+        );
+        s.stop();
+        for _ in 0..3 {
+            s.prompt("More");
+            s.stop();
+        }
+        s.fold.prune(2);
+        assert!(
+            s.fold
+                .snapshot(0, 20, None)
+                .turns
+                .iter()
+                .all(|t| t.id != old)
+        );
+
+        let (_, ops) = s.event(
+            "question.resolved",
+            json!({"question_id": "q-1", "action": "decline", "closed_by": "user"}),
+        );
+
+        assert!(
+            ops.iter().any(|op| matches!(op,
+                TrajectoryOpDto::ItemUpsert { step: StepDto::Question(q) }
+                    if q.id == question && q.turn_id == old && q.state == QuestionState::Declined)),
+            "{ops:?}"
+        );
+        assert!(
+            ops.iter().any(|op| matches!(op,
+                TrajectoryOpDto::TurnUpsert { turn } if turn.id == old && turn.attention.is_empty())),
+            "the old turn waits no more: {ops:?}"
+        );
+    }
+
+    /// The index counts what a turn did from heads as it does from whole
+    /// events: a fold of heads and a fold of whole events agree.
+    #[test]
+    fn heads_and_whole_events_count_a_turn_the_same() {
+        let mut whole = Session::new();
+        let mut events = Vec::new();
+        for (kind, payload) in [
+            ("user_prompt_submit", json!({"text": "Go"})),
+            ("agent_thought", json!({"text": "Think"})),
+            (
+                "pre_tool_use",
+                json!({"acp": {"toolCallId": "c-1", "kind": "edit", "status": "pending"}}),
+            ),
+            (
+                "post_tool_use",
+                json!({"acp": {"toolCallId": "c-1", "kind": "edit", "status": "completed",
+                               "locations": [{"path": "a.rs"}]}}),
+            ),
+            (
+                "pre_tool_use",
+                json!({"acp": {"toolCallId": "c-2", "kind": "execute", "status": "pending"}}),
+            ),
+            (
+                "post_tool_use",
+                json!({"acp": {"toolCallId": "c-2", "status": "failed"}}),
+            ),
+            ("agent_message", json!({"text": "Done"})),
+            ("session_end", json!({})),
+        ] {
+            let (id, _) = whole.event(kind, payload.clone());
+            events.push((id, kind.to_string(), payload));
+        }
+
+        let mut heads = Fold::new("session", whole.fold.snapshot(0, 1, None).session);
+        for (id, kind, payload) in &events {
+            heads.apply_head(&ariadne_store::EventHead {
+                id: id.clone(),
+                kind: kind.clone(),
+                lane: ariadne_core::event_facts::lane_of(kind, payload),
+                facts: serde_json::to_string(&ariadne_core::event_facts::facts_of(kind, payload))
+                    .unwrap(),
+                created_at: "2026-11-26T00:00:00Z".into(),
+            });
+        }
+
+        let counted = |fold: &Fold| {
+            let turn = fold.snapshot(0, 20, None).turns[0].clone();
+            (turn.activity, turn.earlier_steps, turn.state)
+        };
+        assert_eq!(counted(&heads), counted(&whole.fold));
+        let (activity, earlier, _) = counted(&heads);
+        assert_eq!(
+            (activity.tool_calls, activity.failed, activity.files_changed),
+            (2, 1, 1)
+        );
+        assert_eq!(earlier, 5, "a thought, two calls, a message and a note");
+    }
+
+    /// A diagnosis reads onto the error it names (rule 21).
+    #[test]
+    fn a_diagnosis_reads_onto_the_error_it_names() {
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        let (error, _) = s.event("session.error", json!({"message": "quota"}));
+        s.event(
+            "session.diagnosis",
+            json!({"error_event_id": error, "category": "quota_exhausted", "confidence": 0.8}),
+        );
+
+        let held = s.fold.held_steps(&turn, MAIN_LANE);
+        let [StepDto::Error(step)] = held.as_slice() else {
+            panic!("one error: {held:?}");
+        };
+        assert_eq!(step.text, "quota");
+        assert!(step.diagnosis.is_some(), "{step:?}");
+    }
+
+    /// A block with bytes carries a blob URL and never the bytes (rule 24).
+    #[test]
+    fn a_block_with_bytes_carries_a_blob_url_and_not_the_bytes() {
+        let mut s = Session::new();
+        let (prompt, _) = s.event(
+            "user_prompt_submit",
+            json!({"content": [
+                {"type": "text", "text": "Look"},
+                {"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgo="}]}),
+        );
+
+        let snapshot = s.fold.snapshot(0, 20, None);
+        let content = &snapshot.turns[0].prompt.as_ref().unwrap().content;
+        assert_eq!(
+            content[1],
+            ContentBlockDto::Image {
+                mime_type: Some("image/png".into()),
+                blob: Some(format!("/v1/sessions/session/trajectory/blobs/{prompt}/1")),
+                uri: None,
+            }
+        );
+        assert!(!serde_json::to_string(content).unwrap().contains("iVBOR"));
+    }
+
+    /// A plan keeps the id of its first event across its updates (rule 28).
+    #[test]
+    fn a_plan_keeps_the_id_of_its_first_event() {
+        let mut s = Session::new();
+        s.prompt("Go");
+        let (first, _) = s.event(
+            "plan",
+            json!({"entries": [{"content": "a", "status": "pending"}]}),
+        );
+        s.event(
+            "plan",
+            json!({"entries": [{"content": "a", "status": "completed", "priority": "high"}]}),
+        );
+
+        let plans = s.fold.snapshot(0, 20, None).plans;
+        let [plan] = plans.as_slice() else {
+            panic!("one plan: {plans:?}");
+        };
+        assert_eq!(plan.plan_id, first);
+        assert_eq!(plan.entries[0].status, "completed");
+        assert_eq!(plan.entries[0].priority.as_deref(), Some("high"));
+    }
+
+    /// The session's state follows its row, its running turn and the
+    /// commands its agent offers (rule 29).
+    #[test]
+    fn the_session_state_follows_the_row_the_running_turn_and_the_commands() {
+        let mut s = Session::new();
+        let turn = s.prompt("Go");
+        let (_, ops) = s.event(
+            "available_commands_update",
+            json!({"available_commands": [{"name": "review", "description": "Review",
+                                           "input": {"hint": "a path"}}]}),
+        );
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, TrajectoryOpDto::SessionPatch { session }
+                if session.commands[0].name == "review"
+                    && session.commands[0].hint.as_deref() == Some("a path")
+                    && session.running_turn_id.as_deref() == Some(turn.as_str()))),
+            "{ops:?}"
+        );
+
+        let mut row: ariadne_api::sessions::SessionDto = serde_json::from_value(json!({
+            "id": "session", "goal_id": null, "task_id": null, "seat": null,
+            "task_agent_id": null, "step": null, "model": "stub:m", "effort": null,
+            "internal_session_id": null, "worktree_path": null, "status": "idle",
+            "attention_reason": null, "attention_since": null, "last_activity_at": null,
+            "usage": {"input_tokens": 5, "cached_input_tokens": 0, "output_tokens": 7},
+            "context_used": 10, "context_size": 100, "created_at": "2026-11-27T00:00:00Z",
+            "ended_at": null, "switched_from": null, "pull_request_id": null}))
+        .unwrap();
+        let patch = s.fold.patch_session(&row).expect("the row changed");
+        let TrajectoryOpDto::SessionPatch { session } = patch else {
+            panic!("{patch:?}");
+        };
+        assert_eq!(session.status, SessionStatus::Idle);
+        assert_eq!(session.usage.output_tokens, 7);
+        assert_eq!(session.context.map(|c| (c.used, c.size)), Some((10, 100)));
+        row.status = SessionStatus::Idle;
+        assert!(
+            s.fold.patch_session(&row).is_none(),
+            "nothing changed again"
+        );
     }
 }

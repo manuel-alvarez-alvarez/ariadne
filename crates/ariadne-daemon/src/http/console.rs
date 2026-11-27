@@ -231,6 +231,12 @@ impl Merge {
     /// bus dropped an event it could not load. `None` is a channel closing,
     /// which is the daemon going away.
     pub(super) async fn next(&mut self) -> Option<Result<AgentEventDto, Resync>> {
+        Some(self.next_marked().await?.map(|(event, _)| event))
+    }
+
+    /// [`Self::next`], with whether the store holds the event: true for one
+    /// off the bus, false for one off the live channel.
+    pub(super) async fn next_marked(&mut self) -> Option<Result<(AgentEventDto, bool), Resync>> {
         if let Some(missed) = self.lagged.take() {
             return Some(Err(Resync::missing(missed)));
         }
@@ -262,9 +268,9 @@ impl Merge {
                             continue;
                         }
                         self.watermark = Some(dto.id.clone());
-                        return Some(Ok(dto));
+                        return Some(Ok((dto, true)));
                     }
-                    Queued::Live(dto) => return Some(Ok(dto)),
+                    Queued::Live(dto) => return Some(Ok((dto, false))),
                 }
             }
             match self.fill().await {

@@ -214,8 +214,8 @@ async fn the_stream_sends_a_snapshot_then_updates_and_text_as_appends() {
 #[tokio::test]
 async fn two_subscribers_receive_the_same_rev_sequence() {
     let t = Held::start().await;
-    let mut first = t.stream().await;
-    let mut second = t.stream().await;
+    // Both open at once on a session no one follows yet: one hub opens.
+    let (mut first, mut second) = tokio::join!(t.stream(), t.stream());
     let first_snapshot = expect_sse(&mut first, "snapshot").await;
     let second_snapshot = expect_sse(&mut second, "snapshot").await;
     assert_eq!(first_snapshot["rev"], second_snapshot["rev"]);
@@ -314,4 +314,66 @@ async fn a_subagent_is_a_step_of_its_parent_and_its_steps_are_a_query_away() {
     assert_eq!(read["type"], "tool_call");
     assert_eq!(read["lane"], CHILD);
     assert_eq!(read["tool_call_id"], "c-1");
+}
+
+/// A run of text the agent streams has one id across the opens of the
+/// stream, and takes the id of its stored whole when it ends: the stream
+/// and the steps route then name it the same.
+#[tokio::test]
+async fn a_streamed_run_keeps_its_id_across_opens_and_ends_on_its_stored_id() {
+    let t = Held::start().await;
+    let mut body = t.stream().await;
+    expect_sse(&mut body, "snapshot").await;
+    t.begin_turn().await;
+    let mut seen = Vec::new();
+    while !ops(&seen, "text_append")
+        .iter()
+        .any(|op| op["text"] == "good.")
+    {
+        seen.push(expect_sse(&mut body, "update").await);
+    }
+    let streaming = ops(&seen, "text_append")
+        .into_iter()
+        .find(|op| op["text"] == "good.")
+        .unwrap()["item_id"]
+        .clone();
+    drop(body);
+
+    // Opened again, after the hub that streamed the run is gone.
+    let mut again = t.stream().await;
+    let snapshot = expect_sse(&mut again, "snapshot").await;
+    let running = snapshot["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|turn| turn["state"] == "running")
+        .unwrap_or_else(|| panic!("the held turn runs: {snapshot}"));
+    let step = running["steps"].as_array().unwrap().last().unwrap();
+    assert_eq!(step["id"], streaming, "the same id on the new open");
+    assert_eq!(step["content"][0]["text"], "All good.");
+
+    t.release();
+    let updates = updates_until_closed(&mut again).await;
+    assert!(
+        ops(&updates, "item_remove")
+            .iter()
+            .any(|op| op["item_id"] == streaming),
+        "the streaming id goes when the whole is stored"
+    );
+    let closed = ops(&updates, "item_upsert")
+        .into_iter()
+        .find(|op| {
+            op["step"]["type"] == "message" && op["step"]["content"][0]["text"] == "All good."
+        })
+        .expect("the whole closes the run")["step"]["id"]
+        .clone();
+    assert_ne!(closed, streaming);
+    let turn_id = running["id"].as_str().unwrap();
+    let page: Value =
+        t.h.get(&t.path(&format!("/turns/{turn_id}/steps?limit=1")))
+            .await;
+    assert_eq!(
+        page["steps"][0]["id"], closed,
+        "the steps route names it the same"
+    );
 }

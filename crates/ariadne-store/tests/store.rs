@@ -3230,7 +3230,7 @@ async fn a_database_from_before_the_squash_says_which_file_to_delete() {
     sqlx::query(
         "INSERT INTO _sqlx_migrations (version, description, installed_on, success,
                                        checksum, execution_time)
-         VALUES (29, 'repositories', '2025-01-01 00:00:00', 1, x'00', 0)",
+         VALUES (9999, 'repositories', '2025-01-01 00:00:00', 1, x'00', 0)",
     )
     .execute(&pool)
     .await

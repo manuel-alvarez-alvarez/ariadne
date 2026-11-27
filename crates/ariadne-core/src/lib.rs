@@ -6,6 +6,7 @@
 //! answering the same question differently is the bug.
 
 pub mod acp;
+pub mod event_facts;
 pub mod id;
 pub mod models;
 pub mod probe;

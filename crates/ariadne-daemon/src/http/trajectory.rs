@@ -21,17 +21,17 @@ use ariadne_api::events::AgentEventDto;
 use ariadne_api::stream::{DomainEvent, ResyncDto};
 use ariadne_api::trajectory::{
     MAIN_LANE, TrajectoryQuery, TrajectorySnapshotDto, TrajectoryStepsDto, TrajectoryStepsQuery,
-    TrajectoryUpdateDto,
+    TrajectoryStreamQuery, TrajectoryUpdateDto,
 };
 use ariadne_store::StoreError;
 
 use super::AppState;
 use super::console::Merge;
-use super::convert::{event_dto, session_dto_of};
+use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
 use super::sse;
-use crate::trajectory::read::{READ_EVENTS, Window, read_range, read_turns, turn_bounds};
-use crate::trajectory::{Fold, session_state};
+use crate::trajectory::read::{READ_EVENTS, Read, read_page, read_steps, read_turns};
+use crate::trajectory::{Fold, session_state, step_id};
 
 /// How many turns a snapshot carries when the query names no `limit`: a
 /// screen and a half of closed turns, each a line, above the running one.
@@ -39,7 +39,8 @@ const DEFAULT_TURNS: usize = 20;
 /// The most turns one answer carries.
 const MAX_TURNS: usize = 50;
 /// How many turns a hub keeps while it follows a session. Twice the most a
-/// snapshot carries, so a long day does not grow the hub without end.
+/// snapshot carries, so a long day does not grow the hub without end; the
+/// turns that hold attention stay beside them.
 const KEPT_TURNS: usize = 2 * MAX_TURNS;
 /// The default and the most steps a page of the steps route carries.
 const DEFAULT_STEPS: usize = 50;
@@ -116,7 +117,8 @@ async fn next_frame(frames: &mut broadcast::Receiver<Frame>) -> Option<Frame> {
 
 /// What the hub's task reads.
 enum Input {
-    Event(Box<AgentEventDto>),
+    /// An event, and whether the store holds it.
+    Event(Box<AgentEventDto>, bool),
     Resync(u64),
 }
 
@@ -127,26 +129,36 @@ impl Trajectories {
         state: &AppState,
         session_id: &str,
         limit: usize,
-        subagent: Option<&str>,
     ) -> ApiResult<Subscription> {
-        let slot = {
-            let mut slots = self.slots.lock().expect("trajectory slots");
-            slots.retain(|_, slot| slot.try_lock().map_or(true, |hub| hub.strong_count() > 0));
-            slots.entry(session_id.to_string()).or_default().clone()
-        };
+        let slot = self.slot(session_id);
         let mut hub = slot.lock().await;
-        if let Some(sub) = hub.upgrade().and_then(|kept| kept.join(limit, subagent)) {
+        if let Some(sub) = hub.upgrade().and_then(|kept| kept.join(limit)) {
             return Ok(sub);
         }
         let opened = Hub::open(state, session_id).await?;
         *hub = Arc::downgrade(&opened);
-        opened.join(limit, subagent).ok_or_else(|| {
+        opened.join(limit).ok_or_else(|| {
             ApiError::new(
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 "trajectory_busy",
                 "the session streamed faster than its trajectory could be read; ask again",
             )
         })
+    }
+}
+
+impl Trajectories {
+    /// The slot of a session's hub. A slot stays while a subscriber holds
+    /// it, so two subscribers that come at once to a session with no hub
+    /// lock one slot and open one hub; a slot nobody holds and whose hub
+    /// ended goes.
+    fn slot(&self, session_id: &str) -> Slot {
+        let mut slots = self.slots.lock().expect("trajectory slots");
+        slots.retain(|_, slot| {
+            Arc::strong_count(slot) > 1
+                || slot.try_lock().map_or(true, |hub| hub.strong_count() > 0)
+        });
+        slots.entry(session_id.to_string()).or_default().clone()
     }
 }
 
@@ -166,16 +178,16 @@ impl Hub {
             let (live, so_far) = state.launcher.acp.subscribe_console(session_id).await;
             let store = state.store.clone();
             let id = session_id.to_string();
-            let (window, so_far, merge) = Merge::open_on(
+            let (read, so_far, merge) = Merge::open_on(
                 state.events.clone(),
                 stored,
                 live,
                 session_id.to_string(),
                 so_far,
                 || async move {
-                    let window = read_turns(&store, &id, None, KEPT_TURNS, READ_EVENTS).await?;
-                    let last_id = window.events.last().map(|event| event.id.clone());
-                    Ok((window, last_id))
+                    let read = read_turns(&store, &id, None, MAX_TURNS, None, READ_EVENTS).await?;
+                    let last_id = read.upper.clone();
+                    Ok((read, last_id))
                 },
             )
             .await?;
@@ -183,7 +195,7 @@ impl Hub {
                 continue;
             }
             let mut fold = Fold::new(session_id, session_state(&row));
-            load(&mut fold, window, so_far);
+            read.fold_into(&mut fold, so_far);
             let (frames, _) = broadcast::channel(CAPACITY);
             let hub = Arc::new(Self {
                 state: Mutex::new(HubState {
@@ -202,14 +214,14 @@ impl Hub {
 
     /// A subscriber: the snapshot at the current revision, and a receiver
     /// of every revision after it. None for a hub that has ended.
-    fn join(self: &Arc<Self>, limit: usize, subagent: Option<&str>) -> Option<Subscription> {
+    fn join(self: &Arc<Self>, limit: usize) -> Option<Subscription> {
         let state = self.state.lock().expect("trajectory hub");
         if state.ended {
             return None;
         }
         Some(Subscription {
             hub: self.clone(),
-            snapshot: Some(state.fold.snapshot(state.rev, limit, subagent)),
+            snapshot: Some(state.fold.snapshot(state.rev, limit, None)),
             frames: Some(self.frames.subscribe()),
         })
     }
@@ -267,8 +279,8 @@ impl Hub {
         let (input, mut inputs) = mpsc::channel(CAPACITY);
         let pump = tokio::spawn(async move {
             loop {
-                let next = match merge.next().await {
-                    Some(Ok(event)) => Input::Event(Box::new(event)),
+                let next = match merge.next_marked().await {
+                    Some(Ok((event, stored))) => Input::Event(Box::new(event), stored),
                     Some(Err(resync)) => Input::Resync(resync.missed()),
                     None => return,
                 };
@@ -282,7 +294,9 @@ impl Hub {
             loop {
                 tokio::select! {
                     next = inputs.recv() => match next {
-                        Some(Input::Event(event)) => self.apply(|fold| fold.apply(&event)),
+                        Some(Input::Event(event, stored)) => {
+                            self.apply(|fold| fold.apply(&event, stored))
+                        }
                         Some(Input::Resync(missed)) => {
                             self.end(Some(Frame::Resync(missed)));
                             break;
@@ -324,21 +338,6 @@ impl Hub {
     }
 }
 
-/// Fold a read and the live events that joined it, in id order, into a
-/// fold that has seen nothing yet.
-fn load(fold: &mut Fold, window: Window, live: Vec<AgentEventDto>) {
-    fold.set_has_older(window.has_older);
-    let mut events: Vec<AgentEventDto> = window.events.into_iter().map(event_dto).collect();
-    events.extend(live);
-    events.sort_by(|a, b| a.id.cmp(&b.id));
-    for event in &events {
-        fold.apply(event);
-    }
-    if let Some((turn_id, steps)) = window.cut {
-        fold.cut_turn(&turn_id, steps);
-    }
-}
-
 fn turn_not_found(turn_id: &str) -> ApiError {
     ApiError::new(
         axum::http::StatusCode::NOT_FOUND,
@@ -353,10 +352,10 @@ fn turns_of(limit: Option<u32>) -> usize {
 
 /// A fold over a read of the store alone, for the pages: what a page
 /// answers is stored, and nothing live joins it.
-async fn fold_of(state: &AppState, session_id: &str, window: Window) -> Result<Fold, StoreError> {
+async fn fold_of(state: &AppState, session_id: &str, read: Read) -> Result<Fold, StoreError> {
     let row = session_dto_of(&state.store, state.store.get_session(session_id).await?).await?;
     let mut fold = Fold::new(session_id, session_state(&row));
-    load(&mut fold, window, Vec::new());
+    read.fold_into(&mut fold, Vec::new());
     Ok(fold)
 }
 
@@ -379,19 +378,23 @@ pub(super) async fn snapshot(
     state.store.get_session(&id).await?;
     let limit = turns_of(query.limit);
     let subagent = query.subagent.as_deref();
-    let Some(before) = query.before.as_deref() else {
-        let mut sub = state
-            .trajectories
-            .subscribe(&state, &id, limit, subagent)
-            .await?;
-        return Ok(Json(
-            sub.snapshot
-                .take()
-                .expect("a subscription opens on a snapshot"),
-        ));
+    let read = match (query.before.as_deref(), subagent) {
+        (None, None) => {
+            let mut sub = state.trajectories.subscribe(&state, &id, limit).await?;
+            return Ok(Json(
+                sub.snapshot
+                    .take()
+                    .expect("a subscription opens on a snapshot"),
+            ));
+        }
+        (Some(before), _) => {
+            read_page(&state.store, &id, before, limit, subagent, READ_EVENTS).await?
+        }
+        (None, Some(_)) => {
+            read_turns(&state.store, &id, None, limit, subagent, READ_EVENTS).await?
+        }
     };
-    let window = read_turns(&state.store, &id, Some(before), limit, READ_EVENTS).await?;
-    let fold = fold_of(&state, &id, window).await?;
+    let fold = fold_of(&state, &id, read).await?;
     Ok(Json(fold.snapshot(0, limit, subagent)))
 }
 
@@ -404,7 +407,7 @@ pub(super) async fn snapshot(
 /// reconnect opens on a new snapshot.
 #[utoipa::path(get, path = "/v1/sessions/{id}/trajectory/stream", tag = "sessions",
     operation_id = "trajectory_stream",
-    params(("id" = String, Path, description = "session id"), TrajectoryQuery),
+    params(("id" = String, Path, description = "session id"), TrajectoryStreamQuery),
     responses((status = 200,
         description = "SSE stream of the trajectory (text/event-stream): a `snapshot` event \
                        (TrajectorySnapshotDto), then an `update` event per revision \
@@ -415,17 +418,12 @@ pub(super) async fn snapshot(
 pub(super) async fn stream(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Query(query): Query<TrajectoryQuery>,
+    Query(query): Query<TrajectoryStreamQuery>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
     state.store.get_session(&id).await?;
     let mut sub = state
         .trajectories
-        .subscribe(
-            &state,
-            &id,
-            turns_of(query.limit),
-            query.subagent.as_deref(),
-        )
+        .subscribe(&state, &id, turns_of(query.limit))
         .await?;
     let opening = sub
         .snapshot
@@ -461,29 +459,32 @@ pub(super) async fn steps(
     Query(query): Query<TrajectoryStepsQuery>,
 ) -> ApiResult<Json<TrajectoryStepsDto>> {
     state.store.get_session(&id).await?;
-    let event = state
-        .store
-        .get_event(&turn_id)
-        .await?
-        .filter(|event| event.session_id.as_deref() == Some(id.as_str()))
-        .ok_or_else(|| turn_not_found(&turn_id))?;
-    let next = turn_bounds(&state.store, &id, &event.id).await?;
-    let window = read_range(
-        &state.store,
-        &id,
-        Some(&event.id),
-        next.as_deref(),
-        READ_EVENTS,
-    )
-    .await?;
-    let fold = fold_of(&state, &id, window).await?;
     let limit = query
         .limit
         .map_or(DEFAULT_STEPS, |limit| (limit as usize).clamp(1, MAX_STEPS));
     let lane = query.subagent.as_deref().unwrap_or(MAIN_LANE);
-    fold.steps(&turn_id, lane, query.before.as_deref(), limit)
-        .map(Json)
-        .ok_or_else(|| turn_not_found(&turn_id))
+    let read = read_steps(
+        &state.store,
+        &id,
+        &turn_id,
+        lane,
+        query.before.as_deref(),
+        limit,
+    )
+    .await?
+    .ok_or_else(|| turn_not_found(&turn_id))?;
+    let page = read.page;
+    let earlier = read.earlier;
+    let fold = fold_of(&state, &id, read.read).await?;
+    let steps = fold
+        .held_steps(&turn_id, lane)
+        .into_iter()
+        .filter(|step| page.iter().any(|id| id == step_id(step)))
+        .collect();
+    Ok(Json(TrajectoryStepsDto {
+        steps,
+        earlier_steps: earlier,
+    }))
 }
 
 #[cfg(test)]
@@ -493,7 +494,25 @@ mod tests {
     use ariadne_api::trajectory::TrajectoryUpdateDto;
     use tokio::sync::broadcast;
 
-    use super::{Frame, next_frame};
+    use super::{Frame, Trajectories, next_frame};
+
+    /// Two subscribers that come at once to a session with no hub get one
+    /// slot, so the first to lock it opens the hub and the second joins it.
+    #[tokio::test]
+    async fn two_cold_subscribers_share_one_slot() {
+        let trajectories = Trajectories::default();
+
+        let first = trajectories.slot("session");
+        let second = trajectories.slot("session");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        let opening = first.lock().await;
+        assert!(
+            second.try_lock().is_err(),
+            "the second waits on the first's open"
+        );
+        drop(opening);
+    }
 
     /// A subscriber that falls more revisions behind than the broadcast
     /// holds is told to resync, with the count of what it lost.
