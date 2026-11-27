@@ -514,10 +514,6 @@ pub(crate) enum Command {
         /// goal; not valid with a session id)
         #[arg(long, value_parser = values::Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
-        /// Draw the trajectory as turns on the whole screen (008, rules 39
-        /// to 50). Hidden until it is the default console.
-        #[arg(long, hide = true)]
-        full_screen: bool,
     },
     /// Serve Ariadne MCP tools over stdio (spawned by coding agents)
     #[command(hide = true)]

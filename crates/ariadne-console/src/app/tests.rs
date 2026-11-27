@@ -15,7 +15,7 @@ use ratatui::buffer::Buffer;
 use serde_json::{Value, json};
 
 use ariadne_api::sessions::{AnswerQuestionRequest, QuestionAction, QuestionDto};
-use ariadne_api::trajectory::StepDto;
+use ariadne_api::trajectory::{StepDto, ToolCallDetailDto};
 
 use super::*;
 use crate::ansi::{AnsiBackend, Window};
@@ -150,6 +150,14 @@ struct Stub {
     cancels: Arc<Mutex<usize>>,
     copies: Arc<Mutex<Vec<String>>>,
     steps: Arc<Mutex<Steps>>,
+    /// The turns whose steps were read.
+    step_reads: Arc<Mutex<Vec<String>>>,
+    /// The steps of each subagent, by turn and subagent id.
+    lanes: Vec<((String, String), Vec<StepDto>)>,
+    /// The detail of each step, by step id.
+    details: Vec<(String, ToolCallDetailDto)>,
+    /// Each read of a detail: the step id and whether it asked for raw.
+    detail_reads: Arc<Mutex<Vec<(String, bool)>>>,
     questions: Vec<QuestionDto>,
     refuses: bool,
 }
@@ -179,7 +187,37 @@ impl Host for Stub {
         *self.cancels.lock().unwrap() += 1;
     }
 
+    async fn subagent_steps(
+        &mut self,
+        turn_id: &str,
+        subagent_id: &str,
+    ) -> Result<Vec<StepDto>, String> {
+        self.lanes
+            .iter()
+            .find(|((turn, lane), _)| turn == turn_id && lane == subagent_id)
+            .map(|(_, steps)| steps.clone())
+            .ok_or_else(|| format!("no steps for {subagent_id}"))
+    }
+
+    async fn detail(&mut self, step_id: &str, raw: bool) -> Result<ToolCallDetailDto, String> {
+        self.detail_reads
+            .lock()
+            .unwrap()
+            .push((step_id.to_string(), raw));
+        let mut detail = self
+            .details
+            .iter()
+            .find(|(id, _)| id == step_id)
+            .map(|(_, detail)| detail.clone())
+            .ok_or_else(|| format!("no detail for {step_id}"))?;
+        if !raw {
+            detail.raw = None;
+        }
+        Ok(detail)
+    }
+
     async fn steps(&mut self, turn_id: &str) -> Result<Vec<StepDto>, String> {
+        self.step_reads.lock().unwrap().push(turn_id.to_string());
         self.steps
             .lock()
             .unwrap()
@@ -541,8 +579,19 @@ fn enter_and_right_open_the_item_and_left_closes_it_or_goes_to_its_turn() {
     app.event(key(KeyCode::Right));
     let screen = draw(&app, WIDTH, HEIGHT);
     assert!(
+        screen.iter().any(|row| row == "      reading the detail…"),
+        "an open call reads its detail: {screen:#?}"
+    );
+    // A host that reads no detail leaves the call with what its step says.
+    app.detail_read("c1".into(), Err("no detail here".into()));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert!(
         screen.iter().any(|row| row == "      Bash · Bash subject"),
         "an open step shows what it says whole under its row: {screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "      no detail here"),
+        "{screen:#?}"
     );
 
     app.event(key(KeyCode::Left));
@@ -652,8 +701,9 @@ fn the_wheel_scrolls_in_both_zones_and_a_click_opens_or_closes_an_item() {
         app.zone = zone;
         app.event(wheel(MouseEventKind::ScrollUp));
         let up = draw(&app, WIDTH, HEIGHT);
-        // The transcript zone: the screen less the box and the footer.
-        let zone_rows = usize::from(HEIGHT) - 4;
+        // The transcript zone: the screen less the box, the status row and
+        // the footer.
+        let zone_rows = usize::from(HEIGHT) - 5;
         assert_eq!(
             up[3..zone_rows],
             end[..zone_rows - 3],
@@ -1136,4 +1186,477 @@ async fn a_resize_draws_the_whole_screen_again_and_loses_no_line() {
         "every word of the answer is on the screen: {screen:#?}"
     );
     assert_eq!(count(&screen, "Second answer."), 1);
+}
+
+/// A closed turn `t1` whose steps are `steps`, open on the screen with the
+/// cursor on its first step, driven with `stub` through `events`.
+async fn opened(stub: &mut Stub, steps: Vec<Value>, events: Vec<TermEvent>) -> (App, Vec<String>) {
+    let steps: Vec<StepDto> = steps
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect();
+    stub.steps.lock().unwrap().push(("t1".into(), steps));
+    let mut app = App::new("s1");
+    let mut keys = vec![ctrl('o'), key(KeyCode::Tab), key(KeyCode::Down)];
+    keys.extend(events);
+    let screen = run(
+        &mut app,
+        stub,
+        vec![snap(1, vec![done("t1", "Fix it", "Fixed.")])],
+        keys,
+    )
+    .await;
+    (app, screen)
+}
+
+fn detail_of(id: &str, kind: &str, detail: Value) -> (String, ToolCallDetailDto) {
+    let value = json!({
+        "id": id, "tool_call_id": id, "title": "Run", "kind": kind, "status": "completed",
+        "detail_rev": 0, "detail": detail,
+        "raw": {"input": {"command": "cargo test"}, "output": {"exit": 0}}
+    });
+    (id.to_string(), serde_json::from_value(value).unwrap())
+}
+
+fn buffer(app: &App, width: u16, height: u16) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| app.render(frame)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// The style of the first cell of `text` on the screen.
+fn style_of(buffer: &Buffer, text: &str) -> ratatui::style::Style {
+    let screen = rows(buffer);
+    let (y, row) = screen
+        .iter()
+        .enumerate()
+        .find(|(_, row)| row.contains(text))
+        .unwrap_or_else(|| panic!("{text} is not on the screen: {screen:#?}"));
+    let x = unicode_width::UnicodeWidthStr::width(&row[..row.find(text).unwrap()]);
+    buffer[(x as u16, y as u16)].style()
+}
+
+#[tokio::test]
+async fn an_open_command_shows_the_command_and_its_output_folded_then_whole() {
+    let output: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "execute",
+            json!({"type": "command", "command": "cargo test", "cwd": "/repo",
+                   "output": output, "exit_code": 1, "truncated": false}),
+        )],
+        ..Stub::default()
+    };
+    let calls = vec![call("c1", "t1", "Bash", "completed")];
+
+    let (_, screen) = opened(&mut stub, calls.clone(), vec![key(KeyCode::Enter)]).await;
+    assert!(
+        screen.iter().any(|row| row == "      $ cargo test"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "      in /repo"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "      … 18 more lines"),
+        "{screen:#?}"
+    );
+    assert_eq!(count(&screen, "line 19"), 1, "{screen:#?}");
+    assert_eq!(count(&screen, "line 18"), 0, "{screen:#?}");
+
+    // The second Enter draws the output whole.
+    let mut stub = Stub {
+        details: stub.details.clone(),
+        ..Stub::default()
+    };
+    let (app, _) = opened(
+        &mut stub,
+        calls,
+        vec![key(KeyCode::Enter), key(KeyCode::Enter)],
+    )
+    .await;
+    let screen = draw(&app, WIDTH, 60);
+    assert_eq!(count(&screen, "more lines"), 0, "{screen:#?}");
+    assert_eq!(count(&screen, "line 1"), 11, "{screen:#?}");
+    assert!(
+        screen.iter().any(|row| row == "      exit 1"),
+        "{screen:#?}"
+    );
+}
+
+#[tokio::test]
+async fn an_open_edit_shows_its_change_as_a_coloured_diff() {
+    let unified = "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    old();\n+    new();\n }\n";
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "edit",
+            json!({"type": "diff", "files": [{"path": "src/main.rs", "old_text": null,
+                   "new_text": null, "unified": unified, "language": "rust"}]}),
+        )],
+        ..Stub::default()
+    };
+    let (app, screen) = opened(
+        &mut stub,
+        vec![call("c1", "t1", "Edit", "completed")],
+        vec![key(KeyCode::Enter)],
+    )
+    .await;
+
+    assert!(
+        screen.iter().any(|row| row == "      src/main.rs"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "      @@ -1,3 +1,3 @@"),
+        "{screen:#?}"
+    );
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+    assert_eq!(
+        style_of(&drawn, "-    old();").fg,
+        Some(ratatui::style::Color::Red)
+    );
+    assert_eq!(
+        style_of(&drawn, "+    new();").fg,
+        Some(ratatui::style::Color::Green)
+    );
+}
+
+#[tokio::test]
+async fn an_open_read_shows_the_file_in_its_language() {
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "read",
+            json!({"type": "file", "path": "src/lib.rs", "line": 3, "language": "rust",
+                   "text": "fn main() {}\n"}),
+        )],
+        ..Stub::default()
+    };
+    let (app, screen) = opened(
+        &mut stub,
+        vec![call("c1", "t1", "Read", "completed")],
+        vec![key(KeyCode::Enter)],
+    )
+    .await;
+
+    assert!(
+        screen.iter().any(|row| row == "      src/lib.rs:3"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "      fn main() {}"),
+        "{screen:#?}"
+    );
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+    assert_eq!(
+        style_of(&drawn, "fn main").fg,
+        Some(ratatui::style::Color::Magenta),
+        "a keyword of the language is coloured"
+    );
+}
+
+#[tokio::test]
+async fn r_shows_the_raw_input_and_output_of_the_call_at_the_cursor() {
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "execute",
+            json!({"type": "command", "command": "cargo test", "cwd": null,
+                   "output": "ok", "exit_code": 0, "truncated": false}),
+        )],
+        ..Stub::default()
+    };
+    let (_, screen) = opened(
+        &mut stub,
+        vec![call("c1", "t1", "Bash", "completed")],
+        vec![key(KeyCode::Char('r'))],
+    )
+    .await;
+
+    assert!(
+        screen.iter().any(|row| row == "      raw input"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "        \"command\": \"cargo test\""),
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "      raw output"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen.iter().any(|row| row == "        \"exit\": 0"),
+        "{screen:#?}"
+    );
+    assert_eq!(
+        *stub.detail_reads.lock().unwrap(),
+        vec![("c1".to_string(), true)]
+    );
+}
+
+#[tokio::test]
+async fn a_subagent_shows_its_title_task_state_time_and_steps_and_opens_to_them() {
+    let subagent = step(
+        "subagent",
+        "a1",
+        "t1",
+        json!({"subagent_id": "sub1", "title": "Explore", "task": "Find the loader",
+               "state": "completed", "started_at": "2026-11-27T10:00:00Z",
+               "ended_at": "2026-11-27T10:01:04Z",
+               "activity": {"steps": 3, "tool_calls": 3, "files_changed": 0, "failed": 0,
+                            "cancelled": 0, "thoughts": 0, "subagents": 0}}),
+    );
+    let mut inner = call("c9", "t1", "Grep", "completed");
+    inner["lane"] = json!("sub1");
+    let mut stub = Stub {
+        lanes: vec![(
+            ("t1".into(), "sub1".into()),
+            vec![serde_json::from_value(inner).unwrap()],
+        )],
+        ..Stub::default()
+    };
+    let (app, screen) = opened(&mut stub, vec![subagent.clone()], vec![]).await;
+    let screen_80 = draw(&app, 80, HEIGHT);
+    assert!(
+        screen_80
+            .iter()
+            .any(|row| row
+                == "    ✓ subagent   Explore · Find the loader  completed · 1m 04s · 3 steps"),
+        "{screen_80:#?}"
+    );
+    assert_eq!(count(&screen, "Grep"), 0, "{screen:#?}");
+
+    let mut stub = Stub {
+        lanes: stub.lanes.clone(),
+        ..Stub::default()
+    };
+    let (_, screen) = opened(&mut stub, vec![subagent], vec![key(KeyCode::Enter)]).await;
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "      ✓ execute    Grep · Grep subject  2s"),
+        "a subagent's steps go one level under it: {screen:#?}"
+    );
+}
+
+fn planned(entries: Value) -> Frame {
+    let mut snapshot = snapshot(1, vec![done("t1", "Plan it", "Planned.")]);
+    snapshot.plans = vec![
+        serde_json::from_value(json!({
+            "plan_id": "p1", "variant": "entries", "entries": entries, "markdown": null,
+            "path": null, "turn_id": "t1", "removed": false,
+            "updated_at": "2026-11-27T10:00:00Z"
+        }))
+        .unwrap(),
+    ];
+    Frame::Snapshot(Box::new(snapshot), None)
+}
+
+#[test]
+fn a_plan_with_an_open_entry_shows_one_line_above_the_input_that_opens_to_the_checklist() {
+    let mut app = App::new("s1");
+    app.frame(planned(json!([
+        {"content": "Read the code", "status": "completed", "priority": null},
+        {"content": "Write the tests", "status": "in_progress", "priority": null},
+        {"content": "Ship it", "status": "pending", "priority": null}
+    ])));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    let rule = screen
+        .iter()
+        .position(|row| row.starts_with("───"))
+        .unwrap();
+    assert_eq!(
+        screen[rule - 1],
+        "▸ plan 1/3 · Write the tests",
+        "{screen:#?}"
+    );
+    assert_eq!(count(&screen, "plan 1/3"), 1);
+
+    app.event(ctrl('t'));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    let rule = screen
+        .iter()
+        .position(|row| row.starts_with("───"))
+        .unwrap();
+    assert_eq!(
+        screen[rule - 4..rule],
+        [
+            "▾ plan 1/3 · Write the tests",
+            "  ☑ Read the code",
+            "  ◐ Write the tests",
+            "  ☐ Ship it",
+        ],
+        "{screen:#?}"
+    );
+
+    let mut done_plan = App::new("s1");
+    done_plan.frame(planned(json!([
+        {"content": "Read the code", "status": "completed", "priority": null}
+    ])));
+    assert_eq!(count(&draw(&done_plan, WIDTH, HEIGHT), "plan"), 0);
+}
+
+#[tokio::test]
+async fn warnings_and_compactions_show_in_their_turn_from_its_notices_without_a_step_read() {
+    let mut closed = done("t1", "Work", "Done.");
+    closed["notices"] = json!([
+        step("compaction", "k1", "t1", json!({})),
+        step(
+            "note",
+            "n1",
+            "t1",
+            json!({"severity": "warning", "text": "disk almost full"})
+        ),
+    ]);
+    closed["notices_more"] = json!(2);
+    let mut app = App::new("s1");
+    let mut stub = Stub::default();
+    let screen = run(&mut app, &mut stub, vec![snap(1, vec![closed])], vec![]).await;
+
+    assert_eq!(
+        screen[2], "    ! note       disk almost full",
+        "{screen:#?}"
+    );
+    assert_eq!(
+        screen[3], "    ✓ compaction context compacted",
+        "{screen:#?}"
+    );
+    assert_eq!(
+        screen[4], "    2 more notices · open the turn to read them",
+        "{screen:#?}"
+    );
+    assert!(stub.step_reads.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_info_note_shows_in_the_open_turn_and_not_in_the_folded_one() {
+    let info = step(
+        "note",
+        "n2",
+        "t1",
+        json!({"severity": "info", "text": "mode changed"}),
+    );
+    let mut stub = Stub::default();
+    let mut app = App::new("s1");
+    let folded = run(
+        &mut app,
+        &mut stub,
+        vec![snap(1, vec![done("t1", "Work", "Done.")])],
+        vec![],
+    )
+    .await;
+    assert_eq!(count(&folded, "mode changed"), 0, "{folded:#?}");
+
+    let (_, screen) = opened(&mut Stub::default(), vec![info], vec![]).await;
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "    · note       mode changed"),
+        "{screen:#?}"
+    );
+}
+
+#[tokio::test]
+async fn an_answered_permission_is_a_mark_on_the_row_of_its_call() {
+    let mut bash = call("c1", "t1", "Bash", "completed");
+    bash["permission"] = json!("p1");
+    let answered = step(
+        "permission",
+        "p1",
+        "t1",
+        json!({"tool_call_id": "c1", "state": "answered",
+               "answer": {"option_id": "yes", "label": "Allow", "decided_by": "ai"}}),
+    );
+    let (app, screen) = opened(&mut Stub::default(), vec![bash, answered], vec![]).await;
+    assert_eq!(count(&screen, "permission"), 0, "{screen:#?}");
+    let screen = draw(&app, 80, HEIGHT);
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "    ✓ execute    Bash · Bash subject  ✓ Allow · by ai  2s"),
+        "{screen:#?}"
+    );
+}
+
+fn with_state() -> App {
+    let mut snapshot = snapshot(1, vec![done("t1", "Work", "Done.")]);
+    snapshot.session = serde_json::from_value(json!({
+        "status": "running", "attention_reason": null, "running_turn_id": null,
+        "title": null,
+        "mode": {"current_id": "code", "available": [
+            {"id": "code", "name": "Code", "description": null}]},
+        "config_options": [{"id": "model", "name": "Model", "description": null,
+            "category": "model", "current_value": "opus",
+            "values": [{"value": "opus", "name": "Opus 5.5", "description": null}]}],
+        "context": {"used": 90000, "size": 200000},
+        "usage": {"input_tokens": 12400, "cached_input_tokens": 0, "output_tokens": 3100},
+        "cost": {"amount": 0.42, "currency": "USD"}, "commands": []
+    }))
+    .unwrap();
+    let mut app = App::new("s1");
+    app.frame(Frame::Snapshot(Box::new(snapshot), None));
+    app
+}
+
+/// The status row: the row under the input box's lower rule.
+fn status_row(screen: &[String]) -> String {
+    let rule = screen
+        .iter()
+        .rposition(|row| row.starts_with("───"))
+        .unwrap();
+    screen[rule + 1].clone()
+}
+
+#[test]
+fn the_status_row_shows_the_state_of_the_session_and_drops_whole_items_when_narrow() {
+    let app = with_state();
+    assert_eq!(
+        status_row(&draw(&app, 80, HEIGHT)),
+        " running · Code · Opus 5.5 · context 45% · $0.42 · ↑ 12.4k ↓ 3.1k"
+    );
+    assert_eq!(
+        status_row(&draw(&app, 60, HEIGHT)),
+        " running · Code · Opus 5.5 · context 45% · ↑ 12.4k ↓ 3.1k"
+    );
+    assert_eq!(
+        status_row(&draw(&app, 45, HEIGHT)),
+        " running · Code · Opus 5.5 · context 45%"
+    );
+    assert_eq!(
+        status_row(&draw(&app, 26, HEIGHT)),
+        " running · Code · Opus 5.5"
+    );
+    assert_eq!(status_row(&draw(&app, 20, HEIGHT)), " running · Opus 5.5");
+    assert_eq!(status_row(&draw(&app, 12, HEIGHT)), " running");
+}
+
+#[test]
+fn an_image_audio_resource_and_link_show_as_one_line_with_type_and_name() {
+    let mut turn = done("t1", "Show it", "");
+    turn["answer"] = json!([
+        {"type": "text", "text": "Here."},
+        {"type": "image", "mime_type": "image/png", "blob": null, "uri": "file:///tmp/shot.png"},
+        {"type": "audio", "mime_type": "audio/wav", "blob": null},
+        {"type": "resource", "uri": "file:///src/lib.rs", "mime_type": null, "text": null, "blob": null},
+        {"type": "resource_link", "uri": "https://x/spec", "name": "spec", "title": "The spec",
+         "mime_type": null, "size": null}
+    ]);
+    let screen = draw(&app_with(vec![turn]), WIDTH, HEIGHT);
+    assert_eq!(
+        screen[2..7],
+        [
+            "  Here.",
+            "  [image] shot.png",
+            "  [audio] audio/wav",
+            "  [resource] lib.rs",
+            "  [resource link] The spec",
+        ],
+        "{screen:#?}"
+    );
 }

@@ -640,8 +640,9 @@ async fn a_click_message_opens_and_closes_the_turn_under_it() {
 #[tokio::test]
 async fn a_wheel_message_scrolls_the_transcript() {
     let (_dir, _stub, _h, session, address) = idle_daemon().await;
-    // The transcript has six lines and four rows to show them in.
-    let mut client = Client::open(address, &session.id, 100, 8).await;
+    // The transcript has six lines and four rows to show them in: the
+    // screen less the box, the status row and the footer.
+    let mut client = Client::open(address, &session.id, 100, 9).await;
     client
         .read_until("the end of the transcript", |screen| {
             screen.contains("done") && screen.contains(READY)

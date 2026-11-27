@@ -8,7 +8,8 @@ use crate::theme::{self, ASK, DIM, FRAME, PICKED, QUESTION, TOOL};
 use crate::transcript::{PermissionOption, Tool, TranscriptItem};
 use crate::wrap;
 
-use super::blocks::{block, command, folded_diff, folded_top, head};
+use super::blocks::{block, command, head};
+use crate::diff::{folded_diff, folded_top};
 
 /// The pending permission question as the picker being answered, in a pane
 /// `height` rows tall: the question, its call's command or diff folded to

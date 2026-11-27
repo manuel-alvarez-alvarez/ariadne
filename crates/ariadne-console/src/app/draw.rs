@@ -1,6 +1,6 @@
 //! The whole screen, drawn from the state: the transcript of turns, the
-//! permission or the question above the input, the suggestion list, the
-//! input box and the footer.
+//! plan, the permission or the question above the input, the suggestion
+//! list, the input box, the status row and the footer.
 
 use ratatui::Frame as Draw;
 use ratatui::layout::Rect;
@@ -9,8 +9,8 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 
 use ariadne_api::trajectory::{
-    CompactionStatus, MAIN_LANE, NoteSeverity, PermissionState, PermissionStepDto, QuestionState,
-    StepDto, ToolCallStatus, TurnDto, TurnState,
+    CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionState, PermissionStepDto,
+    QuestionState, StepDto, ToolCallStatus, TurnDto, TurnState,
 };
 
 use crate::markdown;
@@ -20,18 +20,20 @@ use crate::theme::{
 use crate::trajectory::{kind, text};
 use crate::wrap;
 
-use super::{App, Item, LIVE_STEPS, Zone, is_live};
+use super::{App, Detail, Item, LIVE_STEPS, Zone, detail, is_live, lane_of, status};
 
 /// The marks of an item that is closed and of one that is open.
-const FOLDED: &str = "▸ ";
-const UNFOLDED: &str = "▾ ";
+pub(super) const FOLDED: &str = "▸ ";
+pub(super) const UNFOLDED: &str = "▾ ";
 /// The marks of a turn or a step that was cancelled, and of a question.
 const CANCELLED: &str = "⊘";
 const WAITS: &str = "?";
 const NOTE: &str = "·";
 /// How far a step row is indented under its turn, and its body under it.
+/// Each level of a subagent adds [`DEPTH_INDENT`].
 const STEP_INDENT: &str = "    ";
 const BODY_INDENT: &str = "      ";
+const DEPTH_INDENT: &str = "  ";
 /// The columns the kind of a step row is padded to.
 const KIND_WIDTH: usize = 10;
 /// The label in the rule over a pending permission.
@@ -70,17 +72,31 @@ impl App {
         let width = usize::from(area.width);
         let input = self.input.height(area.width).min(area.height);
         let footer = u16::from(area.height > input);
-        let most = (area.height.saturating_sub(input + footer) / 2) as usize;
+        let status_row = u16::from(area.height > input + footer);
+        let below = input + footer + status_row;
+        let most = (area.height.saturating_sub(below) / 2) as usize;
         let attention = self.attention_lines(width, most);
         let attention_rows = attention.len() as u16;
+        let plan = match self.plan() {
+            Some(plan) => {
+                let most = match self.plan_open {
+                    true => most.saturating_sub(attention.len()).max(1),
+                    false => 1,
+                };
+                let room = usize::from(area.height.saturating_sub(below + attention_rows + 1));
+                status::plan_lines(plan, self.plan_open, width, most.min(room))
+            }
+            None => Vec::new(),
+        };
+        let plan_rows = plan.len() as u16;
         let room = area
             .height
-            .saturating_sub(input + footer + attention_rows)
+            .saturating_sub(below + attention_rows + plan_rows)
             .saturating_sub(1);
         let suggested = self.suggestion_rows(room);
         let transcript = area
             .height
-            .saturating_sub(input + footer + attention_rows + suggested);
+            .saturating_sub(below + attention_rows + plan_rows + suggested);
 
         let mut y = area.y;
         let mut next = |rows: u16| {
@@ -89,16 +105,26 @@ impl App {
             rect
         };
         let transcript_area = next(transcript);
+        let plan_area = next(plan_rows);
         let attention_area = next(attention_rows);
         let suggestions_area = next(suggested);
         let input_area = next(input);
+        let status_area = next(status_row);
         let footer_area = next(footer);
 
         self.draw_transcript(frame, transcript_area);
+        self.layout.borrow_mut().plan = plan_area;
+        frame.render_widget(Paragraph::new(Text::from(plan)), plan_area);
         frame.render_widget(Paragraph::new(Text::from(attention)), attention_area);
         self.draw_suggestions(frame, suggestions_area);
         self.input
             .draw(frame, input_area, self.hint(), self.zone == Zone::Input);
+        if let Some(view) = &self.view {
+            frame.render_widget(
+                Paragraph::new(status::status_line(view.session(), width)),
+                status_area,
+            );
+        }
         frame.render_widget(Paragraph::new(self.footer(width)), footer_area);
     }
 
@@ -260,18 +286,21 @@ impl App {
                     Some(&item),
                 ));
             }
-            match self.steps_of(turn) {
+            match self.shown_steps(turn) {
                 Some(steps) => {
-                    for step in steps {
+                    for (depth, step) in steps {
                         let step_item = Item::Step {
                             turn: turn.id.clone(),
                             step: crate::trajectory::step_id(step).to_string(),
                         };
                         let is_answer = is_answer_step(step);
-                        rows.push(Row::head(self.step_row(step, width, is_answer), &step_item));
+                        rows.push(Row::head(
+                            self.step_row(turn, step, depth, width, is_answer),
+                            &step_item,
+                        ));
                         if self.open.contains(&step_item) {
                             answer_in_step |= is_answer;
-                            for line in step_body(step, width) {
+                            for line in self.open_step(step, &step_item, depth, width) {
                                 rows.push(Row::of(line, Some(&step_item)));
                             }
                         }
@@ -282,25 +311,63 @@ impl App {
                     Some(&item),
                 )),
             }
-        } else if turn.state == TurnState::Running {
-            let skip = turn.steps.len().saturating_sub(LIVE_STEPS);
-            for step in &turn.steps[skip..] {
+        } else {
+            // A warning note and a compaction show in their turn whether it
+            // is open or not, read from the turn and not from its steps.
+            let noticed: Vec<&str> = turn
+                .notices
+                .iter()
+                .map(crate::trajectory::step_id)
+                .collect();
+            for step in turn.notices.iter().rev() {
                 rows.push(Row::of(
-                    self.step_row(step, width, is_answer_step(step)),
+                    self.step_row(turn, step, 0, width, false),
                     Some(&item),
                 ));
             }
-        } else {
-            for step in &turn.attention {
-                if matches!(step, StepDto::Error(_)) {
-                    rows.push(Row::of(self.step_row(step, width, false), Some(&item)));
+            if turn.notices_more > 0 {
+                let more = match turn.notices_more {
+                    1 => "1 more notice".to_string(),
+                    more => format!("{more} more notices"),
+                };
+                rows.push(Row::of(
+                    Line::styled(
+                        format!("{STEP_INDENT}{more} · open the turn to read them"),
+                        DIM,
+                    ),
+                    Some(&item),
+                ));
+            }
+            if turn.state == TurnState::Running {
+                let live: Vec<&StepDto> = turn
+                    .steps
+                    .iter()
+                    .filter(|step| !noticed.contains(&crate::trajectory::step_id(step)))
+                    .filter(|step| !answered_on_its_call(step, &turn.steps))
+                    .collect();
+                let skip = live.len().saturating_sub(LIVE_STEPS);
+                for step in &live[skip..] {
+                    rows.push(Row::of(
+                        self.step_row(turn, step, 0, width, is_answer_step(step)),
+                        Some(&item),
+                    ));
+                }
+            } else {
+                for step in &turn.attention {
+                    if matches!(step, StepDto::Error(_)) {
+                        rows.push(Row::of(
+                            self.step_row(turn, step, 0, width, false),
+                            Some(&item),
+                        ));
+                    }
                 }
             }
         }
 
-        let answer = text(live_answer.map_or(turn.answer.as_slice(), |message| &message.content));
+        let blocks = live_answer.map_or(turn.answer.as_slice(), |message| &message.content);
+        let answer = text(blocks);
         if !answer_in_step && !answer.trim().is_empty() {
-            for line in self.answer(&turn.id, &answer, body) {
+            for line in self.answer(&turn.id, blocks, body) {
                 let mut spans = vec![Span::raw("  ")];
                 spans.extend(line.spans);
                 rows.push(Row::of(Line::from(spans).style(line.style), Some(&item)));
@@ -310,17 +377,74 @@ impl App {
     }
 
     /// A turn's answer as markdown, drawn once for each width and text.
-    fn answer(&self, id: &str, answer: &str, width: usize) -> Vec<Line<'static>> {
+    fn answer(&self, id: &str, blocks: &[ContentBlockDto], width: usize) -> Vec<Line<'static>> {
+        let answer = text(blocks);
         let mut answers = self.answers.borrow_mut();
         if let Some((drawn_width, drawn, lines)) = answers.get(id)
             && *drawn_width == width
-            && drawn == answer
+            && *drawn == answer
         {
             return lines.clone();
         }
-        let lines = markdown::render(answer.trim_end(), width);
-        answers.insert(id.to_string(), (width, answer.to_string(), lines.clone()));
+        let lines = content_lines(blocks, width);
+        answers.insert(id.to_string(), (width, answer, lines.clone()));
         lines
+    }
+
+    /// What an open step shows under its row: a tool call its detail by
+    /// its kind, a subagent its task, and every other step its whole text.
+    fn open_step(
+        &self,
+        step: &StepDto,
+        item: &Item,
+        depth: usize,
+        width: usize,
+    ) -> Vec<Line<'static>> {
+        // A step's body carries the indent of a body; a subagent's steps
+        // add one level for each subagent they are under.
+        let lead = DEPTH_INDENT.repeat(depth);
+        let room = width.saturating_sub(wrap::width(&lead));
+        let indent = |line: Line<'static>| {
+            let mut spans = vec![Span::raw(lead.clone())];
+            spans.extend(line.spans);
+            Line::from(spans).style(line.style)
+        };
+        let body = |text: &str| indent(Line::styled(format!("{BODY_INDENT}{text}"), DIM));
+        let room_of_body = room.saturating_sub(BODY_INDENT.len());
+        match step {
+            StepDto::ToolCall(call) => match self.details.get(&call.id) {
+                Some(Detail::Read(read)) => {
+                    let raw = self.raw.contains(&call.id);
+                    let whole = self.whole.contains(item);
+                    // The detail lines carry four of the six columns of a
+                    // body.
+                    let gap = BODY_INDENT.len() - 4;
+                    detail::lines(read, raw, whole, room.saturating_sub(gap))
+                        .into_iter()
+                        .map(|line| {
+                            let mut spans = vec![Span::raw(" ".repeat(gap))];
+                            spans.extend(line.spans);
+                            indent(Line::from(spans).style(line.style))
+                        })
+                        .collect()
+                }
+                Some(Detail::Failed(reason)) => {
+                    let mut lines: Vec<Line<'static>> =
+                        step_body(step, room).into_iter().map(indent).collect();
+                    lines.push(body(&wrap::clip(reason, room_of_body)));
+                    lines
+                }
+                None => vec![body("reading the detail…")],
+            },
+            StepDto::Subagent(subagent) => match &subagent.task {
+                Some(task) => wrap::wrap(task, room_of_body)
+                    .iter()
+                    .map(|part| body(part))
+                    .collect(),
+                None => Vec::new(),
+            },
+            _ => step_body(step, room).into_iter().map(indent).collect(),
+        }
     }
 
     fn turn_mark(&self, turn: &TurnDto) -> (&'static str, Style) {
@@ -333,37 +457,84 @@ impl App {
     }
 
     /// One step: its status, its kind, its subject and how long it took.
-    fn step_row(&self, step: &StepDto, width: usize, is_answer: bool) -> Line<'static> {
+    /// A call carries the mark of the permission that was answered for it,
+    /// and a subagent its task, its state and its step count.
+    fn step_row(
+        &self,
+        turn: &TurnDto,
+        step: &StepDto,
+        depth: usize,
+        width: usize,
+        is_answer: bool,
+    ) -> Line<'static> {
         let (mark, style) = step_mark(step);
         let label = step_kind(step);
         let kind_style = match step {
             StepDto::ToolCall(_) => TOOL,
             _ => DIM,
         };
-        let lead = format!("{STEP_INDENT}{mark} ");
+        let indent = format!("{STEP_INDENT}{}", DEPTH_INDENT.repeat(depth));
+        let lead = format!("{indent}{mark} ");
         let kind = format!("{label:<KIND_WIDTH$} ");
+        let mut tail = Vec::new();
         let took = match step {
-            StepDto::ToolCall(call) => took(&call.started_at, call.ended_at.as_deref()),
+            StepDto::ToolCall(call) => {
+                if let Some(answered) = call
+                    .permission
+                    .as_deref()
+                    .and_then(|id| self.permission_of(turn, id))
+                    .and_then(permission_mark)
+                {
+                    tail.push(Span::styled(format!("  {answered}"), ASK));
+                }
+                took(&call.started_at, call.ended_at.as_deref())
+            }
             StepDto::Subagent(subagent) => took(&subagent.started_at, subagent.ended_at.as_deref()),
             _ => None,
+        };
+        if let StepDto::Subagent(subagent) = step {
+            let mut said = Vec::new();
+            if let Some(state) = &subagent.state {
+                said.push(state.clone());
+            }
+            if let Some(took) = &took {
+                said.push(took.clone());
+            }
+            said.push(match subagent.activity.steps {
+                1 => "1 step".to_string(),
+                steps => format!("{steps} steps"),
+            });
+            tail.push(Span::styled(
+                format!("  {}", said.join(theme::SEPARATOR)),
+                DIM,
+            ));
+        } else if let Some(took) = took {
+            tail.push(Span::styled(format!("  {took}"), DIM));
         }
-        .map(|took| format!("  {took}"))
-        .unwrap_or_default();
-        let room =
-            width.saturating_sub(wrap::width(&lead) + wrap::width(&kind) + wrap::width(&took));
+        let tail_width: usize = tail.iter().map(|span| wrap::width(&span.content)).sum();
+        let room = width.saturating_sub(wrap::width(&lead) + wrap::width(&kind) + tail_width);
         let subject = if is_answer {
             "Turn answer".into()
         } else {
-            subject(step)
+            match step {
+                StepDto::Subagent(subagent) => match &subagent.task {
+                    Some(task) => format!("{} · {}", subagent.title, task.trim()),
+                    None => subagent.title.clone(),
+                },
+                // Under its subagent, a step needs no name of its lane.
+                _ if depth > 0 => bare_subject(step),
+                _ => subject(step),
+            }
         };
         let first = subject.lines().next().unwrap_or_default();
-        Line::from(vec![
-            Span::raw(STEP_INDENT),
+        let mut spans = vec![
+            Span::raw(indent),
             Span::styled(format!("{mark} "), style),
             Span::styled(kind, kind_style),
             Span::raw(wrap::clip(first, room)),
-            Span::styled(took, DIM),
-        ])
+        ];
+        spans.extend(tail);
+        Line::from(spans)
     }
 
     /// The pending permission or the open question, above the input.
@@ -384,7 +555,9 @@ impl App {
             said.push("ctrl-c again to leave");
         }
         let keys = match self.zone {
-            Zone::Transcript => "↑↓ move · enter open · ← close · home/end · y copy · tab input",
+            Zone::Transcript => {
+                "↑↓ move · enter open · ← close · r raw · y copy · home/end · ctrl-t plan · tab input"
+            }
             Zone::Input if self.permission().is_some() => {
                 "↑↓ pick · enter answer · tab transcript · ctrl-c twice leave"
             }
@@ -392,10 +565,10 @@ impl App {
                 "↑↓ pick · enter answer · tab next · esc decline · ctrl-c twice leave"
             }
             Zone::Input if self.running() => {
-                "enter send · tab transcript · pgup/pgdn scroll · ctrl-o open · esc cancel · ctrl-c twice leave"
+                "enter send · tab transcript · pgup/pgdn scroll · ctrl-o open · ctrl-t plan · esc cancel · ctrl-c twice leave"
             }
             Zone::Input => {
-                "enter send · tab transcript · pgup/pgdn scroll · ctrl-o open · ctrl-c twice leave"
+                "enter send · tab transcript · pgup/pgdn scroll · ctrl-o open · ctrl-t plan · ctrl-c twice leave"
             }
         };
         said.push(keys);
@@ -461,8 +634,18 @@ fn step_kind(step: &StepDto) -> String {
     }
 }
 
-/// What a step is about, whole: the row shows its first line.
+/// What a step is about, whole, after the lane it is in where that is not
+/// the session's own: the row shows its first line.
 fn subject(step: &StepDto) -> String {
+    let said = bare_subject(step);
+    match lane_of(step) {
+        MAIN_LANE => said,
+        lane => format!("{lane}: {said}"),
+    }
+}
+
+/// What a step is about, whole.
+fn bare_subject(step: &StepDto) -> String {
     let said = match step {
         StepDto::Message(message) => text(&message.content),
         StepDto::Thought(thought) => text(&thought.content),
@@ -481,25 +664,70 @@ fn subject(step: &StepDto) -> String {
             CompactionStatus::Failed => "the compaction failed".to_string(),
         },
     };
-    let said = said.trim().to_string();
-    match lane(step) {
-        MAIN_LANE => said,
-        lane => format!("{lane}: {said}"),
+    said.trim().to_string()
+}
+
+/// The mark an answered permission puts on the row of its call: the option
+/// chosen, and who chose it where that was not a person at the console.
+fn permission_mark(permission: &PermissionStepDto) -> Option<String> {
+    match permission.state {
+        PermissionState::Pending => None,
+        PermissionState::Cancelled => Some(format!("{CANCELLED} permission cancelled")),
+        PermissionState::Answered => {
+            let answer = permission.answer.as_ref()?;
+            let allowed = permission
+                .options
+                .iter()
+                .find(|option| Some(&option.id) == answer.option_id.as_ref())
+                .and_then(|option| option.kind.as_deref())
+                .is_none_or(|kind| kind.starts_with("allow"));
+            let mark = if allowed {
+                theme::CALL_DONE
+            } else {
+                theme::CALL_FAILED
+            };
+            Some(match answer.decided_by.as_deref() {
+                Some(by) if by != "console" => format!("{mark} {} · by {by}", answer.label),
+                _ => format!("{mark} {}", answer.label),
+            })
+        }
     }
 }
 
-fn lane(step: &StepDto) -> &str {
-    match step {
-        StepDto::Message(step) => &step.lane,
-        StepDto::Thought(step) => &step.lane,
-        StepDto::ToolCall(step) => &step.lane,
-        StepDto::Permission(step) => &step.lane,
-        StepDto::Question(step) => &step.lane,
-        StepDto::Note(step) => &step.lane,
-        StepDto::Error(step) => &step.lane,
-        StepDto::Subagent(step) => &step.lane,
-        StepDto::Compaction(step) => &step.lane,
+/// Whether a step is a permission that was answered and whose call is in
+/// `steps`: the call's row carries it.
+fn answered_on_its_call(step: &StepDto, steps: &[StepDto]) -> bool {
+    let StepDto::Permission(permission) = step else {
+        return false;
+    };
+    permission.state != PermissionState::Pending
+        && steps.iter().any(|other| {
+            matches!(other, StepDto::ToolCall(call) if call.permission.as_deref() == Some(permission.id.as_str()))
+        })
+}
+
+/// Content blocks as lines: the text as markdown, and a block that is not
+/// text as one line with its type and its name.
+fn content_lines(blocks: &[ContentBlockDto], width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut said = String::new();
+    let flush = |said: &mut String, lines: &mut Vec<Line<'static>>| {
+        if !said.trim().is_empty() {
+            lines.extend(markdown::render(said.trim_end(), width));
+        }
+        said.clear();
+    };
+    for block in blocks {
+        match detail::media(block) {
+            Some(media) => {
+                flush(&mut said, &mut lines);
+                lines.push(Line::styled(wrap::clip(&media, width), DIM));
+            }
+            None => said.push_str(&text(std::slice::from_ref(block))),
+        }
     }
+    flush(&mut said, &mut lines);
+    lines
 }
 
 /// An open step, in place under its row: what it says whole, as the log
@@ -512,7 +740,7 @@ fn step_body(step: &StepDto, width: usize) -> Vec<Line<'static>> {
         Line::from(spans).style(line.style)
     };
     match step {
-        StepDto::Message(message) => markdown::render(text(&message.content).trim_end(), room)
+        StepDto::Message(message) => content_lines(&message.content, room)
             .into_iter()
             .map(indent)
             .collect(),

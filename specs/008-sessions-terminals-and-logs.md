@@ -22,6 +22,9 @@ tests:
   - crates/ariadne-console/src/app/tests.rs
   - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
   - crates/ariadne-cli/src/commands/console/app.rs
+  - crates/ariadne-cli/src/commands/console/terminal.rs
+  - crates/ariadne-cli/src/cli/tests.rs
+  - crates/ariadne-client/src/lib.rs
 ---
 
 # Sessions, terminals and logs
@@ -55,7 +58,7 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 13. A finished or unavailable session refuses console input with `409`.
 14. `POST /v1/sessions/{id}/console/cancel` cancels a running turn and refuses a session without a running turn with `409`.
 15. `GET /v1/sessions/{id}/console/terminal` upgrades a known session to the terminal WebSocket.
-    It sends the full-screen console of rules 39 to 50, as terminal bytes: the alternate screen, the mouse and bracketed paste, then the screen.
+    It sends the full-screen console of rules 39 to 58, as terminal bytes: the alternate screen, the mouse and bracketed paste, then the screen.
     It sends nothing before the client's first `resize`.
     A session on a remote host serves the route through the source's forwarder, with the frames of both ways unchanged.
 16. Closing the terminal socket leaves the session alive, and session completion closes its sockets.
@@ -113,13 +116,14 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 
 ### The full-screen console
 
-The hidden flag `ariadne attach --full-screen` opens it.
+`ariadne attach` opens it on a terminal, with no flag.
 Its code is `crates/ariadne-console/src/app/`.
-The inline pane of rules 19 to 37 stays the default.
+`attach` no longer opens the inline pane of rules 19 to 37.
 
-39. On a terminal, `--full-screen` takes the alternate screen, raw mode, the mouse and bracketed paste.
+39. On a terminal, `attach` takes the alternate screen, raw mode, the mouse and bracketed paste.
     The console gives the terminal back on each way out: a leave, an error, a panic and Ctrl-C.
-    Without a terminal on both ends, `attach` prints the line protocol and ignores the flag.
+    Without a terminal on both ends, `attach` prints the line protocol.
+    `attach` has no `--full-screen` flag.
 40. The console reads the trajectory stream (040) and draws the client view of the trajectory.
     A drop, a `resync`, or an update that skips a revision shows `reconnecting` and dials the stream again.
     The next snapshot replaces the view. Thus a reconnect shows no item two times.
@@ -142,7 +146,7 @@ The inline pane of rules 19 to 37 stays the default.
     Tab completes the pick while the suggestion list is open, and moves between the questions of a form.
 45. In the transcript zone, Up, Down, `j` and `k` move the cursor between turns and the steps of open turns.
     The line of the item at the cursor is reversed.
-    Enter and Right open the item in place. An open step shows its whole text under its row.
+    Enter and Right open the item in place. An open step shows its detail under its row (rule 51).
     Left closes an open item, or moves the cursor from a step to its turn.
     Home and End move the cursor to the first and the newest turn.
     `y` copies the item at the cursor as `ariadne session logs` prints it. The CLI sends it to the clipboard with OSC 52.
@@ -164,6 +168,35 @@ The inline pane of rules 19 to 37 stays the default.
 50. On leaving, the console prints the turns that this attach showed, folded, as `ariadne session logs` prints them.
     It prints the newest 20 at most, then a hint to `ariadne session logs <id> --steps`.
     A session that ended before the attach leaves after its snapshot.
+51. An open tool call step reads its detail from the detail route (040) and shows it by its kind.
+    A command shows its command, its working directory, its output and its exit code.
+    An edit shows each file as a coloured diff, with the rules of the inline pane.
+    A read shows the path and the line, then the file text coloured by the grammar of its language.
+    A search and a fetch show what they looked for and what they found. Any other call shows its content.
+    An output keeps its last 12 lines. A diff, a file and raw JSON keep their first 24 lines.
+    Each fold shows a count of the lines it left out. A second Enter on the open step shows it whole.
+    A change of `detail_rev` reads the detail again.
+    A host that cannot read the detail shows the text of the step and the reason.
+    Any other open step shows its whole text under its row.
+52. In the transcript zone, `r` shows the raw input and the raw output of the tool call at the cursor, as JSON.
+    The console reads them with `raw=true`. A second `r` shows the detail again.
+53. A subagent step shows its title, its task, its state, its time and its step count.
+    Enter opens it in place to its steps, one level under its row. The console reads them with `subagent=<id>` (040, rule 44).
+    While the turn runs, the live steps of its lane join them. A step under its subagent does not name its lane.
+54. While a plan of entries has an entry that is not completed, one plan line shows above the input.
+    The line has the count of the completed entries and the entry in progress, else the next one.
+    Ctrl-T, or a click on the line, opens it to the checklist and closes it again.
+55. A folded turn shows a row for each warning note and each compaction in its `notices` field (040, rule 16).
+    The console reads them from the turn and reads no steps for them.
+    Where `notices_more` is above zero, one row gives the count.
+    An open turn shows them as its step rows, with each info note.
+56. An answered permission is a mark on the row of its call: the mark of the option kind, its name, and who chose it if not the console.
+    The permission has no row of its own where the row of its call shows.
+57. The status row under the input shows the status, the mode, the model, the context use, the cost and the tokens.
+    A narrow terminal drops whole items, the least important first: the cost, the tokens, the context, the mode, then the model.
+    The status stays to the last.
+58. An image, an audio block, a resource without text and a resource link show as one line: `[<type>] <name>`.
+    The name is the last part of the URI, else the MIME type, else the title of a link, else its name.
 
 ## Acceptance criteria
 
@@ -200,7 +233,7 @@ Number selection and question navigation use
 24. Required multi-select custom answers contain no unchecked choices
 (`ariadne-console::tui::form::tests::required_multi_custom_answers_do_not_add_unselected_choices`).
 
-25. Rule 39: `ariadne-cli::commands::console::app::tests::the_console_takes_the_alternate_screen_and_the_mouse_and_gives_both_back`, `::the_terminal_is_given_back_when_ctrl_c_leaves_the_console_and_on_an_error`, `::the_terminal_is_given_back_when_setup_or_drive_panics`, `::terminal_restore_continues_after_a_failed_write`, `ariadne-cli::cli::tests::the_full_screen_flag_of_attach_is_parsed_and_hidden`, `ariadne-cli::commands::console::tui::tests::only_a_terminal_on_both_ends_gets_the_inline_console`.
+25. Rule 39: `ariadne-cli::commands::console::app::tests::the_console_takes_the_alternate_screen_and_the_mouse_and_gives_both_back`, `::the_terminal_is_given_back_when_ctrl_c_leaves_the_console_and_on_an_error`, `::the_terminal_is_given_back_when_setup_or_drive_panics`, `::terminal_restore_continues_after_a_failed_write`, `ariadne-cli::cli::tests::attach_opens_the_full_screen_console_with_no_flag`, `ariadne-cli::commands::console::terminal::tests::only_a_terminal_on_both_ends_gets_the_full_screen_console`.
 26. Rule 40: `ariadne-cli::commands::console::app::tests::an_update_that_skips_a_revision_dials_the_stream_again`, `ariadne-console::app::tests::a_reconnect_shows_no_item_two_times`.
 27. Rule 41: `ariadne-console::app::tests::a_turn_shows_its_prompt_one_activity_line_and_its_answer`, `::a_running_turn_shows_its_last_steps_live`, `::a_running_turn_draws_the_whole_answer_and_live_steps`, `::a_streamed_append_updates_the_live_answer`.
 28. Rule 42: `ariadne-console::app::tests::an_open_turn_shows_a_row_per_step_with_its_status_kind_subject_and_duration`, `::an_open_running_turn_reads_all_steps_after_it_finishes`.
@@ -212,10 +245,21 @@ Number selection and question navigation use
 34. Rule 48: `ariadne-console::app::tests::a_pending_permission_shows_above_the_input_and_enter_sends_the_picked_option`, `::an_open_question_shows_its_form_above_the_input_and_the_keys_answer_it`, `::escape_declines_the_open_question`, `::question_reads_retry_after_failure_and_reconnect`, `::the_selected_permission_option_stays_visible_after_resize_and_answers`, `::the_active_question_and_choice_stay_visible_after_resize_and_answer`.
 35. Rule 49: `ariadne-cli::commands::console::app::tests::prompt_history_reaches_past_the_trajectory_page`, `ariadne-console::app::tests::a_slash_opens_the_session_commands_and_tab_completes_the_pick`, `::enter_sends_the_prompt_and_it_shows_queued_until_a_turn_holds_it`, `::a_refused_prompt_is_said_under_the_transcript_and_is_no_longer_queued`, `::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`, `::up_and_down_move_through_the_rows_then_through_the_prompt_history`.
 36. Rule 50: `ariadne-console::app::tests::the_farewell_prints_at_most_twenty_folded_turns_and_a_hint_to_the_log`, `::a_session_that_has_ended_leaves_after_its_snapshot`, `ariadne-cli::commands::console::app::tests::the_console_closing_says_whether_the_session_still_runs`.
+37. Rule 51: `ariadne-console::app::tests::an_open_command_shows_the_command_and_its_output_folded_then_whole`, `::an_open_edit_shows_its_change_as_a_coloured_diff`, `::an_open_read_shows_the_file_in_its_language`, `::enter_and_right_open_the_item_and_left_closes_it_or_goes_to_its_turn`, `ariadne-cli::commands::console::app::tests::the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes`, `ariadne-client::tests::a_step_detail_sends_its_route_and_reads_the_typed_detail`.
+38. Rule 52: `ariadne-console::app::tests::r_shows_the_raw_input_and_output_of_the_call_at_the_cursor`.
+39. Rule 53: `ariadne-console::app::tests::a_subagent_shows_its_title_task_state_time_and_steps_and_opens_to_them`, `ariadne-cli::commands::console::app::tests::the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes`.
+40. Rule 54: `ariadne-console::app::tests::a_plan_with_an_open_entry_shows_one_line_above_the_input_that_opens_to_the_checklist`.
+41. Rule 55: `ariadne-console::app::tests::warnings_and_compactions_show_in_their_turn_from_its_notices_without_a_step_read`, `::an_info_note_shows_in_the_open_turn_and_not_in_the_folded_one`.
+42. Rule 56: `ariadne-console::app::tests::an_answered_permission_is_a_mark_on_the_row_of_its_call`.
+43. Rule 57: `ariadne-console::app::tests::the_status_row_shows_the_state_of_the_session_and_drops_whole_items_when_narrow`, `crates/ariadne-daemon/tests/it/acp_terminal.rs::a_wheel_message_scrolls_the_transcript`.
+44. Rule 58: `ariadne-console::app::tests::an_image_audio_resource_and_link_show_as_one_line_with_type_and_name`.
 
 ## Sources
 
 - crates/ariadne-console/src/app/mod.rs
+- crates/ariadne-console/src/app/detail.rs
+- crates/ariadne-console/src/app/status.rs
+- crates/ariadne-console/src/diff.rs
 - crates/ariadne-cli/src/commands/console/app.rs
 - crates/ariadne-daemon/src/http/console.rs
 - crates/ariadne-daemon/src/http/terminal.rs
