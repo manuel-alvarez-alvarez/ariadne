@@ -17,6 +17,7 @@
 
 pub mod ansi;
 pub mod app;
+mod diff;
 pub mod markdown;
 pub mod theme;
 pub mod trajectory;

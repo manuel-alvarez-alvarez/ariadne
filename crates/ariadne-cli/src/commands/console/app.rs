@@ -1,4 +1,4 @@
-//! `ariadne attach --full-screen` on a terminal: the full-screen console of
+//! `ariadne attach` on a terminal: the full-screen console of
 //! [`ariadne_console::app`] on the process terminal, driven from the
 //! daemon's trajectory stream (040).
 //!
@@ -26,19 +26,24 @@ use ratatui::backend::CrosstermBackend;
 use tokio::time::{Instant, sleep_until};
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto};
-use ariadne_api::trajectory::{StepDto, TrajectoryStreamQuery};
+use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto, SessionDto};
+use ariadne_api::trajectory::{
+    StepDto, ToolCallDetailDto, TrajectoryItemQuery, TrajectoryStreamQuery,
+};
 use ariadne_client::{Client, SseStream};
 use ariadne_console::app::{App, Frame, Host, drive};
 use ariadne_console::trajectory::Printer;
 
-use super::tui::{Held, Terminals};
+use super::terminal::{Held, Terminals};
 use crate::commands::{follow, transcript};
 use crate::output::note;
 
 /// Open the full-screen console on the process terminal.
 pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     let mut app = App::new(id);
+    if let Some(model) = stored_model(client, id).await {
+        app.stored_model(&model);
+    }
     // The terminal is held before the screen is drawn, so a terminal that
     // cannot be drawn on at all is still given back.
     let held = Held::take(Screen::default())?;
@@ -62,13 +67,24 @@ pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     outcome
 }
 
+/// The model the session was launched with, which the status row names where
+/// the agent reports no model option. A session the daemon will not describe
+/// costs the status row its model and nothing else.
+async fn stored_model(client: &Client, id: &str) -> Option<String> {
+    client
+        .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))
+        .await
+        .ok()
+        .map(|session| session.model)
+}
+
 /// What is said as the console closes: that the session is still running,
 /// or that it has ended.
 fn farewell(app: &App, id: &str) -> String {
     match app.has_ended() {
         true => format!("the session has ended; revive it with: ariadne session resume {id}"),
         false => format!(
-            "left the console — the session is still running; attach again with: ariadne attach {id} --full-screen"
+            "left the console — the session is still running; attach again with: ariadne attach {id}"
         ),
     }
 }
@@ -221,6 +237,23 @@ impl Host for Posts<'_> {
         transcript::all_steps(self.client, self.id, turn_id)
             .await
             .map_err(|e| format!("the steps of the turn could not be read: {e}"))
+    }
+
+    async fn subagent_steps(
+        &mut self,
+        turn_id: &str,
+        subagent_id: &str,
+    ) -> Result<Vec<StepDto>, String> {
+        transcript::all_steps_of(self.client, self.id, turn_id, Some(subagent_id))
+            .await
+            .map_err(|e| format!("the steps of the subagent could not be read: {e}"))
+    }
+
+    async fn detail(&mut self, step_id: &str, raw: bool) -> Result<ToolCallDetailDto, String> {
+        self.client
+            .trajectory_item(self.id, step_id, &TrajectoryItemQuery { raw })
+            .await
+            .map_err(|e| format!("the detail of the step could not be read: {}", e.human()))
     }
 
     async fn questions(&mut self) -> Result<Vec<QuestionDto>, String> {
@@ -564,6 +597,90 @@ mod tests {
             console.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             ariadne_console::app::Action::Send(text) if text == "prompt 1"
         ));
+    }
+
+    /// The host reads a step's detail from the detail route, raw where the
+    /// console asks for it, and a subagent's steps from the steps route of
+    /// its turn, by its lane.
+    #[tokio::test]
+    async fn the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes() {
+        let asked: Arc<Mutex<Vec<String>>> = Arc::default();
+        let seen = asked.clone();
+        let router = Router::new()
+            .route(
+                "/v1/sessions/s1/trajectory/items/c1",
+                get(move |request: axum::extract::Request| async move {
+                    seen.lock()
+                        .unwrap()
+                        .push(request.uri().query().unwrap_or_default().to_string());
+                    axum::Json(json!({
+                        "id": "c1", "tool_call_id": "c1", "title": "Run", "kind": "execute",
+                        "status": "completed", "detail_rev": 2,
+                        "detail": {"type": "command", "command": "ls", "cwd": null,
+                                   "output": "a", "exit_code": 0, "truncated": false}
+                    }))
+                }),
+            )
+            .route(
+                "/v1/sessions/s1/trajectory/turns/t1/steps",
+                get(|request: axum::extract::Request| async move {
+                    let query = request.uri().query().unwrap_or_default().to_string();
+                    let steps = match query.contains("subagent=sub1") {
+                        true => vec![json!({
+                            "type": "note", "id": "n1", "turn_id": "t1", "lane": "sub1",
+                            "created_at": "2026-11-27T10:00:00Z", "origin": "x",
+                            "severity": "info", "text": "inside"
+                        })],
+                        false => vec![],
+                    };
+                    axum::Json(json!({"steps": steps, "earlier_steps": 0}))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let mut host = Posts {
+            client: &client,
+            id: "s1",
+        };
+
+        let detail = host.detail("c1", true).await.unwrap();
+        let steps = host.subagent_steps("t1", "sub1").await.unwrap();
+        server.abort();
+
+        assert_eq!(detail.detail_rev, 2);
+        assert_eq!(*asked.lock().unwrap(), vec!["raw=true".to_string()]);
+        assert_eq!(steps.len(), 1);
+    }
+
+    /// The stored model is the session row's, and a session the daemon does
+    /// not describe has none.
+    #[tokio::test]
+    async fn the_stored_model_is_read_from_the_session_row() {
+        let router = Router::new().route(
+            "/v1/sessions/s1",
+            get(|| async {
+                axum::Json(json!({
+                    "id": "s1", "goal_id": null, "task_id": null, "seat": "agent",
+                    "worktree": "/w", "model": "claude-acp:opus", "effort": null,
+                    "agent_session_id": null, "status": "running",
+                    "created_at": "2026-11-27T10:00:00Z", "updated_at": "2026-11-27T10:00:00Z",
+                    "usage": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+
+        let known = stored_model(&client, "s1").await;
+        let unknown = stored_model(&client, "s2").await;
+        server.abort();
+
+        assert_eq!(known.as_deref(), Some("claude-acp:opus"));
+        assert_eq!(unknown, None);
     }
 
     #[test]

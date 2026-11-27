@@ -23,7 +23,7 @@ tests:
   - crates/ariadne-cli/src/commands/doctor/checks.rs
   - crates/ariadne-cli/src/commands/doctor/agents.rs
   - crates/ariadne-cli/src/commands/events.rs
-  - crates/ariadne-cli/src/commands/console/tui.rs
+  - crates/ariadne-cli/src/commands/console/terminal.rs
   - crates/ariadne-cli/src/output/table.rs
   - crates/ariadne-cli/src/output/listing.rs
   - crates/ariadne-cli/src/commands/attention.rs
@@ -212,8 +212,8 @@ same binary also serves (013).
     quiet output prints its session ids. `session discover` does not exist.
 27. `ariadne attach`, `goal attach` and `task attach` open the console of the
     session an id names, revived first when it is gone. A finished
-    task whose worktree is gone revives its session. On a terminal it is an
-    inline pane (008). With stdin or stdout redirected it is the plain line
+    task whose worktree is gone revives its session. On a terminal it is the
+    full-screen console (008, rules 39 to 59), with no flag. With stdin or stdout redirected it is the plain line
     protocol over the trajectory stream (040, rule 45): one `kind · summary`
     line for each finished item, the numbered options of a permission that
     waits, and one prompt for each line read. A number answers that
@@ -656,8 +656,8 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
 - Completion offers the efforts an entry lists and no others
   (`complete.rs::an_entry_offers_the_efforts_it_lists_and_no_others`).
-- Only a terminal on both ends gets the inline console
-  (`console/tui.rs::only_a_terminal_on_both_ends_gets_the_inline_console`),
+- Only a terminal on both ends gets the full-screen console
+  (`console/terminal.rs::only_a_terminal_on_both_ends_gets_the_full_screen_console`),
   and the plain line protocol is behind it
   (`console.rs::a_piped_console_prints_a_line_for_each_finished_item_and_sends_a_line_as_a_prompt`,
   `::a_piped_console_numbers_a_permission_and_sends_the_option_chosen`).

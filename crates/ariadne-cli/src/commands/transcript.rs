@@ -196,6 +196,17 @@ pub(crate) async fn all_steps(
     session_id: &str,
     turn_id: &str,
 ) -> Result<Vec<StepDto>> {
+    all_steps_of(client, session_id, turn_id, None).await
+}
+
+/// Every step of a turn in the lane of `subagent`, or in the session's own
+/// lane where it names none, oldest first, a page at a time.
+pub(crate) async fn all_steps_of(
+    client: &Client,
+    session_id: &str,
+    turn_id: &str,
+    subagent: Option<&str>,
+) -> Result<Vec<StepDto>> {
     let mut steps = Vec::new();
     let mut before = None;
     loop {
@@ -206,7 +217,7 @@ pub(crate) async fn all_steps(
                 &TrajectoryStepsQuery {
                     before,
                     limit: Some(STEP_PAGE),
-                    subagent: None,
+                    subagent: subagent.map(str::to_string),
                 },
             )
             .await?;

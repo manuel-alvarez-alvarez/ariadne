@@ -149,18 +149,6 @@ fn seat_label(seat: Option<Seat>, step: Option<&str>) -> String {
 }
 
 impl Header {
-    /// Build the header from a session and its task or goal context.
-    pub fn for_session(
-        session: &SessionDto,
-        title: Option<String>,
-        repository: Option<String>,
-    ) -> Self {
-        let mut header = Self::of(Some(session));
-        header.task = title;
-        header.repository = repository;
-        header
-    }
-
     pub fn of(session: Option<&SessionDto>) -> Self {
         session.map_or_else(
             || Self {

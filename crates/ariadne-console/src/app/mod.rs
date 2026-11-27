@@ -2,10 +2,12 @@
 //! the whole screen, with the input box under it.
 //!
 //! The screen has two zones. The transcript zone is every turn of the
-//! trajectory: its prompt, one activity line and its answer, and the step
-//! rows of a turn that is open. The input zone is the box the next prompt is
-//! typed into, with a pending permission or an open question above it. One
-//! zone at a time has the keys, and Tab moves them (008, rules 39 to 50).
+//! trajectory: its prompt, one activity line, its notices and its answer,
+//! and the step rows of a turn that is open. A step opens in place to its
+//! detail, and a subagent to its own steps. The input zone is the box the
+//! next prompt is typed into, with the plan, a pending permission or an open
+//! question above it and the status row under it. One zone at a time has the
+//! keys, and Tab moves them (008, rules 39 to 56).
 //!
 //! The console draws from the client [`View`] of the trajectory and nothing
 //! else, so a frame never adds a line twice: a reconnect's snapshot replaces
@@ -39,17 +41,20 @@ use tokio::time::interval;
 
 use ariadne_api::sessions::{AnswerQuestionRequest, QuestionDto};
 use ariadne_api::trajectory::{
-    PermissionState, PermissionStepDto, QuestionState, QuestionStepDto, StepDto,
-    TrajectorySnapshotDto, TrajectoryUpdateDto, TurnDto, TurnState,
+    MAIN_LANE, PermissionState, PermissionStepDto, PlanDto, PlanVariant, QuestionState,
+    QuestionStepDto, StepDto, ToolCallDetailDto, TrajectorySnapshotDto, TrajectoryUpdateDto,
+    TurnDto, TurnState,
 };
 
 use crate::trajectory::{Printer, Touched, View, step_id, text};
 use crate::transcript::{self, FormField};
 
 mod commands;
+mod detail;
 mod draw;
 mod form;
 mod input;
+mod status;
 
 #[cfg(test)]
 mod tests;
@@ -106,6 +111,30 @@ pub trait Host {
     /// of the running turn alone.
     fn steps(&mut self, turn_id: &str)
     -> impl Future<Output = Result<Vec<StepDto>, String>> + Send;
+
+    /// Every step of the subagent `subagent_id` in the turn `turn_id`,
+    /// oldest first. A host that cannot read them says so, and the
+    /// subagent opens to the steps the view holds.
+    fn subagent_steps(
+        &mut self,
+        turn_id: &str,
+        subagent_id: &str,
+    ) -> impl Future<Output = Result<Vec<StepDto>, String>> + Send {
+        let _ = (turn_id, subagent_id);
+        std::future::ready(Err("this console reads no subagent steps".to_string()))
+    }
+
+    /// The typed detail of the tool call step `step_id`, with its raw input
+    /// and raw output where `raw` asks for them (040). A host that cannot
+    /// read it says so, and the step opens to its preview.
+    fn detail(
+        &mut self,
+        step_id: &str,
+        raw: bool,
+    ) -> impl Future<Output = Result<ToolCallDetailDto, String>> + Send {
+        let _ = (step_id, raw);
+        std::future::ready(Err("this console reads no step detail".to_string()))
+    }
 
     /// The open questions of the session, with the form each one asks.
     fn questions(&mut self) -> impl Future<Output = Result<Vec<QuestionDto>, String>> + Send;
@@ -169,6 +198,8 @@ struct Layout {
     total: usize,
     /// The item of each line of the whole transcript.
     items: Vec<Option<Item>>,
+    /// The rows of the plan above the input.
+    plan: Rect,
 }
 
 impl Layout {
@@ -185,6 +216,20 @@ type Drawn = (usize, String, Vec<Line<'static>>);
 /// The form of an open question, as the host listed it: the agent's message
 /// and the fields of its schema.
 type Form = (String, Vec<FormField>);
+
+/// The detail of a tool call step as the host read it, or why it could not.
+#[derive(Debug, Clone)]
+enum Detail {
+    Read(Box<ToolCallDetailDto>),
+    Failed(String),
+}
+
+/// A read of the detail of a step: its id, and whether it asks for the raw
+/// input and output.
+type DetailLoad = (String, bool);
+
+/// A subagent of a turn: the turn id and the subagent id.
+type Lane = (String, String);
 
 /// Everything the full-screen console shows, and everything a key changes.
 ///
@@ -207,6 +252,34 @@ pub struct App {
     loads: VecDeque<String>,
     /// The turns whose steps were asked for once already.
     asked_steps: HashSet<String>,
+    /// The steps of the subagents of turns, as the host read them.
+    lanes: HashMap<Lane, Vec<StepDto>>,
+    /// The subagents whose steps the host is asked for, in that order.
+    lane_loads: VecDeque<Lane>,
+    /// The subagents asked for once, at the step count they had then and
+    /// whether their turn still ran, so a turn that ends reads them again.
+    asked_lanes: HashSet<(Lane, u64, bool)>,
+    /// The detail of tool call steps, by step id.
+    details: HashMap<String, Detail>,
+    /// The details the host is asked for, in that order.
+    detail_loads: VecDeque<DetailLoad>,
+    /// The details asked for once, at the `detail_rev` of their step.
+    asked_details: HashSet<(String, u64, bool)>,
+    /// The tool call steps that show their raw input and output.
+    raw: HashSet<String>,
+    /// The open steps that show their detail whole, with no fold.
+    whole: HashSet<Item>,
+    /// The plan above the input shows its checklist.
+    plan_open: bool,
+    /// The first entry line of the checklist on the screen. The wheel over
+    /// the plan moves it, and the draw keeps it in range.
+    plan_scroll: Cell<usize>,
+    /// How many entry lines the open checklist showed at the last draw: the
+    /// most one notch of the wheel moves it, so no entry is skipped.
+    plan_shown: Cell<usize>,
+    /// The model the session was launched with, as the host read it: what
+    /// the status row names where the agent reports no model option.
+    model: Option<String>,
     /// The first line of the transcript on the screen. `None` follows the
     /// end of the transcript.
     scroll: Cell<Option<usize>>,
@@ -260,6 +333,18 @@ impl App {
             loaded: HashMap::new(),
             loads: VecDeque::new(),
             asked_steps: HashSet::new(),
+            lanes: HashMap::new(),
+            lane_loads: VecDeque::new(),
+            asked_lanes: HashSet::new(),
+            details: HashMap::new(),
+            detail_loads: VecDeque::new(),
+            asked_details: HashSet::new(),
+            raw: HashSet::new(),
+            whole: HashSet::new(),
+            plan_open: false,
+            plan_scroll: Cell::new(0),
+            plan_shown: Cell::new(WHEEL),
+            model: None,
             scroll: Cell::new(None),
             reveal: Cell::new(false),
             layout: RefCell::new(Layout::default()),
@@ -280,6 +365,13 @@ impl App {
             armed: false,
             tick: 0,
         }
+    }
+
+    /// The model the session was launched with, `<agent>:<model>`, which
+    /// the status row names where the agent reports no model option.
+    pub fn stored_model(&mut self, model: &str) {
+        let model = model.split_once(':').map_or(model, |(_, model)| model);
+        self.model = (!model.is_empty()).then(|| model.to_string());
     }
 
     /// The zone that has the keys.
@@ -379,6 +471,49 @@ impl App {
                 self.loads.push_back(id);
             }
         }
+        let open_steps: Vec<(String, String)> = self
+            .open
+            .iter()
+            .filter_map(|item| match item {
+                Item::Step { turn, step } => Some((turn.clone(), step.clone())),
+                Item::Turn(_) => None,
+            })
+            .collect();
+        for (turn, step) in open_steps {
+            match self.step(&turn, &step).cloned() {
+                Some(StepDto::ToolCall(call)) => {
+                    let raw = self.raw.contains(&call.id);
+                    let held = match self.details.get(&call.id) {
+                        Some(Detail::Read(detail)) => {
+                            detail.detail_rev >= call.detail_rev && (!raw || detail.raw.is_some())
+                        }
+                        Some(Detail::Failed(_)) | None => false,
+                    };
+                    if !held
+                        && self
+                            .asked_details
+                            .insert((call.id.clone(), call.detail_rev, raw))
+                    {
+                        self.detail_loads.push_back((call.id.clone(), raw));
+                    }
+                }
+                Some(StepDto::Subagent(subagent)) => {
+                    let running = self
+                        .view
+                        .as_ref()
+                        .and_then(|view| view.turn(&turn))
+                        .is_some_and(|turn| turn.state == TurnState::Running);
+                    let lane = (turn, subagent.subagent_id.clone());
+                    if self
+                        .asked_lanes
+                        .insert((lane.clone(), subagent.activity.steps, running))
+                    {
+                        self.lane_loads.push_back(lane);
+                    }
+                }
+                _ => {}
+            }
+        }
         if let Some(permission) = self.permission()
             && permission.id != self.picked.0
         {
@@ -402,6 +537,32 @@ impl App {
     /// The steps the host read for a closed turn.
     fn steps_read(&mut self, turn_id: String, steps: Vec<StepDto>) {
         self.loaded.insert(turn_id, steps);
+        self.settle();
+    }
+
+    /// The next subagent whose steps the host should read.
+    fn next_lane(&mut self) -> Option<Lane> {
+        self.lane_loads.pop_front()
+    }
+
+    /// The steps the host read for a subagent of a turn.
+    fn lane_read(&mut self, lane: Lane, steps: Vec<StepDto>) {
+        self.lanes.insert(lane, steps);
+        self.settle();
+    }
+
+    /// The next step whose detail the host should read.
+    fn next_detail(&mut self) -> Option<DetailLoad> {
+        self.detail_loads.pop_front()
+    }
+
+    /// The detail the host read for a step, or why it could not.
+    fn detail_read(&mut self, step_id: String, detail: Result<ToolCallDetailDto, String>) {
+        let detail = match detail {
+            Ok(detail) => Detail::Read(Box::new(detail)),
+            Err(reason) => Detail::Failed(reason),
+        };
+        self.details.insert(step_id, detail);
         self.settle();
     }
 
@@ -473,6 +634,86 @@ impl App {
         }
     }
 
+    /// The steps of a subagent of a turn: those the host read, with the
+    /// live steps of its lane that the view holds while the turn runs.
+    fn lane_steps<'a>(&'a self, turn: &'a TurnDto, subagent: &str) -> Vec<&'a StepDto> {
+        let mut steps: Vec<&StepDto> = self
+            .lanes
+            .get(&(turn.id.clone(), subagent.to_string()))
+            .map(|steps| steps.iter().collect())
+            .unwrap_or_default();
+        if turn.state == TurnState::Running {
+            for live in turn.steps.iter().filter(|step| lane_of(step) == subagent) {
+                match steps.iter().position(|held| step_id(held) == step_id(live)) {
+                    Some(at) => steps[at] = live,
+                    None => steps.push(live),
+                }
+            }
+        }
+        steps
+    }
+
+    /// The step rows an open turn shows, each at its depth: the steps of
+    /// the session's own lane, and under an open subagent its own steps. A
+    /// permission that was answered is a mark on the row of its call, and
+    /// has no row of its own where that call has one.
+    fn shown_steps<'a>(&'a self, turn: &'a TurnDto) -> Option<Vec<(usize, &'a StepDto)>> {
+        let steps = self.steps_of(turn)?;
+        let announced: HashSet<&str> = steps
+            .iter()
+            .filter_map(|step| match step {
+                StepDto::Subagent(subagent) => Some(subagent.subagent_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        // The notices the turn carries show above its steps (rule 55), so a
+        // step that is one of them has no second row.
+        let noticed: HashSet<&str> = turn.notices.iter().map(step_id).collect();
+        let top: Vec<&StepDto> = steps
+            .iter()
+            .filter(|step| lane_of(step) == MAIN_LANE || !announced.contains(lane_of(step)))
+            .filter(|step| !noticed.contains(step_id(step)))
+            .collect();
+        let mut shown = Vec::new();
+        self.push_steps(turn, top, 0, &mut shown);
+        Some(shown)
+    }
+
+    fn push_steps<'a>(
+        &'a self,
+        turn: &'a TurnDto,
+        steps: Vec<&'a StepDto>,
+        depth: usize,
+        shown: &mut Vec<(usize, &'a StepDto)>,
+    ) {
+        let calls: HashSet<&str> = steps
+            .iter()
+            .filter_map(|step| match step {
+                StepDto::ToolCall(call) => call.permission.as_deref(),
+                _ => None,
+            })
+            .collect();
+        for step in steps {
+            if let StepDto::Permission(permission) = step
+                && permission.state != PermissionState::Pending
+                && calls.contains(permission.id.as_str())
+            {
+                continue;
+            }
+            shown.push((depth, step));
+            if let StepDto::Subagent(subagent) = step
+                && self.open.contains(&Item::Step {
+                    turn: turn.id.clone(),
+                    step: subagent.id.clone(),
+                })
+                && depth < 8
+            {
+                let children = self.lane_steps(turn, &subagent.subagent_id);
+                self.push_steps(turn, children, depth + 1, shown);
+            }
+        }
+    }
+
     /// Every item the cursor can be on, in screen order: each turn, and the
     /// steps of each open turn under it.
     fn items(&self) -> Vec<Item> {
@@ -481,8 +722,16 @@ impl App {
             let item = Item::Turn(turn.id.clone());
             let open = self.open.contains(&item);
             items.push(item);
+            // A turn's notices are rows of their own, open or folded, oldest
+            // first, as the transcript draws them.
+            for notice in turn.notices.iter().rev() {
+                items.push(Item::Step {
+                    turn: turn.id.clone(),
+                    step: step_id(notice).to_string(),
+                });
+            }
             if open {
-                for step in self.steps_of(turn).unwrap_or_default() {
+                for (_, step) in self.shown_steps(turn).unwrap_or_default() {
                     items.push(Item::Step {
                         turn: turn.id.clone(),
                         step: step_id(step).to_string(),
@@ -493,11 +742,54 @@ impl App {
         items
     }
 
+    /// A step of a turn, of its own lane or of one of its subagents.
     fn step(&self, turn: &str, step: &str) -> Option<&StepDto> {
         let turn = self.view.as_ref()?.turn(turn)?;
-        self.steps_of(turn)?
+        let own = self.steps_of(turn).unwrap_or_default().iter();
+        let lanes = self
+            .lanes
             .iter()
+            .filter(|((held, _), _)| *held == turn.id)
+            .flat_map(|(_, steps)| steps.iter());
+        turn.notices
+            .iter()
+            .chain(own)
+            .chain(turn.steps.iter())
+            .chain(lanes)
             .find(|held| step_id(held) == step)
+    }
+
+    /// The permission that asked about a call, where the turn holds it.
+    fn permission_of<'a>(&'a self, turn: &'a TurnDto, id: &str) -> Option<&'a PermissionStepDto> {
+        let lanes = self
+            .lanes
+            .iter()
+            .filter(|((held, _), _)| *held == turn.id)
+            .flat_map(|(_, steps)| steps.iter());
+        self.steps_of(turn)
+            .unwrap_or_default()
+            .iter()
+            .chain(turn.steps.iter())
+            .chain(turn.attention.iter())
+            .chain(lanes)
+            .find_map(|step| match step {
+                StepDto::Permission(permission) if permission.id == id => Some(permission),
+                _ => None,
+            })
+    }
+
+    /// The plan above the input: the newest plan with an entry still open.
+    fn plan(&self) -> Option<&PlanDto> {
+        self.view
+            .as_ref()?
+            .plans()
+            .iter()
+            .filter(|plan| {
+                !plan.removed
+                    && plan.variant == PlanVariant::Entries
+                    && plan.entries.iter().any(|entry| entry.status != "completed")
+            })
+            .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
     }
 
     /// The pending permission, while the session can still be answered.
@@ -579,6 +871,10 @@ impl App {
         self.armed = false;
         if ctrl && key.code == KeyCode::Char('d') {
             return Action::Quit;
+        }
+        if ctrl && key.code == KeyCode::Char('t') {
+            self.plan_open = !self.plan_open && self.plan().is_some();
+            return Action::None;
         }
         if ctrl && key.code == KeyCode::Char('o') {
             if let Some(newest) = self.turns().last() {
@@ -705,12 +1001,29 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') if plain => self.walk(true),
             KeyCode::Enter | KeyCode::Right => {
                 if let Some(cursor) = self.cursor.clone() {
+                    // An open step shows its detail whole at the second
+                    // press.
+                    if matches!(cursor, Item::Step { .. }) && self.open.contains(&cursor) {
+                        self.whole.insert(cursor.clone());
+                    }
                     self.open_item(cursor);
+                }
+            }
+            KeyCode::Char('r') if plain => {
+                if let Some(Item::Step { turn, step }) = self.cursor.clone()
+                    && let Some(StepDto::ToolCall(call)) = self.step(&turn, &step)
+                {
+                    let id = call.id.clone();
+                    if !self.raw.remove(&id) {
+                        self.raw.insert(id);
+                    }
+                    self.open_item(Item::Step { turn, step });
                 }
             }
             KeyCode::Left => match self.cursor.clone() {
                 Some(cursor) if self.open.contains(&cursor) => {
                     self.open.remove(&cursor);
+                    self.whole.remove(&cursor);
                 }
                 Some(Item::Step { turn, .. }) => {
                     self.cursor = Some(Item::Turn(turn));
@@ -766,7 +1079,9 @@ impl App {
     }
 
     fn toggle(&mut self, item: Item) {
-        if !self.open.remove(&item) {
+        if self.open.remove(&item) {
+            self.whole.remove(&item);
+        } else {
             self.open_item(item);
         }
     }
@@ -807,11 +1122,32 @@ impl App {
         self.scroll.set((top < layout.bottom()).then_some(top));
     }
 
+    /// Whether `row` is on the open checklist of the plan.
+    fn over_plan(&self, row: u16) -> bool {
+        let plan = self.layout.borrow().plan;
+        self.plan_open && row >= plan.y && row < plan.y + plan.height
+    }
+
     fn mouse(&mut self, mouse: MouseEvent) -> Action {
         match mouse.kind {
+            // The wheel over an open checklist scrolls the plan, and
+            // anywhere else the transcript.
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if self.over_plan(mouse.row) => {
+                let at = self.plan_scroll.get();
+                let notch = WHEEL.min(self.plan_shown.get()).max(1);
+                self.plan_scroll.set(match mouse.kind {
+                    MouseEventKind::ScrollUp => at.saturating_sub(notch),
+                    _ => at + notch,
+                });
+            }
             MouseEventKind::ScrollUp => self.scroll_by(WHEEL, false),
             MouseEventKind::ScrollDown => self.scroll_by(WHEEL, true),
             MouseEventKind::Down(MouseButton::Left) => {
+                let plan = self.layout.borrow().plan;
+                if mouse.row >= plan.y && mouse.row < plan.y + plan.height {
+                    self.plan_open = !self.plan_open;
+                    return Action::None;
+                }
                 let item = {
                     let layout = self.layout.borrow();
                     let area = layout.area;
@@ -876,6 +1212,21 @@ fn prompt_text(turn: &TurnDto) -> Option<String> {
     Some(prompt.text.clone().unwrap_or_else(|| text(&prompt.content)))
 }
 
+/// The lane a step is in: the session's own, or a subagent's id.
+fn lane_of(step: &StepDto) -> &str {
+    match step {
+        StepDto::Message(step) => &step.lane,
+        StepDto::Thought(step) => &step.lane,
+        StepDto::ToolCall(step) => &step.lane,
+        StepDto::Permission(step) => &step.lane,
+        StepDto::Question(step) => &step.lane,
+        StepDto::Note(step) => &step.lane,
+        StepDto::Error(step) => &step.lane,
+        StepDto::Subagent(step) => &step.lane,
+        StepDto::Compaction(step) => &step.lane,
+    }
+}
+
 /// Whether a step is still under way.
 fn is_live(step: &StepDto) -> bool {
     !crate::trajectory::settled(step)
@@ -933,6 +1284,16 @@ where
                 Ok(steps) => app.steps_read(turn, steps),
                 Err(reason) => app.failed(&reason),
             }
+        }
+        while let Some(lane) = app.next_lane() {
+            // A host that cannot read them leaves the subagent with the
+            // live steps the view holds.
+            let steps = host.subagent_steps(&lane.0, &lane.1).await;
+            app.lane_read(lane, steps.unwrap_or_default());
+        }
+        while let Some((step, raw)) = app.next_detail() {
+            let detail = host.detail(&step, raw).await;
+            app.detail_read(step, detail);
         }
         if app.wants_questions() {
             match host.questions().await {
