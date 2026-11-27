@@ -106,8 +106,11 @@ Out:
     errors and a running turn's window they fit the payload budget of one
     read, so a cold read and a warm hub hold the same steps. When an answer
     or a new step changes which steps the limits hold, the hub loads the
-    payloads of the steps its `attention` lacks, at most 500 at a time and
-    each once, and fills them in with an `item_upsert` and a `turn_upsert`. `attention_more` counts each attention step of the turn that
+    payloads of the steps its `attention` lacks, at most 500 at a time, and
+    fills them in. The event and its fill are one revision: a subscriber
+    sees, and joins on, the whole window and never the turn between them. A
+    row counts as filled only once its load succeeded; a load that fails
+    ends the hub with `resync`, and the next open reads the window whole. `attention_more` counts each attention step of the turn that
     `attention` does not hold: the waiting steps past the read limit and the
     errors past 20. No read leaves an attention step out without this count,
     and the steps route of the turn returns each step `attention` does not
@@ -395,6 +398,11 @@ Out:
 47. Each shown turn holds its whole attention, errors included, within the
     cap (rule 38):
     `read.rs::each_shown_turn_holds_its_whole_attention_within_the_cap`.
+48. An answer and the refill it calls for are one revision, over HTTP
+    (rule 16):
+    `tests/it/trajectory.rs::an_answer_and_the_refill_it_calls_for_are_one_revision`.
+49. A failed refill leaves its rows to load again (rule 16):
+    `http/trajectory.rs::a_failed_refill_leaves_its_rows_to_load_again`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

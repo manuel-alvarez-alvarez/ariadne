@@ -376,3 +376,78 @@ async fn a_streamed_run_keeps_its_id_across_opens_and_ends_on_its_stored_id() {
     );
     assert_eq!(page["steps"][0]["content"], closed["content"]);
 }
+
+/// A cold open of 101 waiting questions holds the newest 100. An answer to
+/// one of them is one revision that also brings the 101st in: no client
+/// sees, or joins on, a turn of 99 (040, rule 16).
+#[tokio::test]
+async fn an_answer_and_the_refill_it_calls_for_are_one_revision() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let session = h.agent_session(&cast, "develop").await;
+    let store_event = |kind: &str, payload: Value| ariadne_store::NewAgentEvent {
+        session_id: Some(session.id.clone()),
+        task_id: Some(cast.task.id.clone()),
+        kind: kind.into(),
+        payload,
+    };
+    h.store
+        .create_event(store_event("user_prompt_submit", json!({"text": "Ask"})))
+        .await
+        .unwrap();
+    for n in 0..=100 {
+        h.store
+            .create_event(store_event(
+                "question",
+                json!({"question": {"id": format!("q-{n}"), "message": "Which?", "schema": {}}}),
+            ))
+            .await
+            .unwrap();
+    }
+    let mut body = h
+        .stream(get(&format!(
+            "/v1/sessions/{}/trajectory/stream",
+            session.id
+        )))
+        .await;
+    let snapshot = expect_sse(&mut body, "snapshot").await;
+    let turn = &snapshot["turns"][0];
+    assert_eq!(turn["attention"].as_array().unwrap().len(), 100);
+    assert_eq!(turn["attention_more"], 1);
+
+    h.store
+        .create_event(store_event(
+            "question.resolved",
+            json!({"question_id": "q-100", "action": "decline", "closed_by": "user"}),
+        ))
+        .await
+        .unwrap();
+    let update = expect_sse(&mut body, "update").await;
+
+    assert_eq!(update["rev"], snapshot["rev"].as_u64().unwrap() + 1);
+    let upserts: Vec<&Value> = update["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|op| op["op"] == "turn_upsert")
+        .collect();
+    let last = upserts.last().expect("the revision updates the turn");
+    assert_eq!(last["turn"]["attention"].as_array().unwrap().len(), 100);
+    assert_eq!(last["turn"]["attention_more"], 0);
+    assert!(
+        update["ops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|op| op["op"] == "item_upsert" && op["step"]["request_id"] == "q-0"),
+        "the oldest question comes in within the same revision: {update}"
+    );
+    let joined: Value = h
+        .get(&format!("/v1/sessions/{}/trajectory", session.id))
+        .await;
+    assert_eq!(joined["rev"], update["rev"]);
+    assert_eq!(
+        joined["turns"][0]["attention"].as_array().unwrap().len(),
+        100
+    );
+}

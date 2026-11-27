@@ -20,8 +20,8 @@ use tokio::sync::{Notify, broadcast, mpsc};
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::stream::{DomainEvent, ResyncDto};
 use ariadne_api::trajectory::{
-    MAIN_LANE, TrajectoryQuery, TrajectorySnapshotDto, TrajectoryStepsDto, TrajectoryStepsQuery,
-    TrajectoryStreamQuery, TrajectoryUpdateDto,
+    MAIN_LANE, TrajectoryOpDto, TrajectoryQuery, TrajectorySnapshotDto, TrajectoryStepsDto,
+    TrajectoryStepsQuery, TrajectoryStreamQuery, TrajectoryUpdateDto,
 };
 use ariadne_store::StoreError;
 
@@ -64,7 +64,10 @@ pub struct Trajectories {
 }
 
 struct Hub {
-    state: Mutex<HubState>,
+    /// An async lock: one event, its apply and the refill it calls for, is
+    /// one revision under it, and a subscriber that joins meanwhile waits for
+    /// the whole revision (040, rule 16).
+    state: tokio::sync::Mutex<HubState>,
     frames: broadcast::Sender<Frame>,
     /// A subscriber left: the hub ends once nobody follows it.
     left: Notify,
@@ -135,12 +138,14 @@ impl Trajectories {
     ) -> ApiResult<Subscription> {
         let slot = self.slot(session_id);
         let mut hub = slot.lock().await;
-        if let Some(sub) = hub.upgrade().and_then(|kept| kept.join(limit)) {
+        if let Some(kept) = hub.upgrade()
+            && let Some(sub) = kept.join(limit).await
+        {
             return Ok(sub);
         }
         let opened = Hub::open(state, session_id).await?;
         *hub = Arc::downgrade(&opened);
-        opened.join(limit).ok_or_else(|| {
+        opened.join(limit).await.ok_or_else(|| {
             ApiError::new(
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 "trajectory_busy",
@@ -201,7 +206,7 @@ impl Hub {
             read.fold_into(&mut fold, so_far);
             let (frames, _) = broadcast::channel(CAPACITY);
             let hub = Arc::new(Self {
-                state: Mutex::new(HubState {
+                state: tokio::sync::Mutex::new(HubState {
                     fold,
                     rev: 0,
                     ended: false,
@@ -218,8 +223,8 @@ impl Hub {
 
     /// A subscriber: the snapshot at the current revision, and a receiver
     /// of every revision after it. None for a hub that has ended.
-    fn join(self: &Arc<Self>, limit: usize) -> Option<Subscription> {
-        let state = self.state.lock().expect("trajectory hub");
+    async fn join(self: &Arc<Self>, limit: usize) -> Option<Subscription> {
+        let state = self.state.lock().await;
         if state.ended {
             return None;
         }
@@ -230,17 +235,9 @@ impl Hub {
         })
     }
 
-    /// Apply a change to the fold, and send its ops as the next revision.
-    fn apply(
-        &self,
-        change: impl FnOnce(&mut Fold) -> Vec<ariadne_api::trajectory::TrajectoryOpDto>,
-    ) {
-        let mut state = self.state.lock().expect("trajectory hub");
-        if state.ended {
-            return;
-        }
-        let ops = change(&mut state.fold);
-        if ops.is_empty() {
+    /// Send `ops` as the next revision, under the lock the caller holds.
+    fn publish(&self, state: &mut HubState, ops: Vec<TrajectoryOpDto>) {
+        if state.ended || ops.is_empty() {
             return;
         }
         state.fold.prune(KEPT_TURNS);
@@ -252,38 +249,42 @@ impl Hub {
         let _ = self.frames.send(Frame::Update(Arc::new(update)));
     }
 
-    /// Load the attention rows the fold counts and does not hold, and fill
-    /// them in: an answer that takes a step out of a full `attention` brings
-    /// the next one in, as a cold read would hold it (040, rule 16).
-    async fn refill(&self, state: &AppState) {
-        let missing: Vec<String> = {
-            let mut hub = self.state.lock().expect("trajectory hub");
-            let missing: Vec<String> = hub
-                .fold
-                .missing_attention()
-                .into_iter()
-                .filter(|row| !hub.filled.contains(row))
-                .take(READ_EVENTS)
-                .collect();
-            hub.filled.extend(missing.iter().cloned());
-            missing
-        };
-        if missing.is_empty() {
+    /// Apply a change to the fold, and send its ops as the next revision.
+    async fn apply(&self, change: impl FnOnce(&mut Fold) -> Vec<TrajectoryOpDto>) {
+        let mut state = self.state.lock().await;
+        if state.ended {
             return;
         }
-        let Ok(events) = state.store.events_by_ids(&missing).await else {
-            return;
-        };
-        self.apply(|fold| {
-            events
-                .into_iter()
-                .flat_map(|event| fold.fill(&super::convert::event_dto(event)))
-                .collect()
-        });
+        let ops = change(&mut state.fold);
+        self.publish(&mut state, ops);
     }
 
-    fn end(&self, frame: Option<Frame>) {
-        let mut state = self.state.lock().expect("trajectory hub");
+    /// Fold one event, fill the attention window it opened, and send both
+    /// as one revision. A load that fails ends the hub with a resync: the
+    /// window cannot be given whole from here.
+    async fn event(&self, store: &ariadne_store::Store, event: &AgentEventDto, stored: bool) {
+        let mut state = self.state.lock().await;
+        if state.ended {
+            return;
+        }
+        let mut ops = state.fold.apply(event, stored);
+        match refill(&mut state, |rows| async move {
+            store.events_by_ids(&rows).await
+        })
+        .await
+        {
+            Ok(filled) => ops.extend(filled),
+            Err(missed) => {
+                state.ended = true;
+                let _ = self.frames.send(Frame::Resync(missed));
+                return;
+            }
+        }
+        self.publish(&mut state, ops);
+    }
+
+    async fn end(&self, frame: Option<Frame>) {
+        let mut state = self.state.lock().await;
         state.ended = true;
         if let Some(frame) = frame {
             let _ = self.frames.send(frame);
@@ -292,8 +293,8 @@ impl Hub {
 
     /// End the hub if nobody follows it. A subscriber joins under the same
     /// lock, so it either joined before this or finds the hub ended.
-    fn end_if_unwatched(&self) -> bool {
-        let mut state = self.state.lock().expect("trajectory hub");
+    async fn end_if_unwatched(&self) -> bool {
+        let mut state = self.state.lock().await;
         if self.frames.receiver_count() == 0 {
             state.ended = true;
         }
@@ -329,15 +330,14 @@ impl Hub {
                 tokio::select! {
                     next = inputs.recv() => match next {
                         Some(Input::Event(event, stored)) => {
-                            self.apply(|fold| fold.apply(&event, stored));
-                            self.refill(&state).await;
+                            self.event(&state.store, &event, stored).await;
                         }
                         Some(Input::Resync(missed)) => {
-                            self.end(Some(Frame::Resync(missed)));
+                            self.end(Some(Frame::Resync(missed))).await;
                             break;
                         }
                         None => {
-                            self.end(None);
+                            self.end(None).await;
                             break;
                         }
                     },
@@ -346,23 +346,25 @@ impl Hub {
                             if let DomainEvent::SessionUpdated(session) = &event.event
                                 && session.id == session_id
                             {
-                                self.apply(|fold| fold.patch_session(session).into_iter().collect());
+                                self.apply(|fold| fold.patch_session(session).into_iter().collect())
+                                    .await;
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             if let Ok(row) = state.store.get_session(&session_id).await
                                 && let Ok(session) = session_dto_of(&state.store, row).await
                             {
-                                self.apply(|fold| fold.patch_session(&session).into_iter().collect());
+                                self.apply(|fold| fold.patch_session(&session).into_iter().collect())
+                                    .await;
                             }
                         }
                         Err(broadcast::error::RecvError::Closed) => {
-                            self.end(None);
+                            self.end(None).await;
                             break;
                         }
                     },
                     _ = self.left.notified() => {
-                        if self.end_if_unwatched() {
+                        if self.end_if_unwatched().await {
                             break;
                         }
                     }
@@ -371,6 +373,35 @@ impl Hub {
             pump.abort();
         });
     }
+}
+
+/// The ops that fill a hub's attention window: the rows the fold counts
+/// and does not hold, loaded by `load` and filled in. A row counts as filled
+/// once its load succeeded, so a failed load leaves every row to load again;
+/// the failure is the count of rows that could not be given.
+async fn refill<L, Fut>(state: &mut HubState, load: L) -> Result<Vec<TrajectoryOpDto>, u64>
+where
+    L: FnOnce(Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<ariadne_store::AgentEvent>, StoreError>>,
+{
+    let missing: Vec<String> = state
+        .fold
+        .missing_attention()
+        .into_iter()
+        .filter(|row| !state.filled.contains(row))
+        .take(READ_EVENTS)
+        .collect();
+    if missing.is_empty() {
+        return Ok(Vec::new());
+    }
+    let events = load(missing.clone())
+        .await
+        .map_err(|_| missing.len() as u64)?;
+    state.filled.extend(missing);
+    Ok(events
+        .into_iter()
+        .flat_map(|event| state.fold.fill(&super::convert::event_dto(event)))
+        .collect())
 }
 
 fn turn_not_found(turn_id: &str) -> ApiError {
@@ -530,7 +561,66 @@ mod tests {
     use ariadne_api::trajectory::TrajectoryUpdateDto;
     use tokio::sync::broadcast;
 
-    use super::{Frame, Trajectories, next_frame};
+    use super::{Frame, HubState, Trajectories, next_frame, refill};
+    use crate::trajectory::Fold;
+
+    /// A hub's fold that counts one waiting question it does not hold: what
+    /// a cold read past the waiting limit leaves to fill.
+    fn hub_lacking_one_question() -> HubState {
+        let state = ariadne_api::trajectory::SessionStateDto {
+            status: ariadne_core::SessionStatus::Running,
+            attention_reason: None,
+            running_turn_id: None,
+            title: None,
+            mode: None,
+            config_options: Vec::new(),
+            context: None,
+            usage: Default::default(),
+            cost: None,
+            commands: Vec::new(),
+        };
+        let mut fold = Fold::new("session", state);
+        let head = |id: &str, kind: &str, facts: &str| ariadne_store::EventHead {
+            id: id.into(),
+            kind: kind.into(),
+            lane: None,
+            facts: facts.into(),
+            created_at: "2026-11-28T00:00:00Z".into(),
+        };
+        fold.apply_head(&head("0001", "user_prompt_submit", "{}"));
+        fold.apply_head(&head("0002", "question", r#"{"question":"q-1"}"#));
+        HubState {
+            fold,
+            rev: 0,
+            ended: false,
+            filled: Default::default(),
+        }
+    }
+
+    /// A refill whose load fails gives its rows back to load again, and
+    /// says how many it could not give; a later load that succeeds fills
+    /// them (040, rule 16).
+    #[tokio::test]
+    async fn a_failed_refill_leaves_its_rows_to_load_again() {
+        let mut state = hub_lacking_one_question();
+
+        let failed = refill(&mut state, |_| async {
+            Err(ariadne_store::StoreError::Invalid(
+                "the store is gone".into(),
+            ))
+        })
+        .await;
+
+        assert_eq!(failed, Err(1));
+        assert!(state.filled.is_empty(), "nothing counts as filled");
+        let mut asked = Vec::new();
+        let _ = refill(&mut state, |rows| {
+            asked = rows;
+            async { Ok(Vec::new()) }
+        })
+        .await;
+        assert_eq!(asked, ["0002"], "the next refill asks for the row again");
+    }
 
     /// Two subscribers that come at once to a session with no hub get one
     /// slot, so the first to lock it opens the hub and the second joins it.
