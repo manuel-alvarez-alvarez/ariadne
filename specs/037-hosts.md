@@ -1023,7 +1023,8 @@ picker, the Hosts screen and one stream per host — is spec
   (`host_reconnect.rs::local_is_400_and_an_unknown_name_is_404_in_the_error_envelope`,
   `::a_direct_host_takes_one_check_and_its_status_follows_the_answer`).
 - Rules 36 and 41
-  (`host_reconnect.rs::a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after`).
+  (`host_reconnect.rs::a_down_forward_starts_again_at_once_and_waits_the_first_backoff_after`,
+  `hosts.rs::tests::a_reset_backoff_waits_the_first_value_again_and_the_cap_holds`).
 - Rules 11 and 37
   (`host_reconnect.rs::a_connecting_forward_loses_its_try_and_starts_a_new_one_at_once`,
   `::each_reconnect_reaps_the_previous_forward_before_answering`,
