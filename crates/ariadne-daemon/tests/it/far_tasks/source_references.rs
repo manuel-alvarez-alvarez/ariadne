@@ -546,9 +546,38 @@ async fn dependency_failure_and_retry_preserve_one_authoritative_worker_draft() 
     );
 }
 
+/// Feed the terminal bytes of `socket` to `emulator` until its screen
+/// satisfies `done`, or fail with what it shows.
+async fn draw_until(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    emulator: &mut vt100::Parser,
+    what: &str,
+    done: impl Fn(&vt100::Screen) -> bool,
+) {
+    use futures_util::StreamExt;
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while !done(emulator.screen()) {
+        let frame = tokio::time::timeout_at(deadline, socket.next())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "timed out waiting for {what}:\n{}",
+                    emulator.screen().contents()
+                )
+            })
+            .expect("the socket stays open")
+            .expect("the socket does not fail");
+        if let tokio_tungstenite::tungstenite::Message::Binary(bytes) = frame {
+            emulator.process(&bytes);
+        }
+    }
+}
+
 #[tokio::test]
 async fn source_console_stream_and_terminal_connections_reach_the_worker_session() {
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::SinkExt;
     let (p, goal) = setup().await;
     let source = draft(&p, &goal, "Console", &[]).await;
     let worker_task = p.far.store.get_task(&source.id).await.unwrap();
@@ -593,20 +622,52 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
     ))
     .await
     .unwrap();
+    let send =
+        |message: Value| tokio_tungstenite::tungstenite::Message::Text(message.to_string().into());
     socket
-        .send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({"type":"resize","cols":80,"rows":24})
-                .to_string()
-                .into(),
-        ))
+        .send(send(json!({"type":"resize","cols":80,"rows":24})))
         .await
         .unwrap();
-    let response = tokio::time::timeout(TIMEOUT, socket.next())
+    // The worker's full-screen console draws on the emulator at the source:
+    // the alternate screen, with the worker's transcript on it.
+    let size = |n: u16| std::num::NonZeroU16::new(n).unwrap();
+    let mut emulator = vt100::Parser::new(size(24), size(80), 0);
+    draw_until(
+        &mut socket,
+        &mut emulator,
+        "the worker transcript",
+        |screen| screen.contents().contains("worker transcript"),
+    )
+    .await;
+    assert!(emulator.screen().alternate_screen());
+    // A mouse message crosses the forwarder as the worker reads it: the
+    // click opens the first turn, which puts the keys in the transcript, and
+    // a resize after it draws the screen again.
+    for kind in ["wheel_up", "wheel_down", "click"] {
+        socket
+            .send(send(json!({"type":"mouse","kind":kind,"col":2,"row":1})))
+            .await
+            .unwrap();
+    }
+    socket
+        .send(send(json!({"type":"resize","cols":60,"rows":20})))
         .await
-        .unwrap()
-        .unwrap()
         .unwrap();
-    assert!(response.is_text() || response.is_binary());
+    emulator.screen_mut().set_size(size(20), size(60));
+    draw_until(
+        &mut socket,
+        &mut emulator,
+        "the clicked turn open, redrawn at 60 columns",
+        |screen| {
+            let contents = screen.contents();
+            contents.contains("✓ message")
+                && contents
+                    .lines()
+                    .nth(19)
+                    .is_some_and(|row| row.contains("↑↓ move"))
+        },
+    )
+    .await;
     socket.close(None).await.unwrap();
 }
 

@@ -2594,15 +2594,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * A session's console as a terminal.
+         * A session's full-screen console as a terminal.
          * @description Upgrades to a WebSocket. The client sends JSON text frames — a `resize`
          *     with the terminal's columns and rows first and on every change, a `key`
-         *     per key press and a `paste` per pasted text (`TerminalClientMessage`) —
-         *     and reads binary frames of terminal bytes that draw the console, plus a
-         *     text frame carrying the session's status as the socket opens and as it
-         *     ends (`TerminalServerMessage`). Closing the socket ends the console and
-         *     leaves the session running; the session ending, Ctrl-C twice or Ctrl-D
-         *     close the socket.
+         *     per key press, a `paste` per pasted text and a `mouse` per wheel step or
+         *     click (`TerminalClientMessage`) — and reads binary frames of terminal
+         *     bytes that draw the console, plus a text frame carrying the session's
+         *     status as the socket opens and as it ends (`TerminalServerMessage`).
+         *     Closing the socket ends the console and leaves the session running; the
+         *     session ending, Ctrl-C twice or Ctrl-D close the socket.
          */
         get: operations["sessions_console_terminal"];
         put?: never;
@@ -5844,6 +5844,73 @@ export interface components {
         TaskWorkflowContext: {
             name: string;
             steps: components["schemas"]["WorkflowStepDto"][];
+        };
+        /**
+         * @description What a client sends over `GET /v1/sessions/{id}/console/terminal`, the
+         *     session's console as a terminal: one of these per JSON text frame.
+         *
+         *     The daemon draws the console into the terminal the client emulates, so
+         *     the first message is the terminal's size, and every change of it is
+         *     another. A key, a paste and a mouse event are what the terminal read, as
+         *     the console takes them; the daemon reads nothing else. The console asks
+         *     the terminal for the mouse as it opens, so a terminal that reports it
+         *     sends `mouse` messages.
+         */
+        TerminalClientMessage: {
+            /** Format: int32 */
+            cols: number;
+            /** Format: int32 */
+            rows: number;
+            /** @enum {string} */
+            type: "resize";
+        } | {
+            code: components["schemas"]["TerminalKey"];
+            modifiers?: components["schemas"]["TerminalModifier"][];
+            /** @enum {string} */
+            type: "key";
+        } | {
+            text: string;
+            /** @enum {string} */
+            type: "paste";
+        } | {
+            /** Format: int32 */
+            col: number;
+            kind: components["schemas"]["TerminalMouse"];
+            /** Format: int32 */
+            row: number;
+            /** @enum {string} */
+            type: "mouse";
+        };
+        /**
+         * @description The key a [`TerminalClientMessage::Key`] names: crossterm's `KeyCode`,
+         *     as far as the console reads it. A printable character is
+         *     `{"char": "a"}`, a function key `{"f": 5}`, and every other key its name.
+         */
+        TerminalKey: {
+            char: string;
+        } | {
+            /** Format: int32 */
+            f: number;
+        } | "enter" | "backspace" | "tab" | "back_tab" | "esc" | "left" | "right" | "up" | "down" | "home" | "end" | "page_up" | "page_down" | "delete" | "insert";
+        /**
+         * @description A modifier held with a key: crossterm's `KeyModifiers`, one flag each.
+         * @enum {string}
+         */
+        TerminalModifier: "shift" | "control" | "alt" | "super" | "hyper" | "meta";
+        /**
+         * @description What a [`TerminalClientMessage::Mouse`] did: one step of the wheel up or
+         *     down, or a press of the left button.
+         * @enum {string}
+         */
+        TerminalMouse: "wheel_up" | "wheel_down" | "click";
+        /**
+         * @description What the daemon sends over `GET /v1/sessions/{id}/console/terminal` as a
+         *     JSON text frame, beside the binary frames of terminal bytes.
+         */
+        TerminalServerMessage: {
+            status: components["schemas"]["SessionStatus"];
+            /** @enum {string} */
+            type: "status";
         };
         /**
          * @description One permission request to score with the AI permission model, without
@@ -9393,7 +9460,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description WebSocket. Client to server: JSON text frames, one `TerminalClientMessage` each — `resize` first, then `key` and `paste`. Server to client: binary frames of the terminal bytes that draw the console, and JSON text frames of `TerminalServerMessage`. */
+            /** @description WebSocket. Client to server: JSON text frames, one `TerminalClientMessage` each — `resize` first, then `key`, `paste` and `mouse`. Server to client: binary frames of the terminal bytes that draw the full-screen console, and JSON text frames of `TerminalServerMessage`. */
             101: {
                 headers: {
                     [name: string]: unknown;
