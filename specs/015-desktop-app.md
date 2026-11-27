@@ -1928,8 +1928,11 @@ view.
      (`ui/src/features/sessions/trajectory/step-detail.test.tsx::copies the content of a section`).
 103. `Raw` is a toggle with `aria-pressed`. It reads the detail again with
      `raw=true` and shows the raw input and the raw output as JSON. The
-     detail reads without `raw` until then, and no raw data shows without it
-     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::shows the raw input and the raw output only behind Raw`).
+     detail reads without `raw` until then, and no raw data shows without it.
+     Each step the full view shows starts afresh, with `Raw` off, so the raw
+     data of one step never shows under another
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::shows the raw input and the raw output only behind Raw`,
+     `::starts each step the full view shows afresh, with Raw off`).
 104. An image block shows inline, in the answer of a turn and in a detail.
      An audio block, a resource and a resource link show as a labelled row
      with a link. A block with bytes links to its `blob` path on the host's
@@ -1937,18 +1940,27 @@ view.
      (`ui/src/features/sessions/trajectory/step-detail.test.tsx::shows an image inline in a message and in a detail, and audio and resources as labelled rows with a link`).
 105. The detail of a tool call is read again at each new `detail_rev` of
      its step, so an open step of a running call shows new progress, in
-     place and in the full view
+     place and in the full view. The store keeps the live version of each
+     step of a subagent's lane (`children`), which a snapshot drops, and an
+     open subagent shows it over the page it read. So a running call of a
+     subagent shows new progress while the subagent's step count holds
      (`ui/src/features/sessions/trajectory/step-detail.test.tsx::reads the detail of an open running call again at each new detail_rev`,
-     `::shows the newest progress of a running call in the full view`).
+     `::shows the newest progress of a running call in the full view`,
+     `::shows the new progress of a subagent's running call while its step count holds`,
+     `ui/src/features/sessions/trajectory/store.test.ts::keeps the live version of each step of a subagent's lane, and a snapshot drops them`).
 106. A subagent step row shows its title, its task, its state, its time and
      the count of its steps. It opens to the subagent's own steps, read from
      `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps?subagent=<id>`,
-     and each of those opens in place too. Where `can_cancel` is true, the
+     and each of those opens in place too. The newest page is read again at
+     each new step of the subagent, and a row once read stays. Where earlier
+     steps exist, `Show N earlier` reads the page before the first row, with
+     `before=<step id>`, in place and in the full view. Where `can_cancel` is true, the
      row has a Cancel control that posts `{"subagent_id"}` to
      `POST /v1/sessions/{id}/console/cancel`. Where it is false, the row has
      none
      (`ui/src/features/sessions/trajectory/step-detail.test.tsx::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
-     `::offers no cancel on a subagent the agent does not let cancel`).
+     `::offers no cancel on a subagent the agent does not let cancel`,
+     `::reads the earlier steps of a subagent with Show N earlier`).
 107. `Open` shows the whole content of a step, with no set height, in the
      full view. On a console panel of 880 CSS pixels or wider the full view
      sits beside the conversation, and on a narrower panel it is a modal
@@ -1956,11 +1968,15 @@ view.
      subagent shows its whole work: its steps
      (`ui/src/features/sessions/trajectory/step-detail.test.tsx::opens the whole step beside the conversation on a panel of 880 px or wider`,
      `::opens the whole step in a drawer on a panel narrower than 880 px`).
-108. The full view takes the keyboard on its Close button. Escape in the
-     full view closes it, gives the keyboard back to the control that opened
-     it, and does not cancel the running turn. Escape elsewhere in the
-     console still cancels it (rule 95)
-     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::closes the full view on Escape and does not cancel the running turn`).
+108. The full view takes the keyboard on its Close button, for each step it
+     shows: an `Open` inside the view shows another step there, and the
+     keyboard stays in the view. Escape in the full view closes it and does
+     not cancel the running turn. The keyboard goes back to the control
+     outside the view that opened it, else to the row of the step shown,
+     else to the console. Escape elsewhere in the console still cancels the
+     turn (rule 95)
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::closes the full view on Escape and does not cancel the running turn`,
+     `::keeps the keyboard in the full view when an Open inside it shows another step, and gives it back to the first Open`).
 109. The step detail and the full view use the app's tokens alone, as rule
      98 says of the whole turn console
      (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`).

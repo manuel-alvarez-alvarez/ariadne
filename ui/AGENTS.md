@@ -549,6 +549,8 @@ events, so write no fold of events here:
   pages of an open fold, the prompts sent that no turn holds yet, the turns
   that took a queued prompt, so each echo takes one prompt once, and the
   cursor of the history read whole: `shownTurns` is what the reader sees.
+  `children` holds the live steps of the subagents' lanes, which no turn
+  holds, for an open subagent step.
 - `turn-view.tsx` draws a turn: the prompt, one activity line and the
   answer, the step rows of an open fold, and the turn's `attention`.
   `permission-card.tsx` draws a pending permission above the composer.
@@ -559,7 +561,8 @@ events, so write no fold of events here:
   draws the content blocks that are not text. `full-view.tsx` is the full
   view that `Open` fills: beside the transcript on a panel of 880 CSS pixels
   or wider, else a drawer. Its Escape stops at the view, so it never cancels
-  the turn. A detail reaches it through `full-view-context.ts`. `status-slot.tsx`,
+  the turn. A detail reaches it, and the live subagent steps, through
+  `full-view-context.ts`. `status-slot.tsx`,
   `dock-slot.tsx` and `find-slot.tsx` are the mount points of the status row,
   the dock above the composer and the find control.
 - `trajectory-console.tsx` holds the pane: the stream, the scroll, the keys

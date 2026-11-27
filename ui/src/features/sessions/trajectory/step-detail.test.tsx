@@ -28,6 +28,8 @@ const requests: { method: string; path: string; query: URLSearchParams; body: st
 let details: Record<string, { detail: unknown; raw?: { input: unknown; output: unknown } }> = {}
 /** The steps of each subagent, by subagent id. */
 let subagentSteps: Record<string, StepDto[]> = {}
+/** How many steps of a subagent one page of the steps route holds. */
+let pageSize = 200
 let resize: (width: number) => void
 
 beforeEach(() => {
@@ -35,6 +37,7 @@ beforeEach(() => {
   requests.length = 0
   details = {}
   subagentSteps = {}
+  pageSize = 200
   resize = () => {}
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
@@ -60,11 +63,15 @@ beforeEach(() => {
       })
     }
     const subagent = url.searchParams.get("subagent")
-    if (url.pathname.endsWith("/steps"))
-      return Response.json({
-        steps: subagent ? (subagentSteps[subagent] ?? []) : [],
-        earlier_steps: 0,
-      })
+    if (url.pathname.endsWith("/steps")) {
+      // The newest page before `before`, as the daemon pages a lane.
+      const before = url.searchParams.get("before")
+      const all = (subagent ? (subagentSteps[subagent] ?? []) : []).filter(
+        (step) => before === null || step.id < before,
+      )
+      const page = all.slice(-pageSize)
+      return Response.json({ steps: page, earlier_steps: all.length - page.length })
+    }
     if (url.pathname.endsWith("/questions")) return Response.json([])
     return new Response(null, { status: 204 })
   })
@@ -565,4 +572,159 @@ it("shows the newest progress of a running call in the full view", async () => {
     source.emit("update", anUpdate(2, [{ op: "item_upsert", step: { ...tool, detail_rev: 2 } }])),
   )
   await within(view).findByText("second line")
+})
+
+function rawToggle(root: HTMLElement): HTMLElement {
+  return within(root).getByRole("button", { name: "Raw" })
+}
+
+it("starts each step the full view shows afresh, with Raw off", async () => {
+  stubPanelWidth()
+  const user = userEvent.setup()
+  let first = {} as ToolStep
+  let second = {} as ToolStep
+  renderTurn((turnId) => {
+    first = aToolStep(turnId, { title: "First call" })
+    second = aToolStep(turnId, { title: "Second call" })
+    return [first, second]
+  })
+  details[first.id] = {
+    detail: { type: "command", command: "first", truncated: false },
+    raw: { input: { from: "first-raw" }, output: null },
+  }
+  details[second.id] = {
+    detail: { type: "command", command: "second", truncated: false },
+    raw: { input: { from: "second-raw" }, output: null },
+  }
+  act(() => resize(1000))
+
+  await user.click(row(first))
+  await user.click(within(detailOf(first) as HTMLElement).getByRole("button", { name: "Open" }))
+  const view = screen.getByRole("complementary", { name: "Full view" })
+  await user.click(rawToggle(view))
+  await within(view).findByText(/first-raw/)
+
+  await user.click(row(second))
+  await user.click(within(detailOf(second) as HTMLElement).getByRole("button", { name: "Open" }))
+  await waitFor(() =>
+    expect(section(view, "command").querySelector("code")?.textContent).toBe("second"),
+  )
+  expect(rawToggle(view).getAttribute("aria-pressed")).toBe("false")
+  expect(within(view).queryByText(/-raw/)).toBeNull()
+})
+
+it("shows the new progress of a subagent's running call while its step count holds", async () => {
+  const user = userEvent.setup()
+  let subagent = aSubagentStep("none")
+  const { source } = renderTurn((turnId) => {
+    subagent = aSubagentStep(turnId)
+    return [subagent]
+  })
+  const inner = aToolStep(subagent.turn_id, {
+    lane: subagent.subagent_id,
+    title: "Run one test",
+    status: "running",
+    ended_at: null,
+  })
+  subagentSteps[subagent.subagent_id] = [inner]
+  details[inner.id] = {
+    detail: { type: "command", command: "npm test one", output: "first line", truncated: false },
+  }
+
+  await user.click(row(subagent))
+  const steps = await within(detailOf(subagent) as HTMLElement).findByRole("list", {
+    name: "Steps of Explore the tests",
+  })
+  await user.click(within(steps).getByRole("button", { name: /Run one test/ }))
+  await within(steps).findByText("first line")
+
+  details[inner.id] = {
+    detail: { type: "command", command: "npm test one", output: "second line", truncated: false },
+  }
+  act(() =>
+    source.emit("update", anUpdate(2, [{ op: "item_upsert", step: { ...inner, detail_rev: 2 } }])),
+  )
+  await within(steps).findByText("second line")
+  // The subagent's own count did not move, so its steps were read once.
+  expect(requests.filter((one) => one.query.get("subagent") === subagent.subagent_id)).toHaveLength(
+    1,
+  )
+})
+
+it("reads the earlier steps of a subagent with Show N earlier", async () => {
+  const user = userEvent.setup()
+  pageSize = 2
+  let subagent = aSubagentStep("none")
+  renderTurn((turnId) => {
+    subagent = aSubagentStep(turnId, { activity: { ...aSubagentStep(turnId).activity, steps: 3 } })
+    return [subagent]
+  })
+  const [oldest, middle, newest] = ["Oldest call", "Middle call", "Newest call"].map((title) =>
+    aToolStep(subagent.turn_id, { lane: subagent.subagent_id, title }),
+  ) as [ToolStep, ToolStep, ToolStep]
+  subagentSteps[subagent.subagent_id] = [oldest, middle, newest]
+
+  await user.click(row(subagent))
+  const detail = detailOf(subagent) as HTMLElement
+  const steps = await within(detail).findByRole("list", { name: "Steps of Explore the tests" })
+  expect(within(steps).queryByRole("button", { name: /Oldest call/ })).toBeNull()
+
+  await user.click(within(detail).getByRole("button", { name: "Show 1 earlier" }))
+  await within(steps).findByRole("button", { name: /Oldest call/ })
+  expect(
+    within(steps)
+      .getAllByRole("button")
+      .map((button) => button.textContent?.match(/(?:Oldest|Middle|Newest) call/)?.[0]),
+  ).toEqual(["Oldest call", "Middle call", "Newest call"])
+  expect(requests.at(-1)?.query.get("before")).toBe(middle.id)
+  expect(within(detail).queryByRole("button", { name: /earlier/ })).toBeNull()
+})
+
+it("keeps the keyboard in the full view when an Open inside it shows another step, and gives it back to the first Open", async () => {
+  stubPanelWidth()
+  const user = userEvent.setup()
+  let subagent = aSubagentStep("none")
+  renderTurn(
+    (turnId) => {
+      subagent = aSubagentStep(turnId)
+      return [subagent]
+    },
+    { status: "running" },
+  )
+  const inner = aToolStep(subagent.turn_id, { lane: subagent.subagent_id, title: "Run one test" })
+  subagentSteps[subagent.subagent_id] = [inner]
+  details[inner.id] = { detail: { type: "command", command: "npm test one", truncated: false } }
+  act(() => resize(1000))
+
+  row(subagent).focus()
+  await user.keyboard("{Enter}")
+  const open = within(detailOf(subagent) as HTMLElement).getByRole("button", { name: "Open" })
+  open.focus()
+  await user.keyboard("{Enter}")
+  const view = screen.getByRole("complementary", { name: "Full view" })
+  const close = within(view).getByRole("button", { name: "Close the full view" })
+  await waitFor(() => expect(document.activeElement).toBe(close))
+
+  // Down the subagent's work by keyboard, to the Open of one of its steps.
+  const innerRow = await within(view).findByRole("button", { name: /Run one test/ })
+  innerRow.focus()
+  await user.keyboard("{Enter}")
+  const innerOpen = await waitFor(() => {
+    const found = within(innerRow.closest("li") as HTMLElement).getAllByRole("button", {
+      name: "Open",
+    })[0]
+    if (!found) throw new Error("no Open yet")
+    return found
+  })
+  innerOpen.focus()
+  await user.keyboard("{Enter}")
+  await waitFor(() =>
+    expect(section(view, "command").querySelector("code")?.textContent).toBe("npm test one"),
+  )
+  expect(document.activeElement).toBe(close)
+
+  await user.keyboard("{Escape}")
+  expect(screen.queryByRole("complementary", { name: "Full view" })).toBeNull()
+  expect(document.activeElement).toBe(open)
+  expect(requests.filter((one) => one.path.endsWith("/console/cancel"))).toEqual([])
 })

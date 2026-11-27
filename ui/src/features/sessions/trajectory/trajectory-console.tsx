@@ -666,6 +666,7 @@ export function TrajectoryConsole({
       <StepWorkspace
         host={host}
         sessionId={sessionId}
+        childSteps={state.children}
         className="relative flex min-h-0 flex-1 flex-col"
       >
         <div

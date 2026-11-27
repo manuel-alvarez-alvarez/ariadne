@@ -40,9 +40,9 @@ import { languageLabel } from "@/lib/highlight"
 import { DiffEditor } from "../../tasks/diff-editor"
 import { parseUnifiedDiff } from "../../tasks/diff-parse"
 import { MediaBlocks } from "./content-blocks"
-import { useFullView } from "./full-view-context"
+import { useChildSteps, useFullView } from "./full-view-context"
 import { StepRow } from "./step-row"
-import { contentText } from "./store"
+import { childSteps, contentText } from "./store"
 
 type ToolStep = Extract<StepDto, { type: "tool_call" }>
 type SubagentStep = Extract<StepDto, { type: "subagent" }>
@@ -348,6 +348,34 @@ function DiffFileView({ file }: { file: DiffFileDetail }) {
 }
 
 /** The steps of a subagent, each a row that opens in place. */
+function readSubagentSteps(host: Host, sessionId: string, step: SubagentStep, before?: string) {
+  return unwrap(
+    api(host).GET("/v1/sessions/{id}/trajectory/turns/{turn_id}/steps", {
+      params: {
+        path: { id: sessionId, turn_id: step.turn_id },
+        query: {
+          subagent: step.subagent_id,
+          limit: SUBAGENT_STEPS,
+          ...(before === undefined ? {} : { before }),
+        },
+      },
+    }),
+  )
+}
+
+/** The older pages of a subagent's steps that `Show N earlier` read, and how many remain before them. */
+interface OlderSteps {
+  steps: StepDto[]
+  earlier: number
+}
+
+/**
+ * The steps of a subagent, each a row that opens in place. The newest page
+ * is read again at each new step of the subagent, and the live version of a
+ * step that the stream brought wins over the page's, so a running child
+ * call shows its new `detail_rev`. `Show N earlier` reads the page before
+ * the first row.
+ */
 function SubagentBody({
   host,
   sessionId,
@@ -361,7 +389,8 @@ function SubagentBody({
   now: string
   full: boolean
 }) {
-  const steps = useQuery({
+  const live = useChildSteps()
+  const newest = useQuery({
     queryKey: qk.sessions.subagentSteps(
       host,
       sessionId,
@@ -369,17 +398,52 @@ function SubagentBody({
       step.subagent_id,
       step.activity.steps,
     ),
-    queryFn: () =>
-      unwrap(
-        api(host).GET("/v1/sessions/{id}/trajectory/turns/{turn_id}/steps", {
-          params: {
-            path: { id: sessionId, turn_id: step.turn_id },
-            query: { subagent: step.subagent_id, limit: SUBAGENT_STEPS },
-          },
-        }),
-      ),
+    queryFn: () => readSubagentSteps(host, sessionId, step),
     placeholderData: keepPreviousData,
   })
+  const [older, setOlder] = useState<OlderSteps | null>(null)
+  const [olderLoad, setOlderLoad] = useState<{ loading: boolean; error?: unknown }>({
+    loading: false,
+  })
+  // Each newest page read stays: a step that a newer page moves past stays a row.
+  const [held, setHeld] = useState<StepDto[]>([])
+  useEffect(() => {
+    if (newest.data) setHeld((now) => mergeById(now, newest.data.steps))
+  }, [newest.data])
+  const read = useMemo(
+    () => mergeById(older?.steps ?? [], mergeById(held, newest.data?.steps ?? [])),
+    [older, held, newest.data],
+  )
+  const steps = useMemo(
+    () => withLive(read, childSteps(live, step.turn_id, step.subagent_id)),
+    [read, live, step.turn_id, step.subagent_id],
+  )
+  // The daemon counts the steps before the first of its page: a row shown
+  // before that one is not still to read.
+  const base = older
+    ? { first: older.steps[0]?.id, earlier: older.earlier }
+    : {
+        first: newest.data?.steps[0]?.id,
+        earlier: newest.data?.earlier_steps ?? 0,
+      }
+  const before = base.first
+  const shownBefore = before === undefined ? 0 : steps.filter((one) => one.id < before).length
+  const earlier = Math.max(0, base.earlier - shownBefore)
+
+  async function loadEarlier() {
+    setOlderLoad({ loading: true })
+    try {
+      const page = await readSubagentSteps(host, sessionId, step, steps[0]?.id)
+      setOlder((held) => ({
+        steps: [...page.steps, ...(held?.steps ?? [])],
+        earlier: page.earlier_steps,
+      }))
+      setOlderLoad({ loading: false })
+    } catch (error) {
+      setOlderLoad({ loading: false, error })
+    }
+  }
+
   return (
     <div className="space-y-1.5">
       {step.task ? (
@@ -387,16 +451,23 @@ function SubagentBody({
           <Markdown>{step.task}</Markdown>
         </div>
       ) : null}
-      {steps.data ? (
+      {newest.data ? (
         <>
-          {steps.data.earlier_steps > 0 ? (
-            <p className="px-2 font-mono text-xs text-muted-foreground">
-              {steps.data.earlier_steps} earlier steps are not shown
-            </p>
+          {earlier > 0 ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={olderLoad.loading}
+              onClick={() => void loadEarlier()}
+              className="font-mono text-muted-foreground"
+            >
+              Show {earlier} earlier
+            </Button>
           ) : null}
-          {steps.data.steps.length > 0 ? (
+          {olderLoad.error ? <ReadError what="the earlier steps" error={olderLoad.error} /> : null}
+          {steps.length > 0 ? (
             <ul aria-label={`Steps of ${step.title}`} className="space-y-0.5">
-              {steps.data.steps.map((one) => (
+              {steps.map((one) => (
                 <li key={one.id}>
                   <StepDetail host={host} sessionId={sessionId} step={one} now={now} />
                 </li>
@@ -406,13 +477,34 @@ function SubagentBody({
             <p className="px-2 font-mono text-xs text-muted-foreground">No steps yet.</p>
           )}
         </>
-      ) : steps.isError ? (
-        <ReadError what="the steps" error={steps.error} />
+      ) : newest.isError ? (
+        <ReadError what="the steps" error={newest.error} />
       ) : (
         <Loading what="the steps" />
       )}
       <Controls step={step} full={full} />
     </div>
+  )
+}
+
+/** The steps of both lists, each once, oldest first: the version in `newer` wins. */
+function mergeById(older: readonly StepDto[], newer: readonly StepDto[]): StepDto[] {
+  const byId = new Map<string, StepDto>()
+  for (const one of older) byId.set(one.id, one)
+  for (const one of newer) byId.set(one.id, one)
+  return [...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
+/**
+ * The steps read, at their live version where the stream has one. A live
+ * step newer than the first row read joins them. An older one belongs to an
+ * earlier page, which `Show N earlier` reads.
+ */
+function withLive(read: StepDto[], live: StepDto[]): StepDto[] {
+  const first = read[0]?.id
+  return mergeById(
+    read,
+    live.filter((one) => first === undefined || one.id >= first),
   )
 }
 
