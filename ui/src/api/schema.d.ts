@@ -4054,7 +4054,6 @@ export interface components {
             model: string;
             /** @description Whether this goal has an orchestrator for its lifetime. */
             orchestrated: boolean;
-            pull_request?: components["schemas"]["PullRequestOperationDto"] | null;
             /**
              * @description The registered repositories the goal works in, as they stand now: a
              *     goal references them, so an edit to one shows up here.
@@ -4626,8 +4625,8 @@ export interface components {
             number: number;
             opened_at: string;
             /**
-             * @description The open goals of Ariadne's operations on this request, one per
-             *     operation (029): what Forge reads to link the goal and its task.
+             * @description The open tasks of Ariadne's operations on this request, one per
+             *     operation (029, 032): what Forge reads to link the task.
              */
             operations?: components["schemas"]["PullRequestOperationRefDto"][];
             /** @description The task that opened the request: its author keeps it (005). */
@@ -4677,22 +4676,10 @@ export interface components {
             tracked: boolean;
             url: string;
         };
-        /**
-         * @description The pull request an operation goal works on, named by value: the request's
-         *     own row goes when Ariadne stops working on it, and the goal stays.
-         */
-        PullRequestOperationDto: {
-            /** Format: int64 */
-            number: number;
-            operation: components["schemas"]["PrOperation"];
-            repository_id: string;
-            url: string;
-        };
-        /** @description An open operation goal on a request, with its one task. */
+        /** @description The open task of an operation on a request. */
         PullRequestOperationRefDto: {
-            goal_id: string;
             operation: components["schemas"]["PrOperation"];
-            task_id?: string | null;
+            task_id: string;
         };
         /** @description One page of `GET /v1/pull-requests`, the most recently updated first. */
         PullRequestPageDto: {
@@ -5266,7 +5253,7 @@ export interface components {
             /**
              * @description URL of the pull or merge request the task's `pr` column opened, once
              *     it has; null for a task landed directly. On a review or babysit task
-             *     (one with an `operation`) that opened none, the goal's own request, in
+             *     (one with an `operation`) that opened none, the request it works on, in
              *     the response only.
              */
             pr_url?: string | null;

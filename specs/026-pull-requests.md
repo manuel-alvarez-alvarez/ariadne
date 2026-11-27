@@ -283,8 +283,8 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `GET /v1/pull-requests/{id}` | A request Ariadne works on, as the last fetch found it, or read off the forge now where nothing has read it yet. |
 | `GET /v1/repositories/{id}/pull-requests/{number}` | One request of a repository, read off the forge now with its checks and comments, joined to its row where there is one. What the desktop's panel reads. |
 | `GET /v1/repositories/{id}/pull-requests/search?q=` | Search the repository's last fetched list by number, title, or author, the user's own left out. Each match says with `tracked` whether Ariadne works on it. A repository with no fetch yet matches nothing. |
-| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review` | Take `{asked}`: ask Ariadne to review any open request, which starts its work on it and makes the review goal and task, or stop asking, which cancels them (029). |
-| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit` | Take `{asked}`: ask Ariadne to keep any open request, opened by no task, by hand, which starts its work on it and makes the babysit goal and task, or stop asking, which cancels them (032). |
+| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review` | Take `{asked}`: ask Ariadne to review any open request, which starts its work on it and makes the review task, or stop asking, which cancels it (029). |
+| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit` | Take `{asked}`: ask Ariadne to keep any open request, opened by no task, by hand, which starts its work on it and makes the babysit task, or stop asking, which cancels it (032). |
 | `POST /v1/pull-requests/refresh?repo=` | Wake one repository or every enabled repository. Return 202. |
 | `GET /v1/pull-requests/{id}/comments?unanswered_only=` | The comments, read off the forge now, with their marks; or the threads that wait on the login. |
 | `GET /v1/pull-requests/{id}/comments/{comment_id}` | One comment, read off the forge now. |

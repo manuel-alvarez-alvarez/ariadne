@@ -84,18 +84,17 @@ pub struct PullRequestDto {
     /// session (029, 032), or the author of the task that opened it (005).
     #[serde(default)]
     pub session_id: Option<String>,
-    /// The open goals of Ariadne's operations on this request, one per
-    /// operation (029): what Forge reads to link the goal and its task.
+    /// The open tasks of Ariadne's operations on this request, one per
+    /// operation (029, 032): what Forge reads to link the task.
     #[serde(default)]
     pub operations: Vec<PullRequestOperationRefDto>,
 }
 
-/// An open operation goal on a request, with its one task.
+/// The open task of an operation on a request.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PullRequestOperationRefDto {
     pub operation: ariadne_core::workflow::PrOperation,
-    pub goal_id: String,
-    pub task_id: Option<String>,
+    pub task_id: String,
 }
 
 /// One check that failed on a request's head.

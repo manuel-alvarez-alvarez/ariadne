@@ -204,11 +204,11 @@ impl Store {
         agent_id: &str,
         skills: &[String],
     ) -> Result<()> {
-        // The goal of a review operation staffs `pr-reviewer` on its one
-        // agent (029); no other goal does.
+        // The task of a review operation staffs `pr-reviewer` on its one
+        // agent (029); no other task does.
         let operation: Option<String> = sqlx::query_scalar(
-            "SELECT g.pr_operation FROM task_agents a
-               JOIN tasks t ON t.id = a.task_id JOIN goals g ON g.id = t.goal_id
+            "SELECT p.operation FROM task_agents a
+               JOIN task_pull_requests p ON p.task_id = a.task_id
               WHERE a.id = ?",
         )
         .bind(agent_id)
