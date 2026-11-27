@@ -345,7 +345,7 @@ it("finds the text of the loaded turns and the loaded steps", async () => {
  */
 async function keptView(mount: "console" | "session view") {
   const turn = aTurn()
-  const snapshot = aSnapshot([turn])
+  const snapshot = { ...aSnapshot([turn]), rev: 0 }
   if (mount === "console")
     renderScreen(<TrajectoryConsole host="local" sessionId={SESSION_ID} status="idle" />)
   else

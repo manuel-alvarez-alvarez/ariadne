@@ -460,7 +460,7 @@ function TrajectoryPane({
   useLayoutEffect(() => {
     const back = restore.current
     const el = log.current
-    if (!back || !el || state.rev === 0) return
+    if (!back || !el || !state.session) return
     // Wait for the open folds and notice lines to take up their space.
     const read = shownTurns(state).every(
       (turn) => state.pages[turn.id] && loads[turn.id]?.state === "idle",
