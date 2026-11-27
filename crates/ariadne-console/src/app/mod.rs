@@ -256,8 +256,9 @@ pub struct App {
     lanes: HashMap<Lane, Vec<StepDto>>,
     /// The subagents whose steps the host is asked for, in that order.
     lane_loads: VecDeque<Lane>,
-    /// The subagents asked for once, at the step count they had then.
-    asked_lanes: HashSet<(Lane, u64)>,
+    /// The subagents asked for once, at the step count they had then and
+    /// whether their turn still ran, so a turn that ends reads them again.
+    asked_lanes: HashSet<(Lane, u64, bool)>,
     /// The detail of tool call steps, by step id.
     details: HashMap<String, Detail>,
     /// The details the host is asked for, in that order.
@@ -497,10 +498,15 @@ impl App {
                     }
                 }
                 Some(StepDto::Subagent(subagent)) => {
+                    let running = self
+                        .view
+                        .as_ref()
+                        .and_then(|view| view.turn(&turn))
+                        .is_some_and(|turn| turn.state == TurnState::Running);
                     let lane = (turn, subagent.subagent_id.clone());
                     if self
                         .asked_lanes
-                        .insert((lane.clone(), subagent.activity.steps))
+                        .insert((lane.clone(), subagent.activity.steps, running))
                     {
                         self.lane_loads.push_back(lane);
                     }

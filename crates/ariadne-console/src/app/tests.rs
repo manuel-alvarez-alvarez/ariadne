@@ -1445,6 +1445,43 @@ async fn a_subagent_shows_its_title_task_state_time_and_steps_and_opens_to_them(
     );
 }
 
+#[test]
+fn an_open_subagent_is_read_again_when_its_turn_completes() {
+    let subagent = step(
+        "subagent",
+        "a1",
+        "t1",
+        json!({"subagent_id": "sub1", "title": "Explore", "task": "Find it",
+               "state": "running", "started_at": "2026-11-27T10:00:00Z",
+               "activity": {"steps": 1, "tool_calls": 1, "files_changed": 0, "failed": 0,
+                            "cancelled": 0, "thoughts": 0, "subagents": 0}}),
+    );
+    let mut app = App::new("s1");
+    app.frame(snap(
+        1,
+        vec![running("t1", "Fix it", vec![subagent.clone()])],
+    ));
+    for event in [
+        ctrl('o'),
+        key(KeyCode::Tab),
+        key(KeyCode::Down),
+        key(KeyCode::Enter),
+    ] {
+        app.event(event);
+    }
+    let lane = app.next_lane().expect("the open subagent is read");
+    assert_eq!(app.next_lane(), None);
+    app.lane_read(lane.clone(), vec![]);
+
+    app.frame(snap(2, vec![done("t1", "Fix it", "Fixed.")]));
+    app.steps_read("t1".into(), vec![serde_json::from_value(subagent).unwrap()]);
+    assert_eq!(
+        app.next_lane(),
+        Some(lane),
+        "a turn that ends makes the console read the lane again"
+    );
+}
+
 fn planned(entries: Value) -> Frame {
     let mut snapshot = snapshot(1, vec![done("t1", "Plan it", "Planned.")]);
     snapshot.plans = vec![
