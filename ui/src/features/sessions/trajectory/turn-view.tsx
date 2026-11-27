@@ -12,6 +12,11 @@
  * Where the daemon holds more of them than `attention` carries, one row
  * gives the count and opens the steps of the turn. A pending permission is
  * not drawn here: it is a card above the composer.
+ *
+ * A warning and a compaction always show as lines of the turn, and an info
+ * note is a row of the open fold alone (`notices.tsx`). An answered
+ * permission is a mark on the row of its call, and no row of its own where
+ * that row shows. A finished plan shows in the turn that last changed it.
  */
 
 import { BotIcon, ChevronDownIcon, ChevronRightIcon, CircleHelpIcon } from "lucide-react"
@@ -26,6 +31,16 @@ import { PromptBox } from "../console/blocks"
 import { elapsed } from "../console/elapsed"
 import { FormCard } from "../console/form-card"
 import { formQuestions } from "../console/form-questions"
+import {
+  answeredPermissions,
+  isInfoNote,
+  isNotice,
+  NoticeLine,
+  PermissionMark,
+  type PermissionStep,
+  permissionOf,
+} from "./notices"
+import { type Plan, PlanLine, planFoldId } from "./plan"
 import { StepDetail } from "./step-detail"
 import { contentText, foldSteps, type StepPage } from "./store"
 
@@ -38,7 +53,9 @@ type QuestionStep = Extract<StepDto, { type: "question" }>
 const QUESTION_MARKER = "[&_.text-purple-500]:text-question-fg"
 
 /** Where the load of a turn's steps stands. */
-export type PageLoad = { state: "idle" | "loading" } | { state: "error"; message: string }
+export type PageLoad =
+  | { state: "idle" | "loading" }
+  | { state: "error"; message: string; retry: () => void }
 
 interface TurnViewProps {
   host: Host
@@ -53,7 +70,14 @@ interface TurnViewProps {
   now: string
   /** The session's open questions, with their forms. */
   questions: readonly QuestionDto[]
-  onToggle: (turnId: string) => void
+  /** The notices the console read from the steps before the turn's page. */
+  notices: readonly StepDto[]
+  /** The finished plans that this turn last changed. */
+  plans: readonly Plan[]
+  /** The open folds of the console, by id: a plan's checklist among them. */
+  folds: Readonly<Record<string, boolean>>
+  /** Open or close the fold of a turn, or of a plan's checklist, by its id. */
+  onToggle: (id: string) => void
   onEarlier: (turnId: string) => void
 }
 
@@ -67,24 +91,46 @@ export const TurnView = memo(function TurnView({
   live,
   now,
   questions,
+  notices: older,
+  plans,
+  folds,
   onToggle,
   onEarlier,
 }: TurnViewProps) {
   const running = turn.state === "running"
   // A pending permission is the card above the composer, never a row too.
   const fold = foldSteps(turn, page)
-  const steps = open ? fold.steps.filter((step) => !isPending(step)) : []
+  const answered = answeredPermissions([...fold.steps, ...turn.attention])
+  // The notices are lines of their own, and an answered permission is the
+  // mark of its call's row where that row shows.
+  const calls = new Set(fold.steps.flatMap((step) => (step.type === "tool_call" ? [step.id] : [])))
+  const marked = (step: StepDto, shown: ReadonlySet<string>) =>
+    step.type === "permission" &&
+    fold.steps.some(
+      (call) =>
+        call.type === "tool_call" && shown.has(call.id) && permissionOf(call, answered) === step,
+    )
+  const steps = open
+    ? fold.steps.filter((step) => !isPending(step) && !isNotice(step) && !marked(step, calls))
+    : []
   const answer = running ? liveAnswer(turn) : contentText(turn.answer)
   const shownIds = new Set(open ? steps.map((step) => step.id) : [])
   const liveRows =
     running && !open
       ? foldSteps(turn, undefined).steps.filter(
-          (step) => step.type !== "message" && !isPending(step),
+          (step) =>
+            step.type !== "message" && !isPending(step) && !isNotice(step) && !isInfoNote(step),
         )
       : []
-  const lastRows = liveRows.slice(-LIVE_STEPS)
+  const lastCalls = new Set(liveRows.slice(-LIVE_STEPS).map((step) => step.id))
+  const lastRows = liveRows.slice(-LIVE_STEPS).filter((step) => !marked(step, lastCalls))
   for (const step of lastRows) shownIds.add(step.id)
   const errors = turn.attention.filter((step) => step.type === "error" && !shownIds.has(step.id))
+  const held = new Set(fold.steps.map((step) => step.id))
+  const notices = [
+    ...older.filter(isNotice).filter((step) => !held.has(step.id)),
+    ...fold.steps.filter(isNotice),
+  ]
   const asked = turn.attention.filter(
     (step): step is QuestionStep => step.type === "question" && step.state === "open",
   )
@@ -110,7 +156,7 @@ export const TurnView = memo(function TurnView({
             <Button
               size="xs"
               variant="ghost"
-              disabled={load.state === "loading"}
+              disabled={load.state !== "idle"}
               onClick={() => onEarlier(turn.id)}
               className="font-mono text-muted-foreground"
             >
@@ -120,26 +166,30 @@ export const TurnView = memo(function TurnView({
           <ul aria-label="Steps of the turn" className="space-y-0.5">
             {steps.map((step) => (
               <li key={step.id}>
-                <StepRow step={step} now={now} />
+                <StepRow step={step} now={now} permission={markOf(step, answered)} />
                 <StepDetail host={host} sessionId={sessionId} step={step} />
               </li>
             ))}
           </ul>
-          <LoadLine load={load} onRetry={() => onEarlier(turn.id)} />
+          <LoadLine load={load} />
         </div>
       ) : lastRows.length > 0 ? (
         <ul aria-label="Last steps of the turn" className="ml-4 space-y-0.5">
           {lastRows.map((step) => (
             <li key={step.id}>
-              <StepRow step={step} now={now} />
+              <StepRow step={step} now={now} permission={markOf(step, answered)} />
             </li>
           ))}
         </ul>
       ) : null}
+      {!open && load.state === "error" ? <LoadLine load={load} /> : null}
       {errors.map((step) => (
         <div key={step.id} className="ml-4">
           <StepRow step={step} now={now} />
         </div>
+      ))}
+      {notices.map((step) => (
+        <NoticeLine key={step.id} step={step} />
       ))}
       {turn.attention_more > 0 ? (
         <button
@@ -161,6 +211,15 @@ export const TurnView = memo(function TurnView({
           questions={questions}
         />
       ))}
+      {plans.map((plan) => (
+        <div key={plan.plan_id} className="ml-4">
+          <PlanLine
+            plan={plan}
+            open={folds[planFoldId(plan)] === true}
+            onToggle={() => onToggle(planFoldId(plan))}
+          />
+        </div>
+      ))}
       {answer ? (
         <div className="rounded-md bg-muted/30 px-2 py-1.5 ring-1 ring-inset ring-border/40">
           <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
@@ -173,6 +232,14 @@ export const TurnView = memo(function TurnView({
     </article>
   )
 })
+
+/** The answered permission of a call's row, for its mark. */
+function markOf(
+  step: StepDto,
+  answered: ReadonlyMap<string, PermissionStep>,
+): PermissionStep | undefined {
+  return step.type === "tool_call" ? permissionOf(step, answered) : undefined
+}
 
 function isPending(step: StepDto): boolean {
   return step.type === "permission" && step.state === "pending"
@@ -224,7 +291,7 @@ function ActivityLine({
   )
 }
 
-function LoadLine({ load, onRetry }: { load: PageLoad; onRetry: () => void }) {
+function LoadLine({ load }: { load: PageLoad }) {
   if (load.state === "loading")
     return <p className="px-2 py-1 font-mono text-xs text-muted-foreground">Loading the steps…</p>
   if (load.state === "error")
@@ -234,7 +301,7 @@ function LoadLine({ load, onRetry }: { load: PageLoad; onRetry: () => void }) {
         className="flex items-center gap-2 px-2 py-1 font-mono text-xs text-status-danger-fg"
       >
         Could not load the steps: {load.message}
-        <Button size="xs" variant="outline" onClick={onRetry}>
+        <Button size="xs" variant="outline" onClick={load.retry}>
           Retry
         </Button>
       </p>
@@ -324,7 +391,16 @@ const STATUS_TONES: Record<string, string> = {
 }
 
 /** One step as a row: the kind, the status, the title, the subject and the duration. */
-function StepRow({ step, now }: { step: StepDto; now: string }) {
+function StepRow({
+  step,
+  now,
+  permission,
+}: {
+  step: StepDto
+  now: string
+  /** The answered permission of a call, drawn as a mark on its row. */
+  permission?: PermissionStep
+}) {
   const facts = stepFacts(step, now)
   const tone = STATUS_TONES[facts.status.split(" ")[0] ?? ""] ?? "text-muted-foreground"
   return (
@@ -340,6 +416,7 @@ function StepRow({ step, now }: { step: StepDto; now: string }) {
       {facts.subject ? (
         <span className="min-w-0 truncate text-muted-foreground">{facts.subject}</span>
       ) : null}
+      {permission ? <PermissionMark step={permission} /> : null}
       {facts.duration ? (
         <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
           {facts.duration}

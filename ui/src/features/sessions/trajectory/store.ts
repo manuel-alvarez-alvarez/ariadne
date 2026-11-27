@@ -9,8 +9,8 @@
  * id, so no item shows two times. A snapshot, the one a reconnect brings
  * included, drops the older turns and the step pages loaded before it.
  *
- * Four things are the console's own: the step pages it loaded for a turn
- * whose fold is open, the prompts it sent that no turn holds yet, the turns
+ * Five things are the console's own: the step pages it loaded for a turn,
+ * the notices it read from the older steps of a turn, the prompts it sent that no turn holds yet, the turns
  * that already took a queued prompt away, and the cursor of the history it
  * read whole.
  *
@@ -66,6 +66,8 @@ export interface TrajectoryState {
   subagents: Subagent[]
   /** The steps the steps route gave, by turn id. */
   pages: Record<string, StepPage>
+  /** The notices of the steps before a turn's page, by turn id, oldest first. */
+  notices: Record<string, StepDto[]>
   queued: QueuedPrompt[]
   /** The turns that took a queued prompt away: each echo takes one prompt, once. */
   echoed: string[]
@@ -79,6 +81,7 @@ export function emptyTrajectory(): TrajectoryState {
     plans: [],
     subagents: [],
     pages: {},
+    notices: {},
     queued: [],
     echoed: [],
   }
@@ -106,6 +109,7 @@ export function applySnapshot(
     plans: snapshot.plans,
     subagents: snapshot.subagents,
     pages: {},
+    notices: {},
     queued: state.queued,
     echoed: state.echoed,
   })
@@ -198,6 +202,18 @@ export function addStepPage(
         ]
       : page.steps
   return { ...state, pages: { ...state.pages, [turnId]: { steps, earlier: page.earlier_steps } } }
+}
+
+/** Keep the notices of an older page of a turn's steps, in front of the ones held. */
+export function addNotices(
+  state: TrajectoryState,
+  turnId: string,
+  steps: readonly StepDto[],
+): TrajectoryState {
+  if (steps.length === 0) return state
+  const held = state.notices[turnId] ?? []
+  const fresh = steps.filter((step) => !held.some((one) => one.id === step.id))
+  return { ...state, notices: { ...state.notices, [turnId]: [...fresh, ...held] } }
 }
 
 export function queuePrompt(state: TrajectoryState, text: string, id: string): TrajectoryState {

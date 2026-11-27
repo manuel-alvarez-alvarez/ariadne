@@ -42,11 +42,15 @@ let replies: Record<string, Reply[]> = {}
 let listed: QuestionDto[] = []
 
 beforeEach(() => {
-  // The console retains its composer per session: forget it between tests.
+  // The console retains its view per session: forget it between tests.
   for (const id of [SESSION_ID, "01JSESS0000000000000000002"]) {
     updateViewState(consoleViewKey("local", "http://127.0.0.1:7676", id), {
       draft: "",
       failed: [],
+      scrollTop: 0,
+      following: true,
+      oldest: undefined,
+      blockFolds: {},
     })
   }
   stubEventSource()
