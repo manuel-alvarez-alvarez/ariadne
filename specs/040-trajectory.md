@@ -421,6 +421,9 @@ Out:
 53. `GET /v1/sessions/{id}/trajectory/blobs/{event_id}/{index}` answers the
     bytes of one image, audio or resource block of the session's stored
     event `event_id`, with its MIME type, else `application/octet-stream`.
+    The response uses a sandbox CSP and `nosniff` to isolate active content.
+    The forwarder applies the same headers to remote blobs
+    (`tests/it/far_tasks/source_references.rs::source_trajectory_routes_reach_the_worker_session`).
     `index` is the place of the block in the event's `content`, in a call's
     `content` entries, or in a compaction's `summary`: the place a `blob`
     URL names (rule 28).

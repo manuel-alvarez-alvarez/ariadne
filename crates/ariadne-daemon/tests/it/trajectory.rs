@@ -587,6 +587,11 @@ async fn a_blob_answers_the_bytes_of_its_block_and_unknown_ids_are_not_found() {
     let response = h.response(get(blob)).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["content-type"], "image/png");
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "sandbox; default-src 'none'"
+    );
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     let bytes = http_body_util::BodyExt::collect(response.into_body())
         .await
         .unwrap()

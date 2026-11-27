@@ -201,6 +201,9 @@ pub(super) async fn route(
             .headers_mut()
             .insert("content-type", content_type.parse().unwrap());
     }
+    if suffix.starts_with("trajectory/blobs/") {
+        super::trajectory::protect_blob(&mut answer);
+    }
     Ok(answer)
 }
 

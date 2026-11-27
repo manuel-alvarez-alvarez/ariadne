@@ -730,6 +730,11 @@ async fn source_trajectory_routes_reach_the_worker_session() {
     let response = p.local.response(crate::common::get(blob)).await;
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     assert_eq!(response.headers()["content-type"], "image/png");
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "sandbox; default-src 'none'"
+    );
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     let bytes = http_body_util::BodyExt::collect(response.into_body())
         .await
         .unwrap()
