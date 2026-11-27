@@ -9,10 +9,9 @@
  * afresh. Each entry is scoped by the host and the session, and `local`'s also by
  * the daemon's address, so two daemons, or two sessions, never share a draft.
  *
- * Block folds and the transcript position are the interface the transcript
- * redesign builds on: `blockFolds` holds one preference per block id, and
+ * `blockFolds` holds one fold preference per turn or plan id, and
  * `scrollTop` with `following` holds the reader's place. Write them with
- * `updateViewState`; a foldable block with no preference starts folded.
+ * `updateViewState`; a fold with no preference starts closed.
  */
 
 import type { Host } from "@/api"
@@ -24,24 +23,18 @@ export type FailedSend = {
   message: string
 }
 
-export type ConsoleViewState = {
+type ConsoleViewState = {
   draft: string
   /** The scroll box's offset from the top when the reader last scrolled. */
   scrollTop: number
-  /** The first block in view and where its top sat below the scroll box's top. */
-  anchor: { blockId: string; offset: number } | undefined
-  /** The oldest event id the console had loaded; a pane mounted again loads back to it. */
+  /** The oldest turn id the console had loaded; a pane mounted again loads back to it. */
   oldest: string | undefined
   /** The count of steps before the oldest loaded page of each turn. */
   turnEarlier?: Record<string, number>
-  /** True while the reader is at the newest block. */
+  /** True while the reader is at the newest output. */
   following: boolean
-  /** A fold preference per block id; a foldable block with none starts folded. */
+  /** A fold preference per turn or plan id; a fold with none starts closed. */
   blockFolds: Record<string, boolean>
-  /** Whether each activity run, by its first row's id, shows every row; none shows its last 3. */
-  runExpansions: Record<string, boolean>
-  /** The child whose view is shown; none for `main`. */
-  shown: string | undefined
   /** The sends the daemon refused, each with its Retry and Edit. */
   failed: FailedSend[]
 }
@@ -49,12 +42,9 @@ export type ConsoleViewState = {
 const initial: ConsoleViewState = {
   draft: "",
   scrollTop: 0,
-  anchor: undefined,
   oldest: undefined,
   following: true,
   blockFolds: {},
-  runExpansions: {},
-  shown: undefined,
   failed: [],
 }
 

@@ -120,21 +120,16 @@ function activityLine(turn: TurnDto) {
   return line
 }
 
-it("opens the turn console with the hidden parameter, and the console of today without it", () => {
+it("shows the turn console in the session view, with no parameter", () => {
   const session = aSession({ id: SESSION_ID, status: "idle" })
 
   renderScreen(<SessionDetailView host="local" session={session} />, {
-    route: `/sessions?session=${SESSION_ID}&console=turns`,
+    route: `/sessions?session=${SESSION_ID}`,
   })
+
   expect(latestSource().url).toBe(
     `http://127.0.0.1:7676/v1/sessions/${SESSION_ID}/trajectory/stream`,
   )
-
-  stubEventSource()
-  renderScreen(<SessionDetailView host="local" session={session} />, {
-    route: `/sessions?session=${SESSION_ID}`,
-  })
-  expect(latestSource().url).toBe(`http://127.0.0.1:7676/v1/sessions/${SESSION_ID}/console/stream`)
 })
 
 it("keeps the draft and the refused prompts apart for each session", async () => {
