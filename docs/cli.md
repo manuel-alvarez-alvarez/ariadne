@@ -371,26 +371,42 @@ session's own turn untouched. It answers `409` for a subagent that is
 unknown, has already ended, or was never said to be cancellable.
 
 With stdin or stdout redirected there is no pane to draw: `ariadne attach`
-then prints one `kind · summary` line per event and numbered options for a
-permission question, and reads one prompt per line, which is what a script
+then prints one `kind · summary` line for each finished item of the session:
+a prompt, a step when it is done, and a turn when it ends. A permission that
+waits prints its options with numbers. The console reads one prompt in each
+line, and a number answers the waiting permission. That is what a script
 wants.
 
-Use `ariadne session logs <session-id> --follow` to read without sending
-input. It prints complete prompts and replies, dimmed thoughts, plan status,
-tool input and output, diffs, and permission answers as timestamped blocks.
-The task form finds the session for you:
+Use `ariadne session logs <session-id>` to read without sending input. It
+prints each turn of the session in three parts: its prompt, one activity line
+and its answer. The activity line gives the state of the turn and its counts:
+steps, tool calls, changed files, failed and cancelled calls, thoughts and
+subagents. Under the prompt, the turn shows each permission and question that
+waits, and its errors. When the turn has more of these than it shows, a line
+gives their count. `--steps` prints each step of the turn under it in place
+of those lines: messages, thoughts, tool calls with their output preview,
+permissions, questions, notes, errors, subagents and compactions. The task
+form finds the session for you:
 
 ```sh
 ariadne session logs <session-id> --tail 20
-ariadne session logs <session-id> --since 10m --kind agent_message
+ariadne session logs <session-id> --steps --since 10m --kind tool_call
 ariadne task logs <task-id> --follow
 ```
 
-`--tail N` keeps the last N blocks. `--since` accepts RFC 3339 or a duration
-such as `10m`. Repeat `--kind` to include several event kinds. These filters
-narrow the snapshot, which is the session's 200 newest events rather than
-every turn it ever ran; during `--follow`, `--kind` also narrows new events.
-`--format json` keeps each daemon event object unchanged for scripts.
+`--tail N` keeps the last N turns. `--since` accepts RFC 3339 or a duration
+such as `10m`, and keeps the turns that started, ended or still run after
+it, and the steps after it. Repeat `--kind` to keep several step kinds:
+`message`, `thought`, `tool_call`, `permission`, `question`, `note`,
+`error`, `subagent` or `compaction`. `--format json` prints one typed turn in
+each line, as `GET /v1/sessions/{id}/trajectory` gives it. With `--steps`,
+each turn carries all of its steps.
+
+`--follow` prints the turns, and then each new item one time when it is
+done. A turn prints its prompt when it starts, and its activity line and
+answer when it ends. A lost stream reconnects, and the new snapshot prints
+only what was not printed. With `--format json`, a follow prints each turn
+when it ends, and with `--steps` each step when it is done.
 
 Use `ariadne session send <session-id> "Please explain the failure"`
 when a script or a one-line response is enough. When a session is waiting on a
@@ -1214,8 +1230,8 @@ the built-in help screen.
 | `workflow` | `ls`, `show NAME`, `check [--file FILE]`, `create NAME [--file FILE]`, `update NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
 | `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--workflow`, and `--forge on\|off`; update also uses `--path`. |
 | `goal` | `create --model AGENT:MODEL [--title] [-d\|--description] [--from-issue] [--repo]... [--effort] [--workflow]`; `ls [--status STATUS,...] [-a] [--watch]`; `inspect`, `complete`, `cancel [-y]`, `rm [-y]`, and `attach` take an ID. |
-| `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
-| `session` | `ls` accepts `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `-a`, and `--watch`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
+| `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--steps] [--tail] [--since] [--kind]...` take an ID. |
+| `session` | `ls` accepts `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `-a`, and `--watch`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--steps] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
 | `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer\|keeper]`. |
 | `query` | `query EXPR [--at RFC3339\|SPAN \| --since RFC3339\|SPAN [--step SPAN]]`; evaluates the supported PromQL subset at now, at `--at`, or as a range from `--since`. |
 | `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop\|--again]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |

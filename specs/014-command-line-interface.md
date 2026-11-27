@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-11-25
+updated: 2026-11-27
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -31,6 +31,9 @@ tests:
   - crates/ariadne-cli/src/commands/agent.rs
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
+  - crates/ariadne-cli/src/commands/transcript.rs
+  - crates/ariadne-console/src/trajectory/view.rs
+  - crates/ariadne-console/src/trajectory/print.rs
   - crates/ariadne-cli/src/commands/query.rs
   - crates/ariadne-cli/src/commands/task/edit.rs
   - crates/ariadne-cli/src/commands/goal.rs
@@ -210,14 +213,30 @@ same binary also serves (013).
 27. `ariadne attach`, `goal attach` and `task attach` open the console of the
     session an id names, revived first when it is gone. A finished
     task whose worktree is gone revives its session. On a terminal it is an
-    inline pane (008); with stdin or stdout redirected it is the plain line
-    protocol — one `kind · summary` per event, numbered permission choices,
-    and one prompt per line read. `session send` posts one line to that same
-    console input. `session logs` and `task logs` print readable transcript
-    blocks with local timestamps, complete text, plans, tool results and
-    permission answers. `--tail`, `--since` and repeatable `--kind` narrow the
-    snapshot. Their `-f` forms follow the console stream and print agent chunks
-    as they arrive, while JSON keeps the daemon's event objects unchanged.
+    inline pane (008). With stdin or stdout redirected it is the plain line
+    protocol over the trajectory stream (040, rule 45): one `kind · summary`
+    line for each finished item, the numbered options of a permission that
+    waits, and one prompt for each line read. A number answers that
+    permission. `session send` posts one line to that same console input.
+    `session logs` and `task logs` print the typed turns of the trajectory
+    routes (040, rules 41 to 44), with local times:
+    - Each turn is its prompt, one activity line and its answer. Under the
+      prompt are the steps of its `attention`, and a line with the count
+      `attention_more` when that is above zero.
+    - `--steps` prints each step of the turn under it, read from the steps
+      route, in place of the attention.
+    - `--kind` keeps the steps of the step kinds it names. `--tail N` keeps
+      the last N turns, and reads older pages until it has them. `--since`
+      keeps the turns that started, ended or still run at or after its
+      instant, and the steps at or after it.
+    - `--format json` prints one typed turn in each line. With `--steps` the
+      turn carries all its steps; without, `earlier_steps` counts them.
+    - `-f` follows the trajectory stream. It prints each finished item one
+      time: a prompt when its turn opens, a step when it is settled, and the
+      activity line and answer when the turn closes. A dropped stream, a
+      `resync` and a skipped revision reconnect, and the new snapshot
+      prints only what was not printed. A follow ends when the session is
+      no longer live and no turn runs.
 30. `session inspect` shows a reported context window as `<used> / <size>`
     with the compact token spelling. It shows no context line when the agent
     has not reported one, and it never shows a cost.
@@ -618,9 +637,9 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   (`complete.rs::an_entry_offers_the_efforts_it_lists_and_no_others`).
 - Only a terminal on both ends gets the inline console
   (`console/tui.rs::only_a_terminal_on_both_ends_gets_the_inline_console`),
-  and the plain line protocol is unchanged behind it
-  (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
-  `::a_permission_question_renders_and_delivers_the_selected_answer`).
+  and the plain line protocol is behind it
+  (`console.rs::a_piped_console_prints_a_line_for_each_finished_item_and_sends_a_line_as_a_prompt`,
+  `::a_piped_console_numbers_a_permission_and_sends_the_option_chosen`).
 - `ariadne events` derives a recorded tool call's detail from its tool and
   first argument when the summary is empty, derives a tool result from its
   opener, and preserves a non-empty summary
@@ -837,19 +856,49 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `::pull_request_reaches_its_own_query_parameter`,
   `cli/tests.rs::session_ls_takes_filters_pages_and_all`,
   `::session_ls_all_and_cursor_are_exclusive`).
-- The console renders a stub-agent transcript and submits typed input, and
-  its permission question submits the selected option
-  (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
-  `::a_permission_question_renders_and_delivers_the_selected_answer`);
+- Rule 27. A piped console prints one line for each finished item, numbers
+  a waiting permission, and sends each line read as a prompt or the option
+  chosen
+  (`commands/console.rs::a_piped_console_prints_a_line_for_each_finished_item_and_sends_a_line_as_a_prompt`,
+  `::a_piped_console_numbers_a_permission_and_sends_the_option_chosen`,
+  `ariadne-console::trajectory::print::tests::the_line_form_puts_each_item_on_one_line`,
+  `::a_permission_prints_its_options_while_it_waits_and_its_answer_once_answered`);
   `session send` takes an id and the text
   (`cli/tests.rs::session_send_takes_an_id_and_the_text_to_send`);
   `session switch` posts its pin and prints the returned session, while
   `default` is refused locally
   (`session.rs::switch_posts_the_pin_and_returns_the_new_session`,
-  `cli/tests.rs::session_switch_requires_a_model_and_accepts_effort_default`); and
-  `session logs` reads the snapshot and follows the console stream
-  (`commands/console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`,
-  `::a_followed_log_uses_the_console_event_stream`).
+  `cli/tests.rs::session_switch_requires_a_model_and_accepts_effort_default`).
+- Rule 27. A log prints each turn as its prompt, one activity line and its
+  answer, and with `--steps` each step under it
+  (`commands/console.rs::a_log_prints_each_turn_folded_and_with_steps_each_step_under_it`,
+  `ariadne-console::trajectory::print::tests::a_turn_prints_its_prompt_one_activity_line_and_its_answer`,
+  `::given_steps_a_turn_prints_each_under_it_and_no_count_of_hidden_attention`).
+  A turn shows its attention and counts the attention it does not show
+  (`ariadne-console::trajectory::print::tests::a_turn_shows_its_attention_and_counts_the_attention_it_does_not_show`).
+- Rule 27. `--kind`, `--tail` and `--since`
+  (`commands/transcript.rs::tests::kind_keeps_the_steps_of_the_kinds_it_names`,
+  `::tail_keeps_the_last_turns_and_since_the_turns_at_or_after_it`,
+  `commands/console.rs::tail_reads_older_pages_until_it_has_its_turns`).
+  `--format json` prints one typed turn in each line
+  (`commands/console.rs::json_prints_one_typed_turn_in_each_line`,
+  `commands/transcript.rs::tests::a_json_turn_carries_its_steps_or_counts_them`).
+- Rule 27. `-f` prints each finished item one time, also after a reconnect,
+  and leaves out the turns `--tail` does not keep
+  (`commands/console.rs::a_follow_prints_each_finished_item_once_also_after_a_reconnect`,
+  `commands/transcript.rs::tests::a_follow_prints_each_item_once_across_snapshots`,
+  `::a_follow_leaves_out_the_turns_tail_does_not_keep`). The client view
+  applies each op of an update, refuses a skipped revision, and shows a
+  step before a later op closes its turn
+  (`ariadne-console::trajectory::view::tests::a_view_applies_each_op_of_an_update_to_its_snapshot`,
+  `::an_update_that_skips_a_revision_is_a_gap_and_changes_nothing`,
+  `::a_turn_upsert_keeps_the_steps_of_a_running_turn_and_drops_those_of_a_closed_one`,
+  `::an_answer_takes_a_permission_out_of_attention`,
+  `::apply_each_shows_a_step_before_a_later_op_closes_its_turn`,
+  `ariadne-console::trajectory::print::tests::a_step_is_settled_once_it_stops_changing`).
+  The client reads the trajectory routes with their query
+  (`ariadne-client::tests::a_trajectory_page_sends_its_route_and_the_given_query`,
+  `::a_query_with_no_field_given_leaves_the_path_as_it_is`).
 - `pr review` sends the asking pin whole and the stop body alone
   (`commands/pr.rs::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`),
   and is refused, naming `--model`, with no model and no `--stop`

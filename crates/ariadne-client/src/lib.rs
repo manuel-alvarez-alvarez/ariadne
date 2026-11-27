@@ -28,6 +28,10 @@ use ariadne_api::permissions::{
     UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
 };
 use ariadne_api::skills::SkillDto;
+use ariadne_api::trajectory::{
+    TrajectoryQuery, TrajectorySnapshotDto, TrajectoryStepsDto, TrajectoryStepsQuery,
+    TrajectoryStreamQuery,
+};
 use ariadne_api::{HealthResponse, VersionResponse};
 
 pub mod endpoint;
@@ -422,6 +426,49 @@ impl Client {
         .await
     }
 
+    /// A session's trajectory: its newest turns, or with `before` a page of
+    /// the whole turns older than one (040, rules 41 to 43).
+    pub async fn trajectory(
+        &self,
+        session_id: &str,
+        query: &TrajectoryQuery,
+    ) -> Result<TrajectorySnapshotDto, ClientError> {
+        self.get_json(&with_query(
+            &format!("/v1/sessions/{session_id}/trajectory"),
+            query,
+        ))
+        .await
+    }
+
+    /// One page of the steps of a turn, oldest first (040, rule 44).
+    pub async fn trajectory_steps(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        query: &TrajectoryStepsQuery,
+    ) -> Result<TrajectoryStepsDto, ClientError> {
+        self.get_json(&with_query(
+            &format!("/v1/sessions/{session_id}/trajectory/turns/{turn_id}/steps"),
+            query,
+        ))
+        .await
+    }
+
+    /// Follow a session's trajectory: one `snapshot` frame, then an `update`
+    /// frame for each revision, or a `resync` for a follower that fell
+    /// behind (040, rules 45 and 46).
+    pub async fn trajectory_stream(
+        &self,
+        session_id: &str,
+        query: &TrajectoryStreamQuery,
+    ) -> Result<SseStream, ClientError> {
+        self.stream(&with_query(
+            &format!("/v1/sessions/{session_id}/trajectory/stream"),
+            query,
+        ))
+        .await
+    }
+
     // ---- generic verbs ---------------------------------------------------
 
     pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
@@ -776,9 +823,79 @@ fn request(
         .expect("valid request")
 }
 
+/// `path` with the fields `query` gives, URL-encoded. A field that is
+/// `None` is left out, and a query with none leaves `path` as it is.
+fn with_query(path: &str, query: &impl Serialize) -> String {
+    // The trajectory queries hold strings and numbers alone, which always
+    // encode.
+    let query = serde_urlencoded::to_string(query).unwrap_or_default();
+    if query.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{query}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A trajectory route takes the fields of its query that are given, and
+    /// leaves out the rest.
+    #[tokio::test]
+    async fn a_trajectory_page_sends_its_route_and_the_given_query() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut buffer).await.unwrap();
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let body = r#"{"steps": [], "earlier_steps": 7}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let client = Client::tcp(format!("http://{address}"));
+
+        let page = client
+            .trajectory_steps(
+                "s1",
+                "t1",
+                &TrajectoryStepsQuery {
+                    before: Some("c 9".into()),
+                    limit: Some(200),
+                    subagent: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(page.earlier_steps, 7);
+        let request = server.await.unwrap();
+        assert!(
+            request.starts_with(
+                "GET /v1/sessions/s1/trajectory/turns/t1/steps?before=c+9&limit=200 HTTP/1.1\r\n"
+            ),
+            "{request}"
+        );
+    }
+
+    #[test]
+    fn a_query_with_no_field_given_leaves_the_path_as_it_is() {
+        assert_eq!(
+            with_query("/v1/sessions/s1/trajectory", &TrajectoryQuery::default()),
+            "/v1/sessions/s1/trajectory"
+        );
+    }
 
     fn socket() -> PathBuf {
         PathBuf::from("/scratch/home/ariadne.sock")

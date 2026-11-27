@@ -9,10 +9,10 @@ ariadne events -f                      # ...and keep printing as it happens
 ariadne events -f --goal <goal-id>     # one goal's; also --task, --session, --kind
 ariadne events -f --format json        # one JSON object per line, for a pipe
 
-ariadne session logs <session-id> -f   # an agent's event transcript, until it ends
+ariadne session logs <session-id> -f   # an agent's turns, until it ends
 ariadne task logs <task-id> -f         # the same, found by task
-ariadne session logs <id> --tail 20    # only the last twenty transcript blocks
-ariadne task logs <id> --since 10m --kind agent_message
+ariadne session logs <id> --tail 20    # only the last twenty turns
+ariadne task logs <id> --steps --since 10m --kind tool_call
 ariadne daemon logs -f                 # the daemon's own log, over the API
 ariadne daemon logs --service ariadne-cli --level warn
                                         # only that service, at or above that level
@@ -48,7 +48,7 @@ failed session may later carry a `session.diagnosis` event too: an advisory
 reading of the error — quota exhaustion, a temporary failure, an
 authentication or configuration problem, a task failure, or insufficient
 evidence. It appears in `ariadne events`, in `ariadne session logs` and
-`ariadne task logs` as a line under the `ERROR` block it is about, however
+`ariadne task logs` as a `diagnosis:` line under the error it is about, however
 much later it arrives. It never changes what the error itself says, and
 never decides whether a session retries or switches models.
 

@@ -1,1010 +1,569 @@
-//! The text rendering of an agent transcript: what `ariadne session logs`
-//! prints.
+//! What `ariadne session logs`, `ariadne task logs` and a piped `ariadne
+//! attach` print: the typed turns of a session's trajectory (040).
 //!
-//! The transcript model it renders is [`ariadne_console::transcript`], which
-//! the inline console shares.
+//! The daemon folds the turns. [`ariadne_console::trajectory`] holds them
+//! on this side and writes them as text. This module chooses which turns
+//! and steps to show, reads them, and keeps a follow from printing an item
+//! twice.
 
-/// Terminal rendering for [`TranscriptItem`].
-pub(crate) mod render {
-    use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 
-    use anstyle::{AnsiColor, Color, Style};
-    use ariadne_api::events::AgentEventDto;
+use anyhow::Result;
+use ariadne_api::trajectory::{StepDto, TrajectoryQuery, TrajectoryStepsQuery, TurnDto, TurnState};
+use ariadne_client::Client;
+use ariadne_console::trajectory::{
+    Printer, Touched, View, kind, settled, step_at, step_id, step_turn,
+};
+use ariadne_console::transcript::Since;
+use chrono::TimeZone;
 
-    use ariadne_console::transcript::{
-        Filters, FormClosed, FormField, ItemMeta, PermissionOption, TranscriptItem, closed_lines,
-        fold, permission_answer, text, tool_is_terminal,
-    };
+/// The kinds of step `--kind` takes.
+pub(crate) const STEP_KINDS: [&str; 9] = [
+    "message",
+    "thought",
+    "tool_call",
+    "permission",
+    "question",
+    "note",
+    "error",
+    "subagent",
+    "compaction",
+];
 
-    use crate::output::{pager, style};
+/// The most turns, and steps, one read of the daemon answers (040, rules 41
+/// and 44).
+const TURN_PAGE: u32 = 50;
+const STEP_PAGE: u32 = 200;
 
-    const USER: Style = foreground(AnsiColor::Cyan);
-    const AGENT: Style = foreground(AnsiColor::Green);
-    const PLAN: Style = foreground(AnsiColor::Blue);
-    const TOOL: Style = foreground(AnsiColor::Yellow);
-    const PERMISSION: Style = foreground(AnsiColor::Magenta);
-    const ERROR: Style = foreground(AnsiColor::Red).bold();
-    const DIM: Style = Style::new().dimmed();
+/// Which turns and steps a log shows.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Filters {
+    /// The last N turns.
+    pub(crate) tail: Option<usize>,
+    /// The turns and steps at or after an instant.
+    pub(crate) since: Option<Since>,
+    /// The steps of these kinds. Empty is every kind.
+    pub(crate) kinds: Vec<String>,
+}
 
-    const fn foreground(color: AnsiColor) -> Style {
-        Style::new().fg_color(Some(Color::Ansi(color)))
+impl Filters {
+    pub(crate) fn keeps_step(&self, step: &StepDto) -> bool {
+        (self.kinds.is_empty() || self.kinds.iter().any(|wanted| wanted == kind(step)))
+            && self
+                .since
+                .as_ref()
+                .is_none_or(|since| since.includes(step_at(step)))
     }
 
-    pub(crate) fn transcript(
-        items: &[TranscriptItem],
-        width: Option<usize>,
-        color: bool,
-    ) -> String {
-        items.iter().map(|item| block(item, width, color)).collect()
-    }
-
-    fn block(item: &TranscriptItem, width: Option<usize>, color: bool) -> String {
-        match item {
-            TranscriptItem::UserPrompt {
-                meta, text, source, ..
-            } => {
-                let label = source
+    /// A turn is at or after `since` when it started, or ended, at or after
+    /// it, or still runs.
+    fn keeps_turn(&self, turn: &TurnDto) -> bool {
+        self.since.as_ref().is_none_or(|since| {
+            turn.state == TurnState::Running
+                || since.includes(&turn.started_at)
+                || turn
+                    .ended_at
                     .as_deref()
-                    .filter(|source| *source != "console")
-                    .map_or_else(|| "USER".to_string(), |source| format!("USER/{source}"));
-                text_block(meta, &label, USER, text, Style::new(), width, color)
-            }
-            TranscriptItem::AgentText { meta, text } => {
-                text_block(meta, "AGENT", AGENT, text, Style::new(), width, color)
-            }
-            TranscriptItem::Thought { meta, text } => {
-                text_block(meta, "THOUGHT", DIM, text, DIM, width, color)
-            }
-            TranscriptItem::Plan { meta, entries } => {
-                let mut out = header(meta, "PLAN", PLAN, color);
-                out.push('\n');
-                for entry in entries {
-                    let (entry_style, glyph) = style::status(&entry.status);
-                    out.push_str("  ");
-                    out.push_str(&style::paint(
-                        color,
-                        entry_style,
-                        &glyph.unwrap_or('•').to_string(),
-                    ));
-                    out.push(' ');
-                    out.push_str(&entry.content);
-                    out.push('\n');
-                }
-                out.push('\n');
-                out
-            }
-            TranscriptItem::ToolCall { meta, tool } => tool_block(
-                meta,
-                &tool.name,
-                &tool.input,
-                tool.output.as_deref(),
-                tool.diff.as_deref(),
-                tool.status.as_deref(),
-                color,
-            ),
-            TranscriptItem::PermissionQuestion {
-                meta,
-                question,
-                options,
-                answer,
-                ai_note,
-                ..
-            } => permission_block(
-                meta,
-                question,
-                options,
-                ai_note.as_deref(),
-                answer.as_deref(),
-                color,
-            ),
-            TranscriptItem::SystemNote { meta, text } => {
-                text_block(meta, "SYSTEM", DIM, text, DIM, width, color)
-            }
-            TranscriptItem::FormQuestion { meta, .. } => text_block(
-                meta,
-                "QUESTION",
-                DIM,
-                &item.form_lines().join("\n"),
-                Style::default(),
-                width,
-                color,
-            ),
-            TranscriptItem::Error {
-                meta,
-                text,
-                ai_note,
-            } => {
-                let mut out = text_block(meta, "ERROR", ERROR, text, ERROR, width, color);
-                if let Some(note) = ai_note {
-                    // Drop one of `text_block`'s two trailing newlines, so the
-                    // note sits right under the error rather than after a
-                    // blank line, and the block still ends in exactly one.
-                    out.pop();
-                    out.push_str(&style::paint(color, DIM, &format!("  {note}")));
-                    out.push_str("\n\n");
-                }
-                out
-            }
-            TranscriptItem::Raw {
-                meta,
-                kind,
-                payload,
-                ..
-            } => text_block(
-                meta,
-                &kind.to_ascii_uppercase(),
-                DIM,
-                &serde_json::to_string_pretty(payload).unwrap_or_else(|_| payload.to_string()),
-                Style::new(),
-                width,
-                color,
-            ),
-        }
+                    .is_some_and(|ended| since.includes(ended))
+        })
     }
 
-    fn text_block(
-        meta: &ItemMeta,
-        label: &str,
-        label_style: Style,
-        text: &str,
-        content_style: Style,
-        width: Option<usize>,
-        color: bool,
-    ) -> String {
-        let prefix = format!("{}  ", header(meta, label, label_style, color));
-        let indent = " ".repeat(8 + 2 + label.chars().count() + 2);
-        let available = width.map(|width| width.saturating_sub(indent.len()).max(1));
-        let lines = wrap(text, available);
-        let mut out = String::new();
-        for (index, line) in lines.iter().enumerate() {
-            out.push_str(if index == 0 { &prefix } else { &indent });
-            out.push_str(&style::paint(color, content_style, line));
-            out.push('\n');
+    /// The turns `since` keeps, and then the last `tail` of them.
+    fn turns(&self, mut turns: Vec<TurnDto>) -> Vec<TurnDto> {
+        turns.retain(|turn| self.keeps_turn(turn));
+        if let Some(tail) = self.tail {
+            turns.drain(..turns.len().saturating_sub(tail));
         }
-        out.push('\n');
-        out
+        turns
     }
 
-    fn header(meta: &ItemMeta, label: &str, label_style: Style, color: bool) -> String {
-        format!(
-            "{}  {}",
-            style::paint(color, style::META, &clock(&meta.created_at)),
-            style::paint(color, label_style, label)
+    /// Whether an older page can hold a turn these filters keep.
+    fn needs_older(&self, turns: &[TurnDto]) -> bool {
+        let short = self
+            .tail
+            .is_none_or(|tail| turns.iter().filter(|turn| self.keeps_turn(turn)).count() < tail);
+        let within = match (&self.since, turns.first()) {
+            (Some(since), Some(oldest)) => since.includes(&oldest.started_at),
+            _ => true,
+        };
+        short && within
+    }
+}
+
+/// A turn as `--format json` prints it: `steps` are the steps given, all
+/// of them, or none, and `earlier_steps` counts the rest. `attention` keeps
+/// the steps the filters keep.
+pub(crate) fn json_turn(turn: &TurnDto, steps: Option<Vec<StepDto>>, filters: &Filters) -> TurnDto {
+    let mut turn = turn.clone();
+    turn.attention.retain(|step| filters.keeps_step(step));
+    match steps {
+        Some(steps) => {
+            turn.steps = steps;
+            turn.earlier_steps = 0;
+        }
+        None => {
+            turn.earlier_steps += turn.steps.len() as u64;
+            turn.steps.clear();
+        }
+    }
+    turn
+}
+
+/// The turns a log shows, oldest first, each with its steps when `steps`
+/// asks for them. Older pages are read as far as the filters reach.
+pub(crate) async fn read(
+    client: &Client,
+    session_id: &str,
+    filters: &Filters,
+    steps: bool,
+) -> Result<Vec<(TurnDto, Option<Vec<StepDto>>)>> {
+    let newest = client
+        .trajectory(
+            session_id,
+            &TrajectoryQuery {
+                limit: Some(TURN_PAGE),
+                ..TrajectoryQuery::default()
+            },
         )
-    }
-
-    fn clock(timestamp: &str) -> String {
-        chrono::DateTime::parse_from_rfc3339(timestamp)
-            .map(|time| {
-                time.with_timezone(&chrono::Local)
-                    .format("%H:%M:%S")
-                    .to_string()
-            })
-            .unwrap_or_else(|_| timestamp.to_string())
-    }
-
-    fn wrap(text: &str, width: Option<usize>) -> Vec<String> {
-        let Some(width) = width else {
-            return text.split('\n').map(str::to_string).collect();
-        };
-        let mut out = Vec::new();
-        for source in text.split('\n') {
-            if source.is_empty() {
-                out.push(String::new());
-                continue;
-            }
-            let mut line = String::new();
-            for word in source.split_whitespace() {
-                let extra = usize::from(!line.is_empty()) + word.chars().count();
-                if !line.is_empty() && line.chars().count() + extra > width {
-                    out.push(std::mem::take(&mut line));
-                }
-                if !line.is_empty() {
-                    line.push(' ');
-                }
-                line.push_str(word);
-            }
-            out.push(line);
+        .await?;
+    let mut turns = newest.turns;
+    let mut has_older = newest.has_older;
+    while has_older && filters.needs_older(&turns) {
+        let Some(oldest) = turns.first() else { break };
+        let older = client
+            .trajectory(
+                session_id,
+                &TrajectoryQuery {
+                    before: Some(oldest.id.clone()),
+                    limit: Some(TURN_PAGE),
+                    subagent: None,
+                },
+            )
+            .await?;
+        if older.turns.is_empty() {
+            break;
         }
-        if out.is_empty() {
-            out.push(String::new());
-        }
-        out
+        has_older = older.has_older;
+        turns.splice(0..0, older.turns);
     }
-
-    fn tool_line(name: &str, input: &serde_json::Value, status: Option<&str>) -> String {
-        let input = match input {
-            serde_json::Value::Null => String::new(),
-            serde_json::Value::String(text) => format!(" {text}"),
-            input => format!(" {}", serde_json::to_string(input).unwrap_or_default()),
+    let mut out = Vec::new();
+    for turn in filters.turns(turns) {
+        let steps = match steps {
+            true => Some(
+                all_steps(client, session_id, &turn.id)
+                    .await?
+                    .into_iter()
+                    .filter(|step| filters.keeps_step(step))
+                    .collect(),
+            ),
+            false => None,
         };
-        let status = status.map_or_else(String::new, |status| format!(" [{status}]"));
-        format!("{name}{input}{status}")
+        out.push((turn, steps));
+    }
+    Ok(out)
+}
+
+/// Every step of a turn, oldest first, a page at a time.
+pub(crate) async fn all_steps(
+    client: &Client,
+    session_id: &str,
+    turn_id: &str,
+) -> Result<Vec<StepDto>> {
+    let mut steps = Vec::new();
+    let mut before = None;
+    loop {
+        let page = client
+            .trajectory_steps(
+                session_id,
+                turn_id,
+                &TrajectoryStepsQuery {
+                    before,
+                    limit: Some(STEP_PAGE),
+                    subagent: None,
+                },
+            )
+            .await?;
+        let Some(first) = page.steps.first() else {
+            break;
+        };
+        before = Some(step_id(first).to_string());
+        steps.splice(0..0, page.steps);
+        if page.earlier_steps == 0 {
+            break;
+        }
+    }
+    Ok(steps)
+}
+
+/// How a follow writes what it prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Layout {
+    /// The block form of `session logs`.
+    Blocks,
+    /// One `kind · summary` line for each item, for a piped `attach`.
+    Lines,
+    /// One typed turn in each line, and with steps one typed step in each
+    /// line.
+    Json,
+}
+
+/// Prints each item of a followed trajectory one time, across every
+/// snapshot a reconnect brings.
+///
+/// A turn prints its prompt when it opens and its activity and answer when
+/// it closes. A step prints when it is settled, and a permission or a
+/// question prints again, one line, when it closes.
+pub(crate) struct Follower<Tz> {
+    layout: Layout,
+    steps: bool,
+    filters: Filters,
+    printer: Printer<Tz>,
+    admitted: bool,
+    skipped: HashSet<String>,
+    opened: HashSet<String>,
+    /// The turns that ran when they opened here: their steps printed live.
+    live: HashSet<String>,
+    closed: HashSet<String>,
+    printed: HashSet<String>,
+    answered: HashSet<String>,
+}
+
+impl<Tz> Follower<Tz>
+where
+    Tz: TimeZone,
+    Tz::Offset: Display,
+{
+    pub(crate) fn new(layout: Layout, steps: bool, filters: Filters, printer: Printer<Tz>) -> Self {
+        Self {
+            layout,
+            // The line form prints every item.
+            steps: steps || layout == Layout::Lines,
+            filters,
+            printer,
+            admitted: false,
+            skipped: HashSet::new(),
+            opened: HashSet::new(),
+            live: HashSet::new(),
+            closed: HashSet::new(),
+            printed: HashSet::new(),
+            answered: HashSet::new(),
+        }
     }
 
-    fn tool_block(
-        meta: &ItemMeta,
-        name: &str,
-        input: &serde_json::Value,
-        output: Option<&str>,
-        diff: Option<&str>,
-        status: Option<&str>,
-        color: bool,
+    /// Take a snapshot in. The first one chooses the turns `--tail` and
+    /// `--since` keep. Answers the turns whose stored steps the caller reads
+    /// for [`Follower::snapshot`]: those not yet closed here, where the
+    /// follow prints steps in the block or JSON form.
+    pub(crate) fn admit(&mut self, view: &View) -> Vec<String> {
+        if !self.admitted {
+            self.admitted = true;
+            let kept: HashSet<_> = self
+                .filters
+                .turns(view.turns().to_vec())
+                .into_iter()
+                .map(|turn| turn.id)
+                .collect();
+            self.skipped = view
+                .turns()
+                .iter()
+                .filter(|turn| !kept.contains(&turn.id))
+                .map(|turn| turn.id.clone())
+                .collect();
+        }
+        if !self.steps || self.layout == Layout::Lines {
+            return Vec::new();
+        }
+        view.turns()
+            .iter()
+            .filter(|turn| !self.skipped.contains(&turn.id) && !self.closed.contains(&turn.id))
+            .map(|turn| turn.id.clone())
+            .collect()
+    }
+
+    /// What a snapshot adds: every turn of it, with the stored steps read
+    /// for it, of which each item prints once.
+    pub(crate) fn snapshot(
+        &mut self,
+        view: &View,
+        stored: &HashMap<String, Vec<StepDto>>,
     ) -> String {
-        let mut out = format!(
-            "{}  {}\n",
-            header(meta, "TOOL", TOOL, color),
-            tool_line(name, input, status)
-        );
-        out.push_str(&tool_result(output, diff, color));
-        out.push('\n');
-        out
-    }
-
-    fn tool_result(output: Option<&str>, diff: Option<&str>, color: bool) -> String {
         let mut out = String::new();
-        if let Some(output) = output {
-            for line in output.trim_end_matches('\n').split('\n') {
-                out.push_str("  ");
-                out.push_str(line);
-                out.push('\n');
+        for turn in view.turns() {
+            let stored = stored.get(&turn.id).map(Vec::as_slice).unwrap_or_default();
+            out.push_str(&self.sweep(turn, stored));
+        }
+        out
+    }
+
+    /// What an applied update adds, for the turns it touched.
+    pub(crate) fn update(&mut self, view: &View, touched: &[Touched]) -> String {
+        let mut turns: Vec<&str> = Vec::new();
+        for touched in touched {
+            let id = match touched {
+                Touched::Turn(id) => id.as_str(),
+                Touched::Step { turn_id, .. } => turn_id.as_str(),
+                _ => continue,
+            };
+            if !turns.contains(&id) {
+                turns.push(id);
             }
         }
-        if let Some(diff) = diff {
-            let diff = pager::diff(diff, color);
-            for line in diff.trim_end_matches('\n').split('\n') {
-                out.push_str("  ");
-                out.push_str(line);
-                out.push('\n');
+        let mut out = String::new();
+        for id in turns {
+            if let Some(turn) = view.turn(id) {
+                out.push_str(&self.sweep(turn, &[]));
             }
         }
         out
     }
 
-    fn permission_block(
-        meta: &ItemMeta,
-        question: &str,
-        options: &[PermissionOption],
-        ai_note: Option<&str>,
-        answer: Option<&str>,
-        color: bool,
-    ) -> String {
-        let mut out = format!(
-            "{}  {}\n",
-            header(meta, "PERMISSION", PERMISSION, color),
-            question
-        );
-        if let Some(note) = ai_note {
-            out.push_str(&format!("  {note}\n"));
+    fn sweep(&mut self, turn: &TurnDto, stored: &[StepDto]) -> String {
+        if self.skipped.contains(&turn.id) {
+            return String::new();
         }
-        for (index, option) in options.iter().enumerate() {
-            out.push_str(&format!("  {}. {}\n", index + 1, option.name));
+        let mut out = String::new();
+        if self.opened.insert(turn.id.clone()) {
+            if turn.state == TurnState::Running {
+                self.live.insert(turn.id.clone());
+            }
+            out.push_str(&match self.layout {
+                Layout::Blocks => self.printer.opened(turn),
+                Layout::Lines => self.printer.opened_line(turn),
+                Layout::Json => String::new(),
+            });
         }
-        if let Some(answer) = answer {
-            out.push_str(&format!("  answer: {answer}\n"));
+        let mut attention: Vec<&StepDto> = turn.attention.iter().collect();
+        attention.sort_by(|a, b| step_at(a).cmp(step_at(b)));
+        let shown: Vec<&StepDto> = match self.steps {
+            true => stored.iter().chain(&turn.steps).chain(attention).collect(),
+            false => attention,
+        };
+        for step in shown {
+            if step_turn(step) == turn.id && self.filters.keeps_step(step) {
+                out.push_str(&self.step(step));
+            }
         }
-        out.push('\n');
+        if turn.state != TurnState::Running && self.closed.insert(turn.id.clone()) {
+            out.push_str(&match self.layout {
+                Layout::Blocks => self.printer.closed(turn, self.steps),
+                Layout::Lines => self
+                    .printer
+                    .closed_line(turn, !self.live.contains(&turn.id)),
+                Layout::Json => json_line(&json_turn(turn, None, &self.filters)),
+            });
+        }
         out
     }
 
-    /// Stateful rendering for the console stream.
-    pub(crate) struct StreamRenderer {
-        width: Option<usize>,
-        color: bool,
-        active_agent: Option<&'static str>,
-        open_tools: HashSet<String>,
-        pending_permission: Option<Vec<PermissionOption>>,
-        /// The fields of each open question, by id: what its close is
-        /// read with.
-        open_questions: HashMap<String, Vec<FormField>>,
+    fn step(&mut self, step: &StepDto) -> String {
+        if !settled(step) {
+            return String::new();
+        }
+        let id = step_id(step).to_string();
+        let closing = self.printer.answered(step).is_some();
+        if self.printed.insert(id.clone()) {
+            if closing {
+                self.answered.insert(id);
+            }
+            return match self.layout {
+                Layout::Blocks => self.printer.step(step),
+                Layout::Lines => self.printer.step_line(step),
+                Layout::Json if self.steps => json_line(step),
+                Layout::Json => String::new(),
+            };
+        }
+        if closing && self.answered.insert(id) {
+            return match self.layout {
+                Layout::Blocks => self.printer.answered(step).unwrap_or_default(),
+                Layout::Lines => self.printer.answered_line(step).unwrap_or_default(),
+                Layout::Json if self.steps => json_line(step),
+                Layout::Json => String::new(),
+            };
+        }
+        String::new()
     }
+}
 
-    impl StreamRenderer {
-        pub(crate) fn new(width: Option<usize>, color: bool) -> Self {
-            Self {
-                width,
-                color,
-                active_agent: None,
-                open_tools: HashSet::new(),
-                pending_permission: None,
-                open_questions: HashMap::new(),
-            }
-        }
-
-        /// Hold an open question's fields until it closes.
-        fn remember_question(&mut self, item: &TranscriptItem) {
-            if let TranscriptItem::FormQuestion {
-                question_id,
-                fields,
-                closed: None,
-                ..
-            } = item
-            {
-                self.open_questions
-                    .insert(question_id.clone(), fields.clone());
-            }
-        }
-
-        pub(crate) fn snapshot(&mut self, events: &[AgentEventDto], filters: &Filters) -> String {
-            let mut items = filters.apply(fold(events));
-            self.active_agent = None;
-            self.open_tools.clear();
-            self.pending_permission = None;
-            self.open_questions.clear();
-            for item in &items {
-                self.remember_question(item);
-                match item {
-                    TranscriptItem::ToolCall { tool, .. }
-                        if !tool_is_terminal(tool.status.as_deref()) =>
-                    {
-                        self.open_tools.insert(Self::tool_key(&tool.id, &tool.name));
-                    }
-                    TranscriptItem::PermissionQuestion {
-                        options,
-                        answer: None,
-                        ..
-                    } => self.pending_permission = Some(options.clone()),
-                    _ => {}
-                }
-            }
-            let Some(last) = items.last() else {
-                return String::new();
-            };
-            if !Self::stays_open(last) {
-                return transcript(&items, self.width, self.color);
-            }
-            let last = items.pop().expect("the last transcript item exists");
-            let mut out = transcript(&items, self.width, self.color);
-            let open = block(&last, self.width, self.color);
-            out.push_str(open.trim_end_matches('\n'));
-            if matches!(
-                &last,
-                TranscriptItem::ToolCall { .. } | TranscriptItem::PermissionQuestion { .. }
-            ) {
-                out.push('\n');
-            }
-            self.active_agent = match &last {
-                TranscriptItem::AgentText { .. } => Some("agent"),
-                TranscriptItem::Thought { .. } => Some("thought"),
-                _ => None,
-            };
-            out
-        }
-
-        pub(crate) fn event(&mut self, event: &AgentEventDto, filters: &Filters) -> String {
-            match event.kind.as_str() {
-                "agent_message_chunk" => {
-                    self.chunk(event, "agent", "AGENT", AGENT, Style::new(), filters)
-                }
-                "agent_thought_chunk" => self.chunk(event, "thought", "THOUGHT", DIM, DIM, filters),
-                "agent_message" if self.active_agent == Some("agent") => {
-                    self.active_agent = None;
-                    "\n\n".into()
-                }
-                "agent_thought" if self.active_agent == Some("thought") => {
-                    self.active_agent = None;
-                    "\n\n".into()
-                }
-                "pre_tool_use" if filters.allows_kind(&event.kind) => self.tool_start(event),
-                "tool_call_update" if filters.allows_kind(&event.kind) => self.tool_update(event),
-                "post_tool_use" if filters.allows_kind(&event.kind) => self.tool_end(event),
-                "permission_request" if filters.allows_kind(&event.kind) => {
-                    self.permission_start(event)
-                }
-                "question" if filters.allows_kind(&event.kind) => {
-                    if let Some(item) = fold(std::slice::from_ref(event)).first() {
-                        self.remember_question(item);
-                    }
-                    self.render_if_allowed(event, filters)
-                }
-                // A close draws how the question closed, under the question.
-                "question.resolved" if filters.allows_kind(&event.kind) => {
-                    let id = event
-                        .payload
-                        .get("question_id")
-                        .and_then(|id| id.as_str())
-                        .unwrap_or_default();
-                    match self.open_questions.remove(id) {
-                        Some(fields) => {
-                            let mut out = self.close_agent();
-                            for line in closed_lines(&FormClosed::of(&event.payload), &fields) {
-                                out.push_str(&format!("  {line}\n"));
-                            }
-                            out.push('\n');
-                            out
-                        }
-                        None => String::new(),
-                    }
-                }
-                "permission.replied" if filters.allows_kind(&event.kind) => {
-                    if let Some(options) = self.pending_permission.take() {
-                        let answer = permission_answer(&event.payload, &options);
-                        format!("  answer: {answer}\n\n")
-                    } else {
-                        self.render_if_allowed(event, filters)
-                    }
-                }
-                _ => self.render_if_allowed(event, filters),
-            }
-        }
-
-        pub(crate) fn finish(&mut self) -> String {
-            let had_open_block = self.active_agent.take().is_some()
-                || !self.open_tools.is_empty()
-                || self.pending_permission.is_some();
-            self.open_tools.clear();
-            self.pending_permission = None;
-            if had_open_block {
-                "\n\n".into()
-            } else {
-                String::new()
-            }
-        }
-
-        fn render_if_allowed(&mut self, event: &AgentEventDto, filters: &Filters) -> String {
-            if !filters.allows_kind(&event.kind) {
-                return String::new();
-            }
-            let mut out = self.close_agent();
-            out.push_str(&transcript(
-                &fold(std::slice::from_ref(event)),
-                self.width,
-                self.color,
-            ));
-            out
-        }
-
-        fn stays_open(item: &TranscriptItem) -> bool {
-            match item {
-                TranscriptItem::AgentText { meta, .. } => meta
-                    .kinds
-                    .last()
-                    .is_some_and(|kind| kind == "agent_message_chunk"),
-                TranscriptItem::Thought { meta, .. } => meta
-                    .kinds
-                    .last()
-                    .is_some_and(|kind| kind == "agent_thought_chunk"),
-                TranscriptItem::ToolCall { meta, tool } => {
-                    meta.kinds
-                        .last()
-                        .is_some_and(|kind| kind == "pre_tool_use" || kind == "tool_call_update")
-                        && !matches!(tool.status.as_deref(), Some("completed" | "failed"))
-                }
-                TranscriptItem::PermissionQuestion { answer, .. } => answer.is_none(),
-                _ => false,
-            }
-        }
-
-        fn chunk(
-            &mut self,
-            event: &AgentEventDto,
-            active: &'static str,
-            label: &str,
-            label_style: Style,
-            content_style: Style,
-            filters: &Filters,
-        ) -> String {
-            if !filters.allows_kind(&event.kind) {
-                return String::new();
-            }
-            let text = text(event);
-            if self.active_agent == Some(active) {
-                return style::paint(self.color, content_style, &text);
-            }
-            let mut out = self.close_agent();
-            out.push_str(&header(
-                &ItemMeta::from_event(event),
-                label,
-                label_style,
-                self.color,
-            ));
-            out.push_str("  ");
-            out.push_str(&style::paint(self.color, content_style, &text));
-            self.active_agent = Some(active);
-            out
-        }
-
-        fn tool_start(&mut self, event: &AgentEventDto) -> String {
-            let TranscriptItem::ToolCall { meta, tool } = TranscriptItem::from(event) else {
-                return String::new();
-            };
-            let mut out = self.close_agent();
-            if !self.open_tools.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(&format!(
-                "{}  {}\n",
-                header(&meta, "TOOL", TOOL, self.color),
-                tool_line(&tool.name, &tool.input, tool.status.as_deref())
-            ));
-            self.open_tools.insert(Self::tool_key(&tool.id, &tool.name));
-            out
-        }
-
-        fn tool_end(&mut self, event: &AgentEventDto) -> String {
-            let item = TranscriptItem::from(event);
-            let TranscriptItem::ToolCall { tool, .. } = &item else {
-                return String::new();
-            };
-            if self
-                .open_tools
-                .remove(&Self::tool_key(&tool.id, &tool.name))
-            {
-                return format!(
-                    "{}\n",
-                    tool_result(tool.output.as_deref(), tool.diff.as_deref(), self.color)
-                );
-            }
-            let mut out = self.close_agent();
-            out.push_str(&block(&item, self.width, self.color));
-            out
-        }
-
-        fn tool_update(&mut self, event: &AgentEventDto) -> String {
-            let item = TranscriptItem::from(event);
-            let TranscriptItem::ToolCall { tool, .. } = &item else {
-                return String::new();
-            };
-            if self
-                .open_tools
-                .contains(&Self::tool_key(&tool.id, &tool.name))
-            {
-                let mut out = String::new();
-                if let Some(status) = &tool.status {
-                    out.push_str(&format!("  status: {status}\n"));
-                }
-                out.push_str(&tool_result(
-                    tool.output.as_deref(),
-                    tool.diff.as_deref(),
-                    self.color,
-                ));
-                return out;
-            }
-            self.tool_start(event)
-        }
-
-        fn permission_start(&mut self, event: &AgentEventDto) -> String {
-            let TranscriptItem::PermissionQuestion {
-                meta,
-                question,
-                options,
-                ai_note,
-                ..
-            } = TranscriptItem::from(event)
-            else {
-                return String::new();
-            };
-            let mut out = self.close_agent();
-            out.push_str(&format!(
-                "{}  {}\n",
-                header(&meta, "PERMISSION", PERMISSION, self.color),
-                question
-            ));
-            if let Some(note) = ai_note {
-                out.push_str(&format!("  {note}\n"));
-            }
-            for (index, option) in options.iter().enumerate() {
-                out.push_str(&format!("  {}. {}\n", index + 1, option.name));
-            }
-            self.pending_permission = Some(options);
-            out
-        }
-
-        fn close_agent(&mut self) -> String {
-            self.active_agent
-                .take()
-                .map_or_else(String::new, |_| "\n\n".into())
-        }
-
-        fn tool_key(id: &str, name: &str) -> String {
-            if id.is_empty() {
-                format!("name:{name}")
-            } else {
-                id.to_string()
-            }
-        }
-    }
+fn json_line(value: &impl serde::Serialize) -> String {
+    // A DTO of strings, numbers and lists always serializes.
+    format!("{}\n", serde_json::to_string(value).unwrap_or_default())
 }
 
 #[cfg(test)]
 mod tests {
-    use ariadne_api::events::AgentEventDto;
-    use serde_json::json;
+    use ariadne_api::trajectory::TrajectorySnapshotDto;
+    use chrono::Utc;
+    use serde_json::{Value, json};
 
-    use ariadne_console::transcript::{Filters, fold};
+    use super::*;
 
-    use super::render;
-
-    fn event(id: &str, kind: &str, payload: serde_json::Value) -> AgentEventDto {
-        AgentEventDto {
-            id: id.into(),
-            session_id: Some("session".into()),
-            task_id: None,
-            kind: kind.into(),
-            payload,
-            summary: "summary".into(),
-            created_at: "2026-09-11T12:34:56Z".into(),
-        }
-    }
-
-    /// A question an agent asked with its own tool (021): the three field
-    /// shapes each adapter sends.
-    fn asked() -> AgentEventDto {
-        event(
-            "question",
-            "question",
-            json!({"session_id": "agent", "question": {
-                "id": "q1", "session_id": "session", "created_at": "2026-11-25T00:00:00Z",
-                "message": "Codex needs your input to continue.",
-                "schema": {"type": "object", "required": ["base"], "properties": {
-                    "base": {"type": "string", "title": "Which base branch?",
-                             "oneOf": [{"const": "main", "title": "Main"},
-                                       {"const": "next", "title": "Next — the *release* line",
-                                        "description": "Cut on Fridays"}]},
-                    "checks": {"type": "array", "title": "Which checks?",
-                               "items": {"anyOf": [{"const": "fmt", "title": "Format"},
-                                                   {"const": "clippy", "title": "Clippy"}]}},
-                    "note": {"type": "string", "title": "Anything else?"},
-                }},
-            }}),
-        )
-    }
-
-    fn answered() -> AgentEventDto {
-        event(
-            "answered",
-            "question.resolved",
-            json!({"session_id": "agent", "question_id": "q1", "action": "accept",
-                   "closed_by": "user",
-                   "content": {"base": "next", "checks": ["fmt", "clippy"], "note": "ship it"}}),
-        )
-    }
-
-    #[test]
-    fn a_question_draws_each_field_with_its_options_as_written_and_its_answers() {
-        let items = fold(&[asked(), answered()]);
-        let output = render::transcript(&items, Some(72), false);
-
-        for line in [
-            "  Which base branch? → Next — the *release* line",
-            "  Which checks? → Format, Clippy",
-            "  Anything else? → ship it",
-        ] {
-            assert!(
-                output.lines().any(|row| row.trim() == line.trim()),
-                "{line:?} in {output}"
-            );
-        }
-        assert!(!output.contains("Answer it in the console."), "{output}");
-    }
-
-    #[test]
-    fn a_followed_question_draws_its_close_under_it() {
-        let mut renderer = render::StreamRenderer::new(None, false);
-        let asked = renderer.event(&asked(), &Filters::default());
-        assert!(asked.contains("Answer it in the console."), "{asked}");
-        let closed = renderer.event(&answered(), &Filters::default());
-        assert!(
-            closed.contains("Which checks? → Format, Clippy"),
-            "{closed}"
-        );
-    }
-
-    #[test]
-    fn a_transcript_renders_one_full_block_per_item() {
-        let long = "full agent text ".repeat(20);
-        let events = vec![
-            event(
-                "prompt",
-                "user_prompt_submit",
-                json!({"text": "Run the tests", "source": "console"}),
-            ),
-            event(
-                "thought",
-                "agent_thought",
-                json!({"text": "Check the seam"}),
-            ),
-            event("message", "agent_message", json!({"text": long})),
-            event(
-                "pre",
-                "pre_tool_use",
-                json!({
-                    "tool_name": "Bash",
-                    "tool_input": {"command": "cargo test"},
-                    "acp": {"toolCallId": "call-1", "title": "Bash", "status": "pending",
-                            "rawInput": {"command": "cargo test"}}
-                }),
-            ),
-            event(
-                "post",
-                "post_tool_use",
-                json!({
-                    "tool_name": "Bash",
-                    "tool_input": {"command": "cargo test"},
-                    "acp": {"toolCallId": "call-1", "title": "Bash", "status": "completed",
-                            "rawInput": {"command": "cargo test"},
-                            "rawOutput": {"stdout": "all tests passed\n"}}
-                }),
-            ),
-            event(
-                "ask",
-                "permission_request",
-                json!({
-                    "tool_name": "Write",
-                    "tool_input": {"path": "src/main.rs"},
-                    "options": [{"optionId": "yes", "name": "Allow"}]
-                }),
-            ),
-            event("answer", "permission.replied", json!({"option_id": "yes"})),
-        ];
-
-        let items = fold(&events);
-        let output = render::transcript(&items, Some(48), false);
-        let local_time = chrono::DateTime::parse_from_rfc3339("2026-09-11T12:34:56Z")
+    fn turn(id: &str, state: &str, started_at: &str, extra: Value) -> Value {
+        let mut turn = json!({
+            "id": id, "lane": "main",
+            "prompt": {"id": id, "source": "console", "prompt_kind": null,
+                       "content": [{"type": "text", "text": format!("prompt {id}")}]},
+            "state": state, "stop_reason": null, "started_at": started_at,
+            "ended_at": null,
+            "activity": {"steps": 0, "tool_calls": 0, "files_changed": 0, "failed": 0,
+                         "cancelled": 0, "thoughts": 0, "subagents": 0},
+            "steps": [], "earlier_steps": 0, "attention": [], "attention_more": 0, "answer": []
+        });
+        turn.as_object_mut()
             .unwrap()
-            .with_timezone(&chrono::Local)
-            .format("%H:%M:%S")
-            .to_string();
+            .extend(extra.as_object().unwrap().clone());
+        turn
+    }
 
+    fn note(id: &str, turn_id: &str, created_at: &str) -> Value {
+        json!({"type": "note", "id": id, "turn_id": turn_id, "lane": "main",
+               "created_at": created_at, "origin": "session_start", "severity": "info",
+               "text": format!("note {id}")})
+    }
+
+    fn view(turns: Vec<Value>) -> View {
+        let snapshot: TrajectorySnapshotDto = serde_json::from_value(json!({
+            "rev": 0,
+            "session": {"status": "running", "attention_reason": null, "running_turn_id": null,
+                        "title": null, "mode": null, "config_options": [], "context": null,
+                        "usage": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0},
+                        "cost": null, "commands": []},
+            "turns": turns, "has_older": false, "subagents": [], "plans": []
+        }))
+        .unwrap();
+        View::new(snapshot)
+    }
+
+    fn typed<T: serde::de::DeserializeOwned>(value: Value) -> T {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn tail_keeps_the_last_turns_and_since_the_turns_at_or_after_it() {
+        let turns: Vec<TurnDto> = vec![
+            typed(turn(
+                "t1",
+                "completed",
+                "2026-11-27T08:00:00Z",
+                json!({"ended_at": "2026-11-27T08:10:00Z"}),
+            )),
+            typed(turn(
+                "t2",
+                "completed",
+                "2026-11-27T09:00:00Z",
+                json!({"ended_at": "2026-11-27T10:30:00Z"}),
+            )),
+            typed(turn(
+                "t3",
+                "completed",
+                "2026-11-27T11:00:00Z",
+                json!({"ended_at": "2026-11-27T11:10:00Z"}),
+            )),
+        ];
+        let ids = |turns: Vec<TurnDto>| turns.into_iter().map(|turn| turn.id).collect::<Vec<_>>();
+
+        let tail = Filters {
+            tail: Some(2),
+            ..Filters::default()
+        };
+        assert_eq!(ids(tail.turns(turns.clone())), ["t2", "t3"]);
+
+        let since = Filters {
+            since: Some("2026-11-27T10:00:00Z".parse().unwrap()),
+            ..Filters::default()
+        };
         assert_eq!(
-            items.len(),
-            5,
-            "the tool pair and permission pair each fold once"
+            ids(since.turns(turns.clone())),
+            ["t2", "t3"],
+            "t2 ended after the instant"
         );
-        assert_eq!(output.matches(&local_time).count(), 5, "{output}");
-        assert!(output.contains("full agent text"), "{output}");
-        assert!(output.contains("all tests passed"), "{output}");
-        assert!(output.contains("answer: Allow"), "{output}");
-        assert!(!output.contains('…'), "nothing is truncated: {output}");
+        assert!(!since.needs_older(&turns), "t1 started before the instant");
+        assert!(tail.needs_older(&turns[2..]), "one turn is short of two");
     }
 
     #[test]
-    fn a_question_says_why_the_ai_permission_model_left_it_to_the_console() {
-        let events = [
-            event(
-                "ask",
-                "permission_request",
-                json!({
-                    "tool_name": "Bash",
-                    "tool_input": {"command": "cat ~/.aws/credentials"},
-                    "options": [{"optionId": "yes", "name": "Allow"}],
-                    "label": "ask",
-                    "danger": 0.41,
-                    "allow_threshold": 0.2,
-                    "deny_threshold": 0.8,
-                    "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05}
-                }),
-            ),
-            event("answer", "permission.replied", json!({"option_id": "yes"})),
-        ];
-
-        let output = render::transcript(&fold(&events), Some(80), false);
-
-        let question = output
-            .lines()
-            .position(|line| line.contains("PERMISSION"))
-            .expect("the question is printed");
-        assert_eq!(
-            output.lines().nth(question + 1),
-            Some(
-                "  AI said ask · allow 62%, deny 5% · danger 41% (allow up to 20%, deny from 80%)"
-            ),
-            "{output}"
+    fn kind_keeps_the_steps_of_the_kinds_it_names() {
+        let filters = Filters {
+            kinds: vec!["error".into()],
+            ..Filters::default()
+        };
+        let error: StepDto = typed(
+            json!({"type": "error", "id": "e", "turn_id": "t", "lane": "main",
+            "created_at": "2026-11-27T10:00:00Z", "text": "boom", "diagnosis": null}),
         );
-        assert!(output.contains("answer: Allow\n"), "{output}");
+        let note: StepDto = typed(note("n", "t", "2026-11-27T10:00:00Z"));
 
-        let capped = [event(
-            "ask",
-            "permission_request",
-            json!({
-                "tool_name": "Bash", "tool_input": {"command": "cat ~/.aws/credentials"},
-                "options": [{"optionId": "yes", "name": "Allow"}],
-                "label": "ask", "danger": 0.081, "cap": "reviewer_directive",
-                "risk_tags": ["reviewer_directive"],
-                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
-                "probabilities": {"0": 0.82, "1": 0.16, "2": 0.02}
-            }),
-        )];
-        let output = render::transcript(&fold(&capped), Some(80), false);
-        assert!(
-            output.contains("allow 82%, deny 2% · danger 8% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive"),
-            "{output}"
-        );
+        assert!(filters.keeps_step(&error));
+        assert!(!filters.keeps_step(&note));
     }
 
     #[test]
-    fn a_transcript_answer_shows_both_ai_probabilities() {
-        for (label, probabilities, danger, expected) in [
-            (
-                "allow",
-                json!({"0": 0.91, "1": 0.08, "2": 0.01}),
-                0.04,
-                "AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)",
-            ),
-            (
-                "deny",
-                json!({"0": 0.01, "1": 0.11, "2": 0.88}),
-                0.93,
-                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)",
-            ),
-        ] {
-            let events = [
-                event(
-                    "ask",
-                    "permission_request",
-                    json!({
-                        "tool_name": "Bash", "tool_input": {"command": "ls -la"},
-                        "options": [{"optionId": "yes", "name": "Allow"}]
-                    }),
-                ),
-                event(
-                    "answer",
-                    "permission.replied",
-                    json!({
-                        "option_id": "yes", "decided_by": "ai", "label": label,
-                        "danger": danger, "allow_threshold": 0.0531, "deny_threshold": 0.6522,
-                        "probabilities": probabilities
-                    }),
-                ),
-            ];
-            let output = render::transcript(&fold(&events), Some(160), false);
-            assert!(output.contains(expected), "{output}");
-        }
+    fn a_follow_prints_each_item_once_across_snapshots() {
+        let mut follower =
+            Follower::new(Layout::Lines, false, Filters::default(), Printer::new(Utc));
+        let first = view(vec![turn(
+            "t1",
+            "running",
+            "2026-11-27T10:00:00Z",
+            json!({"steps": [note("n1", "t1", "2026-11-27T10:00:01Z")]}),
+        )]);
+        follower.admit(&first);
+        let before = follower.snapshot(&first, &HashMap::new());
+
+        let mut again = view(vec![turn(
+            "t1",
+            "running",
+            "2026-11-27T10:00:00Z",
+            json!({"steps": [note("n1", "t1", "2026-11-27T10:00:01Z"),
+                             note("n2", "t1", "2026-11-27T10:00:02Z")]}),
+        )]);
+        follower.admit(&again);
+        let after = follower.snapshot(&again, &HashMap::new());
+        let touched = again
+            .apply(typed(json!({"rev": 1, "ops": [{"op": "turn_upsert", "turn": turn(
+                "t1", "completed", "2026-11-27T10:00:00Z", json!({"ended_at": "2026-11-27T10:01:00Z"})
+            )}]})))
+            .unwrap();
+        let closed = follower.update(&again, &touched);
+
+        assert_eq!(before, "prompt · prompt t1\nnote · note n1\n");
+        assert_eq!(after, "note · note n2\n");
+        assert_eq!(closed, "turn · completed\n");
     }
 
     #[test]
-    fn a_tool_call_diff_uses_diff_colouring() {
-        let patch = "@@ -1 +1 @@\n-old\n+new\n";
-        let events = [event(
-            "tool",
-            "post_tool_use",
-            json!({
-                "tool_name": "Edit",
-                "tool_input": {"path": "a.txt"},
-                "acp": {"toolCallId": "call-1", "title": "Edit", "status": "completed",
-                        "content": [{"type": "diff", "patch": {
-                            "format": "git_patch", "text": patch
-                        }}]}
-            }),
-        )];
+    fn a_follow_leaves_out_the_turns_tail_does_not_keep() {
+        let filters = Filters {
+            tail: Some(1),
+            ..Filters::default()
+        };
+        let mut follower = Follower::new(Layout::Blocks, false, filters, Printer::new(Utc));
+        let snapshot = view(vec![
+            turn("t1", "completed", "2026-11-27T09:00:00Z", json!({})),
+            turn("t2", "running", "2026-11-27T10:00:00Z", json!({})),
+        ]);
 
-        let output = render::transcript(&fold(&events), None, true);
+        follower.admit(&snapshot);
+        let out = follower.snapshot(&snapshot, &HashMap::new());
 
-        assert!(output.contains("\u{1b}[32m+new\u{1b}[0m"), "{output:?}");
-        assert!(output.contains("\u{1b}[31m-old\u{1b}[0m"), "{output:?}");
+        assert_eq!(out, "10:00:00  USER  prompt t2\n");
     }
 
     #[test]
-    fn a_plan_lists_each_entry_with_its_status_glyph() {
-        let events = [event(
-            "plan",
-            "plan",
-            json!({"entries": [
-                {"content": "Inspect the code", "status": "completed"},
-                {"content": "Run the tests", "status": "pending"}
-            ]}),
-        )];
+    fn a_json_turn_carries_its_steps_or_counts_them() {
+        let turn: TurnDto = typed(turn(
+            "t1",
+            "running",
+            "2026-11-27T10:00:00Z",
+            json!({"steps": [note("n1", "t1", "2026-11-27T10:00:01Z")], "earlier_steps": 4}),
+        ));
 
-        let output = render::transcript(&fold(&events), None, false);
+        let folded = json_turn(&turn, None, &Filters::default());
+        assert!(folded.steps.is_empty());
+        assert_eq!(folded.earlier_steps, 5);
 
-        assert!(output.contains("✓ Inspect the code"), "{output}");
-        assert!(output.contains("○ Run the tests"), "{output}");
-    }
-
-    #[test]
-    fn an_ended_turn_prints_no_block_and_a_cancelled_one_says_so_in_words() {
-        let events = [
-            event("ended", "stop", json!({"stop_reason": "end_turn"})),
-            event("cancelled", "stop", json!({"stop_reason": "cancelled"})),
-        ];
-
-        let output = render::transcript(&fold(&events), None, false);
-
-        assert_eq!(output.matches("SYSTEM").count(), 1, "{output}");
-        assert!(output.contains("turn cancelled"), "{output}");
-        assert!(!output.contains("end_turn"), "{output}");
-    }
-
-    #[test]
-    fn no_color_gives_plain_transcript_text() {
-        let events = [event("message", "agent_message", json!({"text": "plain"}))];
-
-        let output = render::transcript(&fold(&events), None, false);
-
-        assert!(!output.contains('\u{1b}'), "{output:?}");
-    }
-
-    #[test]
-    fn interleaved_tool_calls_keep_one_header_each() {
-        let events = [
-            event(
-                "pre-1",
-                "pre_tool_use",
-                json!({"acp": {"toolCallId": "one", "title": "First", "status": "pending"}}),
-            ),
-            event(
-                "pre-2",
-                "pre_tool_use",
-                json!({"acp": {"toolCallId": "two", "title": "Second", "status": "pending"}}),
-            ),
-            event(
-                "post-1",
-                "post_tool_use",
-                json!({"acp": {"toolCallId": "one", "title": "First", "status": "completed",
-                    "rawOutput": "first output"}}),
-            ),
-            event(
-                "post-2",
-                "post_tool_use",
-                json!({"acp": {"toolCallId": "two", "title": "Second", "status": "completed",
-                    "rawOutput": "second output"}}),
-            ),
-        ];
-        let mut renderer = render::StreamRenderer::new(None, false);
-        let mut output = String::new();
-        for event in events {
-            output.push_str(&renderer.event(&event, &Filters::default()));
-        }
-
-        assert_eq!(output.matches("TOOL").count(), 2, "{output}");
-        assert!(output.contains("first output"), "{output}");
-        assert!(output.contains("second output"), "{output}");
-    }
-
-    #[test]
-    fn a_permission_reply_does_not_end_an_agent_chunk() {
-        let events = [
-            event(
-                "permission",
-                "permission_request",
-                json!({"tool_name": "Write", "options": [{"optionId": "yes", "name": "Allow"}]}),
-            ),
-            event("chunk-1", "agent_message_chunk", json!({"text": "first "})),
-            event("answer", "permission.replied", json!({"option_id": "yes"})),
-            event("chunk-2", "agent_message_chunk", json!({"text": "second"})),
-        ];
-        let mut renderer = render::StreamRenderer::new(None, false);
-        let mut output = String::new();
-        for event in events {
-            output.push_str(&renderer.event(&event, &Filters::default()));
-        }
-
-        assert_eq!(output.matches("AGENT").count(), 1, "{output}");
-        assert!(output.contains("answer: Allow"), "{output}");
-    }
-
-    #[test]
-    fn session_logs_name_the_family_row_that_answered() {
-        let events = [
-            event(
-                "ask",
-                "permission_request",
-                json!({
-                    "tool_name": "Bash", "options": [{"optionId": "allow-once", "name": "Allow once"}]
-                }),
-            ),
-            event(
-                "answer",
-                "permission.replied",
-                json!({
-                    "option_id": "allow-once", "decided_by": "learned",
-                    "learned_level": "family", "learned_key": "git rebase"
-                }),
-            ),
-        ];
-        let output = render::transcript(&fold(&events), Some(80), false);
-        assert!(
-            output.contains("Allow once, learned · family git rebase"),
-            "{output}"
-        );
-        let mut renderer = render::StreamRenderer::new(None, false);
-        let streamed: String = events
-            .iter()
-            .map(|event| renderer.event(event, &Filters::default()))
-            .collect();
-        assert!(
-            streamed.contains("answer: Allow once, learned · family git rebase"),
-            "{streamed}"
-        );
+        let whole = json_turn(&turn, Some(turn.steps.clone()), &Filters::default());
+        assert_eq!(whole.steps.len(), 1);
+        assert_eq!(whole.earlier_steps, 0);
     }
 }
