@@ -16,15 +16,23 @@
  * A scroll to the top loads the older whole turns and keeps the reader's
  * place. The console follows the newest output while the reader is at the
  * bottom, and shows `Jump to latest` once the reader scrolls away.
+ *
+ * Expand opens the console in a modal, and Collapse brings it back. Each
+ * mounts a new pane, as a change of tab does, so the pane keeps its view in
+ * `console-view-state.ts`: the draft, the refused prompts, the open folds,
+ * the reader's place and whether it follows. A pane mounted again loads the
+ * older turns back to the oldest one it had loaded, then puts the place
+ * back.
  */
 
 import { skipToken, useQuery } from "@tanstack/react-query"
-import { ArrowDownIcon } from "lucide-react"
+import { ArrowDownIcon, Maximize2Icon, Minimize2Icon } from "lucide-react"
 import {
   type KeyboardEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react"
@@ -42,6 +50,7 @@ import {
   unwrap,
 } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { copyText } from "@/lib/clipboard"
 import { cn, describeError } from "@/lib/format"
 import { useBaseUrl } from "@/stores/settings"
@@ -71,7 +80,8 @@ import { isLiveStatus } from "../session-display"
 import { TrajectoryDock } from "./dock-slot"
 import { TrajectoryFind } from "./find-slot"
 import { PermissionCard } from "./permission-card"
-import { TrajectoryStatus } from "./status-slot"
+import { finishedPlans, openPlan, type Plan, PlanLine, planFoldId } from "./plan"
+import { ConsoleSubtitle, TrajectoryStatus } from "./status-slot"
 import {
   addStepPage,
   applySnapshot,
@@ -100,18 +110,9 @@ const FOLLOW_SLACK_PX = 24
 
 const IDLE: PageLoad = { state: "idle" }
 
-export function TrajectoryConsole({
-  host,
-  sessionId,
-  status,
-  autoFocus,
-  usage,
-  className,
-  session,
-  canSwitch = true,
-  onResumed,
-  onSwitched,
-}: {
+const NO_PLANS: readonly Plan[] = []
+
+type ConsoleProps = {
   /** The host the session runs on: its stream and every post go there. */
   host: Host
   sessionId: string
@@ -127,7 +128,59 @@ export function TrajectoryConsole({
   canSwitch?: boolean
   onResumed?: (session: SessionDto) => void
   onSwitched?: (session: SessionDto) => void
-}) {
+}
+
+/** The turn console in its panel, or expanded into a modal; each is a pane of its own. */
+export function TrajectoryConsole({ autoFocus, className, ...props }: ConsoleProps) {
+  const [expanded, setExpanded] = useState(false)
+  if (expanded)
+    return (
+      <Dialog open onOpenChange={(open) => open || setExpanded(false)}>
+        <DialogContent
+          showCloseButton={false}
+          className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] p-0 sm:max-w-[calc(100vw-2rem)]"
+        >
+          <DialogTitle className="sr-only">Session console</DialogTitle>
+          <TrajectoryPane
+            {...props}
+            autoFocus
+            className="h-full"
+            onCollapse={() => setExpanded(false)}
+          />
+        </DialogContent>
+      </Dialog>
+    )
+  return (
+    <TrajectoryPane
+      {...props}
+      autoFocus={autoFocus}
+      className={className}
+      onExpand={() => setExpanded(true)}
+    />
+  )
+}
+
+/** Open folds from the kept fold preferences: a fold is open where it is kept unfolded. */
+function openFolds(blockFolds: Record<string, boolean>): Record<string, boolean> {
+  return Object.fromEntries(
+    Object.entries(blockFolds).flatMap(([id, folded]) => (folded ? [] : [[id, true]])),
+  )
+}
+
+function TrajectoryPane({
+  host,
+  sessionId,
+  status,
+  autoFocus,
+  usage,
+  className,
+  session,
+  canSwitch = true,
+  onResumed,
+  onSwitched,
+  onExpand,
+  onCollapse,
+}: ConsoleProps & { onExpand?: () => void; onCollapse?: () => void }) {
   // Read again when either address moves: the settings base URL for `local`,
   // the hosts list for a named host.
   useBaseUrl()
@@ -183,6 +236,9 @@ export function TrajectoryConsole({
   /** The scroll box's size before a page of older turns, to keep the reader's place after it. */
   const anchor = useRef<{ height: number; top: number } | null>(null)
   const seen = useRef(state)
+  /** The place a pane mounted again puts back, once it loaded back to the oldest turn kept. */
+  const restore = useRef<{ scrollTop: number; oldest?: string } | null>(null)
+  const collapseButton = useRef<HTMLButtonElement>(null)
   /** Bumped by each snapshot, so a page asked for before it is dropped. */
   const generation = useRef(0)
   const loadingOlder = useRef(false)
@@ -211,7 +267,13 @@ export function TrajectoryConsole({
 
   useEffect(() => {
     setState(emptyTrajectory())
-    setOpen({})
+    // The view this session's console kept: its folds and the reader's place.
+    const kept = readViewState(consoleViewKey(host, baseUrl ?? "", sessionId))
+    setOpen(openFolds(kept.blockFolds))
+    following.current = kept.following
+    setAway(!kept.following)
+    setUnread(false)
+    restore.current = kept.following ? null : { scrollTop: kept.scrollTop, oldest: kept.oldest }
     setLoads({})
     setQuestions([])
     setQuestionsError(null)
@@ -243,7 +305,7 @@ export function TrajectoryConsole({
       questionReads.current += 1
       stream.stop()
     }
-  }, [baseUrl, unreachable, sessionId, readQuestions])
+  }, [host, baseUrl, unreachable, sessionId, readQuestions])
 
   // A question the stream brings that the last read did not list is read again.
   const unlisted = state.turns.some((turn) =>
@@ -314,7 +376,7 @@ export function TrajectoryConsole({
     anchor.current = null
     if (kept) el.scrollTop = kept.top + (el.scrollHeight - kept.height)
     else if (following.current) pin(el, pinned)
-    else if (seen.current !== state) setUnread(true)
+    else if (!restore.current && seen.current !== state) setUnread(true)
     seen.current = state
   }, [state, failed, open])
 
@@ -339,6 +401,7 @@ export function TrajectoryConsole({
     pin(el, pinned)
     setAway(false)
     setUnread(false)
+    updateViewState(keyRef.current, { following: true })
   }
 
   const loadOlder = useCallback(async () => {
@@ -360,6 +423,10 @@ export function TrajectoryConsole({
       const el = log.current
       anchor.current = el ? { height: el.scrollHeight, top: el.scrollTop } : null
       setState((current) => prependTurns(current, page))
+      const reached = page.turns[0]?.id
+      const kept = readViewState(keyRef.current).oldest
+      if (reached !== undefined && (kept === undefined || reached < kept))
+        updateViewState(keyRef.current, { oldest: reached })
       setHistory(page.has_older ? { state: "idle" } : { state: "start" })
     } catch (error) {
       if (generation.current !== mine) return
@@ -375,6 +442,24 @@ export function TrajectoryConsole({
     const el = log.current
     if (!el || history.state !== "idle" || !state.hasOlder || state.cursor === undefined) return
     if (el.clientHeight > 0 && el.scrollHeight <= el.clientHeight) void loadOlder()
+  })
+
+  // A pane mounted again loads back to the oldest turn it had loaded, then
+  // puts the reader's place back, so the place holds the same turns.
+  useLayoutEffect(() => {
+    const back = restore.current
+    const el = log.current
+    if (!back || !el || state.rev === 0) return
+    const loadedBack =
+      !state.hasOlder ||
+      back.oldest === undefined ||
+      (state.cursor !== undefined && state.cursor <= back.oldest)
+    if (!loadedBack) {
+      if (history.state === "idle") void loadOlder()
+      if (history.state !== "error") return
+    }
+    restore.current = null
+    el.scrollTop = back.scrollTop
   })
 
   /** Load a page of a turn's steps: its last ones, or with `before` the ones older than that step. */
@@ -413,8 +498,14 @@ export function TrajectoryConsole({
     }
   }, [state, open, loads, loadSteps])
 
-  const toggleTurn = useCallback((turnId: string) => {
-    setOpen((current) => ({ ...current, [turnId]: !current[turnId] }))
+  /** Open or close a fold, a turn's or a plan's, and keep it for this session. */
+  const toggleFold = useCallback((id: string) => {
+    setOpen((current) => {
+      const opened = !current[id]
+      const kept = readViewState(keyRef.current).blockFolds
+      updateViewState(keyRef.current, { blockFolds: { ...kept, [id]: !opened } })
+      return { ...current, [id]: opened }
+    })
   }, [])
 
   const earlierSteps = useCallback(
@@ -598,6 +689,10 @@ export function TrajectoryConsole({
       event.stopPropagation()
       // ⌘Escape leaves the console for the pane's Close button, and closes nothing.
       if (event.metaKey) {
+        if (collapseButton.current) {
+          collapseButton.current.focus()
+          return
+        }
         el.closest<HTMLElement>('[data-slot="docked-pane"]')
           ?.querySelector<HTMLElement>('[data-slot="pane-close"]')
           ?.focus()
@@ -642,6 +737,9 @@ export function TrajectoryConsole({
     state.turns.some((turn) =>
       turn.attention.some((step) => step.type === "question" && step.state === "open"),
     )
+  const shown = shownTurns(state)
+  const finished = useMemo(() => finishedPlans(state.plans), [state.plans])
+  const docked = openPlan(state.plans)
   const runningTool = runningTurn?.steps.findLast(
     (step) => step.type === "tool_call" && (step.status === "running" || step.status === "pending"),
   )
@@ -656,11 +754,36 @@ export function TrajectoryConsole({
       )}
     >
       <div className="flex items-center gap-3 border-b px-3 py-1.5 font-mono text-xs text-muted-foreground">
-        <span role="status" className="flex min-w-0 items-center gap-3">
-          <StreamStatusLine status={streamStatus} error={streamError} />
-        </span>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span role="status" className="flex min-w-0 items-center gap-3">
+            <StreamStatusLine status={streamStatus} error={streamError} />
+          </span>
+          <ConsoleSubtitle title={sessionState?.title} />
+        </div>
+        {onExpand ? (
+          <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
+            <Maximize2Icon />
+          </Button>
+        ) : null}
+        {onCollapse ? (
+          <Button
+            ref={collapseButton}
+            size="icon-xs"
+            variant="ghost"
+            onClick={onCollapse}
+            aria-label="Collapse the console back into the panel"
+          >
+            <Minimize2Icon />
+          </Button>
+        ) : null}
       </div>
-      <TrajectoryFind turns={shownTurns(state)} />
+      <TrajectoryFind
+        turns={shown}
+        pages={state.pages}
+        older={state.hasOlder}
+        loading={history.state === "loading"}
+        loadOlder={() => void loadOlder()}
+      />
       <HistoryLine history={history} onRetry={() => void loadOlder()} />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
@@ -678,10 +801,15 @@ export function TrajectoryConsole({
               setAway(!following.current)
               if (following.current) setUnread(false)
             }
+            if (!restore.current)
+              updateViewState(keyRef.current, {
+                scrollTop: el.scrollTop,
+                following: following.current,
+              })
             if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
           }}
         >
-          {shownTurns(state).map((turn) => (
+          {shown.map((turn) => (
             <TurnView
               key={turn.id}
               host={host}
@@ -693,7 +821,9 @@ export function TrajectoryConsole({
               live={live}
               now={turn.state === "running" ? nowIso : (turn.ended_at ?? turn.started_at)}
               questions={questions}
-              onToggle={toggleTurn}
+              plans={finished.get(turn.id) ?? NO_PLANS}
+              folds={open}
+              onToggle={toggleFold}
               onEarlier={earlierSteps}
             />
           ))}
@@ -743,6 +873,13 @@ export function TrajectoryConsole({
         ) : null}
       </div>
       <TrajectoryDock>
+        {docked ? (
+          <PlanLine
+            plan={docked}
+            open={open[planFoldId(docked)] === true}
+            onToggle={() => toggleFold(planFoldId(docked))}
+          />
+        ) : null}
         {pending ? (
           <PermissionCard
             step={pending}
@@ -785,6 +922,7 @@ export function TrajectoryConsole({
         }
         waiting={waiting}
         tokens={tokens}
+        session={sessionState}
       />
       {session ? (
         <SwitchSessionDialog

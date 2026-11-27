@@ -1,5 +1,5 @@
 import { CircleHelpIcon, Loader2Icon, PlugZapIcon } from "lucide-react"
-import { type KeyboardEvent, useRef } from "react"
+import { type KeyboardEvent, type ReactNode, useRef } from "react"
 
 import type { SessionStatus } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -165,19 +165,22 @@ export function StatusRow({
   turn,
   waiting = false,
   tokens,
+  facts,
 }: {
   status: SessionStatus
   turn?: { tool?: string; seconds?: number }
   /** A question of the agent waits for the user. */
   waiting?: boolean
   tokens: TokenTotals
+  /** More of the session's state, before the token totals. They give way first on a narrow row. */
+  facts?: ReactNode
 }) {
   const firstLine = turn?.tool?.split("\n")[0] ?? ""
   const spent = tokens.input > 0 || tokens.output > 0
   return (
     <section
       aria-label="Session status"
-      className="flex items-center gap-3 whitespace-nowrap border-t px-3 py-1 font-mono text-xs text-muted-foreground"
+      className="flex items-center gap-3 overflow-hidden whitespace-nowrap border-t px-3 py-1 font-mono text-xs text-muted-foreground"
     >
       <span className="shrink-0">{status}</span>
       {waiting ? (
@@ -203,6 +206,7 @@ export function StatusRow({
           )}
         </span>
       ) : null}
+      {facts}
       {spent ? (
         <span className="ml-auto shrink-0">
           ↑{formatTokens(tokens.input)} ↓{formatTokens(tokens.output)}

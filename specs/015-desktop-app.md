@@ -1893,8 +1893,64 @@ the default until the turn console replaces it.
     composer (`trajectory/dock-slot.tsx`) and the find control
     (`trajectory/find-slot.tsx`) are named mount points, each in its own
     file. The status row shows the session's status, the running turn and
-    the token totals. The find control draws nothing yet
+    the token totals (rule 99b)
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the session's status, the running turn and the token totals in the status row`).
+
+#### The live state of the session
+
+Rules 99a to 99h show the live state of the session outside the activity
+fold, and keep the reader's view. The data comes from the session state, the
+plans and the `note` and `compaction` steps of the trajectory (040).
+
+99a. While a plan has an open entry, one plan line shows in the dock above
+    the composer (`trajectory/plan.tsx`). It is the newest such plan, as
+    `Plan <done>/<all> · <current entry>`. The current entry is the first
+    `in_progress` entry, else the first entry not `completed`. The line is a
+    disclosure with `aria-expanded`, and it opens to the checklist of the
+    entries: `✓` done, `●` in progress, `○` the rest. A plan with every entry
+    `completed` leaves the dock and shows in the turn that last changed it,
+    as the same line, closed. A removed plan and a plan with no entries show
+    nowhere
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows one plan line above the composer while a plan has an open entry, and a finished plan in its turn`).
+99b. The status row shows, in this order, the status, the running turn, the
+    mode, each config option with its current value, the context use as a
+    share of the window, the cost in its currency, and the token totals at
+    its right end. The row is one line at each width: it does not wrap, and
+    a fact that does not fit is cut
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
+99c. A warning note and a compaction always show as lines of their turn,
+    whatever the fold, and an error shows as rule 94 says. A compaction line
+    says it runs, ended, or failed with its error. An info note is a row of
+    the open activity fold alone: it is not a line of the turn, nor one of
+    the last rows of a running turn (`trajectory/notices.tsx`)
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`).
+99d. An answered permission is a mark on the row of its call, found by the
+    call's `permission` id or by its tool call id, and not a row of its own
+    where the call's row shows. The mark gives `✓` or `✗` by the kind of the
+    option chosen, the option's label, and who decided: `you`, `AI`, a
+    learned rule or `auto`
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::marks an answered permission on the row of its call, with who decided`).
+99e. The title that the agent gives the session shows as the subtitle of the
+    console, under its stream line, and a `session_patch` changes it
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the title that the agent gives as the subtitle of the console`).
+99f. Find (`trajectory/find-slot.tsx`, over the find of the console of today
+    in `console/transcript-find.tsx`) searches the loaded turns and the
+    loaded steps: the prompt and the answer of each turn shown, and each
+    step the console holds for it, live, in a loaded page or in its
+    attention. It says when older turns are not loaded, and loads them on
+    request. It searches nothing on the daemon
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`).
+99g. The turn console expands into a modal and collapses back, as rule 24i
+    says of the console of today. Expand, collapse and a change of tab each
+    mount a new pane. The console keeps the draft, the scroll place and
+    whether it follows, and the open folds of each session, the turns' and
+    the plans', in `console/console-view-state.ts`, and a new pane reads them
+    back
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through expand, collapse and a change of tab`).
+99h. A pane mounted again reads the older turns back to the oldest turn the
+    console had loaded, and then puts the scroll place back, so the place
+    holds the same turns
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::loads back to the oldest turn it had loaded before it puts the reader's place back`).
 
 ## Acceptance criteria
 
@@ -2952,6 +3008,9 @@ the default until the turn console replaces it.
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
 - The goals screen narrows the board by title and names the search when nothing matches.
+- The turn console shows the plan, the session state, the notices, the
+  marks of answered permissions, the title and find, and keeps the view of
+  each session (rules 99a to 99h) (`ui/src/features/sessions/trajectory/console-state.test.tsx`).
 - The turn console (rules 89 to 99) opens behind `?console=turns`, draws a
   closed turn as three rows, opens its activity line to step rows, shows the
   running turn live, answers a pending permission from a card above the
@@ -3115,6 +3174,11 @@ through `detail-panels.test.tsx`, `pane-focus.test.tsx` and
 account of the sessions screen in particular rests on reading
 `sessions-page.tsx` rather than on a test asserting it, apart from the host
 behaviour of rule 61.
+
+The turn console draws a warning note and a compaction only from the steps
+it holds for a turn: the live steps of the stream and a loaded page. The
+`attention` of a turn carries no notes (040, rule 16), so a closed turn of a
+snapshot shows its warnings once its fold has loaded them (rule 99c).
 
 The tests run in jsdom and measure no layout. No test proves that the board's
 columns fit at 33.9rem, the floor of rule 39. The test of rule 39 reads the
