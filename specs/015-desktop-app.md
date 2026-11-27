@@ -1219,7 +1219,20 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     (rule 22f) of one single-select field is answered in the row too, with one
     button per choice that posts `accept` to that host's
     `POST /v1/sessions/{id}/questions/{question_id}/answer`; any other form is
-    answered in the console its row opens. An attention
+    answered in the console its row opens. A
+    row of a session that waits for a permission (031, rule 11a) shows the
+    oldest pending permission of that session, read from
+    `GET /v1/sessions/{id}/trajectory` on the host of the item: the tool, its
+    subject, the question and one button for each option, and the subagent
+    that asked. A click posts the option id as `text` to that host's
+    `POST /v1/sessions/{id}/console/input`. Every button is disabled while the
+    post runs, and a failed post shows its error and permits a new attempt
+    (`ui/src/features/goals/attention-permissions.test.tsx::disables every option while the post runs`,
+    `ui/src/features/goals/attention-permissions.test.tsx::shows a failed post and permits a new attempt`). A session with no
+    pending permission shows no button and keeps the console link. The
+    trajectory is read again after each change of the host's attention list.
+    The board, the popover and the drawer show the same buttons
+    (`ui/src/features/goals/attention-permissions.test.tsx::draws the same buttons in the popover and in the drawer`). An attention
     error of one host follows rule 75: it names that host and has Retry; the items of the other
     hosts stay and their toasts continue. The first answer of a host raises no
     toast, also for a host that answers late, becomes listed, or comes back: a

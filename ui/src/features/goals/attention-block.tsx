@@ -21,6 +21,11 @@ import {
   questionSteps,
 } from "@/features/sessions/console/form-questions"
 import { SessionAttentionBadge } from "@/features/sessions/session-display"
+import {
+  applySnapshot,
+  emptyTrajectory,
+  pendingPermissions,
+} from "@/features/sessions/trajectory/store"
 import { StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { useHasNamedHosts } from "@/hooks/use-host-filter"
 import { describeError, shortId } from "@/lib/format"
@@ -30,6 +35,7 @@ import {
   attentionAffected,
   attentionAffectedLinks,
   attentionDetail,
+  attentionListQueryOptions,
   attentionSubject,
   attentionTarget,
   useFollowAttention,
@@ -185,6 +191,11 @@ export function AttentionBlock({
           questionId={item.recovery.id.slice("question:".length)}
         />
       ) : null}
+      {item.recovery?.producer === "agent_request" &&
+      item.recovery.target.kind === "console" &&
+      item.recovery.id.startsWith("agent_request:waiting_permission:") ? (
+        <PermissionAnswers host={item.host} sessionId={item.recovery.target.session_id} />
+      ) : null}
       {affectedLinks ? (
         <div className="flex flex-wrap gap-2 px-3 pb-2 pl-9 text-xs text-muted-foreground">
           <span>Open:</span>
@@ -326,6 +337,79 @@ function FormAnswers({
       {answer.error ? (
         <p role="alert" className="text-destructive">
           Could not send the answer: {describeError(answer.error)}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+/**
+ * The oldest permission a session waits for, answered in place: one button per
+ * option, each posting its id as `text` to the console input of the session.
+ * It reads the session's trajectory once for each move of the host's attention
+ * list, so a new or an answered permission shows with no poll of its own.
+ */
+function PermissionAnswers({ host, sessionId }: { host: Host; sessionId: string }) {
+  const queryClient = useQueryClient()
+  // Observes the list the rows come from; it never fetches it itself.
+  const { dataUpdatedAt } = useQuery({ ...attentionListQueryOptions(host), enabled: false })
+  const trajectory = useQuery({
+    queryKey: qk.sessions.pendingPermission(host, sessionId, dataUpdatedAt),
+    queryFn: async () => {
+      const snapshot = await unwrap(
+        api(host).GET("/v1/sessions/{id}/trajectory", { params: { path: { id: sessionId } } }),
+      )
+      return pendingPermissions(applySnapshot(emptyTrajectory(), snapshot))[0] ?? null
+    },
+  })
+  const answer = useMutation({
+    mutationFn: (optionId: string) =>
+      unwrap(
+        api(host).POST("/v1/sessions/{id}/console/input", {
+          params: { path: { id: sessionId } },
+          body: { text: optionId },
+        }),
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.attention.lists(host) }),
+  })
+  const step = trajectory.data
+  if (!step) return null
+  return (
+    <section aria-label="Pending permission" className="flex flex-col gap-1 px-3 pb-2 text-sm">
+      <p className="font-medium break-words">
+        Permission · {step.tool.title}
+        {step.subagent ? (
+          <span className="font-normal text-muted-foreground">
+            {" "}
+            · asked by subagent {step.subagent.title}
+          </span>
+        ) : null}
+      </p>
+      {step.tool.subject ? (
+        <code className="block rounded-md bg-muted px-2 py-1 font-mono text-xs break-words whitespace-pre-wrap">
+          {step.tool.subject}
+        </code>
+      ) : null}
+      {step.question && step.question !== step.tool.title ? (
+        <p className="break-words">{step.question}</p>
+      ) : null}
+      <div className="flex flex-wrap gap-1">
+        {step.options.map((option) => (
+          <Button
+            key={option.id}
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={answer.isPending}
+            onClick={() => answer.mutate(option.id)}
+          >
+            {option.name}
+          </Button>
+        ))}
+      </div>
+      {answer.error ? (
+        <p role="alert" className="text-destructive">
+          Could not answer the permission: {describeError(answer.error)}
         </p>
       ) : null}
     </section>

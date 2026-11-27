@@ -113,6 +113,14 @@ export const qk = {
     /** The session's open native questions (`GET /v1/sessions/{id}/questions`). */
     questions: (host: Host, id: string) => [host, "sessions", "detail", id, "questions"] as const,
     /**
+     * The newest turns of the session (`GET /v1/sessions/{id}/trajectory`), read
+     * for the permission an attention block shows. `stamp` is when the host's
+     * attention list last moved: a new list is a new key, so the block reads the
+     * permission again with no poll of its own.
+     */
+    pendingPermission: (host: Host, id: string, stamp: number) =>
+      [host, "sessions", "detail", id, "pending-permission", { stamp }] as const,
+    /**
      * The detail of one tool call step (`GET /v1/sessions/{id}/trajectory/items/{item_id}`)
      * at one `detail_rev`, with or without its raw input and output: a new
      * `detail_rev` is a new key, so a running call reads its progress again.
