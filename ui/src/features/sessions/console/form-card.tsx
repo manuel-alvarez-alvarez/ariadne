@@ -173,7 +173,7 @@ export function FormCard({
         }
       }}
     >
-      <CircleHelpIcon aria-hidden className="absolute top-3 left-2 size-4 text-question-fg" />
+      <CircleHelpIcon aria-hidden className="absolute top-3 left-2 size-4 text-purple-500" />
       {readonly && !expanded ? (
         <button
           type="button"

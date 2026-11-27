@@ -1794,10 +1794,14 @@ the default until the turn console replaces it.
     first row. Each row has a slot for the detail of its step
     (`trajectory/step-detail.tsx`), which draws nothing yet. A step that an
     update brought stays a row of the open fold after its turn ends, and its
-    live version wins over a page read before it
+    live version wins over a page read before it. The rows keep the turn's
+    order: a live step that the page does not hold goes before the next live
+    step that the page holds. `N` counts the earlier steps that no row shows,
+    and `Show N earlier` reads the page before the first row shown
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::opens the activity line to the step rows of the turn`,
     `ui/src/features/sessions/trajectory/store.test.ts::keeps a row seen live in an open fold after its turn ends`,
-    `::shows the live status of a step over a page read before it`).
+    `::shows the live status of a step over a page read before it`,
+    `::shows the steps of an open fold in the turn's order, each counted once`).
 92. The running turn shows its last 3 steps under its activity line, and
     each new step pushes the oldest one out. Its newest message is its
     answer, and a `text_append` op extends it as it streams. The rows and
@@ -1825,9 +1829,11 @@ the default until the turn console replaces it.
     `::says a failed read of the questions, and reads them again on Retry`,
     `::keeps the attention count as a disclosure once the fold is open`).
 95. The composer is the one of today (rules 22, 22b, 22e, 23c). A sent
-    prompt shows `queued` until a newer console turn holds its text, alone
-    or after the seat brief and a blank line. Each turn takes one queued
-    prompt, once. A refused prompt stays with Retry and Edit, and where the
+    prompt shows `queued` until a newer console turn holds its text: the
+    prompt's `text` as it was submitted (040), which leaves out the seat
+    brief, else its content where a daemon sends no `text`. A prompt that
+    only ends with the same text holds another text. Each turn takes one
+    queued prompt, once. A refused prompt stays with Retry and Edit, and where the
     echo of an identical send took its entry, the refusal clears the entry
     that echo left behind (rule 23e). Stop and Escape post the cancel, and
     ⌘Escape moves the keyboard to the pane's Close button and closes
@@ -1841,16 +1847,21 @@ the default until the turn console replaces it.
     `ui/src/features/sessions/trajectory/store.test.ts::keeps a queued prompt until a newer turn holds its text`,
     `::takes one queued prompt per echo, whatever revision follows`,
     `::takes a queued prompt away when its echo carries the seat brief ahead of it`,
+    `::keeps a queued prompt when another prompt only ends with its text`,
     `::clears the entry an identical send's echo left behind when a send is refused`).
 96. A scroll to the top reads the whole turns before the oldest one, with
     `GET /v1/sessions/{id}/trajectory?before=<turn id>`, while `has_older`
     is true. Turns that fit the box leave no scroll, so they read the older
-    turns until the box scrolls or no older turn is left. The reader's place
-    holds. The console follows the newest output while the reader is at the
+    turns until the box scrolls or no older turn is left. The page starts at
+    the oldest turn of the history read whole. A turn the stream brings from
+    before it, such as an old turn whose error a diagnosis names, is held but
+    not shown until the pages reach it. The reader's place holds. The console follows the newest output while the reader is at the
     bottom, and shows `Jump to latest`, marked `New output`, once the reader
     scrolls away
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::loads older turns at the top and keeps the reader's place`,
     `::loads older turns while the turns fit the box and no scroll can reach the top`,
+    `::reads older turns from the history it holds, not from an old turn the stream brought`,
+    `ui/src/features/sessions/trajectory/store.test.ts::keeps a turn the stream brings from before the history out of view and off the cursor`,
     `::follows the newest output, and offers Jump to latest once the reader scrolls away`).
 97. A `resync` or a drop reconnects on the event stream's backoff. The new
     snapshot replaces the state and drops the older turns and the step pages
@@ -1861,9 +1872,11 @@ the default until the turn console replaces it.
     `::ignores a revision it has applied already`,
     `::replaces the state with a snapshot and drops the pages loaded before it`).
 98. The turn console uses the app's tokens in both themes. No source of it
-    names a fixed colour, and nothing it draws carries one, in the light or
-    the dark theme, the shared parts of `console/` included. The marker of a
-    question is the token `--question-fg`
+    names a fixed colour, and nothing it draws shows one, in the light or the
+    dark theme, the shared parts of `console/` included. The shared form
+    card keeps its own look in the console of today. In the turn console
+    its marker takes the token `--question-fg`, which the turn console sets
+    on the card's wrapper
     (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`,
     `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws every part with the app's tokens, shared cards included, in both themes`).
 99. The status row (`trajectory/status-slot.tsx`), the dock above the

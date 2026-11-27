@@ -9,14 +9,20 @@
  * id, so no item shows two times. A snapshot, the one a reconnect brings
  * included, drops the older turns and the step pages loaded before it.
  *
- * Three things are the console's own: the step pages it loaded for a turn
- * whose fold is open, the prompts it sent that no turn holds yet, and the
- * turns that already took a queued prompt away.
+ * Four things are the console's own: the step pages it loaded for a turn
+ * whose fold is open, the prompts it sent that no turn holds yet, the turns
+ * that already took a queued prompt away, and the cursor of the history it
+ * read whole.
  *
  * A turn keeps each step of its own lane that an update brought, after it
  * ends too, and that live version wins over a page that the steps route
  * read before it. So a row seen live never leaves an open fold, and a late
  * page never brings back an older status.
+ *
+ * The turns shown are the history read whole: the snapshot's and the older
+ * pages', from `cursor` on. A turn that the stream brings from before the
+ * cursor, such as an old turn whose error a diagnosis names, is held but not
+ * shown, and the next older page still starts at the cursor.
  */
 
 import type {
@@ -50,8 +56,10 @@ interface QueuedPrompt {
 export interface TrajectoryState {
   rev: number
   session?: SessionState
-  /** Oldest first. */
+  /** Oldest first, the ones held before `cursor` included. */
   turns: TurnDto[]
+  /** The oldest turn of the history read whole: an older page reads before it. */
+  cursor?: string
   /** Whether the daemon holds turns older than the oldest one here. */
   hasOlder: boolean
   plans: Plan[]
@@ -93,6 +101,7 @@ export function applySnapshot(
     rev: snapshot.rev,
     session: snapshot.session,
     turns: snapshot.turns,
+    cursor: snapshot.turns[0]?.id,
     hasOlder: snapshot.has_older,
     plans: snapshot.plans,
     subagents: snapshot.subagents,
@@ -144,14 +153,24 @@ export function applyUpdate(state: TrajectoryState, update: TrajectoryUpdateDto)
   return settle(next)
 }
 
-/** Put a page of older whole turns in front of the turns held. */
+/**
+ * Put a page of older whole turns in front of the history read whole. A turn
+ * the stream already brought keeps its live version, in its own place.
+ */
 export function prependTurns(state: TrajectoryState, page: TrajectorySnapshotDto): TrajectoryState {
   const held = new Set(state.turns.map((turn) => turn.id))
   return {
     ...state,
-    turns: [...page.turns.filter((turn) => !held.has(turn.id)), ...state.turns],
+    turns: [...page.turns.filter((turn) => !held.has(turn.id)), ...state.turns].sort(byId),
+    cursor: page.turns[0]?.id ?? state.cursor,
     hasOlder: page.has_older,
   }
+}
+
+/** The turns a reader sees: the history read whole, from the cursor on. */
+export function shownTurns(state: TrajectoryState): TurnDto[] {
+  const { cursor } = state
+  return cursor === undefined ? state.turns : state.turns.filter((turn) => turn.id >= cursor)
 }
 
 /**
@@ -193,18 +212,36 @@ export function dequeuePrompt(state: TrajectoryState, id: string, text: string):
 }
 
 /**
- * The steps a turn shows when its fold is open: the page loaded, then the
- * live steps after it. A step in both shows its live version, the newer one.
+ * The steps of a turn's open fold, in the turn's order, and how many come
+ * before them. A live step the page does not hold goes before the next live
+ * step that the page holds, else after the page, and a step in both shows
+ * its live version, the newer one. A live step before the page's first step
+ * is one of the page's earlier steps, so it is not counted twice.
  */
-export function turnSteps(turn: TurnDto, page: StepPage | undefined): StepDto[] {
+export function foldSteps(
+  turn: TurnDto,
+  page: StepPage | undefined,
+): { steps: StepDto[]; earlier: number } {
   const live = turn.steps.filter((step) => step.lane === turn.lane)
-  if (!page) return live
+  if (!page) return { steps: live, earlier: 0 }
+  const paged = new Set(page.steps.map((step) => step.id))
+  const ahead = new Map<string, StepDto[]>()
+  let waiting: StepDto[] = []
+  for (const step of live) {
+    if (!paged.has(step.id)) waiting.push(step)
+    else if (waiting.length > 0) {
+      ahead.set(step.id, waiting)
+      waiting = []
+    }
+  }
   const byId = new Map(live.map((step) => [step.id, step]))
-  const held = new Set(page.steps.map((step) => step.id))
-  return [
-    ...page.steps.map((step) => byId.get(step.id) ?? step),
-    ...live.filter((step) => !held.has(step.id)),
-  ]
+  const steps = page.steps.flatMap((step) => [
+    ...(ahead.get(step.id) ?? []),
+    byId.get(step.id) ?? step,
+  ])
+  const first = page.steps[0]
+  const leading = first ? (ahead.get(first.id)?.length ?? 0) : 0
+  return { steps: [...steps, ...waiting], earlier: Math.max(0, page.earlier - leading) }
 }
 
 /** The permissions that wait for an answer, oldest first, from the attention of every turn. */
@@ -220,9 +257,11 @@ export function pendingPermissions(state: TrajectoryState) {
 }
 
 /**
- * A queued prompt leaves the queue once a newer console turn holds its text.
- * Each turn takes one prompt, once: the turns that took one are kept, so a
- * later revision does not take a second prompt of the same text with them.
+ * A queued prompt leaves the queue once a newer console turn holds its text:
+ * the text as it was submitted, else the prompt's content where a daemon
+ * sends no submitted text. Each turn takes one prompt, once: the turns that
+ * took one are kept, so a later revision does not take a second prompt of
+ * the same text with them.
  */
 function settle(state: TrajectoryState): TrajectoryState {
   if (state.queued.length === 0) return state
@@ -234,7 +273,7 @@ function settle(state: TrajectoryState): TrajectoryState {
         turn.id > one.after &&
         !taken.has(turn.id) &&
         turn.prompt?.source === "console" &&
-        holdsText(contentText(turn.prompt.content), one.text),
+        (turn.prompt.text ?? contentText(turn.prompt.content)) === one.text,
     )
     if (!turn) return true
     taken.add(turn.id)
@@ -244,18 +283,14 @@ function settle(state: TrajectoryState): TrajectoryState {
   return queued.length === state.queued.length ? state : { ...state, queued, echoed }
 }
 
-/**
- * Whether a prompt the daemon sent holds the text typed. The first turn of a
- * launch carries the seat brief ahead of the text, with a blank line between.
- */
-function holdsText(sent: string, typed: string): boolean {
-  return sent === typed || sent.endsWith(`\n\n${typed}`)
+function byId(a: { id: string }, b: { id: string }): number {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
 function upsertTurn(state: TrajectoryState, turn: TurnDto): TrajectoryState {
   const at = state.turns.findIndex((one) => one.id === turn.id)
   if (at === -1) {
-    const turns = [...state.turns, { ...turn }].sort((a, b) => (a.id < b.id ? -1 : 1))
+    const turns = [...state.turns, { ...turn }].sort(byId)
     return { ...state, turns }
   }
   const held = state.turns[at] as TurnDto

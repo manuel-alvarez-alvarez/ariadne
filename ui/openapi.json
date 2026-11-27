@@ -10483,6 +10483,13 @@
               "null"
             ],
             "description": "`console` or `daemon`."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The text as it was submitted, without the seat brief that `content`\ncarries ahead of it on the first turn of a launch."
           }
         }
       },

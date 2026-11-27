@@ -27,12 +27,15 @@ import { elapsed } from "../console/elapsed"
 import { FormCard } from "../console/form-card"
 import { formQuestions } from "../console/form-questions"
 import { StepDetail } from "./step-detail"
-import { contentText, type StepPage, turnSteps } from "./store"
+import { contentText, foldSteps, type StepPage } from "./store"
 
 /** How many of its last steps a running turn shows under its activity line. */
 const LIVE_STEPS = 3
 
 type QuestionStep = Extract<StepDto, { type: "question" }>
+
+/** Recolours the marker of the shared question card with the app's token, in both themes. */
+const QUESTION_MARKER = "[&_.text-purple-500]:text-question-fg"
 
 /** Where the load of a turn's steps stands. */
 export type PageLoad = { state: "idle" | "loading" } | { state: "error"; message: string }
@@ -69,12 +72,15 @@ export const TurnView = memo(function TurnView({
 }: TurnViewProps) {
   const running = turn.state === "running"
   // A pending permission is the card above the composer, never a row too.
-  const steps = open ? turnSteps(turn, page).filter((step) => !isPending(step)) : []
+  const fold = foldSteps(turn, page)
+  const steps = open ? fold.steps.filter((step) => !isPending(step)) : []
   const answer = running ? liveAnswer(turn) : contentText(turn.answer)
   const shownIds = new Set(open ? steps.map((step) => step.id) : [])
   const liveRows =
     running && !open
-      ? turnSteps(turn, undefined).filter((step) => step.type !== "message" && !isPending(step))
+      ? foldSteps(turn, undefined).steps.filter(
+          (step) => step.type !== "message" && !isPending(step),
+        )
       : []
   const lastRows = liveRows.slice(-LIVE_STEPS)
   for (const step of lastRows) shownIds.add(step.id)
@@ -82,7 +88,7 @@ export const TurnView = memo(function TurnView({
   const asked = turn.attention.filter(
     (step): step is QuestionStep => step.type === "question" && step.state === "open",
   )
-  const earlier = page?.earlier ?? turn.earlier_steps
+  const earlier = fold.earlier
   return (
     <article
       data-turn-id={turn.id}
@@ -363,7 +369,14 @@ function QuestionCard({
 }) {
   const listed = questions.find((one) => one.id === step.request_id)
   const form = listed ? formQuestions([], [listed])[0] : undefined
-  if (form) return <FormCard host={host} sessionId={sessionId} question={form} live={live} />
+  // The card is the console's of today, which draws its marker in a fixed
+  // colour: here the marker takes the app's question token instead.
+  if (form)
+    return (
+      <div className={QUESTION_MARKER}>
+        <FormCard host={host} sessionId={sessionId} question={form} live={live} />
+      </div>
+    )
   return (
     <section
       aria-label="Question"

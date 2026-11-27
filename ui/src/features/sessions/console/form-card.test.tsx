@@ -197,7 +197,7 @@ it("closes the card with its answer when the resolved event lands, live and in a
 function cardMarks() {
   const nodes = Array.from(card().querySelectorAll("*"))
   return {
-    purpleIcons: card().querySelectorAll(".lucide-circle-help.text-question-fg").length,
+    purpleIcons: card().querySelectorAll(".lucide-circle-help.text-purple-500").length,
     leftBorders: card().querySelectorAll(".border-l").length,
     folds: card().querySelectorAll("[aria-expanded]").length,
     scrollAreas: nodes.filter((node) =>

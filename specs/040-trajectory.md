@@ -83,8 +83,11 @@ Out:
 ### Turns
 
 9. A turn opens on each stored `user_prompt_submit`. The id of the turn is
-   the id of that event. The events of a session before its first prompt
-   are a turn with no prompt, opened by the first of them.
+   the id of that event. Its prompt carries the content the agent read and
+   `text`, the text as it was submitted: the first turn of a launch carries
+   the seat brief in its content, ahead of that text. The events of a
+   session before its first prompt are a turn with no prompt, opened by the
+   first of them.
 10. An event joins the running turn. Where no turn runs, it joins the newest
    turn.
 11. A turn's `state` is `running` until one of these ends it:
@@ -314,6 +317,8 @@ Out:
    `fold.rs::an_item_id_names_the_message_its_chunks_and_whole_belong_to`.
 9. A closed turn carries its prompt, activity and answer, and no steps
    (rules 9, 13, 15, 17): `fold.rs::a_closed_turn_carries_its_prompt_activity_and_answer_and_no_steps`.
+   The prompt keeps its submitted text beside the seat brief (rule 9):
+   `fold.rs::a_prompt_keeps_its_submitted_text_beside_the_seat_brief`.
 10. A running turn carries its last steps (rule 14):
    `fold.rs::a_running_turn_carries_its_last_steps`.
 11. A call's preview, diff stat, subject and detail revision (rules 21, 22):

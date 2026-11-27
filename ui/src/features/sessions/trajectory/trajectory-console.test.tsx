@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { QuestionDto, TrajectorySnapshotDto, TurnDto } from "@/api"
-import { fixedColours } from "@/test/colours"
+import { drawnColours } from "@/test/colours"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { aSession } from "@/test/fixtures"
 import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
@@ -355,8 +355,9 @@ function sizeLog(log: HTMLElement, state: { height: () => number; top: number })
 }
 
 it("loads older turns at the top and keeps the reader's place", async () => {
-  const newest = aTurn({ answer: text("newest answer") })
+  // Made oldest first: each id sorts after the ones made before it.
   const older = aTurn({ answer: text("older answer") })
+  const newest = aTurn({ answer: text("newest answer") })
   reply("GET", "/trajectory", Response.json(aSnapshot([older], { rev: 0, has_older: false })))
   renderConsole(aSnapshot([newest], { has_older: true }))
   const state = {
@@ -374,6 +375,28 @@ it("loads older turns at the top and keeps the reader's place", async () => {
   expect(state.top).toBe(400)
   const turns = within(transcript()).getAllByRole("article")
   expect(turns.map((one) => one.dataset.turnId)).toEqual([older.id, newest.id])
+})
+
+it("reads older turns from the history it holds, not from an old turn the stream brought", async () => {
+  // Made oldest first: each id sorts after the ones made before it.
+  const old = aTurn({ answer: text("old answer") })
+  const between = aTurn({ answer: text("between answer") })
+  const newest = aTurn({ answer: text("newest answer") })
+  reply("GET", "/trajectory", Response.json(aSnapshot([between], { rev: 0, has_older: true })))
+  const { source } = renderConsole(aSnapshot([newest], { has_older: true }))
+  const state = { height: () => 1000, top: 300 }
+  sizeLog(transcript(), state)
+
+  act(() => source.emit("update", anUpdate(2, [{ op: "turn_upsert", turn: old }])))
+  expect(within(transcript()).queryByText("old answer")).toBeNull()
+
+  state.top = 0
+  fireEvent.scroll(transcript())
+
+  await within(transcript()).findByText("between answer")
+  const read = requests.find((one) => one.path === `/v1/sessions/${SESSION_ID}/trajectory`)
+  expect(read?.query.get("before")).toBe(newest.id)
+  expect(within(transcript()).queryByText("old answer")).toBeNull()
 })
 
 it("follows the newest output, and offers Jump to latest once the reader scrolls away", async () => {
@@ -536,8 +559,9 @@ it("says a failed read of the questions, and reads them again on Retry", async (
 })
 
 it("loads older turns while the turns fit the box and no scroll can reach the top", async () => {
-  const newest = aTurn({ answer: text("newest answer") })
+  // Made oldest first: each id sorts after the ones made before it.
   const older = aTurn({ answer: text("older answer") })
+  const newest = aTurn({ answer: text("newest answer") })
   reply("GET", "/trajectory", Response.json(aSnapshot([older], { rev: 0, has_older: false })))
   const client = vi
     .spyOn(HTMLElement.prototype, "clientHeight", "get")
@@ -587,13 +611,7 @@ it("draws every part with the app's tokens, shared cards included, in both theme
   try {
     for (const dark of [false, true]) {
       root.classList.toggle("dark", dark)
-      const drawn = Array.from(document.body.querySelectorAll("[class], [style]")).flatMap(
-        (element) =>
-          fixedColours(
-            `${element.getAttribute("class") ?? ""} ${element.getAttribute("style") ?? ""}`,
-          ),
-      )
-      expect(drawn, dark ? "dark" : "light").toEqual([])
+      expect(drawnColours(document.body), dark ? "dark" : "light").toEqual([])
     }
   } finally {
     root.classList.remove("dark")

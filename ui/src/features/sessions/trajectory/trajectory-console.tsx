@@ -73,9 +73,11 @@ import {
   contentText,
   dequeuePrompt,
   emptyTrajectory,
+  foldSteps,
   pendingPermissions,
   prependTurns,
   queuePrompt,
+  shownTurns,
   type TrajectoryState,
 } from "./store"
 import { TrajectoryStream, trajectoryStreamUrl } from "./trajectory-stream"
@@ -316,15 +318,17 @@ export function TrajectoryConsole({
   }
 
   const loadOlder = useCallback(async () => {
-    const oldest = latest.current.turns[0]
-    if (loadingOlder.current || !latest.current.hasOlder || !oldest) return
+    // The page starts at the history read whole, not at an older turn the
+    // stream brought: the turns between them are still to read.
+    const oldest = latest.current.cursor
+    if (loadingOlder.current || !latest.current.hasOlder || oldest === undefined) return
     const mine = generation.current
     loadingOlder.current = true
     setHistory({ state: "loading" })
     try {
       const page = await unwrap(
         api(host).GET("/v1/sessions/{id}/trajectory", {
-          params: { path: { id: sessionId }, query: { before: oldest.id } },
+          params: { path: { id: sessionId }, query: { before: oldest } },
         }),
       )
       if (generation.current !== mine) return
@@ -345,7 +349,7 @@ export function TrajectoryConsole({
   // box with no height yet is not on screen, and waits.
   useLayoutEffect(() => {
     const el = log.current
-    if (!el || history.state !== "idle" || !state.hasOlder || state.turns.length === 0) return
+    if (!el || history.state !== "idle" || !state.hasOlder || state.cursor === undefined) return
     if (el.clientHeight > 0 && el.scrollHeight <= el.clientHeight) void loadOlder()
   })
 
@@ -391,8 +395,12 @@ export function TrajectoryConsole({
 
   const earlierSteps = useCallback(
     (turnId: string) => {
+      // The page before the first row shown, which may be a live step older
+      // than the page loaded.
+      const turn = latest.current.turns.find((one) => one.id === turnId)
       const page = latest.current.pages[turnId]
-      void loadSteps(turnId, page?.steps[0]?.id)
+      const first = turn ? foldSteps(turn, page).steps[0] : page?.steps[0]
+      void loadSteps(turnId, first?.id)
     },
     [loadSteps],
   )
@@ -620,7 +628,7 @@ export function TrajectoryConsole({
           <StreamStatusLine status={streamStatus} error={streamError} />
         </span>
       </div>
-      <TrajectoryFind turns={state.turns} />
+      <TrajectoryFind turns={shownTurns(state)} />
       <HistoryLine history={history} onRetry={() => void loadOlder()} />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
@@ -641,7 +649,7 @@ export function TrajectoryConsole({
             if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
           }}
         >
-          {state.turns.map((turn) => (
+          {shownTurns(state).map((turn) => (
             <TurnView
               key={turn.id}
               host={host}
@@ -761,7 +769,7 @@ export function TrajectoryConsole({
 
 /** The loaded turns as text: each prompt and answer, oldest first. */
 function turnsText(state: TrajectoryState): string {
-  return state.turns
+  return shownTurns(state)
     .flatMap((turn) => {
       const lines: string[] = []
       if (turn.prompt) lines.push(`> ${contentText(turn.prompt.content)}`)

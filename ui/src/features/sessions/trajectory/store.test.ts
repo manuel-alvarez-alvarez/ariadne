@@ -21,9 +21,10 @@ import {
   contentText,
   dequeuePrompt,
   emptyTrajectory,
+  foldSteps,
   prependTurns,
   queuePrompt,
-  turnSteps,
+  shownTurns,
 } from "./store"
 
 it("replaces a turn and a step by id, so an upsert never shows an item two times", () => {
@@ -137,7 +138,7 @@ it("shows a loaded page of steps, then the live steps after it", () => {
     earlier_steps: 0,
   })
 
-  expect(turnSteps(live, state.pages[turn.id]).map((step) => step.id)).toEqual([
+  expect(foldSteps(live, state.pages[turn.id]).steps.map((step) => step.id)).toEqual([
     first.id,
     second.id,
   ])
@@ -157,7 +158,7 @@ it("keeps a row seen live in an open fold after its turn ends", () => {
   )
 
   const ended = state.turns[0]
-  expect(ended && turnSteps(ended, state.pages[turn.id]).map((step) => step.id)).toEqual([
+  expect(ended && foldSteps(ended, state.pages[turn.id]).steps.map((step) => step.id)).toEqual([
     first.id,
     later.id,
   ])
@@ -176,7 +177,9 @@ it("shows the live status of a step over a page read before it", () => {
   state = addStepPage(state, turn.id, { steps: [tool], earlier_steps: 0 })
 
   const live = state.turns[0]
-  expect(live && turnSteps(live, state.pages[turn.id])[0]).toMatchObject({ status: "completed" })
+  expect(live && foldSteps(live, state.pages[turn.id]).steps[0]).toMatchObject({
+    status: "completed",
+  })
 })
 
 it("keeps the steps of a subagent out of its parent's live steps", () => {
@@ -190,7 +193,7 @@ it("keeps the steps of a subagent out of its parent's live steps", () => {
 
   const parent = state.turns[0]
   expect(parent?.steps).toEqual([])
-  expect(parent && turnSteps(parent, undefined)).toEqual([])
+  expect(parent && foldSteps(parent, undefined).steps).toEqual([])
 })
 
 it("takes one queued prompt per echo, whatever revision follows", () => {
@@ -211,11 +214,34 @@ it("takes a queued prompt away when its echo carries the seat brief ahead of it"
   state = queuePrompt(state, "Start the task", "queued:1")
 
   const echo = aTurn({
-    prompt: { id: "e", content: text("You are the author.\n\nStart the task"), source: "console" },
+    prompt: {
+      id: "e",
+      content: text("You are the author.\n\nStart the task"),
+      text: "Start the task",
+      source: "console",
+    },
   })
   state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: echo }]))
 
   expect(state.queued).toEqual([])
+})
+
+it("keeps a queued prompt when another prompt only ends with its text", () => {
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([]))
+  state = queuePrompt(state, "Start the task", "queued:1")
+
+  // Another client sent a longer prompt whose last paragraph is the same text.
+  const other = aTurn({
+    prompt: {
+      id: "o",
+      content: text("Plan first.\n\nStart the task"),
+      text: "Plan first.\n\nStart the task",
+      source: "console",
+    },
+  })
+  state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: other }]))
+
+  expect(state.queued.map((one) => one.id)).toEqual(["queued:1"])
 })
 
 it("clears the entry an identical send's echo left behind when a send is refused", () => {
@@ -229,4 +255,45 @@ it("clears the entry an identical send's echo left behind when a send is refused
   state = dequeuePrompt(state, "queued:1", "same")
 
   expect(state.queued).toEqual([])
+})
+
+it("shows the steps of an open fold in the turn's order, each counted once", () => {
+  const turn = aTurn({ state: "running", ended_at: null })
+  const watched = Array.from({ length: 51 }, () => aToolStep(turn.id))
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([turn]))
+  state = applyUpdate(
+    state,
+    anUpdate(
+      2,
+      watched.map((step) => ({ op: "item_upsert" as const, step })),
+    ),
+  )
+
+  // The route gives the last 50 steps, and counts the first one as earlier.
+  state = addStepPage(state, turn.id, { steps: watched.slice(1), earlier_steps: 1 })
+
+  const held = state.turns[0]
+  const fold = held && foldSteps(held, state.pages[turn.id])
+  expect(fold?.steps.map((step) => step.id)).toEqual(watched.map((step) => step.id))
+  expect(fold?.earlier).toBe(0)
+})
+
+it("keeps a turn the stream brings from before the history out of view and off the cursor", () => {
+  // Made oldest first: each id sorts after the ones made before it.
+  const first = aTurn()
+  const second = aTurn()
+  const third = aTurn()
+  let state = applySnapshot(emptyTrajectory(), aSnapshot([third], { has_older: true }))
+
+  // A diagnosis names an error of the oldest turn, before the history read.
+  state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: first }]))
+  expect(shownTurns(state).map((turn) => turn.id)).toEqual([third.id])
+  expect(state.cursor).toBe(third.id)
+
+  state = prependTurns(state, aSnapshot([second], { has_older: true }))
+  expect(shownTurns(state).map((turn) => turn.id)).toEqual([second.id, third.id])
+  expect(state.cursor).toBe(second.id)
+
+  state = prependTurns(state, aSnapshot([first], { has_older: false }))
+  expect(shownTurns(state).map((turn) => turn.id)).toEqual([first.id, second.id, third.id])
 })
