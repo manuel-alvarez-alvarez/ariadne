@@ -1,7 +1,7 @@
 //! Integration tests for a session's console served as a terminal:
 //! `GET /v1/sessions/{id}/console/terminal`, a WebSocket that draws the
-//! console `ariadne attach` draws, as bytes for a terminal emulator, and
-//! reads the emulator's keys and size.
+//! full-screen console of `ariadne attach --full-screen`, as bytes for a
+//! terminal emulator, and reads the emulator's keys, mouse and size.
 //!
 //! The agent is the scriptable stub from test support (`common::acp`), the
 //! same one `acp_console.rs` drives the console endpoints against. The
@@ -22,7 +22,7 @@ use tokio_tungstenite::tungstenite::{self, Message};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use ariadne_api::sessions::{
-    TerminalClientMessage, TerminalKey, TerminalModifier, TerminalServerMessage,
+    TerminalClientMessage, TerminalKey, TerminalModifier, TerminalMouse, TerminalServerMessage,
 };
 use ariadne_core::{Actor, AttentionReason, PermissionMode, SessionStatus, TaskStatus};
 use ariadne_store::{AgentPin, NewTask, NewTaskAgent};
@@ -126,15 +126,9 @@ fn home_with_stub(dir: &tempfile::TempDir, stub: &StubAcpAgent) -> std::path::Pa
     home
 }
 
-/// One horizontal rule of the input box at the width the client sent.
-fn rule(cols: usize) -> String {
-    "─".repeat(cols)
-}
-
-fn rule_count(screen: &str, cols: usize) -> usize {
-    let rule = rule(cols);
-    screen.lines().filter(|row| *row == rule).count()
-}
+/// The footer the full-screen console draws under its input box, which says
+/// that it is drawn.
+const READY: &str = "enter send · tab transcript";
 
 /// The client's end: the emulator the bytes draw on, and the socket they
 /// come over.
@@ -184,6 +178,11 @@ impl Client {
             modifiers: Vec::new(),
         })
         .await;
+    }
+
+    async fn mouse(&mut self, kind: TerminalMouse, col: u16, row: u16) {
+        self.send(TerminalClientMessage::Mouse { kind, col, row })
+            .await;
     }
 
     async fn ctrl(&mut self, character: char) {
@@ -282,47 +281,39 @@ impl Client {
     }
 }
 
-/// The bytes draw the transcript — the tool call and the agent's text — the
-/// status row over the box and the footer under it, laid out at the width the
-/// client said.
+/// The bytes take the alternate screen and the mouse, and draw the
+/// trajectory's turns and the input box with its footer over the whole
+/// terminal, at the size the client said.
 #[tokio::test]
-async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_size() {
+async fn the_terminal_draws_the_full_screen_console_at_the_client_size() {
     let (_dir, _stub, _h, session, address) = idle_daemon().await;
-    let mut client = Client::open(address, &session.id, 100, 200).await;
+    let mut client = Client::open(address, &session.id, 100, 40).await;
 
     client
-        .read_until("the transcript and the status line", |screen| {
-            screen.contains("done") && screen.contains("idle")
+        .read_until("the full-screen console", |screen| {
+            screen.contains("done") && screen.contains(READY)
         })
         .await;
 
     let screen = client.screen();
-    assert!(screen.contains("Read"), "the tool call is drawn:\n{screen}");
+    assert!(
+        client.parser.screen().alternate_screen(),
+        "the console takes the alternate screen:\n{screen}"
+    );
+    assert_ne!(
+        client.parser.screen().mouse_protocol_mode(),
+        vt100::MouseProtocolMode::None,
+        "the console asks the terminal for the mouse"
+    );
     let rows: Vec<&str> = screen.lines().collect();
-    let rule = rule(100);
-    let top = rows
-        .iter()
-        .position(|row| *row == rule)
-        .unwrap_or_else(|| panic!("the input box spans the client's width:\n{screen}"));
-    assert_eq!(
-        rows[top - 1].trim_end(),
-        " agent · develop · stub:test-model · idle",
-        "the status row names the seat, the column, the model and the status:\n{screen}"
-    );
-    let bottom = top
-        + 1
-        + rows[top + 1..]
-            .iter()
-            .position(|row| *row == rule)
-            .unwrap_or_else(|| panic!("the box has a bottom rule:\n{screen}"));
-    assert_eq!(rule_count(&screen, 100), 2, "the box has two rules");
+    assert_eq!(rows.len(), 40, "the console fills the terminal:\n{screen}");
     assert!(
-        rows[bottom + 1].starts_with(" enter send · shift+enter newline"),
-        "the footer holds the hints:\n{screen}"
+        rows[39].starts_with(&format!(" {READY}")),
+        "the footer is the last row:\n{screen}"
     );
     assert!(
-        screen.contains("task     task"),
-        "the welcome banner names the task:\n{screen}"
+        rows[4].contains("▸") && rows[4].contains("1 tool call") && rows[5].contains("done"),
+        "the turns are drawn from the top, each with its answer:\n{screen}"
     );
     assert_eq!(client.statuses, [SessionStatus::Idle]);
 }
@@ -333,7 +324,7 @@ async fn typed_keys_and_enter_reach_the_stub_agent_as_a_prompt() {
     let (_dir, stub, _h, session, address) = idle_daemon().await;
     let mut client = Client::open(address, &session.id, 100, 30).await;
     client
-        .read_until("the console to be idle", |screen| screen.contains("idle"))
+        .read_until("the console", |screen| screen.contains(READY))
         .await;
 
     client.type_line("hello from the terminal").await;
@@ -427,7 +418,7 @@ async fn closing_the_socket_leaves_the_session_alive_and_the_session_ending_clos
     let (_dir, stub, h, session, address) = idle_daemon().await;
     let mut client = Client::open(address, &session.id, 100, 30).await;
     client
-        .read_until("the console to be idle", |screen| screen.contains("idle"))
+        .read_until("the console", |screen| screen.contains(READY))
         .await;
 
     client.socket.close(None).await.unwrap();
@@ -487,7 +478,7 @@ async fn a_relaunch_keeps_the_socket_open_and_a_later_socket_too() {
     let address = serve(&h).await;
     let mut client = Client::open(address, &session.id, 100, 30).await;
     client
-        .read_until("the console to be idle", |screen| screen.contains("idle"))
+        .read_until("the console", |screen| screen.contains(READY))
         .await;
 
     let mut resumed_script = script();
@@ -513,7 +504,7 @@ async fn a_relaunch_keeps_the_socket_open_and_a_later_socket_too() {
     let mut later = Client::open(address, &session.id, 100, 30).await;
     later
         .read_until("the resumed prompt on a later socket", |screen| {
-            screen.contains("address the review") && screen.contains("idle")
+            screen.contains("address the review") && screen.contains(READY)
         })
         .await;
     assert!(
@@ -566,7 +557,7 @@ async fn ctrl_c_twice_or_ctrl_d_closes_the_socket_and_the_session_stays_alive() 
 
     let mut client = Client::open(address, &session.id, 100, 30).await;
     client
-        .read_until("the console to be idle", |screen| screen.contains("idle"))
+        .read_until("the console", |screen| screen.contains(READY))
         .await;
     client.ctrl('c').await;
     client.ctrl('c').await;
@@ -575,7 +566,7 @@ async fn ctrl_c_twice_or_ctrl_d_closes_the_socket_and_the_session_stays_alive() 
 
     let mut client = Client::open(address, &session.id, 100, 30).await;
     client
-        .read_until("the console to be idle", |screen| screen.contains("idle"))
+        .read_until("the console", |screen| screen.contains(READY))
         .await;
     client.ctrl('d').await;
     assert!(client.closed_by_the_daemon().await, "Ctrl-D");
@@ -583,75 +574,98 @@ async fn ctrl_c_twice_or_ctrl_d_closes_the_socket_and_the_session_stays_alive() 
     assert_eq!(h.session_status(&session).await, SessionStatus::Idle);
 }
 
-/// A resize sent after the first draw redraws the console at the new size.
+/// A resize sent after the first draw draws the whole screen again at the new
+/// size: the footer moves to the new last row, and no row of the old screen
+/// is left under or beside it.
 #[tokio::test]
 async fn a_resize_redraws_at_the_new_size() {
     let (_dir, _stub, _h, session, address) = idle_daemon().await;
     let mut client = Client::open(address, &session.id, 100, 30).await;
     client
-        .read_until("the console at 100 columns", |screen| {
-            screen.contains("idle") && rule_count(screen, 100) == 2
+        .read_until("the console at 30 rows", |screen| {
+            screen.lines().count() == 30 && screen.contains(READY)
         })
         .await;
 
     client.resize(60, 20).await;
 
     client
-        .read_until("the console redrawn at 60 columns", |screen| {
-            screen.contains("idle") && rule_count(screen, 60) == 2
+        .read_until("the console redrawn at 20 rows", |screen| {
+            screen
+                .lines()
+                .nth(19)
+                .is_some_and(|row| row.starts_with(&format!(" {READY}")))
+        })
+        .await;
+    let screen = client.screen();
+    assert_eq!(screen.lines().count(), 20, "{screen}");
+    assert!(
+        screen.lines().all(|row| row.chars().count() <= 60),
+        "no row of the wider screen is left:\n{screen}"
+    );
+    assert!(screen.contains("done"), "no turn was lost:\n{screen}");
+}
+
+/// A click on a turn's row opens it, in place, with a row for each of its
+/// steps read through the steps route; a second click closes it.
+#[tokio::test]
+async fn a_click_message_opens_and_closes_the_turn_under_it() {
+    let (_dir, _stub, _h, session, address) = idle_daemon().await;
+    let mut client = Client::open(address, &session.id, 100, 30).await;
+    client
+        .read_until("the turns", |screen| {
+            screen.contains("done") && screen.contains(READY)
+        })
+        .await;
+    assert!(!client.screen().contains("Read"), "{}", client.screen());
+
+    // The activity line of the second turn, which ran the tool.
+    client.mouse(TerminalMouse::Click, 4, 4).await;
+
+    client
+        .read_until("the steps of the clicked turn", |screen| {
+            screen.contains("▾") && screen.contains("Read")
+        })
+        .await;
+    client.mouse(TerminalMouse::Click, 4, 4).await;
+    client
+        .read_until("the clicked turn closed again", |screen| {
+            !screen.contains("Read") && screen.contains("done")
         })
         .await;
 }
 
-/// A session whose agent runs a subagent (021) shows the bar, and Tab
-/// clears the terminal and draws the child's view whole: the child's words,
-/// read-only, and none of the parent's. Esc draws the parent's view again.
+/// A step of the wheel scrolls the transcript three lines, and a step down
+/// brings it back to its end.
 #[tokio::test]
-async fn tab_switches_the_terminal_to_a_subagents_view_and_esc_back() {
-    let chunk = |text: &str| json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}});
-    let mut child_chunk = chunk("child words");
-    child_chunk["as_session"] = json!("c1");
-    let mut scripted = script();
-    scripted["prompts"] = json!([{"updates": [
-        chunk("parent words"),
-        {"sessionUpdate": "subagent_spawned", "subagentSessionId": "c1",
-         "name": "explorer", "task": "Look around", "capabilities": {}},
-        child_chunk,
-    ]}]);
-    let agent_dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().home(registry_home(&stub)).await;
-    let cast = acp_cast(&h).await;
-    let session = spawned_idle(&h, &cast).await;
-    let address = serve(&h).await;
-    let mut client = Client::open(address, &session.id, 100, 30).await;
+async fn a_wheel_message_scrolls_the_transcript() {
+    let (_dir, _stub, _h, session, address) = idle_daemon().await;
+    // The transcript has six lines and four rows to show them in.
+    let mut client = Client::open(address, &session.id, 100, 8).await;
     client
-        .read_until("the bar", |screen| {
-            screen.contains("parent words") && screen.contains("● explorer")
+        .read_until("the end of the transcript", |screen| {
+            screen.contains("done") && screen.contains(READY)
+        })
+        .await;
+    let first = "before the first prompt";
+    assert!(!client.screen().contains(first), "{}", client.screen());
+
+    client.mouse(TerminalMouse::WheelUp, 4, 1).await;
+    client
+        .read_until("the first line after a step up", |screen| {
+            screen.contains(first)
         })
         .await;
     assert!(
-        !client.screen().contains("child words"),
-        "{}",
+        !client.screen().contains("done"),
+        "the end scrolled out of sight:\n{}",
         client.screen()
     );
 
-    client.key(TerminalKey::Tab).await;
+    client.mouse(TerminalMouse::WheelDown, 4, 1).await;
     client
-        .read_until("the child's view", |screen| {
-            screen.contains("child words") && screen.contains("read-only")
-        })
-        .await;
-    assert!(
-        !client.screen().contains("parent words"),
-        "the switch cleared the terminal:\n{}",
-        client.screen()
-    );
-
-    client.key(TerminalKey::Esc).await;
-    client
-        .read_until("the parent's view", |screen| {
-            screen.contains("parent words") && !screen.contains("child words")
+        .read_until("the end after a step down", |screen| {
+            screen.contains("done") && !screen.contains(first)
         })
         .await;
 }
@@ -673,9 +687,22 @@ async fn a_terminal_for_an_unknown_session_is_refused_before_the_upgrade() {
     }
 }
 
+/// The document holds the route and the messages a client sends over it,
+/// the mouse one with its three kinds.
 #[tokio::test]
-async fn the_terminal_endpoint_is_in_the_openapi_document() {
+async fn the_terminal_endpoint_and_its_messages_are_in_the_openapi_document() {
     let h = harness().await;
     let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
     assert!(doc["paths"]["/v1/sessions/{id}/console/terminal"]["get"].is_object());
+    let message = doc["components"]["schemas"]["TerminalClientMessage"].to_string();
+    for name in ["resize", "key", "paste", "mouse"] {
+        assert!(
+            message.contains(&format!("\"{name}\"")),
+            "{name}: {message}"
+        );
+    }
+    let kinds = doc["components"]["schemas"]["TerminalMouse"].to_string();
+    for kind in ["wheel_up", "wheel_down", "click"] {
+        assert!(kinds.contains(kind), "{kind}: {kinds}");
+    }
 }

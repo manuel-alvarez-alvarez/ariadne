@@ -476,7 +476,7 @@ mod tests {
             "ended_at": if state == "running" { Value::Null } else { json!("2026-11-27T10:05:00Z") },
             "activity": {"steps": 2, "tool_calls": 2, "files_changed": 0, "failed": 0,
                          "cancelled": 0, "thoughts": 0, "subagents": 0},
-            "steps": [], "earlier_steps": 0, "attention": [], "attention_more": 0,
+            "steps": [], "earlier_steps": 0, "attention": [], "attention_more": 0, "notices": [], "notices_more": 0,
             "answer": [{"type": "text", "text": format!("answer {id}")}]
         });
         turn.as_object_mut()

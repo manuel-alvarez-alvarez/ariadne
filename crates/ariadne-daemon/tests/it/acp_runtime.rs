@@ -12,7 +12,6 @@ use crate::common;
 use serde_json::{Value, json};
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_console::transcript::{TranscriptItem, fold};
 use ariadne_core::SessionStatus;
 use ariadne_store::{AgentPin, EventFilter};
 
@@ -170,11 +169,7 @@ async fn an_acp_error_detail_reaches_the_event_summary_and_session_logs() {
         event.summary,
         "Internal error: thread held by another writer"
     );
-    let items = fold(&[event]);
-    assert!(matches!(
-        items.as_slice(),
-        [TranscriptItem::Error { text, .. }] if text == "Internal error: thread held by another writer"
-    ));
+    assert_eq!(event.kind, "session.error");
 }
 
 #[tokio::test]
