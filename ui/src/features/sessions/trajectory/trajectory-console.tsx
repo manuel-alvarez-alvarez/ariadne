@@ -47,6 +47,7 @@ import {
   qk,
   type SessionDto,
   type SessionStatus,
+  type StepDto,
   unwrap,
 } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -79,10 +80,12 @@ import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
 import { TrajectoryDock } from "./dock-slot"
 import { TrajectoryFind } from "./find-slot"
+import { isNotice } from "./notices"
 import { PermissionCard } from "./permission-card"
 import { finishedPlans, openPlan, type Plan, PlanLine, planFoldId } from "./plan"
 import { ConsoleSubtitle, TrajectoryStatus } from "./status-slot"
 import {
+  addNotices,
   addStepPage,
   applySnapshot,
   applyUpdate,
@@ -111,6 +114,11 @@ const FOLLOW_SLACK_PX = 24
 const IDLE: PageLoad = { state: "idle" }
 
 const NO_PLANS: readonly Plan[] = []
+
+const NO_STEPS: readonly StepDto[] = []
+
+/** How many older steps a read for notices takes at a time, the route's cap. */
+const NOTICE_PAGE = 200
 
 type ConsoleProps = {
   /** The host the session runs on: its stream and every post go there. */
@@ -242,6 +250,8 @@ function TrajectoryPane({
   /** Bumped by each snapshot, so a page asked for before it is dropped. */
   const generation = useRef(0)
   const loadingOlder = useRef(false)
+  /** The turns whose steps were read for their notices since the last snapshot. */
+  const noticed = useRef(new Set<string>())
   const questionReads = useRef(0)
   /** Why the last read of the open questions failed; none once one succeeds. */
   const [questionsError, setQuestionsError] = useState<string | null>(null)
@@ -288,6 +298,7 @@ function TrajectoryPane({
     const stream = new TrajectoryStream(trajectoryStreamUrl(baseUrl, sessionId), {
       onSnapshot: (snapshot) => {
         generation.current += 1
+        noticed.current.clear()
         loadingOlder.current = false
         setHistory({ state: "idle" })
         setLoads({})
@@ -450,6 +461,13 @@ function TrajectoryPane({
     const back = restore.current
     const el = log.current
     if (!back || !el || state.rev === 0) return
+    // Wait for the open folds and notice lines to take up their space.
+    const read = shownTurns(state).every(
+      (turn) =>
+        loads[turn.id]?.state === "error" ||
+        (state.pages[turn.id] && loads[turn.id]?.state !== "loading"),
+    )
+    if (!read) return
     const loadedBack =
       !state.hasOlder ||
       back.oldest === undefined ||
@@ -463,21 +481,42 @@ function TrajectoryPane({
   })
 
   /** Load a page of a turn's steps: its last ones, or with `before` the ones older than that step. */
+  const readSteps = useCallback(
+    async (turnId: string, query: { before?: string; limit?: number }) => {
+      const page = await unwrap(
+        api(host).GET("/v1/sessions/{id}/trajectory/turns/{turn_id}/steps", {
+          params: { path: { id: sessionId, turn_id: turnId }, query },
+        }),
+      )
+      if (!Array.isArray(page?.steps)) throw new Error("the daemon sent no steps")
+      return page
+    },
+    [host, sessionId],
+  )
+
+  /**
+   * Load a page of a turn's steps. Without `before`, it is the turn's last
+   * steps, and the read goes on through the older steps for their notices
+   * alone, so a warning and a compaction show before the fold opens.
+   */
   const loadSteps = useCallback(
     async (turnId: string, before?: string) => {
       const mine = generation.current
       setLoads((current) => ({ ...current, [turnId]: { state: "loading" } }))
       try {
-        const page = await unwrap(
-          api(host).GET("/v1/sessions/{id}/trajectory/turns/{turn_id}/steps", {
-            params: {
-              path: { id: sessionId, turn_id: turnId },
-              query: before === undefined ? {} : { before },
-            },
-          }),
-        )
+        const page = await readSteps(turnId, before === undefined ? {} : { before })
         if (generation.current !== mine) return
         setState((current) => addStepPage(current, turnId, page, before))
+        let earlier = before === undefined ? page.earlier_steps : 0
+        let first = page.steps[0]?.id
+        while (earlier > 0 && first !== undefined) {
+          const older = await readSteps(turnId, { before: first, limit: NOTICE_PAGE })
+          if (generation.current !== mine) return
+          const found = older.steps.filter(isNotice)
+          setState((current) => addNotices(current, turnId, found))
+          earlier = older.earlier_steps
+          first = older.steps[0]?.id
+        }
         setLoads((current) => ({ ...current, [turnId]: IDLE }))
       } catch (error) {
         if (generation.current !== mine) return
@@ -487,14 +526,19 @@ function TrajectoryPane({
         }))
       }
     },
-    [host, sessionId],
+    [readSteps],
   )
 
-  // An open fold whose page a snapshot dropped reads it again.
+  // Each turn shown reads its steps once, for its notices, and an open fold
+  // whose page a snapshot dropped reads it again.
   useEffect(() => {
+    const shownIds = new Set(shownTurns(state).map((turn) => turn.id))
     for (const turn of state.turns) {
-      if (open[turn.id] && !state.pages[turn.id] && (loads[turn.id] ?? IDLE).state === "idle")
+      if (state.pages[turn.id] || (loads[turn.id] ?? IDLE).state !== "idle") continue
+      if (open[turn.id] || (shownIds.has(turn.id) && !noticed.current.has(turn.id))) {
+        noticed.current.add(turn.id)
         void loadSteps(turn.id)
+      }
     }
   }, [state, open, loads, loadSteps])
 
@@ -822,6 +866,7 @@ function TrajectoryPane({
               now={turn.state === "running" ? nowIso : (turn.ended_at ?? turn.started_at)}
               questions={questions}
               plans={finished.get(turn.id) ?? NO_PLANS}
+              notices={state.notices[turn.id] ?? NO_STEPS}
               folds={open}
               onToggle={toggleFold}
               onEarlier={earlierSteps}

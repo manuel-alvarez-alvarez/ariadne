@@ -1919,11 +1919,16 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     a fact that does not fit is cut
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
 99c. A warning note and a compaction always show as lines of their turn,
-    whatever the fold, and an error shows as rule 94 says. A compaction line
-    says it runs, ended, or failed with its error. An info note is a row of
-    the open activity fold alone: it is not a line of the turn, nor one of
+    whatever the fold, and an error shows as rule 94 says. A closed turn of a
+    snapshot carries no steps (040, rule 13), and `attention` carries no
+    notes (040, rule 16). So the console reads the steps of each turn shown
+    once, after each snapshot: the last page, which an opened fold then
+    shows, and then each older page, for its notices alone. A compaction
+    line says it runs, ended, or failed with its error. An info note is a row
+    of the open activity fold alone: it is not a line of the turn, nor one of
     the last rows of a running turn (`trajectory/notices.tsx`)
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`).
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn of a snapshot before its fold opens`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`).
 99d. An answered permission is a mark on the row of its call, found by the
     call's `permission` id or by its tool call id, and not a row of its own
     where the call's row shows. The mark gives `✓` or `✗` by the kind of the
@@ -1937,8 +1942,8 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     in `console/transcript-find.tsx`) searches the loaded turns and the
     loaded steps: the prompt and the answer of each turn shown, and each
     step the console holds for it, live, in a loaded page or in its
-    attention. It says when older turns are not loaded, and loads them on
-    request. It searches nothing on the daemon
+    attention. A step shows in find once its page is loaded. Find reports
+    when older turns are unloaded and loads them on request. It searches nothing on the daemon
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`).
 99g. The turn console expands into a modal and collapses back, as rule 24i
     says of the console of today. Expand, collapse and a change of tab each
@@ -1946,11 +1951,15 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     whether it follows, and the open folds of each session, the turns' and
     the plans', in `console/console-view-state.ts`, and a new pane reads them
     back
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through expand, collapse and a change of tab`).
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through expand and collapse`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through a change of tab`).
 99h. A pane mounted again reads the older turns back to the oldest turn the
-    console had loaded, and then puts the scroll place back, so the place
-    holds the same turns
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::loads back to the oldest turn it had loaded before it puts the reader's place back`).
+    console had loaded, and the first page of steps of each turn shown, the
+    open folds' among them, and their notices. Then it puts the scroll place back, so the place
+    holds the same turns and rows, and a browser does not cut the offset to
+    a shorter box
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::loads back to the oldest turn it had loaded before it puts the reader's place back`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::puts the place back once the open folds read their rows, not before`).
 
 ## Acceptance criteria
 
@@ -3174,11 +3183,6 @@ through `detail-panels.test.tsx`, `pane-focus.test.tsx` and
 account of the sessions screen in particular rests on reading
 `sessions-page.tsx` rather than on a test asserting it, apart from the host
 behaviour of rule 61.
-
-The turn console draws a warning note and a compaction only from the steps
-it holds for a turn: the live steps of the stream and a loaded page. The
-`attention` of a turn carries no notes (040, rule 16), so a closed turn of a
-snapshot shows its warnings once its fold has loaded them (rule 99c).
 
 The tests run in jsdom and measure no layout. No test proves that the board's
 columns fit at 33.9rem, the floor of rule 39. The test of rule 39 reads the

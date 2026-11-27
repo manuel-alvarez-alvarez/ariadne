@@ -39,7 +39,7 @@ type CompactionStep = Extract<StepDto, { type: "compaction" }>
 /** Each request the console made, with its path and query. */
 const requests: { method: string; path: string; query: URLSearchParams }[] = []
 /** Replies by `GET path`, else the steps of no turn, else the open questions, else an empty 204. */
-let replies: Record<string, Response[]> = {}
+let replies: Record<string, (Response | (() => Promise<Response>))[]> = {}
 
 beforeEach(() => {
   updateViewState(consoleViewKey("local", "http://127.0.0.1:7676", SESSION_ID), {
@@ -58,14 +58,14 @@ beforeEach(() => {
     const url = new URL(request.url)
     requests.push({ method: request.method, path: url.pathname, query: url.searchParams })
     const reply = replies[`${request.method} ${url.pathname}`]?.shift()
-    if (reply) return reply
+    if (reply) return typeof reply === "function" ? reply() : reply
     if (url.pathname.endsWith("/steps")) return Response.json({ steps: [], earlier_steps: 0 })
     if (url.pathname.endsWith("/questions")) return Response.json([])
     return new Response(null, { status: 204 })
   })
 })
 
-function reply(path: string, ...answers: Response[]) {
+function reply(path: string, ...answers: (Response | (() => Promise<Response>))[]) {
   replies[`GET /v1/sessions/${SESSION_ID}${path}`] = answers
 }
 
@@ -108,8 +108,9 @@ function sizeLog(log: HTMLElement, state: { height: () => number; top: number })
   Object.defineProperty(log, "scrollTop", {
     configurable: true,
     get: () => state.top,
+    // A browser clamps the offset to the scroll range.
     set: (value: number) => {
-      state.top = value
+      state.top = Math.max(0, Math.min(value, state.height() - 200))
     },
   })
 }
@@ -314,7 +315,13 @@ it("finds the text of the loaded turns and the loaded steps", async () => {
   const older = aTurn({ answer: text("Fixed it first") })
   const turn = aTurn()
   const tool = aToolStep(turn.id, { subject: "npm test -- login" })
-  reply(`/trajectory/turns/${turn.id}/steps`, Response.json({ steps: [tool], earlier_steps: 0 }))
+  let release: () => void = () => {}
+  const late = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  reply(`/trajectory/turns/${turn.id}/steps`, () =>
+    late.then(() => Response.json({ steps: [tool], earlier_steps: 0 })),
+  )
   renderConsole(aSnapshot([older, turn], { has_older: true }))
 
   await user.click(screen.getByRole("button", { name: "Find in transcript" }))
@@ -324,24 +331,27 @@ it("finds the text of the loaded turns and the loaded steps", async () => {
   expect(within(find).getByRole("status").textContent).toBe("1 of 2")
   within(find).getByText("Older history remains unloaded.", { exact: false })
 
-  await user.clear(field)
-  await user.type(field, "login")
-  expect(within(find).getByRole("status").textContent).toBe("No matches in loaded messages")
-
-  fireEvent.click(activityLine(turn))
-  await within(article(turn)).findByText("npm test -- login")
+  // A step is found once the console loaded it, and not before.
   fireEvent.change(field, { target: { value: "-- login" } })
-  expect(within(find).getByRole("status").textContent).toBe("1 of 1")
+  expect(within(find).getByRole("status").textContent).toBe("No matches in loaded messages")
+  await act(async () => release())
+  await waitFor(() => expect(within(find).getByRole("status").textContent).toBe("1 of 1"))
 })
 
-it("keeps the draft, the scroll place and the open folds through expand, collapse and a change of tab", async () => {
-  const user = userEvent.setup()
+/**
+ * A session view with the turn console, a draft, an open fold and a place
+ * away from the bottom, and the check that a new pane keeps all three.
+ */
+async function keptView(mount: "console" | "session view") {
   const turn = aTurn()
   const snapshot = aSnapshot([turn])
-  const session = aSession({ id: SESSION_ID, status: "idle" })
-  renderScreen(<SessionDetailView host="local" session={session} />, {
-    route: `/sessions?session=${SESSION_ID}&console=turns`,
-  })
+  if (mount === "console")
+    renderScreen(<TrajectoryConsole host="local" sessionId={SESSION_ID} status="idle" />)
+  else
+    renderScreen(
+      <SessionDetailView host="local" session={aSession({ id: SESSION_ID, status: "idle" })} />,
+      { route: `/sessions?session=${SESSION_ID}&console=turns` },
+    )
   /** Open the stream of the pane on screen, with a box of its own. */
   const show = () => {
     const state = { height: () => 1000, top: 0 }
@@ -359,13 +369,18 @@ it("keeps the draft, the scroll place and the open folds through expand, collaps
   sizeLog(transcript(), place)
   fireEvent.scroll(transcript())
 
-  const kept = async () => {
+  return async () => {
     const state = show()
     expect(input().value).toBe("Half a thought")
     expect(activityLine(turn).getAttribute("aria-expanded")).toBe("true")
-    expect(state.top).toBe(300)
+    await waitFor(() => expect(state.top).toBe(300))
     expect(screen.queryByRole("button", { name: /Jump to latest/ })).not.toBeNull()
   }
+}
+
+it("keeps the draft, the scroll place and the open folds through expand and collapse", async () => {
+  const user = userEvent.setup()
+  const kept = await keptView("console")
 
   await user.click(screen.getByRole("button", { name: "Expand the console" }))
   await screen.findByRole("dialog", { name: "Session console" })
@@ -374,10 +389,72 @@ it("keeps the draft, the scroll place and the open folds through expand, collaps
   await user.click(screen.getByRole("button", { name: "Collapse the console back into the panel" }))
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   await kept()
+})
+
+it("keeps the draft, the scroll place and the open folds through a change of tab", async () => {
+  const user = userEvent.setup()
+  const kept = await keptView("session view")
 
   await user.click(screen.getByRole("tab", { name: "Agent activity" }))
   await user.click(screen.getByRole("tab", { name: "Console" }))
   await kept()
+})
+
+it("puts the place back once the open folds read their rows, not before", async () => {
+  const turn = aTurn()
+  const tool = aToolStep(turn.id)
+  const page = () => Response.json({ steps: [tool], earlier_steps: 0 })
+  let release: () => void = () => {}
+  const late = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  reply(`/trajectory/turns/${turn.id}/steps`, page(), () => late.then(page))
+  const view = renderConsole(aSnapshot([turn]))
+  fireEvent.click(activityLine(turn))
+  await within(article(turn)).findByText("Run the tests")
+  // The open rows make the box tall enough for the place.
+  const rows = () => within(transcript()).queryByText("Run the tests") !== null
+  const first = { height: () => (rows() ? 1000 : 300), top: 600 }
+  sizeLog(transcript(), first)
+  fireEvent.scroll(transcript())
+
+  view.rerender(<div />)
+  view.rerender(<TrajectoryConsole host="local" sessionId={SESSION_ID} status="idle" />)
+  const again = { height: () => (rows() ? 1000 : 300), top: 0 }
+  sizeLog(transcript(), again)
+  act(() => {
+    latestSource().succeed()
+    latestSource().emit("snapshot", aSnapshot([turn]))
+  })
+  expect(again.top).toBe(0)
+
+  await act(async () => release())
+  await within(article(turn)).findByText("Run the tests")
+  await waitFor(() => expect(again.top).toBe(600))
+})
+
+it("shows the warnings and the compaction of a closed turn of a snapshot before its fold opens", async () => {
+  const turn = aTurn()
+  const warning = aNote(turn.id, "warning", "Rate limited · retrying")
+  const compaction = aCompaction(turn.id)
+  const older = aNote(turn.id, "warning", "Pin fell back to sonnet")
+  const tool = aToolStep(turn.id)
+  reply(
+    `/trajectory/turns/${turn.id}/steps`,
+    Response.json({ steps: [warning, tool, compaction], earlier_steps: 120 }),
+    Response.json({ steps: [older, aNote(turn.id, "info", "Session started")], earlier_steps: 0 }),
+  )
+  // A closed turn of a snapshot carries no steps (040, rule 13).
+  renderConsole(aSnapshot([{ ...turn, steps: [] }]))
+
+  const drawn = article(turn)
+  await within(drawn).findByText("Pin fell back to sonnet")
+  within(drawn).getByText("Rate limited · retrying")
+  within(drawn).getByText("Compacted the context")
+  expect(within(drawn).queryByText("Session started")).toBeNull()
+  expect(activityLine(turn).getAttribute("aria-expanded")).toBe("false")
+  const reads = requests.filter((one) => one.path.endsWith(`/turns/${turn.id}/steps`))
+  expect(reads.map((one) => one.query.get("before"))).toEqual([null, warning.id])
 })
 
 it("loads back to the oldest turn it had loaded before it puts the reader's place back", async () => {
