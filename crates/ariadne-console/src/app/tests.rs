@@ -2231,6 +2231,75 @@ fn a_narrow_bottom_row_drops_whole_items_in_rank_order_and_the_keys_hint_last() 
 }
 
 #[test]
+fn the_bottom_row_names_the_session_after_the_state_mark() {
+    let mut app = with_state();
+    app.named("Add the frobnicator · agent · develop");
+    assert_eq!(
+        bottom_row(&draw(&app, 100, HEIGHT)),
+        keyed(
+            " ◐ · Add the frobnicator · agent · develop · Opus 5.5 · Code · context 45% · $0.42",
+            100
+        )
+    );
+}
+
+#[test]
+fn a_narrow_bottom_row_drops_the_name_before_any_other_item() {
+    let mut app = with_state();
+    app.named("Work");
+    let at = |width: usize| bottom_row(&draw(&app, u16::try_from(width).unwrap(), HEIGHT));
+    let rest = " ◐ · Opus 5.5 · Code · context 45% · $0.42";
+    // The name needs its own room and a separator.
+    assert_eq!(
+        at(58),
+        keyed(" ◐ · Work · Opus 5.5 · Code · context 45% · $0.42", 58)
+    );
+    // Short of that the name is cut, and short of an ellipsis and a letter
+    // it is gone, while every other item is whole.
+    assert_eq!(
+        at(57),
+        keyed(" ◐ · Wo… · Opus 5.5 · Code · context 45% · $0.42", 57)
+    );
+    assert_eq!(
+        at(56),
+        keyed(" ◐ · W… · Opus 5.5 · Code · context 45% · $0.42", 56)
+    );
+    assert_eq!(at(55), keyed(rest, 55));
+    assert_eq!(at(51), keyed(rest, 51));
+    assert_eq!(at(50), keyed(" ◐ · Opus 5.5 · Code · context 45%", 50));
+}
+
+#[test]
+fn a_name_longer_than_its_room_is_cut_with_an_ellipsis_and_the_other_items_stay_whole() {
+    let mut app = with_state();
+    app.named("Add the frobnicator · agent · develop");
+    let row = bottom_row(&draw(&app, 70, HEIGHT));
+    assert_eq!(
+        row,
+        keyed(
+            " ◐ · Add the frobnic… · Opus 5.5 · Code · context 45% · $0.42",
+            70
+        )
+    );
+}
+
+#[test]
+fn a_session_is_named_by_its_title_and_its_seat_with_the_step() {
+    use ariadne_core::Seat;
+    let named = |title, seat, step| session_name(title, seat, step);
+    assert_eq!(
+        named(Some("Add it"), Some(Seat::Agent), Some("develop")),
+        "Add it · agent · develop"
+    );
+    assert_eq!(
+        named(Some("Ship it"), Some(Seat::Orchestrator), Some("develop")),
+        "Ship it · orchestrator"
+    );
+    assert_eq!(named(None, Some(Seat::Reviewer), None), "reviewer");
+    assert_eq!(named(None, None, None), "");
+}
+
+#[test]
 fn reconnecting_and_the_leave_hint_replace_the_left_side_of_the_row_while_they_apply() {
     let mut app = with_state();
     app.frame(Frame::Dropped);

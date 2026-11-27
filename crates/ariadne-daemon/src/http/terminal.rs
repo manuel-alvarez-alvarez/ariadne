@@ -42,8 +42,8 @@ use ariadne_api::sessions::{
 use ariadne_api::trajectory::{
     StepDto, TrajectoryQuery, TrajectorySnapshotDto, TrajectoryStepsQuery,
 };
-use ariadne_console::ansi::{FULL_SCREEN_OFF, FULL_SCREEN_ON};
-use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back};
+use ariadne_console::ansi::{FULL_SCREEN_OFF, FULL_SCREEN_ON, TITLE_RESTORE, title};
+use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back, session_name};
 use ariadne_console::trajectory::Printer;
 use ariadne_console::{AnsiBackend, Window};
 use ariadne_core::SessionStatus;
@@ -52,6 +52,7 @@ use super::AppState;
 use super::console;
 use super::error::ApiResult;
 use super::trajectory::{self, Subscription};
+use crate::http::convert::session_dto_of;
 use crate::trajectory::step_id;
 
 /// How many turns the console's snapshot carries: the most a hub gives.
@@ -115,9 +116,14 @@ async fn run(state: AppState, id: String, socket: WebSocket) -> Result<()> {
     let forwarder = tokio::spawn(forward(drain, outbound));
     let _ = bytes.send(status_frame(&state, &id).await);
     let _ = bytes.send(Message::binary(FULL_SCREEN_ON.to_vec()));
+    let name = name_of(&state, &id).await;
+    if !name.is_empty() {
+        let _ = bytes.send(Message::binary(title(&name)));
+    }
 
     let mut terminal = AnsiBackend::full_screen(Pipe::new(bytes.clone()), window.clone())?;
     let mut app = App::new(&id);
+    app.named(&name);
     let mut posts = Posts {
         state: state.clone(),
         id: id.clone(),
@@ -136,6 +142,9 @@ async fn run(state: AppState, id: String, socket: WebSocket) -> Result<()> {
     // emulator's, and it keeps what it read.
     drop(terminal);
     let _ = bytes.send(Message::binary(FULL_SCREEN_OFF.to_vec()));
+    if !name.is_empty() {
+        let _ = bytes.send(Message::binary(TITLE_RESTORE.to_vec()));
+    }
     let farewell = app.farewell(&Printer::new(chrono::Local));
     let _ = bytes.send(Message::binary(farewell.replace('\n', "\r\n")));
     let _ = bytes.send(status_frame(&state, &id).await);
@@ -143,6 +152,20 @@ async fn run(state: AppState, id: String, socket: WebSocket) -> Result<()> {
     drop(bytes);
     let _ = forwarder.await;
     outcome
+}
+
+/// The name of the session, as `ariadne session ls` shows it and the
+/// console of `ariadne attach` names it: the title behind it, its seat and
+/// its step. A session the store does not know has none.
+async fn name_of(state: &AppState, id: &str) -> String {
+    let Ok(session) = state.store.get_session(id).await else {
+        return String::new();
+    };
+    let title = crate::acp_sessions::title_of(&state.store, &state.launcher.live, &session).await;
+    match session_dto_of(&state.store, session).await {
+        Ok(row) => session_name(title.as_deref(), row.seat, row.step.as_deref()),
+        Err(_) => String::new(),
+    }
 }
 
 /// The session's status, as the text frame that says it.

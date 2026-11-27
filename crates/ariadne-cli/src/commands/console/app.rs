@@ -25,13 +25,17 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::time::{Instant, sleep_until};
 
+use ariadne_api::goals::GoalDto;
+use ariadne_api::pull_requests::PullRequestDto;
 use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto, SessionDto};
+use ariadne_api::tasks::TaskDto;
 use ariadne_api::trajectory::{
     StepDto, ToolCallDetailDto, TrajectoryItemQuery, TrajectoryQuery, TrajectorySnapshotDto,
     TrajectoryStreamQuery,
 };
 use ariadne_client::{Client, SseStream};
-use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back};
+use ariadne_console::ansi::{TITLE_RESTORE, title};
+use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back, session_name};
 use ariadne_console::trajectory::Printer;
 
 use super::terminal::{Held, Terminals};
@@ -41,12 +45,18 @@ use crate::output::note;
 /// Open the full-screen console on the process terminal.
 pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     let mut app = App::new(id);
-    if let Some(model) = stored_model(client, id).await {
-        app.stored_model(&model);
+    let row = session_row(client, id).await;
+    if let Some(model) = row.as_ref().map(|row| row.model.as_str()) {
+        app.stored_model(model);
     }
+    let name = match &row {
+        Some(row) => session_name_of(client, row).await,
+        None => String::new(),
+    };
+    app.named(&name);
     // The terminal is held before the screen is drawn, so a terminal that
     // cannot be drawn on at all is still given back.
-    let held = Held::take(Screen::default())?;
+    let held = Held::take(Screen::default().titled(&name))?;
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
     let outcome = drive(
         &mut terminal,
@@ -67,15 +77,42 @@ pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     outcome
 }
 
-/// The model the session was launched with, which the bottom row names where
-/// the agent reports no model option. A session the daemon will not describe
-/// costs the bottom row its model and nothing else.
-async fn stored_model(client: &Client, id: &str) -> Option<String> {
+/// The session row. Its model is what the bottom row names where the agent
+/// reports no model option. A session the daemon will not describe costs the
+/// bottom row its model and its name, and nothing else.
+async fn session_row(client: &Client, id: &str) -> Option<SessionDto> {
     client
         .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))
         .await
         .ok()
-        .map(|session| session.model)
+}
+
+/// The name of the session, as `ariadne session ls` shows it: the title of
+/// the task, the goal or the pull request behind it, then its seat and step.
+async fn session_name_of(client: &Client, row: &SessionDto) -> String {
+    let title = if let Some(id) = &row.task_id {
+        titled::<TaskDto>(client, "tasks", id, |task| task.title).await
+    } else if let Some(id) = &row.goal_id {
+        titled::<GoalDto>(client, "goals", id, |goal| goal.title).await
+    } else if let Some(id) = &row.pull_request_id {
+        titled::<PullRequestDto>(client, "pull-requests", id, |pull| pull.title).await
+    } else {
+        None
+    };
+    session_name(title.as_deref(), row.seat, row.step.as_deref())
+}
+
+async fn titled<T: serde::de::DeserializeOwned>(
+    client: &Client,
+    route: &str,
+    id: &str,
+    title: fn(T) -> String,
+) -> Option<String> {
+    client
+        .get_json::<T>(&format!("/v1/{route}/{id}"))
+        .await
+        .ok()
+        .map(title)
 }
 
 /// What is said as the console closes: that the session is still running,
@@ -290,6 +327,9 @@ fn osc52(text: &str) -> String {
 pub(super) struct Screen<W: Write = std::io::Stdout> {
     out: W,
     enhanced: bool,
+    /// The window title the console set, which it puts back on leaving.
+    titled: bool,
+    name: String,
 }
 
 impl Default for Screen {
@@ -303,7 +343,15 @@ impl<W: Write> Screen<W> {
         Self {
             out,
             enhanced: false,
+            titled: false,
+            name: String::new(),
         }
+    }
+
+    /// The console names the terminal window `name` while it is open.
+    fn titled(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
     }
 
     /// Write the modes the console needs, raw mode aside.
@@ -313,7 +361,12 @@ impl<W: Write> Screen<W> {
             EnterAlternateScreen,
             EnableMouseCapture,
             EnableBracketedPaste
-        )
+        )?;
+        if !self.name.is_empty() {
+            self.out.write_all(&title(&self.name))?;
+            self.titled = true;
+        }
+        Ok(())
     }
 }
 
@@ -331,6 +384,9 @@ impl<W: Write> Terminals for Screen<W> {
     }
 
     fn leave(&mut self) {
+        if self.titled {
+            let _ = self.out.write_all(TITLE_RESTORE);
+        }
         if self.enhanced {
             let _ = crossterm::execute!(self.out, PopKeyboardEnhancementFlags);
         }
@@ -689,12 +745,57 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let client = Client::tcp(format!("http://{address}"));
 
-        let known = stored_model(&client, "s1").await;
-        let unknown = stored_model(&client, "s2").await;
+        let known = session_row(&client, "s1").await;
+        let unknown = session_row(&client, "s2").await;
         server.abort();
 
-        assert_eq!(known.as_deref(), Some("claude-acp:opus"));
-        assert_eq!(unknown, None);
+        assert_eq!(
+            known.map(|row| row.model).as_deref(),
+            Some("claude-acp:opus")
+        );
+        assert!(unknown.is_none());
+    }
+
+    /// The name is what `ariadne session ls` shows: the title of the task
+    /// behind the session, then its seat and its column.
+    #[tokio::test]
+    async fn the_session_is_named_by_its_task_title_seat_and_step() {
+        let router = Router::new().route(
+            "/v1/tasks/t1",
+            get(|| async { axum::Json(crate::commands::fixtures::task("t1", "g1")) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let row = crate::commands::fixtures::session("s1", "g1", Some("t1"));
+
+        let name = session_name_of(&client, &row).await;
+        server.abort();
+
+        assert_eq!(name, "task t1 · agent · develop");
+    }
+
+    #[test]
+    fn the_window_is_titled_with_the_session_name_and_the_title_is_put_back() {
+        let mut screen = Screen::on(Vec::new()).titled("task t1 · agent · develop");
+        screen.modes().unwrap();
+        assert!(
+            holds(
+                &screen.out,
+                "\x1b]0;task t1 · agent · develop\x07".as_bytes()
+            ),
+            "{:?}",
+            String::from_utf8_lossy(&screen.out)
+        );
+        let set = screen.out.len();
+        screen.leave();
+        assert!(holds(&screen.out[set..], b"\x1b[23;0t"));
+
+        let mut unnamed = Screen::on(Vec::new());
+        unnamed.modes().unwrap();
+        unnamed.leave();
+        assert!(!holds(&unnamed.out, b"\x1b]0;") && !holds(&unnamed.out, b"\x1b[23;0t"));
     }
 
     #[test]

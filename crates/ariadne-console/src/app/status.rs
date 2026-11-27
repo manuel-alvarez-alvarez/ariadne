@@ -5,6 +5,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use ariadne_api::trajectory::{PlanDto, SessionStateDto};
+use ariadne_core::Seat;
 
 use crate::theme::{self, AGENT, ASK, DIM, FAIL, PLAN, TOOL};
 use crate::wrap::{self, wrap};
@@ -109,16 +110,35 @@ fn state_mark(status: &str) -> (&'static str, Style) {
     }
 }
 
+/// What the console calls a session: the title and the seat that `ariadne
+/// session ls` shows, with the workflow column of an agent seat that has
+/// one, e.g. `Add the frobnicator · agent · develop`. Both hosts name a
+/// session by it.
+pub fn session_name(title: Option<&str>, seat: Option<Seat>, step: Option<&str>) -> String {
+    let seat = match (seat, step) {
+        (Some(Seat::Agent), Some(step)) => Some(format!("agent · {step}")),
+        (seat, _) => seat.map(|seat| seat.as_str().to_string()),
+    };
+    let title = title.filter(|title| !title.is_empty());
+    [title.map(str::to_string), seat]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(theme::SEPARATOR)
+}
+
 /// The one row under the input box. On the left: the mark of the session's
-/// state, its model — the agent's model option, else the model the session
+/// state, the name of the session, its model — the agent's model option, else the model the session
 /// was launched with — its mode, the context it uses and its cost. On the
 /// right: the hint that `?` lists the keys. `said` replaces the left side
 /// while it applies. Where the row does not fit, it drops whole items, the
-/// least important first: the cost, the context, the mode, the model, the
-/// mark, and `? keys` last.
+/// least important first: the name, the cost, the context, the mode, the
+/// model, the mark, and `? keys` last. The name is the one item that is cut
+/// to its room, with an ellipsis, before it is dropped.
 pub(super) fn bottom_row(
     session: Option<&SessionStateDto>,
     stored_model: Option<&str>,
+    name: Option<&str>,
     said: Option<&str>,
     width: usize,
 ) -> Line<'static> {
@@ -126,10 +146,14 @@ pub(super) fn bottom_row(
     // the lowest rank goes first.
     let mut items: Vec<(u8, String, Style)> = Vec::new();
     if let Some(said) = said {
-        items.push((5, said.to_string(), ASK));
+        items.push((6, said.to_string(), ASK));
     } else if let Some(session) = session {
         let (mark, style) = state_mark(session.status.as_str());
-        items.push((4, mark.to_string(), style));
+        items.push((5, mark.to_string(), style));
+        let name = name.filter(|name| !name.is_empty());
+        if let Some(name) = name {
+            items.push((0, name.to_string(), Style::new()));
+        }
         if let Some(model) = session
             .config_options
             .iter()
@@ -146,7 +170,7 @@ pub(super) fn bottom_row(
             })
             .or_else(|| stored_model.map(str::to_string))
         {
-            items.push((3, model, DIM));
+            items.push((4, model, DIM));
         }
         if let Some(mode) = session.mode.as_ref().and_then(|mode| {
             let id = mode.current_id.as_deref()?;
@@ -157,18 +181,18 @@ pub(super) fn bottom_row(
                     .map_or(id.to_string(), |available| available.name.clone()),
             )
         }) {
-            items.push((2, mode, DIM));
+            items.push((3, mode, DIM));
         }
         if let Some(context) = session.context.filter(|context| context.size > 0) {
             let percent = context.used.saturating_mul(100) / context.size;
-            items.push((1, format!("context {percent}%"), DIM));
+            items.push((2, format!("context {percent}%"), DIM));
         }
         if let Some(cost) = &session.cost {
             let said = match cost.currency.as_str() {
                 "USD" => format!("${:.2}", cost.amount),
                 currency => format!("{:.2} {currency}", cost.amount),
             };
-            items.push((0, said, DIM));
+            items.push((1, said, DIM));
         }
     }
     let keys = wrap::width(theme::KEYS_HINT);
@@ -180,6 +204,27 @@ pub(super) fn bottom_row(
         1 + texts + gaps + hint <= width
     };
     let mut hint = true;
+    // The name takes the room the rest leaves, cut with an ellipsis; a room
+    // too small for one letter and the ellipsis drops it.
+    if let Some(at) = items
+        .iter()
+        .position(|(rank, ..)| *rank == 0 && name.is_some())
+    {
+        let rest: Vec<(u8, String, Style)> = items
+            .iter()
+            .enumerate()
+            .filter(|(held, _)| *held != at)
+            .map(|(_, item)| item.clone())
+            .collect();
+        let texts: usize = rest.iter().map(|(_, text, _)| wrap::width(text)).sum();
+        let gaps = wrap::width(theme::SEPARATOR) * rest.len();
+        let room = width.saturating_sub(1 + texts + gaps + keys + 3);
+        if room < 2 {
+            items.remove(at);
+        } else {
+            items[at].1 = wrap::clip(&items[at].1.clone(), room);
+        }
+    }
     while !fits(&items, hint) && (hint || !items.is_empty()) {
         if items.is_empty() {
             hint = false;

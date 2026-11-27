@@ -31,6 +31,18 @@ pub const FULL_SCREEN_ON: &[u8] = b"\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h
 /// shown.
 pub const FULL_SCREEN_OFF: &[u8] = b"\x1b[?2004l\x1b[?1006l\x1b[?1000l\x1b[?1049l\x1b[?25h";
 
+/// What the console tells the terminal to put the window title back: it pops
+/// the title that [`title`] pushed.
+pub const TITLE_RESTORE: &[u8] = b"\x1b[23;0t";
+
+/// What the console tells the terminal to name its window: it pushes the
+/// title the window has, then sets `name`, which loses its control
+/// characters. [`TITLE_RESTORE`] gives the first one back.
+pub fn title(name: &str) -> Vec<u8> {
+    let name: String = name.chars().filter(|c| !c.is_control()).collect();
+    format!("\x1b[22;0t\x1b]0;{name}\x07").into_bytes()
+}
+
 /// The size of the terminal at the far end, as the client last reported it.
 ///
 /// Shared between the backend, which answers ratatui's `size` from it, and

@@ -182,6 +182,30 @@ impl Titles {
     }
 }
 
+/// The title [`Titles::of`] gives one session, read for that session alone.
+pub(crate) async fn title_of(
+    store: &Store,
+    live: &crate::forge::live::LivePulls,
+    session: &AgentSession,
+) -> Option<String> {
+    if let Some(task) = &session.task_id
+        && let Ok(task) = store.get_task(task).await
+    {
+        return Some(task.title);
+    }
+    if let Some(goal) = &session.goal_id
+        && let Ok(goal) = store.get_goal(goal).await
+    {
+        return Some(goal.title);
+    }
+    let row = store
+        .get_pull_request(session.pull_request_id.as_ref()?)
+        .await
+        .ok()?;
+    let pull = crate::forge::live::of_row(store, live, row).await.ok()??;
+    Some(pull.title)
+}
+
 /// One row of the listing before the page is cut: what it takes to build the
 /// entry, once the page is known.
 enum Row {
