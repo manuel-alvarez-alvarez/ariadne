@@ -677,7 +677,7 @@ impl Fold {
         moments
     }
 
-    /// The stored rows that show a main-lane call whole, oldest first: its
+    /// The stored rows that show a main-lane call whole: its
     /// opener, then its newest output, diff and change.
     pub(crate) fn call_rows(&self, step: &str) -> Vec<String> {
         self.turns

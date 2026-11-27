@@ -17,7 +17,8 @@ use ariadne_core::{PromptKind, SessionStatus};
 use ariadne_store::AgentEvent;
 
 use crate::http::convert::event_dto;
-use crate::trajectory::{Fold, Moment, diff_text_of};
+use crate::trajectory::detail::diff_text_of;
+use crate::trajectory::{Fold, Moment};
 
 /// Opens and closes every entry's fence. Reserved: stripped from an entry's
 /// own text first, so nothing a tool printed or a diff carried can forge one
@@ -615,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_start_of_the_output() {
+    fn a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_folded_output() {
         let output_lines: Vec<String> = (1..=14).map(|n| format!("line {n}")).collect();
         let events = [
             event(

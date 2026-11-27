@@ -228,8 +228,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     another's conversation, so the new agent gets this instead, as its
     history. `handoff_text` (`crates/ariadne-daemon/src/agents/handoff.rs`)
     folds the events into the typed turns of the trajectory fold (040), and
-    opens the text
-    with one line that names it as the history of the session the agent
+    opens the text with one line that names it as the history of the session the agent
     continues and tells it to go on from where that history ends.
 15. One entry follows per kept event, oldest first, each under its own
     marker: a `user_prompt_submit` whole under `user` where its source is
@@ -239,8 +238,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     are complete; a paired `pre_tool_use` and `post_tool_use` as the head
     line of the call — the command, the path, the
     pattern, or the title — then its output and its diff, read from the
-    rows the fold names for the call, each folded to their last ten lines
-    with a count of what is hidden; a call with no end
+    rows the fold names for the call. The newest row with output and the
+    newest row with a diff supply those values. Each folds to its last ten
+    lines with a count of what is hidden. A call with no end
     renders its head alone; a `permission_request` and its
     `permission.replied` as one line, the head of the call and the option
     chosen; and a `session.error` as one line, its first line.
@@ -450,7 +450,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - A tool call and its end render as one entry with the head and the folded
   output (`handoff.rs::a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_folded_output`),
   its diff folds the same way
-  (`::a_diff_is_folded_the_same_way_as_output`), and a call with no end
+  (`::a_diff_is_folded_the_same_way_as_output`), and mixed updates keep the
+  newest output and the newest diff
+  (`::a_call_keeps_its_newest_output_across_mixed_updates`). A call with no end
   renders its head alone (`::a_call_with_no_end_renders_its_head_alone`).
 - A plan renders as a checklist (`handoff.rs::a_plan_renders_as_a_checklist`).
 - A permission request renders as one line with the option chosen

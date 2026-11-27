@@ -382,37 +382,6 @@ pub(super) fn diffs_of(acp: &Value) -> Vec<(Option<String>, u64, u64)> {
         .collect()
 }
 
-/// The file change of a call as a unified diff: the agent's patch where it
-/// sent one, else the hunks between its old and new text. A handoff reads
-/// it whole where the step holds only its size.
-pub(crate) fn diff_text_of(acp: &Value) -> Option<String> {
-    let diff = acp
-        .get("content")?
-        .as_array()?
-        .iter()
-        .find(|entry| string_at(entry, "/type").as_deref() == Some("diff"))?;
-    if let Some(patch) = string_at(diff, "/patch/text") {
-        let headed = patch
-            .lines()
-            .take_while(|line| !line.starts_with("@@"))
-            .any(|line| line.starts_with("--- ") || line.starts_with("+++ "));
-        return Some(match string_at(diff, "/path") {
-            Some(path) if !headed => format!("--- {path}\n+++ {path}\n{patch}"),
-            _ => patch,
-        });
-    }
-    let path = string_at(diff, "/path")?;
-    let old = string_at(diff, "/oldText").unwrap_or_default();
-    let new = string_at(diff, "/newText").unwrap_or_default();
-    let text = similar::TextDiff::from_lines(&old, &new)
-        .unified_diff()
-        .context_radius(3)
-        .missing_newline_hint(false)
-        .header(&path, &path)
-        .to_string();
-    (!text.is_empty()).then_some(text)
-}
-
 /// The start of what a call gave back: the text of its content, else its
 /// raw output.
 pub(super) fn preview_of(acp: &Value) -> Option<String> {
