@@ -3,7 +3,7 @@
 
 use serde_json::Value;
 
-use ariadne_core::event_facts::EventFacts;
+use ariadne_core::event_facts::{EventFacts, FactLocation};
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::trajectory::{
@@ -287,7 +287,7 @@ pub(super) fn merge_call_facts(call: &mut ToolCallStepDto, facts: &EventFacts, c
         facts
             .locations
             .iter()
-            .map(|location| LocationDto {
+            .map(|location: &FactLocation| LocationDto {
                 path: location.path.clone(),
                 line: location.line,
             })
