@@ -251,7 +251,10 @@ same binary also serves (013).
       under that turn, open or closed, in text, JSON and the piped console.
     - A close that comes on the live stream after its turn closed prints
       too, from the step the update sends. A close after its turn closed
-      prints whole, under a line that names its turn by time and prompt. A follow ends when the session is
+      prints whole, under a line that names its turn by time and prompt.
+      A diagnosis that comes after its error prints once, as a
+      `diagnosis:` line under it.
+      A follow ends when the session is
       no longer live and no turn runs.
     - A piped console answers with a number only the permission that waits
       when the line is read, and only once. Any other line is a prompt.
@@ -920,6 +923,7 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `ariadne-console::trajectory::view::tests::an_answer_on_a_closed_turn_names_the_step_it_takes_out_of_attention`,
   `ariadne-console::trajectory::print::tests::an_owner_line_names_a_turn_by_its_time_and_the_start_of_its_prompt`,
   `commands/transcript.rs::tests::a_follow_prints_each_item_once_across_snapshots`,
+  `::a_diagnosis_that_comes_after_a_printed_error_prints_once`,
   `::a_follow_leaves_out_the_turns_tail_does_not_keep`). The client view
   applies each op of an update, refuses a skipped revision, and shows a
   step before a later op closes its turn

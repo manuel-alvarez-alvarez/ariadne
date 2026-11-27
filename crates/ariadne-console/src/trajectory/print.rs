@@ -170,7 +170,7 @@ where
         out
     }
 
-    /// How a permission or a question closed, under the step printed while
+    /// How a permission or a question closed, or the diagnosis an error got, under the step printed while
     /// it waited. None while it waits, and for every other step.
     pub fn answered(&self, step: &StepDto) -> Option<String> {
         closing(step).map(|line| format!("    {line}\n"))
@@ -423,6 +423,11 @@ fn closing(step: &StepDto) -> Option<String> {
             QuestionState::Declined => Some("declined".to_string()),
             QuestionState::Cancelled => Some("cancelled".to_string()),
         },
+        // The diagnosis of an error comes after the error: it closes it.
+        StepDto::Error(error) => error
+            .diagnosis
+            .as_ref()
+            .map(|diagnosis| format!("diagnosis: {diagnosis}")),
         _ => None,
     }
 }

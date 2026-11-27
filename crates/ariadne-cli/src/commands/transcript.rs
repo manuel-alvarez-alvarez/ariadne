@@ -735,4 +735,40 @@ mod tests {
         assert_eq!(turn.steps.len(), 1, "{out}");
         assert_eq!(step_id(&turn.steps[0]), "n0");
     }
+
+    #[test]
+    fn a_diagnosis_that_comes_after_a_printed_error_prints_once() {
+        for layout in [Layout::Blocks, Layout::Lines] {
+            let error = |diagnosis: Value| {
+                json!({"type": "error", "id": "e", "turn_id": "t1", "lane": "main",
+                       "created_at": "2026-11-27T10:00:01Z", "text": "boom",
+                       "diagnosis": diagnosis})
+            };
+            let mut follower = Follower::new(layout, true, Filters::default(), Printer::new(Utc));
+            let mut view = view(vec![turn(
+                "t1",
+                "running",
+                "2026-11-27T10:00:00Z",
+                json!({"steps": [error(Value::Null)]}),
+            )]);
+            follower.admit(&[], &view);
+            let first = follower.snapshot(&[], &view, &HashMap::new());
+            assert!(first.contains("boom"), "{first}");
+            assert!(!first.contains("quota exhausted"), "{first}");
+
+            let mut out = String::new();
+            for rev in 1..=2 {
+                view.apply_each(
+                    typed(json!({"rev": rev, "ops": [
+                        {"op": "item_upsert", "step": error(json!("quota exhausted"))},
+                    ]})),
+                    |view, touched| {
+                        out.push_str(&follower.update(view, std::slice::from_ref(&touched)))
+                    },
+                )
+                .unwrap();
+            }
+            assert_eq!(out.matches("quota exhausted").count(), 1, "{out}");
+        }
+    }
 }
