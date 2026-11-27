@@ -229,7 +229,12 @@ Out:
       it. A read seeds the first event of each compaction from the heads, so
       an update whose first event the read does not hold opens no step.
     - The steps route loads the newest update of each compaction its page
-      shows, up to the read's bound, also past the turn.
+      shows, up to the read's bound, also past the turn. A read of turns
+      loads the newest update of each compaction in a shown turn's
+      `notices` the same way: from a turn the read skips, such as a turn
+      without the lane of a subagent query (rule 43), and past the cursor
+      of a page of older turns (rule 42). That update changes the step of
+      the compaction, and opens no turn and no step.
 28. A content block with bytes carries a `blob` URL under
     `/v1/sessions/{id}/trajectory/blobs/`, and never the bytes. Adjacent text
     blocks read as one: a stored whole keeps a block per chunk (021, rule 6),
@@ -316,7 +321,7 @@ Out:
     - each shown turn whole, newest turn first: its prompt, its answer, its
       newest 100 permissions and questions that wait, its newest 20 errors
       with their diagnoses, and its newest 20 notices, each compaction with
-      its newest update, the limits of rule 16. The first turn
+      its newest update wherever it is (rule 27), the limits of rule 16. The first turn
       whose whole does not fit is not shown, nor any older one, so each shown
       turn holds the `attention` a warm hub holds. The newest turn shows its
       prompt and answer even where its whole does not fit;
@@ -712,6 +717,11 @@ Out:
     `notice_facts_migration.rs::the_upgrade_fills_the_severity_of_older_notices`.
 79. `ui/openapi.json` and `ui/src/api/schema.d.ts` hold `notices` and
     `notices_more`: `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
+80. A compaction completed in a turn that a subagent query skips, behind
+    more notices and payloads than the limits, reads as a warm fold reads
+    it, in that query and in a page whose cursor comes before the update
+    (rules 16, 27, 36, 42, 43):
+    `read.rs::a_compaction_completed_in_a_skipped_turn_reads_as_a_warm_fold_does`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

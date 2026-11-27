@@ -59,12 +59,16 @@ pub(crate) enum Item {
     Head(EventHead),
     /// A permission or a question outside every turn the fold holds.
     Pair(EventHead),
+    /// The newest update of a compaction that a shown step holds, loaded
+    /// outside the turns the read holds: a turn the read skips, or a turn
+    /// after its bound. It changes that step, and opens no turn.
+    Update(Box<AgentEvent>),
 }
 
 impl Item {
     fn id(&self) -> &str {
         match self {
-            Self::Full(event) | Self::Seed(event, _) => &event.id,
+            Self::Full(event) | Self::Seed(event, _) | Self::Update(event) => &event.id,
             Self::Head(head) | Self::Pair(head) => &head.id,
         }
     }
@@ -102,7 +106,7 @@ impl Read {
     pub(crate) fn loaded(&self) -> usize {
         self.items
             .iter()
-            .filter(|item| matches!(item, Item::Full(_) | Item::Seed(..)))
+            .filter(|item| matches!(item, Item::Full(_) | Item::Seed(..) | Item::Update(_)))
             .count()
     }
 
@@ -125,6 +129,9 @@ impl Read {
                 }
                 Item::Seed(event, turn) => {
                     fold.apply_in(&turn, &crate::http::convert::event_dto(*event));
+                }
+                Item::Update(event) => {
+                    fold.apply_update(&crate::http::convert::event_dto(*event));
                 }
                 Item::Head(head) => fold.apply_head(&head),
                 Item::Pair(head) => fold.pair_head(&head),
@@ -241,8 +248,8 @@ fn attention(turn: &TurnIndex, errors: bool) -> Vec<Vec<String>> {
 
 /// The steps of a turn's `notices`, newest first, with the rows that show
 /// each: its newest warning notes and compactions, a compaction with its
-/// newest update.
-fn notices(turn: &TurnIndex) -> Vec<Vec<String>> {
+/// newest update wherever in the session that update is.
+fn notices(turn: &TurnIndex, compactions: &[CompactionRows]) -> Vec<Vec<String>> {
     let Some(lane) = turn.lanes.get(MAIN_LANE) else {
         return Vec::new();
     };
@@ -250,8 +257,22 @@ fn notices(turn: &TurnIndex) -> Vec<Vec<String>> {
         .iter()
         .rev()
         .take(NOTICES)
-        .map(|id| lane.rows(id))
+        .map(|id| {
+            let mut rows = lane.rows(id);
+            rows.extend(newest_update(compactions, id, MAIN_LANE));
+            rows
+        })
         .collect()
+}
+
+/// The newest update of the compaction whose first event is `step` in
+/// `lane`, where it has one after that first event.
+fn newest_update(compactions: &[CompactionRows], step: &str, lane: &str) -> Option<String> {
+    compactions
+        .iter()
+        .find(|kept| kept.first == step && kept.lane.as_deref().unwrap_or(MAIN_LANE) == lane)
+        .filter(|kept| kept.newest != kept.first)
+        .map(|kept| kept.newest.clone())
 }
 
 /// The last `STEP_WINDOW` steps of a lane, newest first, each with the rows
@@ -289,18 +310,44 @@ pub(crate) async fn read_turns(
     lane: Option<&str>,
     budget: usize,
 ) -> Result<Read, StoreError> {
-    let Some(upper) = store.newest_session_event_id(session_id, before).await? else {
+    let Some(newest) = store.newest_session_event_id(session_id, None).await? else {
         return Ok(Read::default());
     };
-    read_turns_upto(store, session_id, &upper, turns, lane, budget).await
+    let upper = match before {
+        None => newest.clone(),
+        Some(before) => match store
+            .newest_session_event_id(session_id, Some(before))
+            .await?
+        {
+            Some(upper) => upper,
+            None => return Ok(Read::default()),
+        },
+    };
+    read_turns_within(store, session_id, &upper, &newest, turns, lane, budget).await
 }
 
 /// [`read_turns`] at the bound `upper`: no event above it is in the read,
 /// whatever the store holds by the time a query of it runs.
+#[cfg(test)]
 pub(crate) async fn read_turns_upto(
     store: &Store,
     session_id: &str,
     upper: &str,
+    turns: usize,
+    lane: Option<&str>,
+    budget: usize,
+) -> Result<Read, StoreError> {
+    read_turns_within(store, session_id, upper, upper, turns, lane, budget).await
+}
+
+/// The turns up to `upper`. A compaction of those turns shows its newest
+/// update up to `reach`, the bound the read began with: a page of older
+/// turns ends at its cursor, and its compactions do not.
+async fn read_turns_within(
+    store: &Store,
+    session_id: &str,
+    upper: &str,
+    reach: &str,
     turns: usize,
     lane: Option<&str>,
     budget: usize,
@@ -350,7 +397,7 @@ pub(crate) async fn read_turns_upto(
         );
     }
 
-    let compaction_firsts = compactions_of(store, session_id, upper).await?;
+    let compaction_firsts = compactions_of(store, session_id, reach).await?;
     let subagent_firsts = store.first_subagent_events(session_id, upper).await?;
     let mut fold = scratch(session_id);
     seed_compactions(&mut fold, &compaction_firsts);
@@ -379,7 +426,7 @@ pub(crate) async fn read_turns_upto(
             .into_iter()
             .chain(attention(turn, false).into_iter().flatten())
             .chain(attention(turn, true).into_iter().flatten())
-            .chain(notices(turn).into_iter().flatten())
+            .chain(notices(turn, &compaction_firsts).into_iter().flatten())
             .collect();
         if !picks.take(essentials) && !(rank == 0 && picks.take(mandatory(turn, prompt(at)))) {
             break;
@@ -439,12 +486,13 @@ pub(crate) async fn read_turns_upto(
         picks.take(rows);
     }
 
+    let updates = updates_of(&compaction_firsts);
     let loaded = store
         .events_by_ids(&picks.ids.into_iter().collect::<Vec<_>>())
         .await?;
     let first_turn = starts[first_shown].id.clone();
     Ok(Read {
-        items: merge(heads, pairs, loaded, &starts),
+        items: merge(heads, pairs, loaded, &starts, &updates),
         upper: Some(upper.to_string()),
         has_older: candidates.first().is_some_and(|&first| first < first_shown),
         first_turn: Some(first_turn),
@@ -558,14 +606,7 @@ pub(crate) async fn read_steps(
     let mut kept = 0;
     for opener in index.openers[start..end].iter().rev() {
         let mut rows = index.rows(&opener.step);
-        rows.extend(
-            compaction_firsts
-                .iter()
-                .filter(|kept| {
-                    kept.first == opener.step && kept.lane.as_deref().unwrap_or(MAIN_LANE) == lane
-                })
-                .map(|kept| kept.newest.clone()),
-        );
+        rows.extend(newest_update(&compaction_firsts, &opener.step, lane));
         if let Some(child) = turn
             .lanes
             .get(lane)
@@ -587,7 +628,8 @@ pub(crate) async fn read_steps(
         .await?;
     // The prompt after the turn closes it as it closed it in the session: a
     // call it cut short reads as interrupted, not pending.
-    let mut items = merge(heads, pairs, loaded, &starts);
+    let updates = updates_of(&compaction_firsts);
+    let mut items = merge(heads, pairs, loaded, &starts, &updates);
     let successor = starts.get(at + 1).cloned();
     let successor_id = successor.as_ref().map(|head| head.id.clone());
     items.extend(successor.map(Item::Head));
@@ -640,6 +682,7 @@ fn merge(
     pairs: Vec<EventHead>,
     loaded: Vec<AgentEvent>,
     starts: &[EventHead],
+    updates: &BTreeSet<String>,
 ) -> Vec<Item> {
     let held: BTreeSet<String> = heads.iter().map(|head| head.id.clone()).collect();
     let mut loaded: BTreeMap<String, AgentEvent> = loaded
@@ -665,7 +708,12 @@ fn merge(
     // A plan or a subagent's first event outside the turns a read holds is
     // a plan or a subagent the snapshot shows all the same, in the turn it
     // came in.
+    // A compaction's newest update outside the held turns changes its step
+    // and opens no turn.
     items.extend(loaded.into_values().map(|event| {
+        if updates.contains(&event.id) {
+            return Item::Update(Box::new(event));
+        }
         let turn = starts
             .iter()
             .rfind(|start| start.id <= event.id)
@@ -715,6 +763,16 @@ async fn compactions_of(
             newest,
         })
         .collect())
+}
+
+/// The later updates of the compactions: a loaded one outside the held
+/// turns is an [`Item::Update`].
+fn updates_of(compactions: &[CompactionRows]) -> BTreeSet<String> {
+    compactions
+        .iter()
+        .filter(|kept| kept.newest != kept.first)
+        .map(|kept| kept.newest.clone())
+        .collect()
 }
 
 fn seed_subagents(fold: &mut Fold, firsts: &[(String, String)]) {
@@ -2498,5 +2556,101 @@ mod tests {
         let shown = folded(&session, read).snapshot(0, 20, None).turns[0].clone();
         assert_eq!(shown.notices.len(), 20);
         assert_eq!(shown.notices_more, 1180);
+    }
+
+    /// Turn A holds 1,200 warning notes and opens a compaction, turn B
+    /// completes it, and a subagent's lane is in A and C alone. A cold read
+    /// of that lane skips B, and its notice of A shows B's newest update as
+    /// the warm fold does, within the budget; so does a page of older turns
+    /// whose cursor comes before that update (rules 16, 27, 42, 43).
+    #[tokio::test]
+    async fn a_compaction_completed_in_a_skipped_turn_reads_as_a_warm_fold_does() {
+        use ariadne_api::trajectory::{CompactionStatus, ContentBlockDto};
+        let (store, session, _dir) = session().await;
+        let child = json!({"id": "child-1"});
+        let a = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "agent_message",
+            json!({"subagent": child, "text": "A"}),
+        )
+        .await;
+        for n in 0..1200 {
+            commit(
+                &store,
+                &session,
+                "notice",
+                json!({"severity": "warning", "title": format!("warn {n}")}),
+            )
+            .await;
+        }
+        let compaction = commit(
+            &store,
+            &session,
+            "compaction_update",
+            json!({"compaction_id": "k-1", "status": "running", "summary": "old"}),
+        )
+        .await;
+        stop(&store, &session).await;
+        let b = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "compaction_update",
+            json!({"compaction_id": "k-1", "status": "completed", "summary": "new"}),
+        )
+        .await;
+        stop(&store, &session).await;
+        let c = prompt(&store, &session).await;
+        commit(
+            &store,
+            &session,
+            "agent_message",
+            json!({"subagent": child, "text": "C"}),
+        )
+        .await;
+        stop(&store, &session).await;
+
+        let mut warm = scratch(&session);
+        for event in store.list_session_events(&session).await.unwrap() {
+            warm.apply(&crate::http::convert::event_dto(event), true);
+        }
+        let warm_a = warm.snapshot(0, 20, Some("child-1")).turns[0].clone();
+        assert_eq!(warm_a.id, a);
+        assert_eq!(warm_a.notices_more, 1181);
+        let completed = |turn: &ariadne_api::trajectory::TurnDto| {
+            let [StepDto::Compaction(step), ..] = turn.notices.as_slice() else {
+                panic!(
+                    "the compaction is the newest notice: {:?}",
+                    turn.notices.first()
+                );
+            };
+            assert_eq!(step.id, compaction);
+            assert_eq!(step.status, CompactionStatus::Completed);
+            assert_eq!(
+                step.summary,
+                vec![ContentBlockDto::Text { text: "new".into() }]
+            );
+        };
+        completed(&warm_a);
+
+        let read = read_turns(&store, &session, None, 20, Some("child-1"), 500)
+            .await
+            .unwrap();
+        assert!(read.loaded() <= 500, "loaded {}", read.loaded());
+        let cold = folded(&session, read).snapshot(0, 20, Some("child-1"));
+        let ids: Vec<&str> = cold.turns.iter().map(|turn| turn.id.as_str()).collect();
+        assert_eq!(ids, [a.as_str(), c.as_str()], "the read skips B");
+        assert_eq!(cold.turns[0].notices, warm_a.notices);
+        assert_eq!(cold.turns[0].notices_more, warm_a.notices_more);
+
+        let page = read_page(&store, &session, &b, 5, None, 500).await.unwrap();
+        assert!(page.loaded() <= 500, "loaded {}", page.loaded());
+        let paged = folded(&session, page).snapshot(0, 20, None);
+        let ids: Vec<&str> = paged.turns.iter().map(|turn| turn.id.as_str()).collect();
+        assert_eq!(ids, [a.as_str()], "the page ends at its cursor");
+        assert_eq!(paged.turns[0].notices, warm_a.notices);
+        assert_eq!(paged.turns[0].notices_more, warm_a.notices_more);
     }
 }

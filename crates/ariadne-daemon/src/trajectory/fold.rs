@@ -547,21 +547,41 @@ impl Fold {
         rows
     }
 
+    /// Fold a compaction's later update that a read loaded outside the turns
+    /// it holds: the update changes the step that the compaction's first
+    /// event opened, and opens no turn and no step. Any other event changes
+    /// nothing here.
+    pub(crate) fn apply_update(&mut self, event: &AgentEventDto) -> Vec<TrajectoryOpDto> {
+        if !self.is_later_update(event) {
+            return Vec::new();
+        }
+        self.apply(event, true)
+    }
+
+    /// Whether an event is a later update of a compaction the fold knows.
+    fn is_later_update(&self, event: &AgentEventDto) -> bool {
+        if event.kind != "compaction_update" {
+            return false;
+        }
+        let lane = event_lane(&event.kind, &event.payload).unwrap_or_else(|| MAIN_LANE.into());
+        facts_of(&event.kind, &event.payload)
+            .compaction
+            .is_some_and(|compaction| {
+                self.compactions
+                    .get(&(lane, compaction))
+                    .is_some_and(|at| at.step != event.id)
+            })
+    }
+
     /// Build the step of a stored event the index already counts, from its
     /// payload, in its place: what [`Self::missing_attention`] named. A
     /// diagnosis reads onto its error, and a compaction's later update onto
     /// its compaction. The index does not change.
     pub(crate) fn fill(&mut self, event: &AgentEventDto) -> Vec<TrajectoryOpDto> {
-        let facts = facts_of(&event.kind, &event.payload);
-        let later_update = event.kind == "compaction_update"
-            && facts.compaction.as_ref().is_some_and(|compaction| {
-                self.compactions
-                    .get(&(MAIN_LANE.to_string(), compaction.clone()))
-                    .is_some_and(|at| at.step != event.id)
-            });
-        if event.kind == "session.diagnosis" || later_update {
+        if event.kind == "session.diagnosis" || self.is_later_update(event) {
             return self.apply(event, true);
         }
+        let facts = facts_of(&event.kind, &event.payload);
         let Some(turn) = self.turns.iter_mut().find(|turn| {
             turn.lanes
                 .get(MAIN_LANE)
