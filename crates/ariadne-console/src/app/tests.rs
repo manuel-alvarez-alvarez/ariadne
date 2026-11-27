@@ -790,6 +790,23 @@ fn asking() -> Frame {
     )
 }
 
+#[test]
+fn question_reads_retry_after_failure_and_reconnect() {
+    let mut app = App::new("s1");
+    app.frame(asking());
+    assert!(app.wants_questions());
+    for failures in 1..=3 {
+        app.question_failures = failures;
+        app.asked_questions.clear();
+        assert_eq!(app.wants_questions(), failures < 3);
+    }
+    app.frame(Frame::Dropped);
+    app.frame(asking());
+    assert!(app.wants_questions());
+    app.questions_read(vec![form()]);
+    assert!(!app.wants_questions());
+}
+
 #[tokio::test]
 async fn an_open_question_shows_its_form_above_the_input_and_the_keys_answer_it() {
     let mut app = App::new("s1");

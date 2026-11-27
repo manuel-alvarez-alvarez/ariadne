@@ -232,6 +232,7 @@ pub struct App {
     forms: HashMap<String, QuestionDto>,
     /// The questions the host was asked about once already.
     asked_questions: HashSet<String>,
+    question_failures: u8,
     /// The prompts sent that no turn holds yet, oldest first.
     pending: VecDeque<String>,
     /// The turns the console has seen: only a turn new to it takes a pending
@@ -271,6 +272,7 @@ impl App {
             form: FormState::default(),
             forms: HashMap::new(),
             asked_questions: HashSet::new(),
+            question_failures: 0,
             pending: VecDeque::new(),
             known: HashSet::new(),
             notices: Vec::new(),
@@ -295,6 +297,8 @@ impl App {
     pub fn frame(&mut self, frame: Frame) -> bool {
         match frame {
             Frame::Snapshot(snapshot, history) => {
+                self.question_failures = 0;
+                self.asked_questions.clear();
                 let view = View::new(*snapshot);
                 self.live = true;
                 let ids: Vec<String> = view.turns().iter().map(|turn| turn.id.clone()).collect();
@@ -404,6 +408,9 @@ impl App {
     /// Whether an open question waits whose form the console has not read:
     /// true once for each such question.
     fn wants_questions(&mut self) -> bool {
+        if self.question_failures >= 3 {
+            return false;
+        }
         let fresh: Vec<String> = self
             .open_questions()
             .into_iter()
@@ -930,7 +937,11 @@ where
         if app.wants_questions() {
             match host.questions().await {
                 Ok(questions) => app.questions_read(questions),
-                Err(reason) => app.failed(&reason),
+                Err(reason) => {
+                    app.question_failures += 1;
+                    app.asked_questions.clear();
+                    app.failed(&reason);
+                }
             }
         }
         terminal.draw(|frame| app.render(frame))?;
