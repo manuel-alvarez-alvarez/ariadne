@@ -418,3 +418,50 @@ async fn a_refused_switch_leaves_the_reported_options() {
         reported
     );
 }
+
+/// A switch the agent takes writes the options of its answer, even where
+/// that answer matches the options the session opened with: the agent
+/// reported other options meanwhile, and its answer is newer.
+#[tokio::test]
+async fn a_switch_writes_the_options_the_agent_answers_with() {
+    let reported = json!([{"id": "model-id", "name": "Model", "category": "model",
+                           "type": "select", "currentValue": "reported-model",
+                           "options": [{"value": "reported-model", "name": "Reported"}]}]);
+    let (_dir, stub, h, session) = started(json!([turn(json!([
+        {"sessionUpdate": "config_option_update", "configOptions": reported},
+    ]))]))
+    .await;
+    let opened = h.store.get_session(&session.id).await.unwrap().model;
+    assert_eq!(
+        json!(display_state(&h, &session).await.config_options),
+        reported
+    );
+
+    let (status, body) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/switch", session.id),
+            json!({"model": opened}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{body:?}");
+    let answered = stub
+        .calls_of("session/set_config_option")
+        .last()
+        .map(|call| call["value"].clone());
+    assert_eq!(
+        answered,
+        Some(json!("test-model")),
+        "the switch reached the agent"
+    );
+
+    let state = display_state(&h, &session).await;
+    let model = state
+        .config_options
+        .iter()
+        .find(|option| option["id"] == "model-id")
+        .expect("the agent's answer names the model option");
+    assert_eq!(
+        model["currentValue"], "test-model",
+        "the agent's answer replaces the options it reported before"
+    );
+}

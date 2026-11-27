@@ -3047,6 +3047,10 @@ struct Rpc {
     /// A daemon reconnecting to a relay that runs this launch already: its
     /// setup answers come from the relay's record, not from the agent now.
     reconnected: bool,
+    /// The options of the last `session/set_config_option` answer that
+    /// carried any: what the agent says it runs on now, whatever the
+    /// daemon's own copy holds.
+    answered_options: Option<Vec<v1::SessionConfigOption>>,
 }
 
 impl Rpc {
@@ -3076,6 +3080,7 @@ impl Rpc {
             brief: None,
             after_cancel: false,
             reconnected: false,
+            answered_options: None,
         }
     }
 
@@ -4284,7 +4289,7 @@ async fn serve_with_input(
             change = switches.recv(), if switches_open && !closing.load(Ordering::SeqCst) => {
                 match change {
                     Some(change) => {
-                        let before = option_values(&options);
+                        rpc.answered_options = None;
                         let result = async {
                             options = set_pinned_option(rpc, session_id, options.clone(), &["model"], &["model"], "model", &change.model).await?;
                             if let Some(effort) = &change.effort {
@@ -4297,10 +4302,11 @@ async fn serve_with_input(
                         if result.is_ok() {
                             rpc.brief = rpc.seat_brief.clone();
                         }
-                        // Only an answer the agent gave moves the options:
-                        // a refused switch leaves the ones it reported.
-                        let switched = option_values(&options);
-                        if switched != before {
+                        // Only an answer the agent gave moves the options,
+                        // and it moves them whatever the daemon's own copy
+                        // holds: a refused switch leaves the ones it reported.
+                        if let Some(answered) = rpc.answered_options.take() {
+                            let switched = option_values(&answered);
                             rpc.sink
                                 .update_display(&json!(session_id), &["config_options"], |state| {
                                     state.config_options = switched;
@@ -4637,7 +4643,10 @@ async fn set_pinned_option(
     };
     let options = match response.config_options.is_empty() {
         true => options,
-        false => response.config_options,
+        false => {
+            rpc.answered_options = Some(response.config_options.clone());
+            response.config_options
+        }
     };
     // An agent that took the option answers with it set. One that did not —
     // it read the value and made nothing of it — answers the same way, and

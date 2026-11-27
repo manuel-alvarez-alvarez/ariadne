@@ -667,8 +667,9 @@ it leaves nothing to delete.
     - `current_mode_update`, `config_option_update`, the `title` of a
       `session_info_update`, the `cost` of a `usage_update` and
       `available_commands_update` change the display state. A model switch
-      writes the options only where the agent's answers changed them. A
-      refused switch leaves the options that the agent reported.
+      writes the options of the last `session/set_config_option` answer
+      that carried options, whatever the daemon's own copy holds. A refused
+      switch leaves the options that the agent reported.
     - Each change goes live as `display_state_update` with `{session_id}`
       and the fields that changed.
     - The display state belongs to one launch. Once the row names another
@@ -705,8 +706,11 @@ it leaves nothing to delete.
 - A relay reconnect keeps a compaction's earlier summary chunks and the
   options the agent reported
   (`acp_runtime.rs::reconnect_keeps_a_compactions_summary_and_the_reported_options`).
-- A refused switch leaves the reported options
-  (`acp_state.rs::a_refused_switch_leaves_the_reported_options`).
+- A switch writes the options the agent answers with, even where they match
+  the options the session opened with
+  (`acp_state.rs::a_switch_writes_the_options_the_agent_answers_with`), and
+  a refused switch leaves the reported options
+  (`::a_refused_switch_leaves_the_reported_options`).
 - A subagent's updates leave the display state alone
   (`acp_state.rs::a_subagents_updates_leave_the_display_state_alone`).
 
