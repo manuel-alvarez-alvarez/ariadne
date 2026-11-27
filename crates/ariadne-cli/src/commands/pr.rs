@@ -226,12 +226,12 @@ fn inspect_rows(row: &PullRequestDto) -> Vec<(&'static str, Kv)> {
         ),
         ("ariadne review", yes_no(row.review_asked, "no").into()),
         (
-            "review goal",
+            "review task",
             Kv::id(dash(
                 row.operations
                     .iter()
                     .find(|o| o.operation == ariadne_core::workflow::PrOperation::Review)
-                    .map(|o| o.goal_id.as_str()),
+                    .map(|o| o.task_id.as_str()),
             )),
         ),
         ("review model", dash(row.review_model.as_deref()).into()),
@@ -241,12 +241,12 @@ fn inspect_rows(row: &PullRequestDto) -> Vec<(&'static str, Kv)> {
         ),
         ("ariadne babysit", yes_no(row.babysit_asked, "no").into()),
         (
-            "babysit goal",
+            "babysit task",
             Kv::id(dash(
                 row.operations
                     .iter()
                     .find(|o| o.operation == ariadne_core::workflow::PrOperation::Babysit)
-                    .map(|o| o.goal_id.as_str()),
+                    .map(|o| o.task_id.as_str()),
             )),
         ),
         ("babysit model", dash(row.babysit_model.as_deref()).into()),
@@ -1397,11 +1397,11 @@ mod tests {
                 "review decision",
                 "unanswered comments",
                 "ariadne review",
-                "review goal",
+                "review task",
                 "review model",
                 "review skills",
                 "ariadne babysit",
-                "babysit goal",
+                "babysit task",
                 "babysit model",
                 "babysit skills",
                 "session",

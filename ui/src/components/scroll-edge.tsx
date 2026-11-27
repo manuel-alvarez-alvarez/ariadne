@@ -11,10 +11,9 @@
  * the wash, which is what makes a clipped card or a clipped column label trail
  * off, and a shade right at the edge, which is visible over an empty cell too.
  *
- * It was the goals board's alone; every table that can be cut sideways now
- * draws the same two edges through {@link ScrollableTable}, which is the whole
- * pattern — frame, scrollport, measurement and fades — for the surfaces that
- * are a table rather than a board.
+ * Every table that can be cut sideways draws the same two edges through
+ * {@link ScrollableTable}, which is the whole pattern — frame, scrollport,
+ * measurement and fades. The goals board never scrolls sideways, so it has none.
  */
 
 import type { ReactNode } from "react"
@@ -63,11 +62,10 @@ export function ScrollableTable({
 /**
  * One faded edge, over whatever the scrollport holds.
  *
- * Drawn above any sticky header in the same stacking context (`z-30`, against
- * the board's `z-20` column row and `z-10` lane names), so the header a title
- * is cut in half by is exactly where it shows.
+ * Drawn above any sticky header in the same stacking context (`z-30`), so the
+ * header a title is cut in half by is exactly where it shows.
  */
-export function ScrollEdge({ side, show }: { side: "start" | "end"; show: boolean }) {
+function ScrollEdge({ side, show }: { side: "start" | "end"; show: boolean }) {
   const start = side === "start"
   return (
     <div

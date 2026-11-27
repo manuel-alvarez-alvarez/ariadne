@@ -44,7 +44,7 @@ Out:
 
 1. The store keeps two columns beside each event's deflated payload: `lane`,
    and `facts`, a small JSON (`EventFacts`). A query can read them, and no
-   query can read a payload. Migration 0029 adds them, an index on
+   query can read a payload. Migration 0030 adds them, an index on
    `(session_id, kind, id)` for the reads of one kind, and the table
    `store_fills`.
 2. `lane` is the subagent the payload names, or null for the session's own
@@ -63,7 +63,7 @@ Out:
    call's id from `acp.toolCallId`, else `tool_call_id`. An abandoned call is
    `cancelled` for the reason `cancelled`, and `interrupted` otherwise.
 5. When the store opens, it fills the columns of every row stored before
-   migration 0029 from its payload, before it serves a read. So an old
+   migration 0030 from its payload, before it serves a read. So an old
    session reads as exactly as a new one.
 6. The fill runs once. A finished fill writes its row in `store_fills`, and
    a store with that row does not fill again.
@@ -392,7 +392,7 @@ A page with `before` holds the subagents and plans of its own read.
 `crates/ariadne-api/src/trajectory.rs`,
 `crates/ariadne-core/src/event_facts.rs`,
 `crates/ariadne-store/src/events.rs`,
-`crates/ariadne-store/migrations/0029_agent_event_facts.sql`,
+`crates/ariadne-store/migrations/0030_agent_event_facts.sql`,
 `crates/ariadne-store/src/lib.rs` (`Store::open`),
 `crates/ariadne-daemon/src/trajectory/`,
 `crates/ariadne-daemon/src/http/trajectory.rs`,

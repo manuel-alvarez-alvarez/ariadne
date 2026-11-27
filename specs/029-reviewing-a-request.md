@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-11-26
+updated: 2026-11-27
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -17,6 +17,7 @@ tests:
   - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-store/tests/pr_operation_task_migration.rs
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
@@ -32,7 +33,7 @@ tests:
 
 Any open request, regardless of its author or assigned reviewers,
 gets a review session once the user asks Ariadne for one — never on its
-own. The ask makes one goal with one staffed task, and the review session is
+own. The ask makes one staffed task with no goal, and the review session is
 that task's agent (rule 10b). The daemon starts rounds as rules 7 and 8 specify. It posts one review in the user's name, and the forge approval stays
 the user's. Ariadne holds no approval of its own for a request: the status
 rule 15a once gave is retired (rule 15a).
@@ -40,7 +41,7 @@ rule 15a once gave is retired (rule 15a).
 ## Scope
 
 In: which rows want a review session, the manual ask on any request, the
-goal and task it makes, its worktree, its news, its tools and routes, the
+task it makes, its worktree, its news, its tools and routes, the
 verdict policy, the retired Ariadne approval, and the attention it raises.
 
 Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
@@ -56,7 +57,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    `review_asked` holds, the request is open, draft or not, and the forge
    integration is enabled. The session runs on `review_model` and
    `review_effort`, with seat `reviewer`, `pr-reviewer` and the picked
-   `review_skills`, on the task of the review goal (rule 10b). A GitHub review request still creates a row on the
+   `review_skills`, on the review's task (rule 10b). A GitHub review request still creates a row on the
    first fetch so attention can offer a manual start (026, 031); it never
    starts a session by itself.
 2. A draft is no work of its own: a review request on one creates no row
@@ -129,8 +130,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    `::a_forge_re_request_round_waits_for_the_read_of_the_new_head`.
 9. A request that turns merged or closed, or whose manual ask is stopped,
    has its reviewer session killed and its detached worktree removed. A
-   merge completes the review goal and its task; a close fails the task and leaves the goal active; a stop cancels
-   both (rule 10b).
+   merge finishes the review's task; a close fails it; a stop cancels it
+   (rule 10b).
    Stopping review preserves an active keeper or task; stopping a keeper
    preserves an asked review. The request's row is removed when no work or
    outstanding review-request attention remains. GitHub assignment changes
@@ -147,7 +148,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     is staffed on (017), else 400; `pr-reviewer` is loaded anyway and is not
     stored. `model` must have a rank the fixed `review` column allows (030
     rule 11): an unranked model, or one of another rank, answers 400 naming
-    the band — the band of the open goal's snapshot where one is open, else
+    the band — the band of the open task's snapshot where one is open, else
     of the fixed column. It answers the request,
     and wakes the fetch and the scheduler.
     Authorship and GitHub review assignments do not restrict the ask.
@@ -170,52 +171,59 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     The request panel offers **New turn** beside **Stop review** in the **Review** group while review is asked.
     It shows the daemon's refusal text.
 
-10b. A review ask makes one active goal of the review operation, and a
-    stop or an end finishes it. The lifecycle is shared by every PR
+10b. A review ask makes one task of the review operation, with no goal,
+    and a stop or an end finishes it. The lifecycle is shared by every PR
     operation (`Store::start_pr_operation`, `Store::end_pr_operation`); the
     babysit operation applies the same one (032 rule 7b).
-    - One open goal exists per request and operation, named by value in
-      `goals.pr_operation`, `pr_repository_id`, `pr_number` and `pr_url`: the
-      request's own row goes when Ariadne stops working on it, and the goal
-      stays as history. A partial unique index keeps the one.
-    - The goal runs on the fixed `review` column (030 rule 11), snapshotted
-      into `goal_steps` as any goal's columns are, and records `pr-review` as
-      its workflow name, is `active` at once and has no
-      orchestrator (`orchestrated` is false). It has one task, already
-      `in_progress` on the `review` column, and one agent: the pin of the
-      ask and the column's skills with the picked ones. No orchestrator
-      plans it, and no task pass runs it: the request's own pass starts,
-      resumes and watches its session (rule 1), and the session carries the
-      goal, the task and the agent, so the Goals board, the task panel, the
-      session panel, its history and its usage read it as any task's.
-    - A repeated ask keeps the open goal, its task and its agent, and moves
-      the pin and skills onto the agent. The live session runs on, and the
-      next start uses the new pin.
-    - A merge completes the task and the goal; a close fails the task and leaves the goal active; a stop, a goal
-      whose ask is gone, or an integration turned off cancels both. The next
-      ask after a stop makes a new goal and a new session: a session
-      belongs to the goal it started under, and one from before goals is
-      not adopted.
+    - The task names its request by value in `task_pull_requests`
+      (`operation`, `repository_id`, `number`, `url`): the request's own row
+      goes when Ariadne stops working on it, and the task stays as history.
+      One task per request and operation is the open one (`open`), kept by a
+      partial unique index. A finished or cancelled task stops being the
+      open one; a failed one stays it until a stop or the next ask.
+    - The task belongs to no goal. Its one column is the fixed `review`
+      column (030 rule 11), snapshotted into `remote_task_steps` as a
+      goal-less task's columns are, and it records `pr-review` as its
+      workflow name in `task_workflows`. It is `in_progress` on that column
+      at once, with one agent: the pin of the ask and the column's skills
+      with the picked ones. No orchestrator plans it, and no task pass runs
+      it: the request's own pass starts, resumes and watches its session
+      (rule 1), and the session carries the task and the agent, so the
+      board, the task panel, the session panel, its history and its usage
+      read it as any goal-less task's.
+    - A repeated ask keeps the open task and its agent, and moves the pin and
+      skills onto the agent. The live session runs on, and the next start
+      uses the new pin.
+    - A merge finishes the task; a close fails it; a stop, a task whose ask
+      is gone, or an integration turned off cancels it. The next ask after a
+      stop or a close makes a new task and a new session: a session belongs
+      to the task it started under, and one left over from another task, or
+      from before operation tasks, is ended and not adopted.
     - One lock per request (`Store::pr_operation_lock`) serializes a start,
-      a stop and the part of a scheduler pass that acts on the goal. The
+      a stop and the part of a scheduler pass that acts on the task. The
       pass rereads the row under the lock, so it never reads a start whose
-      goal is made and whose ask is not, nor a stop half done. A start
-      writes the goal and then the ask; a stop clears the ask and then
-      cancels the goal (`Store::stop_pr_operation`), so no pass starts a
-      session for an ask nobody owns. A pass still ends a goal whose ask is
-      gone, whose task was ended by hand, or whose request ended, so a
-      failed write converges. Starting twice at once makes one goal and one
-      task.
-    - Cancelling the goal from the Goals board (`POST /v1/goals/{id}/cancel`)
-      is a stop: it clears the ask and cancels the goal and its task under
-      the same lock, so Forge shows the review stopped and no session
-      starts afterwards. The goal is read again under the lock: one a stop
-      and a new start replaced while the cancel waited answers 409, and the
-      replacement stays.
-    - `GoalDto.pull_request`, `TaskDto.operation` and
-      `PullRequestDto.operations` name the operation, the request, and the
-      goal and task of each open one; the desktop's request panel links the
-      goal, and `pr show` prints it.
+      task is made and whose ask is not, nor a stop half done. A start
+      writes the task and then the ask; a stop clears the ask and then
+      cancels the task (`Store::stop_pr_operation`), so no pass starts a
+      session for an ask nobody owns. A pass still ends a task whose ask is
+      gone, that was ended by hand, or whose request ended, so a failed
+      write converges. Starting twice at once makes one task.
+    - Cancelling the task (`POST /v1/tasks/{id}/cancel`) is a stop: it
+      clears the ask and cancels the task under the same lock, so Forge
+      shows the review stopped and no session starts afterwards. The task
+      is read again under the lock: one a stop and a new start replaced
+      while the cancel waited answers 409, and the replacement stays. The
+      stop is the user's alone: an orchestrator or a column, review or
+      keeper session that cancels an operation's task answers 403, and the
+      task, its ask and its session stay.
+    - `TaskDto.operation` and `PullRequestDto.operations` name the operation
+      and the open task of each; a review task's `pr_url` names its request.
+      The desktop's request panel links the task, and `pr show` prints it.
+    - The upgrade to this shape (migration 0029) turns each review or
+      babysit goal from before into its task: the task keeps its column,
+      workflow name, sessions and history, loses its goal, and is the open
+      one where the goal was still active; the goals and the `goals.pr_*`
+      columns go.
 
 ## Tools and routes
 
@@ -419,28 +427,32 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   it after the forge confirms no assignment, loads the picked skills, and
   stops it on explicit stop:
   `pull_request_reviews.rs::an_unassigned_dependabot_request_is_reviewed_until_stopped`.
-- A review ask makes one active goal with no orchestrator, on a snapshot of
-  the fixed `review` column, with one task in its `review` column and one agent whose
-  session is the review; the goal, the task and the request name each other;
-  a repeated ask keeps them:
-  `store.rs::a_review_start_makes_one_active_goal_with_one_staffed_task`,
-  `::a_repeated_review_start_keeps_the_open_goal_and_moves_its_pin`,
-  `pull_request_reviews.rs::a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it`,
+- A review ask makes one task with no goal and no orchestrator, in the
+  fixed `review` column, with one agent whose session is the review; the
+  task and the request name each other; a repeated ask keeps them:
+  `store.rs::a_review_start_makes_one_goal_less_task_in_its_column`,
+  `::a_repeated_review_start_keeps_the_open_task_and_moves_its_pin`,
+  `pull_request_reviews.rs::a_review_is_one_goal_less_task_and_a_repeat_keeps_it`,
   `::an_open_request_i_review_gets_one_session_detached_at_its_head`.
-- A merge completes the goal and its task, a close fails the task and leaves the goal active, a stop cancels both,
-  and the next ask makes a new goal:
-  `store.rs::ending_a_review_closes_its_task_and_goal_and_the_next_start_is_new`,
-  `pull_request_reviews.rs::a_merged_request_completes_its_review_goal_and_task`,
+- A merge finishes the task, a close fails it and it stays the open one, a
+  stop cancels it, and the next ask makes a new task:
+  `store.rs::ending_a_review_closes_its_task_and_the_next_start_is_new`,
+  `::a_closed_request_leaves_its_failed_task_open_until_the_next_start`,
+  `pull_request_reviews.rs::a_merged_request_finishes_its_review_task`,
   `::a_closed_request_fails_its_review_task`,
-  `::stopping_a_review_cancels_its_goal_and_the_next_ask_starts_a_new_one`.
-- A scheduler pass between a start's goal and its ask waits for the start,
-  a stop and a start at once leave one whole state, and cancelling the goal
-  from the Goals board stops the review for good:
-  `pull_request_reviews.rs::a_pass_between_the_goal_and_the_ask_of_a_start_waits_for_the_start`,
+  `::stopping_a_review_cancels_its_task_and_the_next_ask_starts_a_new_one`.
+- A scheduler pass between a start's task and its ask waits for the start,
+  a stop and a start at once leave one whole state, cancelling the task
+  stops the review for good, and the review's own session cannot cancel it:
+  `pull_request_reviews.rs::a_pass_between_the_task_and_the_ask_of_a_start_waits_for_the_start`,
   `::a_stop_and_a_start_at_once_leave_one_whole_state`,
-  `::cancelling_the_review_goal_stops_the_review_and_it_stays_stopped`,
-  `::cancelling_a_replaced_review_goal_leaves_its_replacement_alone`.
-- A model outside the `review` column's band is refused and starts no goal:
+  `::cancelling_the_review_task_stops_the_review_and_it_stays_stopped`,
+  `::cancelling_a_replaced_review_task_leaves_its_replacement_alone`,
+  `::the_review_session_cannot_cancel_its_own_task`.
+- The upgrade turns each review and babysit goal into its goal-less task and
+  leaves ordinary goals as they were:
+  `pr_operation_task_migration.rs::the_upgrade_turns_operation_goals_into_goal_less_tasks`.
+- A model outside the `review` column's band is refused and starts no task:
   `pull_request_reviews.rs::a_review_refuses_a_model_outside_the_workflow_band`.
 - Withdrawing a GitHub review request does not cancel a manual review,
   before or after a review was posted:

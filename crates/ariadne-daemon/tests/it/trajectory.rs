@@ -317,8 +317,8 @@ async fn a_subagent_is_a_step_of_its_parent_and_its_steps_are_a_query_away() {
 }
 
 /// A run of text the agent streams has one id across the opens of the
-/// stream, and takes the id of its stored whole when it ends: the stream
-/// and the steps route then name it the same.
+/// stream: its `item_id`, which its stored whole names too. The stream, a
+/// reopen and the steps route name it the same, and its text reads whole.
 #[tokio::test]
 async fn a_streamed_run_keeps_its_id_across_opens_and_ends_on_its_stored_id() {
     let t = Held::start().await;
@@ -354,26 +354,23 @@ async fn a_streamed_run_keeps_its_id_across_opens_and_ends_on_its_stored_id() {
 
     t.release();
     let updates = updates_until_closed(&mut again).await;
-    assert!(
-        ops(&updates, "item_remove")
-            .iter()
-            .any(|op| op["item_id"] == streaming),
-        "the streaming id goes when the whole is stored"
-    );
     let closed = ops(&updates, "item_upsert")
         .into_iter()
-        .find(|op| {
-            op["step"]["type"] == "message" && op["step"]["content"][0]["text"] == "All good."
-        })
-        .expect("the whole closes the run")["step"]["id"]
+        .find(|op| op["step"]["type"] == "message" && op["step"]["streaming"] == false)
+        .expect("the whole closes the run")["step"]
         .clone();
-    assert_ne!(closed, streaming);
+    assert_eq!(closed["id"], streaming, "the whole closes the same step");
+    assert_eq!(
+        closed["content"],
+        json!([{"type": "text", "text": "All good."}])
+    );
     let turn_id = running["id"].as_str().unwrap();
     let page: Value =
         t.h.get(&t.path(&format!("/turns/{turn_id}/steps?limit=1")))
             .await;
     assert_eq!(
-        page["steps"][0]["id"], closed,
+        page["steps"][0]["id"], streaming,
         "the steps route names it the same"
     );
+    assert_eq!(page["steps"][0]["content"], closed["content"]);
 }

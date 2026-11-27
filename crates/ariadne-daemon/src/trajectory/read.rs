@@ -1133,7 +1133,7 @@ mod tests {
         .snapshot(0, 20, None);
         store.close().await;
 
-        // As a release before migration 0029 left it: no facts, no fill.
+        // As a release before migration 0030 left it: no facts, no fill.
         let path = dir.path().join("test.db");
         let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
             .await

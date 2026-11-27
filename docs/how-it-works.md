@@ -115,15 +115,20 @@ Other repositories retain their explicit landing policies.
 
 The desktop Goals board is one list of task rows. Each row shows the task's
 state, host, steps, tokens, pull request and last activity on one line, and
-opens the task panel. The rows of one goal sit together, joined by a thin
-rail. A task with no goal is a row of its own.
+opens the task panel. The rows of one goal sit together under the goal's
+line. A rail at the left edge joins them, in the colour of each task's
+status. A task with no goal is a row of its own.
 
-- Point at a row, or move the keyboard to it, to see its goal. A frame
-  surrounds the rows of the goal, and the goal bar shows above them.
-- The goal bar names the goal, its status, its progress and its tokens. Its
-  chevron folds the goal to one summary row.
-- The goal bar stays shown while the goal's orchestrator waits for you.
-- A goal with no task to show takes one row that says why, and opens the goal.
+- The goal line is always shown. It names the goal, its status, its progress
+  and the orchestrator's attention badge. The goal's tokens sit directly
+  above the tokens of its rows.
+- The goal line's chevron folds the goal. A folded goal shows its summary on
+  the goal line.
+- A goal with no task to show adds one muted line that says why.
+- From 33.9rem wide up, the board never scrolls sideways. A narrow board
+  hides whole columns: step names first, then last activity, host and the
+  pull request. A pinned task panel narrows the board the same way as a
+  narrow window. Below 33.9rem the board scrolls sideways and cuts no column.
 
 Goals and tasks that need you come first, then the work that runs, then the
 finished work. The **New** menu in the header creates a goal or a task with

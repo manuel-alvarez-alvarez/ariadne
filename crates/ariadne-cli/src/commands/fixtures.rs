@@ -38,7 +38,6 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
         status: GoalStatus::Active,
         orchestrated: true,
         linked: None,
-        pull_request: None,
         model: "stub:test-model".into(),
         effort: None,
         repos: Vec::new(),

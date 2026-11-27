@@ -279,7 +279,7 @@ export interface BoardAttention {
   /**
    * Goal id → why its orchestrator wants a person. Kept apart from `byTask`
    * because an orchestrator session belongs to no task and so has no card of its
-   * own; its goal bar is the only place it can be seen.
+   * own; its goal line is the only place it can be seen.
    */
   byGoal: Map<string, SessionAttention>
   /** Task id → the latest `last_activity_at` of any of its sessions, previous ones included. */
@@ -350,7 +350,7 @@ function collectBoardAttention(
     // A session with no task is an orchestrator's, and lands on its goal's bar.
     const index = session.task_id ? byTask : byGoal
     const key = session.task_id ?? session.goal_id ?? ""
-    // A pull request's session has no row and no goal bar.
+    // A pull request's session has no row and no goal line.
     if (!key) continue
     const held = index.get(key)
     if (!held || held.at.localeCompare(at) < 0) index.set(key, { reason, at })

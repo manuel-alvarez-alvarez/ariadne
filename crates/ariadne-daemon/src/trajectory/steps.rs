@@ -108,7 +108,10 @@ pub(super) fn content_of(
         .unwrap_or_default()
 }
 
-/// ACP content blocks, with every byte left behind a `blob` URL.
+/// ACP content blocks, with every byte left behind a `blob` URL. A stored
+/// run keeps one block per chunk (021, rule 6), and a live run appends its
+/// chunks to one: adjacent text blocks read as one, so both are the same.
+/// A block too large to store reads by its placeholder's `mime_type`.
 pub(super) fn blocks_of(
     blocks: &[Value],
     session_id: &str,
@@ -116,42 +119,50 @@ pub(super) fn blocks_of(
 ) -> Vec<ContentBlockDto> {
     let blob =
         |index: usize| format!("/v1/sessions/{session_id}/trajectory/blobs/{event_id}/{index}");
-    blocks
-        .iter()
-        .enumerate()
-        .filter_map(|(index, block)| {
-            let has_data =
-                |pointer: &str| block.pointer(pointer).is_some_and(|data| !data.is_null());
-            Some(match string_at(block, "/type")?.as_str() {
-                "text" => ContentBlockDto::Text {
-                    text: string_at(block, "/text").unwrap_or_default(),
-                },
-                "image" => ContentBlockDto::Image {
-                    mime_type: string_at(block, "/mimeType"),
-                    blob: has_data("/data").then(|| blob(index)),
-                    uri: string_at(block, "/uri"),
-                },
-                "audio" => ContentBlockDto::Audio {
-                    mime_type: string_at(block, "/mimeType"),
-                    blob: has_data("/data").then(|| blob(index)),
-                },
-                "resource" => ContentBlockDto::Resource {
-                    uri: string_at(block, "/resource/uri").unwrap_or_default(),
-                    mime_type: string_at(block, "/resource/mimeType"),
-                    text: string_at(block, "/resource/text"),
-                    blob: has_data("/resource/blob").then(|| blob(index)),
-                },
-                "resource_link" => ContentBlockDto::ResourceLink {
-                    uri: string_at(block, "/uri").unwrap_or_default(),
-                    name: string_at(block, "/name").unwrap_or_default(),
-                    title: string_at(block, "/title"),
-                    mime_type: string_at(block, "/mimeType"),
-                    size: block.get("size").and_then(Value::as_u64),
-                },
-                _ => return None,
-            })
-        })
-        .collect()
+    let mut out: Vec<ContentBlockDto> = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let has_data = |pointer: &str| block.pointer(pointer).is_some_and(|data| !data.is_null());
+        let mime =
+            |pointer: &str| string_at(block, pointer).or_else(|| string_at(block, "/mime_type"));
+        let Some(kind) = string_at(block, "/type") else {
+            continue;
+        };
+        let next = match kind.as_str() {
+            "text" => {
+                let text = string_at(block, "/text").unwrap_or_default();
+                if let Some(ContentBlockDto::Text { text: last }) = out.last_mut() {
+                    last.push_str(&text);
+                    continue;
+                }
+                ContentBlockDto::Text { text }
+            }
+            "image" => ContentBlockDto::Image {
+                mime_type: mime("/mimeType"),
+                blob: has_data("/data").then(|| blob(index)),
+                uri: string_at(block, "/uri"),
+            },
+            "audio" => ContentBlockDto::Audio {
+                mime_type: mime("/mimeType"),
+                blob: has_data("/data").then(|| blob(index)),
+            },
+            "resource" => ContentBlockDto::Resource {
+                uri: string_at(block, "/resource/uri").unwrap_or_default(),
+                mime_type: mime("/resource/mimeType"),
+                text: string_at(block, "/resource/text"),
+                blob: has_data("/resource/blob").then(|| blob(index)),
+            },
+            "resource_link" => ContentBlockDto::ResourceLink {
+                uri: string_at(block, "/uri").unwrap_or_default(),
+                name: string_at(block, "/name").unwrap_or_default(),
+                title: string_at(block, "/title"),
+                mime_type: mime("/mimeType"),
+                size: block.get("size").and_then(Value::as_u64),
+            },
+            _ => continue,
+        };
+        out.push(next);
+    }
+    out
 }
 
 pub(super) fn new_call(

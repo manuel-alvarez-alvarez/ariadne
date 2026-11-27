@@ -343,7 +343,7 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
      answers `false` for any reason: closed, no longer asking, back to
      draft, or never asked for directly on its own row — so a request that
      stopped asking does not carry a stale blocker for work nothing is
-     trying any more): a reviewer session's task is the review goal's, not a task that fails, and
+     trying any more): a reviewer session's task is the review's own, not a task that fails, and
      carries the same `disconnected` false-positive risk the
      orchestrator's own mark exists to avoid. `reviewer_given_up_items`
      gives it its own item, targeting the request itself, with the same

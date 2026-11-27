@@ -216,10 +216,6 @@ impl Store {
             orchestrator_answered_failed_task_ids: None,
             orchestrator_given_up_at: None,
             orchestrator_given_up_wedged: false,
-            pr_operation: None,
-            pr_repository_id: None,
-            pr_number: None,
-            pr_url: None,
         })
     }
 

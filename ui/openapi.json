@@ -4657,7 +4657,7 @@
         ],
         "responses": {
           "200": {
-            "description": "SSE stream of console events (text/event-stream). A `snapshot` event carrying the newest page of recorded events (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. The chunks and the progress are live only: they are never stored and never reach `/v1/events`. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes.",
+            "description": "SSE stream of console events (text/event-stream). A `snapshot` event carrying the newest page of recorded events (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. Chunks are live only: they are never stored and never reach `/v1/events`. Tool call progress is stored at most once in each interval, and `/v1/events` lists what is stored; the rest is live only. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -8814,17 +8814,6 @@
             "type": "boolean",
             "description": "Whether this goal has an orchestrator for its lifetime."
           },
-          "pull_request": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PullRequestOperationDto",
-                "description": "The pull request and operation this goal runs (029), or null for an\nordinary goal. One open goal exists per request and operation."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "repos": {
             "type": "array",
             "items": {
@@ -10688,7 +10677,7 @@
             "items": {
               "$ref": "#/components/schemas/PullRequestOperationRefDto"
             },
-            "description": "The open goals of Ariadne's operations on this request, one per\noperation (029): what Forge reads to link the goal and its task."
+            "description": "The open tasks of Ariadne's operations on this request, one per\noperation (029, 032): what Forge reads to link the task."
           },
           "origin_task_id": {
             "type": [
@@ -10793,50 +10782,19 @@
           }
         }
       },
-      "PullRequestOperationDto": {
-        "type": "object",
-        "description": "The pull request an operation goal works on, named by value: the request's\nown row goes when Ariadne stops working on it, and the goal stays.",
-        "required": [
-          "operation",
-          "repository_id",
-          "number",
-          "url"
-        ],
-        "properties": {
-          "number": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "operation": {
-            "$ref": "#/components/schemas/PrOperation"
-          },
-          "repository_id": {
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          }
-        }
-      },
       "PullRequestOperationRefDto": {
         "type": "object",
-        "description": "An open operation goal on a request, with its one task.",
+        "description": "The open task of an operation on a request.",
         "required": [
           "operation",
-          "goal_id"
+          "task_id"
         ],
         "properties": {
-          "goal_id": {
-            "type": "string"
-          },
           "operation": {
             "$ref": "#/components/schemas/PrOperation"
           },
           "task_id": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           }
         }
       },
@@ -12687,7 +12645,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/PrOperation",
-                "description": "The pull request operation the task's goal runs (029), or null for an\nordinary task."
+                "description": "The pull request operation the task runs (029, 032), or null for an\nordinary task. Such a task belongs to no goal."
               },
               {
                 "type": "null"
@@ -12699,7 +12657,7 @@
               "string",
               "null"
             ],
-            "description": "URL of the pull or merge request the task's `pr` column opened, once\nit has; null for a task landed directly. On a review or babysit task\n(one with an `operation`) that opened none, the goal's own request, in\nthe response only."
+            "description": "URL of the pull or merge request the task's `pr` column opened, once\nit has; null for a task landed directly. On a review or babysit task\n(one with an `operation`) that opened none, the request it works on, in\nthe response only."
           },
           "reason": {
             "type": [

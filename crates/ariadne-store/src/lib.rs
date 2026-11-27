@@ -46,10 +46,10 @@ pub use events::{EventFilter, EventHead, EventOrder, NewAgentEvent};
 pub use far_tasks::{FarTaskState, is_final};
 pub use forge::{ForgeWrite, SetForgeIntegration};
 pub use goal_parts::{GoalParts, TaskParts};
-pub use goals::{NewGoal, NewPrGoal};
+pub use goals::NewGoal;
 pub use hosts::StoredHost;
 pub use permissions::NewLearnedPermission;
-pub use pr_operations::{PrOperationEnd, PrOperationOwner, StartPrOperation};
+pub use pr_operations::{PrOperationEnd, PrOperationOwner, StartPrOperation, TaskPullRequest};
 pub use pull_request_comments::NewPullRequestComment;
 pub use pull_requests::{NewPullRequest, PullRequestFilter, PullRequestTold};
 pub use remote_tasks::{NewRemoteTask, RemoteTaskContext};
@@ -270,7 +270,7 @@ impl Store {
             attention_order: Arc::default(),
             pr_locks: Arc::default(),
         };
-        // The facts migration 0029 added are filled for the rows before it
+        // The facts migration 0030 added are filled for the rows before it
         // once, here, before any read leans on them (040).
         store.fill_event_facts().await?;
         store.seed_builtin_skills().await?;

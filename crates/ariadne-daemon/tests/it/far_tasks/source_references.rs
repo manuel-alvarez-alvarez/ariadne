@@ -1036,6 +1036,56 @@ async fn a_goal_less_far_task_has_no_source_goal_and_accepts_cancel_and_retry() 
 }
 
 #[tokio::test]
+async fn a_goal_less_far_task_wakes_no_goal_reconciliation() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let p = pair_on(true).await;
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(p.local.telemetry.log_layer()),
+    );
+    let repo = forge_repository(&p.local, "source", "owner/solo").await;
+    forge_repository(&p.far, "worker", "owner/solo").await;
+    let task: TaskDto = p
+        .local
+        .json(
+            post_json(
+                "/v1/tasks",
+                json!({
+                    "title":"Independent remote work", "repo_id":repo.id, "host":"far",
+                    "agents":[{"model":p.model}]
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    eventually(TIMEOUT, "worker authorization", async || {
+        let worker: TaskDto = p.far.get(&format!("/v1/tasks/{}", task.id)).await;
+        worker.execution_context.unwrap().authorized
+    })
+    .await;
+    p.far
+        .store
+        .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "source progress", async || {
+        let t: TaskDto = p.local.get(&format!("/v1/tasks/{}", task.id)).await;
+        t.status == TaskStatus::InProgress
+    })
+    .await;
+    p.local.telemetry.flush();
+    let logs: ariadne_api::logs::LogSnapshotResponse = p.local.get("/v1/logs").await;
+    assert!(
+        !logs
+            .lines
+            .iter()
+            .any(|line| line.message.contains("goal reconciliation failed")),
+        "{:#?}",
+        logs.lines
+    );
+}
+
+#[tokio::test]
 async fn goal_less_admission_checks_the_host_and_saves_its_workflow() {
     let p = pair().await;
     let repo = forge_repository(&p.local, "source", "owner/solo").await;

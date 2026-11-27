@@ -527,11 +527,20 @@ fn snapshot_of(stored: Vec<AgentEvent>, so_far: Vec<AgentEventDto>) -> Vec<Agent
 /// carries no call id: an end cut off from its start would otherwise take
 /// the start of a later call of the same tool, and survive on it.
 fn whole_calls(page: Vec<AgentEventDto>) -> Vec<AgentEventDto> {
-    let mut open: HashMap<String, usize> = HashMap::new();
+    let mut open: HashMap<(String, String), usize> = HashMap::new();
     page.into_iter()
         .filter(|event| match event.kind.as_str() {
             "pre_tool_use" => {
                 *open.entry(call_of(event)).or_default() += 1;
+                true
+            }
+            // Stored progress opens a call whose `pre_tool_use` the store
+            // refused (021): it carries the call as merged, input included.
+            "tool_call_update" => {
+                let started = open.entry(call_of(event)).or_default();
+                if *started == 0 {
+                    *started = 1;
+                }
                 true
             }
             "post_tool_use" => match open.get_mut(&call_of(event)) {
@@ -549,15 +558,21 @@ fn whole_calls(page: Vec<AgentEventDto>) -> Vec<AgentEventDto> {
 /// What pairs a call's end with its start: the ACP call id, and the tool's
 /// name where an event carries no id, as the transcript pairs them. An event
 /// with neither is one call, and pairs with another of its kind.
-fn call_of(event: &AgentEventDto) -> String {
-    event
+fn call_of(event: &AgentEventDto) -> (String, String) {
+    // A child session's call ids are its own: two children may reuse one.
+    let child = event
+        .payload
+        .pointer("/subagent/id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let call = event
         .payload
         .pointer("/acp/toolCallId")
         .and_then(Value::as_str)
         .or_else(|| event.payload.get("tool_call_id").and_then(Value::as_str))
         .or_else(|| event.payload.get("tool_name").and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_string()
+        .unwrap_or_default();
+    (child.to_string(), call.to_string())
 }
 
 /// Follow a session's console.
@@ -581,9 +596,10 @@ fn call_of(event: &AgentEventDto) -> String {
                        running turn's text so far, then an `event` per new one \
                        (`AgentEventDto`) — message and thought chunks, tool call progress, \
                        tool calls, plans, permission requests and turn status all arrive \
-                       this way, in the vocabulary the ACP runtime reports them in. The \
-                       chunks and the progress are live only: they are never stored and \
-                       never reach `/v1/events`. A client that falls behind gets a `resync` \
+                       this way, in the vocabulary the ACP runtime reports them in. Chunks \
+                       are live only: they are never stored and never reach `/v1/events`. \
+                       Tool call progress is stored at most once in each interval, and \
+                       `/v1/events` lists what is stored; the rest is live only. A client that falls behind gets a `resync` \
                        event (ResyncDto) and the connection closes.",
         content_type = "text/event-stream", body = AgentEventDto),
         (status = 404)))]
@@ -762,7 +778,7 @@ mod tests {
     use ariadne_api::events::{AgentEventDto, AgentEventSummaryDto};
     use ariadne_api::stream::DomainEvent;
 
-    use super::{EventBus, Merge, SNAPSHOT_EVENTS, Store};
+    use super::{EventBus, Merge, SNAPSHOT_EVENTS, Store, whole_calls};
     use crate::bus::BusEvent;
 
     fn dto(id: &str, kind: &str) -> AgentEventDto {
@@ -775,6 +791,46 @@ mod tests {
             summary: kind.into(),
             created_at: "2026-09-12T00:00:00.000Z".into(),
         }
+    }
+
+    fn call(id: &str, kind: &str, child: &str) -> AgentEventDto {
+        let mut event = dto(id, kind);
+        event.payload = json!({"acp": {"toolCallId": "call-1"}, "subagent": {"id": child}});
+        event
+    }
+
+    /// Two children reusing a call id are two calls: the first one's end
+    /// does not use up what the second one's stored progress opened, and the
+    /// second's end stays where its opener was refused.
+    #[test]
+    fn a_reused_call_id_opens_again_from_stored_progress() {
+        let page = vec![
+            call("1", "pre_tool_use", "a"),
+            call("2", "post_tool_use", "a"),
+            call("3", "tool_call_update", "b"),
+            call("4", "post_tool_use", "b"),
+            call("5", "post_tool_use", "c"),
+        ];
+        let kept: Vec<String> = whole_calls(page).into_iter().map(|e| e.id).collect();
+        assert_eq!(kept, ["1", "2", "3", "4"]);
+        let same = vec![
+            call("1", "pre_tool_use", "a"),
+            call("2", "post_tool_use", "a"),
+            call("3", "tool_call_update", "a"),
+            call("4", "post_tool_use", "a"),
+        ];
+        assert_eq!(whole_calls(same).len(), 4);
+        // Child and call ids are separate fields, whatever they contain.
+        let mut split = vec![
+            call("1", "pre_tool_use", "a"),
+            call("2", "post_tool_use", "a\0b"),
+            call("3", "post_tool_use", "a"),
+        ];
+        split[0].payload = json!({"acp": {"toolCallId": "b\0c"}, "subagent": {"id": "a"}});
+        split[1].payload = json!({"acp": {"toolCallId": "c"}, "subagent": {"id": "a\0b"}});
+        split[2].payload = json!({"acp": {"toolCallId": "b\0c"}, "subagent": {"id": "a"}});
+        let kept: Vec<String> = whole_calls(split).into_iter().map(|e| e.id).collect();
+        assert_eq!(kept, ["1", "3"]);
     }
 
     /// A store of its own for one test: the console reads its page of stored

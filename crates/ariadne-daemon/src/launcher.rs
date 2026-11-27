@@ -1627,7 +1627,7 @@ impl Launcher {
     }
 
     /// Start a fresh review session on a request: its worktree detached at
-    /// the head, a row with no goal, task or staffed agent, titled by the
+    /// the head, a row on the operation's task and agent, with no goal, titled by the
     /// request, and an agent on `pin` that loads `pr-reviewer` and is briefed
     /// on the request.
     pub async fn spawn_pull_request_session(
@@ -1645,7 +1645,7 @@ impl Launcher {
         let session = self
             .store
             .create_session(NewSession {
-                goal_id: owner.map(|o| o.goal.id.clone()),
+                goal_id: None,
                 task_id: owner.map(|o| o.task.id.clone()),
                 seat: Some(seat),
                 task_agent_id: owner.map(|o| o.agent.id.clone()),
@@ -1721,7 +1721,7 @@ impl Launcher {
             .filter(|s| !s.died_on_arrival())
             .filter(|s| s.model == pin.model && s.effort == pin.effort)
             // A session belongs to the operation that started it: a new
-            // goal, or a session from before goals, starts a new one.
+            // task, or a session from before operation tasks, starts a new one.
             .filter(|s| s.task_id.as_deref() == owner.map(|o| o.task.id.as_str()))
             .and_then(|s| s.internal_session_id.clone().map(|internal| (s, internal)))
         else {
@@ -1762,7 +1762,7 @@ impl Launcher {
 
     /// Start a fresh keeper session on a request asked
     /// for by hand (032): its worktree on a local branch cut from the
-    /// fetched head, a row with no goal, task or staffed agent, titled by
+    /// fetched head, a row on the operation's task and agent, with no goal, titled by
     /// the request, and an agent on `pin` that loads `pr-babysit` and is
     /// briefed on the request.
     pub async fn spawn_keeper_session(
@@ -1780,7 +1780,7 @@ impl Launcher {
         let session = self
             .store
             .create_session(NewSession {
-                goal_id: owner.map(|o| o.goal.id.clone()),
+                goal_id: None,
                 task_id: owner.map(|o| o.task.id.clone()),
                 seat: Some(seat),
                 task_agent_id: owner.map(|o| o.agent.id.clone()),
@@ -1847,7 +1847,7 @@ impl Launcher {
             .filter(|s| !s.died_on_arrival())
             .filter(|s| s.model == pin.model && s.effort == pin.effort)
             // A session belongs to the operation that started it: a new
-            // goal, or a session from before goals, starts a new one.
+            // task, or a session from before operation tasks, starts a new one.
             .filter(|s| s.task_id.as_deref() == owner.map(|o| o.task.id.as_str()))
             .and_then(|s| s.internal_session_id.clone().map(|internal| (s, internal)))
         else {

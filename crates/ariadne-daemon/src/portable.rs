@@ -238,9 +238,10 @@ impl PortableRuntime {
                 if let Some(goal) = &task.goal_id {
                     drain.goals.insert(goal.clone());
                 }
-                let goal = store.task_goal(&task).await?;
-                if let (Some(repository), Some(number)) = (goal.pr_repository_id, goal.pr_number)
-                    && let Some(pull) = store.pull_request_by_number(&repository, number).await?
+                if let Some(link) = store.task_pull_request(&task.id).await?
+                    && let Some(pull) = store
+                        .pull_request_by_number(&link.repository_id, link.number)
+                        .await?
                 {
                     drain.pulls.insert(pull.id);
                 }

@@ -1192,13 +1192,13 @@ async fn hold_review_comments(
 
 /// Ask Ariadne to review any open request on the model the user picks,
 /// or stop asking (029). Authorship and GitHub review assignments do not
-/// restrict the ask. Asking starts one active goal for the review, with one
-/// staffed task and no orchestrator, in one `review` column that Ariadne
-/// fixes: the model must be ranked inside that column's band, else 400. Asking again keeps
-/// the open goal and moves its pin and skills. The session waits while the
-/// request is a draft. A review of the user's own request posts as a
-/// comment; other reviews may request changes. The goal completes when the
-/// request merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends
+/// restrict the ask. Asking starts one staffed task for the review, with no
+/// goal and no orchestrator, in one `review` column that Ariadne fixes: the
+/// model must be ranked inside that column's band, else 400. Asking again
+/// keeps the open task and moves its pin and skills. The session waits while
+/// the request is a draft. A review of the user's own request posts as a
+/// comment; other reviews may request changes. The task finishes when the
+/// request merges, and fails if the request closes. Stopping cancels the task and ends
 /// only the reviewer session, keeping any task or keeper that also works on
 /// the request.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-review", tag = "pull-requests",
@@ -1229,13 +1229,13 @@ pub(super) async fn ask_review(
     if req.asked {
         let existing = state
             .store
-            .active_pr_goal(&id, number, PrOperation::Review)
+            .active_pr_task(&id, number, PrOperation::Review)
             .await?;
         if !state
             .launcher
             .cfg
             .portable
-            .allows_goal(existing.as_ref().map_or("", |goal| goal.id.as_str()))
+            .allows_task(existing.as_ref().map_or("", |task| task.id.as_str()))
         {
             return Err(ApiError::conflict("worker maintenance blocks new work"));
         }
@@ -1289,16 +1289,16 @@ pub(super) async fn ask_review(
                 .map_err(forge_error)?
                 .0
         }
-        // Nothing works on it, so there is no asking to stop; a review goal
+        // Nothing works on it, so there is no asking to stop; a review task
         // a stop left open is ended all the same.
         (None, None) => {
-            end_operation_goal(&state, &id, number, PrOperation::Review).await?;
+            end_operation_task(&state, &id, number, PrOperation::Review).await?;
             return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };
-    // The review is a goal of its own with one staffed task (029). Starting
-    // keeps the open goal where one is, so a repeat only moves its pin and
-    // skills; the goal exists before the ask is written, so a scheduler pass
+    // The review is one staffed task with no goal (029). Starting keeps the
+    // open task where one is, so a repeat only moves its pin and skills;
+    // the task exists before the ask is written, so a scheduler pass
     // that reads the ask finds its owner. A stop writes the ask first, so no
     // pass starts a session for a review that is going away.
     let row = match &pin {
@@ -1325,7 +1325,7 @@ pub(super) async fn ask_review(
                 .store
                 .set_pull_request_review_asked(&row.id, None)
                 .await?;
-            end_operation_goal(&state, &id, number, PrOperation::Review).await?;
+            end_operation_task(&state, &id, number, PrOperation::Review).await?;
             row
         }
     };
@@ -1348,9 +1348,9 @@ pub(super) async fn ask_review(
     Ok(Json(pull_request_dto_of(&state.store, view).await?))
 }
 
-/// Cancel the open goal of an operation on a request, with its task, where
-/// the user stopped the operation.
-async fn end_operation_goal(
+/// Cancel the open task of an operation on a request, where the user
+/// stopped the operation.
+async fn end_operation_task(
     state: &AppState,
     repository_id: &str,
     number: i64,
@@ -1370,7 +1370,7 @@ async fn end_operation_goal(
 }
 
 /// Refuse a model outside the capability band of an operation's column: the
-/// band of the open goal's snapshot, else of the column Ariadne fixes for
+/// band of the open task's snapshot, else of the column Ariadne fixes for
 /// the operation. A model the user has not ranked has no band to be in.
 async fn check_operation_band(
     state: &AppState,
@@ -1382,12 +1382,12 @@ async fn check_operation_band(
     let fixed = ariadne_store::defaults::pr_operation_step(operation);
     let band: Vec<ModelRank> = match state
         .store
-        .active_pr_goal(repository_id, number, operation)
+        .active_pr_task(repository_id, number, operation)
         .await?
     {
-        Some(goal) => state
+        Some(task) => state
             .store
-            .goal_steps(&goal.id)
+            .task_steps(&task)
             .await?
             .first()
             .and_then(|step| serde_json::from_str(&step.ranks).ok())
@@ -1414,12 +1414,12 @@ async fn check_operation_band(
 
 /// Ask Ariadne to keep any open request by hand on the model the user
 /// picks, or stop asking (032), regardless of its author. Asking starts one
-/// active goal for the babysit, with one staffed task and no orchestrator,
-/// in one `babysit` column that Ariadne fixes: the model must be ranked
-/// inside that column's band, else 400. Asking again keeps the open goal and moves its
+/// staffed task for the babysit, with no goal and no orchestrator, in one
+/// `babysit` column that Ariadne fixes: the model must be ranked inside that
+/// column's band, else 400. Asking again keeps the open task and moves its
 /// pin and skills. A request a task already keeps is refused to avoid
-/// competing keepers. The goal completes when the request merges; its task fails on close.
-/// Stopping cancels the goal and its task and ends only the keeper session,
+/// competing keepers. The task finishes when the request merges and fails on close.
+/// Stopping cancels the task and ends only the keeper session,
 /// preserving an asked review. Pushes use the head repository and remain
 /// subject to its permissions.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit", tag = "pull-requests",
@@ -1453,13 +1453,13 @@ pub(super) async fn ask_babysit(
     if req.asked {
         let existing = state
             .store
-            .active_pr_goal(&id, number, PrOperation::Babysit)
+            .active_pr_task(&id, number, PrOperation::Babysit)
             .await?;
         if !state
             .launcher
             .cfg
             .portable
-            .allows_goal(existing.as_ref().map_or("", |goal| goal.id.as_str()))
+            .allows_task(existing.as_ref().map_or("", |task| task.id.as_str()))
         {
             return Err(ApiError::conflict("worker maintenance blocks new work"));
         }
@@ -1513,16 +1513,16 @@ pub(super) async fn ask_babysit(
                 .map_err(forge_error)?
                 .0
         }
-        // Nothing works on it, so there is no asking to stop; a babysit goal
+        // Nothing works on it, so there is no asking to stop; a babysit task
         // a stop left open is ended all the same.
         (None, None) => {
-            end_operation_goal(&state, &id, number, PrOperation::Babysit).await?;
+            end_operation_task(&state, &id, number, PrOperation::Babysit).await?;
             return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };
-    // The babysit is a goal of its own with one staffed task (032). Starting
-    // keeps the open goal where one is, so a repeat only moves its pin and
-    // skills; the goal exists before the ask is written, so a scheduler pass
+    // The babysit is one staffed task with no goal (032). Starting keeps the
+    // open task where one is, so a repeat only moves its pin and skills;
+    // the task exists before the ask is written, so a scheduler pass
     // that reads the ask finds its owner. A stop writes the ask first, so no
     // pass starts a session for a babysit that is going away.
     let row = match &pin {
@@ -1549,7 +1549,7 @@ pub(super) async fn ask_babysit(
                 .store
                 .set_pull_request_babysit_asked(&row.id, None)
                 .await?;
-            end_operation_goal(&state, &id, number, PrOperation::Babysit).await?;
+            end_operation_task(&state, &id, number, PrOperation::Babysit).await?;
             row
         }
     };

@@ -61,7 +61,7 @@ export function orderGroups<G>(groups: readonly G[], orderOf: (group: G) => Grou
   })
 }
 
-/** What a goal bar says about its tasks, and what a folded goal says at all. */
+/** What a goal line says about its tasks, and what a folded goal says at all. */
 interface GoalCounts {
   /**
    * Everything that is in the pipeline or has been through it — the whole goal

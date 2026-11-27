@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-11-25
+updated: 2026-11-26
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -150,7 +150,9 @@ the ACP runtime that takes a prompt (021).
 28. The runtime's own report of the agent's end (`session_end`,
     `session.error`) is not word from the agent, so it does not stamp the
     session's activity. Otherwise a death on arrival would read as an agent
-    that spoke.
+    that spoke. Neither does a running call's stored progress or the end the
+    daemon stores for a call a turn left open (021, rule 7), so a call that
+    reports only progress stalls as soon as it did before.
 29. The attempts are given back when an agent reports, not when a launch
     returns, and once per launch that reported: a task's agents share one
     budget, so an agent that keeps reporting, or one that reported before it

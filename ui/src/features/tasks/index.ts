@@ -11,4 +11,12 @@ export { STALLED_META, StalledBadge } from "./stalled"
 export { compareByAttention, TASK_STATUS_META } from "./status"
 export { TaskCard } from "./task-card"
 export { TaskPanel } from "./task-panel"
-export { TaskRow } from "./task-row"
+export {
+  BOARD_COLUMNS,
+  BOARD_CONTAINER,
+  BOARD_LINE,
+  boardDotsWidth,
+  HOST_HIDES,
+  TaskRow,
+  TOKEN_CELL,
+} from "./task-row"

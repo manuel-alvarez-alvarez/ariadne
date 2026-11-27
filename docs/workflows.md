@@ -95,8 +95,8 @@ none.
 
 A review or a babysit of one pull request runs on no workflow of the
 catalog. When you press **Start review** or **Start babysit** on a request,
-or run `ariadne pr review` or `ariadne pr babysit`, Ariadne makes one active
-goal on it. The goal has one task and no orchestrator. The task has one
+or run `ariadne pr review` or `ariadne pr babysit`, Ariadne makes one task
+for it. The task belongs to no goal and has no orchestrator. It has one
 agent, on one column that Ariadne fixes:
 
 | Operation | Column | Skill | Ranks | Gate |
@@ -107,31 +107,33 @@ agent, on one column that Ariadne fixes:
 The review agent reviews the request and each later push. The babysit agent
 keeps the request open: it answers comments and fixes checks in its own
 worktree, and pushes to the request's own head branch. Each agent works until
-the request merges or closes. You see the goal on the Goals board like any
-other, with its task, session, history and usage. The goal records
+the request merges or closes. You see the task on the board like any other
+task without a goal, with its session, history and usage. The task records
 `pr-review` or `pr-babysit` as its workflow name, and no workflow of your
 own can take either name.
 
 You pick the model and the skills beside the column's own skill when you
 ask. The ranks decide which models an ask accepts. A model you ranked outside
 the band, or never ranked, is refused with a 400 that names the band. Rank a
-model on the Agents screen or with `ariadne models rank` first. A goal
+model on the Agents screen or with `ariadne models rank` first. A task
 already open keeps the band it started with.
 
-Asking again on a request that has an open goal for that operation keeps the
-same goal, and moves the model and skills onto its agent. A merge completes
-the goal. A close without merging fails the task and leaves the goal active.
-**Stop review** or **Stop babysit** cancels the goal, and the next ask makes
-a new goal. A babysit of a request that a task already keeps is refused with
-a 409, so one request never has two keepers. A review and a babysit of the
-same request are independent, and each has a goal of its own. A keeper that
-ran before goals existed is not moved onto a goal when you upgrade: it runs
-on until you ask again.
+Asking again on a request that has an open task for that operation keeps the
+same task, and moves the model and skills onto its agent. A merge finishes
+the task. A close without merging fails it. **Stop review** or **Stop
+babysit**, or cancelling the task, cancels it, and the next ask makes a new
+task. A babysit of a request that a task already keeps is refused with a
+409, so one request never has two keepers. A review and a babysit of the
+same request are independent, and each has a task of its own.
+
+Earlier releases made a goal for each review and babysit. The upgrade turns
+each of those goals into its task: the task keeps its column, sessions,
+history and usage, and the goal goes.
 
 Ariadne before this release shipped a `pr-review` and a `pr-babysit`
 workflow that you could edit. The upgrade removes both, with any edits you
-made to them. Goals that were open at the upgrade keep the columns they
-started with.
+made to them. Reviews and babysits that were open at the upgrade keep the
+columns they started with.
 
 ## Gates
 

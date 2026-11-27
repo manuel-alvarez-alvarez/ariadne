@@ -215,9 +215,18 @@ async fn ingest_event_inner(
     // A `session.diagnosis` is no word from the agent either: it is the
     // advisory classifier's own, read well after the session ended, and
     // must never read as activity (024).
+    //
+    // Nor is a running call's stored progress, or the end the daemon stores
+    // for a call a turn left open (021, rule 7): the clock keeps the pace it
+    // had before the daemon stored either, so a call that only reports
+    // progress is stalled as soon as it was before.
     if !matches!(
         req.kind.as_str(),
-        "session_end" | "session.error" | "session.diagnosis"
+        "session_end"
+            | "session.error"
+            | "session.diagnosis"
+            | "tool_call_update"
+            | "tool_call_abandoned"
     ) {
         store.touch_session(&session.id).await?;
     }

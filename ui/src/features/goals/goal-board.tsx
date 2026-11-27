@@ -1,33 +1,50 @@
 /**
- * The goals board: one list of task rows, the rows of one goal adjacent and
- * joined by a rail, and a gap between one group and the next. A task with no
- * goal is a group of one row, with no rail.
+ * The goals board: one list of task rows, the rows of one goal adjacent under
+ * the goal's own line, and a gap between one group and the next. Each row
+ * has a rail segment at its left edge, and the segments of one goal join into
+ * one rail. A task with no goal is a group of one row.
  *
- * A goal's facts are in its bar. Pointer hover or keyboard focus on a row
- * tints a frame around the rows of its goal and shows the bar on the frame's
- * top edge, over the gap above the first row, so neither moves or hides a row.
- * While the goal's orchestrator wants a person, the bar stays shown at rest.
- * A folded goal is one summary row, and a goal with no shown task one
- * placeholder row.
+ * A goal's facts are in its line, shown at rest, with no background, border
+ * or frame. A folded goal is the line with its summary, and a goal with no
+ * shown task the line and one muted line that says why.
+ *
+ * The board is one grid and every line a subgrid of it (see `task-row.tsx`),
+ * so the goal's token total sits in the token column over its rows' figures.
+ * From the 33.9rem floor up the board never scrolls sideways: a narrow board hides
+ * whole columns. Below the floor it scrolls sideways and cuts none.
  */
 
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import { type ReactNode, type RefObject, useEffect, useId, useMemo, useRef } from "react"
+import {
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react"
 import { Link } from "react-router-dom"
 
 import { type GoalDto, type Host, type HostRow, type TaskDto, useHostLists } from "@/api"
 import { RefreshWarning } from "@/components/error-state"
 import { HostLabel } from "@/components/host-label"
-import { ScrollEdge } from "@/components/scroll-edge"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
-import { TaskRow, taskListQueryOptions } from "@/features/tasks"
+import {
+  BOARD_COLUMNS,
+  BOARD_CONTAINER,
+  BOARD_LINE,
+  boardDotsWidth,
+  HOST_HIDES,
+  TaskRow,
+  TOKEN_CELL,
+  taskListQueryOptions,
+} from "@/features/tasks"
 import { useDaemonIdentities, withoutWorkerCopies } from "@/features/tasks/source-host"
 import { stepTitle } from "@/features/tasks/steps"
-import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { cn, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import {
@@ -39,9 +56,6 @@ import {
 import { useCollapsedLanes } from "./collapsed-lanes"
 import { type GroupOrder, goalCounts, goallessTasks, goalSummary, orderGroups } from "./groups"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
-
-/** The list keeps its columns on a narrow window and scrolls sideways instead. */
-const BOARD_WIDTH = "min-w-[48rem]"
 
 /**
  * The board's own scrollport: sticky only works against the box that scrolls.
@@ -76,11 +90,8 @@ const BOARD_BOX = "h-full rounded-lg border contain-paint"
  */
 const BOARD_FRAME = "relative min-h-0 flex-1"
 
-/** The rail in the left margin that joins the rows of one goal. */
-const RAIL = "pointer-events-none absolute bottom-0 -left-3 w-0.5 rounded-full bg-border"
-
-/** One line of a goal's own: its bar, its folded row, or its placeholder row. */
-const GOAL_LINE = "flex h-8 min-w-0 items-center gap-2 px-1.5 text-xs whitespace-nowrap"
+/** The list: the board's columns, a gap between groups, none inside one. */
+const BOARD_LIST = cn(BOARD_COLUMNS, "min-w-[33.9rem] gap-y-2 px-3 pb-3")
 
 type BoardTask = HostRow<TaskDto & { executionHost: string }>
 
@@ -137,7 +148,6 @@ export function GoalBoard({
   // Folding swaps the goal's rows for its summary, so the fold button is mounted
   // again: the goal it was on takes the keyboard back.
   const refocus = useRef<string | null>(null)
-  const board = useHorizontalOverflow<HTMLElement>()
   const visible = (task: TaskDto) =>
     !activeOnly || (task.status !== "finished" && task.status !== "cancelled")
   // A far task with no goal is listed by its source and by its worker, both
@@ -161,6 +171,11 @@ export function GoalBoard({
       groupOrder(group, attentionByHost.get(groupHost(group)) ?? NO_BOARD_ATTENTION),
     )
   }, [goals, byGoal, noGoal, attentionByHost])
+  // The step column is as wide as the widest dots of any workflow it shows.
+  const dotsFloor = boardDotsWidth([
+    ...goals.map((goal) => goal.steps.length),
+    ...noGoal.map((row) => row.steps?.length ?? 0),
+  ])
   const total =
     goals.reduce(
       (count, goal) =>
@@ -203,62 +218,61 @@ export function GoalBoard({
           warning inside it would push the board past the frame's bottom edge. */}
       {warnings}
       <div className={BOARD_FRAME}>
-        {/* A named region the keyboard can put focus into: the board scrolls both
-          ways, and a scrollport nothing can focus only scrolls under a pointer. */}
+        {/* A named region the keyboard can put focus into: a scrollport nothing
+          can focus only scrolls under a pointer. It is also the container whose
+          width decides which columns the rows show. */}
         <section
-          ref={board.ref}
           aria-label="Goals board"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
           tabIndex={0}
           className={cn(
             BOARD_BOX,
-            "overflow-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+            BOARD_CONTAINER,
+            "overflow-x-auto overflow-y-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
           )}
         >
-          <div className={BOARD_WIDTH}>
-            <div className="sticky top-0 z-30 bg-background px-5 py-2">
-              <h2 className="text-sm font-semibold">Tasks ({total})</h2>
-            </div>
-            <div className="flex flex-col px-6 pb-3">
-              {groups.map((group) => {
-                if (group.kind === "task") {
-                  const { row } = group
-                  const own = attention(row.host)
-                  return (
-                    <div key={group.key} className="pt-2">
-                      <TaskRow
-                        host={row.host}
-                        task={{ ...row, host: row.executionHost }}
-                        steps={row.steps ?? []}
-                        attention={own.byTask.get(row.id)}
-                        lastActivityAt={own.lastActivity.get(row.id)}
-                      />
-                    </div>
-                  )
-                }
-                const { goal } = group
-                // Finished goals open folded unless the user chose otherwise.
-                const collapsed = isCollapsed(goal.id, isTerminalGoalStatus(goal.status))
+          <div className="sticky top-0 z-30 bg-background px-5 py-2">
+            <h2 className="text-sm font-semibold">Tasks ({total})</h2>
+          </div>
+          <div
+            className={BOARD_LIST}
+            style={{ "--board-dots": `${dotsFloor}rem` } as CSSProperties}
+          >
+            {groups.map((group) => {
+              if (group.kind === "task") {
+                const { row } = group
+                const own = attention(row.host)
                 return (
-                  <GoalGroup
+                  <TaskRow
                     key={group.key}
-                    goal={goal}
-                    tasks={group.tasks}
-                    showHost={showHost}
-                    unread={unread.has(goal.host)}
-                    visible={visible}
-                    attention={attention(goal.host)}
-                    collapsed={collapsed}
-                    refocus={refocus}
-                    onToggle={() => setCollapsed(goal.id, !collapsed)}
+                    host={row.host}
+                    task={{ ...row, host: row.executionHost }}
+                    steps={row.steps ?? []}
+                    attention={own.byTask.get(row.id)}
+                    lastActivityAt={own.lastActivity.get(row.id)}
                   />
                 )
-              })}
-            </div>
+              }
+              const { goal } = group
+              // Finished goals open folded unless the user chose otherwise.
+              const collapsed = isCollapsed(goal.id, isTerminalGoalStatus(goal.status))
+              return (
+                <GoalGroup
+                  key={group.key}
+                  goal={goal}
+                  tasks={group.tasks}
+                  showHost={showHost}
+                  unread={unread.has(goal.host)}
+                  visible={visible}
+                  attention={attention(goal.host)}
+                  collapsed={collapsed}
+                  refocus={refocus}
+                  onToggle={() => setCollapsed(goal.id, !collapsed)}
+                />
+              )
+            })}
           </div>
         </section>
-        <ScrollEdge side="start" show={board.overflow.start} />
-        <ScrollEdge side="end" show={board.overflow.end} />
       </div>
     </>
   )
@@ -294,74 +308,35 @@ function GoalGroup({
   const counts = goalCounts(tasks)
   const label = `${goal.title}: Tasks`
 
-  if (collapsed) {
-    return (
-      // biome-ignore lint/a11y/useSemanticElements: this group is not a form control
-      <div role="group" aria-label={label} className="relative pt-2">
-        <span aria-hidden className={cn(RAIL, "top-2")} />
-        <div data-goal-folded className={cn(GOAL_LINE, "rounded-md border border-dashed")}>
-          <FoldToggle goal={goal} collapsed refocus={refocus} onToggle={onToggle} />
-          <GoalTitle goal={goal} tasks={tasks} />
-          <GoalFacts goal={goal} showHost={showHost} orchestrator={orchestrator}>
-            <span className="min-w-0 truncate text-muted-foreground">{goalSummary(tasks)}</span>
-          </GoalFacts>
-        </div>
-      </div>
-    )
-  }
-
-  if (shown.length === 0) {
-    return (
-      // biome-ignore lint/a11y/useSemanticElements: this group is not a form control
-      <div role="group" aria-label={label} className="relative pt-2">
-        <span aria-hidden className={cn(RAIL, "top-2")} />
-        <PlaceholderRow
-          goal={goal}
-          state={placeholderText(goal, tasks, unread)}
-          showHost={showHost}
-          orchestrator={orchestrator}
-          refocus={refocus}
-        />
-      </div>
-    )
-  }
-
-  const pinned = orchestrator !== undefined
   return (
-    // The group takes no pointer of its own, so only a row, or the bar it
-    // shows, starts the hover; the gap above the first row does not.
     // biome-ignore lint/a11y/useSemanticElements: this group is not a form control
-    <div
-      role="group"
-      aria-label={label}
-      className={cn("group/goal pointer-events-none relative", !pinned && "pt-8")}
-    >
-      <span
-        aria-hidden
-        data-goal-frame
-        className="absolute -inset-x-4 top-0 -bottom-1 rounded-lg border bg-muted/40 opacity-0 transition-opacity group-focus-within/goal:opacity-100 group-hover/goal:opacity-100"
-      />
-      <span aria-hidden className={cn(RAIL, "top-8")} />
-      <div
-        data-goal-bar={pinned ? "pinned" : "hover"}
-        className={cn(
-          GOAL_LINE,
-          "z-10",
-          pinned
-            ? "pointer-events-auto relative"
-            : "absolute inset-x-0 top-0 opacity-0 transition-opacity group-focus-within/goal:pointer-events-auto group-focus-within/goal:opacity-100 group-hover/goal:pointer-events-auto group-hover/goal:opacity-100",
-        )}
+    <div role="group" aria-label={label} className={BOARD_LINE}>
+      <GoalLine
+        goal={goal}
+        tasks={tasks}
+        showHost={showHost}
+        orchestrator={orchestrator}
+        collapsed={collapsed}
+        refocus={refocus}
+        onToggle={onToggle}
       >
-        <FoldToggle goal={goal} collapsed={false} refocus={refocus} onToggle={onToggle} />
-        <GoalTitle goal={goal} tasks={tasks} />
-        <GoalFacts goal={goal} showHost={showHost} orchestrator={orchestrator}>
-          <span className="text-muted-foreground">
+        {collapsed ? (
+          <span className="min-w-0 truncate text-muted-foreground">{goalSummary(tasks)}</span>
+        ) : (
+          <span className="shrink-0 text-muted-foreground">
             {counts.finished}/{counts.pipeline}
           </span>
-        </GoalFacts>
-      </div>
-      <div className="pointer-events-auto relative flex flex-col gap-1">
-        {shown.map((task) => (
+        )}
+      </GoalLine>
+      {collapsed ? null : shown.length === 0 ? (
+        <p
+          data-goal-placeholder
+          className="col-span-full flex h-8 min-w-0 items-center pl-3 text-xs text-muted-foreground"
+        >
+          <span className="min-w-0 truncate">{placeholderText(goal, tasks, unread)}</span>
+        </p>
+      ) : (
+        shown.map((task) => (
           <TaskRow
             key={task.id}
             host={goal.host}
@@ -370,8 +345,8 @@ function GoalGroup({
             attention={attention.byTask.get(task.id)}
             lastActivityAt={attention.lastActivity.get(task.id)}
           />
-        ))}
-      </div>
+        ))
+      )}
     </div>
   )
 }
@@ -444,92 +419,60 @@ function GoalTitle({ goal, tasks }: { goal: HostRow<GoalDto>; tasks: TaskDto[] }
 }
 
 /**
- * What a goal's line says after its title: the host, the status, what the
- * caller puts in (a count or a summary), the orchestrator's flag and the
- * tokens of the whole goal at the right end.
+ * A goal's own line, shown at rest: the fold chevron, the title link, the
+ * host, the status, what the caller puts in (a count or a summary) and the
+ * orchestrator's flag, then the tokens of the whole goal in the token column,
+ * over its rows' own figures.
  */
-function GoalFacts({
+function GoalLine({
   goal,
+  tasks,
   showHost,
   orchestrator,
-  tabIndex,
+  collapsed,
+  refocus,
+  onToggle,
   children,
 }: {
   goal: HostRow<GoalDto>
+  tasks: TaskDto[]
   showHost: boolean
   orchestrator?: SessionAttention
-  /** -1 where the line is itself a link and holds no stop of its own. */
-  tabIndex?: number
+  collapsed: boolean
+  refocus: RefObject<string | null>
+  onToggle: () => void
   children: ReactNode
 }) {
   const status = GOAL_STATUS_META[goal.status]
   return (
-    <>
-      {showHost ? <HostLabel host={goal.host} /> : null}
-      <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-        <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
-        {status.label}
-      </span>
-      {children}
-      {orchestrator ? (
-        <SessionAttentionBadge size="sm" attention={orchestrator} hintTabIndex={tabIndex} />
-      ) : null}
+    <div
+      data-goal-line
+      data-goal-folded={collapsed ? "" : undefined}
+      className={cn(BOARD_LINE, "h-8 text-xs")}
+    >
+      {/* Clipped, so a very narrow board never draws it over the token total;
+          the padding keeps the chevron's and the link's focus rings inside. */}
+      <div className="col-span-4 -ml-[3px] flex min-w-0 items-center gap-2 overflow-hidden py-[3px] pl-[3px] whitespace-nowrap">
+        <FoldToggle goal={goal} collapsed={collapsed} refocus={refocus} onToggle={onToggle} />
+        <GoalTitle goal={goal} tasks={tasks} />
+        {showHost ? <HostLabel host={goal.host} className={HOST_HIDES} /> : null}
+        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
+          <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
+          {status.label}
+        </span>
+        {children}
+        {orchestrator ? <SessionAttentionBadge size="sm" attention={orchestrator} /> : null}
+      </div>
       {/* What the whole goal has cost — the orchestrator and every column's
           agents. The hint behind it names the halves and splits the total by
           who spent it. */}
-      <TokenFigure
-        className="ml-auto shrink-0 text-muted-foreground"
-        usage={goal.usage.total}
-        rows={goalUsageRows(goal.usage, (step) => stepTitle(goal.steps, step))}
-        tabIndex={tabIndex}
-      />
-    </>
-  )
-}
-
-/** A goal with no row to show: one line that says why, and opens the goal. */
-function PlaceholderRow({
-  goal,
-  state,
-  showHost,
-  orchestrator,
-  refocus,
-}: {
-  goal: HostRow<GoalDto>
-  state: string
-  showHost: boolean
-  orchestrator?: SessionAttention
-  refocus: RefObject<string | null>
-}) {
-  const stateId = useId()
-  const link = useRef<HTMLAnchorElement>(null)
-  // A goal unfolded to no shown task has no fold button: its row, the only
-  // control left where the fold button was, takes the keyboard.
-  useEffect(() => {
-    if (refocus.current !== goal.id) return
-    refocus.current = null
-    link.current?.focus()
-  })
-  return (
-    <Link
-      ref={link}
-      to={paths.goal(goal.id, goal.host)}
-      aria-label={goal.title}
-      aria-describedby={stateId}
-      data-goal-placeholder
-      className={cn(
-        GOAL_LINE,
-        "rounded-md border border-dashed hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
-      )}
-    >
-      <span className="min-w-0 truncate text-sm font-medium">{goal.title}</span>
-      <span id={stateId} className="min-w-0 truncate text-muted-foreground">
-        {state}
+      <span data-column="tokens" className={cn(TOKEN_CELL, "text-muted-foreground")}>
+        <TokenFigure
+          usage={goal.usage.total}
+          rows={goalUsageRows(goal.usage, (step) => stepTitle(goal.steps, step))}
+        />
       </span>
-      <GoalFacts goal={goal} showHost={showHost} orchestrator={orchestrator} tabIndex={-1}>
-        {null}
-      </GoalFacts>
-    </Link>
+    </div>
   )
 }
 
@@ -547,17 +490,16 @@ export function BoardSkeleton() {
   return (
     <div className={BOARD_FRAME} aria-hidden>
       <div className={cn(BOARD_BOX, "overflow-hidden")}>
-        <div className={BOARD_WIDTH}>
-          <div className="px-5 py-2">
-            <Skeleton className="h-3 w-20" />
-          </div>
-          {[0, 1, 2].map((group) => (
-            <div key={group} className="flex flex-col gap-1 px-6 pt-8">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </div>
-          ))}
+        <div className="px-5 py-2">
+          <Skeleton className="h-3 w-20" />
         </div>
+        {[0, 1, 2].map((group) => (
+          <div key={group} className="flex flex-col gap-1 px-3 pb-2">
+            <Skeleton className="h-6 w-1/2" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ))}
       </div>
     </div>
   )

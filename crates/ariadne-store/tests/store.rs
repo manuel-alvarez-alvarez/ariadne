@@ -6370,11 +6370,11 @@ fn review_start(repository_id: &str, model: &str, skills: &[&str]) -> StartPrOpe
     }
 }
 
-/// A review start makes one active goal with no orchestrator, on a snapshot
-/// of the `pr-review` column, and one task already in that column with one
-/// agent that loads `pr-reviewer` and the picked skills.
+/// A review start makes no goal: one goal-less task already in the fixed
+/// `review` column, linked to its request, with one agent that loads
+/// `pr-reviewer` and the picked skills.
 #[tokio::test]
-async fn a_review_start_makes_one_active_goal_with_one_staffed_task() {
+async fn a_review_start_makes_one_goal_less_task_in_its_column() {
     use ariadne_core::workflow::PrOperation;
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
@@ -6383,17 +6383,32 @@ async fn a_review_start_makes_one_active_goal_with_one_staffed_task() {
         .await
         .unwrap();
     assert!(created);
-    assert_eq!(owner.goal.status(), GoalStatus::Active);
-    assert!(!owner.goal.orchestrated);
-    assert_eq!(owner.goal.workflow, "pr-review");
-    assert_eq!(
-        owner.goal.pull_request_operation(),
-        Some(PrOperation::Review)
-    );
-    assert_eq!(owner.goal.pr_number, Some(7));
+    assert_eq!(owner.task.goal_id, None);
+    assert!(store.list_goals(&[]).await.unwrap().is_empty());
+    assert_eq!(owner.task.title, "Review PR #7: Add widgets");
     assert_eq!(owner.task.status(), TaskStatus::InProgress);
     assert_eq!(owner.task.step.as_deref(), Some("review"));
     assert_eq!(owner.agent.step, "review");
+    let link = store
+        .task_pull_request(&owner.task.id)
+        .await
+        .unwrap()
+        .expect("the request link");
+    assert_eq!(link.operation(), Some(PrOperation::Review));
+    assert_eq!(
+        (link.repository_id.as_str(), link.number),
+        (repo.id.as_str(), 7)
+    );
+    assert_eq!(link.url, "https://github.com/acme/widgets/pull/7");
+    assert!(link.open);
+    assert_eq!(
+        store
+            .task_workflow(&owner.task.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("pr-review")
+    );
     let skills: Vec<String> = store
         .agent_skills(&owner.agent.id)
         .await
@@ -6402,15 +6417,15 @@ async fn a_review_start_makes_one_active_goal_with_one_staffed_task() {
         .map(|s| s.name)
         .collect();
     assert_eq!(skills, ["pr-reviewer", "research"]);
-    let steps = store.goal_steps(&owner.goal.id).await.unwrap();
+    let steps = store.task_steps(&owner.task).await.unwrap();
     assert_eq!(steps.len(), 1);
     assert_eq!(steps[0].ranks, r#"["balanced","frontier"]"#);
 }
 
-/// Starting again keeps the open goal and task and moves the pin and skills
-/// onto the same agent; two starts at once make one goal between them.
+/// Starting again keeps the open task and moves the pin and skills onto the
+/// same agent; two starts at once make one task between them.
 #[tokio::test]
-async fn a_repeated_review_start_keeps_the_open_goal_and_moves_its_pin() {
+async fn a_repeated_review_start_keeps_the_open_task_and_moves_its_pin() {
     use ariadne_core::workflow::PrOperation;
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
@@ -6423,7 +6438,6 @@ async fn a_repeated_review_start_keeps_the_open_goal_and_moves_its_pin() {
         .await
         .unwrap();
     assert!(!created);
-    assert_eq!(second.goal.id, first.goal.id);
     assert_eq!(second.task.id, first.task.id);
     assert_eq!(second.agent.id, first.agent.id);
     assert_eq!(second.agent.model, "stub:two");
@@ -6443,33 +6457,26 @@ async fn a_repeated_review_start_keeps_the_open_goal_and_moves_its_pin() {
         store.start_pr_operation(other)
     );
     let (a, b) = (a.unwrap().0, b.unwrap().0);
-    assert_eq!(a.goal.id, b.goal.id);
     assert_eq!(a.task.id, b.task.id);
     assert_eq!(
-        store
-            .list_tasks(TaskFilter {
-                goal_id: Some(a.goal.id),
-                status: None
-            })
-            .await
-            .unwrap()
-            .len(),
-        1
+        store.list_tasks(TaskFilter::default()).await.unwrap().len(),
+        2
     );
-    assert!(
+    assert_eq!(
         store
-            .active_pr_goal(&repo.id, 7, PrOperation::Review)
+            .active_pr_task(&repo.id, 7, PrOperation::Review)
             .await
             .unwrap()
-            .is_some()
+            .map(|task| task.id),
+        Some(first.task.id)
     );
 }
 
-/// An end completes or cancels the task and the goal together, is safe to
-/// repeat, and leaves the next start a new goal while the old one stays as
-/// history.
+/// An end finishes or cancels the task and lets go of the request, is safe
+/// to repeat, and leaves the next start a new task while the old one stays
+/// as history.
 #[tokio::test]
-async fn ending_a_review_closes_its_task_and_goal_and_the_next_start_is_new() {
+async fn ending_a_review_closes_its_task_and_the_next_start_is_new() {
     use ariadne_core::workflow::PrOperation;
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
@@ -6487,11 +6494,16 @@ async fn ending_a_review_closes_its_task_and_goal_and_the_next_start_is_new() {
         )
         .await
         .unwrap()
-        .expect("the open goal");
-    assert_eq!(ended.status(), GoalStatus::Completed);
-    assert_eq!(
-        store.get_task(&first.task.id).await.unwrap().status(),
-        TaskStatus::Finished
+        .expect("the open task");
+    assert_eq!(ended.id, first.task.id);
+    assert_eq!(ended.status(), TaskStatus::Finished);
+    assert!(
+        !store
+            .task_pull_request(&first.task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .open
     );
     assert!(
         store
@@ -6512,7 +6524,7 @@ async fn ending_a_review_closes_its_task_and_goal_and_the_next_start_is_new() {
         .await
         .unwrap();
     assert!(created);
-    assert_ne!(second.goal.id, first.goal.id);
+    assert_ne!(second.task.id, first.task.id);
     store
         .end_pr_operation(
             &repo.id,
@@ -6528,19 +6540,62 @@ async fn ending_a_review_closes_its_task_and_goal_and_the_next_start_is_new() {
         TaskStatus::Cancelled
     );
     assert_eq!(
-        store.get_goal(&second.goal.id).await.unwrap().status(),
-        GoalStatus::Cancelled
+        store.get_task(&first.task.id).await.unwrap().status(),
+        TaskStatus::Finished
     );
+}
+
+/// A close fails the task and it stays the request's open one; the next
+/// start lets it go and makes a new task.
+#[tokio::test]
+async fn a_closed_request_leaves_its_failed_task_open_until_the_next_start() {
+    use ariadne_core::workflow::PrOperation;
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    let (first, _) = store
+        .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    let failed = store
+        .end_pr_operation(
+            &repo.id,
+            7,
+            PrOperation::Review,
+            PrOperationEnd::Failed,
+            "the request closed",
+        )
+        .await
+        .unwrap()
+        .expect("the open task");
+    assert_eq!(failed.status(), TaskStatus::Failed);
     assert_eq!(
-        store.get_goal(&first.goal.id).await.unwrap().status(),
-        GoalStatus::Completed
+        store
+            .active_pr_task(&repo.id, 7, PrOperation::Review)
+            .await
+            .unwrap()
+            .map(|task| task.id),
+        Some(first.task.id.clone())
+    );
+    let (next, created) = store
+        .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    assert!(created);
+    assert_ne!(next.task.id, first.task.id);
+    assert!(
+        !store
+            .task_pull_request(&first.task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .open
     );
 }
 
 /// A pull request operation runs on no workflow of the catalog (029, 032):
 /// the catalog lists neither name, no goal or repository default names
 /// either, a workflow of the user's own cannot take either name, and each
-/// operation's goal snapshots its one fixed column.
+/// operation's task snapshots its one fixed column.
 #[tokio::test]
 async fn pull_request_operations_run_on_no_workflow_of_the_catalog() {
     let (store, _dir) = test_store().await;
@@ -6600,7 +6655,7 @@ async fn pull_request_operations_run_on_no_workflow_of_the_catalog() {
         (&review, "review", "Review", "pr-reviewer"),
         (&babysit, "babysit", "Babysit", "pr-babysit"),
     ] {
-        let steps = store.goal_steps(&owner.goal.id).await.unwrap();
+        let steps = store.task_steps(&owner.task).await.unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].id, id);
         assert_eq!(steps[0].title, title);
@@ -6640,12 +6695,11 @@ fn babysit_start(repository_id: &str, model: &str, skills: &[&str]) -> StartPrOp
     }
 }
 
-/// A babysit start makes one active goal with no orchestrator, on a snapshot
-/// of the `babysit` column, and one task already in that column with one
-/// agent that loads `pr-babysit` and the picked skills. A review of the
-/// same request is a goal of its own.
+/// A babysit start makes one goal-less task in the `babysit` column with one
+/// agent that loads `pr-babysit` and the picked skills. A review of the same
+/// request is a task of its own.
 #[tokio::test]
-async fn a_babysit_start_makes_one_active_goal_with_one_staffed_task() {
+async fn a_babysit_start_makes_one_goal_less_task_in_its_column() {
     use ariadne_core::workflow::PrOperation;
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
@@ -6654,12 +6708,24 @@ async fn a_babysit_start_makes_one_active_goal_with_one_staffed_task() {
         .await
         .unwrap();
     assert!(created);
-    assert_eq!(owner.goal.status(), GoalStatus::Active);
-    assert!(!owner.goal.orchestrated);
-    assert_eq!(owner.goal.workflow, "pr-babysit");
+    assert_eq!(owner.task.goal_id, None);
+    assert!(store.list_goals(&[]).await.unwrap().is_empty());
+    assert_eq!(owner.task.title, "Keep PR #7: Add widgets");
     assert_eq!(
-        owner.goal.pull_request_operation(),
+        store
+            .task_pull_request(&owner.task.id)
+            .await
+            .unwrap()
+            .and_then(|link| link.operation()),
         Some(PrOperation::Babysit)
+    );
+    assert_eq!(
+        store
+            .task_workflow(&owner.task.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("pr-babysit")
     );
     assert_eq!(owner.task.status(), TaskStatus::InProgress);
     assert_eq!(owner.task.step.as_deref(), Some("babysit"));
@@ -6672,21 +6738,18 @@ async fn a_babysit_start_makes_one_active_goal_with_one_staffed_task() {
         .map(|s| s.name)
         .collect();
     assert_eq!(skills, ["pr-babysit", "research"]);
-    let steps = store.goal_steps(&owner.goal.id).await.unwrap();
-    assert_eq!(steps.len(), 1);
-    assert_eq!(steps[0].ranks, r#"["balanced","frontier"]"#);
 
     let (review, _) = store
         .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
         .await
         .unwrap();
-    assert_ne!(review.goal.id, owner.goal.id);
+    assert_ne!(review.task.id, owner.task.id);
 }
 
-/// A repeated babysit start keeps the goal, task and agent and moves the pin
-/// and skills; an end completes or cancels both and the next start is new.
+/// A repeated babysit start keeps the task and agent and moves the pin and
+/// skills; an end finishes or cancels the task and the next start is new.
 #[tokio::test]
-async fn a_repeated_babysit_start_keeps_its_goal_and_an_end_leaves_the_next_start_new() {
+async fn a_repeated_babysit_start_keeps_its_task_and_an_end_leaves_the_next_start_new() {
     use ariadne_core::workflow::PrOperation;
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
@@ -6699,7 +6762,7 @@ async fn a_repeated_babysit_start_keeps_its_goal_and_an_end_leaves_the_next_star
         .await
         .unwrap();
     assert!(!created);
-    assert_eq!(second.goal.id, first.goal.id);
+    assert_eq!(second.task.id, first.task.id);
     assert_eq!(second.agent.id, first.agent.id);
     assert_eq!(second.agent.model, "stub:two");
 
@@ -6713,18 +6776,14 @@ async fn a_repeated_babysit_start_keeps_its_goal_and_an_end_leaves_the_next_star
         )
         .await
         .unwrap()
-        .expect("the open goal");
-    assert_eq!(ended.status(), GoalStatus::Completed);
-    assert_eq!(
-        store.get_task(&first.task.id).await.unwrap().status(),
-        TaskStatus::Finished
-    );
+        .expect("the open task");
+    assert_eq!(ended.status(), TaskStatus::Finished);
     let (next, created) = store
         .start_pr_operation(babysit_start(&repo.id, "stub:one", &[]))
         .await
         .unwrap();
     assert!(created);
-    assert_ne!(next.goal.id, first.goal.id);
+    assert_ne!(next.task.id, first.task.id);
     store
         .stop_pr_operation(&repo.id, 7, PrOperation::Babysit, "stop")
         .await
@@ -6732,10 +6791,6 @@ async fn a_repeated_babysit_start_keeps_its_goal_and_an_end_leaves_the_next_star
     assert_eq!(
         store.get_task(&next.task.id).await.unwrap().status(),
         TaskStatus::Cancelled
-    );
-    assert_eq!(
-        store.get_goal(&next.goal.id).await.unwrap().status(),
-        GoalStatus::Cancelled
     );
 }
 
