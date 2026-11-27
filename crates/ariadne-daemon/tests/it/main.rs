@@ -14,6 +14,7 @@ mod acp_console;
 mod acp_discovery;
 mod acp_items;
 mod acp_runtime;
+mod acp_state;
 mod acp_terminal;
 mod adapters;
 mod agents;

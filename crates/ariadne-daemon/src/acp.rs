@@ -542,6 +542,47 @@ struct Turn {
     /// order the agent opened them.
     next_tool: u64,
     available_commands: Option<AvailableCommands>,
+    /// Each compaction the agent reported this launch, by id, as its
+    /// updates and summary chunks patched it (021 rule 24).
+    compactions: HashMap<String, Compaction>,
+}
+
+/// One context compaction, as far as the agent has told it.
+#[derive(Default)]
+struct Compaction {
+    /// The summary so far: the last whole summary, and every chunk after it.
+    summary: Vec<Value>,
+    error: Value,
+}
+
+impl Turn {
+    /// Fold one compaction update into the compaction it names, under `key`.
+    /// A summary chunk appends its content. A `compaction_update` patches
+    /// `summary` and `error`: an omitted one keeps its value, null clears
+    /// it, and a value replaces it. Answers the summary and the error that
+    /// result, or None for an update of another kind.
+    fn fold_compaction(&mut self, key: String, update: &Value) -> Option<(Vec<Value>, Value)> {
+        let kind = update["sessionUpdate"].as_str()?;
+        if !matches!(kind, "compaction_summary_chunk" | "compaction_update") {
+            return None;
+        }
+        let compaction = self.compactions.entry(key).or_default();
+        if kind == "compaction_summary_chunk" {
+            compaction
+                .summary
+                .push(update.get("content").cloned().unwrap_or(Value::Null));
+        } else {
+            match update.get("summary") {
+                Some(Value::Array(summary)) => compaction.summary = summary.clone(),
+                Some(_) => compaction.summary.clear(),
+                None => {}
+            }
+            if let Some(error) = update.get("error") {
+                compaction.error = error.clone();
+            }
+        }
+        Some((compaction.summary.clone(), compaction.error.clone()))
+    }
 }
 
 /// An open tool call.
@@ -2321,6 +2362,7 @@ impl AcpRuntime {
                         turn_ended.clone(),
                     );
                     rpc.effects = effects.clone();
+                    rpc.reconnected = recovery.is_some();
                     rpc.active_turn = active_turn.clone();
                     rpc.in_flight = in_flight.clone();
                     rpc.seat_brief = seat_brief_in_turns(&launch.config.system_prompt);
@@ -2882,6 +2924,42 @@ impl EventSink {
         }
     }
 
+    /// Change the session's display state as this launch reports it, and
+    /// send the `fields` that changed live as `display_state_update`. The
+    /// state is not an agent event: a store failure costs the record, never
+    /// the agent, and a launch the session has replaced changes nothing.
+    async fn update_display(
+        &self,
+        session_id: &Value,
+        fields: &[&str],
+        change: impl FnOnce(&mut ariadne_store::SessionDisplayState),
+    ) {
+        let state = match self
+            .runtime
+            .inner
+            .store
+            .update_session_display_state(&self.session_id, &self.launch_id, change)
+            .await
+        {
+            Ok(Some(state)) => state,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(
+                    session = %self.session_id,
+                    error = %error,
+                    "recording the ACP display state failed"
+                );
+                return;
+            }
+        };
+        let state = serde_json::to_value(state).expect("a display state is JSON");
+        let mut payload = json!({"session_id": session_id});
+        for field in fields {
+            payload[*field] = state[*field].clone();
+        }
+        self.emit_live("display_state_update", payload).await;
+    }
+
     /// Record what this launch has spent so far, as its `stop` would.
     async fn record_usage(&self, usage: TokenUsage) {
         let store = &self.runtime.inner.store;
@@ -2966,6 +3044,13 @@ struct Rpc {
     /// The seat brief the next turn carries: set at the launch and again
     /// after a model switch, and taken by the first turn after either.
     brief: Option<String>,
+    /// A daemon reconnecting to a relay that runs this launch already: its
+    /// setup answers come from the relay's record, not from the agent now.
+    reconnected: bool,
+    /// The options of the last `session/set_config_option` answer that
+    /// carried any: what the agent says it runs on now, whatever the
+    /// daemon's own copy holds.
+    answered_options: Option<Vec<v1::SessionConfigOption>>,
 }
 
 impl Rpc {
@@ -2994,6 +3079,8 @@ impl Rpc {
             seat_brief: None,
             brief: None,
             after_cancel: false,
+            reconnected: false,
+            answered_options: None,
         }
     }
 
@@ -3065,6 +3152,11 @@ impl RuntimeIncoming {
             let session = &params["sessionId"];
             let update = &params["update"];
             self.subagents.fold(session, update);
+            // A compaction that a later turn completes keeps the summary
+            // and the error that its earlier frames reported.
+            let compaction = update["compactionId"].as_str().unwrap_or_default();
+            let key = tool_key(compaction, self.subagents.tag(session).as_ref());
+            self.turn.lock().await.fold_compaction(key, update);
             if update["sessionUpdate"] == "available_commands_update"
                 && self.subagents.tag(session).is_none()
             {
@@ -3099,7 +3191,14 @@ impl RuntimeIncoming {
         // console snapshot carries: a child's list goes live, named, and
         // replaces nothing.
         let subagent = self.subagents.tag(&session_id);
-        if subagent.is_some() && update_kind == Some("usage_update") {
+        // A child's options, title and cost are its own, and never the
+        // session's display state (rule 24).
+        if subagent.is_some()
+            && matches!(
+                update_kind,
+                Some("usage_update" | "config_option_update" | "session_info_update")
+            )
+        {
             return Ok(());
         }
         if subagent.is_some() && update_kind == Some("available_commands_update") {
@@ -3180,6 +3279,125 @@ impl RuntimeIncoming {
                         ),
                     )
                     .await;
+            }
+            Some("plan_update") => {
+                self.end_text().await;
+                let plan = plan_payload(update.get("plan").unwrap_or(&Value::Null));
+                self.sink
+                    .emit(
+                        "plan_update",
+                        tagged(json!({"session_id": session_id, "plan": plan}), subagent),
+                    )
+                    .await;
+            }
+            Some("plan_removed") => {
+                self.end_text().await;
+                self.sink
+                    .emit(
+                        "plan_removed",
+                        tagged(
+                            json!({"session_id": session_id, "plan_id": update.get("planId")}),
+                            subagent,
+                        ),
+                    )
+                    .await;
+            }
+            Some("notice") => {
+                self.end_text().await;
+                self.sink
+                    .emit(
+                        "notice",
+                        tagged(
+                            json!({"session_id": session_id,
+                                   "severity": update.get("severity"),
+                                   "title": update.get("title"),
+                                   "description": update.get("description")}),
+                            subagent,
+                        ),
+                    )
+                    .await;
+            }
+            // A summary chunk goes live alone; the stored compaction holds
+            // the whole summary so far.
+            Some("compaction_summary_chunk") => {
+                let id = update["compactionId"].as_str().unwrap_or_default();
+                let content = update.get("content").cloned().unwrap_or(Value::Null);
+                self.turn
+                    .lock()
+                    .await
+                    .fold_compaction(tool_key(id, subagent), &update);
+                self.sink
+                    .emit_live(
+                        "compaction_summary_chunk",
+                        tagged(
+                            json!({"session_id": session_id, "compaction_id": id,
+                                   "content": content}),
+                            subagent,
+                        ),
+                    )
+                    .await;
+            }
+            Some("compaction_update") => {
+                self.end_text().await;
+                let id = update["compactionId"].as_str().unwrap_or_default();
+                let (summary, error) = self
+                    .turn
+                    .lock()
+                    .await
+                    .fold_compaction(tool_key(id, subagent), &update)
+                    .unwrap_or_default();
+                self.sink
+                    .emit(
+                        "compaction_update",
+                        tagged(
+                            json!({"session_id": session_id, "compaction_id": id,
+                                   "status": update.get("status"),
+                                   "summary": summary, "error": error}),
+                            subagent,
+                        ),
+                    )
+                    .await;
+            }
+            Some("current_mode_update") => {
+                self.end_text().await;
+                let mode = update.get("currentModeId").cloned().unwrap_or(Value::Null);
+                self.sink
+                    .emit(
+                        "mode_update",
+                        tagged(
+                            json!({"session_id": session_id, "current_mode_id": mode}),
+                            subagent,
+                        ),
+                    )
+                    .await;
+                if subagent.is_none() {
+                    self.sink
+                        .update_display(&session_id, &["mode"], |state| {
+                            state.mode.get_or_insert_default().current_id =
+                                mode.as_str().map(str::to_string);
+                        })
+                        .await;
+                }
+            }
+            Some("config_option_update") => {
+                let options = update
+                    .get("configOptions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                self.sink
+                    .update_display(&session_id, &["config_options"], |state| {
+                        state.config_options = options;
+                    })
+                    .await;
+            }
+            Some("session_info_update") => {
+                if let Some(title) = update.get("title") {
+                    let title = title.as_str().map(str::to_string);
+                    self.sink
+                        .update_display(&session_id, &["title"], |state| state.title = title)
+                        .await;
+                }
             }
             // A call's state and what is published about it change under
             // the one turn lock a console snapshot reads it under, so a
@@ -3301,6 +3519,13 @@ impl RuntimeIncoming {
                 {
                     self.sink.update_context_window(used, size).await;
                 }
+                if let Some(cost) = update.get("cost") {
+                    let cost =
+                        serde_json::from_value::<ariadne_store::SessionCost>(cost.clone()).ok();
+                    self.sink
+                        .update_display(&session_id, &["cost"], |state| state.cost = cost)
+                        .await;
+                }
             }
             Some("available_commands_update") => {
                 let commands = update
@@ -3316,8 +3541,14 @@ impl RuntimeIncoming {
                 self.sink
                     .emit_live(
                         "available_commands_update",
-                        json!({"session_id": session_id, "available_commands": commands}),
+                        json!({"session_id": session_id, "available_commands": commands.clone()}),
                     )
+                    .await;
+                drop(turn);
+                self.sink
+                    .update_display(&session_id, &["commands"], |state| {
+                        state.commands = commands;
+                    })
                     .await;
             }
             _ => {}
@@ -3958,6 +4189,51 @@ async fn run_protocol(
     if config.plan_mode {
         options = enter_plan_mode(rpc, &session_id, options, setup.modes.as_ref()).await;
     }
+    // The launch's display state starts from what the session opened with,
+    // after the pins and the plan mode (rule 24). A mode change the agent
+    // reported meanwhile is newer than the answer, unless the daemon set
+    // `plan` after it. A reconnect replays setup answers that the state has
+    // moved past, so it writes nothing.
+    let planning = matches!(
+        rpc.outbound
+            .plan_mode
+            .lock()
+            .expect("ACP plan mode lock")
+            .as_ref(),
+        Some(PlanMode {
+            switch: ModeSwitch::SessionMode,
+            ..
+        })
+    );
+    let modes = setup
+        .modes
+        .as_ref()
+        .map(|modes| ariadne_store::SessionModes {
+            current_id: Some(match planning {
+                true => PLAN_MODE.to_string(),
+                false => modes.current_mode_id.0.to_string(),
+            }),
+            available: modes
+                .available_modes
+                .iter()
+                .map(|mode| serde_json::to_value(mode).expect("an ACP mode is JSON"))
+                .collect(),
+        });
+    let opened_with = option_values(&options);
+    if !rpc.reconnected {
+        rpc.sink
+            .update_display(&json!(session_id), &["mode", "config_options"], |state| {
+                let reported = state.mode.take().and_then(|mode| mode.current_id);
+                state.mode = modes.map(|mut modes| {
+                    if !planning && reported.is_some() {
+                        modes.current_id = reported;
+                    }
+                    modes
+                });
+                state.config_options = opened_with;
+            })
+            .await;
+    }
 
     rpc.sink
         .emit("session_start", json!({"session_id": session_id}))
@@ -4013,6 +4289,7 @@ async fn serve_with_input(
             change = switches.recv(), if switches_open && !closing.load(Ordering::SeqCst) => {
                 match change {
                     Some(change) => {
+                        rpc.answered_options = None;
                         let result = async {
                             options = set_pinned_option(rpc, session_id, options.clone(), &["model"], &["model"], "model", &change.model).await?;
                             if let Some(effort) = &change.effort {
@@ -4024,6 +4301,17 @@ async fn serve_with_input(
                         // the agent takes it in a turn.
                         if result.is_ok() {
                             rpc.brief = rpc.seat_brief.clone();
+                        }
+                        // Only an answer the agent gave moves the options,
+                        // and it moves them whatever the daemon's own copy
+                        // holds: a refused switch leaves the ones it reported.
+                        if let Some(answered) = rpc.answered_options.take() {
+                            let switched = option_values(&answered);
+                            rpc.sink
+                                .update_display(&json!(session_id), &["config_options"], |state| {
+                                    state.config_options = switched;
+                                })
+                                .await;
                         }
                         let _ = change.done.send(result);
                     }
@@ -4155,24 +4443,24 @@ impl MessageInFlight {
 /// What the daemon tells an agent it is, on `initialize`.
 ///
 /// It reads and writes the worktree itself rather than through the agent, and
-/// runs no terminal for it. The one session extension it uses is the config
-/// options that carry the model and effort pins.
+/// runs no terminal for it. Its session extensions are the config options
+/// that carry the model and effort pins, and the notices and compactions it
+/// stores for the trajectory (021 rule 24). It asks for no compaction: the
+/// agent compacts its own conversation and reports it.
 ///
 /// It understands subagents (021): `subagents: {}` asks the agent to
 /// announce each child and send the child's updates under the child's own
-/// session id. The SDK models that field only behind its
-/// `unstable_subagents` feature, so it is added to the request's JSON.
-///
-/// Compaction is not among them. An agent compacts its own conversation near
-/// the context limit and carries on, and the daemon asks for none — so there
-/// is nothing it would do with the report that the agent's own next event
-/// does not already do.
+/// session id. It stores plans by id: `plan: {}` asks for `plan_update` and
+/// `plan_removed`. The SDK models both fields only behind its unstable
+/// features, so they are added to the request's JSON.
 fn initialize() -> RawInitialize {
     let capabilities = v1::ClientCapabilities::new()
         .terminal(false)
         .session(
             v1::ClientSessionCapabilities::new()
-                .config_options(v1::SessionConfigOptionsCapabilities::new()),
+                .config_options(v1::SessionConfigOptionsCapabilities::new())
+                .notices(v1::NoticeCapabilities::new())
+                .compaction(v1::CompactionCapabilities::new()),
         )
         // Form mode only: a person answers each question in a console.
         .elicitation(
@@ -4186,6 +4474,7 @@ fn initialize() -> RawInitialize {
         ));
     let mut params = serde_json::to_value(request).expect("an initialize request is JSON");
     params["clientCapabilities"]["subagents"] = json!({});
+    params["clientCapabilities"]["plan"] = json!({});
     RawInitialize(params)
 }
 
@@ -4254,6 +4543,14 @@ async fn session_setup(
         config_options: config_options.unwrap_or_default(),
         modes,
     })
+}
+
+/// Each config option as the JSON the protocol sends.
+fn option_values(options: &[v1::SessionConfigOption]) -> Vec<Value> {
+    options
+        .iter()
+        .map(|option| serde_json::to_value(option).expect("an ACP config option is JSON"))
+        .collect()
 }
 
 /// Pin one option of a launch, or carry on without it.
@@ -4346,7 +4643,10 @@ async fn set_pinned_option(
     };
     let options = match response.config_options.is_empty() {
         true => options,
-        false => response.config_options,
+        false => {
+            rpc.answered_options = Some(response.config_options.clone());
+            response.config_options
+        }
     };
     // An agent that took the option answers with it set. One that did not —
     // it read the value and made nothing of it — answers the same way, and
@@ -4961,6 +5261,27 @@ async fn abandon_open_calls(
 ) {
     let mut turn = turn.lock().await;
     abandon_calls(&mut turn, sink, reason).await;
+}
+
+/// A `plan_update`'s plan as it is stored: `{type: "items", plan_id,
+/// entries}` or `{type: "markdown", plan_id, content, path}`. A plan of
+/// another type is stored as the agent sent it.
+fn plan_payload(plan: &Value) -> Value {
+    let field = |name: &str| plan.get(name).cloned().unwrap_or(Value::Null);
+    match plan["type"].as_str() {
+        Some("items") => json!({
+            "type": "items",
+            "plan_id": field("planId"),
+            "entries": plan.get("entries").cloned().unwrap_or_else(|| json!([])),
+        }),
+        Some("markdown") => json!({
+            "type": "markdown",
+            "plan_id": field("planId"),
+            "content": field("content"),
+            "path": field("path"),
+        }),
+        _ => plan.clone(),
+    }
 }
 
 fn tool_key(id: &str, subagent: Option<&Value>) -> String {
@@ -5930,9 +6251,20 @@ mod tests {
             capabilities["session"]["configOptions"].is_object(),
             "config options carry the model and effort pins: {capabilities}"
         );
-        assert!(
-            capabilities["session"]["compaction"].is_null(),
-            "compaction is not advertised: the daemon asks for none and reads none"
+        assert_eq!(
+            capabilities["session"]["compaction"],
+            json!({}),
+            "the daemon stores each compaction the agent reports: {capabilities}"
+        );
+        assert_eq!(
+            capabilities["session"]["notices"],
+            json!({}),
+            "the daemon stores each notice the agent sends: {capabilities}"
+        );
+        assert_eq!(
+            capabilities["plan"],
+            json!({}),
+            "the daemon stores plans by id: {capabilities}"
         );
         assert_eq!(
             capabilities["elicitation"],

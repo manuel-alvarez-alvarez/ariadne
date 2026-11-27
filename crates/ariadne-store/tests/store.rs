@@ -457,6 +457,8 @@ async fn the_schema_names_agents_by_registry_id_alone() {
             "switched_from",
             "pull_request_id",
             "place",
+            "display_launch_id",
+            "display_state",
         ]
     );
     let config: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")
@@ -7066,4 +7068,111 @@ async fn host_rows_survive_reopening_and_keep_local_color() {
     assert_eq!(rows[1].color.as_deref(), Some("pink"));
     reopened.delete_host("box").await.unwrap();
     assert_eq!(reopened.list_hosts().await.unwrap().len(), 1);
+}
+
+/// The display state an agent reported is read back after the store is
+/// reopened, as a daemon restart reopens it (021 rule 24).
+#[tokio::test]
+async fn a_sessions_display_state_survives_a_reopened_store() {
+    let (store, dir) = test_store().await;
+    let session = loose_session(&store).await;
+    store
+        .set_session_launch(&session.id, "launch-1")
+        .await
+        .unwrap();
+    store
+        .update_session_display_state(&session.id, "launch-1", |state| {
+            state.title = Some("Fix the parser".into());
+            state.mode = Some(SessionModes {
+                current_id: Some("code".into()),
+                available: vec![serde_json::json!({"id": "code", "name": "Code"})],
+            });
+            state.cost = Some(SessionCost {
+                amount: 0.25,
+                currency: "USD".into(),
+            });
+        })
+        .await
+        .unwrap();
+    store.close().await;
+
+    let store = Store::open(dir.path().join("test.db")).await.unwrap();
+    let state = store.session_display_state(&session.id).await.unwrap();
+    assert_eq!(state.title.as_deref(), Some("Fix the parser"));
+    assert_eq!(
+        state.mode.unwrap().current_id.as_deref(),
+        Some("code"),
+        "the mode is kept"
+    );
+    assert_eq!(
+        state.cost,
+        Some(SessionCost {
+            amount: 0.25,
+            currency: "USD".into()
+        })
+    );
+}
+
+/// A new launch hides the earlier launch's state at once, its first report
+/// starts from an empty state, and a report from the replaced launch changes
+/// nothing (021 rule 24).
+#[tokio::test]
+async fn a_new_launch_replaces_the_display_state_of_the_earlier_launch() {
+    let (store, _dir) = test_store().await;
+    let session = loose_session(&store).await;
+    store
+        .set_session_launch(&session.id, "launch-1")
+        .await
+        .unwrap();
+    store
+        .update_session_display_state(&session.id, "launch-1", |state| {
+            state.title = Some("Old title".into());
+            state.commands = vec![serde_json::json!({"name": "old"})];
+        })
+        .await
+        .unwrap();
+
+    store
+        .set_session_launch(&session.id, "launch-2")
+        .await
+        .unwrap();
+    let stale = store
+        .update_session_display_state(&session.id, "launch-1", |state| {
+            state.title = Some("Stale title".into());
+        })
+        .await
+        .unwrap();
+    assert_eq!(stale, None, "the replaced launch writes nothing");
+    assert_eq!(
+        store.session_display_state(&session.id).await.unwrap(),
+        SessionDisplayState::default(),
+        "the earlier launch's state is hidden before the new launch reports"
+    );
+
+    store
+        .update_session_display_state(&session.id, "launch-2", |state| {
+            state.config_options = vec![serde_json::json!({"id": "model"})];
+        })
+        .await
+        .unwrap();
+    let state = store.session_display_state(&session.id).await.unwrap();
+    assert_eq!(state.title, None, "no value of the earlier launch is kept");
+    assert!(state.commands.is_empty());
+    assert_eq!(state.config_options, [serde_json::json!({"id": "model"})]);
+}
+
+async fn loose_session(store: &Store) -> AgentSession {
+    store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:test-model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap()
 }
