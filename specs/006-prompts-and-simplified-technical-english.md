@@ -238,8 +238,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     under `agent`; a `plan` as a checklist, headed by how many of its entries
     are complete; a paired `pre_tool_use` and `post_tool_use` as the head
     line of the call — the command, the path, the
-    pattern, or the title — then the start of its output, which the fold
-    cuts to a few lines, and the size of its diff; a call with no end
+    pattern, or the title — then its output and its diff, read from the
+    rows the fold names for the call, each folded to their last ten lines
+    with a count of what is hidden; a call with no end
     renders its head alone; a `permission_request` and its
     `permission.replied` as one line, the head of the call and the option
     chosen; and a `session.error` as one line, its first line.
@@ -447,9 +448,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   and `session_end`
   (`::stop_session_start_and_session_end_are_left_out`).
 - A tool call and its end render as one entry with the head and the folded
-  start of the output (`handoff.rs::a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_start_of_the_output`),
-  its diff renders as its size
-  (`::a_diff_renders_as_its_size_and_never_as_its_lines`), and a call with no end
+  output (`handoff.rs::a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_folded_output`),
+  its diff folds the same way
+  (`::a_diff_is_folded_the_same_way_as_output`), and a call with no end
   renders its head alone (`::a_call_with_no_end_renders_its_head_alone`).
 - A plan renders as a checklist (`handoff.rs::a_plan_renders_as_a_checklist`).
 - A permission request renders as one line with the option chosen

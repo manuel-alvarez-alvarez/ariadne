@@ -558,6 +558,21 @@ impl Fold {
         moments
     }
 
+    /// The stored rows that show a main-lane call whole, oldest first: its
+    /// opener, then its newest output, diff and change.
+    pub(crate) fn call_rows(&self, step: &str) -> Vec<String> {
+        self.turns
+            .iter()
+            .find_map(|turn| {
+                let lane = turn.lanes.get(MAIN_LANE)?;
+                lane.openers
+                    .iter()
+                    .any(|opener| opener.step == step)
+                    .then(|| lane.rows(step))
+            })
+            .unwrap_or_default()
+    }
+
     /// The trajectory at revision `rev`: the newest `limit` turns, or with a
     /// `subagent` the turns where it has steps, each carrying them.
     pub(crate) fn snapshot(

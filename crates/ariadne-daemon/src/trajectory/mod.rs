@@ -12,4 +12,4 @@ pub(crate) mod read;
 mod steps;
 
 pub(crate) use fold::{Fold, Moment, blank_session, session_state};
-pub(crate) use steps::step_id;
+pub(crate) use steps::{diff_text_of, step_id};

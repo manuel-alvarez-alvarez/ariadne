@@ -20,6 +20,7 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
+similar = { workspace = true }
 tempfile = "3"
 hmac = { workspace = true }
 sha2 = { workspace = true }

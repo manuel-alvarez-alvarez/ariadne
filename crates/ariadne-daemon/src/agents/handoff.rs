@@ -6,15 +6,18 @@
 //! ([`crate::trajectory::Fold`], 040), and written out as one fenced entry
 //! per prompt, step or plan.
 
+use std::collections::HashMap;
+
 use ariadne_api::trajectory::{
     ContentBlockDto, PermissionStepDto, PlanEntryDto, QuestionState, QuestionStepDto, StepDto,
     ToolCallStatus, ToolCallStepDto,
 };
+use ariadne_core::event_facts::output_text;
 use ariadne_core::{PromptKind, SessionStatus};
 use ariadne_store::AgentEvent;
 
 use crate::http::convert::event_dto;
-use crate::trajectory::{Fold, Moment};
+use crate::trajectory::{Fold, Moment, diff_text_of};
 
 /// Opens and closes every entry's fence. Reserved: stripped from an entry's
 /// own text first, so nothing a tool printed or a diff carried can forge one
@@ -25,6 +28,10 @@ const FENCE_CLOSE: char = '⟫';
 /// A prompt the daemon sent keeps its first lines, with a count of the rest
 /// (008 rule 24).
 const DAEMON_PROMPT_FOLD: usize = 6;
+
+/// A tool's output or a diff is folded to its last lines, with a count of
+/// the hidden ones (008 rule 25).
+const BODY_FOLD: usize = 10;
 
 /// The opening line of every handoff: what the text is, and what the agent
 /// that reads it owes.
@@ -44,6 +51,7 @@ pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
         fold.apply(&event_dto(event.clone()), true);
     }
     let moments = fold.history();
+    let details = call_details(&fold, &moments, events);
     let first_briefing = moments
         .iter()
         .position(is_daemon_prompt)
@@ -61,13 +69,57 @@ pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
                     || Some(*index) == last_error)
         })
         .filter_map(|(_, moment)| {
-            render_entry(moment).map(|text| RankedEntry {
+            render_entry(moment, &details).map(|text| RankedEntry {
                 priority: priority(moment, &text),
                 text,
             })
         })
         .collect();
     apply_budget(entries, budget)
+}
+
+/// What a call gave back and the file change it made, whole: the fold holds
+/// only a preview and a size, so the stored rows the fold names for the call
+/// give the rest.
+#[derive(Default)]
+struct CallDetail {
+    output: Option<String>,
+    diff: Option<String>,
+}
+
+/// The detail of each tool call of `moments`, by step id, read from the
+/// rows the fold names for it. The newest row that carries each wins.
+fn call_details(
+    fold: &Fold,
+    moments: &[Moment],
+    events: &[AgentEvent],
+) -> HashMap<String, CallDetail> {
+    let by_id: HashMap<&str, &AgentEvent> = events
+        .iter()
+        .map(|event| (event.id.as_str(), event))
+        .collect();
+    let mut details = HashMap::new();
+    for moment in moments {
+        let Moment::Step(StepDto::ToolCall(call)) = moment else {
+            continue;
+        };
+        let mut detail = CallDetail::default();
+        for row in fold.call_rows(&call.id) {
+            let Some(event) = by_id.get(row.as_str()) else {
+                continue;
+            };
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) else {
+                continue;
+            };
+            let Some(acp) = payload.get("acp") else {
+                continue;
+            };
+            detail.output = output_text(acp).or(detail.output);
+            detail.diff = diff_text_of(acp).or(detail.diff);
+        }
+        details.insert(call.id.clone(), detail);
+    }
+    details
 }
 
 /// The text blocks of a message or a prompt, one per line.
@@ -179,7 +231,7 @@ fn is_ended(call: &ToolCallStepDto) -> bool {
 
 /// One prompt, step or plan as a fenced entry, or `None` for a kind the
 /// handoff leaves out: a thought, a note, a subagent and a compaction.
-fn render_entry(moment: &Moment) -> Option<String> {
+fn render_entry(moment: &Moment, details: &HashMap<String, CallDetail>) -> Option<String> {
     let body = match moment {
         Moment::Prompt(prompt) => user_prompt_body(
             &text_of(&prompt.content),
@@ -189,7 +241,7 @@ fn render_entry(moment: &Moment) -> Option<String> {
         Moment::Plan(plan) => plan_body(&plan.entries),
         Moment::Step(step) => match step {
             StepDto::Message(message) => format!("agent\n{}", text_of(&message.content)),
-            StepDto::ToolCall(call) => tool_body(call),
+            StepDto::ToolCall(call) => tool_body(call, details.get(&call.id)),
             StepDto::Permission(permission) => permission_body(permission),
             StepDto::Error(error) => {
                 format!("error\n{}", error.text.lines().next().unwrap_or_default())
@@ -262,26 +314,43 @@ fn subject(call: &ToolCallStepDto) -> String {
     head
 }
 
-/// A tool call: its head line, then the start of what it gave back and the
-/// size of its diff. The fold already cuts the output to a few lines. A
-/// call with no end — its status is not `completed` or `failed` — renders
-/// its head alone: what it gave back is not known yet.
-fn tool_body(call: &ToolCallStepDto) -> String {
+/// A tool call: its head line, then its output and its diff, each folded to
+/// their last lines with a count of what is hidden. A call with no end — its
+/// status is not `completed` or `failed` — renders its head alone: what it
+/// gave back is not known yet.
+fn tool_body(call: &ToolCallStepDto, detail: Option<&CallDetail>) -> String {
     let mut body = format!("tool\n{}", subject(call));
     if is_ended(call) {
-        if let Some(preview) = &call.preview {
+        // A row the read did not load leaves the fold's own preview.
+        let output = detail
+            .and_then(|detail| detail.output.as_deref())
+            .or(call.preview.as_deref());
+        if let Some(output) = output {
             body.push('\n');
-            body.push_str(preview.trim_end_matches('\n'));
+            body.push_str(&tail_fold(output, BODY_FOLD));
         }
-        if let Some(stat) = &call.diff_stat {
-            let noun = if stat.files == 1 { "file" } else { "files" };
-            body.push_str(&format!(
-                "\ndiff: {} {noun}, +{} -{}",
-                stat.files, stat.added, stat.removed
-            ));
+        if let Some(diff) = detail.and_then(|detail| detail.diff.as_deref()) {
+            body.push('\n');
+            body.push_str(&tail_fold(diff, BODY_FOLD));
         }
     }
     body
+}
+
+/// `text`'s last `limit` lines, with a count of the hidden ones ahead of
+/// them. Trailing blank lines are dropped first, since they say nothing.
+fn tail_fold(text: &str, limit: usize) -> String {
+    let trimmed = text.trim_end_matches('\n');
+    let lines: Vec<&str> = trimmed.lines().collect();
+    if lines.len() <= limit {
+        return trimmed.to_string();
+    }
+    let hidden = lines.len() - limit;
+    let noun = if hidden == 1 { "line" } else { "lines" };
+    format!(
+        "… {hidden} more {noun}\n{}",
+        lines[lines.len() - limit..].join("\n")
+    )
 }
 
 /// A permission request, as one line: the call it asks about, and the
@@ -561,12 +630,13 @@ mod tests {
 
         assert_eq!(out.matches(FENCE_OPEN).count(), 1, "{out}");
         assert!(out.contains("do the thing"), "{out}");
-        assert!(out.contains("line 1"), "{out}");
-        assert!(!out.contains("line 14"), "{out}");
+        assert!(out.contains("line 14"), "{out}");
+        assert!(!out.contains("line 1\n"), "{out}");
+        assert!(out.contains("… 4 more lines"), "{out}");
     }
 
     #[test]
-    fn a_diff_renders_as_its_size_and_never_as_its_lines() {
+    fn a_diff_is_folded_the_same_way_as_output() {
         let hunk: Vec<String> = (1..=14).map(|n| format!("+line{n}")).collect();
         let patch = format!("@@ -0,0 +1,14 @@\n{}\n", hunk.join("\n"));
         let events = [event(
@@ -580,8 +650,9 @@ mod tests {
 
         let out = handoff_text(&events, 10_000);
 
-        assert!(out.contains("diff: 1 file, +14 -0"), "{out}");
-        assert!(!out.contains("+line14"), "{out}");
+        assert!(out.contains("+line14"), "{out}");
+        assert!(!out.contains("+line1\n"), "{out}");
+        assert!(out.contains("… 7 more lines"), "{out}");
     }
 
     #[test]

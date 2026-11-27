@@ -282,6 +282,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha2 0.11.1",
+ "similar",
  "sqlx",
  "tempfile",
  "tokio",
