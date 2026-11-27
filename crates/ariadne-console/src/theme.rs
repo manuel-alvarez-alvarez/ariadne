@@ -106,6 +106,9 @@ pub const KINDS: &[(&str, &str)] = &[
 /// The glyph of a tool call whose kind is none of those of [`KINDS`].
 const KIND_FALLBACK: &str = "◆";
 
+/// The glyph of a subagent, on its summary row.
+pub const SUBAGENT: &str = "↳";
+
 /// The glyph of a group of calls of more than one kind.
 pub const GROUP: &str = "☰";
 

@@ -182,14 +182,35 @@ detail again.
 
 Some agents start subagents: child agents that do part of the turn, such as
 an explorer that reads the repository. Codex ACP and Claude ACP announce
-them; OpenCode does not. A subagent is a step of the turn that started it.
-Its row shows its title, its task, its state, its time and its step count:
+them; OpenCode does not.
+
+While the session has a subagent, the top row of the screen is a bar of
+tabs: `main`, then one tab for each subagent, in the order they started.
+Each subagent tab has the state mark of the subagent and its name. The
+active tab is in brackets and reversed:
 
 ```
-    ✓ subagent   Explore · Find the config loader  completed · 1m 04s · 12 steps
+[main] ✓ Explore  ◐ Review
 ```
 
-Open the subagent to see its own steps in place, one level under its row.
+In a narrow terminal, the bar cuts the names and keeps the marks. Where the
+tabs do not fit, `‹` and `›` show that more tabs are past the edge.
+
+In `main`, a subagent is one row in the turn that started it: its state
+mark, `↳`, its name, its step count and its time. The row does not open in
+place:
+
+```
+    ✓ ↳ Explore  12 steps · 1m 04s
+```
+
+Press Enter on the row to open the tab of the subagent. The tab shows the
+task of the subagent and a row for each of its steps, the same rows as an
+open turn shows. Press Ctrl-N for the next tab and Ctrl-P for the tab
+before. Press Escape in a subagent tab to go back to `main`. Each tab keeps
+its own scroll and its own cursor. The input box sends to the session from
+every tab.
+
 Open one of those steps to see its detail. A permission from a subagent
 shows above the input with the name of the subagent:
 `Bash · asked by subagent explorer`.
@@ -235,6 +256,7 @@ the item at the cursor is reversed. `?` lists the keys of each zone.
 | `r` | Shows the raw input and raw output of the tool call at the cursor |
 | `y` | Copies the item at the cursor as `ariadne session logs` prints it, to the clipboard of the terminal (OSC 52) |
 | Home, End | Moves the cursor to the first or the newest turn |
+| Enter, on a subagent row | Opens the tab of the subagent |
 
 The wheel scrolls the transcript three lines, in both zones. Over an open
 checklist of the plan, it scrolls the checklist instead. A click on a
@@ -262,8 +284,9 @@ cursor.
 | PgUp, PgDn | Scrolls the transcript a screen, in both zones |
 | Ctrl-O | Opens or closes the newest turn |
 | Ctrl-T | Opens or closes the checklist of the plan |
+| Ctrl-N, Ctrl-P | Moves to the next tab or to the tab before, in both zones |
 | Tab | Gives the keys to the transcript; while the slash-command list is open, completes the pick; in a form, goes to the next question |
-| Escape | Cancels the running turn; in a form, declines the question |
+| Escape | Cancels the running turn; in a form, declines the question; in a subagent tab, goes back to `main` |
 | Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running, and the console says how to attach again |
 
 Pasting puts the text into the input box where the cursor is, line breaks

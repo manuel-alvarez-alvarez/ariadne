@@ -1636,81 +1636,387 @@ async fn r_shows_the_raw_input_and_output_of_the_call_at_the_cursor() {
     );
 }
 
-#[tokio::test]
-async fn a_subagent_shows_its_title_task_state_time_and_steps_and_opens_to_them() {
-    let subagent = step(
+/// A subagent `id` of the turn `turn`, as the trajectory sends it: it took
+/// one minute and four seconds and three steps, unless it still runs.
+fn subagent(id: &str, turn: &str, title: &str, state: &str, started: &str) -> Value {
+    let ended = match state {
+        "running" => Value::Null,
+        _ => json!("2026-11-27T10:01:04Z"),
+    };
+    step(
         "subagent",
-        "a1",
-        "t1",
-        json!({"subagent_id": "sub1", "title": "Explore", "task": "Find the loader",
-               "state": "completed", "started_at": "2026-11-27T10:00:00Z",
-               "ended_at": "2026-11-27T10:01:04Z",
+        &format!("a-{id}"),
+        turn,
+        json!({"subagent_id": id, "title": title, "task": format!("{title} task"),
+               "state": state, "started_at": started, "ended_at": ended,
                "activity": {"steps": 3, "tool_calls": 3, "files_changed": 0, "failed": 0,
                             "cancelled": 0, "thoughts": 0, "subagents": 0}}),
-    );
-    let mut inner = call("c9", "t1", "Grep", "completed");
-    inner["lane"] = json!("sub1");
-    let mut stub = Stub {
-        lanes: vec![(
-            ("t1".into(), "sub1".into()),
-            vec![serde_json::from_value(inner).unwrap()],
-        )],
-        ..Stub::default()
-    };
-    let (app, screen) = opened(&mut stub, vec![subagent.clone()], vec![]).await;
-    let screen_80 = draw(&app, 80, HEIGHT);
-    assert!(
-        screen_80
-            .iter()
-            .any(|row| row
-                == "    ✓ subagent   Explore · Find the loader  completed · 1m 04s · 3 steps"),
-        "{screen_80:#?}"
-    );
-    assert_eq!(count(&screen, "Grep"), 0, "{screen:#?}");
+    )
+}
 
-    let mut stub = Stub {
-        lanes: stub.lanes.clone(),
+/// A snapshot of `turns` whose session has `subagents`, in that order.
+fn with_subagents(rev: u64, turns: Vec<Value>, subagents: &[Value]) -> Frame {
+    let mut snapshot = snapshot(rev, turns);
+    snapshot.subagents = subagents
+        .iter()
+        .map(|value| serde_json::from_value(value.clone()).unwrap())
+        .collect();
+    Frame::Snapshot(Box::new(snapshot), None)
+}
+
+/// `Explore`, which completed, and `Review`, which started five seconds
+/// later and failed: the session lists `Review` first.
+fn explore_and_review() -> [Value; 2] {
+    [
+        subagent("sub2", "t1", "Review", "failed", "2026-11-27T10:00:05Z"),
+        subagent("sub1", "t1", "Explore", "completed", "2026-11-27T10:00:00Z"),
+    ]
+}
+
+/// A step of the lane `lane`.
+fn in_lane(mut step: Value, lane: &str) -> StepDto {
+    step["lane"] = json!(lane);
+    serde_json::from_value(step).unwrap()
+}
+
+/// A host whose turn `t1` holds the two subagents and one call of its own,
+/// and whose `Explore` ran one `Grep`.
+fn tabbed_stub() -> Stub {
+    let [review, explore] = explore_and_review();
+    let steps = [explore, review, call("c1", "t1", "Bash", "completed")]
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect();
+    Stub {
+        steps: Arc::new(Mutex::new(vec![("t1".into(), steps)])),
+        lanes: vec![
+            (
+                ("t1".into(), "sub1".into()),
+                vec![in_lane(call("c9", "t1", "Grep", "completed"), "sub1")],
+            ),
+            (("t1".into(), "sub2".into()), vec![]),
+        ],
         ..Stub::default()
-    };
-    let (_, screen) = opened(&mut stub, vec![subagent], vec![key(KeyCode::Enter)]).await;
+    }
+}
+
+/// Drive a console of the session with both subagents, its turn open and
+/// the cursor on the first step, through `events`.
+async fn tabbed(stub: &mut Stub, events: Vec<TermEvent>) -> (App, Vec<String>) {
+    let mut app = App::new("s1");
+    let mut keys = vec![ctrl('o'), key(KeyCode::Tab), key(KeyCode::Down)];
+    keys.extend(events);
+    let frames = vec![with_subagents(
+        1,
+        vec![done("t1", "Fix it", "Fixed.")],
+        &explore_and_review(),
+    )];
+    let screen = run(&mut app, stub, frames, keys).await;
+    (app, screen)
+}
+
+#[test]
+fn the_top_row_is_a_tab_bar_of_main_and_each_subagent_in_start_order() {
+    let mut app = App::new("s1");
+    app.frame(with_subagents(
+        1,
+        vec![done("t1", "Fix it", "Fixed.")],
+        &explore_and_review(),
+    ));
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(screen[0], "[main] ✓ Explore  ✗ Review", "{screen:#?}");
+    assert_eq!(screen[1], "❯ Fix it", "the transcript starts under the bar");
+    let buffer = buffer(&app, WIDTH, HEIGHT);
     assert!(
-        screen
-            .iter()
-            .any(|row| row == "      ✓ $ Grep · Grep subject  2s"),
-        "a subagent's steps go one level under it: {screen:#?}"
+        buffer[(1, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "the active tab is reversed as well as bracketed"
+    );
+    assert!(
+        !buffer[(9, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED)
     );
 }
 
 #[test]
-fn an_open_subagent_is_read_again_when_its_turn_completes() {
-    let subagent = step(
-        "subagent",
-        "a1",
-        "t1",
-        json!({"subagent_id": "sub1", "title": "Explore", "task": "Find it",
-               "state": "running", "started_at": "2026-11-27T10:00:00Z",
-               "activity": {"steps": 1, "tool_calls": 1, "files_changed": 0, "failed": 0,
-                            "cancelled": 0, "thoughts": 0, "subagents": 0}}),
-    );
+fn a_session_with_no_subagent_shows_no_tab_bar_and_the_transcript_uses_the_row() {
+    let app = app_with(vec![done("t1", "Fix it", "Fixed.")]);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(screen[0], "❯ Fix it", "{screen:#?}");
+    assert_eq!(count(&screen, "main"), 0, "{screen:#?}");
+}
+
+#[test]
+fn a_narrow_bar_cuts_the_names_keeps_the_marks_and_marks_tabs_off_the_screen() {
     let mut app = App::new("s1");
-    app.frame(snap(
+    app.frame(with_subagents(
         1,
-        vec![running("t1", "Fix it", vec![subagent.clone()])],
+        vec![done("t1", "Fix it", "Fixed.")],
+        &explore_and_review(),
     ));
-    for event in [
-        ctrl('o'),
-        key(KeyCode::Tab),
-        key(KeyCode::Down),
-        key(KeyCode::Enter),
+    assert_eq!(draw(&app, 22, HEIGHT)[0], "[main] ✓ Exp…  ✗ Rev…");
+
+    let four: Vec<Value> = ["Alpha", "Beta", "Gamma", "Delta"]
+        .iter()
+        .enumerate()
+        .map(|(at, title)| {
+            subagent(
+                &format!("s{at}"),
+                "t1",
+                title,
+                "completed",
+                &format!("2026-11-27T10:00:0{at}Z"),
+            )
+        })
+        .collect();
+    let mut app = App::new("s1");
+    app.frame(with_subagents(
+        1,
+        vec![done("t1", "Fix it", "Fixed.")],
+        &four,
+    ));
+    assert_eq!(
+        draw(&app, 20, HEIGHT)[0],
+        " [main] ✓ Alp… ›",
+        "the tabs past the right edge are marked"
+    );
+    for _ in 0..3 {
+        app.event(ctrl('n'));
+    }
+    assert_eq!(
+        draw(&app, 20, HEIGHT)[0],
+        "‹[✓ Gam…] ✓ Del…",
+        "the tabs past the left edge are marked"
+    );
+}
+
+#[test]
+fn from_five_columns_the_active_tab_its_mark_and_the_edge_marks_fit_whole() {
+    let mut app = App::new("s1");
+    app.frame(with_subagents(
+        1,
+        vec![done("t1", "Fix it", "Fixed.")],
+        &explore_and_review(),
+    ));
+    app.event(ctrl('n'));
+    assert_eq!(draw(&app, 8, HEIGHT)[0], "‹[✓ E…]›");
+    assert_eq!(draw(&app, 5, HEIGHT)[0], "‹[✓]›");
+    app.event(ctrl('p'));
+    assert_eq!(draw(&app, 5, HEIGHT)[0], " […]›");
+
+    for (active, mark) in [
+        ("main", None),
+        ("Explore", Some("✓")),
+        ("Review", Some("✗")),
     ] {
+        for width in 5..=30u16 {
+            let bar = draw(&app, width, HEIGHT)[0].clone();
+            let (Some(open), Some(close)) = (bar.find('['), bar.find(']')) else {
+                panic!("{active} at {width}: no whole active tab in {bar:?}");
+            };
+            if let Some(mark) = mark {
+                assert!(
+                    bar[open..close].contains(mark),
+                    "{active} at {width}: {bar:?}"
+                );
+            }
+            if width < 22 {
+                assert!(
+                    bar.contains('‹') || bar.contains('›'),
+                    "{active} at {width}: no mark of the tabs off the screen in {bar:?}"
+                );
+            }
+        }
+        app.event(ctrl('n'));
+    }
+}
+
+#[tokio::test]
+async fn a_click_on_a_summary_row_opens_the_tab_of_its_subagent() {
+    let mut stub = tabbed_stub();
+    let (mut app, _) = tabbed(&mut stub, vec![]).await;
+    let screen = draw(&app, WIDTH, HEIGHT);
+    let row = screen
+        .iter()
+        .position(|row| row.contains("↳ Review"))
+        .unwrap_or_else(|| panic!("{screen:#?}"));
+
+    app.event(click(u16::try_from(row).unwrap()));
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(screen[0], " main  ✓ Explore [✗ Review]", "{screen:#?}");
+    assert_eq!(count(&screen, "Review task"), 1, "{screen:#?}");
+}
+
+#[tokio::test]
+async fn a_subagent_in_main_is_one_summary_row_that_does_not_open_in_place() {
+    let mut stub = tabbed_stub();
+    let (app, _) = tabbed(&mut stub, vec![]).await;
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "    ✓ ↳ Explore  3 steps · 1m 04s"),
+        "{screen:#?}"
+    );
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "    ✗ ↳ Review  3 steps · 59s"),
+        "{screen:#?}"
+    );
+    let mut stub = tabbed_stub();
+    let (_, screen) = tabbed(&mut stub, vec![key(KeyCode::Enter), key(KeyCode::Esc)]).await;
+    assert_eq!(screen[0], "[main] ✓ Explore  ✗ Review", "{screen:#?}");
+    assert_eq!(count(&screen, "Grep"), 0, "{screen:#?}");
+    assert_eq!(count(&screen, "Explore task"), 0, "{screen:#?}");
+}
+
+#[tokio::test]
+async fn enter_on_a_summary_row_opens_the_tab_of_its_subagent_with_the_rows_of_main() {
+    let mut stub = tabbed_stub();
+    let (_, screen) = tabbed(&mut stub, vec![key(KeyCode::Enter)]).await;
+
+    assert_eq!(screen[0], " main [✓ Explore] ✗ Review", "{screen:#?}");
+    assert!(
+        screen
+            .iter()
+            .any(|row| row == "    ✓ $ Grep · Grep subject  2s"),
+        "the step row of main, with no name of its lane: {screen:#?}"
+    );
+    assert_eq!(count(&screen, "Fix it"), 0, "{screen:#?}");
+    assert_eq!(count(&screen, "Bash"), 0, "{screen:#?}");
+}
+
+#[test]
+fn ctrl_n_and_ctrl_p_move_between_tabs_and_escape_returns_to_main() {
+    let mut app = App::new("s1");
+    app.frame(with_subagents(
+        1,
+        vec![done("t1", "Fix it", "Fixed.")],
+        &explore_and_review(),
+    ));
+    let bar = |app: &App| draw(app, WIDTH, HEIGHT)[0].clone();
+
+    app.event(ctrl('n'));
+    assert_eq!(bar(&app), " main [✓ Explore] ✗ Review");
+    app.event(ctrl('n'));
+    assert_eq!(bar(&app), " main  ✓ Explore [✗ Review]");
+    app.event(ctrl('n'));
+    assert_eq!(
+        bar(&app),
+        "[main] ✓ Explore  ✗ Review",
+        "the last tab wraps"
+    );
+    app.event(ctrl('p'));
+    assert_eq!(
+        bar(&app),
+        " main  ✓ Explore [✗ Review]",
+        "the first wraps back"
+    );
+
+    app.event(key(KeyCode::Tab));
+    assert_eq!(app.zone(), Zone::Transcript, "Tab still moves the zone");
+    app.event(key(KeyCode::Tab));
+    assert_eq!(app.zone(), Zone::Input);
+    assert_eq!(bar(&app), " main  ✓ Explore [✗ Review]");
+
+    app.event(key(KeyCode::Esc));
+    assert_eq!(bar(&app), "[main] ✓ Explore  ✗ Review");
+}
+
+#[test]
+fn each_tab_keeps_its_own_scroll_position_and_cursor_row() {
+    let mut app = App::new("s1");
+    app.frame(with_subagents(
+        1,
+        many(),
+        &[subagent(
+            "sub1",
+            "t20",
+            "Explore",
+            "completed",
+            "2026-11-27T10:00:00Z",
+        )],
+    ));
+    for event in [key(KeyCode::Tab), key(KeyCode::Up), key(KeyCode::Up)] {
         app.event(event);
     }
-    let lane = app.next_lane().expect("the open subagent is read");
+    draw(&app, WIDTH, HEIGHT);
+    app.event(key(KeyCode::PageUp));
+    let main = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(count(&main, "prompt 20"), 0, "{main:#?}");
+
+    app.event(ctrl('n'));
+    app.lane_read(
+        ("t20".into(), "sub1".into()),
+        vec![
+            in_lane(call("c8", "t20", "Glob", "completed"), "sub1"),
+            in_lane(call("c9", "t20", "Edit", "completed"), "sub1"),
+        ],
+    );
+    app.event(key(KeyCode::Up));
+    app.event(key(KeyCode::Up));
+    let tab = draw(&app, WIDTH, HEIGHT);
+    let cursor = app.cursor.clone();
+    assert!(
+        matches!(&cursor, Some(Item::Step { step, .. }) if step == "c8"),
+        "{cursor:?}"
+    );
+
+    app.event(ctrl('p'));
+    assert_eq!(draw(&app, WIDTH, HEIGHT), main, "main keeps its scroll");
+    assert_eq!(app.cursor, Some(Item::Turn("t18".into())), "and its cursor");
+
+    app.event(ctrl('n'));
+    assert_eq!(draw(&app, WIDTH, HEIGHT), tab);
+    assert_eq!(app.cursor, cursor, "the tab keeps its cursor");
+}
+
+#[test]
+fn the_input_sends_to_the_session_from_a_subagent_tab() {
+    let mut app = App::new("s1");
+    app.frame(with_subagents(
+        1,
+        vec![done("t1", "Fix it", "Fixed.")],
+        &explore_and_review(),
+    ));
+    app.event(ctrl('n'));
+    typed(&mut app, "go on");
+
+    assert_eq!(app.event(key(KeyCode::Enter)), Action::Send("go on".into()));
+}
+
+#[test]
+fn a_shown_subagent_tab_is_read_again_when_its_turn_completes() {
+    let explore = subagent("sub1", "t1", "Explore", "running", "2026-11-27T10:00:00Z");
+    let mut app = App::new("s1");
+    app.frame(with_subagents(
+        1,
+        vec![running("t1", "Fix it", vec![explore.clone()])],
+        std::slice::from_ref(&explore),
+    ));
+    assert_eq!(app.next_lane(), None, "main reads no lane");
+    app.event(ctrl('n'));
+    let lane = app.next_lane().expect("the shown tab is read");
     assert_eq!(app.next_lane(), None);
     app.lane_read(lane.clone(), vec![]);
 
-    app.frame(snap(2, vec![done("t1", "Fix it", "Fixed.")]));
-    app.steps_read("t1".into(), vec![serde_json::from_value(subagent).unwrap()]);
+    let mut ended = explore.clone();
+    ended["state"] = json!("completed");
+    app.frame(with_subagents(
+        2,
+        vec![done("t1", "Fix it", "Fixed.")],
+        &[ended],
+    ));
     assert_eq!(
         app.next_lane(),
         Some(lane),
@@ -1953,8 +2259,12 @@ fn a_question_mark_opens_an_overlay_of_every_key_in_groups_by_zone() {
             .unwrap_or_else(|| panic!("{text}: {screen:#?}"))
     };
     // A group for each zone, in order, each with its own keys.
-    let (input, transcript, everywhere) = (at("Input"), at("Transcript"), at("Everywhere"));
-    assert!(input < transcript && transcript < everywhere, "{screen:#?}");
+    let (input, transcript, tabs, everywhere) =
+        (at("Input"), at("Transcript"), at(" Tabs"), at("Everywhere"));
+    assert!(
+        input < transcript && transcript < tabs && tabs < everywhere,
+        "{screen:#?}"
+    );
     for (key, group) in [
         ("enter", input),
         ("shift-enter", input),
@@ -1962,6 +2272,8 @@ fn a_question_mark_opens_an_overlay_of_every_key_in_groups_by_zone() {
         ("↑ ↓ j k", transcript),
         ("y", transcript),
         ("home end", transcript),
+        ("ctrl-n", tabs),
+        ("ctrl-p", tabs),
         ("pgup pgdn", everywhere),
         ("ctrl-o", everywhere),
         ("ctrl-t", everywhere),

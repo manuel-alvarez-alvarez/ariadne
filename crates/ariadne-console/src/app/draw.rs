@@ -1,5 +1,5 @@
-//! The whole screen, drawn from the state: the transcript of turns, the
-//! plan, the permission or the question above the input, the suggestion
+//! The whole screen, drawn from the state: the bar of the tabs, the
+//! transcript of turns or the steps of a subagent, the plan, the permission or the question above the input, the suggestion
 //! list, the input box and the bottom row, and over them the list of keys.
 
 use ratatui::Frame as Draw;
@@ -10,7 +10,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use ariadne_api::trajectory::{
     CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionState, PermissionStepDto,
-    QuestionState, StepDto, ToolCallStatus, TurnDto, TurnState,
+    QuestionState, StepDto, SubagentStepDto, ToolCallStatus, TurnDto, TurnState,
 };
 
 use crate::markdown;
@@ -71,8 +71,16 @@ impl Row {
 impl App {
     /// Draw the whole screen.
     pub fn render(&self, frame: &mut Draw) {
-        let area = frame.area();
-        let width = usize::from(area.width);
+        let whole = frame.area();
+        let width = usize::from(whole.width);
+        let bar = self.tab_bar(width).filter(|_| whole.height > 1);
+        let bar_rows = u16::from(bar.is_some());
+        let area = Rect::new(
+            whole.x,
+            whole.y + bar_rows,
+            whole.width,
+            whole.height - bar_rows,
+        );
         let input = self.input.height(area.width).min(area.height);
         let bottom = u16::from(area.height > input);
         let below = input + bottom;
@@ -122,6 +130,12 @@ impl App {
         let input_area = next(input);
         let bottom_area = next(bottom);
 
+        if let Some(bar) = bar {
+            frame.render_widget(
+                Paragraph::new(bar),
+                Rect::new(whole.x, whole.y, whole.width, 1),
+            );
+        }
         self.draw_transcript(frame, transcript_area);
         self.layout.borrow_mut().plan = plan_area;
         frame.render_widget(Paragraph::new(Text::from(plan)), plan_area);
@@ -131,7 +145,7 @@ impl App {
             .draw(frame, input_area, self.hint(), self.zone == Zone::Input);
         frame.render_widget(Paragraph::new(self.bottom_row(width)), bottom_area);
         if self.keys_open {
-            self.draw_keys(frame, area);
+            self.draw_keys(frame, whole);
         }
     }
 
@@ -173,9 +187,15 @@ impl App {
         layout.items = rows.into_iter().map(|row| row.item).collect();
     }
 
-    /// Every line of the transcript at `width`.
+    /// Every line of the transcript at `width`: the turns in main, and
+    /// the steps of the subagent in its tab.
     fn rows(&self, width: usize) -> Vec<Row> {
         let mut rows = Vec::new();
+        if let Some(subagent) = self.shown_subagent() {
+            self.tab_rows(subagent, width, &mut rows);
+            self.notice_rows(width, &mut rows);
+            return rows;
+        }
         if self.turns().is_empty() && self.pending.is_empty() {
             rows.push(Row::of(
                 Line::styled("no turn yet: what you type below is the first prompt", DIM),
@@ -201,6 +221,13 @@ impl App {
                 None,
             ));
         }
+        self.notice_rows(width, &mut rows);
+        rows
+    }
+
+    /// What the console says about a post that did not arrive, in every
+    /// tab.
+    fn notice_rows(&self, width: usize, rows: &mut Vec<Row>) {
         for notice in &self.notices {
             for part in wrap::wrap(notice, width.saturating_sub(2)) {
                 rows.push(Row::of(
@@ -212,7 +239,74 @@ impl App {
                 ));
             }
         }
-        rows
+    }
+
+    /// A subagent's tab: its task, then a row for each of its steps, as an
+    /// open turn of main shows them.
+    fn tab_rows(&self, subagent: &SubagentStepDto, width: usize, rows: &mut Vec<Row>) {
+        if let Some(task) = subagent.task.as_deref().map(str::trim) {
+            for part in wrap::wrap(task, width.saturating_sub(2)) {
+                rows.push(Row::of(Line::styled(format!("  {part}"), DIM), None));
+            }
+        }
+        let entries = self.tab_entries(subagent);
+        if entries.is_empty() {
+            let lane = (subagent.turn_id.clone(), subagent.subagent_id.clone());
+            let said = match self.lanes.contains_key(&lane) {
+                true => "no step yet",
+                false => "reading the steps…",
+            };
+            rows.push(Row::of(
+                Line::styled(format!("{STEP_INDENT}{said}"), DIM),
+                None,
+            ));
+        }
+        self.entry_rows(
+            &subagent.turn_id,
+            entries,
+            width,
+            &|_| false,
+            &mut false,
+            rows,
+        );
+        rows.push(Row::of(Line::default(), None));
+    }
+
+    /// The rows of `entries` of the turn `turn`: each step, and each group
+    /// with its steps under it while it is open.
+    fn entry_rows(
+        &self,
+        turn: &str,
+        entries: Vec<Entry<'_>>,
+        width: usize,
+        is_answer_step: &dyn Fn(&StepDto) -> bool,
+        answer_in_step: &mut bool,
+        rows: &mut Vec<Row>,
+    ) {
+        for entry in entries {
+            match entry {
+                Entry::Step(depth, step) => {
+                    self.push_step_rows(
+                        turn,
+                        step,
+                        depth,
+                        width,
+                        is_answer_step(step),
+                        answer_in_step,
+                        rows,
+                    );
+                }
+                Entry::Group(group) => {
+                    let group_item = Entry::Group(group.clone()).item(turn);
+                    rows.push(Row::head(self.group_row(&group, width), &group_item));
+                    if self.open.contains(&group_item) {
+                        for step in group {
+                            self.push_step_rows(turn, step, 1, width, false, answer_in_step, rows);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// A turn: its prompt, one activity line, the step rows it shows, and
@@ -296,7 +390,7 @@ impl App {
                 step: crate::trajectory::step_id(step).to_string(),
             };
             rows.push(Row::head(
-                self.step_row(turn, step, 0, width, false),
+                self.step_row(&turn.id, step, 0, width, false),
                 &notice,
             ));
             if self.open.contains(&notice) {
@@ -327,40 +421,14 @@ impl App {
                 ));
             }
             match self.entries(turn) {
-                Some(steps) => {
-                    for entry in steps {
-                        match entry {
-                            Entry::Step(depth, step) => {
-                                self.push_step_rows(
-                                    turn,
-                                    step,
-                                    depth,
-                                    width,
-                                    is_answer_step(step),
-                                    &mut answer_in_step,
-                                    rows,
-                                );
-                            }
-                            Entry::Group(group) => {
-                                let group_item = Entry::Group(group.clone()).item(&turn.id);
-                                rows.push(Row::head(self.group_row(&group, width), &group_item));
-                                if self.open.contains(&group_item) {
-                                    for step in group {
-                                        self.push_step_rows(
-                                            turn,
-                                            step,
-                                            1,
-                                            width,
-                                            false,
-                                            &mut answer_in_step,
-                                            rows,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                Some(entries) => self.entry_rows(
+                    &turn.id,
+                    entries,
+                    width,
+                    &is_answer_step,
+                    &mut answer_in_step,
+                    rows,
+                ),
                 None => rows.push(Row::of(
                     Line::styled(format!("{STEP_INDENT}reading the steps…"), DIM),
                     Some(&item),
@@ -377,6 +445,7 @@ impl App {
                     .steps
                     .iter()
                     .filter(|step| !noticed.contains(&crate::trajectory::step_id(step)))
+                    .filter(|step| lane_of(step) == MAIN_LANE || !self.has_tab(lane_of(step)))
                     .filter(|step| !answered_on_its_call(step, &turn.steps))
                     .collect();
                 let skip = live.len().saturating_sub(LIVE_STEPS);
@@ -384,7 +453,7 @@ impl App {
                 for entry in &entries {
                     let line = match entry {
                         Entry::Step(_, step) => {
-                            self.step_row(turn, step, 0, width, is_answer_step(step))
+                            self.step_row(&turn.id, step, 0, width, is_answer_step(step))
                         }
                         Entry::Group(group) => self.group_row(group, width),
                     };
@@ -394,7 +463,7 @@ impl App {
                 for step in &turn.attention {
                     if matches!(step, StepDto::Error(_)) {
                         rows.push(Row::of(
-                            self.step_row(turn, step, 0, width, false),
+                            self.step_row(&turn.id, step, 0, width, false),
                             Some(&item),
                         ));
                     }
@@ -495,7 +564,7 @@ impl App {
     #[allow(clippy::too_many_arguments)]
     fn push_step_rows(
         &self,
-        turn: &TurnDto,
+        turn: &str,
         step: &StepDto,
         depth: usize,
         width: usize,
@@ -504,7 +573,7 @@ impl App {
         rows: &mut Vec<Row>,
     ) {
         let step_item = Item::Step {
-            turn: turn.id.clone(),
+            turn: turn.to_string(),
             step: crate::trajectory::step_id(step).to_string(),
         };
         rows.push(Row::head(
@@ -574,11 +643,12 @@ impl App {
     }
 
     /// One step: its status, its kind, its subject and how long it took.
-    /// A call carries the mark of the permission that was answered for it,
-    /// and a subagent its task, its state and its step count.
+    /// A call carries the mark of the permission that was answered for it.
+    /// A subagent is its summary row: its name, its step count and its
+    /// time.
     fn step_row(
         &self,
-        turn: &TurnDto,
+        turn: &str,
         step: &StepDto,
         depth: usize,
         width: usize,
@@ -589,6 +659,7 @@ impl App {
         // kind.
         let (label, kind_style) = match step {
             StepDto::ToolCall(call) => (theme::kind_icon(call.kind.as_deref()).to_string(), TOOL),
+            StepDto::Subagent(_) => (theme::SUBAGENT.to_string(), TOOL),
             other => (format!("{:<KIND_WIDTH$}", step_kind(other)), DIM),
         };
         let indent = format!("{STEP_INDENT}{}", DEPTH_INDENT.repeat(depth));
@@ -611,17 +682,11 @@ impl App {
             _ => None,
         };
         if let StepDto::Subagent(subagent) = step {
-            let mut said = Vec::new();
-            if let Some(state) = &subagent.state {
-                said.push(state.clone());
-            }
-            if let Some(took) = &took {
-                said.push(took.clone());
-            }
-            said.push(match subagent.activity.steps {
+            let mut said = vec![match subagent.activity.steps {
                 1 => "1 step".to_string(),
                 steps => format!("{steps} steps"),
-            });
+            }];
+            said.extend(took);
             tail.push(Span::styled(
                 format!("  {}", said.join(theme::SEPARATOR)),
                 DIM,
@@ -646,12 +711,8 @@ impl App {
             "Turn answer".into()
         } else {
             match step {
-                StepDto::Subagent(subagent) => match &subagent.task {
-                    Some(task) => format!("{} · {}", subagent.title, task.trim()),
-                    None => subagent.title.clone(),
-                },
-                // Under its subagent, a step needs no name of its lane.
-                _ if depth > 0 => bare_subject(step),
+                // In its subagent's tab, a step needs no name of its lane.
+                _ if depth > 0 || self.tab.as_deref() == Some(lane_of(step)) => bare_subject(step),
                 _ => subject(step),
             }
         };
@@ -790,6 +851,15 @@ pub(super) const KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Tabs",
+        &[
+            ("ctrl-n", "the next tab"),
+            ("ctrl-p", "the tab before"),
+            ("enter", "on a subagent row, open its tab"),
+            ("esc", "in a subagent tab, back to main"),
+        ],
+    ),
+    (
         "Everywhere",
         &[
             ("pgup pgdn", "scroll the transcript"),
@@ -836,18 +906,23 @@ fn step_mark(step: &StepDto) -> (&'static str, Style) {
             NoteSeverity::Warning => ("!", TOOL),
         },
         StepDto::Error(_) => failed,
-        StepDto::Subagent(subagent) => match subagent.state.as_deref() {
-            Some("completed") => done,
-            Some("failed") => failed,
-            Some("cancelled") => cancelled,
-            _ if is_live(step) => running,
-            _ => done,
-        },
+        StepDto::Subagent(subagent) => subagent_mark(subagent),
         StepDto::Compaction(compaction) => match compaction.status {
             CompactionStatus::Running => running,
             CompactionStatus::Completed => done,
             CompactionStatus::Failed => failed,
         },
+    }
+}
+
+/// The state mark of a subagent and its style, on its row and its tab.
+pub(super) fn subagent_mark(subagent: &SubagentStepDto) -> (&'static str, Style) {
+    match subagent.state.as_deref() {
+        Some("completed") => (theme::CALL_DONE, AGENT),
+        Some("failed") => (theme::CALL_FAILED, FAIL),
+        Some("cancelled") => (CANCELLED, DIM),
+        _ if subagent.ended_at.is_none() => (theme::CALL_RUNNING, TOOL),
+        _ => (theme::CALL_DONE, AGENT),
     }
 }
 

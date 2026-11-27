@@ -171,9 +171,17 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     Any other open step shows its whole text under its row.
 52. In the transcript zone, `r` shows the raw input and the raw output of the tool call at the cursor, as JSON.
     The console reads them with `raw=true`. A second `r` shows the detail again.
-53. A subagent step shows its title, its task, its state, its time and its step count.
-    Enter opens it in place to its steps, one level under its row. The console reads them with `subagent=<id>` (040, rule 44).
-    While the turn runs, the live steps of its lane join them. A step under its subagent does not name its lane.
+53. While the session has a subagent, the top row is a tab bar: `main`, then one tab for each subagent of the trajectory's `subagents` list, in start order.
+    A session with no subagent shows no bar, and the transcript uses the row.
+    A subagent tab shows the state mark of the subagent and its name. The active tab is in brackets and reversed, so it is clear without colour.
+    A narrow bar cuts the names to four columns and keeps the marks. Then it shows the tabs round the active one, with `‹` and `›` where tabs are past an edge.
+    From five columns, the active tab cuts its own name further, so its brackets, its state mark and the edge marks fit whole.
+    In `main`, a subagent is one summary row: the state mark, the subagent icon `↳`, the name, the step count and the time. It does not open in place.
+    Enter or a click on a summary row opens the tab of that subagent.
+    A subagent tab shows its task, then its steps with the rows of an open turn (rules 42, 51 and 59). Its steps do not name their lane.
+    The console reads them with `subagent=<id>` (040, rule 44). While the turn runs, the live steps of its lane join them.
+    Ctrl-N moves to the next tab and Ctrl-P to the tab before; the ends wrap. Esc in a subagent tab returns to `main`. Tab still moves between the zones.
+    Each tab keeps its own scroll position and cursor row. The input sends to the session from every tab.
 54. While a plan of entries has an entry that is not completed, one plan line shows above the input.
     The line has the count of the completed entries and the entry in progress, else the next one.
     Ctrl-T, or a click on the line, opens it to the checklist and closes it again.
@@ -209,7 +217,7 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     An edit row shows `+N -N` from its `diff_stat`, when it has one.
 60. The right side of the bottom row shows `? keys`, which drops after every item of the left side.
     `reconnecting` and `ctrl-c again to leave` replace the left side while they apply.
-61. `?` opens an overlay that lists every key of the console, in a group for each zone: the input, its box editing, a permission, a question, the transcript, and the keys of every zone.
+61. `?` opens an overlay that lists every key of the console, in a group for each zone: the input, its box editing, a permission, a question, the transcript, the tabs, and the keys of every zone.
     It opens in the transcript zone and in an empty input box. `?` in a box that holds text types the character.
     The first row names the close and the scroll keys. Up, Down, PgUp, PgDn, Home and End scroll the list where it is taller than the screen, so every key shows on a 60 by 24 terminal.
     `?` or Esc closes it. The transcript position and the input text stay as they were.
@@ -251,7 +259,9 @@ Number selection and question navigation use
 36. Rule 50: `ariadne-console::app::tests::the_farewell_prints_at_most_twenty_folded_turns_and_a_hint_to_the_log`, `::a_session_that_has_ended_leaves_after_its_snapshot`, `ariadne-cli::commands::console::app::tests::the_console_closing_says_whether_the_session_still_runs`.
 37. Rule 51: `ariadne-console::app::tests::an_open_command_shows_the_command_and_its_output_folded_then_whole`, `::an_open_edit_shows_its_change_as_a_coloured_diff`, `::an_open_read_shows_the_file_in_its_language`, `::enter_and_right_open_the_item_and_left_closes_it_or_goes_to_its_turn`, `ariadne-cli::commands::console::app::tests::the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes`, `ariadne-client::tests::a_step_detail_sends_its_route_and_reads_the_typed_detail`.
 38. Rule 52: `ariadne-console::app::tests::r_shows_the_raw_input_and_output_of_the_call_at_the_cursor`.
-39. Rule 53: `ariadne-console::app::tests::a_subagent_shows_its_title_task_state_time_and_steps_and_opens_to_them`, `ariadne-cli::commands::console::app::tests::the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes`, `ariadne-console::app::tests::an_open_subagent_is_read_again_when_its_turn_completes`.
+39. Rule 53, the tab bar: `ariadne-console::app::tests::the_top_row_is_a_tab_bar_of_main_and_each_subagent_in_start_order`, `::a_session_with_no_subagent_shows_no_tab_bar_and_the_transcript_uses_the_row`, `::a_narrow_bar_cuts_the_names_keeps_the_marks_and_marks_tabs_off_the_screen`, `::from_five_columns_the_active_tab_its_mark_and_the_edge_marks_fit_whole`.
+    The summary row and the tab: `::a_subagent_in_main_is_one_summary_row_that_does_not_open_in_place`, `::enter_on_a_summary_row_opens_the_tab_of_its_subagent_with_the_rows_of_main`, `::a_click_on_a_summary_row_opens_the_tab_of_its_subagent`, `::a_shown_subagent_tab_is_read_again_when_its_turn_completes`, `ariadne-cli::commands::console::app::tests::the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes`.
+    The keys, the places and the input: `ariadne-console::app::tests::ctrl_n_and_ctrl_p_move_between_tabs_and_escape_returns_to_main`, `::each_tab_keeps_its_own_scroll_position_and_cursor_row`, `::the_input_sends_to_the_session_from_a_subagent_tab`.
 40. Rule 54: `ariadne-console::app::tests::a_plan_with_an_open_entry_shows_one_line_above_the_input_that_opens_to_the_checklist`, `::every_entry_of_a_checklist_taller_than_its_room_is_reached_with_the_wheel`, `::the_wheel_reaches_every_entry_of_a_plan_on_a_short_terminal`.
 41. Rule 55: `ariadne-console::app::tests::warnings_and_compactions_show_in_their_turn_from_its_notices_without_a_step_read`, `::an_open_turn_shows_its_notices_and_their_count_once_whether_its_steps_read_or_not`, `::a_notice_is_an_item_the_cursor_reaches_and_it_opens_in_place_to_its_whole_text`, `::an_info_note_shows_in_the_open_turn_and_not_in_the_folded_one`.
 42. Rule 56: `ariadne-console::app::tests::an_answered_permission_is_a_mark_on_the_row_of_its_call`.
