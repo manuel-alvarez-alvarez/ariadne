@@ -325,13 +325,6 @@ impl Merge {
         self.events.drained().await;
         let mut batch: Vec<Queued> = self.queue.drain(..).collect();
         self.take_stored(&mut batch)?;
-        // The pump's wait is long enough for more live events to have been
-        // sent, each below the stored events it has just published. Left on
-        // the channel, one would go out after them.
-        let before = batch.len();
-        self.take_live(&mut batch)?;
-        // A live event that joined here has not waited for the pump yet.
-        self.settled = batch.len() == before;
         batch.sort_by(|a, b| a.id().cmp(b.id()));
         self.queue = batch.into();
         Ok(())
@@ -785,7 +778,7 @@ mod tests {
     use ariadne_api::events::{AgentEventDto, AgentEventSummaryDto};
     use ariadne_api::stream::DomainEvent;
 
-    use super::{EventBus, Merge, Queued, SNAPSHOT_EVENTS, Store, whole_calls};
+    use super::{EventBus, Merge, SNAPSHOT_EVENTS, Store, whole_calls};
     use crate::bus::BusEvent;
 
     fn dto(id: &str, kind: &str) -> AgentEventDto {
@@ -886,30 +879,6 @@ mod tests {
         }
 
         assert_eq!(order, ["0001", "0002", "0003", "0004", "0005"]);
-    }
-
-    /// A live event sent after the one the merge holds, and before a stored
-    /// event, is handed over before that stored event: the wait for the pump
-    /// reads the live channel too, not the stored one alone.
-    #[tokio::test]
-    async fn a_live_event_that_joins_while_the_merge_settles_does_not_trail_a_later_stored_one() {
-        let (stored_tx, stored_rx) = broadcast::channel(16);
-        let (live_tx, live_rx) = broadcast::channel(16);
-        let mut merge = Merge::new(EventBus::new(), stored_rx, live_rx, "session".into(), None);
-        // The merge took the first live event and has yet to settle it.
-        merge
-            .queue
-            .push_back(Queued::Live(dto("0001", "compaction_summary_chunk")));
-        merge.settled = false;
-        live_tx.send(dto("0002", "display_state_update")).unwrap();
-        stored_tx.send(stored("0003", "compaction_update")).unwrap();
-
-        let mut order = Vec::new();
-        for _ in 0..3 {
-            order.push(merge.next().await.unwrap().unwrap().id);
-        }
-
-        assert_eq!(order, ["0001", "0002", "0003"]);
     }
 
     /// Another session's events, and a stored event the snapshot already
