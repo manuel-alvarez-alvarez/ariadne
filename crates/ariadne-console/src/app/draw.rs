@@ -141,8 +141,12 @@ impl App {
         frame.render_widget(Paragraph::new(Text::from(plan)), plan_area);
         frame.render_widget(Paragraph::new(Text::from(attention)), attention_area);
         self.draw_suggestions(frame, suggestions_area);
-        self.input
-            .draw(frame, input_area, self.hint(), self.zone == Zone::Input);
+        self.input.draw(
+            frame,
+            input_area,
+            self.hint(),
+            self.zone == Zone::Input && !self.keys_open,
+        );
         frame.render_widget(Paragraph::new(self.bottom_row(width)), bottom_area);
         if self.keys_open {
             self.draw_keys(frame, whole);
@@ -754,21 +758,51 @@ impl App {
         )
     }
 
-    /// The list of every key, over the screen, in a group for each zone.
+    /// The list of every key, over the screen, in a group for each zone. The
+    /// groups stand in as many columns as the width holds, and the screen
+    /// shows no text cursor under them.
     fn draw_keys(&self, frame: &mut Draw, area: Rect) {
-        let mut lines = Vec::new();
-        for (zone, keys) in KEYS {
-            if !lines.is_empty() {
-                lines.push(Line::raw(""));
-            }
-            lines.push(Line::styled(format!(" {zone}"), QUESTION));
-            for (key, what) in *keys {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("   {key:<14}"), PICKED),
-                    Span::raw(what.to_string()),
-                ]));
-            }
-        }
+        let groups = KEYS
+            .iter()
+            .map(|(zone, keys)| {
+                let mut lines = vec![Line::styled(format!(" {zone}"), QUESTION)];
+                lines.extend(keys.iter().map(|(key, what)| {
+                    Line::from(vec![
+                        Span::styled(format!("{KEY_INDENT}{key:<KEY_WIDTH$}"), PICKED),
+                        Span::raw(what.to_string()),
+                    ])
+                }));
+                lines
+            })
+            .collect::<Vec<_>>();
+        let wide = KEYS
+            .iter()
+            .flat_map(|(_, keys)| keys.iter())
+            .map(|(_, what)| wrap::width(what))
+            .max()
+            .unwrap_or(0)
+            + KEY_INDENT.len()
+            + KEY_WIDTH
+            + KEYS_GUTTER;
+        let across = (usize::from(area.width) / wide).max(1);
+        let columns = key_columns(groups, across);
+        let height = columns.iter().map(Vec::len).max().unwrap_or(0);
+        let lines = (0..height)
+            .map(|row| {
+                let mut spans = Vec::new();
+                for (at, column) in columns.iter().enumerate() {
+                    let cell = column.get(row);
+                    let used = cell.map_or(0, |line| line.width());
+                    if let Some(line) = cell {
+                        spans.extend(line.spans.iter().cloned());
+                    }
+                    if at + 1 < columns.len() {
+                        spans.push(Span::raw(" ".repeat(wide - used)));
+                    }
+                }
+                Line::from(spans)
+            })
+            .collect::<Vec<_>>();
         // Everything above the bottom row, so that no line of the screen
         // under it shows through. The first row names how to close the list
         // and stays; the keys under it scroll where they do not all fit.
@@ -784,6 +818,36 @@ impl App {
         shown.extend(lines.into_iter().skip(from).take(room));
         frame.render_widget(Paragraph::new(Text::from(shown)), over);
     }
+}
+
+/// The indent of a key, the columns it is padded to, and the gap between
+/// two columns of the list of keys.
+const KEY_INDENT: &str = "   ";
+const KEY_WIDTH: usize = 14;
+const KEYS_GUTTER: usize = 2;
+
+/// Pack `groups` in order into at most `across` columns, each group whole in
+/// one column and a blank line between two in a column, as short as the
+/// order allows.
+fn key_columns(groups: Vec<Vec<Line<'static>>>, across: usize) -> Vec<Vec<Line<'static>>> {
+    let total = groups.iter().map(Vec::len).sum::<usize>() + groups.len().saturating_sub(1);
+    let tallest = groups.iter().map(Vec::len).max().unwrap_or(0);
+    for limit in tallest..=total {
+        let mut columns: Vec<Vec<Line<'static>>> = Vec::new();
+        for group in &groups {
+            match columns.last_mut() {
+                Some(column) if column.len() + 1 + group.len() <= limit => {
+                    column.push(Line::raw(""));
+                    column.extend(group.iter().cloned());
+                }
+                _ => columns.push(group.clone()),
+            }
+        }
+        if columns.len() <= across {
+            return columns;
+        }
+    }
+    vec![]
 }
 
 /// Every key of the console, by zone, for the list that `?` opens.

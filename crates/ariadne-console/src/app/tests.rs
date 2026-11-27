@@ -19,6 +19,7 @@ use ariadne_api::trajectory::{StepDto, ToolCallDetailDto};
 
 use super::*;
 use crate::ansi::{AnsiBackend, Window};
+use crate::app::draw::KEYS;
 use crate::testing::{Tap, emulator, resize};
 use crate::trajectory::fixtures::{snapshot, step, turn, update};
 
@@ -2362,6 +2363,103 @@ fn every_key_of_the_overlay_is_reached_by_scrolling_in_a_60_by_24_terminal() {
             .iter()
             .all(|row| !row.contains("? or esc closes"))
     );
+}
+
+/// The first column at which `text` starts on `row`, in characters.
+fn column_of(row: &str, text: &str) -> Option<usize> {
+    row.find(text).map(|at| row[..at].chars().count())
+}
+
+#[test]
+fn a_wide_overlay_shows_its_groups_whole_in_columns_with_no_scroll() {
+    let mut app = app_with(many());
+    app.event(key(KeyCode::Char('?')));
+    let screen = draw(&app, 160, 50);
+    // A heading stands alone in its cell: two spaces or the row's end follow.
+    let head = |zone: &str| {
+        let text = format!(" {zone}");
+        screen
+            .iter()
+            .enumerate()
+            .find_map(|(y, row)| {
+                let at = [
+                    row.find(&format!("{text}  ")),
+                    row.ends_with(&text).then(|| row.len() - text.len()),
+                ]
+                .into_iter()
+                .flatten()
+                .next()?;
+                Some((row[..at].chars().count(), y))
+            })
+            .unwrap_or_else(|| panic!("{zone}: {screen:#?}"))
+    };
+    let heads = KEYS.iter().map(|(zone, _)| head(zone)).collect::<Vec<_>>();
+    // Two or more columns, and the groups in order down each, then across.
+    assert!(heads.iter().any(|(x, _)| *x > 0), "{screen:#?}");
+    for pair in heads.windows(2) {
+        let ((x, y), (next_x, next_y)) = (pair[0], pair[1]);
+        assert!(next_x > x || (next_x == x && next_y > y), "{heads:?}");
+    }
+    // Each group is whole in its column: every key of it stands under its
+    // heading, at the column of the heading, before the next heading.
+    for (at, (_, keys)) in KEYS.iter().enumerate() {
+        let (x, y) = heads[at];
+        for (key, _) in *keys {
+            assert!(
+                screen[y + 1..].iter().any(|row| row
+                    .chars()
+                    .skip(x)
+                    .collect::<String>()
+                    .trim_start()
+                    .starts_with(key)),
+                "{key}: {screen:#?}"
+            );
+        }
+    }
+    // No scroll reaches anything the first screen does not show.
+    app.event(key(KeyCode::Down));
+    assert_eq!(draw(&app, 160, 50), screen);
+    app.event(key(KeyCode::End));
+    assert_eq!(draw(&app, 160, 50), screen);
+}
+
+#[test]
+fn a_narrow_overlay_shows_one_column() {
+    let mut app = app_with(many());
+    app.event(key(KeyCode::Char('?')));
+    let screen = draw(&app, 100, 80);
+    for (zone, _) in KEYS {
+        let row = screen
+            .iter()
+            .find(|row| row.starts_with(&format!(" {zone}")))
+            .unwrap_or_else(|| panic!("{zone}: {screen:#?}"));
+        assert_eq!(column_of(row, zone), Some(1), "{screen:#?}");
+    }
+    // One heading to a row: no row holds two.
+    assert!(
+        screen
+            .iter()
+            .all(|row| !row.contains("Transcript") || !row.contains("Tabs"))
+    );
+}
+
+#[test]
+fn the_overlay_hides_the_text_cursor_and_closing_it_brings_the_cursor_back() {
+    let tap = Tap::default();
+    let window = Window::new(WIDTH, HEIGHT);
+    let mut terminal = Terminal::new(AnsiBackend::new(tap.clone(), window)).unwrap();
+    let mut emulator = emulator(HEIGHT, WIDTH, 0);
+    let mut app = app_with(many());
+    let mut hidden = |app: &App| {
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        emulator.process(&std::mem::take(&mut *tap.0.lock().unwrap()));
+        emulator.screen().hide_cursor()
+    };
+    assert!(!hidden(&app));
+    app.event(key(KeyCode::Char('?')));
+    assert!(hidden(&app));
+    app.event(key(KeyCode::Esc));
+    assert!(!hidden(&app));
 }
 
 #[test]
