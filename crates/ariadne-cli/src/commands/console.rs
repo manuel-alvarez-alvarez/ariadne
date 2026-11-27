@@ -387,6 +387,9 @@ mod tests {
         pages: HashMap<String, Value>,
         /// The steps of each turn.
         steps: HashMap<String, Value>,
+        /// The steps of each turn once every stream script is taken: what
+        /// the store holds after a reconnect.
+        steps_after: HashMap<String, Value>,
         streams: Arc<Mutex<VecDeque<Script>>>,
         prompts: Arc<Mutex<Vec<String>>>,
         /// The `before` of each page read, `-` for the newest.
@@ -406,10 +409,12 @@ mod tests {
         Path((_, turn_id)): Path<(String, String)>,
         Query(_): Query<TrajectoryStepsQuery>,
     ) -> Json<Value> {
-        Json(
-            json!({"steps": stub.steps.get(&turn_id).cloned().unwrap_or(json!([])),
-                    "earlier_steps": 0}),
-        )
+        let after = stub.streams.lock().unwrap().is_empty();
+        let steps = match after {
+            true => stub.steps_after.get(&turn_id).or(stub.steps.get(&turn_id)),
+            false => stub.steps.get(&turn_id),
+        };
+        Json(json!({"steps": steps.cloned().unwrap_or(json!([])), "earlier_steps": 0}))
     }
 
     async fn trajectory_stream(
@@ -1035,5 +1040,76 @@ mod tests {
 
         assert_eq!(*prompts.lock().unwrap(), ["1"]);
         server.abort();
+    }
+
+    fn question(id: &str, turn_id: &str, state: &str) -> Value {
+        json!({"type": "question", "id": id, "turn_id": turn_id, "lane": "main",
+               "created_at": "2026-11-27T10:02:00Z", "request_id": id, "hint": "",
+               "question": "Which base?", "options": [], "recommended": null,
+               "recommendation_reason": null, "state": state,
+               "answer": if state == "answered" { json!("base: next") } else { Value::Null }})
+    }
+
+    #[tokio::test]
+    async fn a_question_that_closes_while_the_stream_is_down_prints_its_close_after_the_reconnect()
+    {
+        for steps in [false, true] {
+            let stub = Stub {
+                streams: streams(vec![
+                    vec![(
+                        "snapshot",
+                        snapshot(
+                            0,
+                            "running",
+                            vec![
+                                turn(
+                                    "t1",
+                                    "completed",
+                                    json!({"attention": [question("q1", "t1", "open")]}),
+                                ),
+                                turn("t2", "running", json!({})),
+                            ],
+                            false,
+                        ),
+                    )],
+                    vec![(
+                        "snapshot",
+                        snapshot(
+                            5,
+                            "exited",
+                            vec![
+                                turn("t1", "completed", json!({})),
+                                turn("t2", "completed", json!({})),
+                            ],
+                            false,
+                        ),
+                    )],
+                ]),
+                steps: HashMap::from([("t1".into(), json!([question("q1", "t1", "open")]))]),
+                steps_after: HashMap::from([(
+                    "t1".into(),
+                    json!([question("q1", "t1", "answered")]),
+                )]),
+                ..Stub::default()
+            };
+
+            let out = follow_with(stub, Layout::Blocks, steps, Filters::default()).await;
+
+            assert_eq!(
+                out,
+                "10:00:00  USER  prompt t1\n\
+                 \x20 10:02:00  question  Which base?\n\
+                 \x20 completed · 2 steps · 2 tool calls\n\
+                 10:05:00  AGENT  answer t1\n\
+                 \n\
+                 10:00:00  USER  prompt t2\n\
+                 \x20 10:02:00  question  Which base?\n\
+                 \x20   answer: base: next\n\
+                 \x20 completed · 2 steps · 2 tool calls\n\
+                 10:05:00  AGENT  answer t2\n\
+                 \n",
+                "with --steps: {steps}"
+            );
+        }
     }
 }

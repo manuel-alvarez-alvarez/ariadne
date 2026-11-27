@@ -255,6 +255,10 @@ pub(crate) struct Follower<Tz> {
     answered: HashSet<String>,
     /// The settled steps of each open turn, for the JSON line of its close.
     held: HashMap<String, Vec<StepDto>>,
+    /// The permissions and questions printed while they waited, by id, with
+    /// their turn: a snapshot reads their turn's stored steps, so a close
+    /// that came while the stream was down prints too.
+    waiting: HashMap<String, String>,
 }
 
 impl<Tz> Follower<Tz>
@@ -277,6 +281,7 @@ where
             printed: HashSet::new(),
             answered: HashSet::new(),
             held: HashMap::new(),
+            waiting: HashMap::new(),
         }
     }
 
@@ -315,14 +320,23 @@ where
                 .map(|turn| turn.id.clone())
                 .collect();
         }
-        if !self.steps || self.layout == Layout::Lines {
-            return Vec::new();
+        let mut wanted: Vec<String> = Vec::new();
+        if self.steps && self.layout != Layout::Lines {
+            wanted.extend(
+                turns
+                    .iter()
+                    .filter(|turn| {
+                        !self.skipped.contains(&turn.id) && !self.closed.contains(&turn.id)
+                    })
+                    .map(|turn| turn.id.clone()),
+            );
         }
-        turns
-            .iter()
-            .filter(|turn| !self.skipped.contains(&turn.id) && !self.closed.contains(&turn.id))
-            .map(|turn| turn.id.clone())
-            .collect()
+        for turn_id in self.waiting.values() {
+            if !wanted.contains(turn_id) {
+                wanted.push(turn_id.clone());
+            }
+        }
+        wanted
     }
 
     /// What a snapshot adds: the `older` turns read before it and every turn
@@ -335,9 +349,22 @@ where
         stored: &HashMap<String, Vec<StepDto>>,
     ) -> String {
         let mut out = String::new();
+        let mut swept = HashSet::new();
         for turn in older.iter().chain(view.turns()) {
+            swept.insert(turn.id.as_str());
             let stored = stored.get(&turn.id).map(Vec::as_slice).unwrap_or_default();
             out.push_str(&self.sweep(turn, stored));
+        }
+        // A turn the snapshot does not hold can still close a waiting step.
+        for (turn_id, steps) in stored {
+            if swept.contains(turn_id.as_str()) {
+                continue;
+            }
+            for step in steps {
+                if self.waiting.contains_key(step_id(step)) {
+                    out.push_str(&self.step(step));
+                }
+            }
         }
         out
     }
@@ -383,7 +410,16 @@ where
         attention.sort_by(|a, b| step_at(a).cmp(step_at(b)));
         let shown: Vec<&StepDto> = match self.steps {
             true => stored.iter().chain(&turn.steps).chain(attention).collect(),
-            false => attention,
+            // The stored steps add the close of a step printed while it
+            // waited, and nothing else.
+            false => attention
+                .into_iter()
+                .chain(
+                    stored
+                        .iter()
+                        .filter(|step| self.waiting.contains_key(step_id(step))),
+                )
+                .collect(),
         };
         for step in shown {
             if step_turn(step) == turn.id && self.filters.keeps_step(step) {
@@ -425,9 +461,15 @@ where
             return String::new();
         }
         let closing = self.printer.answered(step).is_some();
+        let asks = matches!(step, StepDto::Permission(_) | StepDto::Question(_));
+        if closing {
+            self.waiting.remove(&id);
+        }
         if self.printed.insert(id.clone()) {
             if closing {
                 self.answered.insert(id);
+            } else if asks {
+                self.waiting.insert(id, step_turn(step).to_string());
             }
             return match self.layout {
                 Layout::Blocks => self.printer.step(step),
@@ -437,6 +479,9 @@ where
         }
         if closing && self.answered.insert(id) {
             return match self.layout {
+                // A close after its turn closed prints whole: under a later
+                // turn, an answer line alone would not say what it answers.
+                Layout::Blocks if self.closed.contains(step_turn(step)) => self.printer.step(step),
                 Layout::Blocks => self.printer.answered(step).unwrap_or_default(),
                 Layout::Lines => self.printer.answered_line(step).unwrap_or_default(),
                 Layout::Json => String::new(),

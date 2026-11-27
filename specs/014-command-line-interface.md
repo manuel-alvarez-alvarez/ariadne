@@ -242,7 +242,10 @@ same binary also serves (013).
     - A dropped stream, a `resync` and a skipped revision reconnect. The
       follow reads older pages until it reaches a turn it has seen, so a
       turn that opened and closed while the stream was down prints too.
-      Only what was not printed prints. A follow ends when the session is
+      It also reads the stored steps of each turn with a permission or a
+      question that it printed while it waited, so a close that came while
+      the stream was down prints too, whole when its turn has closed. Only
+      what was not printed prints. A follow ends when the session is
       no longer live and no turn runs.
     - A piped console answers with a number only the permission that waits
       when the line is read, and only once. Any other line is a prompt.
@@ -901,6 +904,7 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   and leaves out the turns `--tail` does not keep
   (`commands/console.rs::a_follow_prints_each_finished_item_once_also_after_a_reconnect`,
   `::a_reconnect_prints_the_turns_that_came_and_went_while_the_stream_was_down`,
+  `::a_question_that_closes_while_the_stream_is_down_prints_its_close_after_the_reconnect`,
   `commands/transcript.rs::tests::a_follow_prints_each_item_once_across_snapshots`,
   `::a_follow_leaves_out_the_turns_tail_does_not_keep`). The client view
   applies each op of an update, refuses a skipped revision, and shows a
